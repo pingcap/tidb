@@ -30,6 +30,9 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/ossstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
@@ -602,6 +605,44 @@ type storageWithURI struct {
 }
 
 func (s *storageWithURI) URI() string { return s.uri }
+
+func TestFileScannerPreservesStorageScheme(t *testing.T) {
+	for _, scheme := range []string{"s3", "oss"} {
+		t.Run(scheme, func(t *testing.T) {
+			params := "region=cn-hangzhou&endpoint=https://oss-cn-hangzhou.aliyuncs.com&role-arn=test-role"
+			backend, err := objstore.ParseBackend(scheme+"://bucket/data?"+params, nil)
+			require.NoError(t, err)
+			options := backend.GetS3()
+			storage := s3like.NewStorage(nil, storeapi.NewBucketPrefix(options.Bucket, options.Prefix), options, nil)
+			var store storeapi.Storage = storage
+			if scheme == "oss" {
+				store = &ossstore.OSSStore{Storage: storage}
+			}
+			scanner := &fileScanner{store: store}
+			files := []mydump.FileInfo{
+				{
+					TableName: filter.Table{Schema: "db", Name: "tbl"},
+					FileMeta:  mydump.SourceFileMeta{Path: "db.tbl.001.csv", Type: mydump.SourceTypeCSV},
+				},
+				{
+					TableName: filter.Table{Schema: "db", Name: "tbl"},
+					FileMeta:  mydump.SourceFileMeta{Path: "db.tbl.002.csv", Type: mydump.SourceTypeCSV},
+				},
+			}
+			meta, err := scanner.buildTableMeta(&mydump.MDDatabaseMeta{Name: "db"},
+				&mydump.MDTableMeta{Name: "tbl", DataFiles: files},
+				map[string]mydump.FileInfo{files[0].FileMeta.Path: files[0], files[1].FileMeta.Path: files[1]})
+			require.NoError(t, err)
+			require.Equal(t, scheme+"://bucket/data/db.tbl.*.csv", meta.WildcardPath)
+			query, err := NewSQLGenerator().GenerateImportSQL(meta, &ImportOptions{
+				Format:             "csv",
+				ResourceParameters: params,
+			})
+			require.NoError(t, err)
+			require.Equal(t, "IMPORT INTO `db`.`tbl` FROM '"+scheme+"://bucket/data/db.tbl.*.csv?"+params+"' FORMAT 'csv'", query)
+		})
+	}
+}
 
 func TestAuroraWildcardURIPreservesRawKey(t *testing.T) {
 	scanner := &fileScanner{

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 // currentStatementRUWeights reads the loaded config rather than capturing
@@ -91,6 +93,7 @@ type statementRUFinalizedSnapshot struct {
 	engineRU         statementRUEngineResult
 	report           *statementRUFullReport
 	failure          statementRUFailureReason
+	ttlJob           bool
 }
 
 func installStatementRUOwner(stmt *ExecStmt) {
@@ -123,7 +126,7 @@ func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup
 	eligible := sessVars.StmtCtx.IsReadOnly || sessVars.StmtCtx.InSelectStmt ||
 		planInfo.kind == statementRUPlanAnalyze || planInfo.kind == statementRUPlanWrite || planInfo.kind == statementRUPlanCommit
 	if !eligible ||
-		sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) ||
+		(sessVars.InRestrictedSQL && !isStatementRUTTLJob(sessVars)) || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) ||
 		sessVars.StmtCtx.GetFlatPlan() != nil {
 		return statementRUCalculationSetup{}, false
 	}
@@ -131,6 +134,10 @@ func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup
 	return statementRUCalculationSetup{
 		frontendCompileBytes: statementRUFrontendCompileBytes(stmt),
 	}, true
+}
+
+func isStatementRUTTLJob(vars *variable.SessionVars) bool {
+	return vars.InRestrictedSQL && vars.RequestSourceType == kv.InternalTxnTTL && vars.TTLJobID != ""
 }
 
 type statementRUPlanKind uint8
@@ -196,8 +203,12 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 
 	sql := stmt.StmtNode.OriginalText()
 	if stmt.Ctx != nil {
-		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil &&
-			sessVars.StmtCtx != nil && sessVars.StmtCtx.OriginalSQL != "" {
+		sessVars := stmt.Ctx.GetSessionVars()
+		// Both prepared and non-prepared cache hits skip plan compilation.
+		if sessVars != nil && sessVars.FoundInPlanCache {
+			return 0
+		}
+		if sessVars != nil && sessVars.StmtCtx != nil && sessVars.StmtCtx.OriginalSQL != "" {
 			stmtCtx := sessVars.StmtCtx
 			normalizedSQL, _ := stmtCtx.SQLDigest()
 			normalizedSQL = trimStatementRUExplainPrefix(normalizedSQL)
@@ -295,7 +306,12 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
 	engineRU := calculator.engineResult(weights)
-	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV} {
+	// TotalRU already includes the original TiFlash RU, so add only the extra
+	// (multiplier - 1) copies: total - original TiFlash RU + scaled TiFlash RU.
+	result.TotalRU += engineRU.TiFlash * (statementRUTiFlashMultiplier - 1)
+	// Keep the per-engine value consistent with the adjusted statement total.
+	engineRU.TiFlash *= statementRUTiFlashMultiplier
+	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV, engineRU.TiFlash} {
 		if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
 			return statementRUFailed(statementRUOperatorInvalid), false
 		}
@@ -320,7 +336,7 @@ func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
-	reportStatementRUV3ConsumptionSafely(stmt, finalized.engineRU)
+	reportStatementRUV2ConsumptionSafely(stmt, finalized.engineRU)
 	publishStatementRUMetricsSafely(finalized)
 	if finalized.report == nil {
 		return
@@ -331,18 +347,18 @@ func publishStatementRUFinalizedSnapshot(
 	})
 }
 
-func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
+func reportStatementRUV2ConsumptionSafely(stmt *ExecStmt, result statementRUEngineResult) {
 	defer func() {
 		_ = recover()
 	}()
-	if stmt == nil || stmt.Ctx == nil || (result.TiDB <= 0 && result.TiKV <= 0) {
+	if stmt == nil || stmt.Ctx == nil || (result.TiDB <= 0 && result.TiKV <= 0 && result.TiFlash <= 0) {
 		return
 	}
 	dctx := stmt.Ctx.GetDistSQLCtx()
 	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
 		return
 	}
-	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, result.TiKV, result.TiDB, 0)
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, result.TiKV, result.TiDB, result.TiFlash)
 }
 
 // publishStatementRUMetricsSafely publishes result metrics using cached counters.
@@ -353,7 +369,10 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 			publishStatementRUFailureSafely(statementRUPanic)
 		}
 	}()
-	metrics.AddRUV3Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.result.TotalRU, finalized.sqlType)
+	if finalized.ttlJob {
+		metrics.RUV2TTLTotal.Add(finalized.result.TotalRU)
+	}
+	metrics.AddRUV2Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.engineRU.TiFlash, finalized.result.TotalRU, finalized.sqlType)
 	if finalized.report != nil {
 		publishStatementRUFullMetrics(finalized)
 	}
@@ -386,5 +405,6 @@ func publishStatementRUCalibrationSafely(
 		snapshot.Units.OperatorNum,
 		snapshot.Units.WriteKeys,
 		snapshot.Units.WriteBytes,
+		snapshot.Units.CrossAZNetBytes,
 	)
 }

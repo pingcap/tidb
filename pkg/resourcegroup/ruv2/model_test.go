@@ -38,6 +38,36 @@ func TestDefaultWeights(t *testing.T) {
 	}
 }
 
+func TestDefaultDDLWeights(t *testing.T) {
+	want := DDLWeights{
+		TxnKVBytes:    1,
+		IngestKVBytes: 1,
+	}
+	if got := DefaultDDLWeights(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultDDLWeights() = %+v, want %+v", got, want)
+	}
+	if err := DefaultDDLWeights().Validate(); err != nil {
+		t.Fatalf("DefaultDDLWeights().Validate() returned error: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		weights DDLWeights
+		wantErr string
+	}{
+		{name: "negative txn KV bytes", weights: DDLWeights{TxnKVBytes: -1}, wantErr: "txn-kv-bytes must be finite and non-negative, got -1"},
+		{name: "NaN ingest KV bytes", weights: DDLWeights{IngestKVBytes: math.NaN()}, wantErr: "ingest-kv-bytes must be finite and non-negative, got NaN"},
+		{name: "infinite ingest KV bytes", weights: DDLWeights{IngestKVBytes: math.Inf(1)}, wantErr: "ingest-kv-bytes must be finite and non-negative, got +Inf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.weights.Validate(); err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("DDLWeights.Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestCalculate(t *testing.T) {
 	units := StmtUnits{
 		CPUWork: 1, ScanBytes: 2, NetBytes: 3, FrontendCompileBytes: 4,
@@ -132,5 +162,30 @@ func TestStmtUnitsArithmetic(t *testing.T) {
 	}
 	if got := got.Sub(right); got != left {
 		t.Fatalf("StmtUnits.Sub() = %+v, want %+v", got, left)
+	}
+}
+
+func TestCrossAZNetwork(t *testing.T) {
+	units := StmtUnits{NetBytes: 150, CrossAZNetBytes: 50}
+	weights := DefaultWeights()
+	result, ok := Calculate(units, weights)
+	if !ok || result.TotalRU != 150 {
+		t.Fatalf("default: %+v, %v", result, ok)
+	}
+	weights.CrossAZNetByte = 2
+	result, ok = Calculate(units, weights)
+	if !ok || result.TotalRU != 250 {
+		t.Fatalf("cross-AZ: %+v, %v", result, ok)
+	}
+	if !units.Add(units).Sub(units).Valid() || units.Add(units).Sub(units) != units {
+		t.Fatal("network unit arithmetic")
+	}
+	units.CrossAZNetBytes = 151
+	if units.Valid() {
+		t.Fatal("cross-AZ is a subset of total network bytes")
+	}
+	weights.CrossAZNetByte = -1
+	if _, ok := Calculate(StmtUnits{}, weights); ok {
+		t.Fatal("negative cross-AZ weight")
 	}
 }

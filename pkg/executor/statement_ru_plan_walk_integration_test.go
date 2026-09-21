@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -155,7 +157,7 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, _, _, _, _ float64,
-		_, _, _, _ float64,
+		_, _, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -240,7 +242,7 @@ func TestStatementRUWrappedStatements(t *testing.T) {
 	var writeStatement, writeKeys, writeBytes, scanBytes, operatorNum float64
 	connectionID := tk.Session().GetSessionVars().ConnectionID
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
-		observedID uint64, _ string, _, scan, _, _, _, _, ws, operators, keys, bytes float64,
+		observedID uint64, _ string, _, scan, _, _, _, _, ws, operators, keys, bytes, _ float64,
 	) {
 		if observedID == connectionID {
 			count++
@@ -406,7 +408,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		connectionID := tk.Session().GetSessionVars().ConnectionID
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 			id uint64, state string, _, observedScanBytes, _, _, observedHashRows, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if id == connectionID {
 				require.Equal(t, "incomplete", state)
@@ -635,7 +637,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -828,7 +830,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		})
 		t.Run("injected commit error", func(t *testing.T) {
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "return(true)")
-			before := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("update"))
+			before := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("update"))
 			rs, err := tk.Exec("explain analyze update commit_failure set b = b + 1 where a = 1")
 			require.Error(t, err)
 			require.Nil(t, rs)
@@ -838,7 +840,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			require.NotNil(t, observation.owner)
 			require.True(t, observation.owner.ConsumedForTest())
 			require.False(t, observation.owner.RecordedSuccessForTest())
-			require.Equal(t, before, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("update")))
+			require.Equal(t, before, testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("update")))
 			vars := tk.Session().GetSessionVars()
 			require.Nil(t, vars.StmtCtx.CTEStorageMap)
 			require.Nil(t, vars.MemTracker.SearchTrackerWithoutLock(vars.StmtCtx.MemTracker.Label()))
@@ -1236,7 +1238,7 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, netBytes, _, _, _ float64,
-		_, _, _, _ float64,
+		_, _, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -1375,7 +1377,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1421,7 +1423,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1472,7 +1474,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1506,7 +1508,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			observedCPUWork, _, _, _, _, _ float64,
-			_, _, _, _ float64,
+			_, _, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1756,7 +1758,7 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 
 		var publications atomic.Int64
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
-			connectionID uint64, _ string, _, _, _, _, _, _, _, _, _, _ float64,
+			connectionID uint64, _ string, _, _, _, _, _, _, _, _, _, _, _ float64,
 		) {
 			if fmt.Sprint(connectionID) == retryingConnectionID {
 				publications.Add(1)
@@ -1813,7 +1815,7 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 		connectionID := tk1.Session().GetSessionVars().ConnectionID
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 			observedConnectionID uint64, _ string, _, _, _, _, _, _ float64,
-			writeStatement, _, _, _ float64,
+			writeStatement, _, _, _, _ float64,
 		) {
 			if observedConnectionID == connectionID {
 				chargedWrites.Add(int64(writeStatement))
@@ -1849,7 +1851,7 @@ func TestStatementRUWriteLifecycle(t *testing.T) {
 	connectionID := tk.Session().GetSessionVars().ConnectionID
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 		observedConnectionID uint64, _ string, cpu, _, _, _, _, _ float64,
-		ws, operators, keys, bytes float64,
+		ws, operators, keys, bytes, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -1966,6 +1968,34 @@ func TestStatementRUWriteLifecycle(t *testing.T) {
 	})
 }
 
+func TestLastQueryInfoRUV2(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_last_query_info (id int primary key, v int)")
+	tk.MustExec("insert into ru_last_query_info values (1, 2), (2, 3), (3, 4)")
+	const sql = "select * from ru_last_query_info where id > 0 order by id"
+	for _, mode := range []string{config.RUReportModeResult, config.RUReportModeFull} {
+		t.Run(mode, func(t *testing.T) {
+			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
+			explainRows := tk.MustQuery("explain analyze format='ru' " + sql).Rows()
+			require.NotEmpty(t, explainRows)
+			require.Len(t, explainRows[0], 7)
+			require.Equal(t, "100.00%", explainRows[0][5])
+			explainRU := explainRows[0][4].(string)
+
+			tk.MustQuery(sql).Check(testkit.Rows("1 2", "2 3", "3 4"))
+			rows := tk.MustQuery("select @@tidb_last_query_info").Rows()
+			var info sessionstates.QueryInfo
+			require.NoError(t, json.Unmarshal([]byte(rows[0][0].(string)), &info))
+			require.Positive(t, info.RUV2Consumption)
+			// EXPLAIN displays RU with two decimal places.
+			require.Equal(t, explainRU, fmt.Sprintf("%.2f", info.RUV2Consumption))
+		})
+	}
+}
+
 func TestStatementRUReportModesSQL(t *testing.T) {
 	enableStatementRUExecutionInfo(t)
 	store := testkit.CreateMockStore(t)
@@ -1977,20 +2007,22 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
 			var observed atomic.Int64
+			var frontendBytes float64
 			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(_ uint64, _ string,
-				_, _, _, _, _, _, _, _, _, _ float64) {
+				_, _, _, frontendCompileBytes, _, _, _, _, _, _, _ float64) {
 				observed.Add(1)
+				frontendBytes = frontendCompileBytes
 			})
-			totalBefore := testutil.ToFloat64(metrics.RUV3Total)
-			tidbBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))
-			tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tikv"))
+			totalBefore := testutil.ToFloat64(metrics.RUV2Total)
+			tidbBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))
+			tikvBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv"))
 			tk.MustQuery("select * from ru_report_modes where id > 0").Check(testkit.Rows("1 2"))
 			tk.MustExec("begin")
 			tk.MustExec("update ru_report_modes set v = v + 1 where id = 1")
 			tk.MustExec("commit")
-			tidbDelta := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb")) - tidbBefore
-			tikvDelta := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tikv")) - tikvBefore
-			totalDelta := testutil.ToFloat64(metrics.RUV3Total) - totalBefore
+			tidbDelta := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb")) - tidbBefore
+			tikvDelta := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv")) - tikvBefore
+			totalDelta := testutil.ToFloat64(metrics.RUV2Total) - totalBefore
 			require.Positive(t, tidbDelta)
 			require.Positive(t, tikvDelta)
 			require.InDelta(t, tidbDelta+tikvDelta, totalDelta, 1e-9)
@@ -2004,18 +2036,18 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 				labels := []string{"select", "insert", "replace", "update", "delete", "commit", "analyze", "other"}
 				before := make([]float64, len(labels))
 				for i, label := range labels {
-					before[i] = testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(label))
+					before[i] = testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues(label))
 				}
-				totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+				totalBefore := testutil.ToFloat64(metrics.RUV2Total)
 				if stmtType == "select" {
 					tk.MustQuery(sql)
 				} else {
 					tk.MustExec(sql)
 				}
-				total := testutil.ToFloat64(metrics.RUV3Total) - totalBefore
+				total := testutil.ToFloat64(metrics.RUV2Total) - totalBefore
 				require.Positive(t, total, sql)
 				for i, label := range labels {
-					delta := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(label)) - before[i]
+					delta := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues(label)) - before[i]
 					if label == stmtType {
 						require.InDelta(t, total, delta, 1e-9, sql)
 					} else {
@@ -2035,17 +2067,44 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 			checkType("commit", "commit")
 			checkType("analyze table ru_report_modes", "analyze")
 			tk.MustExec("set @@tidb_enable_prepared_plan_cache = on")
+			checkCache := func(sql, stmtType string, hit bool) float64 {
+				t.Helper()
+				before := testutil.ToFloat64(metrics.RUV2Total)
+				observedBefore := observed.Load()
+				checkType(sql, stmtType)
+				require.Equal(t, hit, tk.Session().GetSessionVars().FoundInPlanCache, sql)
+				if mode == config.RUReportModeFull {
+					require.Equal(t, observedBefore+1, observed.Load())
+					if hit {
+						require.Zero(t, frontendBytes, sql)
+					} else {
+						require.Positive(t, frontendBytes, sql)
+					}
+				}
+				return testutil.ToFloat64(metrics.RUV2Total) - before
+			}
 			tk.MustExec("prepare ru_report_insert from 'insert into ru_report_modes values (?, ?)'")
 			tk.MustExec("set @ru_id = 4, @ru_v = 5")
-			checkType("execute ru_report_insert using @ru_id, @ru_v", "insert")
+			checkCache("execute ru_report_insert using @ru_id, @ru_v", "insert", false)
 			tk.MustExec("set @ru_id = 5")
-			checkType("execute ru_report_insert using @ru_id, @ru_v", "insert")
+			checkCache("execute ru_report_insert using @ru_id, @ru_v", "insert", true)
 			tk.MustExec("deallocate prepare ru_report_insert")
 			tk.MustExec("prepare ru_report_select from 'select * from ru_report_modes where id > ?'")
 			tk.MustExec("set @ru_id = 0")
-			checkType("execute ru_report_select using @ru_id", "select")
-			checkType("execute ru_report_select using @ru_id", "select")
+			missRU := checkCache("execute ru_report_select using @ru_id", "select", false)
+			hitRU := checkCache("execute ru_report_select using @ru_id", "select", true)
+			require.Greater(t, missRU, hitRU)
+			tk.MustExec("set @@tidb_enable_prepared_plan_cache = off")
+			disabledRU := checkCache("execute ru_report_select using @ru_id", "select", false)
+			require.InDelta(t, missRU, disabledRU, 1e-9)
 			tk.MustExec("deallocate prepare ru_report_select")
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = on")
+			missRU = checkCache("select v from ru_report_modes where id > 0", "select", false)
+			hitRU = checkCache("select v from ru_report_modes where id > 0", "select", true)
+			require.Greater(t, missRU, hitRU)
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = off")
+			disabledRU = checkCache("select v from ru_report_modes where id > 0", "select", false)
+			require.InDelta(t, missRU, disabledRU, 1e-9)
 			checkType("delete from ru_report_modes where id > 1", "delete")
 			tk.MustExec("update ru_report_modes set v = 2 where id = 1")
 		})
