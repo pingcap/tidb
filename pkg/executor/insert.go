@@ -87,6 +87,10 @@ func (e *InsertExec) initReturningBuffers() {
 	outputTypes := e.RetFieldTypes()
 	e.returningOutBuf = chunk.MutRowFromTypes(outputTypes)
 	vars := e.Ctx().GetSessionVars()
+	// EXPLAIN ANALYZE returns the plan, not the RETURNING rows, so they are not kept.
+	if vars.StmtCtx.IsExplainAnalyzeDML {
+		return
+	}
 	// Do not size the list from e.InitCap(): the executor builder sets ZeroCapacity for
 	// INSERT, which would make List.AppendRow allocate a fresh chunk for every row.
 	e.returningList = chunk.NewListWithMemTracker(outputTypes, vars.InitChunkSize, vars.MaxChunkSize, e.memTracker)
@@ -127,6 +131,11 @@ func (e *InsertExec) appendReturningRow(row []types.Datum, handle kv.Handle) err
 			return err
 		}
 		e.returningOutBuf.SetDatum(i, val)
+	}
+	if e.returningList == nil {
+		// EXPLAIN ANALYZE: the row is still evaluated, so the errors and warnings of the
+		// RETURNING expressions are the same as in a plain execution, but it is discarded.
+		return nil
 	}
 	e.returningList.AppendRow(e.returningOutBuf.ToRow())
 	return nil
