@@ -153,7 +153,7 @@ fn in_process_write_stack() -> Result<
         store: MvccStore::with_pd(pd.oracle()),
     });
     let cache = RegionCache::new(InProcessRegionLoader);
-    let read_authority = SharedReadAuthority::start(client, cache)
+    let read_authority = SharedReadAuthority::start_with_lock_resolver(client, cache)
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     // The embedded store never garbage-collects, so the read floor is a
     // static zero -- Go's unistore behavior for a store with no PD to ask.

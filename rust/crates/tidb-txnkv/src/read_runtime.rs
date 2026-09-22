@@ -697,6 +697,7 @@ mod async_resolve_tests {
         assert_eq!(task.commit_version, 150);
         assert_eq!(task.keys, vec![b"secondary".to_vec()]);
         assert_eq!(task.request_source, "foreground-read");
+        assert!(task.include_keys);
         assert!(task.schedule_regions);
         assert!(!background_cancellation.is_cancelled());
         caller_cancellation.cancel();
@@ -705,6 +706,105 @@ mod async_resolve_tests {
 
         pool.close_and_wait();
         assert!(background_cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn large_read_cleanup_is_detached_and_scans_the_region() {
+        let resolve_calls = Arc::new(AtomicUsize::new(0));
+        let resolve_requests = Arc::new(Mutex::new(Vec::new()));
+        let client = Client {
+            resolve_calls: Arc::clone(&resolve_calls),
+            resolve_requests: Arc::clone(&resolve_requests),
+        };
+        let cache = BackgroundRegionCache::without_worker(RegionCache::new(Loader));
+        let resolving_locks = Arc::new(Mutex::new(ResolvingLocks::default()));
+        let authority_id = next_read_authority_id();
+        let opener = SharedReadOpener {
+            client: client.clone(),
+            region_cache: cache.clone_opener(),
+            resolving_locks: Arc::clone(&resolving_locks),
+            async_resolve_pool: None,
+            authority_id,
+        };
+        let pool = crate::lock::async_resolve_pool(opener.clone());
+        let runtime = SharedReadRuntime::from_shared_authorities(
+            client,
+            cache.open_lease().expect("the test opens a cache lease"),
+            resolving_locks,
+            Some(Arc::clone(&pool)),
+            authority_id,
+        )
+        .expect("the test runtime shares the resolver opener");
+
+        let result = resolve_optimistic_locks(
+            &runtime,
+            &[OptimisticLock {
+                key: b"large-secondary".to_vec(),
+                primary: b"primary".to_vec(),
+                txn_id: 100,
+                ttl_ms: 0,
+                txn_size: u64::MAX,
+                lock_type: 2,
+                min_commit_ts: 0,
+                use_async_commit: false,
+                secondaries: Vec::new(),
+            }],
+            200,
+            &KvrpcContext {
+                request_source: "foreground-read".to_owned(),
+                ..KvrpcContext::default()
+            },
+            &UnaryCallContext::with_timeout(Duration::from_secs(1)),
+            &FixedTimestampSource::new(1),
+            true,
+        )
+        .expect("the read returns once the large transaction status is known");
+        assert_eq!(result.statuses, vec![ResolvedTxnStatus::Committed(150)]);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while resolve_calls.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(resolve_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(*resolve_requests.lock().unwrap(), vec![(1, Vec::new())]);
+        pool.close_and_wait();
+    }
+
+    #[test]
+    fn large_read_cleanup_falls_back_to_a_region_scan_without_a_pool() {
+        let resolve_calls = Arc::new(AtomicUsize::new(0));
+        let resolve_requests = Arc::new(Mutex::new(Vec::new()));
+        let runtime = SharedReadRuntime::new_injected(
+            Client {
+                resolve_calls: Arc::clone(&resolve_calls),
+                resolve_requests: Arc::clone(&resolve_requests),
+            },
+            RegionCache::new(Loader),
+        );
+
+        let result = resolve_optimistic_locks(
+            &runtime,
+            &[OptimisticLock {
+                key: b"large-secondary".to_vec(),
+                primary: b"primary".to_vec(),
+                txn_id: 100,
+                ttl_ms: 0,
+                txn_size: u64::MAX,
+                lock_type: 2,
+                min_commit_ts: 0,
+                use_async_commit: false,
+                secondaries: Vec::new(),
+            }],
+            200,
+            &KvrpcContext::default(),
+            &UnaryCallContext::with_timeout(Duration::from_secs(1)),
+            &FixedTimestampSource::new(1),
+            true,
+        )
+        .expect("a runtime without the async pool resolves the lock inline");
+        assert_eq!(result.statuses, vec![ResolvedTxnStatus::Committed(150)]);
+        assert_eq!(resolve_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(*resolve_requests.lock().unwrap(), vec![(1, Vec::new())]);
     }
 
     #[test]

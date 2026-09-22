@@ -1346,8 +1346,10 @@ read resolver pool with a process-wide 10,000-task admission limit, uses a
 40-second retry budget, routes multi-key transaction cleanup in the background
 and schedules each region group independently. Pool close cancels and drains
 these tasks before the shared region cache stops. Inline cleanup errors do not
-replace a determined read status. The regular non-lite read resolver remains a
-separate open async path.
+replace a determined read status. The ordinary non-lite read path now
+schedules detached region-scan cleanup when the shared async resolver is
+installed. All current production openers that can resolve locks now install
+the pool; the optional TiKV-side async-resolve mode remains open.
 
 The new runtime tests verify caller/background cancellation isolation,
 request-source propagation, cache-backed child sessions, and exact key grouping
@@ -1376,3 +1378,30 @@ gates remain open. Upstream's `gp.New(10000, 10*time.Second)` can run up to
 10,000 goroutines; this Rust runtime currently caps blocking worker threads at
 512 while admitting up to 10,000 tasks. That Rust resource bound changes peak
 cleanup concurrency and remains unbenchmarked before package acceptance.
+
+### Ordinary read-cleanup receipt (2026-09-22)
+
+The pinned Go `resolveLocks` path schedules each resolved non-lite read lock
+with `resultRequired=false`; `resolveLock` routes by the lock key and sends an
+empty `ResolveLock.Keys` list so TiKV scans that region. Rust now schedules the
+same detached cleanup when a resolver-enabled runtime is present, retains only
+`RequestSource`, and uses an empty key list. If scheduling is rejected, Rust
+falls back to the caller path and propagates its error, matching the ordinary
+Go fallback. The regression test checks that a large-lock read returns the
+determined status and eventually sends the region-scan request.
+
+Validation after this addition passed:
+
+    cd rust
+    cargo test --offline --locked -p tidb-txnkv --lib read_cleanup_
+    cargo test --offline --locked -p tidb-txnkv --test lock_resolver_source
+    cargo test --offline --locked -p tidb-unistore --lib the_in_process_pair_starts_the_shared_read_authority
+    cargo check --offline --locked -p tidb-server --message-format=short
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+The async-cleanup unit tests passed all 4 cases and the resolver source suite
+passed all 26 cases. Full package parity remains open for resolver options,
+cache behavior, metrics, async-commit/secondary workers, failpoints, source test
+reconciliation, all caller wiring, and the 512-worker concurrency gap above.

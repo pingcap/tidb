@@ -33,6 +33,8 @@ pub(crate) struct AsyncLockResolveTask {
     pub(crate) commit_version: u64,
     pub(crate) keys: Vec<Vec<u8>>,
     pub(crate) request_source: String,
+    /// Whether ResolveLock should carry `keys` or scan the routed region.
+    pub(crate) include_keys: bool,
     /// Whether this transaction-level task should schedule its region groups
     /// independently, matching `batchLiteResolveLocks`' nested read tasks.
     pub(crate) schedule_regions: bool,

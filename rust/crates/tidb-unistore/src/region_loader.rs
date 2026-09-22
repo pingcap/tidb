@@ -185,8 +185,11 @@ mod authority_tests {
     fn the_in_process_pair_starts_the_shared_read_authority() {
         let cache = tidb_txnkv::region::RegionCache::new(InProcessRegionLoader);
         let authority: tidb_txnkv::SharedReadAuthority<InProcessClient, InProcessRegionLoader> =
-            tidb_txnkv::SharedReadAuthority::start(InProcessClient::new(), cache)
-                .expect("the maintenance worker starts over the in-process plane");
+            tidb_txnkv::SharedReadAuthority::start_with_lock_resolver(
+                InProcessClient::new(),
+                cache,
+            )
+            .expect("the maintenance worker starts over the in-process plane");
         drop(authority);
     }
 }

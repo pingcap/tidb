@@ -31,9 +31,9 @@ The current Go ignored-hint contract is lock_resolver.go's
 backoffOnLockHintsInRequest before resolveLocks: only ForRead checks the exact
 request hints, any matching transaction charges one BoTxnLockFast backoff, and
 resolution runs afterward. Repeated ignored responses exhaust the caller's
-existing backoffer. The status cache, ordinary non-lite read cleanup,
-async-commit and secondary-check worker paths, failpoints, original tests and
-all caller integrations remain open.
+existing backoffer. The status cache, explicit lite/result-required modes,
+TiKV-side async-resolve option, async-commit and secondary-check worker paths,
+failpoints, original tests and all caller integrations remain open.
 
 The direct-unary cop response delegate now borrows the current per-region
 budget through blocking-lock status/cleanup recovery, matching
@@ -52,9 +52,13 @@ shutdown. Source tests cover exact writer batching, read cancellation and
 request-source behavior. This matches the small-lock branch of
 `LockResolver.resolveLocks` and `batchLiteResolveLocks` in the pinned
 `lock_resolver.go`. The remaining resolver options/cache paths, complete
-metrics, ordinary non-lite read cleanup, async-commit/secondary-check worker
+metrics and TiKV-side async-resolve option, async-commit/secondary-check worker
 paths, failpoints, original Go support/test reconciliation and every
-whole-package acceptance gate remain open.
+whole-package acceptance gate remain open. The default non-lite read cleanup
+now schedules a detached region scan when the runtime has an async resolver;
+the explicit Go `Lite` and `resultRequired` option combinations remain open.
+The current real-TiKV and embedded unistore server openers both install the
+pool; unistore authority and server compile checks cover that wiring.
 
 The async pool currently admits up to 10,000 tasks but Tokio's blocking runtime
 caps worker threads at 512. Upstream's `gp.New(10000, 10*time.Second)` can run

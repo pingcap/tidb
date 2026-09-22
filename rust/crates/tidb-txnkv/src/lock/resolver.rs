@@ -83,6 +83,7 @@ where
                     commit_version: task.commit_version,
                     keys: group.keys.clone(),
                     request_source: task.request_source.clone(),
+                    include_keys: task.include_keys,
                     schedule_regions: false,
                 };
                 if pool.as_ref().is_some_and(|pool| pool.try_spawn(child)) {
@@ -99,6 +100,7 @@ where
                     &context,
                     &call,
                     &mut backoff,
+                    task.include_keys,
                 );
             }
         } else {
@@ -112,6 +114,7 @@ where
                     &context,
                     &call,
                     &mut backoff,
+                    task.include_keys,
                 )
                 .is_err()
                 {
@@ -723,6 +726,7 @@ where
             timestamp_source,
             false,
             defer_lite_cleanup,
+            for_read,
             backoff,
         ) {
             Err(LockRecoveryError::NonAsyncCommitLock) => resolve_one_optimistic_lock(
@@ -734,6 +738,7 @@ where
                 timestamp_source,
                 true,
                 defer_lite_cleanup,
+                for_read,
                 backoff,
             )?,
             other => other?,
@@ -814,6 +819,7 @@ where
                 commit_version,
                 keys: cleanup.keys.clone(),
                 request_source: base_context.request_source.clone(),
+                include_keys: true,
                 schedule_regions: true,
             }) {
                 continue;
@@ -830,6 +836,7 @@ where
                     base_context,
                     call,
                     backoff,
+                    true,
                 )?;
             }
             Ok::<(), LockRecoveryError>(())
@@ -883,6 +890,7 @@ fn resolve_one_optimistic_lock<C, L, T>(
     timestamp_source: &T,
     force_sync_commit: bool,
     defer_lite_cleanup: bool,
+    for_read: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<OneLockOutcome, LockRecoveryError>
 where
@@ -991,8 +999,7 @@ where
     }
     let status = classify_determined_status(&check_response)?;
     if lock.key != lock.primary && !defer_lite_cleanup {
-        check_cancelled(call)?;
-        resolve_secondary(runtime, lock, status, base_context, call, backoff)?;
+        resolve_secondary(runtime, lock, status, base_context, call, for_read, backoff)?;
     }
     Ok(OneLockOutcome::Resolved {
         status,
@@ -1351,6 +1358,7 @@ where
             base_context,
             call,
             &mut worker,
+            true,
         ) {
             errors.push(error.to_string());
         }
@@ -1465,12 +1473,30 @@ fn resolve_secondary<C, L>(
     status: ResolvedTxnStatus,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
+    for_read: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
     L: RegionRecoveryLoader,
 {
+    if for_read {
+        let commit_version = match status {
+            ResolvedTxnStatus::Committed(commit_version) => commit_version,
+            ResolvedTxnStatus::RolledBack => 0,
+        };
+        if runtime.try_schedule_async_resolve(AsyncLockResolveTask {
+            txn_id: lock.txn_id,
+            commit_version,
+            keys: vec![lock.key.clone()],
+            request_source: base_context.request_source.clone(),
+            include_keys: false,
+            schedule_regions: false,
+        }) {
+            return Ok(());
+        }
+        crate::client_go_metrics::inc_lock_resolver_read_async_fallback();
+    }
     resolve_key(
         runtime,
         lock.txn_id,
@@ -1508,7 +1534,8 @@ where
                 ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
                 ResolvedTxnStatus::RolledBack => 0,
             },
-            keys: vec![key.to_vec()],
+            // Go's non-lite ResolveLock omits Keys so TiKV scans this region.
+            keys: Vec::new(),
             is_async: false,
             is_txn_file: false,
             ..KvrpcResolveLockRequest::default()
@@ -1541,6 +1568,7 @@ fn resolve_region_keys<C, L>(
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
     backoff: &mut RegionBackoffBudget,
+    include_keys: bool,
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -1555,7 +1583,11 @@ where
                 ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
                 ResolvedTxnStatus::RolledBack => 0,
             },
-            keys: group.keys.clone(),
+            keys: if include_keys {
+                group.keys.clone()
+            } else {
+                Vec::new()
+            },
             is_async: false,
             is_txn_file: false,
             ..KvrpcResolveLockRequest::default()
