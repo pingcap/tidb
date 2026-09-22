@@ -207,14 +207,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "CreateTable"
 	case *CreateViewStmt:
 		return "CreateView"
-	case *CreateMaterializedViewStmt:
-		return "CreateMaterializedView"
-	case *CreateMaterializedViewLogStmt:
-		return "CreateMaterializedViewLog"
-	case *AlterMaterializedViewStmt:
-		return "AlterMaterializedView"
-	case *AlterMaterializedViewLogStmt:
-		return "AlterMaterializedViewLog"
 	case *CreateUserStmt:
 		return "CreateUser"
 	case *DeleteStmt:
@@ -228,10 +220,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 			return "DropView"
 		}
 		return "DropTable"
-	case *DropMaterializedViewStmt:
-		return "DropMaterializedView"
-	case *DropMaterializedViewLogStmt:
-		return "DropMaterializedViewLog"
 	case *ExplainStmt:
 		if _, ok := x.Stmt.(*ShowStmt); ok {
 			return "DescTable"
