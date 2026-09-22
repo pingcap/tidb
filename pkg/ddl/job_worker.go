@@ -671,9 +671,12 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	if !kerneltype.IsNextGen() {
 		return nil
 	}
-	// For reorganization jobs, only distributed add-index currently accounts
-	// the reorganization workload itself. Other reorganization jobs account the
-	// DDL transaction below, but their reorganization RU v2 is not fully accounted.
+	// The reorganization work itself is accounted separately from this
+	// DDL-transaction sample: distributed add-index charges the ingest KV size,
+	// while the partition reorganization jobs and the reorg type MODIFY/CHANGE
+	// COLUMN jobs charge their backfill transaction bytes. Other reorganization
+	// jobs account the DDL transaction below, but their reorganization RU v2 is
+	// not fully accounted.
 	txn, err := w.sess.Txn()
 	if err != nil {
 		return errors.Trace(err)

@@ -885,6 +885,9 @@ func (w *updateColumnWorker) cleanRowMap() {
 func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	// writtenBytes samples the payload buffered by the txn that finally
+	// commits, so a retried RunInNewTxn overwrites it instead of double counting.
+	var writtenBytes int
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -940,9 +943,13 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		// Collect the warnings.
 		taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
 
+		writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
+	if errInTxn == nil {
+		w.accountBackfillTxnRU(handleRange.getJobID(), writtenBytes)
+	}
 	failpoint.InjectCall("mockUpdateColumnWorkerStuck")
 	return
 }
