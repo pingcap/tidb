@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -576,6 +577,13 @@ type QueryChunk struct {
 	Chk         *chunk.Chunk
 	RowIDOffset int64
 }
+
+// RunImportQuery executes the supplied task statement and streams owned chunks to
+// output. The caller owns the channel and session; the function closes its executor
+// before returning. Registration by executor avoids a package import cycle.
+// TODO: Separate IMPORT task submission, status APIs and TaskMeta from the DXF
+// worker package, so workers can call executor directly without this registration.
+var RunImportQuery func(context.Context, sessionctx.Context, *QueryPlan, string, int64, chan<- QueryChunk) error
 
 func newQueryChunkProcessor(
 	chunkCh chan QueryChunk,

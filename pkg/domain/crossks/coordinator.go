@@ -23,8 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
-// schemaCoordinator is used to manage internal sessions to coordinate schema
-// changes, see InfoSchemaCoordinator for more details.
+// schemaCoordinator tracks internal sessions for schema coordination and GC reporting.
 type schemaCoordinator struct {
 	printMDLLogTime time.Time
 	mu              sync.RWMutex
@@ -77,3 +76,20 @@ func (c *schemaCoordinator) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 }
 
 func (*schemaCoordinator) KillNonFlashbackClusterConn() {}
+
+// minStartTS reads published process information rather than mutable session variables.
+func (c *schemaCoordinator) minStartTS(lowerLimit, currentTS uint64) uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	minTS := currentTS
+	for se := range c.sessions {
+		info := se.ShowProcess()
+		if info == nil || (info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue.Load()) {
+			continue
+		}
+		if ts := info.CurTxnStartTS; ts > lowerLimit && ts < minTS {
+			minTS = ts
+		}
+	}
+	return minTS
+}

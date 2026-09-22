@@ -652,6 +652,10 @@ func TestShowImportProgress(t *testing.T) {
 	require.EqualValues(t, 500, runInfo.Processed)
 	checkShowInfo("encode", "500B", "1000B", "50", "100B/s", "00:00:05", 0)
 
+	// Query totals cannot be known before the SELECT has finished.
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepQuery)
+	checkShowInfo("query", "0B", "N/A", "N/A", "0B/s", "N/A", 0)
+
 	// Merge step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
 

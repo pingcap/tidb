@@ -27,6 +27,7 @@ go_library(
         "//pkg/dxf/framework/scheduler",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/expression",
+        "//pkg/infoschema",
         "//pkg/ingestor/ingestctrl",
         "//pkg/ingestor/simplesst",
         "//pkg/keyspace",
@@ -122,7 +123,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",

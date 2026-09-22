@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -103,6 +104,47 @@ func TestInitDefaultOptions(t *testing.T) {
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
+}
+
+func TestImportQueryStorageOptions(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := context.Background()
+	previousURI := vardef.CloudStorageURI.Load()
+	vardef.CloudStorageURI.Store("s3://bucket")
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+
+	plan := &Plan{DataSourceType: DataSourceTypeQuery}
+	require.NoError(t, plan.initOptions(ctx, sctx, nil))
+	if kerneltype.IsNextGen() {
+		require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
+	} else {
+		require.Empty(t, plan.CloudStorageURI)
+	}
+
+	err := plan.initOptions(ctx, sctx, []*plannercore.LoadDataOpt{{
+		Name: cloudStorageURIOption,
+		Value: &expression.Constant{
+			Value:   types.NewStringDatum("s3://override"),
+			RetType: types.NewFieldType(mysql.TypeVarString),
+		},
+	}})
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
+	require.ErrorContains(t, err, "import from query")
+	for _, uri := range []string{"", "noop://sort"} {
+		controller := &LoadDataController{Plan: &Plan{CloudStorageURI: uri}}
+		require.NoError(t, controller.InitDataStore(ctx))
+		require.Nil(t, controller.dataStore)
+		require.Equal(t, uri != "", controller.globalSortStore != nil)
+		controller.Close()
+	}
+	for _, source := range []string{"s3://source/%zz", "unsupported://source/file"} {
+		controller := &LoadDataController{Plan: &Plan{CloudStorageURI: "noop://sort", Path: source}}
+		require.Error(t, controller.InitDataStore(ctx))
+		require.Nil(t, controller.globalSortStore)
+		require.Nil(t, controller.dataStore)
+		controller.Close()
+	}
 }
 
 func TestPlanUseNewCollate(t *testing.T) {
