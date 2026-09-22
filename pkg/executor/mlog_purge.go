@@ -491,7 +491,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
 			}
 			deleteLoopStart = time.Now()
-			for _, rowIDRange := range deletePlan.rowIDRanges {
+			for rangeIndex, rowIDRange := range deletePlan.rowIDRanges {
 				for {
 					rows, deleteErr := purgeMaterializedViewLogData(kctx, deleteSQLExec, deleteVars, schemaName.O, mlogName.O, lockedLastPurgedTSO, lockedLastPurgedTSOReady, safePurgeTSO, &rowIDRange, effectiveBatchSize)
 					totalPurgeRows += rows
@@ -499,10 +499,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 						return finalizeFailure(deleteErr)
 					}
 					failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
-					if rows < effectiveBatchSize {
-						break
-					}
-					if throttlePlan != nil {
+					hasMoreRanges := rangeIndex+1 < len(deletePlan.rowIDRanges)
+					batchCompleted := rows >= effectiveBatchSize
+					if throttlePlan != nil && shouldThrottleMLogPurgeDeleteBatch(batchCompleted, hasMoreRanges) {
 						if sleepErr := throttlePlan.maybeSleep(kctx, deleteLoopStart, totalPurgeRows); sleepErr != nil {
 							if taskCancelController.isManualCancelRequested() {
 								return finalizeFailure(sleepErr)
@@ -513,6 +512,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 						} else {
 							effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
 						}
+					}
+					if !batchCompleted {
+						break
 					}
 				}
 			}
@@ -1287,6 +1289,10 @@ func floorPowerOfTwo(value int64) int64 {
 		return 0
 	}
 	return 1 << (bits.Len64(uint64(value)) - 1)
+}
+
+func shouldThrottleMLogPurgeDeleteBatch(batchCompleted, hasMoreRanges bool) bool {
+	return batchCompleted || hasMoreRanges
 }
 
 func setSessionVarWithRestore(sessVars *variable.SessionVars, varName, value string) (func(), error) {

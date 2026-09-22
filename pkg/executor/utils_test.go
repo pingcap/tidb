@@ -407,6 +407,25 @@ func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
 	require.Less(t, plan.targetRate, float64(50000))
 }
 
+func TestShouldThrottleMLogPurgeDeleteBatchAcrossRanges(t *testing.T) {
+	tests := []struct {
+		name           string
+		batchCompleted bool
+		hasMoreRanges  bool
+		shouldThrottle bool
+	}{
+		{name: "full batch", batchCompleted: true, shouldThrottle: true},
+		{name: "partial batch before another range", hasMoreRanges: true, shouldThrottle: true},
+		{name: "empty range before another range", hasMoreRanges: true, shouldThrottle: true},
+		{name: "partial final batch", shouldThrottle: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.shouldThrottle, shouldThrottleMLogPurgeDeleteBatch(tt.batchCompleted, tt.hasMoreRanges))
+		})
+	}
+}
+
 func TestBuildMLogPurgeDeleteRowIDRanges(t *testing.T) {
 	stats := mlogPurgePendingRowStats{pendingRows: 40000, minRowID: 1, maxRowID: 40000, hasRowIDBounds: true}
 	require.Equal(t, []mlogPurgeDeleteRowIDRange{{startRowID: 1, endRowID: 8000}, {startRowID: 8001, endRowID: 16000}, {startRowID: 16001, endRowID: 24000}, {startRowID: 24001, endRowID: 32000}, {startRowID: 32001, endRowID: 40000}}, buildMLogPurgeDeleteRowIDRanges(stats, 0))
