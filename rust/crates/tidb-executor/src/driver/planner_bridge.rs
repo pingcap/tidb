@@ -1598,6 +1598,10 @@ pub(crate) fn physical_plan_for_logical(
         .with_selectivity_factor(ctx.selectivity_factor())
         .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
         .with_projection_push_down(ctx.allow_projection_push_down())
+        .with_heavy_function_optimize(
+            ctx.optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_56318, true),
+        )
         .with_inl_join_inner_multi_pattern(ctx.enable_inl_join_inner_multi_pattern())
         .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
         .with_paging(ctx.optimizer_cost_env().session.enable_paging)

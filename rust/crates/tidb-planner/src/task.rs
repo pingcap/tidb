@@ -2655,6 +2655,121 @@ fn contains_virtual_column_in_plan(
         .any(|column| virtual_ids.contains(&column.unique_id))
 }
 
+/// Go `HeavyFunctionNameMap` (`core/task.go:46-57`). These expressions are
+/// expensive enough that evaluating them once in a pushed-down projection is
+/// preferable to evaluating them again in the global TopN.
+const HEAVY_TOPN_FUNCTIONS: &[&str] = &[
+    "vec_cosine_distance",
+    "vec_l1_distance",
+    "vec_l2_distance",
+    "vec_negative_inner_product",
+    "vec_dims",
+    "vec_l2_norm",
+    "fts_match_word",
+];
+
+/// Go `ContainHeavyFunction` (`core/task.go:1083-1092`).
+fn contains_heavy_topn_function(expression: &Expression) -> bool {
+    let Expression::ScalarFunction(function) = expression else {
+        return false;
+    };
+    if HEAVY_TOPN_FUNCTIONS.contains(&function.func_name.lowercase()) {
+        return true;
+    }
+    function.args.iter().any(contains_heavy_topn_function)
+}
+
+/// The plans returned by Go `getPushedDownTopN` when at least one by-item is a
+/// heavy function: a bottom projection materializes each heavy expression,
+/// a pushed TopN orders by those fresh columns, and a global TopN reuses the
+/// same columns after the task returns to TiDB.
+fn heavy_topn_split(
+    topn: &crate::physical::PhysicalTopN,
+    child_plan: &PhysicalPlan,
+    store_type: StoreType,
+    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    allocator: &crate::plan_base::PlanIdAllocator,
+) -> Option<(
+    crate::physical::PhysicalProjection,
+    crate::physical::PhysicalTopN,
+    crate::physical::PhysicalTopN,
+)> {
+    if !topn.heavy_function_optimize
+        || (store_type == StoreType::TiKv && !topn.allow_projection_push_down)
+    {
+        return None;
+    }
+    let heavy_indexes: Vec<usize> = topn
+        .by_items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            contains_heavy_topn_function(&item.expr).then_some(index)
+        })
+        .collect();
+    if heavy_indexes.is_empty() {
+        return None;
+    }
+    let column_ids = column_ids?;
+    let output_schema = topn.base.base.schema()?.clone();
+    let mut projection_exprs = output_schema
+        .columns
+        .iter()
+        .cloned()
+        .map(Expression::Column)
+        .collect::<Vec<_>>();
+    let mut projection_columns = output_schema.columns.clone();
+    let mut distance_columns = Vec::with_capacity(heavy_indexes.len());
+    for index in heavy_indexes.iter().copied() {
+        let expression = topn.by_items[index].expr.clone();
+        let ret_type = expression.static_type()?.clone();
+        projection_exprs.push(expression);
+        let mut distance = tidb_expr::column::Column::new(column_ids.alloc(), ret_type);
+        distance.index = (projection_exprs.len() - 1) as i64;
+        projection_columns.push(distance.clone());
+        distance_columns.push((index, distance));
+    }
+
+    let child_stats = child_plan.stats_info().cloned();
+    let new_count = topn.offset.wrapping_add(topn.count);
+    let pushed_stats = child_stats.map(|stats| stats.derive_limit_stats(new_count as f64));
+    let projection_schema = tidb_expr::schema::Schema::new(projection_columns);
+    let mut projection_base = crate::physical::BasePhysicalPlan::new(
+        allocator,
+        "Projection",
+        topn.base.base.query_block_offset(),
+    );
+    projection_base.base.set_stats(pushed_stats.clone());
+    projection_base
+        .base
+        .set_schema(Some(projection_schema.clone()));
+    let projection = crate::physical::PhysicalProjection {
+        base: projection_base,
+        exprs: projection_exprs,
+        ..Default::default()
+    };
+
+    let mut pushed = topn.clone();
+    pushed.base.set_children(Vec::new());
+    pushed.base.base.set_stats(pushed_stats);
+    pushed
+        .base
+        .base
+        .set_schema(Some(projection_schema));
+    pushed.offset = 0;
+    pushed.count = new_count;
+    for (index, distance) in &distance_columns {
+        pushed.by_items[*index].expr = Expression::Column(distance.clone());
+    }
+
+    let mut global = topn.clone();
+    global.base.set_children(Vec::new());
+    for (index, distance) in distance_columns {
+        global.by_items[index].expr = Expression::Column(distance);
+    }
+    Some((projection, pushed, global))
+}
+
 pub fn attach2_task(
     plan: PhysicalPlan,
     mut tasks: Vec<Task>,
@@ -3069,6 +3184,29 @@ pub fn attach2_task(
                             }
                             return Ok(attach_plan_to_task(plan, converted));
                         }
+                        if let Some((projection, pushed, global)) = heavy_topn_split(
+                            topn,
+                            cop.plan().expect("cop plan was checked above"),
+                            cop.get_store_type(),
+                            column_ids,
+                            allocator,
+                        ) {
+                            let pushed_task = attach_plan_to_task(
+                                PhysicalPlan::TopN(pushed),
+                                attach_plan_to_task(
+                                    PhysicalPlan::Projection(projection),
+                                    Task::Cop(cop),
+                                ),
+                            );
+                            if !topn.partition_by.is_empty() {
+                                return Ok(pushed_task);
+                            }
+                            let converted = pushed_task.into_root_task(allocator)?;
+                            return Ok(attach_plan_to_task(
+                                PhysicalPlan::TopN(global),
+                                converted,
+                            ));
+                        }
                         let new_count = topn.offset.wrapping_add(topn.count);
                         let stats = cop
                             .plan()
@@ -3090,6 +3228,8 @@ pub fn attach2_task(
                             count: new_count,
                             prefix_col: topn.prefix_col,
                             prefix_len: topn.prefix_len,
+                            allow_projection_push_down: topn.allow_projection_push_down,
+                            heavy_function_optimize: topn.heavy_function_optimize,
                         });
                         let Task::Cop(pushed_cop) = attach_plan_to_task(pushed, Task::Cop(cop))
                         else {
@@ -3112,8 +3252,33 @@ pub fn attach2_task(
                             mpp.plan.as_deref().ok_or_else(|| {
                                 PlanError::internal("MPP TopN attachment received an empty task")
                             })?,
-                        );
+                    );
                     if pushable {
+                        if let Some((projection, pushed, global)) = heavy_topn_split(
+                            topn,
+                            mpp.plan.as_deref().ok_or_else(|| {
+                                PlanError::internal("MPP TopN attachment received an empty task")
+                            })?,
+                            StoreType::TiFlash,
+                            column_ids,
+                            allocator,
+                        ) {
+                            let pushed_task = attach_plan_to_task(
+                                PhysicalPlan::TopN(pushed),
+                                attach_plan_to_task(
+                                    PhysicalPlan::Projection(projection),
+                                    Task::Mpp(mpp),
+                                ),
+                            );
+                            if !topn.partition_by.is_empty() {
+                                return Ok(pushed_task);
+                            }
+                            let converted = pushed_task.into_root_task(allocator)?;
+                            return Ok(attach_plan_to_task(
+                                PhysicalPlan::TopN(global),
+                                converted,
+                            ));
+                        }
                         let new_count = topn.offset.wrapping_add(topn.count);
                         let stats = mpp
                             .plan
@@ -3137,6 +3302,8 @@ pub fn attach2_task(
                             count: new_count,
                             prefix_col: topn.prefix_col,
                             prefix_len: topn.prefix_len,
+                            allow_projection_push_down: topn.allow_projection_push_down,
+                            heavy_function_optimize: topn.heavy_function_optimize,
                         });
                         let mut pushed_task = attach_plan_to_task(pushed, Task::Mpp(mpp));
                         if let Some(PhysicalPlan::TopN(pushed_topn)) = pushed_task.plan_mut() {
@@ -3499,6 +3666,94 @@ mod attach_tests {
         };
         assert_eq!(pushed_topn.offset, 0);
         assert_eq!(pushed_topn.count, 10);
+    }
+
+    #[test]
+    fn mpp_topn_materializes_heavy_by_items_once() {
+        use tidb_ast::CiString;
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode, VectorFloat32};
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::Constant;
+        use tidb_expr::scalar_function::ScalarFunction;
+
+        let id = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+        let score = Column::new(2, FieldType::new(FieldTypeCode::Double));
+        let vector = Column::new(3, FieldType::new(FieldTypeCode::VectorFloat32));
+        let child_schema = Schema::new(vec![id.clone(), score.clone(), vector.clone()]);
+        let mut child_base = op_with_stats("Dual", 20.0);
+        child_base.base.set_schema(Some(child_schema));
+        let child = PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+            base: child_base,
+            row_count: 0,
+        });
+        let child_task = Task::Mpp(MppTask::new(child, MppPartitionType::Any, []));
+
+        let query_vector = Constant::new(
+            Datum::new_vector_float32(VectorFloat32::must_create(vec![1.0, 2.0])),
+            FieldType::new(FieldTypeCode::VectorFloat32),
+        );
+        let heavy = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("vec_l2_distance"),
+            FieldType::new(FieldTypeCode::Double),
+            vec![Expression::Column(vector), Expression::Constant(query_vector)],
+        ));
+        let topn_schema = Schema::new(vec![id.clone(), score.clone()]);
+        let mut topn_base = op_with_stats("TopN", 10.0);
+        topn_base.base.set_schema(Some(topn_schema));
+        let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+            base: topn_base,
+            by_items: vec![
+                tidb_expr::aggregation::ByItems::new(Expression::Column(score), false),
+                tidb_expr::aggregation::ByItems::new(heavy, false),
+            ],
+            offset: 4,
+            count: 6,
+            ..crate::physical::PhysicalTopN::default()
+        });
+        let PhysicalPlan::TopN(topn_ref) = &topn else {
+            unreachable!();
+        };
+        assert!(crate::pushdown::can_exprs_push_down_tiflash(
+            &topn_ref
+                .by_items
+                .iter()
+                .map(|item| item.expr.clone())
+                .collect::<Vec<_>>()
+        ));
+        assert!(contains_heavy_topn_function(&topn_ref.by_items[1].expr));
+        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let attached = attach2_task(
+            topn,
+            vec![child_task],
+            Some(&column_ids),
+            &PlanIdAllocator::new(),
+        )
+        .expect("heavy MPP TopN attaches");
+        let Some(PhysicalPlan::TopN(global)) = attached.plan() else {
+            panic!("the global TopN remains at root");
+        };
+        let Expression::Column(global_distance) = &global.by_items[1].expr else {
+            panic!("global heavy by-item was not replaced by a distance column");
+        };
+        assert_eq!(global_distance.index, 2);
+        let Some(PhysicalPlan::TableReader(reader)) = global.base.children().first() else {
+            panic!("global TopN reads through a TableReader");
+        };
+        let Some(PhysicalPlan::ExchangeSender(sender)) = reader.table_plan.as_deref() else {
+            panic!("the MPP reader owns the pass-through sender");
+        };
+        let Some(PhysicalPlan::TopN(pushed)) = sender.base.children().first() else {
+            panic!("the partial TopN is below the sender");
+        };
+        assert_eq!(pushed.count, 10);
+        let Expression::Column(pushed_distance) = &pushed.by_items[1].expr else {
+            panic!("pushed heavy by-item was not replaced by a distance column");
+        };
+        assert_eq!(pushed_distance.unique_id, global_distance.unique_id);
+        let Some(PhysicalPlan::Projection(projection)) = pushed.base.children().first() else {
+            panic!("the distance projection is below the pushed TopN");
+        };
+        assert_eq!(projection.exprs.len(), 3);
     }
 
     #[test]

@@ -121,6 +121,8 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.AllowProjectionPushDown`, used when Projection
     /// enumerates its TiKV coprocessor candidate.
     pub allow_projection_push_down: bool,
+    /// Go fix-control 56318, which enables the heavy-function TopN rewrite.
+    pub heavy_function_optimize: bool,
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
     /// (`tidb_enable_inl_join_inner_multi_pattern`, default ON): whether
     /// Selection, Projection, an inner-type Join, or a matching Aggregation
@@ -204,6 +206,7 @@ impl<'a> DispatchContext<'a> {
             expression_evaluator: &crate::ranger::points::evaluate_static,
             ordering_index_selectivity_ratio: 0.01,
             allow_projection_push_down: true,
+            heavy_function_optimize: true,
             // Go `vardef.DefTiDBEnableINLJoinMultiPattern` is true.
             enable_inl_join_inner_multi_pattern: true,
             // Go `vardef.DefOptLimitPushDownThreshold`.
@@ -295,6 +298,12 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_projection_push_down(mut self, allow: bool) -> Self {
         self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// Sets Go fix-control 56318 for heavy-function TopN planning.
+    pub const fn with_heavy_function_optimize(mut self, enabled: bool) -> Self {
+        self.heavy_function_optimize = enabled;
         self
     }
 
@@ -512,7 +521,14 @@ fn exhaust_physical_plans(
             // Go's two preference slices, in order: the TopN operators
             // (`getPhysTopN`), then the LIMIT half (`getPhysLimits`).
             let mut slices = Vec::with_capacity(2);
-            let topns = physical::get_phys_topn(op, prop, ctx.allocator, ctx.mpp_allowed);
+            let topns = physical::get_phys_topn(
+                op,
+                prop,
+                ctx.allocator,
+                ctx.mpp_allowed,
+                ctx.allow_projection_push_down,
+                ctx.heavy_function_optimize,
+            );
             if !topns.is_empty() {
                 slices.push(topns);
             }

@@ -50,7 +50,7 @@ fn plan_stringer_show_operator_renderings() {}
 /// first — position 1 holds the only Column item at index == output-schema
 /// length (:190-211) in BOTH the pushed-down and global TopN.
 #[test]
-#[ignore = "go-parity-gap: getPushedDownTopN heavy-function split is documented unported (task.rs keeps only the non-heavy half)"]
+#[ignore = "covered by task::attach_tests::mpp_topn_materializes_heavy_by_items_once; this source receipt remains for the Go fixture"]
 fn pushed_down_topn_moves_heavy_function_byitem_last() {}
 
 /// GO PORT of `pkg/planner/core/task_test.go:32 TestPhysicalUnionScanAttach2Task`.

@@ -2684,7 +2684,7 @@ pub fn get_phys_limits(
 /// Go `physicalop.PhysicalTopN` (`physical_topn.go:37`), the planning
 /// slice: expression-borne `ByItems`, the K-heap partition order, the
 /// offset/count pair, and partial-order prefix-index metadata.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PhysicalTopN {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
@@ -2701,6 +2701,29 @@ pub struct PhysicalTopN {
     pub prefix_col: Option<i64>,
     /// Go `PrefixLen`, in bytes.
     pub prefix_len: usize,
+    /// Go `SessionVars.AllowProjectionPushDown`, captured when the
+    /// candidate is enumerated so Attach2Task can apply the TiKV heavy
+    /// function projection gate at the same boundary as Go.
+    pub allow_projection_push_down: bool,
+    /// Go fix-control 56318, captured with the candidate. Heavy-function
+    /// TopN reuse is enabled by default and can be disabled per statement.
+    pub heavy_function_optimize: bool,
+}
+
+impl Default for PhysicalTopN {
+    fn default() -> Self {
+        Self {
+            base: BasePhysicalPlan::default(),
+            by_items: Vec::new(),
+            partition_by: Vec::new(),
+            offset: 0,
+            count: 0,
+            prefix_col: None,
+            prefix_len: 0,
+            allow_projection_push_down: true,
+            heavy_function_optimize: true,
+        }
+    }
 }
 
 /// Go `getPhysTopN` (`physical_topn.go:272`), the core loop: one TopN
@@ -2715,6 +2738,8 @@ pub fn get_phys_topn(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     mpp_allowed: bool,
+    allow_projection_push_down: bool,
+    heavy_function_optimize: bool,
 ) -> Vec<PhysicalPlan> {
     let mut all_task_types = vec![
         TaskType::CopSingleRead,
@@ -2766,6 +2791,8 @@ pub fn get_phys_topn(
             count: topn.count,
             prefix_col: None,
             prefix_len: 0,
+            allow_projection_push_down,
+            heavy_function_optimize,
         }));
         if tp == TaskType::CopMultiRead {
             if let Some(advisory_sort_items) = &advisory_sort_items {
@@ -2787,6 +2814,8 @@ pub fn get_phys_topn(
                     count: topn.count,
                     prefix_col: None,
                     prefix_len: 0,
+                    allow_projection_push_down,
+                    heavy_function_optimize,
                 }));
             }
         }
@@ -4229,6 +4258,8 @@ impl PhysicalPlan {
                 count: op.count,
                 prefix_col: op.prefix_col,
                 prefix_len: op.prefix_len,
+                allow_projection_push_down: op.allow_projection_push_down,
+                heavy_function_optimize: op.heavy_function_optimize,
             }),
             Self::HashAgg(op) => Self::HashAgg(PhysicalHashAgg {
                 base: base_of(&op.base),

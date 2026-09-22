@@ -8063,6 +8063,31 @@ single-partition final stages. The focused receipts from `rust/` pass:
     cargo test --offline --locked -j12 -p tidb-planner --lib task::attach_tests::mpp_scalar_single_distinct_builds_three_aggregation_stages -- --test-threads=1
 
 Scalar multi-distinct adjustment, TiFlash pre-aggregation mode, fragment
-scheduling/task metadata transport, heavy-function TopN, and complete
-physicalop/workload acceptance remain open. No sysbench, TPC-C, TPC-H, or YCSB
+scheduling/task metadata transport, partial-order and TiDB-cop TopN branches,
+and complete physicalop/workload acceptance remain open. No sysbench, TPC-C,
+TPC-H, or YCSB
 performance result is inferred from these planner unit tests.
+
+
+## Continuing heavy-function TopN parity
+
+Rust now mirrors Go's `HeavyFunctionNameMap` and recursive
+`ContainHeavyFunction` check for the vector-distance, vector-dimension,
+vector-norm, and full-text functions. When fix-control 56318 is enabled, a
+TiKV/TiFlash candidate with a heavy by-item gets the same bottom Projection,
+fresh distance columns, pushed `Offset+Count` TopN, and global TopN column
+reuse as Go. TiKV still observes `AllowProjectionPushDown`; statement fix
+control is captured in `DispatchContext` from `StmtContext`.
+
+The focused receipt from `rust/` passes:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib \
+      task::attach_tests::mpp_topn_materializes_heavy_by_items_once \
+      -- --test-threads=1
+    cargo check --offline --locked -j12 -p tidb-planner --message-format=short
+    cargo check --offline --locked -j12 -p tidb-executor --message-format=short
+
+Vector-index distance-column reuse, partial-order and TiDB-cop TopN branches,
+fragment scheduling, scalar multi-distinct aggregation, TiFlash pre-aggregation
+mode, and whole physicalop/workload acceptance remain open. No sysbench,
+TPC-C, TPC-H, or YCSB performance result is inferred from this planner test.
