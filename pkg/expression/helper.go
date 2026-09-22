@@ -88,12 +88,53 @@ func MaterializedScheduleErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMa
 	}
 }
 
+// EvalMaterializedScheduleExpr parses and evaluates a persisted materialized
+// view schedule expression. The caller must configure evalSctx with the
+// schedule's SQL mode, conversion flags, error levels, and timezone first.
+func EvalMaterializedScheduleExpr(
+	evalSctx sessionctx.Context,
+	exprSQL string,
+	scheduleSQLMode mysql.SQLMode,
+) (*types.Time, error) {
+	if evalSctx == nil {
+		return nil, errors.New("materialized schedule eval session is unavailable")
+	}
+	exprNode, err := generatedexpr.ParseExpressionWithSQLMode(exprSQL, scheduleSQLMode)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	builtExpr, err := BuildSimpleExpr(evalSctx.GetExprCtx(), exprNode)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	v, err := builtExpr.Eval(evalSctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if v.IsNull() {
+		return nil, nil
+	}
+	if v.Kind() != types.KindMysqlTime {
+		return nil, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.KindStr(v.Kind()),
+		)
+	}
+	t := v.GetMysqlTime()
+	if tp := t.Type(); tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
+		return nil, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.TypeStr(tp),
+		)
+	}
+	return &t, nil
+}
+
 // DeriveMaterializedScheduleNextTime evaluates a runtime NEXT expression with
 // the SQL mode and timezone persisted in the MV/MLog metadata.
 func DeriveMaterializedScheduleNextTime(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
-	startExpr string,
 	nextExpr string,
 	scheduleSQLMode mysql.SQLMode,
 	scheduleTimeZone *time.Location,
@@ -137,41 +178,20 @@ func DeriveMaterializedScheduleNextTime(
 		}
 	}()
 
-	exprNode, err := generatedexpr.ParseExpression(nextExpr)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	builtExpr, err := BuildSimpleExpr(evalSctx.GetExprCtx(), exprNode)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
 	// Execute a separate statement to refresh the statement timestamp cache.
 	// Schedule expressions can contain NOW(), which must use the current
 	// evaluation time instead of a timestamp left in the pooled session.
 	if _, err := sqlexec.ExecSQL(kctx, evalSctx.GetSQLExecutor(), "SELECT NOW(6)"); err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	v, err := builtExpr.Eval(evalSctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	t, err := EvalMaterializedScheduleExpr(evalSctx, nextExpr, scheduleSQLMode)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	if v.IsNull() {
+	if t == nil {
 		return nil, true, nil
 	}
-	if v.Kind() != types.KindMysqlTime {
-		return nil, false, errors.Errorf(
-			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
-			types.KindStr(v.Kind()),
-		)
-	}
-	t := v.GetMysqlTime()
-	if tp := t.Type(); tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
-		return nil, false, errors.Errorf(
-			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
-			types.TypeStr(tp),
-		)
-	}
-	return &t, true, nil
+	return t, true, nil
 }
 
 // IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.

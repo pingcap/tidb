@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -1465,6 +1466,28 @@ func TestPurgeMaterializedViewLogNextUnixSecondsOnlyUpdatesForInternalSQL(t *tes
 	wantNextUnixSeconds := time.Date(2030, 1, 2, 0, 0, 0, 0, tz).Unix()
 	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = null where MLOG_ID = %d", mlogID))
 	mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_internal_next")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows(strconv.FormatInt(wantNextUnixSeconds, 10)))
+
+	// Runtime schedule parsing must use the SQL mode persisted with the MLog.
+	info := mlogTable.Meta().MaterializedViewLog
+	info.PurgeNext = "CAST(DATE_ADD('2030-01-01', INTERVAL (1 || 2) DAY) AS DATETIME)"
+	info.PurgeScheduleSQLMode = mysql.ModePipesAsConcat
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = null where MLOG_ID = %d", mlogID))
+	mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_internal_next")
+	wantNextUnixSeconds = time.Date(2030, 1, 13, 0, 0, 0, 0, tz).Unix()
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows(strconv.FormatInt(wantNextUnixSeconds, 10)))
+
+	info.PurgeNext = "CAST(DATE_ADD('2030-01-01', INTERVAL CAST('1\\2' AS UNSIGNED) DAY) AS DATETIME)"
+	info.PurgeScheduleSQLMode = mysql.ModeNoBackslashEscapes
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = null where MLOG_ID = %d", mlogID))
+	mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_internal_next")
+	wantNextUnixSeconds = time.Date(2030, 1, 2, 0, 0, 0, 0, tz).Unix()
 	tk.MustQuery(fmt.Sprintf(
 		"select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,

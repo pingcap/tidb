@@ -593,7 +593,9 @@ func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 		RefreshMethod:           "FAST",
 		RefreshStartWith:        "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
 		RefreshNext:             "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		RefreshScheduleSQLMode:  mysql.ModePipesAsConcat,
 		RefreshScheduleTimeZone: TimeZoneLocation{Name: "UTC", Offset: 0},
+		UpdateRefreshSchedule:   true,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -653,7 +655,9 @@ func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 		PurgeMethod:           "DEFERRED",
 		PurgeStartWith:        "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
 		PurgeNext:             "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		PurgeScheduleSQLMode:  mysql.ModeNoBackslashEscapes,
 		PurgeScheduleTimeZone: TimeZoneLocation{Name: "UTC", Offset: 0},
+		UpdatePurgeSchedule:   true,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {

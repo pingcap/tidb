@@ -857,6 +857,12 @@ func calcMaterializedViewLogSafePurgeTSO(
 	for id := range publicMVIDs {
 		publicIDs = append(publicIDs, id)
 	}
+	// A public MView must already have a refresh-info row. A building MView may
+	// legitimately not have one visible yet: CREATE MView must commit the
+	// prewrite row before running the initial build, and the build snapshot TSO
+	// recorded afterward is greater than this purge's safe TSO. Include building
+	// MViews in the later MIN query when their rows are visible, but do not
+	// require those rows to be present here.
 	if len(publicIDs) > 0 {
 		rows, err := sqlexec.ExecSQL(kctx, sqlExec, fmt.Sprintf(
 			"SELECT COUNT(1) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%s)", buildINList(publicIDs),
@@ -1372,8 +1378,8 @@ func deriveMLogPurgeNextUnixSeconds(
 		return nil, true, nil
 	}
 	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
-		kctx, evalSctx, mlogInfo.PurgeStartWith, mlogInfo.PurgeNext,
-		mlogInfo.DefinitionSQLMode, scheduleTimeZone,
+		kctx, evalSctx, mlogInfo.PurgeNext,
+		mlogInfo.PurgeScheduleSQLMode, scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err

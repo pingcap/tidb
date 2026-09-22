@@ -315,6 +315,8 @@ func TestAlterMaterializedViewRefreshScheduleTimeZone(t *testing.T) {
 	}
 
 	mvTable, info := getMView()
+	initialSQLMode := info.DefinitionSQLMode
+	initialRefreshScheduleSQLMode := info.RefreshScheduleSQLMode
 	initialTimeZoneName := info.RefreshScheduleTimeZone.Name
 	initialTimeZoneOffset := info.RefreshScheduleTimeZone.Offset
 	require.Equal(t, 0, initialTimeZoneOffset)
@@ -324,11 +326,15 @@ func TestAlterMaterializedViewRefreshScheduleTimeZone(t *testing.T) {
 	_, info = getMView()
 	require.Equal(t, initialTimeZoneName, info.RefreshScheduleTimeZone.Name)
 	require.Equal(t, initialTimeZoneOffset, info.RefreshScheduleTimeZone.Offset)
+	require.Equal(t, initialRefreshScheduleSQLMode, info.RefreshScheduleSQLMode)
 	require.Empty(t, info.RefreshNext)
 
+	tk.MustExec("set sql_mode = 'PIPES_AS_CONCAT'")
 	tk.MustExec("alter materialized view mv refresh next cast('2030-01-02 10:00:00' as datetime)")
 	_, info = getMView()
 	require.Equal(t, 8*60*60, info.RefreshScheduleTimeZone.Offset)
+	require.Equal(t, initialSQLMode, info.DefinitionSQLMode)
+	require.Equal(t, tk.Session().GetSessionVars().SQLMode, info.RefreshScheduleSQLMode)
 	tk.MustQuery("select NEXT_REFRESH_UNIX_SECONDS = 1893549600 from mysql.tidb_mview_refresh_info where MVIEW_ID = " + strconv.FormatInt(mvTable.ID, 10)).Check(testkit.Rows("1"))
 }
 
