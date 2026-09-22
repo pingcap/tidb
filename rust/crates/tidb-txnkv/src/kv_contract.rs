@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
 use tokio::sync::Notify;
@@ -550,9 +550,16 @@ pub fn new_copr_request_limiter(capacity: isize) -> Option<Arc<CoprRequestLimite
 }
 
 /// Owns one coprocessor request limiter per TiKV store for one statement.
+///
+/// The store map lives behind an `RwLock` rather than a `Mutex`: every
+/// coprocessor request resolves its store limiter through
+/// [`Self::get_store_limiter`], so the read path runs on every probe batch
+/// from every worker, while the write path runs once per distinct store. A
+/// mutex turns that read-mostly pattern into the profiler's top contended
+/// futex; an RwLock keeps concurrent readers off the wait queue.
 pub struct QueryCopStoreLimiter {
     limit: usize,
-    stores: Mutex<HashMap<u64, Arc<CoprRequestLimiter>>>,
+    stores: RwLock<HashMap<u64, Arc<CoprRequestLimiter>>>,
 }
 
 impl fmt::Debug for QueryCopStoreLimiter {
@@ -562,7 +569,11 @@ impl fmt::Debug for QueryCopStoreLimiter {
             .field("limit", &self.limit)
             .field(
                 "stores",
-                &self.stores.lock().map(|stores| stores.len()).unwrap_or(0),
+                &self
+                    .stores
+                    .read()
+                    .map(|stores| stores.len())
+                    .unwrap_or(0),
             )
             .finish()
     }
@@ -576,9 +587,18 @@ impl QueryCopStoreLimiter {
         if store_id == 0 {
             return None;
         }
+        {
+            let stores = self
+                .stores
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(limiter) = stores.get(&store_id) {
+                return Some(limiter.clone());
+            }
+        }
         let mut stores = self
             .stores
-            .lock()
+            .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         Some(
             stores
@@ -602,7 +622,7 @@ pub fn new_query_cop_store_limiter(limit: isize) -> Option<Arc<QueryCopStoreLimi
     (limit > 0).then(|| {
         Arc::new(QueryCopStoreLimiter {
             limit: limit as usize,
-            stores: Mutex::new(HashMap::new()),
+            stores: RwLock::new(HashMap::new()),
         })
     })
 }
