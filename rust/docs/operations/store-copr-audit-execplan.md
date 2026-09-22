@@ -17,7 +17,9 @@ of spinning. Clean reads must incur no additional hint allocation or wait.
 The working branch is hparser-integration. On 2026-09-22, fetching with
 `git fetch origin --prune` and running `git pull --ff-only origin hparser-integration`
 confirmed the branch was current at 38dc925c092448e1e618a7bb3d5eab405d90eb71.
-Current master is bb80c86a127b579a93c2070a7f3464ef1b609e38. The complete root and dependency
+Before push, origin advanced to effaa12d84; the lock cleanup change was rebased
+and pushed as 6cc445380d. Current master is
+bb80c86a127b579a93c2070a7f3464ef1b609e38. The complete root and dependency
 artifact inventory is rust/docs/parity/copr-package-inventory.md (20 root
 artifacts plus five artifacts in separate copr_test/metrics packages).
 Master pins client-go/v2 v2.0.8-0.20260921040125-5f38569c8cc0. Its complete
