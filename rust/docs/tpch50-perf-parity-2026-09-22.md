@@ -7,6 +7,25 @@ all eight tables analyzed. Go master binary from origin/master, Rust
 release binary from this branch's hparser-integration head. One client,
 `go-tpc tpch run --use-explain` (EXPLAIN ANALYZE), sequential laps.
 
+## Wall-clock gate -- back-to-back final (2026-09-22, head 9cb4d25ca2)
+
+Both gates ran sequentially on the same machine state (go-tpc, one client,
+EXPLAIN ANALYZE, warm stats). Total 769.70s (Go) vs 1403.72s (Rust) =
+1.82x. Sixteen queries sit at parity (0.82x-1.09x, six faster), and the
+regressions concentrate in five shapes:
+
+| query | go | rust | rust/go | shape |
+| --- | --- | --- | --- | --- |
+| q10 | 17.48 | 139.92 | 8.00x | IndexHashJoin probe + root agg |
+| q17 | 190.52 | 597.81 | 3.14x | pushed cop agg + IndexHashJoin probe |
+| q13 | 30.30 | 72.58 | 2.40x | LEFT JOIN + 7.5M-group HashAgg (spill) |
+| q21 | 41.44 | 72.65 | 1.75x | semi-join probes over lineitem |
+| q2 | 10.17 | 17.62 | 1.73x | partsupp/part/supplier join + group |
+| q18 | 51.44 | 66.20 | 1.29x | LEFT JOIN + group |
+
+The original first table below is the earlier gate (9cb4d25's ancestors)
+kept for history.
+
 ## Wall-clock gate (first lap, seconds)
 
 | query | go | rust | rust/go |
