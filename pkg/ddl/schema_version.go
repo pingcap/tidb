@@ -357,7 +357,7 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 		SetSchemaDiffForDropTablePartition(diff, job, jobCtx)
 	case model.ActionRecoverTable:
 		SetSchemaDiffForRecoverTable(diff, job, jobCtx)
-	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable:
 		SetSchemaDiffForDropTable(diff, job, jobCtx)
 	case model.ActionReorganizePartition:
 		SetSchemaDiffForReorganizePartition(diff, job, jobCtx)

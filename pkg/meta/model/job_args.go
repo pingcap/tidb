@@ -311,10 +311,10 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 	return getOrDecodeArgs[*BatchCreateTableArgs](&BatchCreateTableArgs{}, job)
 }
 
-// DropTableArgs is the arguments for table-like object, view, and sequence drop jobs.
+// DropTableArgs is the arguments for drop table/view/sequence job.
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
-	// The following fields are only for DROP TABLE and materialized view drop jobs.
+	// below fields are only for drop table.
 	// when dropping multiple tables, the Identifiers is the same, but each drop-table
 	// runs in a separate job.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
@@ -327,9 +327,8 @@ type DropTableArgs struct {
 }
 
 func (a *DropTableArgs) getArgsV1(job *Job) []any {
-	// Only table-like drop jobs have submission arguments in V1.
-	switch job.Type {
-	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog:
+	// only drop-table job has in args, drop view/sequence job has no args.
+	if job.Type == ActionDropTable {
 		return []any{a.Identifiers, a.FKCheck}
 	}
 	return nil
@@ -340,8 +339,7 @@ func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
 }
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
-	switch job.Type {
-	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog:
+	if job.Type == ActionDropTable {
 		return job.decodeArgs(&a.Identifiers, &a.FKCheck)
 	}
 	return nil

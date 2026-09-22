@@ -640,8 +640,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackDropColumn(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(jobCtx, job)
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
-		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		err = rollingbackDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(jobCtx, job)

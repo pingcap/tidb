@@ -300,11 +300,6 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.flag |= inCreateOrDropTable
 	case *ast.CreateMaterializedViewLogStmt:
 		p.stmtTp = TypeCreate
-	case *ast.DropMaterializedViewStmt:
-		p.stmtTp = TypeDrop
-		p.flag |= inCreateOrDropTable
-	case *ast.DropMaterializedViewLogStmt:
-		p.stmtTp = TypeDrop
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeDrop
@@ -656,7 +651,7 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 		p.flag &= ^inCreateOrDropTable
 	case *ast.CreateMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.DropMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
+	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {

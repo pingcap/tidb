@@ -96,8 +96,7 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyMaskingPolicyChange(b, m, diff)
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
-	case model.ActionDropTable, model.ActionDropTablePartition,
-		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable, model.ActionDropTablePartition:
 		return applyDropTableOrPartition(b, m, diff)
 	case model.ActionRecoverTable:
 		return applyRecoverTable(b, m, diff)
@@ -291,39 +290,8 @@ func applyDropTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff
 
 	// bundle ops
 	b.markTableBundleShouldUpdate(diff.TableID)
-	if diff.Type == model.ActionDropTable || diff.Type == model.ActionDropTablePartition {
-		for _, opt := range diff.AffectedOpts {
-			b.deleteBundle(b.infoSchema, opt.OldTableID)
-		}
-		return tblIDs, nil
-	}
-
-	// Materialized view drops update related table metadata in the same DDL
-	// transaction. These entries must be reloaded rather than treated as bundle
-	// IDs like the legacy DROP TABLE path does.
 	for _, opt := range diff.AffectedOpts {
-		if opt.SchemaID == 0 && opt.OldSchemaID == 0 {
-			b.deleteBundle(b.infoSchema, opt.OldTableID)
-			continue
-		}
-		// Use a non-drop action type so that applyTableUpdate reloads the related
-		// table metadata from the same transaction instead of removing the table.
-		// ActionModifyTableComment is intentionally used here because this is a
-		// metadata reload.
-		reloadDiff := &model.SchemaDiff{
-			Type:        model.ActionModifyTableComment,
-			Version:     diff.Version,
-			SchemaID:    opt.SchemaID,
-			TableID:     opt.TableID,
-			OldSchemaID: opt.OldSchemaID,
-			OldTableID:  opt.OldTableID,
-		}
-		affectedIDs, err := applyTableUpdate(b, m, reloadDiff)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tblIDs = append(tblIDs, affectedIDs...)
-		b.markTableBundleShouldUpdate(opt.TableID)
+		b.deleteBundle(b.infoSchema, opt.OldTableID)
 	}
 	return tblIDs, nil
 }
@@ -525,8 +493,7 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
-		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
 		// directly return if this action is initiated by refreshMeta DDL (only used by BR). In the BR case, we don't
 		// care about ON DELETE/UPDATE CASCADE so doesn't need to go through the below logic. The most important
@@ -569,7 +536,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 		} else if tableIDIsValid(oldTableID) {
 			b.deleteBundle(b.infoSchema, oldTableID)
 		}
-	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
 	case model.ActionTruncateTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
@@ -667,7 +634,7 @@ func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
 	case model.ActionCreateMaskingPolicy,
 		model.ActionAlterMaskingPolicy,
 		model.ActionDropMaskingPolicy,
-		model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropTable,
 		model.ActionDropColumn,
 		model.ActionModifyColumn,
 		model.ActionRenameTable,

@@ -225,14 +225,12 @@ func TestDropTableArgs(t *testing.T) {
 		},
 		FKCheck: true,
 	}
-	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog} {
-		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-			j2 := &Job{}
-			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
-			args, err := GetDropTableArgs(j2)
-			require.NoError(t, err)
-			require.EqualValues(t, inArgs, args)
-		}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropTable)))
+		args, err := GetDropTableArgs(j2)
+		require.NoError(t, err)
+		require.EqualValues(t, inArgs, args)
 	}
 	for _, tp := range []ActionType{ActionDropView, ActionDropSequence} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -255,14 +253,12 @@ func TestFinishedDropTableArgs(t *testing.T) {
 		OldPartitionIDs: []int64{1, 2},
 		OldRuleIDs:      []string{"schema/test/a/par1", "schema/test/a/par2"},
 	}
-	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog} {
-		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-			j2 := &Job{}
-			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, tp)))
-			args, err := GetFinishedDropTableArgs(j2)
-			require.NoError(t, err)
-			require.EqualValues(t, inArgs, args)
-		}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropTable)))
+		args, err := GetFinishedDropTableArgs(j2)
+		require.NoError(t, err)
+		require.EqualValues(t, inArgs, args)
 	}
 }
 
