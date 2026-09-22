@@ -1269,17 +1269,11 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	u, err2 := objstore.ParseRawURL(e.Path)
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
+	u, _, err := e.parseDataSourcePath()
+	if err != nil {
+		return err
 	}
 
-	if objstore.IsLocal(u) {
-		u.Path = filepath.Dir(e.Path)
-	} else {
-		u.Path = ""
-	}
 	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
 	if err != nil {
 		return err
@@ -1287,22 +1281,27 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	e.dataStore = s
 
 	if e.IsGlobalSort() {
-		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
-		if err3 != nil {
-			return err3
+		store, err := GetSortStore(ctx, e.Plan.CloudStorageURI)
+		if err != nil {
+			return err
 		}
 		e.globalSortStore = store
 	}
 	return nil
 }
 
-// CheckDataSourceAccess checks whether the data source can be accessed without
-// discovering all matching files. It is used before submitting a task whose
-// full file discovery runs asynchronously.
-func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
+// parseDataSourcePath parses e.Path and returns the URL of the storage holding
+// the data source, together with the file name or glob pattern to look for in
+// that storage.
+//
+// For local path, the returned URL points to the parent directory and the file
+// name is the base name, so that importing from server disk is confined to the
+// requested file or pattern. For remote storage, the file name is the object
+// path without the leading slash.
+func (e *LoadDataController) parseDataSourcePath() (*url.URL, string, error) {
 	u, err := objstore.ParseRawURL(e.Path)
 	if err != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			err.Error())
 	}
 
@@ -1314,10 +1313,31 @@ func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
 		fileNameKey = strings.Trim(u.Path, "/")
 		u.Path = ""
 	}
-	// Check malformed glob patterns before probing the store.
-	if _, err = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), ""); err != nil {
+	return u, fileNameKey, nil
+}
+
+// checkDataSourceGlob checks that the file name or glob pattern of the data
+// source is well-formed.
+func checkDataSourceGlob(fileNameKey string) error {
+	// matching an empty name is enough to detect a malformed pattern.
+	if _, err := filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), ""); err != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			"Glob pattern error: "+err.Error())
+	}
+	return nil
+}
+
+// CheckDataSourceAccess checks whether the data source can be accessed without
+// discovering all matching files. It is used before submitting a task whose
+// full file discovery runs asynchronously.
+func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
+	u, fileNameKey, err := e.parseDataSourcePath()
+	if err != nil {
+		return err
+	}
+	// Check malformed glob patterns before probing the store.
+	if err = checkDataSourceGlob(fileNameKey); err != nil {
+		return err
 	}
 
 	sourceStore, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
@@ -1530,13 +1550,11 @@ func (r *compressionEstimator) estimate(
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	u, err2 := objstore.ParseRawURL(e.Path)
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
+	u, fileNameKey, err := e.parseDataSourcePath()
+	if err != nil {
+		return err
 	}
 
-	var fileNameKey string
 	if objstore.IsLocal(u) {
 		// LOAD DATA don't support server file.
 		if !e.InImportInto {
@@ -1553,27 +1571,19 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				"the file suffix is not supported when import from server disk")
 		}
-		dir := filepath.Dir(e.Path)
-		_, err := os.Stat(dir)
-		if err != nil {
+		if _, err := os.Stat(filepath.Dir(e.Path)); err != nil {
 			// permission denied / file not exist error, etc.
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				err.Error())
 		}
-
-		fileNameKey = filepath.Base(e.Path)
-	} else {
-		fileNameKey = strings.Trim(u.Path, "/")
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), "")
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			"Glob pattern error: "+err2.Error())
+	if err = checkDataSourceGlob(fileNameKey); err != nil {
+		return err
 	}
 
-	if err2 = e.InitDataStore(ctx); err2 != nil {
-		return err2
+	if err = e.InitDataStore(ctx); err != nil {
+		return err
 	}
 
 	s := e.dataStore
@@ -1590,16 +1600,16 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
 	if idx == -1 {
-		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
-		if err2 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the file location is correct")
+		fileReader, err := s.Open(ctx, fileNameKey, nil)
+		if err != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "Please check the file location is correct")
 		}
 		defer func() {
 			terror.Log(fileReader.Close())
 		}()
-		size, err3 := fileReader.Seek(0, io.SeekEnd)
-		if err3 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
+		size, err := fileReader.Seek(0, io.SeekEnd)
+		if err != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to read file size by seek")
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
@@ -1690,8 +1700,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
-		if err2 = e.CheckNonCSVFormatOptions(); err2 != nil {
-			return err2
+		if err = e.CheckNonCSVFormatOptions(); err != nil {
+			return err
 		}
 	}
 	var totalSize, totalRealSize int64
