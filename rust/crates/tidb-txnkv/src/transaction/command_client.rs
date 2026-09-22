@@ -339,10 +339,15 @@ pub struct TransactionPessimisticRollbackRequest<'a> {
     pub context: KvrpcContext,
 }
 
+/// One admitted BatchGet whose completion can be driven independently of its
+/// siblings. Dropping a transport future cancels that exact pending response.
+pub type TransactionBatchGetFuture =
+    futures::future::BoxFuture<'static, PublishedCommand<KvrpcBatchGetResponse>>;
+
 /// Typed transaction commands required from the sole shared TiKV client.
 ///
-/// Every method publishes one command on an already-selected route and
-/// completes it at the publication boundary.
+/// Commands use an already-selected route. Synchronous methods return their
+/// publication result; begin methods return independently driven completions.
 pub trait TransactionCommandClient {
     /// Publishes one transactional Get at the caller's snapshot timestamp.
     fn publish_transaction_get(
@@ -381,6 +386,20 @@ pub trait TransactionCommandClient {
                     call,
                 )
             })
+            .collect()
+    }
+
+    /// Admits all requests and exposes their individual completions. The
+    /// snapshot owner drives them in completion order and joins retry workers
+    /// before releasing its result collector, as Go asyncBatchGetByRegions does.
+    fn begin_transaction_batch_gets(
+        &mut self,
+        requests: &[TransactionBatchGetRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<TransactionBatchGetFuture> {
+        self.publish_transaction_batch_gets(requests, call)
+            .into_iter()
+            .map(|response| Box::pin(std::future::ready(response)) as TransactionBatchGetFuture)
             .collect()
     }
 
@@ -606,6 +625,45 @@ impl TransactionCommandClient for TonicCoprocessorClient {
             }),
             call,
         )
+    }
+
+    fn begin_transaction_batch_gets(
+        &mut self,
+        requests: &[TransactionBatchGetRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<TransactionBatchGetFuture> {
+        requests
+            .iter()
+            .map(|request| {
+                let pending = self
+                    .begin_transaction_batch_get(
+                        request.address,
+                        None,
+                        &request.request,
+                        &request.context,
+                        call,
+                    )
+                    .map_err(|error| error.to_string());
+                Box::pin(async move {
+                    let mut pending = match pending {
+                        Ok(pending) => pending,
+                        Err(error) => return PublishedCommand::BeforePublication(error),
+                    };
+                    let completed = std::future::poll_fn(|cx| pending.poll_complete(cx)).await;
+                    let error = match completed {
+                        Ok(Ok(response)) => return PublishedCommand::Response(response),
+                        Ok(Err(error)) => error.to_string(),
+                        Err(error) => error.to_string(),
+                    };
+                    match pending.publication().cloned() {
+                        Some(publication) => {
+                            PublishedCommand::AfterPublication { publication, error }
+                        }
+                        None => PublishedCommand::BeforePublication(error),
+                    }
+                }) as TransactionBatchGetFuture
+            })
+            .collect()
     }
 
     fn publish_transaction_scan(
@@ -873,6 +931,21 @@ mod tests {
             };
         }
         check_batch!(publish_transaction_batch_gets, TransactionBatchGetRequest);
+        let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+        let pending = client.begin_transaction_batch_gets(
+            &[TransactionBatchGetRequest {
+                address,
+                request: Default::default(),
+                context: Default::default(),
+            }],
+            &call,
+        );
+        let results =
+            crate::rpc::wait_with_call(futures::future::join_all(pending), &call).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0], PublishedCommand::BeforePublication(error) if !error.is_empty())
+        );
         check_batch!(publish_prewrites, TransactionPrewriteRequest);
         check_batch!(publish_commits, TransactionCommitRequest);
         check_batch!(publish_pessimistic_locks, TransactionPessimisticLockRequest);

@@ -21,22 +21,20 @@
 
 use std::collections::HashMap;
 use tidb_proto::{
-    KvrpcBatchGetRequest, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcScanRequest,
-    KvrpcScanResponse,
+    KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcScanRequest, KvrpcScanResponse,
 };
 
 use crate::gc_state::GcStateCache;
 use crate::lock::{
-    decode_blocking_lock_observation, resolve_blocking_locks, LockRecoveryClient, TimestampSource,
+    decode_blocking_lock_observation, record_blocking_locks, resolve_blocking_locks_recorded,
+    LockRecoveryClient, TimestampSource,
 };
 use crate::region::{RegionBackoffBudget, RegionRecoveryLoader};
 use crate::rpc::{TransactionBatchPublication, TransactionBatchResponse, UnaryCallContext};
 use crate::SharedReadRuntime;
 
-use super::super::command_client::{
-    PublishedCommand, TransactionBatchGetRequest, TransactionCommandClient,
-};
-use super::super::region_batches::{group_snapshot_keys, point_route, RegionKeyBatch};
+use super::super::command_client::{PublishedCommand, TransactionCommandClient};
+use super::super::region_batches::{point_route, RegionKeyBatch};
 use super::super::state::{CoordinatorState, TransactionCause};
 use super::{
     recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
@@ -45,7 +43,7 @@ use super::{
 
 /// Retains the registered category instead of making exhaustion look retryable
 /// merely because its formatted text contains "lock" or "region".
-fn snapshot_recovery_error(cause: TransactionCause) -> OptimisticCoordinatorError {
+pub(super) fn snapshot_recovery_error(cause: TransactionCause) -> OptimisticCoordinatorError {
     match cause {
         TransactionCause::BackoffExhausted { kind, detail } => {
             OptimisticCoordinatorError::SnapshotBackoff { kind, detail }
@@ -82,7 +80,7 @@ fn backoff_ignored_snapshot_hints(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn resolve_snapshot_locks<C, L, T>(
+pub(super) fn resolve_snapshot_locks<C, L, T>(
     runtime: &SharedReadRuntime<C, L>,
     locks: &[crate::lock::BlockingLock],
     read_ts: u64,
@@ -91,23 +89,26 @@ fn resolve_snapshot_locks<C, L, T>(
     timestamps: &T,
     backoff: &mut RegionBackoffBudget,
     for_read: bool,
+    record: &mut Option<crate::ResolvingLocksGuard>,
 ) -> Result<crate::lock::LockRecoveryResult, OptimisticCoordinatorError>
 where
     C: LockRecoveryClient,
     L: RegionRecoveryLoader,
     T: TimestampSource,
 {
+    record_blocking_locks(runtime, locks, read_ts, record);
     // Only the hints sent by this physical read can have been ignored.
     if for_read {
         backoff_ignored_snapshot_hints(locks, context, backoff, call)?;
     }
-    let recovery =
-        resolve_blocking_locks(runtime, locks, read_ts, context, call, timestamps, for_read)
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+    let recovery = resolve_blocking_locks_recorded(
+        runtime, locks, read_ts, context, call, timestamps, for_read,
+    )
+    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
     Ok(recovery)
 }
 
-fn wait_snapshot_lock_ttl(
+pub(super) fn wait_snapshot_lock_ttl(
     recovery: &crate::lock::LockRecoveryResult,
     backoff: &mut RegionBackoffBudget,
     call: &UnaryCallContext,
@@ -339,6 +340,7 @@ where
     resolved_locks.rescope(start_ts);
     let mut rpc_count = 0_u64;
     let mut first_lock = None;
+    let mut resolving_record = None;
     loop {
         let route = point_route(runtime, key)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -386,6 +388,7 @@ where
                     timestamps,
                     forward_backoff,
                     true,
+                    &mut resolving_record,
                 )?;
                 resolved_locks.absorb(&recovery);
                 wait_snapshot_lock_ttl(&recovery, forward_backoff, call)?;
@@ -605,6 +608,7 @@ where
                 timestamps,
                 forward_backoff,
                 false,
+                &mut None,
             )?;
             wait_snapshot_lock_ttl(&recovery, forward_backoff, &page_call)?;
             continue;
@@ -776,6 +780,7 @@ where
         let mut read_backoff = RegionBackoffBudget::campaign_default();
         let mut rpc_count = 0_u64;
         let mut first_lock = None;
+        let mut resolving_record = None;
         loop {
             let route = point_route(&self.runtime, key)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -826,6 +831,7 @@ where
                         &self.timestamps,
                         &mut read_backoff,
                         true,
+                        &mut resolving_record,
                     )?;
                     self.resolved_locks.absorb(&recovery);
                     wait_snapshot_lock_ttl(&recovery, &mut read_backoff, call)?;
@@ -865,7 +871,12 @@ where
         &mut self,
         keys: &[Vec<u8>],
         call: &UnaryCallContext,
-    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError>
+    where
+        C: Clone + Send,
+        L: Send + Sync,
+        T: Sync,
+    {
         self.snapshot_batch_get_at(keys, self.start_ts, call)
     }
 
@@ -877,7 +888,12 @@ where
         keys: &[Vec<u8>],
         read_ts: u64,
         call: &UnaryCallContext,
-    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError>
+    where
+        C: Clone + Send,
+        L: Send + Sync,
+        T: Sync,
+    {
         self.snapshot_cache.rescope(read_ts);
         if keys.is_empty() {
             return Ok(Vec::new());
@@ -908,149 +924,20 @@ where
         if keys.is_empty() {
             return Ok(cached.into_iter().collect());
         }
-        let mut groups = group_snapshot_keys(&self.runtime, keys)
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        let mut budgets: Vec<_> = (0..groups.len())
-            .map(|_| RegionBackoffBudget::campaign_default())
-            .collect();
-        let mut values = HashMap::new();
-        loop {
-            let mut retries = Vec::new();
-            // Move routed keys into the wire requests; the route/attempt
-            // metadata stays available for each response's own recovery.
-            let request_keys: Vec<_> = groups.iter_mut().map(RegionKeyBatch::take_keys).collect();
-            let mut requests = Vec::with_capacity(groups.len());
-            for (batch, keys) in groups.iter().zip(request_keys) {
-                let mut context = self.write_context(batch.context());
-                self.resolved_locks.stamp(&mut context);
-                let request = KvrpcBatchGetRequest {
-                    keys,
-                    version: read_ts,
-                    need_commit_ts: true,
-                    ..KvrpcBatchGetRequest::default()
-                };
-                requests.push(TransactionBatchGetRequest {
-                    address: batch.address(),
-                    request,
-                    context,
-                });
-            }
-            let published = self
-                .runtime
-                .client()
-                .try_lock()
-                .map_err(|_| {
-                    OptimisticCoordinatorError::SnapshotGet(
-                        "TiKV client is already borrowed".to_owned(),
-                    )
-                })?
-                .publish_transaction_batch_gets(&requests, call);
-            self.snapshot_batch_get_rpc_count = self
-                .snapshot_batch_get_rpc_count
-                .wrapping_add(requests.len() as u64);
-            for (((batch, request), published), mut backoff) in
-                groups.iter().zip(requests).zip(published).zip(budgets)
-            {
-                let mut locked = Vec::new();
-                let mut retry_keys = Vec::new();
-                let response = match published {
-                    PublishedCommand::Response(response) => response,
-                    PublishedCommand::BeforePublication(error)
-                    | PublishedCommand::AfterPublication { error, .. } => {
-                        return Err(OptimisticCoordinatorError::SnapshotGet(error));
-                    }
-                };
-                if let Some(region_error) = response.response.region_error.as_ref() {
-                    recover_region_error_with(
-                        &self.runtime,
-                        &mut backoff,
-                        region_error,
-                        batch.attempt(),
-                        call,
-                    )
-                    .map_err(snapshot_recovery_error)?;
-                    retries.push((request.request.keys, backoff));
-                    continue;
-                }
-                if let Some(key_error) = response.response.error.as_ref() {
-                    if let Some(lock_info) = key_error.locked.as_ref() {
-                        locked.extend(decode_blocking_lock_observation(lock_info).map_err(
-                            |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
-                        )?);
-                        // Go cannot trust any pairs when the response itself
-                        // reports an error: retry this entire physical batch.
-                        retry_keys.extend(request.request.keys);
-                    } else {
-                        return Err(OptimisticCoordinatorError::SnapshotGet(format!(
-                            "TiKV key error: {key_error:?}"
-                        )));
-                    }
-                } else {
-                    for pair in response.response.pairs {
-                        if let Some(key_error) = pair.error.as_ref() {
-                            if let Some(lock_info) = key_error.locked.as_ref() {
-                                let observations = decode_blocking_lock_observation(lock_info)
-                                    .map_err(|error| {
-                                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                                    })?;
-                                // The lock owns the key; a pair's outer key may
-                                // be empty. Keep clean values and absent keys done.
-                                retry_keys
-                                    .extend(observations.iter().map(|lock| lock.key().to_vec()));
-                                locked.extend(observations);
-                                continue;
-                            }
-                            return Err(OptimisticCoordinatorError::SnapshotGet(format!(
-                                "TiKV key error: {key_error:?}"
-                            )));
-                        }
-                        if !pair.value.is_empty() {
-                            values.insert(pair.key, pair.value);
-                        }
-                    }
-                }
-                if !locked.is_empty() {
-                    let recovery = resolve_snapshot_locks(
-                        &self.runtime,
-                        &locked,
-                        read_ts,
-                        &request.context,
-                        call,
-                        &self.timestamps,
-                        &mut backoff,
-                        true,
-                    )?;
-                    self.resolved_locks.absorb(&recovery);
-                    wait_snapshot_lock_ttl(&recovery, &mut backoff, call)?;
-                }
-                if !retry_keys.is_empty() {
-                    retries.push((retry_keys, backoff));
-                }
-            }
-            if !retries.is_empty() {
-                groups = Vec::new();
-                budgets = Vec::new();
-                for (keys, backoff) in retries {
-                    let split = group_snapshot_keys(&self.runtime, &keys).map_err(|error| {
-                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                    })?;
-                    if split.len() == 1 {
-                        groups.extend(split);
-                        budgets.push(backoff);
-                    } else {
-                        for batch in split {
-                            groups.push(batch);
-                            budgets.push(backoff.fork());
-                        }
-                    }
-                }
-                continue;
-            }
-            self.check_visibility_at(read_ts)?;
-            self.snapshot_cache.update_batch(keys, &values);
-            cached.extend(values);
-            return Ok(cached.into_iter().collect());
-        }
+        let values = super::snapshot_batch_get::snapshot_batch_get_with(
+            &self.runtime,
+            &self.timestamps,
+            read_ts,
+            self.resource_group_name.as_deref(),
+            &mut self.resolved_locks,
+            &mut self.snapshot_batch_get_rpc_count,
+            keys,
+            call,
+        )?;
+        self.check_visibility_at(read_ts)?;
+        self.snapshot_cache.update_batch(keys, &values);
+        cached.extend(values);
+        Ok(cached.into_iter().collect())
     }
 
     /// Reads every pair in `[start_key, end_key)` at this transaction's exact

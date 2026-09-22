@@ -149,6 +149,7 @@ struct Recorded {
 /// A store holding one value behind a lock that stays alive for the first
 /// [`LOCKED_RESPONSES`] probes; the mock lives at the trait seam, so no
 /// transport runs at all.
+#[derive(Clone)]
 struct LockingClient {
     remaining_locked: u64,
     request_ids: u64,
@@ -157,6 +158,12 @@ struct LockingClient {
     get_responses: std::collections::VecDeque<KvrpcGetResponse>,
     scan_responses: std::collections::VecDeque<KvrpcScanResponse>,
     status_response: Option<KvrpcCheckTxnStatusResponse>,
+    recovery_barrier: Option<Arc<(Mutex<usize>, std::sync::Condvar)>>,
+    status_hold: Option<Arc<(Mutex<(bool, bool)>, std::sync::Condvar)>>,
+    retry_hold: Option<Arc<(Mutex<(bool, bool)>, std::sync::Condvar)>>,
+    lock_batch_keys_once: Option<Arc<Mutex<std::collections::BTreeSet<Vec<u8>>>>>,
+    first_batch_gate: Option<Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>>,
+    status_ready: Option<Arc<Mutex<Option<futures::channel::oneshot::Sender<()>>>>>,
 }
 
 impl LockingClient {
@@ -169,6 +176,12 @@ impl LockingClient {
             get_responses: Default::default(),
             scan_responses: Default::default(),
             status_response: None,
+            recovery_barrier: None,
+            status_hold: None,
+            retry_hold: None,
+            lock_batch_keys_once: None,
+            first_batch_gate: None,
+            status_ready: None,
         }
     }
 
@@ -258,7 +271,7 @@ impl TransactionCommandClient for LockingClient {
         _address: &str,
         request: &KvrpcBatchGetRequest,
         context: &KvrpcContext,
-        _call: &UnaryCallContext,
+        call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcBatchGetResponse> {
         self.recorded
             .lock()
@@ -272,6 +285,37 @@ impl TransactionCommandClient for LockingClient {
             .push(context.clone());
         if let Some(response) = self.batch_responses.pop_front() {
             return self.respond(BatchCommandTag::BatchGet, response);
+        }
+        if let Some(hold) = &self.retry_hold {
+            if let Err(error) = wait_for_worker_release(hold) {
+                return PublishedCommand::BeforePublication(error.to_string());
+            }
+            if call.cancellation().is_cancelled() || call.timeout().is_zero() {
+                return PublishedCommand::BeforePublication("held retry was cancelled".to_owned());
+            }
+        }
+        if let Some(seen) = &self.lock_batch_keys_once {
+            if seen.lock().unwrap().insert(request.keys[0].clone()) {
+                return self.respond(
+                    BatchCommandTag::BatchGet,
+                    KvrpcBatchGetResponse {
+                        error: Some(KvrpcKeyError {
+                            locked: Some(KvrpcLockInfo {
+                                key: request.keys[0].clone(),
+                                primary_lock: request.keys[0].clone(),
+                                lock_version: if request.keys[0].as_slice() < b"m".as_slice() {
+                                    90
+                                } else {
+                                    91
+                                },
+                                ..Self::live_lock()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                );
+            }
         }
         if request.keys.iter().any(|key| key == b"error") {
             return self.respond(
@@ -305,6 +349,29 @@ impl TransactionCommandClient for LockingClient {
                 ..Default::default()
             },
         )
+    }
+
+    fn begin_transaction_batch_gets(
+        &mut self,
+        requests: &[tidb_txnkv::transaction::TransactionBatchGetRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<tidb_txnkv::transaction::TransactionBatchGetFuture> {
+        let mut gate = self
+            .first_batch_gate
+            .as_ref()
+            .and_then(|gate| gate.lock().unwrap().take());
+        self.publish_transaction_batch_gets(requests, call)
+            .into_iter()
+            .map(|response| {
+                let gate = gate.take();
+                Box::pin(async move {
+                    if let Some(gate) = gate {
+                        let _ = gate.await;
+                    }
+                    response
+                }) as tidb_txnkv::transaction::TransactionBatchGetFuture
+            })
+            .collect()
     }
 
     fn publish_transaction_scan(
@@ -401,6 +468,28 @@ impl LockRecoveryClient for LockingClient {
                 .status_get_attempts
                 .push((request.lock_ts, attempts));
             recorded.status_checks.push(request.clone());
+        }
+        if let Some(barrier) = &self.recovery_barrier {
+            let mut entered = barrier.0.lock().unwrap();
+            *entered += 1;
+            barrier.1.notify_all();
+            let (entered, _) = barrier
+                .1
+                .wait_timeout_while(entered, Duration::from_secs(2), |entered| *entered < 2)
+                .unwrap();
+            if *entered < 2 {
+                return Err(DirectUnaryClientError::InvalidRequest(
+                    "BatchGet retry workers did not overlap".to_owned(),
+                ));
+            }
+        }
+        if let Some(ready) = &self.status_ready {
+            if let Some(ready) = ready.lock().unwrap().take() {
+                let _ = ready.send(());
+            }
+        }
+        if let Some(hold) = &self.status_hold {
+            wait_for_worker_release(hold)?;
         }
         if let Some(response) = &self.status_response {
             return Ok(response.clone());
@@ -1212,4 +1301,317 @@ fn max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock() {
                 .contains(&(93, 7)));
         }
     }
+}
+
+#[test]
+fn batch_get_lock_recovery_workers_make_independent_progress() {
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let mut client = LockingClient::new(Arc::clone(&recorded));
+    client.remaining_locked = 0;
+    client.status_response = Some(KvrpcCheckTxnStatusResponse {
+        commit_version: START_TS,
+        ..Default::default()
+    });
+    client.recovery_barrier = Some(Arc::new((Mutex::new(0), std::sync::Condvar::new())));
+    let keys: Vec<_> = (0..5121).map(|i| format!("{i:05}").into_bytes()).collect();
+    for (key, lock_version) in [(&keys[0], 90), (&keys[5120], 91)] {
+        client.batch_responses.push_back(KvrpcBatchGetResponse {
+            error: Some(KvrpcKeyError {
+                locked: Some(KvrpcLockInfo {
+                    key: key.clone(),
+                    primary_lock: key.clone(),
+                    lock_version,
+                    ..LockingClient::live_lock()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+    }
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+    let values = transaction
+        .snapshot_batch_get(&keys, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+        .unwrap();
+    assert_eq!(values.len(), keys.len());
+    assert_eq!(transaction.snapshot_point_rpc_counts(), (0, 4));
+    let mut requests = recorded
+        .lock()
+        .unwrap()
+        .batch_requests
+        .iter()
+        .map(|request| request.keys.len())
+        .collect::<Vec<_>>();
+    requests.sort_unstable();
+    assert_eq!(requests, vec![1, 1, 5120, 5120]);
+}
+
+fn wait_for_worker_release(
+    hold: &Arc<(Mutex<(bool, bool)>, std::sync::Condvar)>,
+) -> Result<(), DirectUnaryClientError> {
+    let mut state = hold.0.lock().unwrap();
+    state.0 = true;
+    hold.1.notify_all();
+    // Retain the RPC even after cancellation, as Go's original paused worker
+    // does, to distinguish joining from merely sending a cancel signal.
+    let (state, _) = hold
+        .1
+        .wait_timeout_while(state, Duration::from_secs(2), |state| !state.1)
+        .unwrap();
+    if !state.1 {
+        return Err(DirectUnaryClientError::InvalidRequest(
+            "worker release timed out".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn two_batch_worker_fixture() -> (LockingClient, Vec<Vec<u8>>) {
+    let mut client = LockingClient::new(Arc::new(Mutex::new(Recorded::default())));
+    client.remaining_locked = 0;
+    client.status_response = Some(KvrpcCheckTxnStatusResponse {
+        commit_version: START_TS,
+        ..Default::default()
+    });
+    let keys: Vec<_> = (0..5121).map(|i| format!("{i:05}").into_bytes()).collect();
+    client.batch_responses = [
+        KvrpcBatchGetResponse::default(),
+        KvrpcBatchGetResponse {
+            error: Some(KvrpcKeyError {
+                locked: Some(KvrpcLockInfo {
+                    key: keys[5120].clone(),
+                    primary_lock: keys[5120].clone(),
+                    ..LockingClient::live_lock()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    ]
+    .into();
+    (client, keys)
+}
+
+#[test]
+fn batch_get_recovery_starts_before_an_earlier_rpc_completes() {
+    let (mut client, keys) = two_batch_worker_fixture();
+    let (ready, gate) = futures::channel::oneshot::channel();
+    client.first_batch_gate = Some(Arc::new(Mutex::new(Some(gate))));
+    client.status_ready = Some(Arc::new(Mutex::new(Some(ready))));
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+    // Batch 1 completes only after batch 2's retry enters CheckTxnStatus.
+    // Waiting in request order consumes the deadline without making progress.
+    let values = transaction
+        .snapshot_batch_get(
+            &keys,
+            &UnaryCallContext::with_timeout(Duration::from_secs(2)),
+        )
+        .unwrap();
+    assert_eq!(values, vec![(keys[5120].clone(), b"batch-value".to_vec())]);
+    assert_eq!(transaction.snapshot_point_rpc_counts(), (0, 3));
+}
+
+#[test]
+fn batch_get_joins_retry_workers_before_returning_cancellation_or_sibling_error() {
+    for hold_retry in [false, true] {
+        for mode in ["cancel", "deadline", "sibling-error"] {
+            let (mut client, keys) = two_batch_worker_fixture();
+            let hold = Arc::new((Mutex::new((false, false)), std::sync::Condvar::new()));
+            if hold_retry {
+                client.retry_hold = Some(Arc::clone(&hold));
+            } else {
+                client.status_hold = Some(Arc::clone(&hold));
+            }
+            if mode == "sibling-error" {
+                client.batch_responses[0].error = Some(KvrpcKeyError {
+                    abort: "fatal sibling response".to_owned(),
+                    ..Default::default()
+                });
+            }
+            let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+            let mut transaction = RealOptimisticTransaction::new_injected(
+                runtime.clone(),
+                TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+                CALL_TIMEOUT,
+                START_TS,
+                Instant::now(),
+                4,
+                4096,
+            )
+            .unwrap();
+            let call = UnaryCallContext::with_timeout(if mode == "deadline" {
+                Duration::from_millis(100)
+            } else {
+                CALL_TIMEOUT
+            });
+            let cancel = call.cancellation().clone();
+            let (done, completed) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let result = transaction.snapshot_batch_get(&keys, &call);
+                done.send(()).unwrap();
+                (transaction, result)
+            });
+            let state = hold.0.lock().unwrap();
+            let (state, _) = hold
+                .1
+                .wait_timeout_while(state, Duration::from_secs(2), |state| !state.0)
+                .unwrap();
+            assert!(
+                state.0,
+                "retry worker must enter the held status RPC: {mode}"
+            );
+            drop(state);
+            let active_locks = runtime.resolving_locks();
+            if mode == "cancel" {
+                cancel.cancel();
+            }
+            let wait = if mode == "deadline" {
+                Duration::from_millis(150)
+            } else {
+                Duration::from_millis(30)
+            };
+            let early = completed.recv_timeout(wait);
+            hold.0.lock().unwrap().1 = true;
+            hold.1.notify_all();
+            let (mut transaction, result) = worker.join().unwrap();
+            assert_eq!(active_locks.len(), 1,
+                "the worker retains one resolving record through status, backoff and retry RPC: retry={hold_retry}, mode={mode}");
+            assert!(
+                early.is_err(),
+                "BatchGet returned while its retry worker still owned request state: {mode}"
+            );
+            assert!(result.is_err(), "{mode}");
+            if mode == "sibling-error" {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("fatal sibling response"));
+                assert_eq!(
+                    transaction.snapshot_point_rpc_counts(),
+                    (0, 3),
+                    "sibling recovery was allowed to finish"
+                );
+            }
+            assert!(
+                runtime.resolving_locks().is_empty(),
+                "worker guard released before return"
+            );
+            let before = transaction.snapshot_point_rpc_counts();
+            assert_eq!(
+                transaction
+                    .snapshot_get(b"05120", &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+                    .unwrap()
+                    .rpc_count,
+                1,
+                "an unsuccessful BatchGet cannot populate the snapshot cache"
+            );
+            assert_eq!(transaction.snapshot_point_rpc_counts().0, before.0 + 1);
+        }
+    }
+}
+
+#[test]
+fn batch_get_split_retries_run_children_independently() {
+    struct SplitRegion;
+    impl RegionLoader for SplitRegion {
+        fn cluster_id(&self) -> u64 {
+            11
+        }
+        fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+            OneRegion.load_region(key)
+        }
+    }
+    impl RegionRecoveryLoader for SplitRegion {
+        fn hydrate_region(
+            &mut self,
+            metadata: &RegionMetadata,
+            _: u64,
+            _: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        ) -> Result<RegionLocation, RegionLoadError> {
+            let mut region = OneRegion.load_region(b"")?;
+            region.region = metadata.region;
+            let decode = |key: &[u8]| {
+                if key.is_empty() {
+                    Vec::new()
+                } else {
+                    tidb_codec::decode_bytes(key).unwrap().1
+                }
+            };
+            region.start_key = decode(&metadata.encoded_start_key);
+            region.end_key = decode(&metadata.encoded_end_key);
+            Ok(region)
+        }
+    }
+    let (mut client, _) = two_batch_worker_fixture();
+    client.lock_batch_keys_once = Some(Arc::new(Mutex::new(Default::default())));
+    client.recovery_barrier = Some(Arc::new((Mutex::new(0), std::sync::Condvar::new())));
+    let mut middle = Vec::new();
+    tidb_codec::encode_bytes(&mut middle, b"m");
+    let region = |id, start_key, end_key| tidb_proto::metapb::Region {
+        id,
+        start_key,
+        end_key,
+        region_epoch: Some(tidb_proto::metapb::RegionEpoch {
+            conf_ver: 1,
+            version: 2,
+        }),
+        peers: vec![tidb_proto::metapb::Peer {
+            id: 620,
+            store_id: 6200,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    client.batch_responses = [KvrpcBatchGetResponse {
+        region_error: Some(tidb_proto::errorpb::Error {
+            epoch_not_match: Some(tidb_proto::errorpb::EpochNotMatch {
+                current_regions: vec![
+                    region(63, Vec::new(), middle.clone()),
+                    region(64, middle, Vec::new()),
+                ],
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }]
+    .into();
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        SharedReadRuntime::new_injected(client, RegionCache::new(SplitRegion)),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+    let values = transaction
+        .snapshot_batch_get(
+            &[b"a".to_vec(), b"z".to_vec()],
+            &UnaryCallContext::with_timeout(CALL_TIMEOUT),
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values.len(), 2);
+    assert_eq!(values[b"a".as_slice()], b"batch-value");
+    assert_eq!(values[b"z".as_slice()], b"batch-value");
+    assert_eq!(transaction.snapshot_point_rpc_counts(), (0, 5));
 }

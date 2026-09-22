@@ -36,6 +36,7 @@ directory; inventory every artifact and module build input before editing.
 - [x] Inventory the complete pinned txnsnapshot and config/retry dependency packages.
 - [x] Reconcile the live snapshot lock-hint, scan lock, per-batch retry and registered exhaustion boundaries; preserve the whole-package claim as open.
 - [x] Reconcile MaxTS first-lock behavior in both point-read entry paths; verify red/green Rust regressions and the original Go autocommit/hint tests.
+- [x] Integrate completion-order BatchGet recovery, independently progressing split workers, cancellation/join and resolving-record ownership; verify scoped regressions and the original Go cancellation test.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
 - [ ] Satisfy the remaining whole-package build/platform/generated/live-store and workload gates.
@@ -528,3 +529,129 @@ remote equality. The overall goal remains active.
 
 Revision note: refreshed the master boundary, added MaxTS red/green and original
 Go validation, and recorded the distinct unresolved BatchGet worker lifecycle.
+
+## BatchGet worker implementation milestone
+
+
+MaxTS was published as 8acd92ec20 with remote equality verified. The next refresh
+left branch and master unchanged. Complete the previously identified worker
+lifecycle using SharedReadRuntime::fork_client, which already retains the same
+transport, region cache and resolving-lock registry with independent client
+borrows. Keep successful multi-batch reads on the caller's completion loop;
+start a scoped worker only for a region/lock recovery response. Process initial
+responses as they complete, retain one backoffer per physical batch, and join
+all recovery workers before returning on cancellation or error. A split retry
+must fork its existing budget to independently progressing children.
+
+Decision: add Send/Clone bounds only to concurrent BatchGet entrypoints, leaving
+single Get and Scan fixture capabilities unchanged. Production StoreWriteClient,
+StoreWriteLoader and StorePdCapability already satisfy the needed bounds. Use
+native completion futures and the existing cancellation/deadline-aware
+rpc::wait_with_call bridge; do not poll or create a transport/timer service.
+Share only result collection and resolved/committed hint publication under short
+locks. Do not hold client or collector locks during another worker's RPC/wait.
+
+First prove two physical locked batches can enter their status RPCs together;
+the original round-based loop must fail the bounded synchronization regression.
+Then verify completion order, cancellation while a worker owns the collector,
+join-before-return, independent failure/success, split budgets and clean-batch
+preservation. Full snapshot options/metrics/original-test and store gates remain
+part of the open package acceptance boundary.
+
+### Worker outcome, discoveries and validation
+
+
+The old round-based implementation is replaced by the integrated
+transaction/coordinator/snapshot_batch_get.rs owner. Tonic's
+begin_transaction_batch_gets publishes every initial request before the caller
+waits on the existing cancellation-aware completion bridge. FuturesUnordered
+lets a later physical response start recovery while an earlier RPC remains
+pending. Ordinary successful responses stay on the caller; only region/lock
+recovery starts scoped native workers. One-batch reads use the synchronous
+entrypoint without a future, client clone or worker. Each worker has its own
+client borrow over the existing process transport/cache; short shared locks
+protect result collection and hint sets. No client/collector lock spans another
+worker's wait. A split retry forks its charged backoff into concurrent children.
+RPC counts and cache publication are collected only after workers have joined.
+
+Decision: retain resolving-lock records at the read/worker owner rather than
+inside one resolver invocation. The cancellation test exposed a zero-record
+interval during the retry RPC. Go retains its token until the Get/BatchGet
+worker returns, so ResolvingLocksGuard now supports UpdateResolvingLocks and
+the shared snapshot resolver updates a caller-owned guard before hinted-lock
+backoff. Both point-read paths also retain that guard through their complete
+Get. Non-snapshot lock callers preserve their existing one-attempt guard.
+The source-importing standalone resolver test reexports the guard type so the
+same production source remains exercised there.
+
+Red proofs were behavioral, not compilation failures. The first concurrency
+test failed when two physical lock responses could not enter status recovery
+together. Temporarily replacing completion order with request order stalled
+the later batch's retry until the call deadline. The record-lifetime assertion
+then observed zero resolving records while a retry RPC was paused, where Go
+requires one. These probes are recorded in /private/tmp/tidb-batch-workers-
+red.log, order-red.log and registry-red.log. The temporary order probe restored
+production source in a finally block before final validation.
+
+The final snapshot suite covers independently progressing initial retries,
+recovery before an earlier RPC completes, split-child concurrency, successful
+sibling retention, cache exclusion after errors, and worker join/record release.
+Cancellation, deadline and sibling-error cases each pause both a status RPC
+and the retry BatchGet RPC. They assert that the call cannot return early,
+that one resolving record remains visible during the pause, and that the record
+has disappeared when the caller receives the result. The standalone admission
+test also exercises the production Tonic future entrypoint's error identity.
+
+From rust/, these exact commands passed:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all snapshot_ --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all region_error_recovery_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test lock_resolver_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib transaction::coordinator --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib transaction_admission_errors --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib rpc::batch::completion --message-format=short
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+
+The test commands passed 22, 26, 30, 24, one and two tests respectively; existing
+compiler warnings remain. Logs use /private/tmp/tidb-batch-workers- with suffixes
+snapshot-final.log, region.log, lock.log, coordinator.log, admission.log,
+completion.log and check.log. The focused initial green proof is green.log.
+
+From /private/tmp/tidb-master-cc83514 at master
+0b505ecc58b659655345b7bb85a619db02f94300:
+
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/txnkv/txnsnapshot -run '^TestAsyncBatchGetCancellationWaitsForRetryWorker$' -count=1 -v
+
+The original cancellation/join regression passed in 0.122s package runtime;
+go.log records it. That package has no failpoint injection, so no transformation
+was required. The reference worktree is unchanged.
+
+From the repository root:
+
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    rustfmt --edition 2021 --check rust/crates/tidb-txnkv/src/transaction/coordinator/snapshot_batch_get.rs
+    git diff --check
+
+Lint passed with network permission after the sandboxed invocation could not
+resolve the pinned revive tool's module source. Scoped formatting preserves
+unrelated existing Rust formatting; the new module is checked in full. No Go,
+module, generated or Bazel files changed, so change-based bazel_prepare is not
+triggered. The fresh-worktree Bazel gate remains unsatisfied because bazel is
+unavailable.
+
+Whole-package acceptance remains open. In particular, the live coordinator's
+EnableAsyncBatchGet configuration path, original async statistics/options,
+replica/tier behavior, reverse scanning and full test reconciliation remain
+required. The new worker execution matches the async path selected by TiDB's
+default; it is not acceptance of every configurable snapshot path. Scoped
+native workers preserve Rust borrowing and join guarantees, but their resource
+cost under widespread simultaneous lock/region failures needs live workload
+measurement. No real TiKV or matched sysbench/TPC-C/TPC-H/YCSB workload was run,
+so no throughput/latency gain is claimed. The new master adaptive LIMIT package
+boundary is still outstanding. Preserve the user-owned vs_helper.rs and
+fragment.rs, refresh before publishing, and keep the goal active.
+
+Revision note: replaced the serial BatchGet recovery loop, reconciled the
+resolving-record lifetime exposed by the new lifecycle tests, and retained
+explicit remaining complete-package validation boundaries.

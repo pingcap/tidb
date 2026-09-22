@@ -66,23 +66,63 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
-    let _resolving = runtime.record_resolving_locks(
+    let mut record = None;
+    record_blocking_locks(runtime, locks, caller_start_ts, &mut record);
+    resolve_blocking_locks_recorded(
+        runtime,
+        locks,
         caller_start_ts,
-        locks.iter().map(|lock| match lock {
-            BlockingLock::Optimistic(lock) => ResolvingLock {
-                txn_id: caller_start_ts,
-                lock_txn_id: lock.txn_id,
-                key: lock.key.clone(),
-                primary: lock.primary.clone(),
-            },
-            BlockingLock::Pessimistic(lock) => ResolvingLock {
-                txn_id: caller_start_ts,
-                lock_txn_id: lock.txn_id,
-                key: lock.key.clone(),
-                primary: lock.primary.clone(),
-            },
-        }),
-    );
+        base_context,
+        call,
+        timestamp_source,
+        for_read,
+    )
+}
+
+pub(crate) fn record_blocking_locks<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: &[BlockingLock],
+    caller_start_ts: u64,
+    record: &mut Option<crate::ResolvingLocksGuard>,
+) where
+    L: RegionRecoveryLoader,
+{
+    let locks = locks.iter().map(|lock| match lock {
+        BlockingLock::Optimistic(lock) => ResolvingLock {
+            txn_id: caller_start_ts,
+            lock_txn_id: lock.txn_id,
+            key: lock.key.clone(),
+            primary: lock.primary.clone(),
+        },
+        BlockingLock::Pessimistic(lock) => ResolvingLock {
+            txn_id: caller_start_ts,
+            lock_txn_id: lock.txn_id,
+            key: lock.key.clone(),
+            primary: lock.primary.clone(),
+        },
+    });
+    if let Some(record) = record {
+        record.update(locks);
+    } else {
+        *record = Some(runtime.record_resolving_locks(caller_start_ts, locks));
+    }
+}
+
+/// The caller owns the resolving record for the full read or worker lifetime.
+pub(crate) fn resolve_blocking_locks_recorded<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: &[BlockingLock],
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    for_read: bool,
+) -> Result<LockRecoveryResult, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource + ?Sized,
+{
     let mut result = LockRecoveryResult {
         statuses: Vec::with_capacity(locks.len()),
         ..LockRecoveryResult::default()

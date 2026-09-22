@@ -58,6 +58,18 @@ pub struct ResolvingLocksGuard {
     token: u64,
 }
 
+impl ResolvingLocksGuard {
+    /// Go UpdateResolvingLocks replaces this worker's current observation while
+    /// preserving the same RecordResolvingLocks / ResolveLocksDone token.
+    pub fn update(&mut self, locks: impl Iterator<Item = ResolvingLock>) {
+        self.registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entries
+            .insert(self.token, locks.collect());
+    }
+}
+
 impl Drop for ResolvingLocksGuard {
     fn drop(&mut self) {
         self.registry

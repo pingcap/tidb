@@ -34,6 +34,7 @@ mod cleanup;
 mod commit;
 mod opener;
 mod prewrite;
+mod snapshot_batch_get;
 mod snapshot_read;
 
 use std::fmt;

@@ -25,7 +25,7 @@ pub use tidb_txnkv::region;
 pub use tidb_txnkv::rpc;
 pub use tidb_txnkv::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode, ResolvingLock,
-    SharedReadRuntime, UnaryCallContext, UnaryCancellation,
+    ResolvingLocksGuard, SharedReadRuntime, UnaryCallContext, UnaryCancellation,
 };
 
 #[allow(unused_imports)]
