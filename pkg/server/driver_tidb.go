@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -309,6 +310,9 @@ func (tc *TiDBContext) Close() error {
 	}
 
 	tc.Session.Close()
+	failpoint.Inject("mockContextCloseError", func() {
+		failpoint.Return(errors.New("mock context close error"))
+	})
 	return nil
 }
 

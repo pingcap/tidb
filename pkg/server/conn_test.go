@@ -1514,6 +1514,94 @@ func TestChangeUserAuth(t *testing.T) {
 	err = cc.handleChangeUser(ctx, data)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/ChangeUserAuthSwitch"))
 	require.EqualError(t, err, t.Name())
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+}
+
+func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		peerHost:     "localhost",
+		collation:    mysql.DefaultCollationID,
+		capability:   mysql.ClientProtocol41,
+		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		server:       srv,
+		user:         "root",
+		dbname:       "old_db",
+	}
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.SetCtx(tc)
+	defer func() { require.NoError(t, cc.getCtx().Close()) }()
+
+	data := []byte{}
+	data = append(data, "missing_user"...)
+	data = append(data, 0)
+	data = append(data, 0)
+	data = append(data, "new_db"...)
+	data = append(data, 0)
+	data = append(data, 0, 0)
+	closeFP := "github.com/pingcap/tidb/pkg/server/mockContextCloseError"
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(closeFP)) })
+	// Cleanup failure must not prevent restoring the authenticated old session.
+	require.NoError(t, failpoint.Enable(closeFP, "1*return"))
+	err = cc.handleChangeUser(context.Background(), data)
+	require.NoError(t, failpoint.Disable(closeFP))
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+	require.Equal(t, "root", cc.ctx.GetSessionVars().User.Username)
+
+	// A failure while resolving the new user's plugin must preserve the old session too.
+	cc.capability |= mysql.ClientPluginAuth
+	pluginData := append(append([]byte(nil), data...), []byte(mysql.AuthNativePassword+"\x00")...)
+	err = cc.handleChangeUser(context.Background(), pluginData)
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+
+	// Rejecting a newly opened context at the connection limit must roll it back.
+	srv.cfg.Instance.MaxConnections = 1
+	srv.clients[cc.connectionID] = cc
+	err = cc.handleChangeUser(context.Background(), data)
+	delete(srv.clients, cc.connectionID)
+	srv.cfg.Instance.MaxConnections = 0
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+
+	// A valid change on the same connection must remain possible after those failures.
+	cc.capability &^= mysql.ClientPluginAuth
+	successData := []byte("root\x00\x00test\x00\x00\x00")
+	// Closing the old session can report an error after cleanup; the authenticated new session stays usable.
+	require.NoError(t, failpoint.Enable(closeFP, "1*return"))
+	require.NoError(t, cc.handleChangeUser(context.Background(), successData))
+	require.NoError(t, failpoint.Disable(closeFP))
+	require.NotSame(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "test", cc.dbname)
+	require.Equal(t, "root", cc.ctx.GetSessionVars().User.Username)
 }
 
 func TestAuthPlugin2(t *testing.T) {
