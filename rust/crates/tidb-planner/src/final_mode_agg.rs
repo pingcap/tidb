@@ -29,18 +29,21 @@
 //! the two halves and consumed by [`remove_unnecessary_first_row`] exactly
 //! where Go consumes the pointer map.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::aggregation::{
     names, need_count, need_value, AggFuncDesc, AggFunctionMode, ByItems,
 };
 use tidb_expr::column::Column;
+use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 
 use crate::expression_rewriter::ColumnIdAllocator;
+use crate::cardinality::ndv::GroupNdv;
+use crate::stats_info::StatsInfo;
 
 /// Go `AggInfo` (`base_physical_agg.go:592`): the descriptor triple either
 /// half of a split carries.
@@ -72,6 +75,25 @@ pub struct FinalModeSplit {
 /// merge, and the final stage gathers the middle results into one worker.
 #[derive(Debug)]
 pub struct ThreeStageAggSplit {
+    /// The source-side partial aggregate.
+    pub partial: crate::physical::PhysicalPlan,
+    /// The hash-partitioned middle aggregate.
+    pub middle: crate::physical::PhysicalPlan,
+    /// The single-partition final aggregate.
+    pub final_agg: crate::physical::PhysicalPlan,
+    /// The columns used by the partial-to-middle hash exchange.
+    pub partition_cols: Vec<crate::physical_property::MppPartitionColumn>,
+}
+
+/// The physical pieces Go's multi-distinct scalar MPP rewrite inserts around
+/// the ordinary partial/final split: Expand plus the conditional projection
+/// below the partial aggregate, followed by middle and final aggregates.
+#[derive(Debug)]
+pub struct MultiDistinctThreeStageAggSplit {
+    /// Replicates each input row once per distinct argument set.
+    pub expand: crate::physical::PhysicalPlan,
+    /// Selects each ordinary aggregate's target grouping set.
+    pub partial_projection: crate::physical::PhysicalPlan,
     /// The source-side partial aggregate.
     pub partial: crate::physical::PhysicalPlan,
     /// The hash-partitioned middle aggregate.
@@ -133,6 +155,154 @@ pub fn can_use_three_stage_single_distinct(
         }
     }
     distinct_count == 1
+}
+
+/// The grouping sets used by Go's multi-distinct three-stage rewrite. Each
+/// set is the ordered list of column arguments of one `COUNT(DISTINCT ...)`.
+pub type DistinctGroupingSets = Vec<Vec<Column>>;
+
+/// Go `BasePhysicalAgg.canUse3Stage4MultiDistinctAgg`'s admission checks.
+///
+/// The multi-distinct feature is session-gated and intentionally narrow: no
+/// GROUP BY, at least two distinct COUNT descriptors, simple column arguments
+/// for the distinct descriptors, complete input modes, and no aggregate-local
+/// ordering. Duplicate or overlapping grouping sets remain refused exactly as
+/// Go's current implementation does.
+#[must_use]
+pub fn can_use_three_stage_multi_distinct(
+    agg_funcs: &[AggFuncDesc],
+    group_by_items: &[Expression],
+    enable_3_stage_distinct_agg: bool,
+    enable_3_stage_multi_distinct_agg: bool,
+) -> Option<DistinctGroupingSets> {
+    if !enable_3_stage_distinct_agg
+        || !enable_3_stage_multi_distinct_agg
+        || !group_by_items.is_empty()
+    {
+        return None;
+    }
+    let mut grouping_sets: DistinctGroupingSets = Vec::new();
+    for function in agg_funcs {
+        if function.has_distinct {
+            if function.name() != names::COUNT
+                || function
+                    .base
+                    .args
+                    .iter()
+                    .any(|argument| !matches!(argument, Expression::Column(_)))
+            {
+                return None;
+            }
+            grouping_sets.push(
+                function
+                    .base
+                    .args
+                    .iter()
+                    .filter_map(|argument| match argument {
+                        Expression::Column(column) => Some(column.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            );
+        } else if function.base.args.len() > 1 {
+            return None;
+        }
+        if !function.order_by_items.is_empty()
+            || function.mode != AggFunctionMode::Complete
+        {
+            return None;
+        }
+    }
+    if grouping_sets.len() <= 1 {
+        return None;
+    }
+    let mut seen = HashSet::new();
+    if grouping_sets.iter().any(|set| {
+        let mut ids: Vec<_> = set.iter().map(|column| column.unique_id).collect();
+        ids.sort_unstable();
+        !seen.insert(ids)
+    }) {
+        return None;
+    }
+    // Go's GroupingSets.Merge rejects layouts that share a column: the
+    // subsequent NeedCloneColumn check would require duplicating that column
+    // in Expand, which the three-stage path deliberately does not implement.
+    if grouping_sets.iter().enumerate().any(|(index, left)| {
+        grouping_sets[index + 1..].iter().any(|right| {
+            left.iter().any(|column| {
+                right
+                    .iter()
+                    .any(|other| other.unique_id == column.unique_id)
+            })
+        })
+    }) {
+        return None;
+    }
+    let mut marked = agg_funcs.to_vec();
+    if !mark_three_stage_grouping_ids(&mut marked, &grouping_sets) {
+        return None;
+    }
+    Some(grouping_sets)
+}
+
+/// Assigns Go's one-based `GroupingID` to every distinct and ordinary
+/// aggregate descriptor. The caller uses the returned descriptors as a
+/// validation-only copy before applying the same IDs to the physical plan.
+#[must_use]
+pub fn mark_three_stage_grouping_ids(
+    agg_funcs: &mut [AggFuncDesc],
+    grouping_sets: &[Vec<Column>],
+) -> bool {
+    let all_grouping_ids: HashSet<_> = grouping_sets
+        .iter()
+        .flat_map(|set| set.iter().map(|column| column.unique_id))
+        .collect();
+    for function in agg_funcs {
+        if function.has_distinct {
+            // Distinct descriptors were admitted only when every argument is
+            // a simple column, so preserve their grouping-set position.
+            let argument_ids: HashSet<_> = function
+                .base
+                .args
+                .iter()
+                .filter_map(|argument| match argument {
+                    Expression::Column(column) => Some(column.unique_id),
+                    _ => None,
+                })
+                .collect();
+            let Some(index) = grouping_sets.iter().position(|set| {
+                set.iter()
+                    .map(|column| column.unique_id)
+                    .collect::<HashSet<_>>()
+                    == argument_ids
+            }) else {
+                return false;
+            };
+            function.grouping_id = (index + 1) as i32;
+            continue;
+        }
+        // GroupingSets.TargetOne chooses the first layout whose null-filled
+        // columns do not intersect the ordinary aggregate's dependencies.
+        // A constant aggregate therefore targets the first layout, as does a
+        // column absent from every distinct grouping set.
+        let argument_ids: HashSet<_> = function
+            .base
+            .args
+            .iter()
+            .flat_map(tidb_expr::expr_util::extract_columns)
+            .map(|column| column.unique_id)
+            .collect();
+        let Some(index) = grouping_sets.iter().position(|set| {
+            let set_ids: HashSet<_> = set.iter().map(|column| column.unique_id).collect();
+            argument_ids
+                .iter()
+                .all(|column_id| set_ids.contains(column_id) || !all_grouping_ids.contains(column_id))
+        }) else {
+            return false;
+        };
+        function.grouping_id = (index + 1) as i32;
+    }
+    true
 }
 
 /// Go `adjust3StagePhaseAgg`'s single-distinct branch (`task.go:1840`).
@@ -200,6 +370,9 @@ pub fn adjust_three_stage_single_distinct(
         group_by_items: final_hash.group_by_items.clone(),
         mpp_run_mode: final_hash.mpp_run_mode,
         mpp_partition_cols: final_hash.mpp_partition_cols.clone(),
+        enable_3_stage_distinct_agg: final_hash.enable_3_stage_distinct_agg,
+        enable_3_stage_multi_distinct_agg: final_hash.enable_3_stage_multi_distinct_agg,
+        tiflash_pre_agg_mode: final_hash.tiflash_pre_agg_mode.clone(),
     };
     middle_hash.base.base.set_id(plan_ids.alloc());
     middle_hash
@@ -255,6 +428,338 @@ pub fn adjust_three_stage_single_distinct(
         final_agg: PhysicalPlan::HashAgg(final_hash),
         partition_cols,
     }))
+}
+
+/// Go `adjust3StagePhaseAgg`'s grouping-set branch
+/// (`task.go:1905-2030`). It materializes the grouping-set expansion and the
+/// conditional projection below the partial aggregate, then rewrites the
+/// middle and final descriptors over the same output-column contract.
+pub fn adjust_three_stage_multi_distinct(
+    partial: crate::physical::PhysicalPlan,
+    final_agg: crate::physical::PhysicalPlan,
+    child: &crate::physical::PhysicalPlan,
+    grouping_sets: &[Vec<Column>],
+    column_ids: &ColumnIdAllocator,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+) -> Result<Option<MultiDistinctThreeStageAggSplit>, crate::plan_base::PlanError> {
+    use crate::physical::{BasePhysicalPlan, PhysicalHashAgg, PhysicalPlan, PhysicalProjection};
+    use crate::physical::expand::PhysicalExpand;
+    use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder};
+
+    let PhysicalPlan::HashAgg(mut final_hash) = final_agg else {
+        return Ok(None);
+    };
+    let PhysicalPlan::HashAgg(mut partial_hash) = partial else {
+        return Ok(None);
+    };
+    let child_schema = child.schema().cloned().unwrap_or_default();
+    let mut grouping_ids = HashSet::new();
+    for set in grouping_sets {
+        grouping_ids.extend(set.iter().map(|column| column.unique_id));
+    }
+
+    let mut gid_type = FieldType::new(FieldTypeCode::LongLong);
+    gid_type.set_flags(gid_type.flags() | FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
+    let mut grouping_id_col = Column::new(column_ids.alloc(), gid_type.clone());
+    grouping_id_col.index = child_schema.columns.len() as i64;
+
+    let mut expand_schema_columns = child_schema.columns.clone();
+    expand_schema_columns.push(grouping_id_col.clone());
+    let expand_schema = Schema::new(expand_schema_columns.clone());
+    let levels = grouping_sets
+        .iter()
+        .enumerate()
+        .map(|(offset, grouping_set)| {
+            let grouping_set_ids: HashSet<_> = grouping_set
+                .iter()
+                .map(|column| column.unique_id)
+                .collect();
+            let mut level = Vec::with_capacity(expand_schema_columns.len());
+            for column in &child_schema.columns {
+                if grouping_ids.contains(&column.unique_id)
+                    && !grouping_set_ids.contains(&column.unique_id)
+                {
+                    let mut null = Constant::new_null();
+                    null.ret_type = column.ret_type.clone();
+                    level.push(Expression::Constant(null));
+                } else {
+                    level.push(Expression::Column(column.clone()));
+                }
+            }
+            let mut gid = Constant::new(tidb_datatype::Datum::UInt((offset + 1) as u64), gid_type.clone());
+            gid.ret_type = Some(gid_type.clone());
+            level.push(Expression::Constant(gid));
+            level
+        })
+        .collect::<Vec<_>>();
+    let mut expand_base = BasePhysicalPlan::new(
+        plan_ids,
+        "Expand",
+        child.query_block_offset(),
+    );
+    expand_base.base.set_stats(
+        child
+            .stats_info()
+            .map(|stats| stats.scale(grouping_sets.len() as f64, 1.0)),
+    );
+    expand_base.base.set_schema(Some(expand_schema.clone()));
+    let expand = PhysicalPlan::Expand(PhysicalExpand {
+        base: expand_base,
+        level_exprs: levels,
+        extra_grouping_col_names: vec!["gid".to_owned()],
+    });
+
+    partial_hash.group_by_items.push(Expression::Column(grouping_id_col.clone()));
+    if let Some(schema) = partial_hash.base.base.schema().cloned() {
+        let mut schema = schema;
+        schema.columns.push(grouping_id_col.clone());
+        partial_hash.base.base.set_schema(Some(schema));
+    }
+    scale_three_stage_multi_distinct_stats(
+        &mut partial_hash,
+        grouping_sets,
+        &grouping_id_col,
+        child.stats_info(),
+    );
+
+    let eval_ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
+    let builder = RealFunctionBuilder::new(&eval_ctx);
+    let mut projection_exprs = expand_schema
+        .columns
+        .iter()
+        .cloned()
+        .map(Expression::Column)
+        .collect::<Vec<_>>();
+    let mut projection_columns = expand_schema.columns.clone();
+    for function in &mut partial_hash.agg_funcs {
+        if function.has_distinct {
+            continue;
+        }
+        let Some(argument) = function.base.args.first().cloned() else {
+            return Ok(None);
+        };
+        let Some(grouping_id) = (function.grouping_id > 0).then_some(function.grouping_id) else {
+            return Ok(None);
+        };
+        let mut null = Constant::new_null();
+        null.ret_type = argument.static_type().cloned();
+        let condition = builder
+            .new_function(
+                "eq",
+                None,
+                vec![
+                    Expression::Column(grouping_id_col.clone()),
+                    Expression::Constant(Constant::new(tidb_datatype::Datum::UInt(grouping_id as u64), gid_type.clone())),
+                ],
+            )
+            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+        let case_when = builder
+            .new_function(
+                "case",
+                argument.static_type().cloned(),
+                vec![condition, argument, Expression::Constant(null)],
+            )
+            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+        let mut case_column = Column::new(
+            column_ids.alloc(),
+            case_when
+                .static_type()
+                .cloned()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
+        );
+        case_column.index = projection_exprs.len() as i64;
+        projection_exprs.push(case_when);
+        projection_columns.push(case_column.clone());
+        function.base.args[0] = Expression::Column(case_column);
+    }
+    let mut projection_base = BasePhysicalPlan::new(
+        plan_ids,
+        "Projection",
+        child.query_block_offset(),
+    );
+    projection_base.base.set_stats(child.stats_info().cloned());
+    projection_base
+        .base
+        .set_schema(Some(Schema::new(projection_columns)));
+    let partial_projection = PhysicalPlan::Projection(PhysicalProjection {
+        base: projection_base,
+        exprs: projection_exprs,
+        ..Default::default()
+    });
+
+    let mut middle_hash = PhysicalHashAgg {
+        base: final_hash.base.clone(),
+        agg_funcs: final_hash.agg_funcs.clone(),
+        group_by_items: final_hash.group_by_items.clone(),
+        mpp_run_mode: final_hash.mpp_run_mode,
+        mpp_partition_cols: final_hash.mpp_partition_cols.clone(),
+        enable_3_stage_distinct_agg: final_hash.enable_3_stage_distinct_agg,
+        enable_3_stage_multi_distinct_agg: final_hash.enable_3_stage_multi_distinct_agg,
+        tiflash_pre_agg_mode: final_hash.tiflash_pre_agg_mode.clone(),
+    };
+    middle_hash.base.base.set_id(plan_ids.alloc());
+    middle_hash
+        .base
+        .set_children_req_props(vec![Some(crate::physical_property::PhysicalProperty::default())]);
+
+    let mut middle_schema = Schema::default();
+    let mut ordinary_arg_map = HashMap::new();
+    for function in &mut middle_hash.agg_funcs {
+        let output = Column::new(column_ids.alloc(), function.base.ret_type.clone());
+        if function.has_distinct {
+            function.mode = AggFunctionMode::Partial1;
+        } else {
+            let Some(Expression::Column(argument)) = function.base.args.first() else {
+                return Ok(None);
+            };
+            ordinary_arg_map.insert(argument.unique_id, output.clone());
+            function.mode = AggFunctionMode::Partial2;
+        }
+        middle_schema.columns.push(output);
+    }
+    middle_hash.base.base.set_schema(Some(middle_schema.clone()));
+
+    for (index, function) in final_hash.agg_funcs.iter_mut().enumerate() {
+        if function.has_distinct {
+            function.base.name = names::SUM.to_owned();
+            function.has_distinct = false;
+            function.base.args = vec![Expression::Column(middle_schema.columns[index].clone())];
+        } else {
+            let mut remapped = Vec::with_capacity(function.base.args.len());
+            for argument in &function.base.args {
+                let Expression::Column(column) = argument else {
+                    return Ok(None);
+                };
+                let Some(mapped) = ordinary_arg_map.get(&column.unique_id) else {
+                    return Ok(None);
+                };
+                remapped.push(Expression::Column(mapped.clone()));
+            }
+            function.base.args = remapped;
+        }
+        function.mode = AggFunctionMode::Final;
+        function.grouping_id = 0;
+    }
+    final_hash
+        .base
+        .set_children_req_props(vec![Some(crate::physical_property::PhysicalProperty::default())]);
+
+    let partition_cols = partial_hash
+        .group_by_items
+        .iter()
+        .filter_map(|item| match item {
+            Expression::Column(column) => Some(crate::physical_property::MppPartitionColumn {
+                collate_id: column
+                    .get_static_type()
+                    .map(|field_type| {
+                        crate::physical_property::collate_id_for_partition(
+                            field_type.collation_name(),
+                        )
+                    })
+                    .unwrap_or(-1),
+                col: column.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    Ok(Some(MultiDistinctThreeStageAggSplit {
+        expand,
+        partial_projection,
+        partial: PhysicalPlan::HashAgg(partial_hash),
+        middle: PhysicalPlan::HashAgg(middle_hash),
+        final_agg: PhysicalPlan::HashAgg(final_hash),
+        partition_cols,
+    }))
+}
+
+/// Mirrors Go `scaleStats4GroupingSets`: the Expand rows are replicated, but
+/// the partial aggregate's output cardinality is the sum of the NDV for each
+/// grouping layout. Existing composite NDVs are adjusted for the grouping
+/// columns that become NULL in each layout and all other profile metadata is
+/// retained.
+fn scale_three_stage_multi_distinct_stats(
+    partial: &mut crate::physical::PhysicalHashAgg,
+    grouping_sets: &[Vec<Column>],
+    grouping_id_col: &Column,
+    child_stats: Option<&StatsInfo>,
+) {
+    let Some(child_stats) = child_stats else {
+        return;
+    };
+    let grouping_ids: HashSet<_> = grouping_sets
+        .iter()
+        .flat_map(|set| set.iter().map(|column| column.unique_id))
+        .collect();
+    let mut normal_group_ids = Vec::new();
+    for item in &partial.group_by_items {
+        for column in tidb_expr::expr_util::extract_columns(item) {
+            if column.unique_id != grouping_id_col.unique_id
+                && !grouping_ids.contains(&column.unique_id)
+            {
+                normal_group_ids.push(column.unique_id);
+            }
+        }
+    }
+
+    let sum_ndv = grouping_sets
+        .iter()
+        .map(|set| {
+            let mut ids: Vec<_> = set.iter().map(|column| column.unique_id).collect();
+            ids.extend(normal_group_ids.iter().copied());
+            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&ids, child_stats)
+                .0
+        })
+        .sum::<f64>();
+    let col_ndvs: Vec<(i64, f64)> = partial
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.col_ndvs().keys().map(|id| (*id, sum_ndv)).collect())
+        .unwrap_or_default();
+
+    let group_ndvs = partial
+        .base
+        .base
+        .stats_info()
+        .map(|stats| {
+            stats
+                .group_ndvs()
+                .iter()
+                .map(|group| {
+                    let mut ndv = group.ndv;
+                    let mut intersection_ids = Vec::new();
+                    for (index, column_id) in group.columns.iter().enumerate() {
+                        if grouping_ids.contains(column_id) {
+                            let before_len = intersection_ids.len();
+                            intersection_ids.extend_from_slice(&group.columns[index..]);
+                            let (increment, _) = crate::cardinality::derive_stats::
+                                estimate_cols_ndv_with_matched_len(
+                                    &intersection_ids,
+                                    child_stats,
+                                );
+                            ndv += increment;
+                            intersection_ids.truncate(before_len);
+                        }
+                        intersection_ids.push(*column_id);
+                    }
+                    GroupNdv {
+                        columns: group.columns.clone(),
+                        ndv,
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let Some(old_stats) = partial.base.base.stats_info() else {
+        return;
+    };
+    let mut new_stats = StatsInfo::new(sum_ndv, col_ndvs)
+        .with_stats_version(old_stats.stats_version())
+        .with_group_ndvs(group_ndvs);
+    if let Some(hist_coll) = old_stats.hist_coll().cloned() {
+        new_stats = new_stats.with_hist_coll(hist_coll);
+    }
+    partial.base.base.set_stats(Some(new_stats));
 }
 
 /// Go `BasePhysicalAgg.ConvertAvgForMPP` (`base_physical_agg.go:209`).
@@ -799,6 +1304,9 @@ pub fn build_final_mode_aggregation(
                 AggFunctionMode::Partial1 | AggFunctionMode::Partial2
             ) {
                 final_mode = AggFunctionMode::Partial2;
+            }
+            if is_mpp_task && agg_func.grouping_id > 0 {
+                final_grouping_id = agg_func.grouping_id;
             }
         }
 
@@ -1415,5 +1923,42 @@ mod tests {
             group_by_items: Vec::new(),
         };
         assert!(build_final_mode_aggregation(&ctx(), &alloc, &original, true, false).is_none());
+    }
+
+    #[test]
+    fn multi_distinct_admission_matches_go_grouping_set_targeting() {
+        let a = bigint_col(1);
+        let b = bigint_col(2);
+        let c = bigint_col(3);
+        let funcs = vec![
+            agg(names::COUNT, &a, true),
+            agg(names::COUNT, &b, true),
+            agg(names::COUNT, &c, false),
+        ];
+        let grouping_sets = can_use_three_stage_multi_distinct(&funcs, &[], true, true)
+            .expect("two independent distinct layouts are admissible");
+        let mut marked = funcs.clone();
+        assert!(mark_three_stage_grouping_ids(&mut marked, &grouping_sets));
+        assert_eq!(
+            marked
+                .iter()
+                .map(|function| function.grouping_id)
+                .collect::<Vec<_>>(),
+            [1, 2, 1]
+        );
+        assert!(can_use_three_stage_multi_distinct(&funcs, &[], false, true).is_none());
+        assert!(can_use_three_stage_multi_distinct(&funcs, &[], true, false).is_none());
+
+        let overlapping = vec![
+            AggFuncDesc::new(
+                &ctx(),
+                names::COUNT,
+                vec![Expression::Column(a), Expression::Column(b.clone())],
+                true,
+            )
+            .expect("multi-column distinct descriptor"),
+            agg(names::COUNT, &b, true),
+        ];
+        assert!(can_use_three_stage_multi_distinct(&overlapping, &[], true, true).is_none());
     }
 }

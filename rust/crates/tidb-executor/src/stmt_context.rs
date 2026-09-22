@@ -664,6 +664,12 @@ pub struct StmtContextData {
     /// (`@@tidb_opt_agg_push_down`, default `OFF`): gates the
     /// aggregation-push-down rule's join and union arms.
     allow_agg_push_down: bool,
+    /// Go `SessionVars.Enable3StageDistinctAgg`.
+    enable_3_stage_distinct_agg: bool,
+    /// Go `SessionVars.Enable3StageMultiDistinctAgg`.
+    enable_3_stage_multi_distinct_agg: bool,
+    /// Go `SessionVars.TiFlashPreAggMode`.
+    tiflash_pre_agg_mode: String,
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`
     /// (`@@tidb_opt_enable_advanced_join_reorder`, default `ON`): whether
     /// join reorder uses the advanced framework. Its greedy solver compares
@@ -1343,6 +1349,27 @@ context_configuration! {
         self
     }
 
+    /// Sets Go `SessionVars.Enable3StageDistinctAgg` for this statement.
+    #[must_use]
+    pub fn with_enable_3_stage_distinct_agg(mut self, enabled: bool) -> Self {
+        self.enable_3_stage_distinct_agg = enabled;
+        self
+    }
+
+    /// Sets Go `SessionVars.Enable3StageMultiDistinctAgg` for this statement.
+    #[must_use]
+    pub fn with_enable_3_stage_multi_distinct_agg(mut self, enabled: bool) -> Self {
+        self.enable_3_stage_multi_distinct_agg = enabled;
+        self
+    }
+
+    /// Sets Go `SessionVars.TiFlashPreAggMode` for this statement.
+    #[must_use]
+    pub fn with_tiflash_pre_agg_mode(mut self, mode: impl Into<String>) -> Self {
+        self.tiflash_pre_agg_mode = mode.into();
+        self
+    }
+
     /// Sets `@@tidb_opt_enable_advanced_join_reorder` for this statement.
     #[must_use]
     pub fn with_advanced_join_reorder(mut self, enabled: bool) -> Self {
@@ -1817,6 +1844,10 @@ impl StmtContext {
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
             allow_agg_push_down: tidb_vardef::defaults::DEF_OPT_AGG_PUSH_DOWN,
+            enable_3_stage_distinct_agg: tidb_vardef::defaults::DEF_TIDB3_STAGE_DISTINCT_AGG,
+            enable_3_stage_multi_distinct_agg:
+                tidb_vardef::defaults::DEF_TIDB3_STAGE_MULTI_DISTINCT_AGG,
+            tiflash_pre_agg_mode: tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned(),
             advanced_join_reorder: tidb_vardef::defaults::DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             cartesian_join_order_threshold:
                 tidb_vardef::defaults::DEF_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD,
@@ -2668,6 +2699,24 @@ impl StmtContext {
     #[must_use]
     pub fn allow_agg_push_down(&self) -> bool {
         self.allow_agg_push_down
+    }
+
+    /// Returns Go `SessionVars.Enable3StageDistinctAgg`.
+    #[must_use]
+    pub fn enable_3_stage_distinct_agg(&self) -> bool {
+        self.enable_3_stage_distinct_agg
+    }
+
+    /// Returns Go `SessionVars.Enable3StageMultiDistinctAgg`.
+    #[must_use]
+    pub fn enable_3_stage_multi_distinct_agg(&self) -> bool {
+        self.enable_3_stage_multi_distinct_agg
+    }
+
+    /// Returns Go `SessionVars.TiFlashPreAggMode`.
+    #[must_use]
+    pub fn tiflash_pre_agg_mode(&self) -> &str {
+        &self.tiflash_pre_agg_mode
     }
 
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`. The advanced

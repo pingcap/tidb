@@ -2059,7 +2059,32 @@ fn attach_hash_agg_to_mpp(
     };
     let mode = hash_agg.mpp_run_mode;
     let requested_partition_cols = hash_agg.mpp_partition_cols.clone();
+    let enable_3_stage_distinct_agg = hash_agg.enable_3_stage_distinct_agg;
+    let enable_3_stage_multi_distinct_agg = hash_agg.enable_3_stage_multi_distinct_agg;
+    let tiflash_pre_agg_mode = hash_agg.tiflash_pre_agg_mode.clone();
     let expr_ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
+    let multi_distinct_grouping_sets = if mode == crate::physical::AggMppRunMode::MppScalar {
+        let PhysicalPlan::HashAgg(hash_agg) = &mut plan else {
+            unreachable!("MPP scalar aggregate is a HashAgg");
+        };
+        let grouping_sets = crate::final_mode_agg::can_use_three_stage_multi_distinct(
+            &hash_agg.agg_funcs,
+            &hash_agg.group_by_items,
+            enable_3_stage_distinct_agg,
+            enable_3_stage_multi_distinct_agg,
+        );
+        if let Some(grouping_sets) = &grouping_sets {
+            if !crate::final_mode_agg::mark_three_stage_grouping_ids(
+                &mut hash_agg.agg_funcs,
+                grouping_sets,
+            ) {
+                return Ok(Task::invalid_task());
+            }
+        }
+        grouping_sets
+    } else {
+        None
+    };
     let mut avg_projection = None;
     if matches!(
         mode,
@@ -2097,6 +2122,10 @@ fn attach_hash_agg_to_mpp(
             )? else {
                 return Ok(Task::invalid_task());
             };
+            let mut partial = partial;
+            if let PhysicalPlan::HashAgg(partial_hash_agg) = &mut partial {
+                partial_hash_agg.tiflash_pre_agg_mode = tiflash_pre_agg_mode.clone();
+            }
             let task = attach_plan_to_task(partial, Task::Mpp(mpp));
             let Task::Mpp(mpp) = task else {
                 unreachable!("partial HashAgg attachment must retain MPP task");
@@ -2174,7 +2203,7 @@ fn attach_hash_agg_to_mpp(
             }
         }
         crate::physical::AggMppRunMode::MppScalar => {
-            let can_use_three_stage = match &plan {
+            let can_use_three_stage_single = match &plan {
                 PhysicalPlan::HashAgg(hash_agg) => {
                     crate::final_mode_agg::can_use_three_stage_single_distinct(
                         &hash_agg.agg_funcs,
@@ -2183,6 +2212,8 @@ fn attach_hash_agg_to_mpp(
                 }
                 _ => false,
             };
+            let can_use_three_stage =
+                can_use_three_stage_single || multi_distinct_grouping_sets.is_some();
             let original_schema = plan.schema().cloned();
             let required = crate::physical_property::PhysicalProperty {
                 task_tp: crate::task_type::TaskType::Mpp,
@@ -2217,6 +2248,52 @@ fn attach_hash_agg_to_mpp(
                 let Some(partial) = partial else {
                     return Ok(Task::invalid_task());
                 };
+                if let Some(grouping_sets) = multi_distinct_grouping_sets {
+                    let child = mpp.plan.as_deref().ok_or_else(|| {
+                        PlanError::internal("scalar MPP aggregate has no child plan")
+                    })?;
+                    let Some(split) = crate::final_mode_agg::adjust_three_stage_multi_distinct(
+                        partial,
+                        final_agg,
+                        child,
+                        &grouping_sets,
+                        column_ids,
+                        allocator,
+                    )?
+                    else {
+                        return Ok(Task::invalid_task());
+                    };
+                    let task = attach_plan_to_task(split.expand, Task::Mpp(mpp));
+                    let task = attach_plan_to_task(split.partial_projection, task);
+                    let mut partial = split.partial;
+                    if let PhysicalPlan::HashAgg(partial_hash_agg) = &mut partial {
+                        partial_hash_agg.tiflash_pre_agg_mode = tiflash_pre_agg_mode.clone();
+                    }
+                    let task = attach_plan_to_task(partial, task);
+                    let Task::Mpp(mpp) = task else {
+                        unreachable!("multi-distinct partial HashAgg must retain MPP task");
+                    };
+                    let hash_required = crate::physical_property::PhysicalProperty {
+                        task_tp: crate::task_type::TaskType::Mpp,
+                        expected_cnt: f64::MAX,
+                        mpp_partition_tp: MppPartitionType::Hash,
+                        mpp_partition_cols: split.partition_cols,
+                        ..crate::physical_property::PhysicalProperty::default()
+                    };
+                    let mpp = mpp.enforce_exchanger(&hash_required, allocator)?;
+                    let task = attach_plan_to_task(split.middle, Task::Mpp(mpp));
+                    let Task::Mpp(mpp) = task else {
+                        unreachable!("multi-distinct middle HashAgg must retain MPP task");
+                    };
+                    let mpp = mpp.enforce_exchanger(&required, allocator)?;
+                    let task = attach_plan_to_task(split.final_agg, Task::Mpp(mpp));
+                    return finish_scalar_aggregate_output(
+                        task,
+                        avg_projection,
+                        original_schema.as_ref(),
+                        allocator,
+                    );
+                }
                 let Some(split) = crate::final_mode_agg::adjust_three_stage_single_distinct(
                     partial,
                     final_agg,
@@ -3852,6 +3929,7 @@ mod attach_tests {
                 col: group.clone(),
                 collate_id: -1,
             }],
+            ..PhysicalHashAgg::default()
         });
         let mut child_base = op_with_stats("Dual", 12.0);
         child_base.base.set_schema(Some(Schema::new(vec![
@@ -4007,6 +4085,130 @@ mod attach_tests {
                     && partial.agg_funcs.len() == 1
                     && partial.agg_funcs[0].name() == names::COUNT
         ));
+    }
+
+    #[test]
+    fn mpp_scalar_multi_distinct_builds_expand_and_three_aggregation_stages() {
+        use crate::expression_rewriter::ColumnIdAllocator;
+        use crate::physical::{AggMppRunMode, PhysicalHashAgg};
+        use tidb_expr::aggregation::{names, AggFuncDesc};
+        use tidb_expr::{SessionTimeZone, ZonedNoColumns};
+
+        let plan_allocator = PlanIdAllocator::new();
+        let column_allocator = ColumnIdAllocator::new();
+        let ctx = ZonedNoColumns(SessionTimeZone::utc());
+        let distinct_a = tidb_expr::column::Column::new(
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        let distinct_b = tidb_expr::column::Column::new(
+            2,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        let ordinary_c = tidb_expr::column::Column::new(
+            3,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        let count_distinct = |column: tidb_expr::column::Column| {
+            AggFuncDesc::new(&ctx, names::COUNT, vec![Expression::Column(column)], true)
+                .expect("distinct count descriptor")
+        };
+        let ordinary = AggFuncDesc::new(
+            &ctx,
+            names::COUNT,
+            vec![Expression::Column(ordinary_c.clone())],
+            false,
+        )
+        .expect("ordinary count descriptor");
+        let mut base = op_with_stats("HashAgg", 4.0);
+        base.base.set_schema(Some(Schema::new(vec![
+            tidb_expr::column::Column::new(
+                4,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+            tidb_expr::column::Column::new(
+                5,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+            tidb_expr::column::Column::new(
+                6,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+        ])));
+        let hash = PhysicalPlan::HashAgg(PhysicalHashAgg {
+            base,
+            agg_funcs: vec![count_distinct(distinct_a.clone()), count_distinct(distinct_b.clone()), ordinary],
+            group_by_items: Vec::new(),
+            mpp_run_mode: AggMppRunMode::MppScalar,
+            enable_3_stage_distinct_agg: true,
+            enable_3_stage_multi_distinct_agg: true,
+            ..PhysicalHashAgg::default()
+        });
+        let mut child_base = op_with_stats("Dual", 12.0);
+        child_base.base.set_schema(Some(Schema::new(vec![
+            distinct_a.clone(),
+            distinct_b.clone(),
+            ordinary_c,
+        ])));
+        let child = Task::Mpp(MppTask::new(
+            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+                base: child_base,
+                row_count: 12,
+            }),
+            MppPartitionType::Any,
+            [],
+        ));
+        let attached = attach2_task(
+            hash,
+            vec![child],
+            Some(&column_allocator),
+            &plan_allocator,
+        )
+        .expect("multi-distinct scalar MPP HashAgg attaches");
+        let Task::Mpp(mpp) = attached else {
+            panic!("multi-distinct scalar MPP HashAgg remains an MPP task");
+        };
+        let Some(PhysicalPlan::Projection(projection)) = mpp.plan() else {
+            panic!("scalar MPP output restores the original schema");
+        };
+        let Some(PhysicalPlan::HashAgg(final_agg)) = projection.base.children().first() else {
+            panic!("projection is above the final HashAgg");
+        };
+        let Some(PhysicalPlan::ExchangeReceiver(single_receiver)) =
+            final_agg.base.children().first()
+        else {
+            panic!("final aggregation is fed by a single-partition exchange");
+        };
+        let Some(PhysicalPlan::ExchangeSender(single_sender)) =
+            single_receiver.base.children().first()
+        else {
+            panic!("the single-partition receiver owns its sender");
+        };
+        let Some(PhysicalPlan::HashAgg(middle)) = single_sender.base.children().first() else {
+            panic!("the single-partition exchange feeds the middle HashAgg");
+        };
+        assert!(middle.group_by_items.is_empty());
+        let Some(PhysicalPlan::ExchangeReceiver(hash_receiver)) = middle.base.children().first()
+        else {
+            panic!("the middle aggregation is fed by a hash exchange");
+        };
+        let Some(PhysicalPlan::ExchangeSender(sender)) = hash_receiver.base.children().first() else {
+            panic!("the hash receiver owns its sender");
+        };
+        assert_eq!(sender.hash_cols.len(), 3, "a, b, and grouping ID partition the middle stage");
+        let Some(PhysicalPlan::HashAgg(partial)) = sender.base.children().first() else {
+            panic!("the hash exchange feeds the partial HashAgg");
+        };
+        assert_eq!(partial.group_by_items.len(), 3);
+        let Some(PhysicalPlan::Projection(projection)) = partial.base.children().first() else {
+            panic!("ordinary aggregates are guarded below the partial HashAgg");
+        };
+        assert_eq!(projection.exprs.len(), 5);
+        let Some(PhysicalPlan::Expand(expand)) = projection.base.children().first() else {
+            panic!("the partial projection is above the grouping-set Expand");
+        };
+        assert_eq!(expand.level_exprs.len(), 2);
+        assert_eq!(expand.base.base.schema().map(Schema::len), Some(4));
     }
 
     #[test]

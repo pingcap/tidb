@@ -69,6 +69,9 @@ pub(crate) struct StatementVarSnapshot {
     opt_prefix_index_single_scan: bool,
     always_keep_join_key: bool,
     allow_agg_push_down: bool,
+    enable_3_stage_distinct_agg: bool,
+    enable_3_stage_multi_distinct_agg: bool,
+    tiflash_pre_agg_mode: String,
     enable_unsafe_substitute: bool,
     enable_semi_join_rewrite: bool,
     allow_in_subq_to_join_and_agg: bool,
@@ -783,6 +786,14 @@ impl Session {
             ),
             always_keep_join_key: on(tidb_vardef::tidb_vars::TIDB_OPT_ALWAYS_KEEP_JOIN_KEY),
             allow_agg_push_down: on(tidb_vardef::tidb_vars::TIDB_OPT_AGG_PUSH_DOWN),
+            enable_3_stage_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT3_STAGE_DISTINCT_AGG),
+            enable_3_stage_multi_distinct_agg: on(
+                tidb_vardef::tidb_vars::TIDB_OPT_ENABLE3_STAGE_MULTI_DISTINCT_AGG,
+            ),
+            tiflash_pre_agg_mode: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIFLASH_HASH_AGG_PRE_AGG_MODE)
+                .unwrap_or_else(|_| tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned()),
             enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
             allow_in_subq_to_join_and_agg: on(
@@ -993,6 +1004,9 @@ impl Session {
         let opt_prefix_index_single_scan = snapshot.opt_prefix_index_single_scan;
         let always_keep_join_key = snapshot.always_keep_join_key;
         let allow_agg_push_down = snapshot.allow_agg_push_down;
+        let enable_3_stage_distinct_agg = snapshot.enable_3_stage_distinct_agg;
+        let enable_3_stage_multi_distinct_agg = snapshot.enable_3_stage_multi_distinct_agg;
+        let tiflash_pre_agg_mode = snapshot.tiflash_pre_agg_mode.clone();
         let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
         let allow_in_subq_to_join_and_agg =
@@ -1115,6 +1129,9 @@ impl Session {
                     .with_join_reorder_threshold(join_reorder_threshold)
                     .with_advanced_join_reorder(advanced_join_reorder)
                     .with_allow_agg_push_down(allow_agg_push_down)
+                    .with_enable_3_stage_distinct_agg(enable_3_stage_distinct_agg)
+                    .with_enable_3_stage_multi_distinct_agg(enable_3_stage_multi_distinct_agg)
+                    .with_tiflash_pre_agg_mode(tiflash_pre_agg_mode.clone())
                     .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                     .with_projection_push_down(allow_projection_push_down)
                     .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
@@ -1323,6 +1340,9 @@ impl Session {
                 .with_join_reorder_threshold(join_reorder_threshold)
                 .with_advanced_join_reorder(advanced_join_reorder)
                 .with_allow_agg_push_down(allow_agg_push_down)
+                .with_enable_3_stage_distinct_agg(enable_3_stage_distinct_agg)
+                .with_enable_3_stage_multi_distinct_agg(enable_3_stage_multi_distinct_agg)
+                .with_tiflash_pre_agg_mode(tiflash_pre_agg_mode.clone())
                 .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                 .with_projection_push_down(allow_projection_push_down)
                 .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)

@@ -2841,7 +2841,7 @@ pub enum AggMppRunMode {
 
 /// Go `physicalop.PhysicalHashAgg` (`physical_hash_agg.go:33`), the
 /// aggregate descriptors, grouping expressions, and MPP run contract.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PhysicalHashAgg {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
@@ -2853,6 +2853,30 @@ pub struct PhysicalHashAgg {
     pub mpp_run_mode: AggMppRunMode,
     /// Go `BasePhysicalAgg.MppPartitionCols`.
     pub mpp_partition_cols: Vec<crate::physical_property::MppPartitionColumn>,
+    /// Go `SessionVars.Enable3StageDistinctAgg`, captured on the MPP
+    /// candidate before attachment mutates its aggregate descriptors.
+    pub enable_3_stage_distinct_agg: bool,
+    /// Go `SessionVars.Enable3StageMultiDistinctAgg`.
+    pub enable_3_stage_multi_distinct_agg: bool,
+    /// Go `PhysicalHashAgg.TiflashPreAggMode`.
+    pub tiflash_pre_agg_mode: String,
+}
+
+impl Default for PhysicalHashAgg {
+    fn default() -> Self {
+        Self {
+            base: BasePhysicalPlan::default(),
+            agg_funcs: Vec::new(),
+            group_by_items: Vec::new(),
+            mpp_run_mode: AggMppRunMode::default(),
+            mpp_partition_cols: Vec::new(),
+            enable_3_stage_distinct_agg: true,
+            enable_3_stage_multi_distinct_agg: false,
+            // Go leaves the per-plan field empty until MPP attachment assigns
+            // the session's pre-aggregation mode to the partial stage.
+            tiflash_pre_agg_mode: String::new(),
+        }
+    }
 }
 
 /// Go `getHashAggs` (`physical_hash_agg.go:52`), the root/cop loop: a hash
@@ -2882,6 +2906,33 @@ pub fn get_hash_aggs_with_mpp(
     skew_ratio: f64,
     mpp_allowed: bool,
     enable_skew_distinct_agg: bool,
+) -> Vec<PhysicalPlan> {
+    get_hash_aggs_with_mpp_options(
+        agg,
+        prop,
+        allocator,
+        skew_ratio,
+        mpp_allowed,
+        enable_skew_distinct_agg,
+        true,
+        false,
+        tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE,
+    )
+}
+
+/// MPP-aware hash aggregation enumeration with the statement switches that
+/// Go carries on `SessionVars` into `PhysicalHashAgg`.
+#[must_use]
+pub fn get_hash_aggs_with_mpp_options(
+    agg: &crate::logical::LogicalAggregation,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+    mpp_allowed: bool,
+    enable_skew_distinct_agg: bool,
+    enable_3_stage_distinct_agg: bool,
+    enable_3_stage_multi_distinct_agg: bool,
+    tiflash_pre_agg_mode: &str,
 ) -> Vec<PhysicalPlan> {
     if !prop.is_sort_item_empty() {
         return Vec::new();
@@ -2957,6 +3008,9 @@ pub fn get_hash_aggs_with_mpp(
             allocator,
             skew_ratio,
             enable_skew_distinct_agg,
+            enable_3_stage_distinct_agg,
+            enable_3_stage_multi_distinct_agg,
+            tiflash_pre_agg_mode,
         ));
     }
     hash_aggs
@@ -2975,6 +3029,9 @@ fn get_mpp_hash_aggs(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
     enable_skew_distinct_agg: bool,
+    enable_3_stage_distinct_agg: bool,
+    enable_3_stage_multi_distinct_agg: bool,
+    tiflash_pre_agg_mode: &str,
 ) -> Vec<PhysicalPlan> {
     let has_final_agg = agg
         .agg_funcs
@@ -3003,6 +3060,9 @@ fn get_mpp_hash_aggs(
             group_by_items: agg.group_by_items.clone(),
             mpp_run_mode: mode,
             mpp_partition_cols: partition_cols,
+            enable_3_stage_distinct_agg,
+            enable_3_stage_multi_distinct_agg,
+            tiflash_pre_agg_mode: tiflash_pre_agg_mode.to_owned(),
         })
     };
 
@@ -4267,6 +4327,9 @@ impl PhysicalPlan {
                 group_by_items: op.group_by_items.clone(),
                 mpp_run_mode: op.mpp_run_mode,
                 mpp_partition_cols: op.mpp_partition_cols.clone(),
+                enable_3_stage_distinct_agg: op.enable_3_stage_distinct_agg,
+                enable_3_stage_multi_distinct_agg: op.enable_3_stage_multi_distinct_agg,
+                tiflash_pre_agg_mode: op.tiflash_pre_agg_mode.clone(),
             }),
             Self::StreamAgg(op) => Self::StreamAgg(PhysicalStreamAgg {
                 base: base_of(&op.base),

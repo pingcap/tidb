@@ -82,6 +82,18 @@ their recorded stage. The latest verified state is summarized first.
   scalar DISTINCT aggregation, TiFlash pre-aggregation mode, fragment
   scheduling, heavy TopN, and whole-package/workload acceptance remain open.
 
+- [x] (2026-09-21, scalar multi-distinct MPP and pre-aggregation settings)
+  Rust now carries the Go three-stage distinct and multi-distinct session
+  switches plus TiFlash pre-aggregation mode from the session snapshot through
+  physical HashAgg candidates. Scalar MPP multi-distinct COUNT plans now use
+  Go's grouping-set admission and targeting rules, Expand levels, conditional
+  partial projection, hash-partitioned middle stage, and single-partition final
+  stage. Partial aggregate statistics follow Go's grouping-set NDV adjustment.
+  Focused admission, final-mode, MPP HashAgg, task-attachment, planner,
+  executor, and session checks pass. Fragment scheduling/task metadata,
+  protobuf/runtime pre-aggregation transport, heavy TopN, and whole-package or
+  workload acceptance remain open.
+
 - [x] (2026-09-21, MaxOneRow enforced-MPP warning routing) The Go
   `CanSelfBeingPushedToCopImpl` refusal is now preserved before Rust's generic
   non-root task gate, so a `MaxOneRow` MPP refusal raises the source warning
@@ -8088,6 +8100,36 @@ The focused receipt from `rust/` passes:
     cargo check --offline --locked -j12 -p tidb-executor --message-format=short
 
 Vector-index distance-column reuse, partial-order and TiDB-cop TopN branches,
-fragment scheduling, scalar multi-distinct aggregation, TiFlash pre-aggregation
-mode, and whole physicalop/workload acceptance remain open. No sysbench,
-TPC-C, TPC-H, or YCSB performance result is inferred from this planner test.
+fragment scheduling/task metadata, protobuf/runtime pre-aggregation transport,
+and whole physicalop/workload acceptance remain open. No sysbench, TPC-C,
+TPC-H, or YCSB performance result is inferred from this planner test.
+
+
+## Continuing scalar multi-distinct MPP and pre-aggregation settings parity
+
+Go gates scalar three-stage multi-distinct aggregation on both
+`Enable3StageDistinctAgg` and `Enable3StageMultiDistinctAgg`, assigns each
+distinct COUNT and compatible ordinary aggregate a one-based grouping ID, and
+refuses duplicate or overlapping layouts that would require cloned Expand
+columns. Rust now preserves those gates and IDs, targets ordinary aggregates
+with the same first compatible grouping layout, and builds the source-shaped
+`Expand -> Projection -> Partial HashAgg -> Hash Exchange -> Middle HashAgg ->
+Single Exchange -> Final HashAgg` chain. Partial statistics use the source
+grouping-set NDV sum and composite-NDV adjustment rather than treating Expand
+as an ordinary row multiplier.
+
+The statement snapshot carries Go's three-stage switches and
+`TiFlashHashAggPreAggMode` into planner dispatch and MPP partial HashAggs;
+MPP2 and scalar partial stages preserve the selected pre-aggregation mode.
+Focused receipts from `rust/` pass:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib final_mode_agg::tests -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib task::attach_tests -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib physical::tests::mpp_hash_agg_enumeration_matches_go_run_modes -- --test-threads=1
+    cargo check --offline --locked -j12 -p tidb-planner --message-format=short
+    cargo check --offline --locked -j12 -p tidb-executor --message-format=short
+    cargo check --offline --locked -j12 -p tidb-session --message-format=short
+
+Runtime protobuf encoding, native fragment scheduling/task metadata, the
+remaining TopN branches, complete physicalop package acceptance, and the
+sysbench/TPC-C/TPC-H/YCSB performance gates remain open.

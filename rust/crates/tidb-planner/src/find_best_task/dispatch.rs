@@ -164,6 +164,12 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.EnableSkewDistinctAgg`, which disables one-phase MPP
     /// aggregation so skew-aware distinct rewrites can retain their exchange.
     pub enable_skew_distinct_agg: bool,
+    /// Go `SessionVars.Enable3StageDistinctAgg`.
+    pub enable_3_stage_distinct_agg: bool,
+    /// Go `SessionVars.Enable3StageMultiDistinctAgg`.
+    pub enable_3_stage_multi_distinct_agg: bool,
+    /// Go `SessionVars.TiFlashPreAggMode`.
+    pub tiflash_pre_agg_mode: String,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
     pub mpp_warning_sink: Option<&'a dyn MppWarningSink>,
     /// Go `SessionVars.GetAllowPreferRangeScan()` (`tidb_opt_prefer_range_scan`,
@@ -222,6 +228,9 @@ impl<'a> DispatchContext<'a> {
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
             enable_skew_distinct_agg: false,
+            enable_3_stage_distinct_agg: true,
+            enable_3_stage_multi_distinct_agg: false,
+            tiflash_pre_agg_mode: tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned(),
             mpp_warning_sink: None,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
@@ -388,6 +397,28 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_enable_skew_distinct_agg(mut self, enabled: bool) -> Self {
         self.enable_skew_distinct_agg = enabled;
+        self
+    }
+
+    /// Carries Go's three-stage distinct aggregate switch into physical
+    /// aggregation enumeration and attachment.
+    #[must_use]
+    pub const fn with_enable_3_stage_distinct_agg(mut self, enabled: bool) -> Self {
+        self.enable_3_stage_distinct_agg = enabled;
+        self
+    }
+
+    /// Carries Go's three-stage multi-distinct aggregate switch.
+    #[must_use]
+    pub const fn with_enable_3_stage_multi_distinct_agg(mut self, enabled: bool) -> Self {
+        self.enable_3_stage_multi_distinct_agg = enabled;
+        self
+    }
+
+    /// Carries Go's TiFlash hash-aggregate pre-aggregation mode.
+    #[must_use]
+    pub fn with_tiflash_pre_agg_mode(mut self, mode: impl Into<String>) -> Self {
+        self.tiflash_pre_agg_mode = mode.into();
         self
     }
 
@@ -561,13 +592,16 @@ fn exhaust_physical_plans(
             // StreamAgg and immediately returns it when STREAM_AGG applies.
             // With no applicable hint both families share one cost search in
             // that same hash-then-stream order.
-            let mut hash_aggs = physical::get_hash_aggs_with_mpp(
+            let mut hash_aggs = physical::get_hash_aggs_with_mpp_options(
                 op,
                 prop,
                 ctx.allocator,
                 ctx.skew_ratio,
                 ctx.mpp_allowed,
                 ctx.enable_skew_distinct_agg,
+                ctx.enable_3_stage_distinct_agg,
+                ctx.enable_3_stage_multi_distinct_agg,
+                &ctx.tiflash_pre_agg_mode,
             );
             if !hash_aggs.is_empty()
                 && op.prefer_agg_type & crate::expression_rewriter::PREFER_HASH_AGG != 0
