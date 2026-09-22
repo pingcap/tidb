@@ -1,7 +1,7 @@
 # Physicalop source inventory
 
 Audit reference: TiDB `origin/master`, fetched 2026-09-22 (local time).
-Resolved revision: `cc83514fa9cd093be05b6531003480ba819877fd`.
+Resolved revision: `64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59`.
 
 The user defines Go parity as TiDB master. Read reference artifacts with
 `git show <resolved-master-revision>:<path>`; the working branch Go files

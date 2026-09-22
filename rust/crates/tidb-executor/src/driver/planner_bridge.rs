@@ -1078,6 +1078,7 @@ impl OwnedRewrite for InitStats<'_> {
         source.base.base.set_stats(None);
         source.table_path_count_after_access = None;
         source.index_path_count_after_access.clear();
+        source.index_path_single_scan.clear();
         source.index_path_row_estimates.clear();
         // Go `initStats` calls `GetStatsTable(..., ds.PhysicalTableID)`: a
         // static-pruning child owns one physical partition's statistics,
@@ -2327,6 +2328,7 @@ fn optimize_built_logical(
         statistics_load: Some(&statistics_load),
         partition_pruning: Some(&partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
+        opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
         range_max_size: ctx.range_max_size(),
         selectivity_factor: ctx.selectivity_factor(),
         range_fallback_handler: Some(ctx.range_fallback_handler()),

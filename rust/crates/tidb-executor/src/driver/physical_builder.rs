@@ -2215,6 +2215,13 @@ fn build_index_inner_reader(
     let filter_schema = physical_table_schema(embedded, &table);
     let mut filters = Vec::new();
     collect_index_inner_filters(embedded, &filter_schema, &mut filters)?;
+    let mut index_filters = Vec::new();
+    if let PhysicalPlan::IndexLookUpReader(reader) = plan {
+        if let Some(index_plan) = reader.index_plan.as_deref() {
+            let index_schema = physical_table_schema(index_plan, &table);
+            collect_index_inner_filters(index_plan, &index_schema, &mut index_filters)?;
+        }
+    }
     let mut source = IndexJoinLookupExec::new_with_context(
         meta(ctx, plan, row_schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
@@ -2234,6 +2241,7 @@ fn build_index_inner_reader(
         );
     }
     source.set_filters(filters, ctx.clone());
+    source.set_index_filters(index_filters);
     source.set_column_projection(Some(output_offsets), []);
     if let Some((true, desc)) = index_inner_scan_order(plan) {
         source.set_keep_order(desc);

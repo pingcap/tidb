@@ -729,3 +729,88 @@ fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values()
         }
     }
 }
+
+#[test]
+fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    for ddl in [
+        "CREATE TABLE o (k INT)",
+        "CREATE TABLE i (k INT, a VARCHAR(20), b INT, KEY idx(k, a(2), b))",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    for insert in [
+        "INSERT INTO o VALUES(1),(3),(NULL),(3),(9)",
+        "INSERT INTO i VALUES(1,NULL,10),(1,'abz',11),(3,NULL,30),(3,'aba',31),(3,'abb',32)",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+    // Captured from TiDB master 64e8c4c05e. Join reorder derives path coverage
+    // before final pruning removes the null predicate's full-length column.
+    let cases = [
+        (
+            "SELECT /*+ INL_JOIN(i) */ o.k,i.b FROM o LEFT JOIN i USE INDEX(idx) ON o.k=i.k WHERE i.a IS NULL",
+            vec!["1 10", "3 30", "3 30", "9 <nil>", "<nil> <nil>"],
+            false,
+        ),
+        (
+            "SELECT /*+ INL_JOIN(i) */ o.k,i.b FROM o JOIN i USE INDEX(idx) ON o.k=i.k WHERE i.a IS NOT NULL",
+            vec!["1 11", "3 31", "3 31", "3 32", "3 32"],
+            false,
+        ),
+        (
+            "SELECT /*+ INL_JOIN(i) */ o.k,i.a FROM o JOIN i USE INDEX(idx) ON o.k=i.k WHERE i.a IS NOT NULL",
+            vec!["1 abz", "3 aba", "3 aba", "3 abb", "3 abb"],
+            false,
+        ),
+        (
+            "SELECT /*+ INL_JOIN(i) */ o.k,i.b FROM o JOIN i USE INDEX(idx) ON o.k=i.k WHERE i.b>10",
+            vec!["1 11", "3 30", "3 30", "3 31", "3 31", "3 32", "3 32"],
+            true,
+        ),
+    ];
+    for (dirty, ctx) in [(false, crate::StmtContext::for_query()), (true, ctx)] {
+        for (sql, expected, covering) in cases.clone() {
+            let (rows, ops) =
+                crate::storage::capture_storage_ops(|| run_select_on(sql, &catalog, &ctx));
+            let mut rows: Vec<_> = rows
+                .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|value| match value {
+                            Datum::Null => "<nil>".to_owned(),
+                            Datum::Int(value) => value.to_string(),
+                            value => datum_text_for_test(value),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect();
+            rows.sort();
+            assert_eq!(rows, expected, "{sql}");
+            let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+                panic!("query")
+            };
+            let QueryStmt::Select(select) = &*query else {
+                panic!("select")
+            };
+            let (_, plan) =
+                explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+            let plan = plan
+                .iter()
+                .map(|row| datum_text_for_test(&row[0]))
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(plan.contains("IndexReader"), covering, "{sql}: {plan}");
+            if covering && !dirty {
+                assert_eq!(
+                    ops.gets, 0,
+                    "covering inner reader must avoid table gets: {ops:?}"
+                );
+            }
+        }
+    }
+}

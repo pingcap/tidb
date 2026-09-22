@@ -199,6 +199,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         statistics_load: context.statistics_load,
         partition_pruning: context.partition_pruning,
         opt_index_prune_threshold: context.opt_index_prune_threshold,
+        opt_prefix_index_single_scan: context.opt_prefix_index_single_scan,
         range_max_size: context.range_max_size,
         selectivity_factor: context.selectivity_factor,
         range_fallback_handler: context.range_fallback_handler,

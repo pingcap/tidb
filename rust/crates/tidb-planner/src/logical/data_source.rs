@@ -246,6 +246,9 @@ pub struct DataSource {
     pub table_stats: Option<StatsInfo>,
     /// Go table access path's already-derived `CountAfterAccess`.
     pub table_path_count_after_access: Option<f64>,
+    /// Go `AccessPath.IsSingleScan`, fixed when stats are first derived.
+    /// Later pruning must not change the reader family of an existing path.
+    pub index_path_single_scan: std::collections::BTreeMap<i64, bool>,
     /// Go index access paths' already-derived `CountAfterAccess`, by index id.
     pub index_path_count_after_access: std::collections::BTreeMap<i64, f64>,
     /// Unadjusted index cardinality bounds retained for Go skyline risk comparison.
@@ -760,6 +763,7 @@ impl DataSource {
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             table_stats: self.table_stats.clone(),
             table_path_count_after_access: self.table_path_count_after_access,
+            index_path_single_scan: self.index_path_single_scan.clone(),
             index_path_count_after_access: self.index_path_count_after_access.clone(),
             index_path_row_estimates: self.index_path_row_estimates.clone(),
             analyzed_index_ids: self.analyzed_index_ids.clone(),
@@ -767,4 +771,112 @@ impl DataSource {
             has_tiflash_replica: self.has_tiflash_replica,
         }
     }
+}
+
+/// Go `DataSource.IsSingleScan`: parent outputs require complete values;
+/// a direct IS NULL argument can use a prefix when the session allows it.
+pub(crate) fn index_path_is_single_scan(
+    ds: &crate::logical::DataSource,
+    source_index: &crate::plan_builder::catalog::SourceIndex,
+    opt_prefix_index_single_scan: bool,
+) -> bool {
+    if opt_prefix_index_single_scan {
+        if let Some(required) = &ds.cols_requiring_full_len {
+            return required
+                .iter()
+                .all(|column| index_covers_expression_column(ds, source_index, column, false))
+                && ds
+                    .all_conds
+                    .iter()
+                    .all(|condition| index_covers_condition(ds, source_index, condition, true));
+        }
+    }
+    (0..ds.columns.len()).all(|position| index_covers_column(ds, source_index, position, false))
+}
+
+fn index_covers_expression_column(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    column: &tidb_expr::column::Column,
+    ignore_len: bool,
+) -> bool {
+    ds.base
+        .base
+        .schema()
+        .and_then(|schema| {
+            schema
+                .columns
+                .iter()
+                .position(|candidate| candidate.unique_id == column.unique_id)
+        })
+        .is_some_and(|position| index_covers_column(ds, index, position, ignore_len))
+}
+
+pub(crate) fn index_covers_condition(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    condition: &tidb_expr::expression::Expression,
+    opt_prefix_index_single_scan: bool,
+) -> bool {
+    use tidb_expr::expression::Expression;
+    match condition {
+        Expression::Column(column) => index_covers_expression_column(ds, index, column, false),
+        Expression::ScalarFunction(function) => {
+            if opt_prefix_index_single_scan && function.func_name.lowercase() == "isnull" {
+                if let [Expression::Column(column)] = function.args.as_slice() {
+                    return index_covers_expression_column(ds, index, column, true);
+                }
+            }
+            function.args.iter().all(|argument| {
+                index_covers_condition(ds, index, argument, opt_prefix_index_single_scan)
+            })
+        }
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) => true,
+    }
+}
+
+fn index_covers_column(
+    ds: &crate::logical::DataSource,
+    source_index: &crate::plan_builder::catalog::SourceIndex,
+    position: usize,
+    ignore_len: bool,
+) -> bool {
+    let Some(column) = ds.columns.get(position) else {
+        return false;
+    };
+    if (ds.pk_is_handle && column.is_primary_key)
+        || column.id == tidb_model::column::EXTRA_HANDLE_ID
+        || column.id == tidb_model::column::EXTRA_PHYS_TBL_ID
+    {
+        return true;
+    }
+    let schema_column = ds
+        .base
+        .base
+        .schema()
+        .and_then(|schema| schema.columns.get(position));
+    let field_type = schema_column.and_then(|column| column.ret_type.as_ref());
+    let full_length = |length: i64| {
+        ignore_len
+            || length == tidb_datatype::UNSPECIFIED_LENGTH
+            || field_type.is_some_and(|field_type| length == field_type.flen())
+    };
+    if source_index.columns.iter().any(|index_column| {
+        full_length(index_column.length) && index_column.name.eq_ignore_ascii_case(&column.name)
+    }) {
+        return true;
+    }
+    let covered_by_handle = schema_column.is_some_and(|column| {
+        ds.common_handle_cols
+            .iter()
+            .zip(&ds.common_handle_lens)
+            .any(|(handle, length)| handle.unique_id == column.unique_id && full_length(*length))
+    });
+    covered_by_handle
+        && !(ds.common_handle_version == 0
+            && tidb_datatype::new_collation_enabled()
+            && field_type.is_some_and(|field_type| {
+                field_type.eval_type() == tidb_datatype::EvalType::String
+                    && !field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
+            }))
 }

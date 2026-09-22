@@ -48,6 +48,7 @@
 //! Joins refuse toward [`crate::find_best_task`]'s own specialized search,
 //! which owns candidate enumeration for them.
 
+use crate::logical::data_source::{index_covers_condition, index_path_is_single_scan};
 use std::collections::{HashMap, HashSet};
 
 use crate::enforce::enforce_property;
@@ -1460,114 +1461,6 @@ fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProp
         }
     }
     true
-}
-
-/// Go `DataSource.IsSingleScan`: parent outputs require complete values;
-/// a direct IS NULL argument can use a prefix when the session allows it.
-fn index_path_is_single_scan(
-    ds: &crate::logical::DataSource,
-    source_index: &crate::plan_builder::catalog::SourceIndex,
-    opt_prefix_index_single_scan: bool,
-) -> bool {
-    if opt_prefix_index_single_scan {
-        if let Some(required) = &ds.cols_requiring_full_len {
-            return required
-                .iter()
-                .all(|column| index_covers_expression_column(ds, source_index, column, false))
-                && ds
-                    .all_conds
-                    .iter()
-                    .all(|condition| index_covers_condition(ds, source_index, condition, true));
-        }
-    }
-    (0..ds.columns.len()).all(|position| index_covers_column(ds, source_index, position, false))
-}
-
-fn index_covers_expression_column(
-    ds: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
-    column: &tidb_expr::column::Column,
-    ignore_len: bool,
-) -> bool {
-    ds.base
-        .base
-        .schema()
-        .and_then(|schema| {
-            schema
-                .columns
-                .iter()
-                .position(|candidate| candidate.unique_id == column.unique_id)
-        })
-        .is_some_and(|position| index_covers_column(ds, index, position, ignore_len))
-}
-
-fn index_covers_condition(
-    ds: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
-    condition: &tidb_expr::expression::Expression,
-    opt_prefix_index_single_scan: bool,
-) -> bool {
-    use tidb_expr::expression::Expression;
-    match condition {
-        Expression::Column(column) => index_covers_expression_column(ds, index, column, false),
-        Expression::ScalarFunction(function) => {
-            if opt_prefix_index_single_scan && function.func_name.lowercase() == "isnull" {
-                if let [Expression::Column(column)] = function.args.as_slice() {
-                    return index_covers_expression_column(ds, index, column, true);
-                }
-            }
-            function.args.iter().all(|argument| {
-                index_covers_condition(ds, index, argument, opt_prefix_index_single_scan)
-            })
-        }
-        Expression::Constant(_) | Expression::CorrelatedColumn(_) => true,
-    }
-}
-
-fn index_covers_column(
-    ds: &crate::logical::DataSource,
-    source_index: &crate::plan_builder::catalog::SourceIndex,
-    position: usize,
-    ignore_len: bool,
-) -> bool {
-    let Some(column) = ds.columns.get(position) else {
-        return false;
-    };
-    if (ds.pk_is_handle && column.is_primary_key)
-        || column.id == tidb_model::column::EXTRA_HANDLE_ID
-        || column.id == tidb_model::column::EXTRA_PHYS_TBL_ID
-    {
-        return true;
-    }
-    let schema_column = ds
-        .base
-        .base
-        .schema()
-        .and_then(|schema| schema.columns.get(position));
-    let field_type = schema_column.and_then(|column| column.ret_type.as_ref());
-    let full_length = |length: i64| {
-        ignore_len
-            || length == tidb_datatype::UNSPECIFIED_LENGTH
-            || field_type.is_some_and(|field_type| length == field_type.flen())
-    };
-    if source_index.columns.iter().any(|index_column| {
-        full_length(index_column.length) && index_column.name.eq_ignore_ascii_case(&column.name)
-    }) {
-        return true;
-    }
-    let covered_by_handle = schema_column.is_some_and(|column| {
-        ds.common_handle_cols
-            .iter()
-            .zip(&ds.common_handle_lens)
-            .any(|(handle, length)| handle.unique_id == column.unique_id && full_length(*length))
-    });
-    covered_by_handle
-        && !(ds.common_handle_version == 0
-            && tidb_datatype::new_collation_enabled()
-            && field_type.is_some_and(|field_type| {
-                field_type.eval_type() == tidb_datatype::EvalType::String
-                    && !field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
-            }))
 }
 
 fn index_path_matches_order(
@@ -3301,8 +3194,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // reads the table rows back through an IndexLookUp double
                 // read (`BuildIndexLookUpTask` at conversion) — the cop task
                 // carries BOTH halves, exactly Go's shape.
-                let single_scan =
-                    index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan);
+                let single_scan = ds
+                    .index_path_single_scan
+                    .get(&source_index.id)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan)
+                    });
                 // The two COP property kinds are disjoint: a covering index
                 // is single-read, while a lookup is multi-read.
                 if (prop.task_tp == TaskType::CopSingleRead && !single_scan)
@@ -5191,6 +5089,52 @@ mod tests {
             !index_path_is_single_scan(&ds, &index, true),
             "full parent output cannot use a prefix"
         );
+
+        ds.indexes = vec![index];
+        ds.table_stats = Some(StatsInfo::new(10.0, []));
+        let mut plan = LogicalPlan::DataSource(ds);
+        let context = crate::logical::rule_tests::test_context(&allocator);
+        plan.recursive_derive_stats_with_context(&[], &context)
+            .unwrap();
+        let LogicalPlan::DataSource(source) = &mut plan else {
+            unreachable!()
+        };
+        assert_eq!(source.index_path_single_scan.get(&0), Some(&false));
+        source.cols_requiring_full_len = Some(Vec::new());
+        plan.recursive_derive_stats_with_context(&[], &context)
+            .unwrap();
+        let LogicalPlan::DataSource(source) = &mut plan else {
+            unreachable!()
+        };
+        assert_eq!(
+            source.index_path_single_scan.get(&0),
+            Some(&false),
+            "final pruning must not change the path retained by join reorder"
+        );
+        assert_eq!(
+            source.clone_shallow().index_path_single_scan,
+            source.index_path_single_scan
+        );
+        source.base.base.set_stats(None);
+        plan.recursive_derive_stats_with_context(&[], &context)
+            .unwrap();
+        let LogicalPlan::DataSource(source) = &mut plan else {
+            unreachable!()
+        };
+        assert_eq!(
+            source.index_path_single_scan.get(&0),
+            Some(&true),
+            "reinitialized statistics derive a new path from current requirements"
+        );
+        source.base.base.set_stats(None);
+        let mut context = context;
+        context.opt_prefix_index_single_scan = false;
+        plan.recursive_derive_stats_with_context(&[], &context)
+            .unwrap();
+        let LogicalPlan::DataSource(source) = &plan else {
+            unreachable!()
+        };
+        assert_eq!(source.index_path_single_scan.get(&0), Some(&false));
     }
 
     #[test]

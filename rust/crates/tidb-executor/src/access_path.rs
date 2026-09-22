@@ -4659,6 +4659,8 @@ pub(crate) struct LookupForkTemplate {
     probe_key_types: Option<Arc<[FieldType]>>,
     decode_context: crate::kv_table::RowDecodeContext,
     statement: PushdownStatementContext,
+    /// Selection on the index side of a double read, before handle lookup.
+    index_filters: Vec<Expression>,
     filters: Vec<Expression>,
     filter_context: Option<crate::StmtContext>,
     filter_types: Vec<FieldType>,
@@ -4698,6 +4700,7 @@ impl LookupForkTemplate {
             produced: crate::executor::RowCount::default(),
             decode_context: self.decode_context.clone(),
             statement: self.statement.clone(),
+            index_filters: self.index_filters.clone(),
             filters: self.filters.clone(),
             filter_context: self.filter_context.clone(),
             filter_chunk: Chunk::new(
@@ -4789,9 +4792,10 @@ pub struct IndexJoinLookupExec {
     /// Statement flags, warning sink, and time zone carried by a batched
     /// common-handle coprocessor request.
     statement: PushdownStatementContext,
-    /// Leaf-local predicates that Go places below the index join's inner
-    /// reader. They are evaluated over the same full table row this source
-    /// returns, so replacing the originally-built leaf cannot drop them.
+    /// Selection on the index side of a double read, before handle lookup.
+    index_filters: Vec<Expression>,
+    /// Remaining leaf-local predicates below the index join's inner reader,
+    /// evaluated over the same physical table-column layout it returns.
     filters: Vec<Expression>,
     filter_context: Option<crate::StmtContext>,
     filter_chunk: Chunk,
@@ -4864,6 +4868,7 @@ impl IndexJoinLookupExec {
             produced: crate::executor::RowCount::default(),
             decode_context,
             statement,
+            index_filters: Vec::new(),
             filters: Vec::new(),
             filter_context: None,
             filter_chunk,
@@ -4940,15 +4945,24 @@ impl IndexJoinLookupExec {
         if ranges.is_empty() {
             return;
         }
-        let keep = self
-            .decode_offsets
-            .clone()
-            .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
-        let predicates = if self.covering {
-            scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref())
+        let filters = if self.covering {
+            &self.filters
         } else {
-            Vec::new()
+            &self.index_filters
         };
+        let keep = if self.covering {
+            self.decode_offsets
+                .clone()
+                .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>())
+        } else {
+            expression_column_offsets(filters)
+        };
+        let predicates = scan_predicates_for_filters(filters, &keep, self.filter_context.as_ref());
+        // A handle-only response cannot recheck missing index predicates.
+        if !self.covering && predicates.len() != filters.len() {
+            self.next_probe = first_probe;
+            return;
+        }
         // Go rebuilds the exact reader family in the completed inner task.
         // A PhysicalIndexReader returns its covered projection from this
         // stream; a PhysicalIndexLookUpReader consumes only handles and then
@@ -5010,6 +5024,7 @@ impl IndexJoinLookupExec {
             probe_key_types: self.probe_key_types().map(Arc::from),
             decode_context: self.decode_context.clone(),
             statement: self.statement.clone(),
+            index_filters: self.index_filters.clone(),
             filters: self.filters.clone(),
             filter_context: self.filter_context.clone(),
             filter_types: self
@@ -5078,6 +5093,11 @@ impl IndexJoinLookupExec {
     pub(crate) fn set_filters(&mut self, filters: Vec<Expression>, context: crate::StmtContext) {
         self.filters = filters;
         self.filter_context = Some(context);
+    }
+
+    /// Retains the physical index Selection before the double-read table side.
+    pub(crate) fn set_index_filters(&mut self, filters: Vec<Expression>) {
+        self.index_filters = filters;
     }
 
     /// Narrows storage decoding while preserving the row shape required by
@@ -5373,10 +5393,53 @@ impl IndexJoinLookupExec {
     /// The physical scan decides whether this multi-range walk is ordered.
     /// Go retains that decision while rebuilding the index-join inner reader;
     /// in particular, StreamAgg requires equal group keys to stay contiguous.
-    fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+    fn next_handle(
+        &mut self,
+        mut covering_row: Option<&mut Vec<Datum>>,
+    ) -> Result<Option<TableHandle>, ExecError> {
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
-                let handle = cursor.next_handle().map_err(ExecError::from)?;
+                let handle = if covering_row.is_some() || !self.index_filters.is_empty() {
+                    let LookupObject::Index(index_id) = self.object else {
+                        return Err(ExecError::internal(
+                            "an index-join index Selection has no index",
+                        ));
+                    };
+                    cursor
+                        .next_handle_in_partition_if(|handle, key, value| {
+                            let row = self
+                                .table
+                                .index_filter_row(
+                                    index_id,
+                                    handle,
+                                    key,
+                                    value,
+                                    self.decode_context.zone(),
+                                )
+                                .map_err(ExecError::from)?;
+                            if !Self::passes_filters(
+                                &self.index_filters,
+                                self.filter_context.as_ref(),
+                                &mut self.filter_chunk,
+                                visible_of(&self.table, &row),
+                            )? {
+                                return Ok(std::ops::ControlFlow::Continue(false));
+                            }
+                            if let Some(output) = covering_row.as_mut() {
+                                output.clear();
+                                if let Some(offsets) = &self.decode_offsets {
+                                    output
+                                        .extend(offsets.iter().map(|offset| row[*offset].clone()));
+                                } else {
+                                    output.extend(visible_of(&self.table, &row).iter().cloned());
+                                }
+                            }
+                            Ok::<_, ExecError>(std::ops::ControlFlow::Continue(true))
+                        })?
+                        .map(|(handle, _)| handle)
+                } else {
+                    cursor.next_handle().map_err(ExecError::from)?
+                };
                 if let Some(handle) = handle {
                     return Ok(Some(handle));
                 }
@@ -5389,11 +5452,8 @@ impl IndexJoinLookupExec {
                     // outer-derived bound exists, otherwise Go's
                     // `buildRangesForIndexJoin` last-slot extension. One
                     // batch of outer rows becomes one multi-range walk.
-                    let mut ranges = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
-                    while ranges.len() < INDEX_LOOKUP_BATCH_SIZE {
-                        let Some((probe, bounds)) = self.next_probe_with_bounds() else {
-                            break;
-                        };
+                    let mut ranges = Vec::with_capacity(self.probes.len());
+                    while let Some((probe, bounds)) = self.next_probe_with_bounds() {
                         ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
                     }
                     if ranges.is_empty() {
@@ -5788,7 +5848,7 @@ impl IndexJoinLookupExec {
                     }
                 }
             }
-            return self.next_handle();
+            return self.next_handle(None);
         }
         loop {
             let Some(probe) = self.next_probe() else {
@@ -5810,9 +5870,16 @@ impl IndexJoinLookupExec {
                     ExecError::unsupported(format!("covering index-join read failed: {error:?}"))
                 });
             }
-            // A backend that cannot serve the single-read request retains the
-            // byte-level correctness path. The planner family remains the
-            // authority; this fallback does not reclassify the physical plan.
+            if self.table.partition().is_none()
+                && !self.table.has_dirty_content(&self.statement.staged_writes)
+            {
+                // Go rebuilds the chosen IndexReader for each outer task;
+                // its rows come from the index, including native fallback.
+                let mut row = Vec::new();
+                return self
+                    .next_handle(Some(&mut row))
+                    .map(|handle| handle.map(|_| row));
+            }
         }
         let complete_common_handle = matches!(self.object, LookupObject::CommonHandle)
             && (self.probe_parts.is_empty()
@@ -5858,19 +5925,30 @@ impl IndexJoinLookupExec {
     }
 
     fn row_passes_filters(&mut self, row: &[Datum]) -> Result<bool, ExecError> {
-        if self.filters.is_empty() {
+        Self::passes_filters(
+            &self.filters,
+            self.filter_context.as_ref(),
+            &mut self.filter_chunk,
+            row,
+        )
+    }
+
+    fn passes_filters(
+        filters: &[Expression],
+        context: Option<&crate::StmtContext>,
+        chunk: &mut Chunk,
+        row: &[Datum],
+    ) -> Result<bool, ExecError> {
+        if filters.is_empty() {
             return Ok(true);
         }
-        let context = self
-            .filter_context
-            .as_ref()
-            .expect("a filtered lookup source has a statement context");
-        self.filter_chunk.reset();
+        let context = context.expect("a filtered lookup source has a statement context");
+        chunk.reset();
         for (offset, value) in row.iter().enumerate() {
-            self.filter_chunk.append_datum(offset, value);
+            chunk.append_datum(offset, value);
         }
-        let chunk_row = self.filter_chunk.get_row(0);
-        for filter in &self.filters {
+        let chunk_row = chunk.get_row(0);
+        for filter in filters {
             if truthy_of(&filter.eval(context, chunk_row)?)? != Some(true) {
                 return Ok(false);
             }
@@ -6603,6 +6681,15 @@ mod tests {
             false,
         );
 
+        table
+            .insert_row_with_row_id(
+                &[Datum::Int(42), Datum::Int(7)],
+                Some(101),
+                0,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+        gets.store(0, Ordering::Relaxed);
         let mut output = tidb_expr::column::Column::new(2, long());
         output.index = 0;
         let mut source = IndexJoinLookupExec::new_with_context(
@@ -6616,7 +6703,11 @@ mod tests {
         source.set_keep_order(true);
         source.open().unwrap();
         source.set_probes(IndexJoinProbes {
-            keys: vec![vec![Datum::Int(7)]],
+            keys: vec![
+                vec![Datum::Int(7)],
+                vec![Datum::Int(2)],
+                vec![Datum::Int(8)],
+            ],
             bound_values: Vec::new(),
         });
 
@@ -6629,21 +6720,171 @@ mod tests {
             0,
             "PhysicalIndexReader must not open a table-side handle lookup"
         );
-        let request = request
+        let captured = request
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .clone()
             .expect("the covering index request was opened");
         assert!(
-            request.output_offsets.is_none(),
+            captured.output_offsets.is_none(),
             "the index response retains covered values instead of projecting handles only"
         );
         assert!(
-            request.keep_order,
+            captured.keep_order,
             "the physical scan order must reach TiKV"
         );
-        assert!(request.desc, "the physical scan direction must reach TiKV");
+        assert!(captured.desc, "the physical scan direction must reach TiKV");
+        assert_eq!(captured.ranges.len(), 3);
+        assert!(
+            captured.ranges.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "Go orders encoded range starts even for a descending reader"
+        );
         source.close().unwrap();
+
+        // The double-read family keeps its own index Selection before it
+        // projects handles for the table request.
+        let mut b = tidb_expr::column::Column::new(2, long());
+        b.index = 1;
+        source.covering = false;
+        source.set_filters(Vec::new(), crate::StmtContext::for_query());
+        source.set_index_filters(vec![Expression::ScalarFunction(
+            tidb_expr::expression::ScalarFunction::new(
+                tidb_ast::CiString::new("gt"),
+                long(),
+                vec![
+                    Expression::Column(b),
+                    Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(2), long())),
+                ],
+            ),
+        )]);
+        source.set_column_projection(Some(vec![0]), []);
+        source.open().unwrap();
+        source.set_probes(IndexJoinProbes {
+            keys: vec![vec![Datum::Int(7)]],
+            bound_values: Vec::new(),
+        });
+        source.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 1);
+        assert_eq!(chunk.get_row(0).get_int64(0), 42);
+        let captured = request.lock().unwrap().clone().unwrap();
+        assert_eq!(captured.predicates.len(), 1);
+        assert_eq!(captured.output_offsets, Some(vec![1]));
+        assert_eq!(gets.load(Ordering::Relaxed), 1);
+        source.close().unwrap();
+    }
+
+    #[test]
+    fn native_covering_index_join_preserves_filters_order_and_probe_resets() {
+        for descending in [false, true] {
+            let (catalog, _, gets) = table_of(8, true);
+            let crate::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
+                panic!("storage-backed table");
+            };
+            let mut b = tidb_expr::column::Column::new(2, long());
+            b.index = 1;
+            let filter = Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
+                tidb_ast::CiString::new("gt"),
+                long(),
+                vec![
+                    Expression::Column(b.clone()),
+                    Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(2), long())),
+                ],
+            ));
+            b.index = 0;
+            let mut source = IndexJoinLookupExec::new_with_context(
+                ExecutorMeta::new(Schema::new(vec![b]), 0, 1, 1),
+                table.as_ref().clone(),
+                LookupObject::Index(1),
+                crate::RowDecodeContext::for_test_query_utc(),
+            );
+            source.set_filters(vec![filter], crate::StmtContext::for_query());
+            source.set_column_projection(Some(vec![1]), []);
+            source.mark_covering();
+            source.set_keep_order(descending);
+            let probes = |values: &[i64]| IndexJoinProbes {
+                keys: values
+                    .iter()
+                    .map(|value| vec![Datum::Int(*value)])
+                    .collect(),
+                bound_values: Vec::new(),
+            };
+            for _ in 0..2 {
+                source.open().unwrap();
+                source.set_probes(probes(&[5, 2, 4]));
+                let mut chunk = source.new_chunk();
+                source.next(&mut chunk).unwrap();
+                assert_eq!(chunk.num_rows(), 1);
+                assert_eq!(
+                    chunk.get_row(0).get_int64(0),
+                    if descending { 5 } else { 4 }
+                );
+                // Replacing a partially drained task must drop the old range
+                // cursor and preserve the new task's filter/projection.
+                source.set_probes(probes(&[7, 1, 3]));
+                let mut result = Vec::new();
+                loop {
+                    source.next(&mut chunk).unwrap();
+                    if chunk.num_rows() == 0 {
+                        break;
+                    }
+                    result.push(chunk.get_row(0).get_int64(0));
+                }
+                assert_eq!(result, if descending { vec![7, 3] } else { vec![3, 7] });
+                source.set_probes(probes(&[]));
+                source.next(&mut chunk).unwrap();
+                assert_eq!(chunk.num_rows(), 0);
+                source.close().unwrap();
+                assert_eq!(
+                    gets.load(Ordering::Relaxed),
+                    0,
+                    "native IndexReader fetches no table rows"
+                );
+            }
+            source.open().unwrap();
+            let values = (1..INDEX_LOOKUP_BATCH_SIZE as i64 + 4)
+                .rev()
+                .collect::<Vec<_>>();
+            source.set_probes(probes(&values));
+            let mut chunk = source.new_chunk();
+            let mut result = Vec::new();
+            loop {
+                source.next(&mut chunk).unwrap();
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                result.push(chunk.get_row(0).get_int64(0));
+            }
+            assert_eq!(
+                result,
+                if descending {
+                    vec![8, 7, 6, 5, 4, 3]
+                } else {
+                    vec![3, 4, 5, 6, 7, 8]
+                },
+                "all probe ranges must be ordered before scanning the task"
+            );
+            source.close().unwrap();
+            assert_eq!(gets.load(Ordering::Relaxed), 0);
+
+            // A double read must reject every row on the index side before
+            // opening any table lookup, including a native fallback.
+            source.covering = false;
+            source.set_filters(Vec::new(), crate::StmtContext::for_query());
+            source.set_index_filters(vec![Expression::Constant(
+                tidb_expr::constant::Constant::new(Datum::Int(0), long()),
+            )]);
+            source.set_column_projection(Some(vec![2]), []);
+            source.open().unwrap();
+            source.set_probes(probes(&[7, 1, 3]));
+            source.next(&mut chunk).unwrap();
+            assert_eq!(chunk.num_rows(), 0);
+            assert_eq!(
+                gets.load(Ordering::Relaxed),
+                0,
+                "index Selection precedes record lookup"
+            );
+            source.close().unwrap();
+        }
     }
 
     #[test]

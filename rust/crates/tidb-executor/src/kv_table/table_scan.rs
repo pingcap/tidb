@@ -1992,6 +1992,9 @@ impl KvTable {
             }
             key_ranges.push((low, high));
         }
+        // Go buildKvRangesForIndexJoin sorts encoded starts after substituting
+        // probe keys. The runtime key-column order can differ from probe order.
+        key_ranges.sort_by(|left, right| left.0.cmp(&right.0));
         // Go `checkCoverIndex` (`physical_index_scan.go`): the coprocessor's
         // Unique flag travels only when EVERY range names the FULL index key
         // -- a prefix range of a unique index is not a unique get, and
@@ -2510,8 +2513,8 @@ impl KvTable {
         // one partition ends and the next begins.
         let mut partition_of_iterator = Vec::new();
         for (ordinal, physical_id) in scan_physical_ids.iter().copied().enumerate() {
+            let mut key_ranges = Vec::with_capacity(ranges.len());
             for range in ranges {
-                partition_of_iterator.push(ordinal);
                 let mut low = Key::from_bytes(encode_index_seek_key(
                     physical_id,
                     index_id,
@@ -2528,6 +2531,13 @@ impl KvTable {
                 if !range.high_exclusive {
                     high = high.prefix_next();
                 }
+                key_ranges.push((low, high));
+            }
+            if ordered {
+                key_ranges.sort_by(|left, right| left.0.cmp(&right.0));
+            }
+            for (low, high) in key_ranges {
+                partition_of_iterator.push(ordinal);
                 let iterator = if descending {
                     self.store.iter_reverse(Some(&high), Some(&low))
                 } else {

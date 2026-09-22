@@ -8738,7 +8738,7 @@ cannot distinguish Go's nil (unpruned) list from an empty pruned list.
 - [x] Carry prefix-safe null predicates through remote and native covering execution without exposing truncated output values.
 - [x] Run scoped regressions, compilation and lint; review the implementation.
 - [x] Commit the reviewed checkpoint and rebase onto the refreshed working branch.
-- [ ] Publish the validated rebased commit (the final operation of this milestone).
+- [x] Publish the validated rebased commit (`91042355e8`, verified at origin).
 
 ### Decision Log
 
@@ -8893,3 +8893,214 @@ passed: the 32-test planner dispatch suite and 16-test prefix-index SQL suite,
 using the commands listed above. The checkpoint is committed and ready to push;
 publication is the final operation. All remaining package/workload obligations
 stay open.
+
+
+## Continue the IndexReader and index-join package audit (2026-09-22)
+
+
+### Purpose and context
+
+
+The previous milestone is pushed and is authoritative progress. The refreshed
+working branch and master remain `91042355e8` and `cc83514fa9`. Keep the complete
+physicalop, executor and dependent logical/core package claims open. A covering
+index-join inner reader currently uses index values only with a remote backend;
+its native fallback still collects handles and fetches records. Go rebuilds the
+selected PhysicalIndexReader through buildNoRangeIndexReader and consumes the
+index result directly. This wastes table reads on an already proven covering
+path and must be reconciled within the whole-package audit.
+
+### Progress
+
+
+- [x] Pull latest code and verify the prior published checkpoint.
+- [x] Inspect the complete inner-reader lifecycle, filtering and projection paths.
+- [x] Reproduce native covering inner-reader table gets and add lifecycle/output regressions.
+- [x] Reuse index-KV decoding for eligible covering index joins, retaining required fallback semantics.
+- [x] Run the cc83514fa9 master SQL comparison and targeted native/transport validation.
+- [x] Repeat the Go SQL comparison at freshly fetched master 64e8c4c05e.
+- [x] Run compilation, scoped formatting, lint and self-review.
+- [ ] Commit and push this checkpoint; verify the published branch.
+
+### Decision Log
+
+
+Reuse the existing multi-range cursor, index-KV row decoder, projection mapping
+and filter execution. Preserve complete value selection when the index and
+clustered handle contain duplicate columns. Dirty/partition reads must retain
+their existing correctness paths unless separately proved. Repeated probe
+batches, reader reopen, reverse order and pruned outputs require regression
+coverage. No new SQL feature or reader family is introduced.
+
+A detached current-master worktree at `/private/tmp/tidb-master-cc83514` provides
+an authoritative Go SQL oracle without relying on the integration branch's older
+Go source. Apply the repository's build and failpoint prerequisites before any
+Go package test. The complete package artifact inventory and benchmark gates
+remain required; a scoped SQL oracle is supplementary evidence.
+
+### Surprises & Discoveries
+
+
+The existing index-join covering regression tests only a fake remote stream.
+The native fallback therefore still fetched table rows despite the selected
+single-read physical plan. The latest checked-in TPC-H performance receipt also
+identifies index-join probe costs, but it attributes substantial remote cost to
+request admission; native lookup removal alone is not evidence of fixing those
+measurements.
+
+### Validation and remaining scope
+
+
+Extend the existing access-path and index-join SQL suites, verify red/green
+storage-operation counts and exact values, and compare representative SQL with
+current master. Check executor/planner/session compilation and make lint. Keep
+all original package gates, real TiKV execution and matched workload throughput
+measurements open until verified. Record exact commands and any unavailable
+validation in the outcome receipt.
+
+The native regression first returned index key 5 where ascending order required
+4. Master buildKvRangesForIndexJoin sorts the encoded range starts after runtime
+key substitution. Native ordered scans now sort those starts per physical table;
+remote requests carry the sorted list in either direction. One native index-join
+task builds all its ranges before opening the cursor, so a static-range expansion
+cannot break ordering at the 20,000-range batching boundary. The regression also
+checks 20,003 ranges, partial consumption followed by new probes, empty probes,
+reopen, ascending/descending filters and compact projections.
+
+The live master oracle exposed a second mismatch. On an inner join selecting
+`o.k,i.b` with `i.a IS NOT NULL` and index `(k,a(2),b)`, master chooses IndexLookUp;
+Rust had selected IndexReader. Temporary logging in master IsSingleScan and
+PruneColumns confirmed that join reorder first derives stats with full column
+`a` still required. Final pruning removes that requirement, but Go's cached
+AccessPath.IsSingleScan is unchanged. The fix records the boolean per index
+alongside the first statistics profile, passes the actual session setting through
+RuleContext, copies it with DataSource and clears it when InitStats resets the
+profile. Physical conversion uses that retained fact. The coverage helpers now
+live with DataSource and serve both statistics derivation and filter placement.
+A unit regression checks memoization, shallow cloning, reinitialization and the
+session switch. Standalone prefix-null predicates retain their previous behavior.
+
+Selecting master's double-read family exposed a third bug: rebuilding an inner
+IndexLookUpReader collected only its table-side Selection. The index-side
+`NOT IS NULL(a)` vanished, returning NULL rows that master filters out. The
+builder now retains both sides separately. Native index predicates evaluate the
+index KV before producing a handle; remote handle-only responses require every
+index predicate to be lowered and applied. If that proof is absent, the native
+cursor evaluates them. The table-side predicates and output projection retain
+their own physical column layout. A rejected index row opens no table lookup.
+The SQL regression exercises these cases with both clean and dirty statement
+contexts, preserving full string outputs, duplicate matches and outer NULL rows.
+
+### Current-master oracle and acceptance evidence
+
+
+The initial oracle ran against cc83514fa9 with an overlay of the existing
+`pkg/executor/windows/window_sql_test.go`; no tracked Go source was modified.
+It logs sorted rows and EXPLAIN brief reader families for the eight standalone
+prefix cases under each switch value and four index-join queries. Those SQL
+fixtures and expected rows/reader families are retained in
+`driver/tests/index_prefix_reads.rs`. The four join families are respectively
+IndexLookUp, IndexLookUp, IndexLookUp, IndexReader. The overlay's comparison is
+supplementary evidence, not an assertion of complete optimizer-plan equality.
+
+The final fetch advanced master through object-store and DDL fixes to
+`64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59`. No audited planner/executor source or
+Go module input changed. All 58 physicalop artifact hashes and five direct input
+hashes were rechecked against that revision, and the inventory reference was
+updated. The owned clean oracle worktree was advanced to that master revision
+for a final runtime comparison.
+
+The initial native order regression failed before the range-order/native-read
+fix. The new SQL regression first failed on reader family, then exposed lost
+index predicates when the family was corrected; both are now green. A separate
+mutation probe disables only direct native covering reads, preserving ordering
+and filters, to isolate the table-get regression; its exact failing/passing
+receipt is retained with the final validation output.
+
+Exact Rust validation commands, run from `rust/` (all passed; counts are scoped
+and overlap, so they are not a unique-test total):
+
+    cargo test --offline --locked -j12 -p tidb-executor --lib access_path::tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib driver::tests::index_prefix_reads --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_join --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib remote_scan::tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib kv_table::table_scan::remote_cursor_tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib driver::tests::joins --message-format=short
+    cargo test --offline --locked -j12 -p tidb-planner --lib find_best_task::dispatch::tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-planner --lib logical::rule --message-format=short
+    cargo test --offline --locked -j12 -p tidb-planner --test all core_logical_cte_topn_prune_source --message-format=short
+    cargo check --offline --locked -j12 -p tidb-executor -p tidb-exec -p tidb-session --message-format=short
+
+The suites passed 36, 17, 22, 31, 33, 17, 32, 160 and 2 tests respectively.
+An initial filter `kv_table::table_scan::tests` selected zero tests and is not
+counted; the corrected remote_cursor_tests filter above selected 33 tests.
+Targeted regression commands also ran with filters
+`native_covering_index_join_preserves_filters_order_and_probe_resets`,
+`index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls`, and
+`prefix_single_scan_distinguishes_unpruned_full_values_and_null_arguments`.
+Logs use `/private/tmp/tidb-index-join-*.log`; SQL red/green logs also use
+`/private/tmp/tidb-native-covering-join-*.log`.
+
+Repository-root validation:
+
+    make lint
+    python3 /private/tmp/tidb-index-join-format.py --check
+    git diff --check
+
+The formatter is a temporary changed-line/function rustfmt wrapper; it excludes
+unchanged files and the user's preexisting untracked Rust files. Lint initially
+hit sandbox network restrictions while installing pinned revive, then passed
+with cache/network access. Existing Rust warnings remain. No Go/Bazel/module
+artifact in the working branch changed, so its bazel_prepare gate is not
+triggered by this diff.
+
+From the clean temporary master worktree, the mandatory fresh-workspace
+`make bazel_prepare` was attempted and failed because `bazel` is unavailable.
+That gate remains unsatisfied; the direct Go runtime oracle is reported
+separately. The selected windows package and its BUILD metadata contain no
+failpoint/testfailpoint reference, so no failpoint transformation was required.
+After downloading the pinned toolchain/dependencies, the exact oracle command
+ran offline with its cache and local test-server access:
+
+    GOTOOLCHAIN=go1.26.0 GOPROXY=off GOCACHE=/private/tmp/tidb-gocache go test -overlay=/private/tmp/tidb-master-covering-overlay.json -run '^TestCoveringIndexReaderMasterOracle$' -tags=intest,deadlock -count=1 -v ./pkg/executor/windows
+
+The overlay maps only the existing window_sql_test.go to a temporary copy with
+TestCoveringIndexReaderMasterOracle appended. Its body creates the `pn`, `o` and
+`i` fixtures from the Rust regression, sets the prefix-single-scan variable to
+0 then 1, and logs `tk.MustQuery(sql).Sort().Rows()` and
+`tk.MustQuery("explain format='brief' " + sql).Rows()` for each case. The initial
+oracle log is `/private/tmp/tidb-master-covering-go.log`; the final refreshed
+master log is `/private/tmp/tidb-master-covering-latest-go.log`. Debug overlays
+used to trace pruning/stats ordering are excluded from that final run.
+
+### Outcomes and remaining whole-package gates
+
+
+The implemented behavior is bounded seed evidence within the open whole-package
+audit: first-derivation reader-family parity, preserved index Selection, ordered
+runtime ranges and native covering index-join rows without record gets. The
+changed files are executor access_path, physical_builder, planner_bridge,
+index_prefix_reads and kv_table/table_scan; planner dispatch, data_source,
+rewrite, rule, rule_join_reorder and its two RuleContext test fixtures; plus this
+ExecPlan and the current-master source inventory.
+
+Correctness risk centers on retained coverage facts across pruning and the two
+predicate schemas; regression coverage now exercises those boundaries. Native
+covering acceleration remains restricted to clean, unpartitioned readers. Dirty
+and partitioned execution retains existing fallback paths. Full original
+upstream-package tests/build/platform/generated gates, real TiKV validation and
+matched sysbench/TPC-C/TPC-H/YCSB measurements remain open. No complete package
+or workload throughput improvement is claimed.
+
+The final current-master oracle passed at 64e8c4c05e (0.459s package runtime);
+all 20 logged row/reader observations exactly match the initial cc83514fa9 run.
+The Rust regression comment and the source inventory now reference the final
+master pin. The implementation and acceptance limits above are unchanged.
+
+The isolated native covering-read mutation failed with two record-get batches
+where zero were required (`tidb-index-join-covering-get-red.log`). Restoring the
+implementation passed all 36 access-path tests (`tidb-index-join-access-tests.log`).
+This is an operation-count regression proof; it is not a throughput benchmark.
+Disk remains at approximately 273 GiB available after the earlier 318 GB cleanup;
+active Rust build output is approximately 17 GB, and the reusable Go oracle cache
+is 3.5 GB. No user data or preexisting untracked Rust file was changed.

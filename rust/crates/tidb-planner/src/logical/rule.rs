@@ -613,6 +613,8 @@ pub struct RuleContext<'a> {
     pub partition_pruning: Option<&'a dyn super::rule_partition_processor::PartitionPruning>,
     /// Go `SessionVars.OptIndexPruneThreshold`.
     pub opt_index_prune_threshold: i32,
+    /// Go `SessionVars.OptPrefixIndexSingleScan`, read while deriving access paths.
+    pub opt_prefix_index_single_scan: bool,
     /// Go `SessionVars.RangeMaxSize`; zero means unlimited.
     pub range_max_size: i64,
     /// Go SessionVars.SelectivityFactor for uncovered or partially covered predicates.

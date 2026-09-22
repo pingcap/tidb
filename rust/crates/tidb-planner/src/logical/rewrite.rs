@@ -2432,6 +2432,7 @@ struct DeriveStatsFold<'a> {
     /// Go `SCtx().GetSessionVars().TiDBOptJoinReorderThreshold`, read by
     /// `cardinality.EstimateFullJoinRowCount`.
     join_reorder_threshold: i32,
+    opt_prefix_index_single_scan: bool,
     range_max_size: i64,
     selectivity_factor: f64,
     range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
@@ -2608,6 +2609,21 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 )
                             },
                         );
+                        // Go derivePathStatsAndTryHeuristics fixes IsSingleScan
+                        // with the first stats profile. Join reorder can derive
+                        // this before the final column-pruning pass.
+                        op.index_path_single_scan = op
+                            .indexes
+                            .iter()
+                            .map(|index| {
+                                (
+                                    index.id,
+                                    super::data_source::index_path_is_single_scan(
+                                        op, index, self.opt_prefix_index_single_scan,
+                                    ),
+                                )
+                            })
+                            .collect();
                         op.base.base.set_stats(Some(stats.clone()));
                         StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
                     }
@@ -2866,6 +2882,7 @@ pub fn recursive_derive_stats(
         plan,
         col_groups,
         join_reorder_threshold,
+        true,
         64 * 1024 * 1024,
         crate::cost_factors::SELECTION_FACTOR,
         None,
@@ -2883,6 +2900,7 @@ pub fn recursive_derive_stats_with_context(
         plan,
         col_groups,
         context.join_reorder_threshold,
+        context.opt_prefix_index_single_scan,
         context.range_max_size,
         context.selectivity_factor,
         context.range_fallback_handler,
@@ -2894,6 +2912,7 @@ fn recursive_derive_stats_with_range_quota(
     plan: LogicalPlan,
     col_groups: Vec<Vec<tidb_expr::column::Column>>,
     join_reorder_threshold: i32,
+    opt_prefix_index_single_scan: bool,
     range_max_size: i64,
     selectivity_factor: f64,
     range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
@@ -2903,6 +2922,7 @@ fn recursive_derive_stats_with_range_quota(
         builder,
         failure: RewriteFailure::default(),
         join_reorder_threshold,
+        opt_prefix_index_single_scan,
         range_max_size,
         selectivity_factor,
         range_fallback_handler,
