@@ -75,10 +75,14 @@ which is exactly the workload TiDB users request it for (#18207 is `feature/acce
 Known v1 divergences from MySQL (documented, to be narrowed later):
 
 - Multi-table `FOR UPDATE SKIP LOCKED` (joins) returns `ErrNotSupportedYet` in v1.
-- `LIMIT n` above the lock operator locks what was scanned and then filters, so it may
-  return fewer than `n` rows even when further unlocked rows exist, whereas MySQL's
-  scan continues past skipped rows to fill the limit. Fixing this requires lock-during-
-  scan (coprocessor participation) and is explicitly future work.
+- `LIMIT n` composes with skip-locked the way MySQL's scan-until-limit does: the
+  planner keeps the Limit above the lock operator for skip-locked plans (for other
+  lock types `LogicalLock.PushDownTopN` keeps pushing it below, which is correct
+  because those never drop rows at the lock), and the executor locks candidate rows
+  incrementally, replacing skipped rows with later candidates until the limit is
+  filled. If the required ordering cannot be provided by the child (no usable index),
+  the fallback is a TopN above the lock, which locks all matching rows before sorting
+  — analogous to MySQL locking all rows examined by a filesort.
 - MySQL skips on gap/next-key lock conflicts; TiDB's pessimistic model has no gap
   locks, so only record locks are considered.
 
@@ -194,17 +198,17 @@ Planner:
 
 Executor:
 
-- `SelectLockExec` in skip-locked mode buffers child rows, issues one `LockKeys` with
-  `LockCtx.SkipLocked`, then emits only rows whose keys were acquired. (Today it
-  streams rows up before locking at end-of-stream, which cannot filter.)
-  `runPessimisticSelectForUpdate` already drains the executor before returning results
-  to the client, so no skipped row can escape before locks resolve. The buffer is not
-  unbounded: it is attached to the statement's memory tracker, so it counts against
-  `tidb_mem_quota_query` and exceeding the quota triggers the configured OOM action
-  (by default the query is cancelled) — i.e. explicit rejection rather than unbounded
-  growth. This matches the bound that `runPessimisticSelectForUpdate`'s own row
-  buffering already has. Disk spilling for the buffer is possible follow-up work, but
-  note the target workload is `LIMIT n` queue pops with small buffered sets.
+- `SelectLockExec` in skip-locked mode locks candidate rows incrementally instead of
+  streaming rows up before locking at end-of-stream (which cannot filter): it consumes
+  the child through a cursor, locks only as many candidate rows as the output chunk
+  still requires in each skip-locked `LockKeys` call (`LockCtx.SkipLocked`), emits the
+  acquired rows, and repeats for the shortfall until the requirement is filled or the
+  child is exhausted. Examined rows get locked whether or not a Limit above ends up
+  returning them (as in MySQL); unexamined rows stay unlocked, so concurrent
+  `LIMIT 1` queue workers pop disjoint rows while each locks only the row it returns.
+  Memory use is bounded by a single chunk — there is no statement-wide buffering.
+  `runPessimisticSelectForUpdate` drains the executor before returning results to the
+  client, so no skipped row can escape before locks resolve.
 - `PointGet`/`BatchPointGet`: a skipped row/index key produces no output row and does
   not enter the pessimistic lock cache. For unique-index access, the executor forms
   (index key → row key) pairs: if the index key locks but the row key skips,
@@ -279,8 +283,10 @@ unsafe-for-SBR warning.
 
 ## Impacts & Risks
 
-- `SelectLockExec` buffering changes the memory profile of large skip-locked scans;
-  mitigated by memory tracking and the typical `LIMIT n` usage.
+- Each incremental skip-locked lock batch is a separate `LockKeys` round trip; a scan
+  over a heavily locked region issues more, smaller pessimistic lock RPCs than the
+  wait-based lock types. The batch size follows the parent's required rows, so the
+  overhead concentrates on small-limit statements, which are also the cheap ones.
 - RPC-retry idempotency: a re-sent skip-locked request may skip a key it had locked in
   a lost response, leaving an owned-but-unreported lock until TTL expiry — the same
   exposure class as the existing `LockedWithConflict` lost-response TODO in client-go.
