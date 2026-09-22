@@ -86,6 +86,26 @@ impl RegionBackoffKind {
         Self::PdRpc,
     ];
 
+    /// Pinned client-go Config.name used in snapshot runtime statistics.
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::TikvRpc => "tikvRPC",
+            Self::RegionMiss => "regionMiss",
+            Self::RegionScheduling => "regionScheduling",
+            Self::TikvServerBusy => "tikvServerBusy",
+            Self::TikvDiskFull => "tikvDiskFull",
+            Self::RegionRecoveryInProgress => "regionRecoveryInProgress",
+            Self::StaleCommand => "staleCommand",
+            Self::MaxTimestampNotSynced => "maxTsNotSynced",
+            Self::RegionNotInitialized => "regionNotInitialized",
+            Self::IsWitness => "isWitness",
+            Self::TxnLock => "txnLock",
+            Self::TxnLockFast => "txnLockFast",
+            Self::TxnNotFound => "txnNotFound",
+            Self::PdRpc => "pdRPC",
+        }
+    }
+
     const fn is_sleep_excluded(self) -> bool {
         matches!(self, Self::TikvServerBusy)
     }
@@ -123,6 +143,9 @@ pub struct RegionBackoffBudget {
     excluded_sleep_ms: u64,
     attempts: [u32; RegionBackoffKind::COUNT],
     sleep_ms_by_kind: [u64; RegionBackoffKind::COUNT],
+    // Like Go's lazy backoffTimes map, clean reads need no counter storage.
+    counts_by_kind: Option<Box<[u64; RegionBackoffKind::COUNT]>>,
+    pending_delay: Option<(RegionBackoffKind, u64)>,
     jitter_state: u64,
 }
 
@@ -136,6 +159,8 @@ impl RegionBackoffBudget {
             excluded_sleep_ms: 0,
             attempts: [0; RegionBackoffKind::COUNT],
             sleep_ms_by_kind: [0; RegionBackoffKind::COUNT],
+            counts_by_kind: None,
+            pending_delay: None,
             jitter_state: entropy_seed(),
         }
     }
@@ -155,6 +180,8 @@ impl RegionBackoffBudget {
             excluded_sleep_ms: 0,
             attempts: [0; RegionBackoffKind::COUNT],
             sleep_ms_by_kind: [0; RegionBackoffKind::COUNT],
+            counts_by_kind: None,
+            pending_delay: None,
             jitter_state: seed,
         }
     }
@@ -165,6 +192,7 @@ impl RegionBackoffBudget {
     pub fn fork(&self) -> Self {
         Self {
             attempts: [0; RegionBackoffKind::COUNT],
+            pending_delay: None,
             jitter_state: entropy_seed(),
             ..self.clone()
         }
@@ -223,12 +251,60 @@ impl RegionBackoffBudget {
         let delay_ms = computed.min(duration_ms(max_sleep));
 
         self.attempts[index] = attempt.saturating_add(1);
+        let counts = self
+            .counts_by_kind
+            .get_or_insert_with(|| Box::new([0; RegionBackoffKind::COUNT]));
+        counts[index] = counts[index].wrapping_add(1);
+        self.pending_delay = Some((kind, delay_ms));
         self.total_sleep_ms = self.total_sleep_ms.saturating_add(delay_ms);
         self.sleep_ms_by_kind[index] = self.sleep_ms_by_kind[index].saturating_add(delay_ms);
         if kind.is_sleep_excluded() {
             self.excluded_sleep_ms = self.excluded_sleep_ms.saturating_add(delay_ms);
         }
         Ok(Duration::from_millis(delay_ms))
+    }
+
+    /// Reconcile a reserved wait at its caller-owned completion boundary.
+    /// Go counts an interrupted wait but charges zero sleep and does not advance
+    /// its exponential schedule. Cancellation before reservation counts nothing.
+    pub(crate) fn finish_wait(&mut self, completed: bool) {
+        if let Some((kind, delay_ms)) = self.pending_delay.take() {
+            if !completed {
+                let index = kind as usize;
+                self.total_sleep_ms -= delay_ms;
+                self.sleep_ms_by_kind[index] -= delay_ms;
+                self.attempts[index] = self.attempts[index].saturating_sub(1);
+                if kind.is_sleep_excluded() {
+                    self.excluded_sleep_ms -= delay_ms;
+                }
+            }
+        }
+    }
+
+    /// The caller selects one completed descendant, as UpdateUsingForked does.
+    /// Retain the parent's delay schedules; replace only inherited history.
+    pub(crate) fn update_from_forked(&mut self, forked: &Self) {
+        self.total_sleep_ms = forked.total_sleep_ms;
+        self.excluded_sleep_ms = forked.excluded_sleep_ms;
+        self.sleep_ms_by_kind = forked.sleep_ms_by_kind;
+        self.counts_by_kind.clone_from(&forked.counts_by_kind);
+        self.pending_delay = None;
+    }
+
+    pub(crate) fn runtime_stats(&self) -> impl Iterator<Item = (&'static str, u64, Duration)> + '_ {
+        RegionBackoffKind::ALL.into_iter().filter_map(|kind| {
+            let count = self
+                .counts_by_kind
+                .as_ref()
+                .map_or(0, |counts| counts[kind as usize]);
+            (count != 0).then(|| {
+                (
+                    kind.name(),
+                    count,
+                    Duration::from_millis(self.sleep_ms_by_kind[kind as usize]),
+                )
+            })
+        })
     }
 
     /// Returns all reserved sleep, including client-go-excluded busy sleep.
@@ -331,4 +407,76 @@ pub fn retry_backoff_upper_bound_ms(attempts: u32) -> u64 {
         .checked_shl(attempts)
         .unwrap_or(u64::MAX)
         .min(RETRY_BACKOFF_CAP_MS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_and_interrupted_waits_keep_separate_counts_and_sleep() {
+        let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        assert_eq!(
+            budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            Duration::from_millis(2)
+        );
+        budget.finish_wait(true);
+        assert_eq!(
+            budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            Duration::from_millis(4)
+        );
+        budget.finish_wait(false);
+        assert_eq!(budget.total_sleep(), Duration::from_millis(2));
+        assert_eq!(
+            budget.runtime_stats().collect::<Vec<_>>(),
+            vec![("regionMiss", 2, Duration::from_millis(2))]
+        );
+        // Go's canceled backoffFn does not advance its exponential schedule.
+        assert_eq!(
+            budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            Duration::from_millis(4)
+        );
+        budget.finish_wait(true);
+        budget
+            .next_delay(RegionBackoffKind::TikvServerBusy)
+            .unwrap();
+        budget.finish_wait(false);
+        assert_eq!(budget.remaining(), Duration::from_millis(19_994));
+        assert_eq!(
+            budget.runtime_stats().collect::<Vec<_>>(),
+            vec![
+                ("regionMiss", 3, Duration::from_millis(6)),
+                ("tikvServerBusy", 1, Duration::ZERO),
+            ]
+        );
+    }
+
+    #[test]
+    fn forked_history_replaces_the_parent_without_replacing_its_schedule() {
+        let mut parent = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        parent.next_delay(RegionBackoffKind::RegionMiss).unwrap();
+        parent.finish_wait(true);
+        let mut first = parent.fork();
+        let mut last = parent.fork();
+        assert_eq!(
+            first.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            Duration::from_millis(2)
+        );
+        first.finish_wait(true);
+        last.next_delay(RegionBackoffKind::StaleCommand).unwrap();
+        last.finish_wait(true);
+        parent.update_from_forked(&first);
+        parent.update_from_forked(&last);
+        assert_eq!(
+            parent.runtime_stats().collect::<Vec<_>>(),
+            vec![
+                ("regionMiss", 1, Duration::from_millis(2)),
+                ("staleCommand", 1, Duration::from_millis(2)),
+            ]
+        );
+        assert_eq!(
+            parent.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            Duration::from_millis(4)
+        );
+    }
 }

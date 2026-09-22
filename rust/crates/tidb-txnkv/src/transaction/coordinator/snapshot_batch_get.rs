@@ -34,7 +34,8 @@ use super::super::command_client::{
 };
 use super::super::region_batches::{group_snapshot_keys, RegionKeyBatch};
 use super::snapshot_read::{
-    resolve_snapshot_locks, snapshot_recovery_error, wait_snapshot_lock_ttl,
+    record_snapshot_backoff, resolve_snapshot_locks, snapshot_recovery_error,
+    wait_snapshot_lock_ttl,
 };
 use super::{recover_region_error_with, OptimisticCoordinatorError};
 
@@ -71,26 +72,17 @@ where
         rpc_count: AtomicU64::new(0),
         call,
     };
+    let mut backoff = RegionBackoffBudget::campaign_default();
     let result = if groups.len() == 1 {
         // Go bypasses the async API for one batch. Do not allocate a future,
         // clone a client capability or create a worker for this common path.
-        run_batch(
-            runtime,
-            &state,
-            groups.pop().unwrap(),
-            RegionBackoffBudget::campaign_default(),
-            None,
-        )
+        run_batch(runtime, &state, groups.pop().unwrap(), &mut backoff, None)
     } else if enable_async {
-        run_initial_batches(runtime, &state, groups)
+        run_initial_batches(runtime, &state, groups, &mut backoff)
     } else {
-        run_sync_batches(
-            runtime,
-            &state,
-            groups,
-            &RegionBackoffBudget::campaign_default(),
-        )
+        run_sync_batches(runtime, &state, groups, &mut backoff)
     };
+    record_snapshot_backoff(stats.map(Arc::as_ref), &backoff);
     *rpc_count = rpc_count.wrapping_add(state.rpc_count.load(Ordering::Relaxed));
     result?;
     Ok(state.values.into_inner().unwrap_or_else(|p| p.into_inner()))
@@ -163,7 +155,7 @@ impl BatchReply {
 
 enum BatchEvent {
     Response(RegionKeyBatch, BatchReply),
-    Retried(ReadResult),
+    Retried(ReadResult, Option<RegionBackoffBudget>),
 }
 
 fn read_error(error: impl std::fmt::Display) -> OptimisticCoordinatorError {
@@ -174,12 +166,14 @@ fn run_initial_batches<C, L, T>(
     runtime: &SharedReadRuntime<C, L>,
     state: &BatchGetState<'_, T>,
     mut groups: Vec<RegionKeyBatch>,
+    backoff: &mut RegionBackoffBudget,
 ) -> ReadResult
 where
     C: TransactionCommandClient + LockRecoveryClient + Clone + Send,
     L: RegionRecoveryLoader + Send + Sync,
     T: TimestampSource + Sync,
 {
+    let initial_backoff = backoff.clone();
     let bodies: Vec<_> = groups
         .iter_mut()
         .map(|batch| state.request(batch))
@@ -242,9 +236,15 @@ where
                 }
             };
             let result = match event {
-                BatchEvent::Retried(result) => result,
+                BatchEvent::Retried(result, completed) => {
+                    if let Some(completed) = completed {
+                        backoff.update_from_forked(&completed);
+                    }
+                    result
+                }
                 BatchEvent::Response(batch, reply) if reply.needs_recovery() => {
                     let worker_runtime = runtime.fork_client();
+                    let mut worker_backoff = initial_backoff.fork();
                     let (sender, receiver) = futures::channel::oneshot::channel();
                     match std::thread::Builder::new()
                         .name("snapshot-batch-retry".into())
@@ -253,31 +253,36 @@ where
                                 &worker_runtime,
                                 state,
                                 batch,
-                                RegionBackoffBudget::campaign_default(),
+                                &mut worker_backoff,
                                 Some(reply),
                             );
-                            let _ = sender.send(result);
+                            let _ = sender.send((result, Some(worker_backoff)));
                         }) {
                         Ok(_) => {
                             events.push(Box::pin(async move {
-                                BatchEvent::Retried(receiver.await.unwrap_or_else(|_| {
-                                    Err(read_error("BatchGet retry worker ended without a result"))
-                                }))
+                                let (result, completed) = receiver.await.unwrap_or_else(|_| {
+                                    (
+                                        Err(read_error(
+                                            "BatchGet retry worker ended without a result",
+                                        )),
+                                        None,
+                                    )
+                                });
+                                BatchEvent::Retried(result, completed)
                             }));
                             Ok(())
                         }
                         Err(spawn) => Err(read_error(spawn)),
                     }
                 }
-                BatchEvent::Response(batch, reply) => handle_response(
-                    runtime,
-                    state,
-                    &batch,
-                    reply,
-                    &mut RegionBackoffBudget::campaign_default(),
-                    &mut None,
-                )
-                .map(|_| ()),
+                BatchEvent::Response(batch, reply) => {
+                    let mut completed = initial_backoff.fork();
+                    let result =
+                        handle_response(runtime, state, &batch, reply, &mut completed, &mut None)
+                            .map(|_| ());
+                    backoff.update_from_forked(&completed);
+                    result
+                }
             };
             // Go waits for sibling batches after an ordinary request error.
             // Only cancellation/deadline stops the completion loop early.
@@ -296,7 +301,7 @@ fn run_batch<C, L, T>(
     runtime: &SharedReadRuntime<C, L>,
     state: &BatchGetState<'_, T>,
     mut batch: RegionKeyBatch,
-    mut backoff: RegionBackoffBudget,
+    backoff: &mut RegionBackoffBudget,
     mut initial: Option<BatchReply>,
 ) -> ReadResult
 where
@@ -338,7 +343,7 @@ where
             state,
             &batch,
             reply,
-            &mut backoff,
+            backoff,
             &mut resolving_record,
         )?
         else {
@@ -351,7 +356,7 @@ where
         }
         // Go recursively groups a split retry with tryAsyncAPI=false; each
         // child owns a fork of the already charged backoffer, never a new budget.
-        return run_sync_batches(runtime, state, groups, &backoff);
+        return run_sync_batches(runtime, state, groups, backoff);
     }
 }
 
@@ -362,30 +367,32 @@ fn run_sync_batches<C, L, T>(
     runtime: &SharedReadRuntime<C, L>,
     state: &BatchGetState<'_, T>,
     groups: Vec<RegionKeyBatch>,
-    backoff: &RegionBackoffBudget,
+    backoff: &mut RegionBackoffBudget,
 ) -> ReadResult
 where
     C: TransactionCommandClient + LockRecoveryClient + Clone + Send,
     L: RegionRecoveryLoader + Send + Sync,
     T: TimestampSource + Sync,
 {
-    std::thread::scope(|scope| {
+    let last_completed = Mutex::new(None);
+    let result = std::thread::scope(|scope| {
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut error = None;
         for group in groups {
             let worker_runtime = runtime.fork_client();
-            let worker_backoff = backoff.fork();
+            let mut worker_backoff = backoff.fork();
+            let last_completed = &last_completed;
             let sender = sender.clone();
             if let Err(spawn) = std::thread::Builder::new()
                 .name("snapshot-batch-get".into())
                 .spawn_scoped(scope, move || {
-                    let _ = sender.send(run_batch(
-                        &worker_runtime,
-                        state,
-                        group,
-                        worker_backoff,
-                        None,
-                    ));
+                    let result =
+                        run_batch(&worker_runtime, state, group, &mut worker_backoff, None);
+                    // Go stores lastForkedBo before sending the worker result.
+                    // Channel receive order need not equal worker-finish order.
+                    *last_completed.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(worker_backoff);
+                    let _ = sender.send(result);
                 })
             {
                 error = Some(read_error(spawn));
@@ -398,7 +405,14 @@ where
             }
         }
         error.map_or(Ok(()), Err)
-    })
+    });
+    if let Some(completed) = last_completed
+        .into_inner()
+        .unwrap_or_else(|p| p.into_inner())
+    {
+        backoff.update_from_forked(&completed);
+    }
+    result
 }
 
 fn handle_response<C, L, T>(

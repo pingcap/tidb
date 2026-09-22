@@ -15,7 +15,7 @@ repeated ignored hints must terminate with the registered storage error instead
 of spinning. Clean reads must incur no additional hint allocation or wait.
 
 The working branch is hparser-integration, pulled before work. Current master is
-0b505ecc58b659655345b7bb85a619db02f94300. The complete root and dependency
+8a37ef2b44f5adef5a5cf57c263d9da8db76faa0. The complete root and dependency
 artifact inventory is rust/docs/parity/copr-package-inventory.md (20 root
 artifacts plus five artifacts in separate copr_test/metrics packages).
 Master pins client-go/v2 v2.0.8-0.20260921040125-5f38569c8cc0. Its complete
@@ -40,8 +40,11 @@ directory; inventory every artifact and module build input before editing.
 - [x] Wire the published EnableAsyncBatchGet setting into each live BatchGet call and validate both concurrent execution modes.
 - [x] Preserve point-response execution details at the wire boundary and integrate optional runtime response statistics with live Get/BatchGet.
 - [x] Integrate native point-read RPC counts/durations and ClientHelper ResolveLock accounting at the physical completion boundary; verify the terminal delivery/cancellation race.
+- [x] Integrate Get/BatchGet selected backoff histories, completed/cancelled wait accounting, and separate resolve-lock detail timing.
+- [ ] Reconcile nested lock resolver and PD/routing backoffers with the full caller-owned history and clone/fork semantics.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
+- [ ] Audit master 8a37ef2b44 memory arbitration changes as complete pkg/util/memory, pkg/session and pkg/executor/join units.
 - [ ] Satisfy the remaining whole-package build/platform/generated/live-store and workload gates.
 
 ## Context and implementation milestones
@@ -90,6 +93,14 @@ callbacks while matching Go's externally observable contract.
   adds no clock sample, allocation or completion-lock acquisition.
   Date/Author: 2026-09-22 / Codex.
 
+- Decision: Publish only the selected completed backoffer after uncached Get
+  or BatchGet returns, including error exits; keep ResolveLockDetail separate
+  from the outer ClientHelper RPC timer.
+  Rationale: Go replaces parent history using its last completed descendant,
+  and only records backoff when total sleep is positive. Summing every worker
+  or timing ignored-hint sleeps as resolver work would change the report.
+  Date/Author: 2026-09-22 / Codex.
+
 ## Validation and recovery
 
 
@@ -117,6 +128,12 @@ child hint rules therefore require integration beyond their metadata fields.
 Existing generic Source(String) conversions also prevent a lock timeout from
 reaching SQL with Go's registered code 9004.
 
+The snapshot audit also found that Go retains the last completed fork's backoff
+history instead of a sum across workers, and starts ResolveLockDetail after
+ignored-hint backoff. Native nested resolver budgets still restart locally;
+that is a separate unresolved dependency boundary, documented in the backoff
+receipt rather than hidden by statistics accumulation.
+
 ## Outcomes & Retrospective
 
 
@@ -133,6 +150,12 @@ This is tested seed evidence within the open whole-package audit. It does not
 complete pkg/store/copr, the pinned txnlock package or any snapshot package.
 There is no real-store or sysbench/TPC-C/TPC-H/YCSB performance claim.
 
+
+Native snapshot response/RPC statistics and selected request backoff history
+are now connected to optional collectors. The validation receipts below prove
+these changes, including cancellation and both BatchGet modes. The next work
+is shared backoffer ownership in nested resolver/routing paths; complete
+snapshot acceptance and live SQL/workload gates remain open.
 
 ## Implementation and remaining caller audit, 2026-09-22
 
@@ -1041,3 +1064,132 @@ Commit and push this evidence without claiming the package transcreated.
 Revision note: completed optional native RPC/helper statistics, made terminal
 accounting visible before cancellation returns, and recorded validation and
 remaining whole-package work.
+
+
+## Snapshot backoff ownership milestone
+
+
+The branch and master were refreshed after c7e6959df4 with no upstream change.
+Pinned snapshot.go records backoff once after uncached Get/BatchGet returns,
+including errors, and skips it if total sleep is zero. For multiple BatchGet
+workers it uses the last completed fork's counters, not their sum. Async
+cancellation retains the last callback actually executed. Clone/Fork preserve
+history but reset each delay schedule; UpdateUsingForked copies history back
+without replacing the parent's delay functions. Scanner's internal point Get
+collects RPC/resolve detail but does not call recordBackoffInfo.
+
+Native RegionBackoffBudget currently records reserved duration and delay
+schedule attempts but no independent inherited attempt history. Add completed
+wait reconciliation and per-kind counts, preserve those counts through forks,
+and return the selected worker history to the request owner. Record that one
+history when an uncached read exits. A canceled in-progress Go wait contributes
+one attempt and zero sleep; cancellation before backoff contributes neither.
+Keep statistics distinct from budget reservations and do not sum forked history.
+
+Go ClientHelper's ResolveLock RPC timer includes ignored-hint backoff, but
+ResolveLockDetail starts after that backoff, after the empty-lock return. Add
+that separate optional timer around native resolution, including error exits,
+without counting ordinary Scanner response-level resolution. Red-proof the
+existing repeated-hint Get/BatchGet regression before implementation; then add
+fork selection and cancellation cases and run the scoped Rust, original Go,
+dependent compile and lint gates. The whole txnsnapshot/retry/txnlock units
+remain open. Native nested lock resolver routines currently create fresh local
+budgets rather than borrowing the request backoffer; reconcile those dependency
+paths from the pinned source before claiming complete backoff parity.
+
+
+## Snapshot backoff validation receipt (2026-09-22)
+
+
+The red regression reported zero txnLockFast attempts instead of six. Run from
+rust/ before the implementation:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test snapshot_lock_wait_source snapshot_get_and_batch_get_back_off_ignored_request_hints --message-format=short
+
+/private/tmp/tidb-snapshot-backoff-red.log records that behavioral failure.
+The final implementation adds independent per-kind attempt history to
+RegionBackoffBudget, reconciles canceled waits with zero sleep, and returns
+one completed worker history through existing BatchGet owners. Sync worker
+selection is stored before its result send, so channel receive order cannot
+choose a different history. Async callbacks alone update the selected history;
+canceled, joined workers cannot overwrite it after the request stops polling.
+Get records after its uncached loop returns, including errors. ResolveLockDetail
+starts after ignored hints and empty-lock filtering and records resolver errors.
+The original RPC helper timer remains separate and includes the hint wait.
+
+Validated from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test snapshot_lock_wait_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib backoff --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib retry::tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test region_error_recovery_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all snapshot_ --message-format=short
+    cargo test --manifest-path third_party/tikv-client-rs/Cargo.toml --offline --locked -j12 --lib transaction::snapshot_stats --message-format=short
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+
+All passed: 14, 5, 2, 26, 12 and 9 tests respectively, plus dependent
+compilation. Some aggregate tests repeat source cases from the standalone
+region target. Logs under /private/tmp/tidb-snapshot-backoff- are source,
+unit, budget, region, aggregate, runtime and check.log. The live fixture covers
+both BatchGet settings with one 1ms sleep per worker and expects one selected
+1ms history, not a 2ms sum. Repeated-hint Get/BatchGet tests cover successful
+and failed reads; other regressions check cache hits, Scanner exclusion,
+resolver errors, interruption, parent-schedule retention and wrapping clone/merge.
+
+From /private/tmp/tidb-master-cc83514:
+
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/config/retry github.com/tikv/client-go/v2/txnkv/txnsnapshot -run '^(TestBackoff.*|TestSnapshotRuntimeStats.*|TestCollectBatchGetResponseDataPointResponseStats|TestAsyncBatchGetCancellationWaitsForRetryWorker)$' -count=1 -v
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/config/retry -run '^(TestCheckKilled|TestMayBackoffForRegionError)$' -count=1 -v
+
+All nine original retry tests and seven original snapshot tests passed;
+go.log and go-region.log contain the oracle results. These packages use no
+failpoint.Inject calls needing a source transformation. From repository root:
+
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+Lint, scoped formatting and diff checks passed. The formatting helper now
+includes the entire changed private enum, preserving valid standard formatting
+without touching unrelated files. No Go/module/Bazel input changed. The earlier
+fresh-worktree Bazel gate remains unsatisfied because Bazel is unavailable.
+Full build/platform/nextgen gates, live TiKV and matched workload benchmarks
+remain unverified. Counter storage is allocated lazily at the first backoff, as Go lazily
+creates its maps; successful reads allocate none, and later waits reuse the
+storage. Workload overhead has not been measured. Available space is about
+214 GiB after the earlier cleanup and current rebuilds.
+
+Changed files are tidb-txnkv's retry.rs, coordinator/mod.rs,
+coordinator/snapshot_read.rs, coordinator/snapshot_batch_get.rs and
+snapshot_lock_wait_source.rs; vendored transaction/snapshot_stats.rs; this
+ExecPlan and the retry/txnsnapshot inventories. Self-review checked canceled
+reservation refunds, preservation of earlier non-snapshot reservations,
+fork-history replacement, async cancellation/join, optional timing and retained
+cache/read results. User-owned untracked vs_helper.rs and fragment.rs remain
+untouched. Commit/push only the reviewed task files and verify remote equality.
+
+The full package unit stays open. In particular, lock/resolver.rs creates fresh
+20-second backoffers in query_txn_status, resolve_async_commit_lock and
+resolve_key; pinned Go passes the caller's backoffer and forks at specific
+parallel boundaries. PD/routing retries also need reconciliation. Inspect those
+complete txnlock/retry dependency paths next, including original tests, instead
+of merely adding their durations to this collector. Options, scanner/replica/tier
+behavior, request-error/replica statistics and SQL runtime-stat attachment are
+also still open; no workload performance gain or complete-package parity is
+claimed by this receipt.
+
+Revision note: retained Go's completed-worker backoff ownership and separate
+resolver detail timing, recorded red/green evidence, and identified nested
+backoffer ownership as the next dependency gap.
+
+
+Publication refresh note: origin/master advanced from 0b505ecc58 to
+8a37ef2b44f5adef5a5cf57c263d9da8db76faa0, memory arbitration optimization #71346.
+The clean Go oracle worktree was advanced to it. The 13 changed artifacts are
+in pkg/util/memory, pkg/session and pkg/executor/join; go.mod/go.sum/DEPS.bzl and
+the pinned client-go sources are unchanged, so the recorded oracle tests still
+exercise the exact dependency source. Audit those three complete package units
+before claiming current-master acceptance there. The final backoff-counter
+storage is lazy, avoiding an always-present 14-counter array on clean reads;
+scoped budget/snapshot regressions and dependent compilation were rerun for
+that ownership change. No workload speedup is inferred from the storage choice.

@@ -1042,7 +1042,7 @@ fn scan_pair_locks_use_point_get_without_replaying_clean_rows() {
 #[test]
 fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
     let _config = snapshot_test_config();
-    for batch in [false, true] {
+    for (batch, fail) in [(false, false), (false, true), (true, false), (true, true)] {
         for committed in [false, true] {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut client = LockingClient::new(Arc::clone(&recorded));
@@ -1065,6 +1065,20 @@ fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
                     ..Default::default()
                 });
             }
+            if fail {
+                let error = Some(KvrpcKeyError {
+                    abort: "after backoff".into(),
+                    ..Default::default()
+                });
+                client.get_responses.push_back(KvrpcGetResponse {
+                    error: error.clone(),
+                    ..Default::default()
+                });
+                client.batch_responses.push_back(KvrpcBatchGetResponse {
+                    error,
+                    ..Default::default()
+                });
+            }
             let mut transaction = RealOptimisticTransaction::new_injected(
                 SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
                 TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
@@ -1075,25 +1089,35 @@ fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
                 4096,
             )
             .unwrap();
+            let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
+            transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
             let started = Instant::now();
             if batch {
-                assert_eq!(
-                    transaction
-                        .snapshot_batch_get(
-                            &[ROW_KEY.to_vec()],
-                            &UnaryCallContext::with_timeout(CALL_TIMEOUT)
-                        )
-                        .unwrap()
-                        .len(),
-                    1
+                let result = transaction.snapshot_batch_get(
+                    &[ROW_KEY.to_vec()],
+                    &UnaryCallContext::with_timeout(CALL_TIMEOUT),
                 );
+                if fail {
+                    assert!(result.is_err());
+                } else {
+                    assert_eq!(result.unwrap().len(), 1);
+                }
             } else {
-                assert!(transaction
-                    .snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
-                    .unwrap()
-                    .value
-                    .is_some());
+                let result = transaction
+                    .snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT));
+                if fail {
+                    assert!(result.is_err());
+                } else {
+                    assert!(result.unwrap().value.is_some());
+                }
             }
+            assert_eq!(stats.backoff_count("txnLockFast"), 6);
+            assert!(stats.backoff_duration("txnLockFast") >= Duration::from_millis(63));
+            assert!(stats.resolve_lock_duration() > Duration::ZERO);
+            assert!(
+                stats.rpc_duration(tikv_client::SnapshotRpcCommand::ResolveLock)
+                    >= stats.resolve_lock_duration() + stats.backoff_duration("txnLockFast")
+            );
             let recorded = recorded.lock().unwrap();
             let contexts = if batch {
                 &recorded.batch_contexts
@@ -1239,6 +1263,8 @@ fn scan_response_locks_wait_without_stamping_read_hints() {
         stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
         0
     );
+    assert_eq!(stats.backoff_count("txnLockFast"), 0);
+    assert_eq!(stats.resolve_lock_duration(), Duration::ZERO);
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.scans.len(), 2);
     assert!(recorded
@@ -1989,7 +2015,9 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
             ..Default::default()
         });
     }
+    let prior_resolve_time = empty.resolve_lock_duration();
     assert!(transaction.snapshot_get(b"failed-lock", &call).is_err());
+    assert!(empty.resolve_lock_duration() > prior_resolve_time);
     assert_eq!(empty.rpc_count(tikv_client::SnapshotRpcCommand::Get), 4);
     assert_eq!(
         empty.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
@@ -2098,5 +2126,78 @@ fn snapshot_response_stats_batch_modes_retries_and_pair_errors() {
             stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
             1
         );
+    }
+}
+
+#[test]
+fn snapshot_batch_backoff_keeps_one_completed_workers_history() {
+    let _config = snapshot_test_config();
+    for enable_async in [false, true] {
+        let mut config = tidb_config::config_tree::new_config();
+        config.performance.enable_async_batch_get = enable_async;
+        tidb_config::config_tree::config::store_global_config(config);
+        let mut client = LockingClient::new(Arc::new(Mutex::new(Recorded::default())));
+        client.remaining_locked = 0;
+        client.status_response = Some(KvrpcCheckTxnStatusResponse {
+            commit_version: START_TS,
+            ..Default::default()
+        });
+        let mut keys: Vec<_> = (0..5120).map(|i| format!("a{i:05}").into_bytes()).collect();
+        keys.push(b"z".to_vec());
+        client.keyed_batch_responses = Some(Arc::new(Mutex::new(
+            [(&keys[0], 90), (&keys[5120], 91)]
+                .into_iter()
+                .map(|(key, lock_version)| {
+                    (
+                        key.clone(),
+                        KvrpcBatchGetResponse {
+                            error: Some(KvrpcKeyError {
+                                locked: Some(KvrpcLockInfo {
+                                    key: key.clone(),
+                                    primary_lock: key.clone(),
+                                    lock_version,
+                                    ..LockingClient::live_lock()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        )));
+        // Each worker sees its own already-hinted lock once on the retry, so
+        // each independently sleeps 1ms. Summing workers would report 2ms.
+        client.lock_batch_keys_once = Some(Arc::new(Mutex::new(Default::default())));
+        let mut transaction = RealOptimisticTransaction::new_injected(
+            SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
+            TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+            CALL_TIMEOUT,
+            START_TS,
+            Instant::now(),
+            4,
+            4096,
+        )
+        .unwrap();
+        let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
+        transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
+        let values = transaction
+            .snapshot_batch_get(&keys, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+            .unwrap();
+        assert_eq!(values.len(), keys.len());
+        assert_eq!(
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
+            6
+        );
+        assert_eq!(stats.backoff_count("txnLockFast"), 1);
+        assert_eq!(
+            stats.backoff_duration("txnLockFast"),
+            Duration::from_millis(1)
+        );
+        // The completed history is recorded once per uncached operation.
+        transaction
+            .snapshot_batch_get(&keys, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+            .unwrap();
+        assert_eq!(stats.backoff_count("txnLockFast"), 1);
     }
 }

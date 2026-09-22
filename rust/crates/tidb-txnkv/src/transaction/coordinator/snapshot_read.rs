@@ -72,10 +72,13 @@ fn backoff_ignored_snapshot_hints(
         context.resolved_locks.contains(&lock.txn_id())
             || context.committed_locks.contains(&lock.txn_id())
     }) {
+        wait_with_call(call, std::time::Duration::ZERO).map_err(snapshot_recovery_error)?;
         let delay = backoff
             .next_delay(crate::region::RegionBackoffKind::TxnLockFast)
             .map_err(snapshot_backoff_error)?;
-        wait_with_call(call, delay).map_err(snapshot_recovery_error)?;
+        let result = wait_with_call(call, delay);
+        backoff.finish_wait(result.is_ok());
+        result.map_err(snapshot_recovery_error)?;
     }
     Ok(())
 }
@@ -107,11 +110,18 @@ where
     if for_read {
         backoff_ignored_snapshot_hints(locks, context, backoff, call)?;
     }
+    // Go ResolveLockDetail excludes ignored-hint backoff and empty lock sets;
+    // ClientHelper's outer ResolveLock observation includes the hint wait.
+    let started = stats
+        .filter(|_| !locks.is_empty())
+        .map(|_| std::time::Instant::now());
     let recovery = resolve_blocking_locks_recorded(
         runtime, locks, read_ts, context, call, timestamps, for_read,
-    )
-    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-    Ok(recovery)
+    );
+    if let (Some(stats), Some(started)) = (stats, started) {
+        stats.record_resolve_lock(started.elapsed());
+    }
+    recovery.map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))
 }
 
 pub(super) fn wait_snapshot_lock_ttl(
@@ -120,12 +130,28 @@ pub(super) fn wait_snapshot_lock_ttl(
     call: &UnaryCallContext,
 ) -> Result<(), OptimisticCoordinatorError> {
     if recovery.is_alive() {
+        wait_with_call(call, std::time::Duration::ZERO).map_err(snapshot_recovery_error)?;
         let delay = backoff
             .next_delay_capped(crate::region::RegionBackoffKind::TxnLockFast, recovery.ttl)
             .map_err(snapshot_backoff_error)?;
-        wait_with_call(call, delay).map_err(snapshot_recovery_error)?;
+        let result = wait_with_call(call, delay);
+        backoff.finish_wait(result.is_ok());
+        result.map_err(snapshot_recovery_error)?;
     }
     Ok(())
+}
+
+pub(super) fn record_snapshot_backoff(
+    stats: Option<&tikv_client::SnapshotRuntimeStats>,
+    backoff: &RegionBackoffBudget,
+) {
+    // snapshot.recordBackoffInfo skips even zero-sleep attempts unless the
+    // selected history contains at least one completed positive sleep.
+    if let Some(stats) = stats.filter(|_| !backoff.total_sleep().is_zero()) {
+        for (kind, count, duration) in backoff.runtime_stats() {
+            stats.record_backoff_totals(kind, count, duration);
+        }
+    }
 }
 
 /// Go KVSnapshot.get's latest-committed shortcut applies only after this
@@ -806,7 +832,7 @@ where
         let mut rpc_count = 0_u64;
         let mut first_lock = None;
         let mut resolving_record = None;
-        loop {
+        let result = (|| loop {
             let route = point_route(&self.runtime, key)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
             // Go `ClientHelper.SendReqCtx` stamps both sets onto the context
@@ -893,7 +919,9 @@ where
                 publication: Some(response.publication),
                 rpc_count,
             });
-        }
+        })();
+        record_snapshot_backoff(self.snapshot_runtime_stats.as_deref(), &read_backoff);
+        result
     }
 
     /// Reads a set of encoded keys at one transaction timestamp. Keys are
@@ -1216,5 +1244,44 @@ mod tests {
         cache.update_batch(&keys, &values);
         assert!(cache.values.is_empty());
         assert_eq!(cache.bytes, 0);
+    }
+
+    #[test]
+    fn snapshot_backoff_records_zero_sleep_attempts_only_with_positive_history() {
+        use super::*;
+        use crate::region::RegionBackoffKind;
+        use std::time::Duration;
+        let stats = tikv_client::SnapshotRuntimeStats::new();
+        let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        budget.next_delay(RegionBackoffKind::RegionMiss).unwrap();
+        budget.finish_wait(false);
+        record_snapshot_backoff(Some(&stats), &budget);
+        assert_eq!(stats.backoff_count("regionMiss"), 0);
+        budget.next_delay(RegionBackoffKind::TxnLockFast).unwrap();
+        budget.finish_wait(true);
+        record_snapshot_backoff(None, &budget);
+        assert_eq!(stats.backoff_count("txnLockFast"), 0);
+        record_snapshot_backoff(Some(&stats), &budget);
+        assert_eq!(stats.backoff_count("regionMiss"), 1);
+        assert_eq!(stats.backoff_duration("regionMiss"), Duration::ZERO);
+        assert_eq!(stats.backoff_count("txnLockFast"), 1);
+        assert_eq!(
+            stats.backoff_duration("txnLockFast"),
+            Duration::from_millis(1)
+        );
+        record_snapshot_backoff(Some(&stats), &budget);
+        assert_eq!(stats.backoff_count("regionMiss"), 2);
+        assert_eq!(stats.backoff_count("txnLockFast"), 2);
+
+        let mut cancelled_budget = RegionBackoffBudget::campaign_default();
+        let cancelled = UnaryCallContext::with_timeout(Duration::from_secs(1));
+        cancelled.cancellation().cancel();
+        assert!(wait_snapshot_lock_ttl(
+            &crate::lock::LockRecoveryResult::alive(Duration::from_millis(50)),
+            &mut cancelled_budget,
+            &cancelled,
+        )
+        .is_err());
+        assert_eq!(cancelled_budget.runtime_stats().count(), 0);
     }
 }

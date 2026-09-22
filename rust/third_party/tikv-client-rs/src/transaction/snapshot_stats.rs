@@ -722,7 +722,7 @@ impl SnapshotRuntimeStats {
         inner.resolve_lock_duration += other.resolve_lock_duration;
         for (retry_type, stat) in other.backoff {
             let merged = inner.backoff.entry(retry_type).or_default();
-            merged.count += stat.count;
+            merged.count = merged.count.wrapping_add(stat.count);
             merged.duration += stat.duration;
         }
         drop(inner);
@@ -782,7 +782,8 @@ impl SnapshotRuntimeStats {
         }
     }
 
-    pub(crate) fn record_resolve_lock(&self, duration: Duration) {
+    /// Record resolver detail after ignored-hint backoff, excluding TTL waits.
+    pub fn record_resolve_lock(&self, duration: Duration) {
         self.inner
             .lock()
             .expect("snapshot stats lock poisoned")
@@ -790,9 +791,14 @@ impl SnapshotRuntimeStats {
     }
 
     pub(crate) fn record_backoff(&self, retry_type: &'static str, duration: Duration) {
+        self.record_backoff_totals(retry_type, 1, duration);
+    }
+
+    /// Merge the selected completed backoffer's history, including zero-sleep attempts.
+    pub fn record_backoff_totals(&self, retry_type: &'static str, count: u64, duration: Duration) {
         let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
         let stat = inner.backoff.entry(retry_type).or_default();
-        stat.count += 1;
+        stat.count = stat.count.wrapping_add(count);
         stat.duration += duration;
     }
 }
@@ -1599,5 +1605,20 @@ mod tests {
         interceptor.wrap("store", &request, next).await.unwrap();
         assert_eq!(stats.rpc_count(SnapshotRpcCommand::Get), 2);
         assert_eq!(stats.point_response_stats(), before);
+    }
+
+    #[test]
+    fn backoff_totals_clone_and_merge_preserve_go_counter_wrapping() {
+        let stats = SnapshotRuntimeStats::new();
+        stats.record_backoff_totals("regionMiss", u64::MAX, Duration::from_millis(1));
+        let cloned = stats.clone();
+        cloned.merge(&cloned);
+        cloned.record_backoff_totals("regionMiss", 3, Duration::ZERO);
+        assert_eq!(cloned.backoff_count("regionMiss"), 1);
+        assert_eq!(
+            cloned.backoff_duration("regionMiss"),
+            Duration::from_millis(2)
+        );
+        assert_eq!(stats.backoff_count("regionMiss"), u64::MAX);
     }
 }

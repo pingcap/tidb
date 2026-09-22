@@ -1,7 +1,7 @@
 # Pinned client-go txnkv/txnsnapshot package inventory
 
 The whole pinned package is an open dependency acceptance unit. TiDB master
-0b505ecc58b659655345b7bb85a619db02f94300 selects client-go/v2
+8a37ef2b44f5adef5a5cf57c263d9da8db76faa0 selects client-go/v2
 v2.0.8-0.20260921040125-5f38569c8cc0. Individual fixes are seed evidence,
 not a transcreated-package claim. Related plan:
 rust/docs/operations/store-copr-audit-execplan.md.
@@ -78,7 +78,7 @@ getter; CollectBatchGetResponseData through typed-response/payload cases;
 ConcurrentPointResponseWrites through eight synchronized native writers.
 The util dependency's complete inventory is client-go-util-package-inventory.md.
 This does not close the package: live SQL CollectRuntimeStats attachment,
-native backoff/resolver-detail integration, options/tier/replica/reverse scanner,
+nested resolver/routing backoff integration, options/tier/replica/reverse scanner,
 all original support/fixtures and live build/workload gates remain open.
 
 Native Get and both BatchGet modes now also record optional RPC count/duration,
@@ -94,6 +94,30 @@ sample no additional clock and install no observer.
 ClientHelper-style point lock resolution records one ResolveLock call even on
 failure. The following TTL wait and ordinary Scanner response-level resolution
 are excluded as in the pinned source. This is separate from the original
-ResolveLockDetail field, whose native aggregation remains open, as do backoff,
-request-error/replica statistics and live SQL attachment. The 2026-09-22 RPC
+ResolveLockDetail field, whose native timing is now collected after ignored-hint
+backoff. Nested resolver/routing backoff, request-error/replica statistics and
+live SQL attachment remain open. The 2026-09-22 RPC
 receipt in the ExecPlan records the red/green and cancellation-race evidence.
+
+Uncached Get and BatchGet now merge the request owner's selected backoff
+history after success or failure, as snapshot.recordBackoffInfo does. An
+interrupted wait keeps its attempt with zero sleep; no positive total sleep
+means no snapshot backoff map is recorded. Forks retain independent history
+while restarting delay schedules, and the parent retains only the last
+completed worker's history. Sync workers publish that selection before sending
+the result; async mode selects callbacks actually consumed before cancellation.
+Inherited history is replaced, not summed across descendants. Cache hits and
+Scanner's internal get do not record another public-read backoff history.
+ResolveLockDetail excludes ignored-hint and following TTL waits, includes
+resolver errors, and excludes ordinary Scanner response-level resolution.
+
+The 2026-09-22 backoff receipt covers both runtime async settings and the
+original fork/update tests. Full backoff parity is still open: nested lock
+resolver routines and PD/routing retries do not all borrow this request budget.
+Do not substitute summing every nested retry into a shared collector, because
+Go's Clone/Fork and last-completed selection determine which history survives.
+
+Publication refresh advanced TiDB master to 8a37ef2b44 (#71346). go.mod, go.sum
+and DEPS.bzl are unchanged, so this pinned module and every package artifact
+remain the same. That commit's memory/session/join changes require separate
+whole-package review; they do not establish new acceptance for this package.

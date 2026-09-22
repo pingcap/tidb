@@ -569,6 +569,10 @@ pub(super) fn recover_region_error_with<C, L>(
 where
     L: RegionRecoveryLoader,
 {
+    // Older non-snapshot owners already slept their prior reservation. Only
+    // a reservation made by this recovery may be refunded on cancellation.
+    backoff.finish_wait(true);
+    wait_with_call(call, Duration::ZERO)?;
     let outcome = runtime
         .region_cache_handle()
         .on_region_error(error, attempt.clone(), backoff)
@@ -589,7 +593,9 @@ where
             return Err(terminal_region_cause(terminal));
         }
     };
-    wait_with_call(call, delay)
+    let result = wait_with_call(call, delay);
+    backoff.finish_wait(result.is_ok());
+    result
 }
 
 /// Turns one cache recovery answer into the disposition the caller acts on.
