@@ -241,6 +241,13 @@ type PlanBuilder struct {
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
 	inDeleteStmt bool
+	// selectDepth counts the nesting depth of SELECT statements (including
+	// subqueries and view bodies) that are currently being built. It is used to
+	// tell a table read by a SELECT apart from the target tables of an
+	// UPDATE/DELETE, so that a query which reads a table without referencing any
+	// of its columns (for example `SELECT 1 FROM t`) still requires a SELECT
+	// privilege on that table.
+	selectDepth int
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
