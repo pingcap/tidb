@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -319,15 +318,12 @@ func TestLoadData(t *testing.T) {
 }
 
 func TestLoadDataEscape(t *testing.T) {
-	cfg := config.CSVConfig{
-		FieldsTerminatedBy: "\t",
-		FieldsEscapedBy:    `\`,
-		LinesTerminatedBy:  "\n",
-		FieldNullDefinedBy: []string{`\N`},
-		AllowEmptyLine:     true,
-		QuotedNullIsText:   true,
-		UnescapedQuote:     true,
-	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test"
+	ctx := tk.Session().(sessionctx.Context)
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -341,28 +337,17 @@ func TestLoadDataEscape(t *testing.T) {
 		{data: []byte("8\trtn0Zb\\N\n"), expected: []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}},
 		{data: []byte("9\ttab\\	tab\n"), expected: []string{"9|tab	tab"}},
 	}
-	for _, tt := range tests {
-		parser, err := mydump.NewCSVParser(
-			context.Background(),
-			&cfg,
-			mydump.NewStringReader(string(tt.data)),
-			int64(config.ReadBlockSize),
-			nil,
-			false,
-			nil,
-		)
-		require.NoError(t, err)
-
-		require.NoError(t, parser.ReadRow())
-		row := parser.LastRow().Row
-		require.Len(t, row, 2)
-		require.Equal(t, tt.expected, []string{row[0].GetString() + "|" + row[1].GetString()})
-		parser.RecycleRow(parser.LastRow())
-
-		err = parser.ReadRow()
-		require.ErrorIs(t, errors.Cause(err), io.EOF)
-		require.NoError(t, parser.Close())
+	// Load all escape cases together to cover SQL execution without starting a
+	// separate LOAD DATA job for each row.
+	combined := testCase{
+		expectedMsg: fmt.Sprintf("Records: %d  Deleted: 0  Skipped: 0  Warnings: 0", len(tests)),
 	}
+	for _, tt := range tests {
+		combined.data = append(combined.data, tt.data...)
+		combined.expected = append(combined.expected, tt.expected...)
+	}
+	checkCases([]testCase{combined}, loadSQL, t, tk, ctx,
+		"select * from load_data_test order by id", "delete from load_data_test")
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
