@@ -381,6 +381,11 @@ pub fn effective_default(definition: &SysVarDef) -> String {
 /// that only inspect a value should not have to clone its backing bytes.
 #[must_use]
 pub fn effective_default_value(definition: &SysVarDef) -> Cow<'static, str> {
+    // go's `server.setSystemTimeZoneVariable` replaces the static `CST`
+    // default with the inferred IANA name before serving any session.
+    if definition.name == "system_time_zone" {
+        return Cow::Owned(system_time_zone_name().to_owned());
+    }
     if let Some(value) = sem_v2_defaults()
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -391,6 +396,36 @@ pub fn effective_default_value(definition: &SysVarDef) -> Cow<'static, str> {
     }
     tidb_util::sem::effective_sysvar_default(definition.name)
         .map_or_else(|| Cow::Borrowed(definition.value), Cow::Owned)
+}
+/// go `server.setSystemTimeZoneVariable` -> `timeutil.InferSystemTZ`
+/// (`pkg/util/timeutil/time_zone.go`): the IANA name inferred from `$TZ` or
+/// the resolved `/etc/localtime` path, falling back to `UTC`. go overwrites
+/// the static `system_time_zone` default (`CST`) with this at server start.
+fn system_time_zone_name() -> &'static str {
+    static TZ: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TZ.get_or_init(|| {
+        // `$TZ=""` means UTC; a `$TZ` that loads wins outright.
+        if let Ok(tz) = std::env::var("TZ") {
+            if !tz.is_empty() && tz != "UTC" {
+                return tz;
+            }
+            if tz == "UTC" {
+                return "UTC".to_owned();
+            }
+        }
+        let Ok(resolved) = std::fs::canonicalize("/etc/localtime") else {
+            return "UTC".to_owned();
+        };
+        let path = resolved.to_string_lossy();
+        // macOS Mojave keeps the zoneinfo tree under `zoneinfo.default`.
+        for marker in ["zoneinfo.default", "zoneinfo"] {
+            if let Some(index) = path.find(marker) {
+                return path[index + marker.len() + 1..].to_owned();
+            }
+        }
+        "UTC".to_owned()
+    })
+    .as_str()
 }
 
 /// Go `SysVar.AllowEmpty`: the empty string means "read the value from the
@@ -2785,9 +2820,15 @@ mod tests {
             get_sys_var("version_compile_os").unwrap().value,
             std::env::consts::OS
         );
+        // go spells x86-64 `amd64` and arm64 `arm64` (`runtime.GOARCH`).
+        let expected_machine = match std::env::consts::ARCH {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            other => other,
+        };
         assert_eq!(
             get_sys_var("version_compile_machine").unwrap().value,
-            std::env::consts::ARCH
+            expected_machine
         );
     }
 

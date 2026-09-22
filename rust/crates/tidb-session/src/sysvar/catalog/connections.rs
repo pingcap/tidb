@@ -375,7 +375,8 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     SysVarDef {
         name: "tidb_last_query_info",
         scope: 2,
-        value: "",
+        value: "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"error_count\":0,\"kv_errors\":null,\"fall_back_actions\":null}",
+        // go marshals the fresh QueryInfo{TxnScope:"global", StartTS:0, ForUpdateTS:0, ErrorCount:0, KvErrors:nil, FallBackActions:nil} (queryinfo.go).
         var_type: VarType::Str,
         read_only: true,
         allow_auto_value: false,

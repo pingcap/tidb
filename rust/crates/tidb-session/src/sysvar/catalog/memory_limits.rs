@@ -99,7 +99,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     SysVarDef {
         name: "last_sql_use_alloc",
         scope: 2,
-        value: "OFF",
+        value: "ON",
+        // go seeds vars.preUseChunkAlloc from config PreUseChunkAlloc: true.
         var_type: VarType::Bool,
         read_only: true,
         allow_auto_value: false,

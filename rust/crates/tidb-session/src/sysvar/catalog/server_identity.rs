@@ -327,9 +327,9 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     SysVarDef {
         name: "version_compile_machine",
         scope: 0,
-        // Go uses runtime.GOARCH; use Rust's target constant so generated
-        // builds report the architecture they were actually compiled for.
-        value: std::env::consts::ARCH,
+        // Go reports `runtime.GOARCH`, whose names differ from Rust's
+        // target arch constants (`amd64` vs `x86_64`, `arm64` vs `aarch64`).
+        value: GO_MACHINE,
         var_type: VarType::Str,
         read_only: false,
         allow_auto_value: false,
@@ -364,4 +364,17 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
     },
+
+
 ];
+
+/// go `runtime.GOARCH` spelling of the compiling target (`amd64`, not
+/// `x86_64`; `arm64`, not `aarch64`).
+#[cfg(target_arch = "x86_64")]
+const GO_MACHINE: &str = "amd64";
+#[cfg(target_arch = "aarch64")]
+const GO_MACHINE: &str = "arm64";
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+const GO_MACHINE: &str = std::env::consts::ARCH;
+
+

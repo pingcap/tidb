@@ -867,7 +867,8 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     SysVarDef {
         name: "tidb_slow_query_file",
         scope: 2,
-        value: "",
+        value: "tidb-slow.log",
+        // go seeds vars.SlowQueryFile from config.Log.SlowQueryFile ("tidb-slow.log").
         var_type: VarType::Str,
         read_only: false,
         allow_auto_value: false,

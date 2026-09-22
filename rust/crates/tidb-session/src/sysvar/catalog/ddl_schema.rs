@@ -315,7 +315,8 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     SysVarDef {
         name: "tidb_last_ddl_info",
         scope: 2,
-        value: "",
+        value: "{\"query\":\"\",\"seq_num\":0}",
+        // go marshals the zero LastDDLInfo{Query:"", SeqNum:0}.
         var_type: VarType::Str,
         read_only: true,
         allow_auto_value: false,
