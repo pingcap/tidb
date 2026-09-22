@@ -305,11 +305,11 @@ table t1;
 -- error 3989
 delete from db2.parent_0;
 -- error 3989
-update db2.parent_1 set id_0 = 10;
+update db2.parent_1 set id = 10;
 -- error 3989
 delete from db2.parent_2;
 -- error 3989
-update db2.parent_3 set id_3 = 10;
+update db2.parent_3 set id = 10;
 
 # finish test
 alter schema db1 read only 0;
