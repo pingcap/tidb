@@ -32,6 +32,7 @@ use super::text::format_json;
 use super::value::{
     json_document_string, json_sql_string, parse_json, parse_json_document_argument,
 };
+use crate::builtin_ext::BuiltinFuncCache;
 use crate::coerce::coerce_str;
 use crate::expression::{ConstLevel, Expression};
 use crate::{Columns, Datum, EvalError, JsonError};
@@ -40,13 +41,11 @@ use tidb_chunk::row::Row;
 /// Per-signature cache and lazy evaluator for `JSON_SCHEMA_VALID`.
 ///
 /// Clone deliberately starts empty, matching Go's
-/// `builtinJSONSchemaValidSig.Clone`. Only strict constants are cached because
-/// Rust's evaluation context does not yet expose Go's `CtxID`; a context-only
-/// parameter must never leak its compiled schema into another execution.
+/// `builtinJSONSchemaValidSig.Clone`. The cache is keyed by the statement
+/// context and admits `ConstOnlyInContext`, matching Go's
+/// `builtinFuncCache[jsonschema.Schema]` consumer.
 #[derive(Debug, Default)]
-pub(crate) struct JsonSchemaCache(
-    std::sync::OnceLock<Result<Option<PreparedJsonSchema>, EvalError>>,
-);
+pub(crate) struct JsonSchemaCache(BuiltinFuncCache<Option<PreparedJsonSchema>>);
 
 #[derive(Debug)]
 struct PreparedJsonSchema {
@@ -75,11 +74,12 @@ impl JsonSchemaCache {
             return Ok(Datum::Null);
         }
 
-        if schema_arg.const_level() == ConstLevel::STRICT {
-            let schema = match self.0.get_or_init(|| prepare_json_schema(&schema_value)) {
-                Ok(Some(schema)) => schema,
-                Ok(None) => return Ok(Datum::Null),
-                Err(error) => return Err(error.clone()),
+        if schema_arg.const_level() >= ConstLevel::ONLY_IN_CONTEXT {
+            let schema = self
+                .0
+                .get_or_init_cache(ctx.context_id(), || prepare_json_schema(&schema_value))?;
+            let Some(schema) = schema.as_ref().as_ref() else {
+                return Ok(Datum::Null);
             };
             return validate_json_schema(schema, &document_arg.eval(ctx, row)?);
         }

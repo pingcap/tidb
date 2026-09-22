@@ -7793,3 +7793,28 @@ accept the whole expression, types, planner, executor, or workload packages.
 Native ignored cases, complete production/build/generated/support inventories,
 and full sysbench/TPC-C/TPC-H/YCSB measurements remain open under the original
 goal.
+
+
+## Continuing JSON_SCHEMA_VALID cache parity
+
+Go's `builtinJSONSchemaValidSig.schemaCache` admits every schema argument whose
+`ConstLevel` is `ConstOnlyInContext`, keyed by the statement `CtxID`; the
+earlier Rust port admitted only strict literals because its cache predated the
+context-id seam. `JsonSchemaCache` now uses the shared context-keyed cache, so
+prepared/context-only schemas are compiled once per statement, constructor
+errors are not retained, clones start empty, and a new statement context
+replaces the previous schema. The existing document NULL short-circuit and
+validator lifetime are unchanged.
+
+The native source tests now cover clone reset and a prepared schema that stays
+cached within one context but is replaced in the next. From `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib json_schema_valid_cache -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-expr --lib json_schema_valid -- --test-threads=1
+
+The cache selection passes 2 tests. The broader JSON-schema selection passes 4
+tests; its fifth test is the existing sandbox-blocked localhost HTTP fixture.
+The complete expression run after this cache change reaches 1216 passed with
+that one same permission-denied bind. The package and workload acceptance
+gates remain open, including the Go failpoint-only cache-refresh oracle and
+the full sysbench/TPC-C/TPC-H/YCSB measurements.

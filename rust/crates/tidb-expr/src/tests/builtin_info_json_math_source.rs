@@ -19,6 +19,7 @@
 use super::{chunk_e, e};
 use crate::builtin_ext::json::dispatch as json_dispatch;
 use crate::builtin_ext::json2;
+use crate::constant::{Constant, ParamMarker};
 use crate::expression::Expression;
 use crate::like::like_match_with_collation;
 use crate::math_fn::dispatch_values;
@@ -1493,6 +1494,79 @@ fn json_schema_valid_cache() {
     let cloned = function.clone();
     assert_eq!(
         cloned.eval(&NoColumns, empty.get_row(0)).unwrap(),
+        Datum::Int(1)
+    );
+}
+
+/// Go `builtinJSONSchemaValidSig.schemaCache` is keyed by `CtxID`, not only by
+/// strict literals. A prepared parameter belongs to one statement context, so
+/// changing it under the same context deliberately keeps the cached schema;
+/// the next context gets a fresh schema.
+#[test]
+fn json_schema_valid_cache_replaces_context_only_schema() {
+    struct SchemaContext {
+        context_id: u64,
+        schema: Datum,
+    }
+
+    impl Columns for SchemaContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn context_id(&self) -> u64 {
+            self.context_id
+        }
+
+        fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+            (order == 0)
+                .then(|| self.schema.clone())
+                .ok_or(EvalError::Unsupported("unbound prepared parameter"))
+        }
+    }
+
+    let mut schema = Constant::new(json_s(r#"{"type":"object"}"#), text_ft());
+    schema.param_marker = Some(ParamMarker { order: 0 });
+    let function = ScalarFunction::new(
+        CiString::new("json_schema_valid"),
+        int_ft(),
+        vec![Expression::Constant(schema), const_arg(json_s("[]"))],
+    );
+    let row = tidb_chunk::row::Row::empty();
+    assert_eq!(
+        function
+            .eval(
+                &SchemaContext {
+                    context_id: 7,
+                    schema: json_s(r#"{"type":"object"}"#),
+                },
+                row,
+            )
+            .unwrap(),
+        Datum::Int(0)
+    );
+    assert_eq!(
+        function
+            .eval(
+                &SchemaContext {
+                    context_id: 7,
+                    schema: json_s("{}"),
+                },
+                row,
+            )
+            .unwrap(),
+        Datum::Int(0)
+    );
+    assert_eq!(
+        function
+            .eval(
+                &SchemaContext {
+                    context_id: 8,
+                    schema: json_s("{}"),
+                },
+                row,
+            )
+            .unwrap(),
         Datum::Int(1)
     );
 }
