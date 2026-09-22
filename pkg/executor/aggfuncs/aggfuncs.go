@@ -88,6 +88,19 @@ var (
 	_ AggFunc = (*maxMin4VectorFloat32)(nil)
 	_ AggFunc = (*maxMin4Enum)(nil)
 	_ AggFunc = (*maxMin4Set)(nil)
+	_ AggFunc = (*maxMinCount4Int)(nil)
+	_ AggFunc = (*maxMinCount4Uint)(nil)
+	_ AggFunc = (*maxMinCount4Float32)(nil)
+	_ AggFunc = (*maxMinCount4Float64)(nil)
+	_ AggFunc = (*maxMinCount4Decimal)(nil)
+	_ AggFunc = (*maxMinCount4String)(nil)
+	_ AggFunc = (*maxMinCount4Time)(nil)
+	_ AggFunc = (*maxMinCount4Duration)(nil)
+	_ AggFunc = (*maxMinCount4JSON)(nil)
+	_ AggFunc = (*maxMinCount4VectorFloat32)(nil)
+	_ AggFunc = (*maxMinCount4Enum)(nil)
+	_ AggFunc = (*maxMinCount4Set)(nil)
+	_ AggFunc = (*unsupportedRowBasedFinalMaxMinCount)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgPartial4Decimal)(nil)
@@ -111,11 +124,33 @@ var (
 	_ AggFunc = (*sum4Decimal)(nil)
 	_ AggFunc = (*sum4Float64)(nil)
 
+	// All the AggFunc implementations for "SUM_INT" are listed here.
+	_ AggFunc = (*sumDistinctUint64)(nil)
+	_ AggFunc = (*sumDistinctInt64)(nil)
+
+	_ AggFunc = (*sumUint)(nil)
+	_ AggFunc = (*sumInt)(nil)
+
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
 	_ AggFunc = (*groupConcat)(nil)
 
 	_ AggFunc = (*groupPartialConcatDistinct)(nil)
 	_ AggFunc = (*groupOriginalConcatDistinct)(nil)
+
+	// All the AggFunc implementations for "STDDEV_POP/STDDEV_SAMP/VAR_POP/VAR_SAMP" are listed here.
+	_ AggFunc = (*stdDevPop4Float64)(nil)
+	_ AggFunc = (*stddevSamp4Float64)(nil)
+	_ AggFunc = (*varPop4Float64)(nil)
+	_ AggFunc = (*varSamp4Float64)(nil)
+
+	_ AggFunc = (*stdDevPopOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*stdDevPopPartial4DistinctFloat64)(nil)
+	_ AggFunc = (*stddevSampOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*stddevSampPartial4DistinctFloat64)(nil)
+	_ AggFunc = (*varPopOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*varPopPartial4DistinctFloat64)(nil)
+	_ AggFunc = (*varSampOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*varSampPartial4DistinctFloat64)(nil)
 
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)

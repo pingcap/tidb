@@ -33,6 +33,8 @@ import (
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 var (
@@ -577,6 +579,8 @@ func TestTaskExecutorRun(t *testing.T) {
 
 	t.Run("subtask cancelled during running", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
+		core, logs := observer.New(zap.InfoLevel)
+		e.taskExecutor.sampleLogger = zap.New(core)
 		e.mockForCheckBalanceSubtask()
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
@@ -592,6 +596,8 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, storage.ErrTaskNotFound)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 		e.taskExecutor.Run()
+		require.Empty(t, logs.FilterMessage("run subtask failed").All())
+		require.Len(t, logs.FilterMessage("subtask run canceled").All(), 1)
 		require.True(t, e.ctrl.Satisfied())
 	})
 

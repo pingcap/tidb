@@ -450,6 +450,10 @@ func TestSlowQuery(t *testing.T) {
 			"10",
 			"10",
 			"100",
+			"0",
+			"0",
+			"0",
+			"",
 			"test",
 			"",
 			"0",
@@ -496,8 +500,6 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
-			"0",
-			"",
 			"abcd",
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
@@ -546,6 +548,10 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"0",
+			"0",
+			"",
 			"rtdb",
 			"",
 			"0",
@@ -592,8 +598,6 @@ func TestSlowQuery(t *testing.T) {
 			"0.021",
 			"1",
 			"1",
-			"0",
-			"",
 			"",
 			"",
 			"",
@@ -810,6 +814,49 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
 	).Check(testkit.Rows("Statement type"))
+	tk.MustQuery(`
+		SELECT table_name, column_name
+		FROM information_schema.columns
+		WHERE table_name IN (
+			'STATEMENTS_SUMMARY',
+			'STATEMENTS_SUMMARY_HISTORY',
+			'CLUSTER_STATEMENTS_SUMMARY',
+			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
+		)
+		AND column_name IN (
+			'AVG_IA_REMOTE_READ_SEGMENT_COUNT',
+			'IA_REMOTE_EXEC_COUNT',
+			'MAX_IA_REMOTE_READ_SEGMENT_COUNT'
+		)
+		ORDER BY table_name, column_name
+	`).Check(testkit.Rows(
+		"CLUSTER_STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY IA_REMOTE_EXEC_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY IA_REMOTE_EXEC_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY IA_REMOTE_EXEC_COUNT",
+		"STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY IA_REMOTE_EXEC_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+	))
+	tk.MustQuery(`
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_name IN (
+			'STATEMENTS_SUMMARY',
+			'STATEMENTS_SUMMARY_HISTORY',
+			'CLUSTER_STATEMENTS_SUMMARY',
+			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
+		)
+		AND column_name IN (
+			'AVG_IA_READ_SEGMENT_COUNT',
+			'MAX_IA_READ_SEGMENT_COUNT'
+		)
+	`).Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -1452,12 +1499,16 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	var ok bool
 	const expectedSQLDigest = "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b"
 	const expectedSQLText = "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a"
-	var beginTime = time.Now().Format(types.TimeFormat)
+	begin := time.Now()
+	beginTime := begin.Format(types.TimeFormat)
 	err = tk.QueryToErr(expectedSQLText)
-	var endTime = time.Now().Format(types.TimeFormat)
 	require.NotNil(t, err)
+	require.Eventually(t, func() bool {
+		return !memory.MemoryLimitGCLast.Load().Before(begin)
+	}, 5*time.Second, 50*time.Millisecond)
 	// Check Memory Table
 	rows := tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE").Rows()
+	memoryUsageReadTime := time.Now().Format(types.TimeFormat)
 	require.Len(t, rows, 1)
 	row := rows[0]
 	require.Len(t, row, 11)
@@ -1476,15 +1527,16 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 		require.Fail(t, "CURRENT_OPS get wrong value")
 	}
 	require.GreaterOrEqual(t, row[5], beginTime) // SESSION_KILL_LAST
-	require.LessOrEqual(t, row[5], endTime)
+	require.LessOrEqual(t, row[5], memoryUsageReadTime)
 	require.Greater(t, row[6], "0")              // SESSION_KILL_TOTAL
 	require.GreaterOrEqual(t, row[7], beginTime) // GC_LAST
-	require.LessOrEqual(t, row[7], endTime)
+	require.LessOrEqual(t, row[7], memoryUsageReadTime)
 	require.Greater(t, row[8], "0") // GC_TOTAL
 	require.Equal(t, row[9], "0")   // DISK_USAGE
 	require.Equal(t, row[10], "0")  // QUERY_FORCE_DISK
 
 	rows = tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE_OPS_HISTORY").Rows()
+	opsHistoryReadTime := time.Now().Format(types.TimeFormat)
 	require.Greater(t, len(rows), 0)
 	row = nil
 	for _, historyRow := range rows {
@@ -1495,7 +1547,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.NotNil(t, row)
 	require.Len(t, row, 12)
 	require.GreaterOrEqual(t, row[0], beginTime) // TIME
-	require.LessOrEqual(t, row[0], endTime)
+	require.LessOrEqual(t, row[0], opsHistoryReadTime)
 	require.Equal(t, row[1], "SessionKill") // OPS
 	require.Equal(t, row[2], "536870912")   // MEMORY_LIMIT
 	tmp, ok = row[3].(string)               // MEMORY_CURRENT

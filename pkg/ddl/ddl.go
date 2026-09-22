@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -170,9 +171,9 @@ const (
 )
 
 var (
-	// EnableSplitTableRegion is a flag to decide whether to split a new region for
-	// a newly created table. It takes effect only if the Storage supports split
-	// region.
+	// EnableSplitTableRegion controls whether to split a new Region for a newly
+	// created table without pre-split configuration or Region split policies. It
+	// takes effect only if the Storage supports splitting Regions.
 	EnableSplitTableRegion = uint32(0)
 )
 
@@ -199,6 +200,8 @@ type DDL interface {
 	GetID() string
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
+	// StorageClassTransitionStatuses returns active explicit storage-class operation statuses.
+	StorageClassTransitionStatuses() []StorageClassTransitionStatus
 }
 
 type jobSubmitResult struct {
@@ -264,12 +267,13 @@ type ddl struct {
 	wg tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 
 	*ddlCtx
-	sessPool          *sess.Pool
-	delRangeMgr       delRangeManager
-	enableTiFlashPoll *atomicutil.Bool
-	sysTblMgr         systable.Manager
-	minJobIDRefresher *systable.MinJobIDRefresher
-	eventPublishStore notifier.Store
+	sessPool                      *sess.Pool
+	delRangeMgr                   delRangeManager
+	enableTiFlashPoll             *atomicutil.Bool
+	sysTblMgr                     systable.Manager
+	minJobIDRefresher             *systable.MinJobIDRefresher
+	eventPublishStore             notifier.Store
+	storageClassTransitionManager *storageClassTransitionManager
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -348,6 +352,7 @@ type ddlCtx struct {
 	etcdCli      *clientv3.Client
 	autoidCli    *autoid.ClientDiscover
 	schemaLoader SchemaLoader
+	extWorkload  extworkload.Manager
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
@@ -780,6 +785,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		etcdCli:           opt.EtcdCli,
 		autoidCli:         opt.AutoIDClient,
 		schemaLoader:      opt.SchemaLoader,
+		extWorkload:       opt.ExtWorkloadMgr,
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*ReorgContext)
@@ -791,6 +797,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		eventPublishStore: opt.EventPublishStore,
 	}
+	d.storageClassTransitionManager = newStorageClassTransitionManager(d)
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
@@ -802,7 +809,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return newLitBackfillScheduler(ctx, d, task, param)
 		})
-	scheduler.RegisterSchedulerCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
+	scheduler.RegisterCleanerFactory(proto.Backfill, newBackfillCleaner)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -950,7 +957,7 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-// this detection is only used for Classic kernel. for NextGen(TiDB-X), the job
+// this detection is only used for Classic kernel. for NextGen(TiDB X), the job
 // version is always started with V2, no need to detect kernel version.
 //
 // detect versions of all TiDB instances and choose a job version to use, rules:

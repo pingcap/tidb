@@ -41,6 +41,9 @@ type PreparedStatement interface {
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
 
+	// CheckLongDataSize checks whether the statement has accumulated too much data through COM_STMT_SEND_LONG_DATA.
+	CheckLongDataSize() error
+
 	// NumParams returns number of parameters.
 	NumParams() int
 

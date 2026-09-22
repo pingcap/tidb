@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -28,11 +29,13 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -958,6 +961,125 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func TestConfig(t *testing.T) {
+	t.Run("cross AZ weight is not configurable", func(t *testing.T) {
+		conf := NewConfig()
+		_, err := toml.Decode("[ru-v2.stmt-weights]\nCrossAZNetByte = 2\ncross-az-net-byte = 2\n", conf)
+		require.NoError(t, err)
+		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
+		require.NoError(t, json.Unmarshal([]byte(`{"ru-v2":{"stmt-weights":{"CrossAZNetByte":2,"cross-az-net-byte":2}}}`), conf))
+		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
+		conf.RUV2.StmtWeights.CrossAZNetByte = 2
+		data, err := json.Marshal(conf.RUV2.StmtWeights)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "CrossAZ")
+		require.NotContains(t, string(data), "cross-az")
+		var encoded bytes.Buffer
+		require.NoError(t, toml.NewEncoder(&encoded).Encode(conf.RUV2.StmtWeights))
+		require.NotContains(t, encoded.String(), "CrossAZ")
+		require.NotContains(t, encoded.String(), "cross-az")
+	})
+
+	t.Run("RU v2 statement weights", func(t *testing.T) {
+		field, ok := reflect.TypeOf(RUV2Config{}).FieldByName("StmtWeights")
+		require.True(t, ok)
+		require.True(t, field.Anonymous)
+		require.Equal(t, reflect.TypeOf(ruv2.StmtWeights{}), field.Type)
+		require.Equal(t, "stmt-weights", field.Tag.Get("toml"))
+		require.Equal(t, "stmt-weights", field.Tag.Get("json"))
+
+		require.Equal(t, ruv2.DefaultWeights(), NewConfig().RUV2.StmtWeights)
+
+		want := ruv2.StmtWeights{
+			CPUWork: 2, ScanByte: 3, NetByte: 5, FrontendCompileByte: 7,
+			HashStateRow: 11, JoinOutputRow: 13, WriteStatement: 17,
+			OperatorNum: 19, WriteKey: 23, WriteByte: 29,
+		}
+		conf := NewConfig()
+		meta, err := toml.Decode(`
+[ru-v2.stmt-weights]
+cpu-work = 2
+scan-byte = 3
+net-byte = 5
+frontend-compile-byte = 7
+hash-state-row = 11
+join-output-row = 13
+write-statement = 17
+operator-num = 19
+write-key = 23
+write-byte = 29
+`, conf)
+		require.NoError(t, err)
+		require.Empty(t, meta.Undecoded())
+		require.Equal(t, want, conf.RUV2.StmtWeights)
+
+		conf = NewConfig()
+		require.NoError(t, json.Unmarshal([]byte(`{
+			"ru-v2": {
+				"stmt-weights": {
+					"cpu-work": 2,
+					"scan-byte": 3,
+					"net-byte": 5,
+					"frontend-compile-byte": 7,
+					"hash-state-row": 11,
+					"join-output-row": 13,
+					"write-statement": 17,
+					"operator-num": 19,
+					"write-key": 23,
+					"write-byte": 29
+				}
+			}
+		}`), conf))
+		require.Equal(t, want, conf.RUV2.StmtWeights)
+
+		conf.RUV2.StmtWeights.CPUWork = -1
+		require.EqualError(t, conf.Valid(), "ru-v2.stmt-weights.cpu-work must be finite and non-negative, got -1")
+	})
+
+	t.Run("RU report mode", func(t *testing.T) {
+		require.Equal(t, RUReportModeResult, NewConfig().RUV2.ReportMode)
+		for _, mode := range []string{RUReportModeResult, RUReportModeFull} {
+			conf := NewConfig()
+			path := filepath.Join(t.TempDir(), "ru.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[ru-v2]\nreport-mode = \""+mode+"\"\n"), 0600))
+			require.NoError(t, conf.Load(path))
+			require.NoError(t, conf.Valid())
+			require.Equal(t, mode, conf.RUV2.ReportMode)
+		}
+		for _, mode := range []string{"", "FULL", "invalid"} {
+			conf := NewConfig()
+			conf.RUV2.ReportMode = mode
+			require.ErrorContains(t, conf.Valid(), "invalid ru-v2.report-mode")
+		}
+	})
+	t.Run("DDL RU weights", func(t *testing.T) {
+		conf := NewConfig()
+		require.Equal(t, float64(1), conf.RUV2.DDLWeights.TxnKVBytes)
+		require.Equal(t, float64(1), conf.RUV2.DDLWeights.IngestKVBytes)
+
+		path := filepath.Join(t.TempDir(), "ru.toml")
+		require.NoError(t, os.WriteFile(path, []byte(`[ru-v2.ddl-weights]
+txn-kv-bytes = 2
+ingest-kv-bytes = 3
+`), 0600))
+		require.NoError(t, conf.Load(path))
+		require.NoError(t, conf.Valid())
+		require.Equal(t, float64(2), conf.RUV2.DDLWeights.TxnKVBytes)
+		require.Equal(t, float64(3), conf.RUV2.DDLWeights.IngestKVBytes)
+
+		encoded, err := json.Marshal(conf.RUV2.DDLWeights)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"txn-kv-bytes":2,"ingest-kv-bytes":3}`, string(encoded))
+
+		for _, invalid := range []float64{-1, math.NaN(), math.Inf(1)} {
+			conf := NewConfig()
+			conf.RUV2.DDLWeights.TxnKVBytes = invalid
+			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.txn-kv-bytes")
+
+			conf = NewConfig()
+			conf.RUV2.DDLWeights.IngestKVBytes = invalid
+			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.ingest-kv-bytes")
+		}
+	})
 	conf := new(Config)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Performance.TxnTotalSizeLimit = 1000
@@ -966,6 +1088,26 @@ func TestConfig(t *testing.T) {
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	storeDir := t.TempDir()
 	configFile := filepath.Join(storeDir, "config.toml")
+	hostedEmbeddingErr := "hosted-embedding can only be configured for starter deploy mode"
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`[hosted-embedding]`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), hostedEmbeddingErr)
+
+	conf = NewConfig()
+	conf.HostedEmbedding.Enabled = true
+	require.ErrorContains(t, conf.Valid(), hostedEmbeddingErr)
+
+	conf = NewConfig()
+	conf.HostedEmbedding.APIEndpoint = "https://example.com/v1"
+	require.ErrorContains(t, conf.Valid(), hostedEmbeddingErr)
+
+	if kerneltype.IsNextGen() {
+		conf = NewConfig()
+		conf.DeployMode = deploymode.Starter
+		conf.HostedEmbedding.Enabled = true
+		require.NoError(t, conf.Valid())
+	}
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -1033,6 +1175,7 @@ keys-limit=123
 total-key-size-limit=1024
 [experimental]
 allow-expression-index = true
+allow-enable-foreign-key-check-in-shared-lock = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -1104,6 +1247,7 @@ max_connections = 200
 	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.True(t, conf.Experimental.AllowEnableForeignKeyCheckInSharedLock)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
 	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
@@ -1209,8 +1353,7 @@ grpc-keepalive-timeout = 0.01
 	}
 	require.NoError(t, conf.Load(configFile))
 
-	require.Equal(t, 2.01, conf.RUV2.RUScale)
-	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
+	require.Equal(t, RUReportModeResult, conf.RUV2.ReportMode)
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
@@ -1337,6 +1480,7 @@ func TestDeployModeConfig(t *testing.T) {
 	conf := NewConfig()
 	require.Equal(t, deploymode.Premium, conf.DeployMode)
 	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 	conf.DeployMode = deploymode.Mode(100)
 	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
@@ -1369,6 +1513,7 @@ func TestDeployModeConfig(t *testing.T) {
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
 	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
@@ -1401,6 +1546,19 @@ dxf-resource-limit = 101`), 0644))
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
 	require.True(t, conf.Standby.EnableZeroBackend)
+	require.EqualValues(t, 25*units.GiB, conf.StarterParams.MaxImportDataSize)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[hosted-embedding]
+enabled = true
+api-endpoint = "https://example.com/v1"
+api-key-path = "/tmp/embedding-api-key"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.HostedEmbedding.Enabled)
+	require.Equal(t, "https://example.com/v1", conf.HostedEmbedding.APIEndpoint)
+	require.Equal(t, "/tmp/embedding-api-key", conf.HostedEmbedding.APIKeyPath)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
@@ -1411,9 +1569,36 @@ max-import-data-size = "1MiB"`), 0644))
 	require.EqualValues(t, 1024*1024, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+max-import-data-size = "0B"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, "/etc/tidb/starter-bootstrap.json", conf.StarterParams.BootstrapFile)
+	require.NoError(t, conf.Valid())
+
 	conf = NewConfig()
 	conf.StarterParams.EnableManagerNotifier = true
 	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	conf = NewConfig()
+	conf.StarterParams.BootstrapFile = "/etc/tidb/starter-bootstrap.json"
+	require.ErrorContains(t, conf.Valid(), "starter-params.bootstrap-file can only be configured for starter deploy mode")
+	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
+bootstrap-file = ""`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
+bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "starter-params.bootstrap-file can only be configured for starter deploy mode")
 	conf = NewConfig()
 	conf.StarterParams.MaxImportDataSize = 1
 	require.ErrorContains(t, conf.Valid(), "starter-params.max-import-data-size can only be configured for starter deploy mode")
@@ -2060,13 +2245,4 @@ func TestMetering(t *testing.T) {
 			tc.checkFunc(t, mcfg)
 		})
 	}
-}
-
-func TestGetTiKVConfigKeepsZeroRUV2RUScale(t *testing.T) {
-	conf := NewConfig()
-	conf.RUV2.RUScale = 123
-	conf.TiKVClient.RUV2.RUScale = 0
-
-	tikvConf := conf.GetTiKVConfig()
-	require.Zero(t, tikvConf.TiKVClient.RUV2.RUScale)
 }

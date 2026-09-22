@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/collector"
@@ -620,51 +621,89 @@ type planMeta struct {
 	isLarge              bool
 }
 
+// normalizedMetadataMap keeps entries and their admission count in the same
+// generation so take cannot reset the count of an in-flight registration.
+type normalizedMetadataMap struct {
+	sync.Map
+	length atomic2.Int64
+}
+
+func newNormalizedMetadataMap() *normalizedMetadataMap {
+	return &normalizedMetadataMap{}
+}
+
+func (m *normalizedMetadataMap) tryReserve() bool {
+	for {
+		current := m.length.Load()
+		if current >= topsqlstate.GlobalState.MaxCollect.Load() {
+			return false
+		}
+		if m.length.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
+}
+
 // normalizedSQLMap is a wrapped map used to register normalizedSQL.
 type normalizedSQLMap struct {
-	data   atomic.Pointer[sync.Map]
-	length atomic2.Int64
+	data atomic.Pointer[normalizedMetadataMap]
 }
 
 func newNormalizedSQLMap() *normalizedSQLMap {
 	r := &normalizedSQLMap{}
-	r.data.Store(&sync.Map{})
+	r.data.Store(newNormalizedMetadataMap())
 	return r
+}
+
+func (m *normalizedSQLMap) size() int64 {
+	return m.data.Load().length.Load()
 }
 
 // register saves the relationship between sqlDigest and normalizedSQL.
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isInternal bool) {
-	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
-		reporter_metrics.IgnoreExceedSQLCounter.Inc()
+	key := string(sqlDigest)
+	for {
+		data := m.data.Load()
+		failpoint.InjectCall("afterLoadNormalizedSQLMap")
+		accepted := false
+		if data.length.Load() < topsqlstate.GlobalState.MaxCollect.Load() {
+			if _, loaded := data.Load(key); loaded {
+				accepted = true
+			} else if data.tryReserve() {
+				_, loaded = data.LoadOrStore(key, sqlMeta{
+					normalizedSQL: normalizedSQL,
+					isInternal:    isInternal,
+				})
+				if loaded {
+					data.length.Dec()
+				}
+				accepted = true
+			}
+		}
+		if m.data.Load() != data {
+			// The detached generation may already have been serialized.
+			continue
+		}
+		if !accepted {
+			reporter_metrics.IgnoreExceedSQLCounter.Inc()
+		}
 		return
-	}
-	data := m.data.Load()
-	_, loaded := data.LoadOrStore(string(sqlDigest), sqlMeta{
-		normalizedSQL: normalizedSQL,
-		isInternal:    isInternal,
-	})
-	if !loaded {
-		m.length.Add(1)
 	}
 }
 
 // take away all data inside normalizedSQLMap, put them in the returned new normalizedSQLMap.
 func (m *normalizedSQLMap) take() *normalizedSQLMap {
-	data := m.data.Load()
-	length := m.length.Load()
 	r := &normalizedSQLMap{}
-	r.data.Store(data)
-	r.length.Store(length)
-	m.data.Store(&sync.Map{})
-	m.length.Store(0)
+	r.data.Store(m.data.Swap(newNormalizedMetadataMap()))
 	return r
 }
 
 // toProto converts the normalizedSQLMap to the corresponding protobuf representation.
 func (m *normalizedSQLMap) toProto(keyspaceName []byte) []tipb.SQLMeta {
-	metas := make([]tipb.SQLMeta, 0, m.length.Load())
-	m.data.Load().Range(func(k, v any) bool {
+	data := m.data.Load()
+	metas := make([]tipb.SQLMeta, 0, data.length.Load())
+	data.Range(func(k, v any) bool {
 		meta := v.(sqlMeta)
 		metas = append(metas, tipb.SQLMeta{
 			KeyspaceName:  keyspaceName,
@@ -685,51 +724,66 @@ type planBinaryDecodeFunc func(string) (string, error)
 // into encoded format
 type planBinaryCompressFunc func([]byte) string
 
-// normalizedSQLMap is a wrapped map used to register normalizedPlan.
+// normalizedPlanMap is a wrapped map used to register normalizedPlan.
 type normalizedPlanMap struct {
-	data   atomic.Pointer[sync.Map]
-	length atomic2.Int64
+	data atomic.Pointer[normalizedMetadataMap]
 }
 
 func newNormalizedPlanMap() *normalizedPlanMap {
 	r := &normalizedPlanMap{}
-	r.data.Store(&sync.Map{})
+	r.data.Store(newNormalizedMetadataMap())
 	return r
+}
+
+func (m *normalizedPlanMap) size() int64 {
+	return m.data.Load().length.Load()
 }
 
 // register saves the relationship between planDigest and normalizedPlan.
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, isLarge bool) {
-	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
-		reporter_metrics.IgnoreExceedPlanCounter.Inc()
+	key := string(planDigest)
+	for {
+		data := m.data.Load()
+		failpoint.InjectCall("afterLoadNormalizedPlanMap")
+		accepted := false
+		if data.length.Load() < topsqlstate.GlobalState.MaxCollect.Load() {
+			if _, loaded := data.Load(key); loaded {
+				accepted = true
+			} else if data.tryReserve() {
+				_, loaded = data.LoadOrStore(key, planMeta{
+					binaryNormalizedPlan: normalizedPlan,
+					isLarge:              isLarge,
+				})
+				if loaded {
+					data.length.Dec()
+				}
+				accepted = true
+			}
+		}
+		if m.data.Load() != data {
+			// The detached generation may already have been serialized.
+			continue
+		}
+		if !accepted {
+			reporter_metrics.IgnoreExceedPlanCounter.Inc()
+		}
 		return
-	}
-	data := m.data.Load()
-	_, loaded := data.LoadOrStore(string(planDigest), planMeta{
-		binaryNormalizedPlan: normalizedPlan,
-		isLarge:              isLarge,
-	})
-	if !loaded {
-		m.length.Add(1)
 	}
 }
 
 // take away all data inside normalizedPlanMap, put them in the returned new normalizedPlanMap.
 func (m *normalizedPlanMap) take() *normalizedPlanMap {
-	data := m.data.Load()
-	length := m.length.Load()
 	r := &normalizedPlanMap{}
-	r.data.Store(data)
-	r.length.Store(length)
-	m.data.Store(&sync.Map{})
-	m.length.Store(0)
+	r.data.Store(m.data.Swap(newNormalizedMetadataMap()))
 	return r
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
 func (m *normalizedPlanMap) toProto(keyspaceName []byte, decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
-	metas := make([]tipb.PlanMeta, 0, m.length.Load())
-	m.data.Load().Range(func(k, v any) bool {
+	data := m.data.Load()
+	metas := make([]tipb.PlanMeta, 0, data.length.Load())
+	data.Range(func(k, v any) bool {
 		originalMeta := v.(planMeta)
 		protoMeta := tipb.PlanMeta{
 			KeyspaceName: keyspaceName,

@@ -59,6 +59,8 @@ var (
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
+	_ StmtNode = &PurgeMaterializedViewLogStmt{}
+	_ StmtNode = &CancelMaterializedViewJobStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 	_ StmtNode = &TrafficStmt{}
 	_ StmtNode = &RecommendIndexStmt{}
@@ -652,6 +654,68 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// PurgeMaterializedViewLogStmt is a statement to purge a materialized view log on a base table.
+type PurgeMaterializedViewLogStmt struct {
+	stmtNode
+
+	Table *TableName
+}
+
+// CancelMaterializedViewJobType identifies the materialized-view job targeted by CANCEL.
+type CancelMaterializedViewJobType uint8
+
+const (
+	// CancelMaterializedViewJobTypeLogPurge targets materialized view log purge jobs.
+	CancelMaterializedViewJobTypeLogPurge CancelMaterializedViewJobType = iota + 1
+)
+
+// CancelMaterializedViewJobStmt represents CANCEL MATERIALIZED VIEW LOG PURGE JOB.
+type CancelMaterializedViewJobStmt struct {
+	stmtNode
+
+	Tp    CancelMaterializedViewJobType
+	JobID int64
+}
+
+// Restore implements Node interface.
+func (n *CancelMaterializedViewJobStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.Tp != CancelMaterializedViewJobTypeLogPurge {
+		return errors.Errorf("invalid materialized view job cancel type: %d", n.Tp)
+	}
+	ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW LOG PURGE JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// Accept implements Node interface.
+func (n *CancelMaterializedViewJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+// Restore implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PURGE MATERIALIZED VIEW LOG ON ")
+	return n.Table.Restore(ctx)
+}
+
+// Accept implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PurgeMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
 // PrepareStmt is a statement to prepares a SQL statement which contains placeholders,
 // and it is executed with ExecuteStmt and released with DeallocateStmt.
 // See https://dev.mysql.com/doc/refman/5.7/en/prepare.html
@@ -1016,7 +1080,11 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if n.Name == TiDBCloudStorageURI {
+	if n.IsSystem && isEmbeddingAPIKeySysVar(n.Name) {
+		// API keys must not be exposed through statement restoration used by
+		// processlist, statement logging, and audit paths.
+		ctx.WriteString("******")
+	} else if n.Name == TiDBCloudStorageURI {
 		// need to redact the url for safety when `show processlist;`
 		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
 	} else if err := n.Value.Restore(ctx); err != nil {
@@ -1029,6 +1097,20 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+func isEmbeddingAPIKeySysVar(name string) bool {
+	_, ok := embeddingAPIKeySysVars[strings.ToLower(name)]
+	return ok
+}
+
+var embeddingAPIKeySysVars = map[string]struct{}{
+	"tidb_exp_embed_jina_ai_api_key":     {},
+	"tidb_exp_embed_openai_api_key":      {},
+	"tidb_exp_embed_cohere_api_key":      {},
+	"tidb_exp_embed_huggingface_api_key": {},
+	"tidb_exp_embed_nvidia_nim_api_key":  {},
+	"tidb_exp_embed_gemini_api_key":      {},
 }
 
 // Accept implements Node interface.
@@ -1317,7 +1399,7 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // SecureText implements SensitiveStatement interface.
-// need to redact the tidb_cloud_storage_url for safety when `show processlist;`
+// Sensitive variable values are redacted by VariableAssignment.Restore.
 func (n *SetStmt) SecureText() string {
 	redactedStmt := *n
 	var sb strings.Builder
@@ -1434,10 +1516,16 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 
 // SecureText implements SensitiveStatement interface.
 func (n *SetPwdStmt) SecureText() string {
-	if n.RetainCurrentPassword {
-		return fmt.Sprintf("set password for user %s RETAIN CURRENT PASSWORD", n.User)
+	// n.User can be nil for the current-user form (`SET PASSWORD = '...'`),
+	// matching Restore's handling. Avoid leaking `<nil>` into redacted SQL.
+	base := "set password"
+	if n.User != nil {
+		base = fmt.Sprintf("set password for user %s", n.User)
 	}
-	return fmt.Sprintf("set password for user %s", n.User)
+	if n.RetainCurrentPassword {
+		return base + " RETAIN CURRENT PASSWORD"
+	}
+	return base
 }
 
 // Accept implements Node Accept interface.
@@ -3902,8 +3990,8 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
-// if the url is not a valid url, return the original string.
+// RedactURL redacts sensitive query parameters in supported storage URLs.
+// If the URL is not valid, it returns the original string.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
 	u, err := url.Parse(str)
@@ -3928,6 +4016,9 @@ func RedactURL(str string) string {
 			"account-key":    {},
 			"encryption-key": {},
 			"sas-token":      {},
+			// Azure endpoints can contain SAS tokens used directly by the storage
+			// client, so masking only the separate sas-token parameter is insufficient.
+			"endpoint": {},
 		}
 	}
 

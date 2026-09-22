@@ -41,6 +41,7 @@ var GetEtcdClient = store.NewEtcdCli
 
 // CheckRequirements checks the requirements for IMPORT INTO.
 // we check the following things here:
+//   - target table should not have TTL enabled
 //   - when import from file
 //     1. there is no active job on the target table
 //     2. the total file size > 0
@@ -60,6 +61,18 @@ func (e *LoadDataController) CheckRequirementsBeforeInitDataFiles(ctx context.Co
 }
 
 func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionctx.Context, checkTotalFileSize bool) error {
+	tableInfo := e.Plan.TableInfo
+	// Import table mode can prevent TTL from deleting data and causing a checksum
+	// mismatch. However, because TTL jobs run asynchronously, a job that races with the
+	// switch to import mode may still report a protected-table error. This precheck is
+	// also needed on versions that do not support table mode. Therefore, IMPORT INTO
+	// forbids importing into a table with TTL enabled. If later testing shows that IMPORT
+	// INTO can always switch table mode without an opt-out, TTL can check table mode before
+	// starting a job and this precheck can be removed.
+	if tableInfo.TTLInfo != nil && tableInfo.TTLInfo.Enable {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table has TTL enabled, please disable TTL before IMPORT INTO")
+	}
+
 	conn := se.GetSQLExecutor()
 	if e.DataSourceType == DataSourceTypeFile {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)

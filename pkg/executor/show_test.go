@@ -18,18 +18,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestFillOneImportJobInfo(t *testing.T) {
@@ -174,6 +178,62 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show variables like 'tidb_redact_log'").Check(testkit.Rows())
 	tk.MustQuery("show session variables like 'tidb_redact_log'").Check(testkit.Rows())
 	tk.MustQuery("show global variables like 'tidb_redact_log'").Check(testkit.Rows("tidb_redact_log OFF"))
+}
+
+func TestAdminShowSlowIARemoteReadStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_slow_log_threshold=300000")
+
+	iaDetail := execdetails.ExecDetails{CopExecDetails: execdetails.CopExecDetails{
+		ScanDetail: &tikvutil.ScanDetail{
+			IaRemoteReadSegmentCount:    4,
+			IaRemoteReadSegmentBytes:    4096,
+			IaRemoteReadSegmentDuration: 15 * time.Millisecond,
+		},
+	}}
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "user IA", Duration: 2 * time.Second, Detail: iaDetail})
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "internal IA", Duration: 3 * time.Second, Detail: iaDetail, Internal: true})
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "user standard", Duration: time.Second})
+	require.Eventually(t, func() bool {
+		return len(dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 3})) == 3
+	}, time.Second, 10*time.Millisecond)
+
+	commands := []string{
+		"admin show slow recent 2",
+		"admin show slow top 1",
+		"admin show slow top internal 1",
+		"admin show slow top all 1",
+	}
+	for _, command := range commands {
+		rs, err := tk.Exec(command)
+		require.NoError(t, err)
+		fields := rs.Fields()
+		require.Len(t, fields, 17)
+		require.Equal(t, "IA_REMOTE_READ_SEGMENT_COUNT", fields[14].ColumnAsName.O)
+		require.Equal(t, mysql.TypeLonglong, fields[14].Column.GetType())
+		require.True(t, mysql.HasUnsignedFlag(fields[14].Column.GetFlag()))
+		require.Equal(t, "IA_REMOTE_READ_SEGMENT_SIZE", fields[15].ColumnAsName.O)
+		require.Equal(t, mysql.TypeLonglong, fields[15].Column.GetType())
+		require.True(t, mysql.HasUnsignedFlag(fields[15].Column.GetFlag()))
+		require.Equal(t, "IA_REMOTE_READ_SEGMENT_WAIT_TIME", fields[16].ColumnAsName.O)
+		require.Equal(t, mysql.TypeDouble, fields[16].Column.GetType())
+		require.NoError(t, rs.Close())
+	}
+
+	rows := tk.MustQuery("admin show slow recent 2").Rows()
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		if row[0] == "user standard" {
+			require.Equal(t, []any{"0", "0", "0"}, row[14:17])
+		} else {
+			require.Equal(t, "internal IA", row[0])
+			require.Equal(t, []any{"4", "4096", "0.015"}, row[14:17])
+		}
+	}
+	tk.MustQuery("admin show slow top 1").CheckAt([]int{14, 15, 16}, testkit.Rows("4 4096 0.015"))
+	tk.MustQuery("admin show slow top internal 1").CheckAt([]int{14, 15, 16}, testkit.Rows("4 4096 0.015"))
+	tk.MustQuery("admin show slow top all 1").CheckAt([]int{14, 15, 16}, testkit.Rows("4 4096 0.015"))
 }
 
 func TestShowIndex(t *testing.T) {

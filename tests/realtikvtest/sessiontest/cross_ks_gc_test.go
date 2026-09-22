@@ -37,10 +37,18 @@ func TestCrossKSRuntimeGCLoopStartedBySystemDomain(t *testing.T) {
 			*idleTimeout = 100 * time.Millisecond
 		})
 
-	const targetKS = "keyspace1"
+	const targetKS = "keyspace2"
 	_, systemDom := realtikvtest.CreateMockStoreAndDomainAndSetup(t,
 		realtikvtest.WithKeyspaceName(keyspace.System),
 		realtikvtest.WithAllocPort(true))
+	// Bootstrap the target keyspace so its runtime can be acquired, then release the bootstrap domain
+	// before the GC loop opens and closes its own runtime.
+	t.Run("bootstrap target keyspace", func(t *testing.T) {
+		realtikvtest.CreateMockStoreAndDomainAndSetup(t,
+			realtikvtest.WithKeyspaceName(targetKS),
+			realtikvtest.WithKeepSystemStore(true),
+			realtikvtest.WithAllocPort(true))
+	})
 
 	handle, err := systemDom.AcquireKSRuntime(targetKS, "test/cross-ks-gc-loop")
 	require.NoError(t, err)

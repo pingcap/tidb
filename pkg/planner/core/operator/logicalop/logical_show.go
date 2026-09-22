@@ -191,8 +191,6 @@ func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expressio
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 // todo: merge getFakeStats with the one in logical_show_ddl_jobs.go

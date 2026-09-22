@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
-	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -56,7 +55,6 @@ type cloudImportExecutor struct {
 	metric        *lightningmetric.Common
 	engine        atomic.Pointer[globalsort.Engine]
 	summary       *execute.SubtaskSummary
-	ingestedSSTs  *ingestedSSTRecorder
 }
 
 func newCloudImportExecutor(
@@ -65,21 +63,15 @@ func newCloudImportExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
-	observeIngestedSST bool,
 ) (*cloudImportExecutor, error) {
-	summary := &execute.SubtaskSummary{}
-	executor := &cloudImportExecutor{
+	return &cloudImportExecutor{
 		job:           job,
 		store:         store,
 		indexes:       indexes,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
-		summary:       summary,
-	}
-	if observeIngestedSST {
-		executor.ingestedSSTs = newIngestedSSTRecorder(summary)
-	}
-	return executor, nil
+		summary:       &execute.SubtaskSummary{},
+	}, nil
 }
 
 func (e *cloudImportExecutor) Init(ctx context.Context) error {
@@ -125,8 +117,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	localBackend.SetCollector(&ingestCollector{
-		meterRec:     meterRec,
-		ingestedSSTs: e.ingestedSSTs,
+		meterRec: meterRec,
 	})
 
 	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, e.indexes)
@@ -223,10 +214,6 @@ func (e *cloudImportExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 // ResetSummary resets the summary stored in the executor.
 func (e *cloudImportExecutor) ResetSummary() {
-	if e.ingestedSSTs != nil {
-		e.ingestedSSTs.Reset()
-		return
-	}
 	e.summary.Reset()
 }
 
@@ -272,60 +259,13 @@ func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource 
 
 type ingestCollector struct {
 	execute.NoopCollector
-	meterRec     *metering.Recorder
-	ingestedSSTs *ingestedSSTRecorder
+	meterRec *metering.Recorder
 }
 
 func (c *ingestCollector) Processed(bytes, _ int64) {
 	// since the region job might be retried, this value might be larger than
 	// the total KV size.
 	c.meterRec.IncClusterWriteBytes(uint64(bytes))
-}
-
-func (c *ingestCollector) RecordIngestedSST(identity string, size uint64) {
-	if c.ingestedSSTs != nil {
-		c.ingestedSSTs.RecordIngestedSST(identity, size)
-	}
-}
-
-type ingestedSSTRecorder struct {
-	execute.NoopCollector
-
-	summary *execute.SubtaskSummary
-	mu      sync.Mutex
-	seen    map[string]struct{}
-}
-
-func newIngestedSSTRecorder(summary *execute.SubtaskSummary) *ingestedSSTRecorder {
-	return &ingestedSSTRecorder{
-		summary: summary,
-		seen:    make(map[string]struct{}),
-	}
-}
-
-func (r *ingestedSSTRecorder) RecordIngestedSST(identity string, size uint64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if identity == "" {
-		r.summary.IngestedSSTInvalidIdentityCount.Inc()
-		return
-	}
-	if _, ok := r.seen[identity]; ok {
-		return
-	}
-	r.seen[identity] = struct{}{}
-	r.summary.IngestedSSTCount.Inc()
-	r.summary.IngestedSSTBytes.Add(size)
-	if size == 0 {
-		r.summary.IngestedSSTZeroSizeCount.Inc()
-	}
-}
-
-func (r *ingestedSSTRecorder) Reset() {
-	r.mu.Lock()
-	clear(r.seen)
-	r.summary.Reset()
-	r.mu.Unlock()
 }
 
 func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {

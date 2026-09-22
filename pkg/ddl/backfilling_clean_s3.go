@@ -33,23 +33,23 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ scheduler.CleanUpRoutine = (*BackfillCleanUpS3)(nil)
+var _ scheduler.Cleaner = (*BackfillCleaner)(nil)
 
-// BackfillCleanUpS3 implements scheduler.CleanUpRoutine.
-type BackfillCleanUpS3 struct {
+// BackfillCleaner implements scheduler.Cleaner.
+type BackfillCleaner struct {
 }
 
-func newBackfillCleanUpS3() scheduler.CleanUpRoutine {
-	return &BackfillCleanUpS3{}
+func newBackfillCleaner() scheduler.Cleaner {
+	return &BackfillCleaner{}
 }
 
-// CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
+// Clean implements scheduler.Cleaner.
+func (*BackfillCleaner) Clean(ctx context.Context, task *proto.Task) error {
 	var taskMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return err
 	}
-	// Not use cloud storage, no need to cleanUp.
+	// No cleanup is needed when the task does not use cloud storage.
 	if len(taskMeta.CloudStorageURI) == 0 {
 		return nil
 	}
@@ -83,7 +83,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	// send metering data for nextgen kernel, only for succeed backfill tasks,
 	// we don't meter merge temp index tasks
 	if kerneltype.IsNextGen() && task.State == proto.TaskStateSucceed && !taskMeta.MergeTempIndex {
-		if err = sendMeterOnCleanUp(ctx, task, logger); err != nil {
+		if err = sendMeterOnClean(ctx, task, logger); err != nil {
 			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
 			return err
 		}
@@ -93,7 +93,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
-func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
+func sendMeterOnClean(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
 	taskManager, err := dxfstorage.GetTaskManager()
 	if err != nil {
 		return err
@@ -102,26 +102,16 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logge
 	if err != nil {
 		return err
 	}
-	rowCount, indexKVSize, err := sumReadIndexSubtaskSummary(subtasks)
-	if err != nil {
-		return err
-	}
-	return handle.SendRowAndSizeMeterData(ctx, task, rowCount, 0, indexKVSize, logger)
-}
-
-func sumReadIndexSubtaskSummary(subtasks []*proto.Subtask) (rowCount, processedBytes int64, err error) {
-	for _, subtask := range subtasks {
-		if len(subtask.Summary) == 0 {
-			continue
-		}
+	var rowCount, indexKVSize int64
+	for _, st := range subtasks {
 		summary := &execute.SubtaskSummary{}
-		if err = json.Unmarshal([]byte(subtask.Summary), summary); err != nil {
-			return 0, 0, errors.Trace(err)
+		if err = json.Unmarshal([]byte(st.Summary), summary); err != nil {
+			return errors.Trace(err)
 		}
 		rowCount += summary.RowCnt.Load()
-		processedBytes += summary.Processed.Load()
+		indexKVSize += summary.Processed.Load()
 	}
-	return rowCount, processedBytes, nil
+	return handle.SendRowAndSizeMeterData(ctx, task, rowCount, 0, indexKVSize, logger)
 }
 
 func redactCloudStorageURI(

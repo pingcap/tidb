@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -191,6 +192,7 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
+		diskQuotaOption:       {},
 		threadOption:          {},
 		disablePrecheckOption: {},
 	}
@@ -335,6 +337,12 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+	// UseNewCollate captures whether the new collation implementation was enabled
+	// in the submitting keyspace. Import execution may happen in another keyspace,
+	// so key and expression encoding must use this captured value instead of the
+	// executor process default. Nil means old metadata and should fall back to the
+	// caller-provided default.
+	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
 // GetOnDupKeyMode returns the conflict handling mode.
@@ -347,6 +355,21 @@ func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 		return OnDupKeyModeError
 	}
 	return p.OnDupKey
+}
+
+// GetUseNewCollateOrDefault returns the captured new-collation mode, or
+// defaultVal for import metadata generated before the field existed.
+func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
+	if p.UseNewCollate == nil {
+		return defaultVal
+	}
+	return *p.UseNewCollate
+}
+
+// setUseNewCollate stores the new-collation mode captured from the submitting
+// keyspace.
+func (p *Plan) setUseNewCollate(useNewCollate bool) {
+	p.UseNewCollate = &useNewCollate
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -553,6 +576,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
+	p.setUseNewCollate(collate.NewCollationEnabled())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
@@ -1739,12 +1763,15 @@ func newLoadDataParser(
 	dataStore storeapi.Storage,
 	dataFileInfo LoadDataReaderInfo,
 ) (parser mydump.Parser, err error) {
-	reader, err2 := dataFileInfo.Opener(ctx)
-	if err2 != nil {
-		return nil, err2
+	var reader io.ReadSeekCloser
+	if format != DataFormatParquet {
+		reader, err = dataFileInfo.Opener(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && reader != nil {
 			if err3 := reader.Close(); err3 != nil && logger != nil {
 				logger.Warn("failed to close reader", zap.Error(err3))
 			}
@@ -1779,8 +1806,9 @@ func newLoadDataParser(
 		parser, err = parquetfile.NewParser(
 			ctx,
 			dataStore,
-			reader,
+			dataFileInfo.Opener,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.FileSize,
 			dataFileInfo.Remote.ParquetMeta,
 		)
 	default:
@@ -1948,7 +1976,11 @@ func createColAssignSimpleExprs(
 
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
+	return createColAssignSimpleExprs(
+		e.ColumnAssignments,
+		ctx,
+		&e.colAssignMu,
+	)
 }
 
 func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) ingestctrl.BackendConfig {

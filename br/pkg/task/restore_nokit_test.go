@@ -111,8 +111,8 @@ func TestRewriteKeyRangesUsesStorageCodec(t *testing.T) {
 	require.Equal(t, legacyEnd, []byte(ranges[0][1]))
 
 	v2Codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
-		Id:   1,
-		Name: "user-keyspace",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1},
+		Name:     "user-keyspace",
 	})
 	require.NoError(t, err)
 

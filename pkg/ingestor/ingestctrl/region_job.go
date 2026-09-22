@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"encoding/hex"
 	goerrors "errors"
 	"fmt"
 	"io"
@@ -811,13 +810,6 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
 			return resp, errors.Trace(err)
 		}
-		for _, meta := range ingestMetas {
-			identity := ""
-			if len(meta.GetUuid()) > 0 {
-				identity = "classic/" + hex.EncodeToString(meta.GetUuid()) + "/" + meta.GetCfName()
-			}
-			recordIngestedSST(local.collector, identity, meta.GetLength())
-		}
 	}
 	return resp, nil
 }
@@ -946,6 +938,8 @@ type regionJobRetryer struct {
 
 type dispatcher struct {
 	workerCtx context.Context
+	// allJobsSucceeded distinguishes normal result-channel closure from error cleanup.
+	allJobsSucceeded chan struct{}
 
 	jobFromWorkerCh chan *regionJob
 	jobWg           *sync.WaitGroup
@@ -960,11 +954,16 @@ func newDispatcher(
 	retryer *regionJobRetryer,
 ) *dispatcher {
 	return &dispatcher{
-		workerCtx:       workerCtx,
-		jobFromWorkerCh: jobFromWorkerCh,
-		jobWg:           jobWg,
-		retryer:         retryer,
+		workerCtx:        workerCtx,
+		allJobsSucceeded: make(chan struct{}),
+		jobFromWorkerCh:  jobFromWorkerCh,
+		jobWg:            jobWg,
+		retryer:          retryer,
 	}
+}
+
+func (d *dispatcher) markAllJobsSucceeded() {
+	close(d.allJobsSucceeded)
 }
 
 func (d *dispatcher) run() error {
@@ -975,10 +974,16 @@ func (d *dispatcher) run() error {
 	for {
 		select {
 		case <-d.workerCtx.Done():
-			return nil
+			return d.workerCtx.Err()
 		case job, ok = <-d.jobFromWorkerCh:
 		}
 		if !ok {
+			failpoint.InjectCall("beforeWaitForRegionJobWorkerPoolOutcome")
+			select {
+			case <-d.workerCtx.Done():
+				return d.workerCtx.Err()
+			case <-d.allJobsSucceeded:
+			}
 			d.retryer.close()
 			return nil
 		}

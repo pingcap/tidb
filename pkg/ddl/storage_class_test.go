@@ -1,0 +1,1248 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync/atomic"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/stretchr/testify/require"
+)
+
+func TestBuildStorageClassSettingsFromJSON(t *testing.T) {
+	require := require.New(t)
+
+	tests := []struct {
+		name   string
+		input  string
+		expect *model.StorageClassSettings
+	}{
+		{
+			name:  "valid string tier",
+			input: `"STANDARD"`,
+			expect: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "STANDARD"},
+				},
+			},
+		},
+		{
+			name:   "invalid string tier",
+			input:  `"INVALID"`,
+			expect: nil,
+		},
+		{
+			name: "valid no scope",
+			input: `{
+				"tier": "STANDARD"
+			}`,
+			expect: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "STANDARD"},
+				},
+			},
+		},
+		{
+			name: "valid names in",
+			input: `{
+				"tier": "STANDARD",
+				"names_in": ["part1", "part2"]
+			}`,
+			expect: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{
+						Tier:    "STANDARD",
+						NamesIn: []string{"part1", "part2"},
+					},
+				},
+			},
+		},
+		{
+			name: "valid less than",
+			input: `{
+				"tier": "STANDARD",
+				"less_than": "100"
+			}`,
+			expect: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{
+						Tier:     "STANDARD",
+						LessThan: stringPtr("100"),
+					},
+				},
+			},
+		},
+		{
+			name: "valid values in",
+			input: `{
+				"tier": "STANDARD",
+				"values_in": ["100", "200"]
+			}`,
+			expect: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{
+						Tier:     "STANDARD",
+						ValuesIn: []string{"100", "200"},
+					},
+				},
+			},
+		},
+		{
+			name: "invalid multiple scopes",
+			input: `{
+				"tier": "STANDARD",
+				"names_in": ["part1", "part2"],
+				"values_in": ["100", "200"]
+			}`,
+			expect: nil,
+		},
+		{
+			name: "invalid unknown field",
+			input: `{
+				"tier": "STANDARD",
+				"unknown": "100"
+			}`,
+			expect: nil,
+		},
+		{
+			name: "invalid JSON",
+			input: `{
+				"tier": "STANDARD",
+				"names_in": ["part1", "part2"
+			}`,
+			expect: nil,
+		},
+		{
+			name:   "invalid trailing JSON",
+			input:  `{"tier":"STANDARD"} {"tier":"IA"}`,
+			expect: nil,
+		},
+		{
+			name: "multiple tiers",
+			input: `[
+				{"tier": "IA", "names_in": ["part1", "part2"]},
+				{"tier": "STANDARD"}
+			]`,
+			expect: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", NamesIn: []string{"part1", "part2"}},
+					{Tier: "STANDARD"},
+				},
+			},
+		},
+		{
+			name: "multiple tiers normalized",
+			input: `[
+				{"tier": "ia", "names_in": ["Part1"]},
+				{"tier": "standard", "transitions": [{"tier": "ia", "after_days": 30}]}
+			]`,
+			expect: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", NamesIn: []string{"part1"}},
+					{Tier: "STANDARD", Transitions: []model.StorageClassTransitRule{
+						{Tier: "IA", AfterDays: 30},
+					}},
+				},
+			},
+		},
+		{
+			name:   "invalid unknown field in list",
+			input:  `[{"tier": "STANDARD", "unknown": "100"}]`,
+			expect: nil,
+		},
+		{
+			name:   "invalid null def in list",
+			input:  `[null]`,
+			expect: nil,
+		},
+		{
+			name:   "invalid null def mixed in list",
+			input:  `[{"tier": "STANDARD"}, null]`,
+			expect: nil,
+		},
+		{
+			name: "valid transitions",
+			input: `{
+				"tier": "STANDARD",
+				"transitions": [{"tier": "IA", "after_days": 30}]
+			}`,
+			expect: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "STANDARD", Transitions: []model.StorageClassTransitRule{
+						{Tier: "IA", AfterDays: 30},
+					}},
+				},
+			},
+		},
+		{
+			name: "redundant transitions",
+			input: `{
+				"tier": "STANDARD",
+				"transitions": [{"tier": "IA", "after_days": 30}, {"tier": "IA", "after_days": 60}]
+			}`,
+			expect: nil,
+		},
+		{
+			name: "transitions from cold to hot",
+			input: `{
+				"tier": "IA",
+				"transitions": [{"tier": "STANDARD", "after_days": 30}]
+			}`,
+			expect: nil,
+		},
+		{
+			name: "transitions from cold to hot 2",
+			input: `{
+				"tier": "STANDARD",
+				"transitions": [{"tier": "IA", "after_days": 15}, {"tier": "STANDARD", "after_days": 30}]
+			}`,
+			expect: nil,
+		},
+		{
+			name: "transitions with transit time of 0",
+			input: `{
+				"tier": "STANDARD",
+				"transitions": [{"tier": "IA", "after_days": 0}]
+			}`,
+			expect: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ddl.BuildStorageClassSettingsFromJSON(json.RawMessage([]byte(tt.input)))
+			if tt.expect != nil {
+				require.NoError(err)
+				require.Equal(tt.expect, got)
+			} else {
+				require.Error(err)
+			}
+		})
+	}
+
+	got, err := ddl.BuildStorageClassSettingsFromJSON(nil)
+	require.NoError(err)
+	expect := &model.StorageClassSettings{
+		Defs: []*model.StorageClassDef{
+			{Tier: "STANDARD"},
+		},
+	}
+	require.Equal(expect, got)
+}
+
+func TestBuildStorageClassForTable(t *testing.T) {
+	require := require.New(t)
+
+	tests := []struct {
+		name     string
+		settings *model.StorageClassSettings
+		expected string
+	}{
+		{
+			name:     "no storage class settings",
+			settings: nil,
+			expected: "",
+		},
+		{
+			name: "no scope definition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA"},
+				},
+			},
+			expected: "IA",
+		},
+		{
+			name: "no matching scope definition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", NamesIn: []string{"part1"}},
+				},
+			},
+			expected: "STANDARD",
+		},
+		{
+			name: "multiply tiers",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "STANDARD", NamesIn: []string{"part1"}},
+					{Tier: "STANDARD", NamesIn: []string{"part2"}},
+					{Tier: "IA"},
+				},
+			},
+			expected: "IA",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tbInfo := &model.TableInfo{}
+			err := ddl.BuildStorageClassForTable(tbInfo, tt.settings)
+			require.NoError(err)
+			require.Equal(tt.expected, tbInfo.StorageClassTier)
+		})
+	}
+}
+
+func TestBuildStorageClassForPartitions(t *testing.T) {
+	require := require.New(t)
+
+	tests := []struct {
+		name          string
+		settings      *model.StorageClassSettings
+		partitions    []model.PartitionDefinition
+		partitionType ast.PartitionType
+		expected      []string
+	}{
+		{
+			name:     "no storage class settings",
+			settings: nil,
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}},
+				{Name: ast.CIStr{L: "part2"}},
+			},
+			expected: []string{"", ""},
+		},
+		{
+			name: "no scope definition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA"},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}},
+				{Name: ast.CIStr{L: "part2"}},
+			},
+			expected: []string{"IA", "IA"},
+		},
+		{
+			name: "no scope definition on hash partition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA"},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}},
+				{Name: ast.CIStr{L: "part2"}},
+			},
+			partitionType: ast.PartitionTypeHash,
+			expected:      []string{"IA", "IA"},
+		},
+		{
+			name: "names_in scope definition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", NamesIn: []string{"part1"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}},
+				{Name: ast.CIStr{L: "part2"}},
+			},
+			expected: []string{"IA", "STANDARD"},
+		},
+		{
+			name: "names_in invalid on hash partition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", NamesIn: []string{"part1"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}},
+				{Name: ast.CIStr{L: "part2"}},
+			},
+			partitionType: ast.PartitionTypeHash,
+			expected:      nil,
+		},
+		{
+			name: "names_in invalid on key partition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", NamesIn: []string{"part1"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}},
+				{Name: ast.CIStr{L: "part2"}},
+			},
+			partitionType: ast.PartitionTypeKey,
+			expected:      nil,
+		},
+		{
+			name: "partition scopes override no-scope default",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "STANDARD", NamesIn: []string{"part1"}},
+					{Tier: "IA"},
+					{Tier: "STANDARD", NamesIn: []string{"part2"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}},
+				{Name: ast.CIStr{L: "part2"}},
+			},
+			expected: []string{"STANDARD", "STANDARD"},
+		},
+		{
+			name: "partition scope wins when no-scope default appears first",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "STANDARD"},
+					{Tier: "IA", NamesIn: []string{"part1"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}},
+				{Name: ast.CIStr{L: "part2"}},
+			},
+			expected: []string{"IA", "STANDARD"},
+		},
+		{
+			name: "less_than scope definition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", LessThan: stringPtr("200")},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, LessThan: []string{"100"}},
+				{Name: ast.CIStr{L: "part2"}, LessThan: []string{"200"}},
+				{Name: ast.CIStr{L: "part3"}, LessThan: []string{"1000"}},
+			},
+			expected: []string{"IA", "IA", "STANDARD"},
+		},
+		{
+			name: "values_in scope definition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", ValuesIn: []string{"2", "3"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, InValues: [][]string{{"1"}, {"2"}}},
+				{Name: ast.CIStr{L: "part2"}, InValues: [][]string{{"3"}}},
+				{Name: ast.CIStr{L: "part3"}, InValues: [][]string{{"4"}}},
+			},
+			expected: []string{"IA", "IA", "STANDARD"},
+		},
+		{
+			name: "less_than maxvalue includes literal and maxvalue upper bounds",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", LessThan: stringPtr("MAXVALUE")},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, LessThan: []string{"'MAXVALUE'"}},
+				{Name: ast.CIStr{L: "part2"}, LessThan: []string{"MAXVALUE"}},
+			},
+			expected: []string{"IA", "IA"},
+		},
+		{
+			name: "values_in keyword does not match quoted literal",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", ValuesIn: []string{"DEFAULT"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, InValues: [][]string{{"'DEFAULT'"}}},
+				{Name: ast.CIStr{L: "part2"}, InValues: [][]string{{"DEFAULT"}}},
+			},
+			expected: []string{"STANDARD", "IA"},
+		},
+		{
+			name: "less_than invalid on list partition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", LessThan: stringPtr("200")},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, InValues: [][]string{{"1"}}},
+			},
+			expected: nil,
+		},
+		{
+			name: "less_than invalid on multi-column range partition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", LessThan: stringPtr("200")},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, LessThan: []string{"100", "200"}},
+			},
+			expected: nil,
+		},
+		{
+			name: "less_than invalid numeric range value",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", LessThan: stringPtr("abc")},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, LessThan: []string{"100"}},
+			},
+			expected: nil,
+		},
+		{
+			name: "values_in invalid on range partition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", ValuesIn: []string{"1"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, LessThan: []string{"100"}},
+			},
+			expected: nil,
+		},
+		{
+			name: "values_in invalid on multi-column list partition",
+			settings: &model.StorageClassSettings{
+				Defs: []*model.StorageClassDef{
+					{Tier: "IA", ValuesIn: []string{"1"}},
+				},
+			},
+			partitions: []model.PartitionDefinition{
+				{Name: ast.CIStr{L: "part1"}, InValues: [][]string{{"1", "2"}}},
+			},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tbInfo := &model.TableInfo{}
+			if tt.partitions != nil {
+				tbInfo.Partition = &model.PartitionInfo{
+					Definitions: tt.partitions,
+				}
+				if tt.partitionType != ast.PartitionTypeNone {
+					tbInfo.Partition.Type = tt.partitionType
+				} else if len(tt.partitions) > 0 {
+					switch {
+					case len(tt.partitions[0].LessThan) > 0:
+						tbInfo.Partition.Type = ast.PartitionTypeRange
+					case len(tt.partitions[0].InValues) > 0:
+						tbInfo.Partition.Type = ast.PartitionTypeList
+					}
+				}
+			}
+			err := ddl.BuildStorageClassForPartitions(tt.partitions, tbInfo, tt.settings)
+			if tt.expected == nil {
+				require.Error(err)
+				return
+			}
+			require.NoError(err)
+			for i, part := range tbInfo.Partition.Definitions {
+				require.Equal(tt.expected[i], part.StorageClassTier)
+			}
+		})
+	}
+}
+
+func TestStorageClassPartitionScopesUseNormalizedValues(t *testing.T) {
+	tests := []struct {
+		name       string
+		sql        string
+		tiers      []string
+		lessThan   []string
+		listValues []string
+	}{
+		{
+			name: "range expression",
+			sql: `create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"200"}}'
+		partition by range (id) (partition p0 values less than (100 + 100), partition p1 values less than (300))`,
+			tiers:    []string{"IA", "STANDARD"},
+			lessThan: []string{"200", "300"},
+		},
+		{
+			name: "range expression unsigned",
+			sql: `create table t (id bigint unsigned) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"18446744073709551614"}}'
+		partition by range (id) (partition p0 values less than (18446744073709551614), partition p1 values less than (18446744073709551615))`,
+			tiers:    []string{"IA", "STANDARD"},
+			lessThan: []string{"18446744073709551614", "18446744073709551615"},
+		},
+		{
+			name: "range columns integer",
+			sql: `create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"20"}}'
+		partition by range columns (id) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))`,
+			tiers:    []string{"IA", "IA", "STANDARD"},
+			lessThan: []string{"10", "20", "30"},
+		},
+		{
+			name: "range columns datetime",
+			sql: `create table t (created_at datetime) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"2026-05-01 00:00:00"}}'
+	partition by range columns (created_at) (partition p202604 values less than ('2026-04-01 00:00:00'), partition p202605 values less than ('2026-05-01 00:00:00'), partition p202606 values less than ('2026-06-01 00:00:00'))`,
+			tiers:    []string{"IA", "IA", "STANDARD"},
+			lessThan: []string{"'2026-04-01 00:00:00'", "'2026-05-01 00:00:00'", "'2026-06-01 00:00:00'"},
+		},
+		{
+			name: "range columns string numeric literal",
+			sql: `create table t (name varchar(20)) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"2"}}'
+	partition by range columns (name) (partition p10 values less than ('10'), partition p2 values less than ('2'), partition p3 values less than ('3'))`,
+			tiers:    []string{"IA", "IA", "STANDARD"},
+			lessThan: []string{"'10'", "'2'", "'3'"},
+		},
+		{
+			name: "range columns string uses column collation",
+			sql: `create table t (name char(10) collate utf8mb4_unicode_ci) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"G"}}'
+	partition by range columns (name) (partition p0 values less than ('a'), partition p1 values less than ('G'))`,
+			tiers:    []string{"IA", "IA"},
+			lessThan: []string{"'a'", "'G'"},
+		},
+		{
+			name: "list expression",
+			sql: `create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["2"]}}'
+partition by list (id) (partition p0 values in (1 + 1), partition p1 values in (3))`,
+			tiers:      []string{"IA", "STANDARD"},
+			listValues: []string{"2", "3"},
+		},
+		{
+			name: "range columns maxvalue includes literal and maxvalue upper bounds",
+			sql: `create table t (name varchar(20)) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"MAXVALUE"}}'
+	partition by range columns (name) (partition p0 values less than ('MAXVALUE'), partition p1 values less than (MAXVALUE))`,
+			tiers:    []string{"IA", "IA"},
+			lessThan: []string{"'MAXVALUE'", "MAXVALUE"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tbInfo := buildTableInfoFromCreateSQL(t, tt.sql)
+			require.NotNil(t, tbInfo.Partition)
+			require.Len(t, tbInfo.Partition.Definitions, len(tt.tiers))
+			for i, tier := range tt.tiers {
+				part := tbInfo.Partition.Definitions[i]
+				require.Equal(t, tier, part.StorageClassTier)
+				if len(tt.lessThan) > 0 {
+					require.Equal(t, tt.lessThan[i], part.LessThan[0])
+				}
+				if len(tt.listValues) > 0 {
+					require.Equal(t, tt.listValues[i], part.InValues[0][0])
+				}
+			}
+		})
+	}
+}
+
+func TestStorageClassPartitionScopesRejectInvalidLessThanValue(t *testing.T) {
+	sql := `create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"abc"}}'
+	partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	createStmt, ok := stmt.(*ast.CreateTableStmt)
+	require.True(t, ok)
+	_, err = ddl.BuildTableInfoFromAST(metabuild.NewContext(), createStmt)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid 'less_than' value")
+}
+
+func buildTableInfoFromCreateSQL(t *testing.T, sql string) *model.TableInfo {
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	createStmt, ok := stmt.(*ast.CreateTableStmt)
+	require.True(t, ok)
+	tbInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), createStmt)
+	require.NoError(t, err)
+	return tbInfo
+}
+
+func TestStorageClassString(t *testing.T) {
+	require := require.New(t)
+
+	tests := []struct {
+		name        string
+		tier        string
+		transitions []model.StorageClassTransitRule
+		expected    string
+	}{
+		{
+			name:     "no transitions",
+			tier:     "STANDARD",
+			expected: "STANDARD",
+		},
+		{
+			name:     "IA with no transitions",
+			tier:     "IA",
+			expected: "IA",
+		},
+		{
+			name:        "with transitions",
+			tier:        "STANDARD",
+			transitions: []model.StorageClassTransitRule{{Tier: "IA", AfterDays: 30}},
+			expected:    `{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ti := model.TableInfo{
+				StorageClassTier:        tt.tier,
+				StorageClassTransitions: tt.transitions,
+			}
+
+			result := ti.StorageClassString()
+			require.Equal(tt.expected, result)
+		})
+	}
+}
+
+func TestGetEngineAttributeFromStorageClassTableOptions(t *testing.T) {
+	require := require.New(t)
+
+	tests := []struct {
+		name     string
+		options  []*ast.TableOption
+		expected string
+		found    bool
+		hasErr   bool
+	}{
+		{
+			name: "storage class sugar",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionStorageClass, StrValue: "ia"},
+			},
+			expected: `{"storage_class":"IA"}`,
+			found:    true,
+		},
+		{
+			name: "engine attribute",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"STANDARD"}`},
+			},
+			expected: `{"storage_class":"STANDARD"}`,
+			found:    true,
+		},
+		{
+			name: "repeated engine attribute keeps last value",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"STANDARD"}`},
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"IA"}`},
+			},
+			expected: `{"storage_class":"IA"}`,
+			found:    true,
+		},
+		{
+			name: "repeated engine attribute rejects invalid earlier value",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{`},
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"IA"}`},
+			},
+			hasErr: true,
+		},
+		{
+			name: "engine attribute without storage class remains unsupported",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"key":"value"}`},
+			},
+			hasErr: true,
+		},
+		{
+			name: "engine attribute then storage class",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"STANDARD"}`},
+				{Tp: ast.TableOptionStorageClass, StrValue: "IA"},
+			},
+			hasErr: true,
+		},
+		{
+			name: "storage class then engine attribute",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionStorageClass, StrValue: "IA"},
+				{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"STANDARD"}`},
+			},
+			hasErr: true,
+		},
+		{
+			name: "invalid storage class tier",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionStorageClass, StrValue: "cold"},
+			},
+			hasErr: true,
+		},
+		{
+			name: "repeated storage class rejects invalid earlier value",
+			options: []*ast.TableOption{
+				{Tp: ast.TableOptionStorageClass, StrValue: "cold"},
+				{Tp: ast.TableOptionStorageClass, StrValue: "IA"},
+			},
+			hasErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found, err := ddl.GetEngineAttributeFromStorageClassTableOptions(tt.options)
+			if tt.hasErr {
+				require.Error(err)
+				return
+			}
+			require.NoError(err)
+			require.Equal(tt.found, found)
+			require.JSONEq(tt.expected, got)
+		})
+	}
+}
+
+func TestCheckStorageClassConflictInAlterTableSpecs(t *testing.T) {
+	require := require.New(t)
+
+	tests := []struct {
+		name   string
+		specs  []*ast.AlterTableSpec
+		hasErr bool
+	}{
+		{
+			name: "same spec conflict",
+			specs: []*ast.AlterTableSpec{
+				{
+					Tp: ast.AlterTableOption,
+					Options: []*ast.TableOption{
+						{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"STANDARD"}`},
+						{Tp: ast.TableOptionStorageClass, StrValue: "IA"},
+					},
+				},
+			},
+			hasErr: true,
+		},
+		{
+			name: "separate specs conflict",
+			specs: []*ast.AlterTableSpec{
+				{
+					Tp:      ast.AlterTableOption,
+					Options: []*ast.TableOption{{Tp: ast.TableOptionEngineAttribute, StrValue: `{"storage_class":"STANDARD"}`}},
+				},
+				{
+					Tp:      ast.AlterTableOption,
+					Options: []*ast.TableOption{{Tp: ast.TableOptionStorageClass, StrValue: "IA"}},
+				},
+			},
+			hasErr: true,
+		},
+		{
+			name: "single form",
+			specs: []*ast.AlterTableSpec{
+				{
+					Tp:      ast.AlterTableOption,
+					Options: []*ast.TableOption{{Tp: ast.TableOptionStorageClass, StrValue: "IA"}},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ddl.CheckStorageClassConflictInAlterTableSpecs(tt.specs)
+			if tt.hasErr {
+				require.Error(err)
+				return
+			}
+			require.NoError(err)
+		})
+	}
+}
+
+func TestGetSimpleTableStorageClassForShowCreate(t *testing.T) {
+	require := require.New(t)
+
+	tests := []struct {
+		name            string
+		engineAttribute string
+		expected        string
+		ok              bool
+	}{
+		{
+			name:            "simple string storage class",
+			engineAttribute: `{"storage_class":"IA"}`,
+			expected:        "IA",
+			ok:              true,
+		},
+		{
+			name:            "simple object storage class",
+			engineAttribute: `{"storage_class":{"tier":"ia"}}`,
+			expected:        "IA",
+			ok:              true,
+		},
+		{
+			name:            "simple list storage class",
+			engineAttribute: `{"storage_class":[{"tier":"ia"}]}`,
+			expected:        "IA",
+			ok:              true,
+		},
+		{
+			name:            "with transitions falls back to engine attribute",
+			engineAttribute: `{"storage_class":{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}}`,
+			ok:              false,
+		},
+		{
+			name:            "with scope falls back to engine attribute",
+			engineAttribute: `{"storage_class":{"tier":"IA","names_in":["p0"]}}`,
+			ok:              false,
+		},
+		{
+			name:            "with additional engine attribute field falls back to engine attribute",
+			engineAttribute: `{"storage_class":"IA","future_field":true}`,
+			ok:              false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok, err := ddl.GetSimpleTableStorageClassForShowCreate(&model.TableInfo{
+				EngineAttribute: tt.engineAttribute,
+			})
+			require.NoError(err)
+			require.Equal(tt.ok, ok)
+			require.Equal(tt.expected, got)
+		})
+	}
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+func TestStorageClassTransitionHistoryInsertionRetry(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("storage class transition history is NextGen-only")
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{name: "single DDL", sql: "ALTER TABLE t STORAGE_CLASS STANDARD"},
+		{name: "multi-schema DDL", sql: "ALTER TABLE t ADD COLUMN c INT, STORAGE_CLASS STANDARD"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("USE test")
+			tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY)")
+			tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+
+			// Read durable metadata and history before the failed step is retried.
+			checkTK := testkit.NewTestKit(t, store)
+			var retryTable *model.TableInfo
+			var retryHistory [][]any
+			var retryErr error
+			var retrySchemaVersion int64
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Query != tc.sql || job.ErrorCount != 1 || retryTable != nil {
+					return
+				}
+				txn, err := store.Begin()
+				if err != nil {
+					retryErr = err
+					return
+				}
+				defer func() { _ = txn.Rollback() }()
+				retryTable, retryErr = meta.NewMutator(txn).GetTable(job.SchemaID, job.TableID)
+				retrySchemaVersion = job.LastSchemaVersion
+				retryHistory = checkTK.MustQuery(`SELECT direction, state FROM mysql.tidb_storage_class_transition_history
+					WHERE table_name = 't' ORDER BY start_ts`).Rows()
+			})
+
+			// Fail after superseding the old operation, then let the DDL retry.
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockInsertStorageClassTransitionError", "1*return(true)")
+			tk.MustExec(tc.sql)
+			require.NoError(t, retryErr)
+			require.NotNil(t, retryTable)
+			require.Equal(t, model.StorageClassTierIA, retryTable.StorageClassTier)
+			require.Zero(t, retrySchemaVersion)
+			require.Equal(t, testkit.Rows("TO_IA RUNNING"), retryHistory)
+			for _, column := range retryTable.Columns {
+				if column.Name.L == "c" {
+					require.NotEqual(t, model.StatePublic, column.State)
+				}
+			}
+			tk.MustQuery(`SELECT direction, state FROM mysql.tidb_storage_class_transition_history
+				WHERE table_name = 't' ORDER BY start_ts`).Check(testkit.Rows(
+				"TO_IA SUPERSEDED", "TO_STANDARD RUNNING"))
+		})
+	}
+}
+
+func TestStorageClassTransitionHistorySecondInsertionRetry(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("storage class transition history is NextGen-only")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec(`CREATE TABLE t (id INT PRIMARY KEY) PARTITION BY RANGE (id)
+		(PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)`)
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+
+	// Splitting the old operation produces one new row for each direction.
+	// Fail the second INSERT after the first INSERT and supersession succeeded.
+	sql := `ALTER TABLE t ENGINE_ATTRIBUTE = '{"storage_class":[{"tier":"STANDARD","names_in":["p0"]},{"tier":"IA","names_in":["p1"]}]}'`
+	checkTK := testkit.NewTestKit(t, store)
+	var retryHistory [][]any
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Query == sql && job.ErrorCount == 1 {
+			retryHistory = checkTK.MustQuery(`SELECT direction, state FROM mysql.tidb_storage_class_transition_history
+				WHERE table_name = 't' ORDER BY start_ts`).Rows()
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockInsertStorageClassTransitionError", "1*off->1*return(true)")
+	tk.MustExec(sql)
+	require.Equal(t, testkit.Rows("TO_IA RUNNING"), retryHistory)
+	tk.MustQuery(`SELECT direction, state, COUNT(*) FROM mysql.tidb_storage_class_transition_history
+		WHERE table_name = 't' GROUP BY direction, state ORDER BY direction, state`).Check(testkit.Rows(
+		"TO_IA RUNNING 1", "TO_IA SUPERSEDED 1", "TO_STANDARD RUNNING 1"))
+}
+
+func TestStorageClassTransitionHistoryInsertionCancellation(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("storage class transition history is NextGen-only")
+	}
+	for _, sql := range []string{
+		"ALTER TABLE t STORAGE_CLASS STANDARD",
+		"ALTER TABLE t ADD COLUMN c INT, STORAGE_CLASS STANDARD",
+	} {
+		t.Run(sql, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("USE test")
+			tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY)")
+			tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+			limit := vardef.GetDDLErrorCountLimit()
+			tk.MustExec("SET GLOBAL tidb_ddl_error_count_limit = 2")
+			defer tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_ddl_error_count_limit = %d", limit))
+
+			// Repeated failures must preserve error accounting and reach cancellation.
+			var cancellingErrorCount atomic.Int64
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Query == sql && job.IsCancelling() {
+					cancellingErrorCount.Store(job.ErrorCount)
+				}
+			})
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockInsertStorageClassTransitionError", "return(true)")
+			err := tk.ExecToErr(sql)
+			require.ErrorContains(t, err, "injected storage class transition history insertion failure")
+			require.EqualValues(t, 3, cancellingErrorCount.Load())
+			tk.MustQuery(`SELECT direction, state FROM mysql.tidb_storage_class_transition_history
+				WHERE table_name = 't' ORDER BY start_ts`).Check(testkit.Rows("TO_IA RUNNING"))
+			tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+				context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StorageClassTierIA, tbl.Meta().StorageClassTier)
+			require.Len(t, tbl.Meta().Columns, 1)
+			tk.MustExec("INSERT INTO t VALUES (1)")
+			tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("1"))
+		})
+	}
+}
+
+func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY)")
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+		tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tables
+			WHERE table_schema = 'mysql' AND table_name = 'tidb_storage_class_transition_history'`).Check(testkit.Rows("0"))
+		return
+	}
+
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+	tk.MustQuery(`SELECT direction, state, total_replicas, completed_replicas, finish_time, duration,
+			schema_version > 0
+		FROM mysql.tidb_storage_class_transition_history`).Check(testkit.Rows(
+		"TO_IA RUNNING <nil> <nil> <nil> <nil> 1",
+	))
+	tk.MustQuery("SHOW COLUMNS FROM mysql.tidb_storage_class_transition_history LIKE 'progress'").Check(testkit.Rows())
+
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS STANDARD")
+	tk.MustQuery(`SELECT direction, state, COUNT(*)
+		FROM mysql.tidb_storage_class_transition_history
+		GROUP BY direction, state ORDER BY direction, state`).Check(testkit.Rows(
+		"TO_IA SUPERSEDED 1",
+		"TO_STANDARD RUNNING 1",
+	))
+
+	// Replacing a physical partition ends the old operation and starts a new
+	// one for every current physical target configured for the same tier.
+	tk.MustExec(`INSERT INTO mysql.tidb_storage_class_transition_history
+		(table_schema, table_name, table_id, partition_name, partition_id, direction,
+		 state, schema_version, start_ts, start_time, physical_targets)
+		VALUES ('test', 'history_t', 500, 'p0', 501, 'TO_IA', 'RUNNING', 1, 100,
+		 '2020-01-01 00:00:00',
+		 '[{"physical_id":501,"partition_id":501,"partition_name":"p0"}]')`)
+	tblInfo := &model.TableInfo{
+		ID:               500,
+		Name:             ast.NewCIStr("history_t"),
+		StorageClassTier: model.StorageClassTierIA,
+		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+			{ID: 502, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+		}},
+	}
+	se := ddlsess.NewSession(tk.Session())
+	require.NoError(t, ddl.ReconcileStorageClassTransitionTopologyForTest(context.Background(), se, tblInfo))
+	tk.MustQuery(`SELECT state, COUNT(*) FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 500 GROUP BY state ORDER BY state`).Check(testkit.Rows(
+		"RUNNING 1",
+		"SUPERSEDED 1",
+	))
+	tk.MustQuery(`SELECT physical_targets FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 500 AND state = 'RUNNING'`).Check(testkit.Rows(
+		`[{"physical_id":502,"partition_id":502,"partition_name":"p0"}]`,
+	))
+
+	// Pruning by a stable row boundary is idempotent. A repeated prune from a
+	// former owner cannot consume another batch from the retained history.
+	tk.MustExec("SET GLOBAL tidb_storage_class_transition_history_size = 100")
+	for i := 0; i < 102; i++ {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_storage_class_transition_history
+			(table_schema, table_name, table_id, direction, state, schema_version, start_ts, start_time,
+			 finish_time, duration, physical_targets)
+			VALUES ('test', 'history', %d, 'TO_IA', 'COMPLETED', 1, %d,
+			 '2020-01-01 00:00:00', '2020-01-01 00:00:00', 1, '[]')`, 10000+i, i+1))
+	}
+	secondTK := testkit.NewTestKit(t, store)
+	secondSession := ddlsess.NewSession(secondTK.Session())
+	var snapshotCount atomic.Int32
+	entered := make(chan struct{}, 2)
+	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/ddl/afterStorageClassTransitionHistoryPruneSnapshot",
+		func() {
+			call := snapshotCount.Add(1)
+			if call > 2 {
+				return
+			}
+			entered <- struct{}{}
+			if call == 1 {
+				<-releaseFirst
+				return
+			}
+			<-releaseSecond
+		},
+	)
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- ddl.PruneStorageClassTransitionHistoryForTest(context.Background(), se)
+	}()
+	go func() {
+		errCh <- ddl.PruneStorageClassTransitionHistoryForTest(context.Background(), secondSession)
+	}()
+	<-entered
+	<-entered
+	close(releaseFirst)
+	require.NoError(t, <-errCh)
+	close(releaseSecond)
+	require.NoError(t, <-errCh)
+	tk.MustQuery(`SELECT COUNT(*) FROM mysql.tidb_storage_class_transition_history
+		WHERE state IN ('COMPLETED', 'SUPERSEDED')`).Check(testkit.Rows("100"))
+
+	// A committed history row can become visible before the owner's InfoSchema
+	// has published the table change. Such a row must not be reconciled using
+	// the stale schema snapshot.
+	tk.MustExec("DELETE FROM mysql.tidb_storage_class_transition_history")
+	currentSchemaVersion := domain.GetDomain(tk.Session()).InfoSchema().SchemaMetaVersion()
+	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_storage_class_transition_history
+		(table_schema, table_name, table_id, direction, state, schema_version, start_ts,
+		 start_time, physical_targets)
+		VALUES ('test', 'not_published', 90001, 'TO_IA', 'RUNNING', %d, 90001,
+		 '2020-01-01 00:00:00', '[{"physical_id":90001}]')`, currentSchemaVersion+1))
+	_, err := ddl.PollStorageClassTransitionsForTest(
+		context.Background(), domain.GetDomain(tk.Session()).DDL(), se)
+	require.NoError(t, err)
+	tk.MustQuery(`SELECT state FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 90001`).Check(testkit.Rows("RUNNING"))
+
+	// Once that exact schema version is visible, normal orphan reconciliation
+	// can safely finish the row without contacting TiKV.
+	tk.MustExec(fmt.Sprintf(`UPDATE mysql.tidb_storage_class_transition_history
+		SET schema_version = %d WHERE table_id = 90001`, currentSchemaVersion))
+	_, err = ddl.PollStorageClassTransitionsForTest(
+		context.Background(), domain.GetDomain(tk.Session()).DDL(), se)
+	require.NoError(t, err)
+	tk.MustQuery(`SELECT state FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 90001`).Check(testkit.Rows("SUPERSEDED"))
+
+	// In a multi-schema DDL, the storage-class sub-job may reuse the version
+	// generated by an earlier sub-job instead of generating its own.
+	tk.MustExec("CREATE TABLE multi_t (id INT PRIMARY KEY)")
+	var sawStorageClassSubJob, skippedStorageClassVersion atomic.Bool
+	var cancelSubJobAfterStorageClass, storageClassSubJobRan, cancelledLaterSubJob atomic.Bool
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/ddl/beforeBatchedMultiSchemaParentJobUpdate",
+		func(_ *model.Job, proxyJob *model.Job) {
+			if proxyJob.Type == model.ActionModifyEngineAttribute && proxyJob.MultiSchemaInfo != nil {
+				sawStorageClassSubJob.Store(true)
+				skippedStorageClassVersion.Store(proxyJob.MultiSchemaInfo.SkipVersion)
+				if cancelSubJobAfterStorageClass.Load() {
+					storageClassSubJobRan.Store(true)
+				}
+				return
+			}
+			if cancelSubJobAfterStorageClass.Load() && storageClassSubJobRan.Load() &&
+				!cancelledLaterSubJob.Swap(true) {
+				proxyJob.State = model.JobStateCancelled
+				proxyJob.Error = dbterror.ErrCancelledDDLJob
+			}
+		},
+	)
+	tk.MustExec("ALTER TABLE multi_t ADD COLUMN c INT, STORAGE_CLASS IA")
+	require.True(t, sawStorageClassSubJob.Load())
+	require.True(t, skippedStorageClassVersion.Load())
+	multiSchemaVersion := domain.GetDomain(tk.Session()).InfoSchema().SchemaMetaVersion()
+	tk.MustQuery(fmt.Sprintf(`SELECT schema_version = %d
+		FROM mysql.tidb_storage_class_transition_history
+		WHERE table_schema = 'test' AND table_name = 'multi_t' AND state = 'RUNNING'`, multiSchemaVersion)).Check(testkit.Rows("1"))
+
+	// If a later sub-job fails, the storage-class metadata is restored and its
+	// deferred history changes must be discarded with the same transaction.
+	tk.MustExec("CREATE TABLE multi_fail_t (id INT PRIMARY KEY)")
+	tk.MustExec("ALTER TABLE multi_fail_t STORAGE_CLASS IA")
+	cancelSubJobAfterStorageClass.Store(true)
+	require.Error(t, tk.ExecToErr("ALTER TABLE multi_fail_t STORAGE_CLASS STANDARD, ADD COLUMN c INT"))
+	require.True(t, storageClassSubJobRan.Load())
+	require.True(t, cancelledLaterSubJob.Load())
+	tk.MustQuery(`SELECT direction, state
+		FROM mysql.tidb_storage_class_transition_history
+		WHERE table_schema = 'test' AND table_name = 'multi_fail_t'
+		ORDER BY start_ts`).Check(testkit.Rows("TO_IA RUNNING"))
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+		context.Background(), ast.NewCIStr("test"), ast.NewCIStr("multi_fail_t"))
+	require.NoError(t, err)
+	require.Equal(t, model.StorageClassTierIA, tbl.Meta().StorageClassTier)
+}

@@ -21,17 +21,24 @@ import (
 
 // ColumnFilter is a structure to check if a column should be included for processing.
 type ColumnFilter interface {
-	// MatchColumn checks if a column can be processed after applying the columnFilter.
+	// MatchColumn checks if a column can be processed after applying ColumnFilterRules.
 	MatchColumn(column string) bool
 }
 
-// columnFilter is a concrete implementation of ColumnFilter.
-type columnFilter []columnRule
+// ColumnFilterRules is a parsed column filter rule list.
+type ColumnFilterRules []columnRule
 
-// ParseColumnFilter a columnFilter from a list of serialized columnFilter rules.
+// ParseColumnFilter parses a column filter rule list.
 // Column is not case-sensitive on any platform, nor are column aliases.
-// So the parsed columnFilter is case-insensitive.
+// So the parsed ColumnFilterRules is case-insensitive.
 func ParseColumnFilter(args []string) (ColumnFilter, error) {
+	return ParseColumnFilterRules(args)
+}
+
+// ParseColumnFilterRules parses a column filter rule list.
+// Column is not case-sensitive on any platform, nor are column aliases.
+// So the parsed ColumnFilterRules is case-insensitive.
+func ParseColumnFilterRules(args []string) (ColumnFilterRules, error) {
 	p := columnRulesParser{
 		make([]columnRule, 0, len(args)),
 		matcherParser{
@@ -48,14 +55,14 @@ func ParseColumnFilter(args []string) (ColumnFilter, error) {
 
 	slices.Reverse(p.rules)
 
-	return columnFilter(p.rules), nil
+	return ColumnFilterRules(p.rules), nil
 }
 
-// MatchColumn checks if a column can be processed after applying the columnFilter `f`.
+// MatchColumn checks if a column can be processed after applying the ColumnFilterRules.
 // Column is not case-sensitive on any platform, nor are column aliases.
 // So we always match in lowercase.
 // See also: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html
-func (f columnFilter) MatchColumn(column string) bool {
+func (f ColumnFilterRules) MatchColumn(column string) bool {
 	lowercaseColumn := strings.ToLower(column)
 	for _, rule := range f {
 		if rule.column.matchString(lowercaseColumn) {

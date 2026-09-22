@@ -18,7 +18,6 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,15 +58,6 @@ type regionJobWorker interface {
 	Close() error
 }
 
-func recordIngestedSST(collector execute.Collector, identity string, size uint64) {
-	if collector == nil {
-		return
-	}
-	if c, ok := collector.(execute.IngestedSSTCollector); ok {
-		c.RecordIngestedSST(identity, size)
-	}
-}
-
 type regionJobBaseWorker struct {
 	ctx context.Context
 
@@ -93,7 +83,8 @@ type regionJobBaseWorker struct {
 // Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
 func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err error) {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
-	defer putil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+	metricsLabel, funcInfo, _ := job.RecoverArgs()
+	defer putil.Recover(metricsLabel, funcInfo, func() {
 		err = errors.Errorf("region job worker panic")
 		job.done(w.jobWg)
 	}, false)
@@ -467,12 +458,6 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 	if err != nil {
 		return err
 	}
-	id, size, ok := job.writeResult.nextGenWriteResp.GetSSTMeta()
-	if !ok {
-		recordIngestedSST(w.collector, "", 0)
-		return nil
-	}
-	recordIngestedSST(w.collector, "next-gen/"+strconv.FormatInt(id, 10), size)
 	return nil
 }
 

@@ -56,9 +56,15 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
+func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
+
+	// Create table ... / Create table like ... / BR BatchCreateTableWithInfo need to check whether
+	// columnar storage is enabled or not.
+	if err := w.checkCreateTableColumnarStorage(job, tbInfo); err != nil {
+		return tbInfo, errors.Trace(err)
+	}
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
@@ -156,7 +162,7 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 		// Updating auto id meta kv is done in a separate txn.
 		// It's ok as these data are bind with table ID, and we won't use these
 		// table IDs until info schema version is updated.
-		if err := handleAutoIncID(r, job, tbInfo); err != nil {
+		if err := handleAutoIncID(r, job.SchemaID, tbInfo); err != nil {
 			return tbInfo, errors.Trace(err)
 		}
 
@@ -173,8 +179,8 @@ type autoIDType struct {
 
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableInfo) error {
-	allocs := autoid.NewAllocatorsFromTblInfo(r, job.SchemaID, tbInfo)
+func handleAutoIncID(r autoid.Requirement, schemaID int64, tbInfo *model.TableInfo) error {
+	allocs := autoid.NewAllocatorsFromTblInfo(r, schemaID, tbInfo)
 
 	hs := make([]autoIDType, 0, 3)
 	if tbInfo.AutoIncID > 1 {
@@ -231,7 +237,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
-	tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+	tbInfo, err = createTable(w, jobCtx, job, &asAutoIDRequirement{
 		store:     w.store,
 		autoidCli: w.autoidCli,
 	}, args)
@@ -249,6 +255,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
+	if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+	}
+
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, errors.Trace(err)
@@ -262,7 +272,7 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+		tbInfo, err = createTable(w, jobCtx, job, &asAutoIDRequirement{
 			store:     w.store,
 			autoidCli: w.autoidCli,
 		}, args)
@@ -292,6 +302,9 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+		if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
 		}
 
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -330,7 +343,7 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			tbInfo, err := createTable(jobCtx, stubJob, &asAutoIDRequirement{
+			tbInfo, err := createTable(w, jobCtx, stubJob, &asAutoIDRequirement{
 				store:     w.store,
 				autoidCli: w.autoidCli,
 			}, tblArgs)
@@ -352,11 +365,39 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			return ver, errors.Trace(err)
 		}
 	}
+	if err = w.registerTTLTablesToExternalWorkload(jobCtx.ctx, job, tableInfos); err != nil {
+		return ver, err
+	}
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) registerTTLTablesToExternalWorkload(
+	ctx context.Context,
+	job *model.Job,
+	tableInfos []*model.TableInfo,
+) error {
+	registeredTTLTableIDs := make([]int64, 0, len(tableInfos))
+	for i := range tableInfos {
+		if err := w.registerTTLTableToExternalWorkload(ctx, tableInfos[i]); err != nil {
+			for j := len(registeredTTLTableIDs) - 1; j >= 0; j-- {
+				compensateTableID := registeredTTLTableIDs[j]
+				if compensateErr := w.deleteTTLTableFromExternalWorkload(ctx, compensateTableID); compensateErr != nil {
+					logutil.DDLLogger().Warn("failed to roll back TTL table registration in external workload controller",
+						zap.Int64("tableID", compensateTableID),
+						zap.Error(compensateErr))
+				}
+			}
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+		if tableInfos[i] != nil && tableInfos[i].TTLInfo != nil && tableInfos[i].TTLInfo.Enable {
+			registeredTTLTableIDs = append(registeredTTLTableIDs, tableInfos[i].ID)
+		}
+	}
+	return nil
 }
 
 func createTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
@@ -523,6 +564,9 @@ func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 		if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), tbInfo); err != nil {
 			return errors.Trace(err)
 		}
+		if err := rebuildStorageClassForPartitions(tbInfo, tbInfo.Partition.Definitions); err != nil {
+			return errors.Trace(err)
+		}
 		if s.Partition != nil {
 			if err := checkPartitionFuncType(ctx.GetExprCtx(), s.Partition.Expr, s.Table.Schema.O, tbInfo); err != nil {
 				return errors.Trace(err)
@@ -553,6 +597,9 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		for _, option := range colDef.Options {
 			if option.Tp == ast.ColumnOptionGenerated {
 				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
+					return errors.Trace(err)
+				}
+				if err := checkEmbedTextGeneratedColumn(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -593,6 +640,25 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		colName := colDef.Name.Name.L
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
+		}
+	}
+
+	embedTextCols := make(map[string]struct{})
+	for _, colDef := range colDefs {
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionGenerated && expression.IsEmbedTextFuncCall(option.Expr) {
+				embedTextCols[colDef.Name.Name.L] = struct{}{}
+			}
+		}
+	}
+	for colName, colInfo := range colName2Generation {
+		if !colInfo.generated {
+			continue
+		}
+		for depCol := range colInfo.dependences {
+			if _, ok := embedTextCols[depCol]; ok {
+				return embedTextDependencyErr(colName, depCol)
+			}
 		}
 	}
 	return nil
@@ -939,6 +1005,11 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	var ttlOptionsHandled bool
 
+	engineAttribute, hasEngineAttribute, engineAttributeErr := GetEngineAttributeFromStorageClassTableOptions(options)
+	if engineAttributeErr != nil {
+		return engineAttributeErr
+	}
+
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
@@ -1000,8 +1071,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", op.StrValue)))
 			}
 			tbInfo.Affinity = affinity
-		case ast.TableOptionEngineAttribute:
-			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
+		case ast.TableOptionEngineAttribute, ast.TableOptionStorageClass:
+		}
+	}
+	if hasEngineAttribute {
+		if err := handleEngineAttributeForCreateTable(engineAttribute, tbInfo); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -1263,6 +1338,9 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	tblInfo.MaterializedViewBase = nil
+	tblInfo.MaterializedView = nil
+	tblInfo.MaterializedViewLog = nil
 	tblInfo.TableCacheStatusType = model.TableCacheStatusDisable
 	// Ignore TiFlash replicas for temporary tables.
 	if s.TemporaryKeyword != ast.TemporaryNone {

@@ -50,6 +50,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/collate",
         "//pkg/util/dbterror",
         "//pkg/util/deadlockhistory",
         "//pkg/util/domainutil",
@@ -86,6 +87,7 @@ go_test(
     timeout = "short",
     srcs = [
         "bench_test.go",
+        "builder_mview_test.go",
         "builder_test.go",
         "infoschema_nokit_test.go",
         "infoschema_test.go",
@@ -98,7 +100,7 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
-    shard_count = 40,
+    shard_count = 42,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",

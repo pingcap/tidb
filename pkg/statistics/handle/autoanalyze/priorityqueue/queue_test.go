@@ -456,10 +456,14 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	tbl2, err := dom.InfoSchema().TableByName(ctx, schema, ast.NewCIStr("t2"))
 	require.NoError(t, err)
 
-	// Check current jobs.
-	job, err := pq.PeekForTest()
+	// Check current jobs. Tables with the same priority do not have a stable heap order.
+	snapshot, err := pq.Snapshot()
 	require.NoError(t, err)
-	require.Equal(t, tbl1.Meta().ID, job.GetTableID())
+	currentJobIDs := make([]int64, 0, len(snapshot.CurrentJobs))
+	for _, job := range snapshot.CurrentJobs {
+		currentJobIDs = append(currentJobIDs, job.TableID)
+	}
+	require.ElementsMatch(t, []int64{tbl1.Meta().ID, tbl2.Meta().ID}, currentJobIDs)
 
 	// Lock t1.
 	tk.MustExec("lock stats t1")
@@ -469,7 +473,10 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	job, err = pq.PeekForTest()
+	l, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 1, l)
+	job, err := pq.PeekForTest()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
 
@@ -481,7 +488,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	l, err := pq.Len()
+	l, err = pq.Len()
 	require.NoError(t, err)
 	require.Equal(t, 2, l)
 }

@@ -74,6 +74,7 @@ type CopContextMultiIndex struct {
 
 // NewCopContextBase creates a CopContextBase.
 // `idxCols` contains all the index columns and also the columns referenced by the index condition.
+// The new-collation mode is carried by `exprCtx`.
 func NewCopContextBase(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
@@ -125,13 +126,18 @@ func NewCopContextBase(
 		handleIDs = []int64{extra.ID}
 	}
 
-	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(exprCtx,
-		ast.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
+	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(
+		exprCtx,
+		ast.CIStr{}, // unused
+		tblInfo.Name,
+		colInfos,
+		tblInfo,
+	)
 	if err != nil {
 		return nil, err
 	}
 	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
-	vColOffsets, vColFts := CollectVirtualColumnOffsetsAndTypes(exprCtx.GetEvalCtx(), expColInfos)
+	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(exprCtx.GetEvalCtx(), expColInfos)
 
 	return &CopContextBase{
 		TableInfo:                   tblInfo,
@@ -148,7 +154,7 @@ func NewCopContextBase(
 	}, nil
 }
 
-// NewCopContext creates a CopContext.
+// NewCopContext creates a CopContext. The new-collation mode is carried by `exprCtx`.
 func NewCopContext(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
@@ -157,7 +163,13 @@ func NewCopContext(
 	requestSource string,
 ) (CopContext, error) {
 	if len(allIdxInfo) == 1 {
-		return NewCopContextSingleIndex(exprCtx, pushDownFlags, tblInfo, allIdxInfo[0], requestSource)
+		return NewCopContextSingleIndex(
+			exprCtx,
+			pushDownFlags,
+			tblInfo,
+			allIdxInfo[0],
+			requestSource,
+		)
 	}
 	return NewCopContextMultiIndex(exprCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource)
 }
@@ -382,8 +394,7 @@ func resolveIndicesForHandle(cols []*expression.Column, handleIDs []int64) []int
 	return offsets
 }
 
-// CollectVirtualColumnOffsetsAndTypes returns virtual column offsets and their field types.
-func CollectVirtualColumnOffsetsAndTypes(ctx expression.EvalContext, cols []*expression.Column) ([]int, []*types.FieldType) {
+func collectVirtualColumnOffsetsAndTypes(ctx expression.EvalContext, cols []*expression.Column) ([]int, []*types.FieldType) {
 	var offsets []int
 	var fts []*types.FieldType
 	for i, col := range cols {

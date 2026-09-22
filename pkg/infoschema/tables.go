@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -148,6 +149,8 @@ const (
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 	// TableTiFlashReplica is the string constant of tiflash replica table.
 	TableTiFlashReplica = "TIFLASH_REPLICA"
+	// TableStorageClassTransitions is the string constant of the active storage class transitions table.
+	TableStorageClassTransitions = "TIKV_STORAGE_CLASS_TRANSITIONS"
 	// TableInspectionResult is the string constant of inspection result table.
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricTables is a table that contains all metrics table definition.
@@ -354,6 +357,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
 	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
 	TableSchemataExtensions:              autoid.InformationSchemaDBID + 101,
+	TableStorageClassTransitions:         autoid.InformationSchemaDBID + 102,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -486,6 +490,7 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
 	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
+	{name: "TIDB_STORAGE_CLASS", tp: mysql.TypeVarchar, size: 32},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
@@ -655,6 +660,7 @@ var partitionsCols = []columnInfo{
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
+	{name: "TIDB_STORAGE_CLASS", tp: mysql.TypeVarchar, size: 32},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -933,6 +939,10 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.RocksdbBlockCacheHitCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadByteStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentWaitTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: execdetails.ReadPoolTaskDetailsStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogDBStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogIndexNamesStr, tp: mysql.TypeVarchar, size: 100},
 	{name: variable.SlowLogIsInternalStr, tp: mysql.TypeTiny, size: 1},
@@ -979,8 +989,6 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogTikvCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogStorageFromKV, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogStorageFromMPP, tp: mysql.TypeTiny, size: 1},
-	{name: variable.SlowLogRequestUnitV2, tp: mysql.TypeDouble, size: 22},
-	{name: variable.SlowLogRequestUnitV2Detail, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1229,6 +1237,27 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
 }
 
+var tableStorageClassTransitionsCols = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DIRECTION", tp: mysql.TypeVarchar, size: 16},
+	{name: "TOTAL_REPLICAS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "COMPLETED_REPLICAS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "DURATION", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "LAST_UPDATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+}
+
+// GetStorageClassTransitionsTableColumns returns fresh column metadata for
+// INFORMATION_SCHEMA.TIKV_STORAGE_CLASS_TRANSITIONS.
+func GetStorageClassTransitionsTableColumns() []*model.ColumnInfo {
+	return buildTableMeta(TableStorageClassTransitions, tableStorageClassTransitionsCols).Columns
+}
+
 var tableInspectionResultCols = []columnInfo{
 	{name: "RULE", tp: mysql.TypeVarchar, size: 64},
 	{name: "ITEM", tp: mysql.TypeVarchar, size: 64},
@@ -1365,6 +1394,13 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.MaxRocksdbBlockReadCountStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read count"},
 	{name: stmtsummary.AvgRocksdbBlockReadByteStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb block read byte"},
 	{name: stmtsummary.MaxRocksdbBlockReadByteStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read byte"},
+	{name: stmtsummary.IAExecCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Count of executions that read IA remote segments"},
+	{name: stmtsummary.AvgIARemoteReadSegmentCountStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of IA remote segments read"},
+	{name: stmtsummary.MaxIARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of IA remote segments read"},
+	{name: stmtsummary.AvgIARemoteReadSegmentSizeStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of bytes returned from IA remote segment reads"},
+	{name: stmtsummary.MaxIARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of bytes returned from IA remote segment reads"},
+	{name: stmtsummary.AvgIARemoteReadSegmentWaitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time spent waiting for IA remote segment reads"},
+	{name: stmtsummary.MaxIARemoteReadSegmentWaitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time spent waiting for IA remote segment reads"},
 	{name: stmtsummary.AvgPrewriteTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of prewrite phase"},
 	{name: stmtsummary.MaxPrewriteTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of prewrite phase"},
 	{name: stmtsummary.AvgCommitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of commit phase"},
@@ -1427,8 +1463,6 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.AvgRequestUnitWriteStr, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Average write request-unit cost of these statements"},
 	{name: stmtsummary.MaxQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
 	{name: stmtsummary.AvgQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of waiting for available request-units"},
-	{name: stmtsummary.MaxRequestUnitV2Str, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Max request-unit v2 cost of these statements"},
-	{name: stmtsummary.AvgRequestUnitV2Str, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Average request-unit v2 cost of these statements"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
@@ -2503,6 +2537,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
 	TableTiFlashReplica:                     tableTableTiFlashReplicaCols,
+	TableStorageClassTransitions:            tableStorageClassTransitionsCols,
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
@@ -2647,6 +2682,12 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
+// UseNewCollate implements table.Table UseNewCollate interface. Info schema
+// tables are not persisted user tables, so they use the current process default.
+func (it *infoschemaTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
+}
+
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
@@ -2743,6 +2784,12 @@ func (vt *VirtualTable) Allocators(_ table.AllocatorContext) autoid.Allocators {
 // Meta implements table.Table Meta interface.
 func (vt *VirtualTable) Meta() *model.TableInfo {
 	return nil
+}
+
+// UseNewCollate implements table.Table UseNewCollate interface. Virtual tables
+// are not persisted user tables, so they use the current process default.
+func (vt *VirtualTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.

@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -106,7 +107,11 @@ func getTableImporter(
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
+	tbl, err := tables.TableFromMetaWithCollate(
+		taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		idAlloc,
+		taskMeta.Plan.TableInfo,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -123,9 +128,19 @@ func getTableImporter(
 	}
 
 	failpoint.Inject("createTableImporterForTest", func() {
-		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
+		failpoint.Return(importer.NewTableImporterForTest(
+			ctx,
+			controller,
+			strconv.FormatInt(taskID, 10),
+			store,
+		))
 	})
-	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
+	return importer.NewTableImporter(
+		ctx,
+		controller,
+		strconv.FormatInt(taskID, 10),
+		store,
+	)
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) (err error) {
@@ -187,7 +202,7 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, chun
 		}
 	}
 
-	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path)
+	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path, targetChunk.FileSize)
 	if err != nil {
 		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
 			zap.Error(err))
@@ -267,6 +282,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 			return errors.Trace(err)
 		}
 	}
+	logger.Info("start processing chunks", zap.Int("chunkCount", len(subtaskMeta.Chunks)))
 
 	var dataEngine, indexEngine *backend.OpenedEngine
 	defer func() {
@@ -434,29 +450,13 @@ type mergeSortStepExecutor struct {
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
 	subtaskSortedKVMeta *globalsort.SortedKVMeta
-	// part-size for uploading merged files, it's calculated by:
-	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
-	dataKVPartSize  int64
-	indexKVPartSize int64
-	store           tidbkv.Storage
-	indicesGenKV    map[int64]importer.GenKVIndex
+	store               tidbkv.Storage
+	indicesGenKV        map[int64]importer.GenKVIndex
 
 	summary execute.SubtaskSummary
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
-
-func (m *mergeSortStepExecutor) Init(context.Context) error {
-	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
-	m.dataKVPartSize = max(simplesst.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount))
-	m.indexKVPartSize = max(simplesst.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount))
-
-	m.logger.Info("merge sort partSize",
-		zap.String("data-kv", units.BytesSize(float64(m.dataKVPartSize))),
-		zap.String("index-kv", units.BytesSize(float64(m.indexKVPartSize))),
-	)
-	return nil
-}
 
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	defer func() {
@@ -500,10 +500,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.task.ID, subtask.ID)
 
-	partSize := m.dataKVPartSize
-	if sm.KVGroup != globalsort.DataKVGroup {
-		partSize = m.indexKVPartSize
-	}
 	onDup, err := getOnDupForKVGroup(
 		m.indicesGenKV,
 		sm.KVGroup,
@@ -514,15 +510,16 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	}
 
 	wctx := workerpool.NewContext(ctx)
+	res := m.GetResource()
 	op := globalsort.NewMergeOperator(
 		wctx,
 		objStore,
-		partSize,
+		res.MemoryPerCore(),
 		prefix,
 		simplesst.DefaultOneWriterBlockSize,
 		onWriterClose,
 		globalsort.NewMergeCollector(ctx, &m.summary),
-		int(m.GetResource().CPU.Capacity()),
+		int(res.CPU.Capacity()),
 		false,
 		onDup,
 	)
@@ -530,7 +527,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err = globalsort.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
 		op,
 	); err != nil {
 		return errors.Trace(err)
