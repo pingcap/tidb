@@ -1,7 +1,7 @@
 # Pinned client-go config/retry package inventory
 
 Open whole-package dependency of the snapshot/coprocessor audit. TiDB master
-64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59 pins client-go/v2
+0b505ecc58b659655345b7bb85a619db02f94300 pins client-go/v2
 v2.0.8-0.20260921040125-5f38569c8cc0. This inventory is not package acceptance.
 
 | Artifact | Lines | SHA-256 | Rust owner / disposition |

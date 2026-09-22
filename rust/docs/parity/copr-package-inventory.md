@@ -2,7 +2,7 @@
 
 This receipt is part of `rust/docs/go-physical-plan-parity-execplan.md`. The
 claim unit is the complete tracked Go package at commit
-`64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59` (`origin/master`, refreshed 2026-09-22). `Partial`
+`0b505ecc58b659655345b7bb85a619db02f94300` (`origin/master`, refreshed 2026-09-22). `Partial`
 means that a native Rust owner exists but full contract/test parity has not yet
 been demonstrated.
 

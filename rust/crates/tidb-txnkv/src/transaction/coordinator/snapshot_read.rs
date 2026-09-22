@@ -121,6 +121,28 @@ fn wait_snapshot_lock_ttl(
     Ok(())
 }
 
+/// Go KVSnapshot.get's latest-committed shortcut applies only after this
+/// Get chose its first blocking transaction, and only until TiKV ignores it.
+fn ignore_later_max_ts_lock(
+    first_lock: &mut Option<u64>,
+    read_ts: u64,
+    lock_ts: u64,
+    request_context: &tidb_proto::KvrpcContext,
+) -> bool {
+    match *first_lock {
+        None => {
+            *first_lock = Some(lock_ts);
+            false
+        }
+        Some(first) => {
+            read_ts == u64::MAX
+                && first != lock_ts
+                && !request_context.resolved_locks.contains(&lock_ts)
+                && !request_context.committed_locks.contains(&lock_ts)
+        }
+    }
+}
+
 /// Pairs one Scan page may return. client-go's `scanBatchSize`.
 const SCAN_PAGE_LIMIT: u32 = 256;
 
@@ -316,6 +338,7 @@ where
     // new timestamp is a new snapshot.
     resolved_locks.rescope(start_ts);
     let mut rpc_count = 0_u64;
+    let mut first_lock = None;
     loop {
         let route = point_route(runtime, key)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -343,6 +366,15 @@ where
         }
         if let Some(key_error) = response.response.error.as_ref() {
             if let Some(lock_info) = key_error.locked.as_ref() {
+                if ignore_later_max_ts_lock(
+                    &mut first_lock,
+                    start_ts,
+                    lock_info.lock_version,
+                    &context,
+                ) {
+                    resolved_locks.ignore_lock(lock_info.lock_version);
+                    continue;
+                }
                 let locks = decode_blocking_lock_observation(lock_info)
                     .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
                 let recovery = resolve_snapshot_locks(
@@ -743,6 +775,7 @@ where
         // One call owns both its region-error and lock-wait budget.
         let mut read_backoff = RegionBackoffBudget::campaign_default();
         let mut rpc_count = 0_u64;
+        let mut first_lock = None;
         loop {
             let route = point_route(&self.runtime, key)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -772,6 +805,15 @@ where
             }
             if let Some(key_error) = response.response.error.as_ref() {
                 if let Some(lock_info) = key_error.locked.as_ref() {
+                    if ignore_later_max_ts_lock(
+                        &mut first_lock,
+                        read_ts,
+                        lock_info.lock_version,
+                        &context,
+                    ) {
+                        self.resolved_locks.ignore_lock(lock_info.lock_version);
+                        continue;
+                    }
                     let locks = decode_blocking_lock_observation(lock_info).map_err(|error| {
                         OptimisticCoordinatorError::SnapshotGet(error.to_string())
                     })?;

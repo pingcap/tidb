@@ -143,6 +143,7 @@ struct Recorded {
     batch_requests: Vec<KvrpcBatchGetRequest>,
     batch_contexts: Vec<KvrpcContext>,
     status_checks: Vec<KvrpcCheckTxnStatusRequest>,
+    status_get_attempts: Vec<(u64, usize)>,
 }
 
 /// A store holding one value behind a lock that stays alive for the first
@@ -393,11 +394,14 @@ impl LockRecoveryClient for LockingClient {
         _context: &KvrpcContext,
         _call: &UnaryCallContext,
     ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
-        self.recorded
-            .lock()
-            .unwrap()
-            .status_checks
-            .push(request.clone());
+        {
+            let mut recorded = self.recorded.lock().unwrap();
+            let attempts = recorded.get_versions.len();
+            recorded
+                .status_get_attempts
+                .push((request.lock_ts, attempts));
+            recorded.status_checks.push(request.clone());
+        }
         if let Some(response) = &self.status_response {
             return Ok(response.clone());
         }
@@ -1086,4 +1090,126 @@ fn scan_response_locks_wait_without_stamping_read_hints() {
         recorded.get_versions.is_empty(),
         "a response-level error retries the full scan page"
     );
+}
+
+#[test]
+fn max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock() {
+    for scan_pair in [false, true] {
+        for read_ts in [START_TS, u64::MAX] {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut client = LockingClient::new(Arc::clone(&recorded));
+            client.remaining_locked = 0;
+            client.status_response = Some(KvrpcCheckTxnStatusResponse {
+                commit_version: START_TS,
+                ..Default::default()
+            });
+            for lock_ts in [90, 91, 91, 90, 92] {
+                client.get_responses.push_back(KvrpcGetResponse {
+                    error: Some(KvrpcKeyError {
+                        locked: Some(KvrpcLockInfo {
+                            lock_version: lock_ts,
+                            ..LockingClient::live_lock()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+            }
+            if scan_pair {
+                client.scan_responses.push_back(KvrpcScanResponse {
+                    pairs: vec![tidb_proto::KvrpcKvPair {
+                        key: ROW_KEY.to_vec(),
+                        error: Some(KvrpcKeyError {
+                            locked: Some(LockingClient::live_lock()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                });
+            }
+            let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+            let mut transaction = RealOptimisticTransaction::new_injected(
+                runtime.clone(),
+                TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+                CALL_TIMEOUT,
+                START_TS,
+                Instant::now(),
+                4,
+                4096,
+            )
+            .unwrap();
+            let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+            if scan_pair {
+                assert_eq!(
+                    transaction
+                        .snapshot_scan_at(b"a", b"z", None, read_ts, &call)
+                        .unwrap(),
+                    vec![(ROW_KEY.to_vec(), b"waited-out-value".to_vec())]
+                );
+            } else {
+                assert_eq!(
+                    transaction
+                        .snapshot_get_at(ROW_KEY, read_ts, &call)
+                        .unwrap()
+                        .value,
+                    Some(b"waited-out-value".to_vec())
+                );
+            }
+            {
+                let recorded = recorded.lock().unwrap();
+                assert_eq!(recorded.get_contexts.len(), 6);
+                assert_eq!(recorded.get_contexts[1].committed_locks, vec![90]);
+                if read_ts == u64::MAX {
+                    assert_eq!(
+                        recorded.get_contexts[2].resolved_locks,
+                        vec![91],
+                        "new lock is skipped before consulting its status"
+                    );
+                    assert_eq!(recorded.get_contexts[2].committed_locks, vec![90]);
+                    assert_eq!(
+                        recorded.get_contexts[3].committed_locks,
+                        vec![90, 91],
+                        "ignored sent hint must fall through to resolution"
+                    );
+                    assert_eq!(recorded.get_contexts[5].resolved_locks, vec![91, 92]);
+                    assert!(recorded.status_get_attempts.contains(&(90, 1)));
+                    assert!(recorded.status_get_attempts.contains(&(91, 3)));
+                    assert!(!recorded.status_get_attempts.iter().any(|(ts, _)| *ts == 92));
+                } else {
+                    assert!(recorded
+                        .get_contexts
+                        .iter()
+                        .all(|ctx| ctx.resolved_locks.is_empty()));
+                    assert!(recorded.status_get_attempts.contains(&(91, 2)));
+                    assert!(recorded.status_get_attempts.contains(&(92, 5)));
+                }
+            }
+            // A later Get chooses its own first transaction, even while the
+            // snapshot retains resolved/committed sets from the preceding Get.
+            runtime
+                .client()
+                .lock()
+                .unwrap()
+                .get_responses
+                .push_back(KvrpcGetResponse {
+                    error: Some(KvrpcKeyError {
+                        locked: Some(KvrpcLockInfo {
+                            lock_version: 93,
+                            ..LockingClient::live_lock()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+            transaction
+                .snapshot_get_at(b"another-key", read_ts, &call)
+                .unwrap();
+            assert!(recorded
+                .lock()
+                .unwrap()
+                .status_get_attempts
+                .contains(&(93, 7)));
+        }
+    }
 }

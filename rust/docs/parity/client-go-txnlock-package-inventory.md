@@ -3,7 +3,7 @@
 Open whole-package dependency unit for the coprocessor/snapshot audit in
 rust/docs/operations/store-copr-audit-execplan.md. Pin:
 client-go/v2 v2.0.8-0.20260921040125-5f38569c8cc0, selected by TiDB master
-64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59. This is an inventory and bounded
+0b505ecc58b659655345b7bb85a619db02f94300. This is an inventory and bounded
 seed evidence; the package is not transcreated.
 
 | Artifact | Lines | SHA-256 | Rust owner / disposition |

@@ -14,8 +14,8 @@ reply must consume the existing TxnLockFast retry budget before resolution;
 repeated ignored hints must terminate with the registered storage error instead
 of spinning. Clean reads must incur no additional hint allocation or wait.
 
-The working branch is hparser-integration, pulled before work. Master remains
-64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59. The complete root and dependency
+The working branch is hparser-integration, pulled before work. Current master is
+0b505ecc58b659655345b7bb85a619db02f94300. The complete root and dependency
 artifact inventory is rust/docs/parity/copr-package-inventory.md (20 root
 artifacts plus five artifacts in separate copr_test/metrics packages).
 Master pins client-go/v2 v2.0.8-0.20260921040125-5f38569c8cc0. Its complete
@@ -35,6 +35,7 @@ directory; inventory every artifact and module build input before editing.
 - [x] Audit the four snapshot read callers and remaining store-batch requirements; record the unresolved integration below.
 - [x] Inventory the complete pinned txnsnapshot and config/retry dependency packages.
 - [x] Reconcile the live snapshot lock-hint, scan lock, per-batch retry and registered exhaustion boundaries; preserve the whole-package claim as open.
+- [x] Reconcile MaxTS first-lock behavior in both point-read entry paths; verify red/green Rust regressions and the original Go autocommit/hint tests.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
 - [ ] Satisfy the remaining whole-package build/platform/generated/live-store and workload gates.
@@ -400,3 +401,130 @@ rust/docs/tpch50-perf-parity-2026-09-22.md. TiDB master stayed at 64e8c4c05e.
 That historical benchmark receipt is preserved and is not a measurement of
 this snapshot change. No implementation or validation inputs changed in the
 fast-forward. Final scoped formatting and whitespace checks passed afterward.
+
+
+## Current-master MaxTS and worker milestone
+
+
+The previous snapshot milestone was pushed as bd7f36502c and remote equality
+was verified. At the next turn the working branch was pulled unchanged, while
+TiDB master advanced to 0b505ecc58b659655345b7bb85a619db02f94300. The client-go
+module pin, pkg/store/copr, pkg/kv and module inputs are unchanged from 64e8c4c05e;
+the existing dependency inventory hashes still apply. The clean Go oracle
+worktree was advanced to the new master. Its new executor adaptive LIMIT
+admission controller, related executor/join changes and session-variable changes
+are an additional required current-master audit boundary, not covered by the
+old executor receipts.
+
+Complete the MaxTS first-lock rule in both point-read entry paths before
+continuing the snapshot worker audit. MaxTS is Go's latest-committed point-read
+marker (math.MaxUint64), not a transaction timestamp. KVSnapshot.get records
+the first lock's transaction; at MaxTS only, a later different transaction not
+included in either sent request hint set is added to resolvedLocks without a
+status RPC. If TiKV repeats that lock despite the hint, the normal resolver and
+backoff must run. Ordinary snapshot timestamps and the original first lock do
+not take the shortcut. Track this per Get, including point reads resolving Scan
+pairs; do not let one Get's first-lock choice leak into the next.
+
+Prove sent contexts and status-request order with scripted Get/Scan responses
+before editing implementation. Audit batch worker publication, completion,
+retry and cancellation ownership; preserve the complete txnsnapshot package
+acceptance boundary. No worker-parity claim follows merely from concurrent
+initial RPC publication or source-only Go tests.
+
+### MaxTS outcome and validation
+
+
+Both snapshot_get_with (direct autocommit and Scan pair Get) and
+RealOptimisticTransaction::snapshot_get_at now retain the first transaction
+locally to one Get. A later different transaction at MaxTS is inserted into
+SnapshotLockSet's ignored set only when neither exact sent hint set names it.
+The next RPC carries that hint. A repeated hinted response takes the existing
+backoff and resolver path. Clean successful reads allocate no new collections;
+the new state is one stack-local optional transaction ID.
+
+The regression max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock
+failed before implementation: the third sent request had no resolved hint for
+transaction 91. It now passes across ordinary/MaxTS timestamps and transactional
+Get/Scan-pair entry paths. It verifies transactions 90,91,91,90,92 followed by
+success, the status-RPC order, and a later independent Get choosing 93 as its
+own first transaction. This completes that rule's seed evidence; the entire
+txnsnapshot package remains the acceptance unit.
+
+From rust/, these exact commands passed:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all max_ts_get_only --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all snapshot_ --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test lock_resolver_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib transaction::coordinator --message-format=short
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+
+The regression passed one test; the surrounding runs passed 18 snapshot, 30
+lock-resolver and 24 coordinator tests. Existing compilation warnings remain.
+From the repository root:
+
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+The first lint attempt could not resolve proxy.golang.org while installing
+the missing pinned revive tool. Rerunning with network permission restored the
+tool and passed the complete lint target. Scoped formatting and whitespace
+checks passed. No Go, module, generated or Bazel source changed, so the diff
+does not trigger change-based bazel_prepare. The previously unsatisfied fresh
+Go worktree gate still requires bazel.
+
+From /private/tmp/tidb-master-cc83514 at
+0b505ecc58b659655345b7bb85a619db02f94300:
+
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/tikv -run '^TestKV$/^(TestAutocommitPointGetResolvesIgnoredLockHint|TestSnapshotReadsBackOffWhenServerReturnsHintedLock|TestBatchGetIgnoredCommittedLockExhaustsBackoff|TestResolveLocksWithOptsBacksOffOnlyForRead)$' -count=1 -v
+
+All four selected original methods and their subcases passed, including the
+package TestMain goleak gate (0.119s package runtime). Original TestKV calls
+util.EnableFailpoints before creating clients. This pinned library uses runtime
+EvalFailpoint, not source Inject rewriting; no persistent transformation was
+made, and the runtime flag ends with the test process. The worktree is clean.
+These cross-package originals are oracle evidence, not a claim that Rust owns
+the entire tikv package test suite.
+
+Logs use /private/tmp/tidb-snapshot-maxts- with suffixes red.log, green.log,
+all.log, lock.log, coordinator.log, check.log, lint.log and go.log. All 17
+source/test/support artifacts in the txnlock, txnsnapshot and retry inventories
+were rechecked for exact SHA-256 and line counts, together with module go.mod,
+go.sum and LICENSE. TiDB go.mod, go.sum, DEPS.bzl, pkg/store/copr and pkg/kv have
+no diff between 64e8c4c05e and 0b505ecc58. Current inventory source pins were
+advanced while preserving historical receipts.
+
+### Worker audit and next whole-package boundaries
+
+
+TransactionCommandClient::publish_transaction_batch_gets admits all Tonic
+requests before completion, but complete_published_batch waits in input order.
+snapshot_batch_get_at then handles region recovery, lock status and TTL waits
+serially before another publication round. Go snapshot_async.go instead starts
+independent retry workers as responses arrive, cancels outstanding work and
+joins workers before its collector or statistics can escape. Concurrent initial
+publication alone therefore cannot satisfy this contract. The Rust generic
+client/timestamp interfaces also admit non-Send fixtures; preserve those native
+ownership boundaries when selecting the worker design, and test cancellation
+while a retry worker owns the collector before claiming this milestone.
+
+Current master's new adaptive LIMIT controller belongs to the complete
+pkg/executor/internal/exec package: BUILD.bazel, executor.go, indexusage.go,
+indexusage_test.go, adaptive_limit_controller.go and
+adaptive_limit_controller_test.go (six artifacts, 2,737 lines). Its executor,
+join, session-variable and upgrade callers are additional required integration
+work. No adaptive-controller implementation or package receipt is claimed here.
+
+Self-review found no unrelated source edits. The remaining correctness risk is
+concurrent real-store lock behavior beyond scripted response sequences; reverse
+scans, options, replica routing, metrics and the original full test matrices
+remain open. Real TiKV and matched sysbench/TPC-C/TPC-H/YCSB runs were not run;
+no workload throughput claim follows from fewer status RPCs. Disk availability
+is about 235 GiB after the earlier cleanup. Preserve the two preexisting user
+files vs_helper.rs and fragment.rs. Commit the reviewed milestone as
+`txnkv: match master MaxTS first-lock reads`, push hparser-integration and verify
+remote equality. The overall goal remains active.
+
+Revision note: refreshed the master boundary, added MaxTS red/green and original
+Go validation, and recorded the distinct unresolved BatchGet worker lifecycle.

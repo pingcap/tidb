@@ -328,6 +328,12 @@ impl SnapshotLockSet {
         self.access.extend(result.access_locks.iter().copied());
     }
 
+    /// Go resolvedLocks.Put: skip a transaction on later requests of this
+    /// snapshot, including KVSnapshot.get's MaxTS first-lock shortcut.
+    pub fn ignore_lock(&mut self, txn_id: u64) {
+        self.ignore.insert(txn_id);
+    }
+
     /// Go `ClientHelper.SendReqCtx`: both sets are stamped onto the context of
     /// every request this reader sends after the first resolve.
     pub fn stamp(&self, context: &mut KvrpcContext) {

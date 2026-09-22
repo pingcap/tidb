@@ -1,7 +1,7 @@
 # Pinned client-go txnkv/txnsnapshot package inventory
 
 The whole pinned package is an open dependency acceptance unit. TiDB master
-64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59 selects client-go/v2
+0b505ecc58b659655345b7bb85a619db02f94300 selects client-go/v2
 v2.0.8-0.20260921040125-5f38569c8cc0. Individual fixes are seed evidence,
 not a transcreated-package claim. Related plan:
 rust/docs/operations/store-copr-audit-execplan.md.
@@ -28,5 +28,16 @@ Get and BatchGet pass the exact sent request hints into read lock resolution.
 BatchGet resolves per physical response with a worker-owned backoffer. Scanner
 pair errors use snapshot.get; response-level errors use ResolveLocks with
 ForRead false and do not stamp resolved/committed hints onto Scan RPCs. Full
-scanner iteration, MaxTS first-lock rules, per-worker cancellation, cache/options,
+scanner iteration, per-worker cancellation, cache/options,
 replica routing, metrics, original tests and platform/build gates remain open.
+
+The MaxTS first-lock shortcut is now represented in both live point-read paths,
+including Scan pair rereads. Each Get records its first transaction, skips a
+later unhinted transaction only at MaxTS, and resolves repeated hinted locks.
+The scripted Rust regression covers ordinary timestamps, both entry paths,
+exact sent contexts, status-RPC ordering and reset between Gets. The selected
+original TestKV lock-hint tests in the pinned module's tikv package also pass;
+they are supplementary oracle evidence, not acceptance of that separate package.
+See the ExecPlan for exact commands and remaining worker gates. All seven
+artifact hashes and line counts were rechecked at the new master; the pin and
+module inputs are unchanged from 64e8c4c05e.
