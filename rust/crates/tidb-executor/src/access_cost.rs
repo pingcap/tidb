@@ -361,9 +361,23 @@ impl TableStatistics {
                 .unwrap_or_else(|| {
                     full_loaded_columns
                         .iter()
+                        .filter(|id| **id != column_id)
                         .find_map(|id| {
                             self.columns.get(id).and_then(|candidate| {
-                                (candidate.histogram.last_update_version == version)
+                                let same_version =
+                                    candidate.histogram.last_update_version == version;
+                                // A candidate whose histogram never got
+                                // buckets stores its rows in TopN only, and
+                                // the persisted TopN total can sit BELOW the
+                                // analyze-time row count (TPC-H SF50
+                                // lineitem.l_quantity is 26 rows short of
+                                // 300,005,811). Charging the factor with
+                                // that short total skewed every borrowed
+                                // NDV; an evicted column must then fall
+                                // through to no-factor (Go's shape, which
+                                // loads the needed column itself).
+                                let buckets_loaded = !candidate.histogram.buckets.is_empty();
+                                (same_version && buckets_loaded)
                                     .then(|| candidate.total_row_count() as i64)
                             })
                         })
