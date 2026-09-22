@@ -38,6 +38,13 @@ pub enum QueryResponseError {
     Pending,
     /// The response source returned its first terminal error.
     Source(String),
+    /// A registered storage or SQL error whose identity survives row decoding.
+    Sql {
+        /// MySQL protocol error number.
+        code: u16,
+        /// Source-formatted error message.
+        message: String,
+    },
     /// The canonical query cancellation interrupted response consumption.
     Cancelled,
 }
@@ -47,6 +54,7 @@ impl std::fmt::Display for QueryResponseError {
         match self {
             Self::Pending => formatter.write_str("DistSQL query response is still pending"),
             Self::Source(message) => formatter.write_str(message),
+            Self::Sql { message, .. } => formatter.write_str(message),
             Self::Cancelled => formatter.write_str("query cancelled by caller"),
         }
     }

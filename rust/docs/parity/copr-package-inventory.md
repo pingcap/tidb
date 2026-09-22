@@ -116,3 +116,22 @@ whole-package acceptance.
 | `region_cache.go` | 1024 | `6e7ec9edf5364110ae3d8127959190a6ac77fce4` | `8944998fa050a0f7641fb9cde9092ef49fafe7c6ea0c970f6584f8900d96b703` |
 | `region_cache_test.go` | 539 | `337eedd2524644bd9bb7b9558e71d2aeda535eb9` | `8d463176a019c4ee02f4ffc587132ae036678280cba01be640b79fd1f756cde4` |
 | `store.go` | 156 | `bfb635bcafaf8dee17d39a7f597d0db075d7da3c` | `f4040ede33e595043baf8efc57a6f6748072d67b40e7d46683863e55c41eff42` |
+
+
+## Ignored request lock hints, 2026-09-22
+
+The live direct-unary transport now checks the exact sent request's resolved
+and committed transaction hints before lock resolution, charges one short
+backoff per matching response, and preserves registered exhaustion error 9004
+through raw/decoded responses and executor rows/chunks. The 64-case regression
+covers resolved/committed hints, ordinary/shared locks, ordered/unordered reads,
+synchronous/asynchronous completion, success, exhaustion, cancellation and
+unhinted replies. This is bounded seed evidence only. Store-batched envelopes
+remain rejected and their parent/child suppression and serial timeout contracts
+remain open. Snapshot Get/BatchGet/Scan caller gaps also remain explicit.
+
+See rust/docs/operations/store-copr-audit-execplan.md for the exact red/green,
+original-master and dependent compilation/lint receipt. The complete pinned
+client-go txnkv/txnlock dependency inventory is
+rust/docs/parity/client-go-txnlock-package-inventory.md. Neither package is
+accepted as fully transcreated by this change.

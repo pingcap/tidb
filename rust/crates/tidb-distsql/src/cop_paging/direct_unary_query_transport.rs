@@ -272,6 +272,8 @@ pub enum DirectUnaryTransportError {
     DeadlineExceeded,
     /// A locked response could not be handled by the bounded lock delegate.
     LockRecovery(String),
+    /// The existing retry budget was exhausted; retain its source category.
+    Backoff(tidb_txnkv::region::RegionBackoffExhausted),
 }
 
 impl DirectUnaryTransportError {
@@ -294,6 +296,7 @@ impl DirectUnaryTransportError {
             Self::CallerCancelled => "caller_cancelled",
             Self::DeadlineExceeded => "deadline_exceeded",
             Self::LockRecovery(_) => "lock_recovery",
+            Self::Backoff(_) => "backoff",
             Self::LimiterBackpressure => "limiter_backpressure",
         }
     }
@@ -331,6 +334,7 @@ impl std::fmt::Display for DirectUnaryTransportError {
             }
             Self::DeadlineExceeded => formatter.write_str("query deadline exceeded"),
             Self::LockRecovery(message) => write!(formatter, "lock recovery failed: {message}"),
+            Self::Backoff(error) => write!(formatter, "retry budget exhausted: {error:?}"),
         }
     }
 }
@@ -341,6 +345,29 @@ impl std::error::Error for DirectUnaryTransportError {
             Self::Route(error) => Some(error),
             Self::Client(error) => Some(error),
             _ => None,
+        }
+    }
+}
+
+impl From<DirectUnaryTransportError> for QueryResponseError {
+    fn from(error: DirectUnaryTransportError) -> Self {
+        match error {
+            DirectUnaryTransportError::CallerCancelled => Self::Cancelled,
+            DirectUnaryTransportError::Backoff(exhausted) => {
+                let source = tidb_txnkv::StorageDriverError::from_backoff(
+                    exhausted.kind,
+                    &format!("{exhausted:?}"),
+                );
+                match tidb_txnkv::to_tidb_driver_error(&source) {
+                    tidb_txnkv::ConvertedDriverError::Terror(converted) => Self::Sql {
+                        code: u16::try_from(converted.code().value())
+                            .expect("registered storage error fits the MySQL protocol"),
+                        message: converted.to_string(),
+                    },
+                    other => Self::Source(other.to_string()),
+                }
+            }
+            other => Self::Source(other.to_string()),
         }
     }
 }
@@ -1034,7 +1061,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         // dispatched below.
         let _ = self
             .prefetch_attempts()
-            .map_err(|error| QueryResponseError::Source(error.to_string()))?;
+            .map_err(QueryResponseError::from)?;
         loop {
             let Some(&logical_task_id) = self.logical_order.get(self.logical_index) else {
                 self.closed = true;
@@ -1080,7 +1107,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     self.complete_batch_attempt(logical_task_id)
                 } else if self
                     .try_complete_batch_attempt(logical_task_id)
-                    .map_err(|error| QueryResponseError::Source(error.to_string()))?
+                    .map_err(QueryResponseError::from)?
                 {
                     Ok(())
                 } else {
@@ -1100,7 +1127,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         .map_err(Self::completion_error)?;
                     if self.pending_batches.contains_key(&completed) {
                         self.try_complete_batch_attempt(completed)
-                            .map_err(|error| QueryResponseError::Source(error.to_string()))?;
+                            .map_err(QueryResponseError::from)?;
                     }
                 }
                 Err(DirectUnaryTransportError::LimiterBackpressure) => {
@@ -1167,7 +1194,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             // region before returning the completed page.
             let backpressured = self
                 .prefetch_attempts()
-                .map_err(|error| QueryResponseError::Source(error.to_string()))?;
+                .map_err(QueryResponseError::from)?;
 
             let completion = self
                 .completion_notifier
@@ -1177,7 +1204,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 if self.pending_batches.contains_key(&logical_task_id)
                     && self
                         .try_complete_batch_attempt(logical_task_id)
-                        .map_err(|error| QueryResponseError::Source(error.to_string()))?
+                        .map_err(QueryResponseError::from)?
                 {
                     self.mark_unordered_ready(logical_task_id);
                 }
@@ -1211,7 +1238,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             if self.pending_batches.contains_key(&logical_task_id)
                 && self
                     .try_complete_batch_attempt(logical_task_id)
-                    .map_err(|error| QueryResponseError::Source(error.to_string()))?
+                    .map_err(QueryResponseError::from)?
             {
                 self.mark_unordered_ready(logical_task_id);
             }
@@ -1806,6 +1833,26 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     },
                 ))));
             }
+            // Client-go checks the hints carried by this RPC before resolving
+            // its locks. The shared snapshot sets may have changed since send.
+            // Shared-lock children still consume only one backoff per reply.
+            let locks = if lock.shared_lock_infos.is_empty() {
+                std::slice::from_ref(&lock)
+            } else {
+                lock.shared_lock_infos.as_slice()
+            };
+            if locks.iter().any(|lock| {
+                client_request.context.resolved_locks.contains(&lock.lock_version)
+                    || client_request.context.committed_locks.contains(&lock.lock_version)
+            }) {
+                let delay = self
+                    .region_backoffs
+                    .entry(selected.attempt.region.id)
+                    .or_insert_with(|| RegionBackoffBudget::new(self.config.region_retry_max_sleep))
+                    .next_delay(RegionBackoffKind::TxnLockFast)
+                    .map_err(DirectUnaryTransportError::Backoff)?;
+                self.sleep_retry(delay)?;
+            }
             let action = blocking(|| {
                 self.locked_response_delegate.handle_locked_response(
                     &self.shared_runtime,
@@ -1843,11 +1890,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                                 RegionBackoffBudget::new(self.config.region_retry_max_sleep)
                             })
                             .next_delay_capped(RegionBackoffKind::TxnLockFast, recovered.ttl)
-                            .map_err(|error| {
-                                DirectUnaryTransportError::LockRecovery(format!(
-                                    "scan lock retry budget exhausted: {error:?}"
-                                ))
-                            })?;
+                            .map_err(DirectUnaryTransportError::Backoff)?;
                         self.sleep_retry(delay)?;
                     }
                     let failed = self.runtime.consume_failed_attempt(attempt_id)?;
@@ -2254,11 +2297,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
 
     fn fail<T>(&mut self, error: DirectUnaryTransportError) -> Result<T, QueryResponseError> {
         self.closed = true;
-        if matches!(error, DirectUnaryTransportError::CallerCancelled) {
-            Err(QueryResponseError::Cancelled)
-        } else {
-            Err(QueryResponseError::Source(error.to_string()))
-        }
+        Err(error.into())
     }
 }
 

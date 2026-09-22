@@ -133,7 +133,7 @@ pub enum ResponseChannelError {
     Unsupported(ResponseChannelUnsupported),
     /// Raw bytes were not a valid checked-in `tipb.SelectResponse`.
     Decode(String),
-    /// The response carried a TiKV error.
+    /// The response carried a TiKV or registered storage/SQL error.
     SelectResponse {
         /// TiKV error code.
         code: i32,
@@ -428,6 +428,12 @@ impl SelectResponseSource {
                 Err(QueryResponseError::Pending) => Err(ResponseChannelError::Pending),
                 Err(QueryResponseError::Source(message)) => {
                     Err(ResponseChannelError::Source(message))
+                }
+                Err(QueryResponseError::Sql { code, message }) => {
+                    Err(ResponseChannelError::SelectResponse {
+                        code: i32::from(code),
+                        message,
+                    })
                 }
                 Err(QueryResponseError::Cancelled) => Err(ResponseChannelError::Cancelled),
             },

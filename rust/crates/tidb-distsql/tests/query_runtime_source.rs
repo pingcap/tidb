@@ -526,3 +526,45 @@ fn transport_error_remains_the_first_error() {
         Err(QueryRuntimeError::Transport(message)) if message == "region request failed"
     ));
 }
+
+#[test]
+fn registered_storage_error_survives_row_and_chunk_decoding() {
+    struct Failure(Arc<AtomicBool>);
+    impl QueryResponse for Failure {
+        fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+            Err(QueryResponseError::Sql {
+                code: 9004,
+                message: "[tikv:9004]Resolve lock timeout".to_owned(),
+            })
+        }
+        fn close(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    for chunk in [false, true] {
+        let closed = Arc::new(AtomicBool::new(false));
+        let mut iter = tidb_distsql::SelectResponseIter::from_query_response(
+            Box::new(Failure(Arc::clone(&closed))),
+            field_types(1),
+            Vec::new(),
+            SessionTimeZone::utc(),
+            WarningCollector::new(),
+            tidb_distsql::select_result_metadata(input()),
+            None,
+        );
+        let error = if chunk {
+            iter.next_chunk_with_required_rows(1).unwrap_err()
+        } else {
+            iter.next_row().unwrap_err()
+        };
+        assert_eq!(
+            error,
+            tidb_distsql::ResponseChannelError::SelectResponse {
+                code: 9004,
+                message: "[tikv:9004]Resolve lock timeout".to_owned(),
+            }
+        );
+        iter.close();
+        assert!(closed.load(Ordering::SeqCst));
+    }
+}

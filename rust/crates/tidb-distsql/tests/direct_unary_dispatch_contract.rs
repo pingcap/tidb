@@ -323,6 +323,197 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
 }
 
 #[test]
+fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
+    use tidb_distsql::cop_paging::{
+        LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
+    };
+    use tidb_txnkv::{lock::LockRecoveryResult, SharedReadRuntime};
+
+    #[derive(Debug)]
+    struct Resolve {
+        committed: bool,
+        waits: Arc<RecordingRetryControl>,
+        observations: Arc<Mutex<Vec<(usize, tidb_proto::KvrpcContext)>>>,
+    }
+    impl LockedResponseDelegate<ScriptedClient, ScriptedLoader> for Resolve {
+        fn handle_locked_response(
+            &self,
+            _: &SharedReadRuntime<ScriptedClient, ScriptedLoader>,
+            observation: LockedResponseObservation,
+        ) -> Result<LockedResponseAction, String> {
+            self.observations.lock().unwrap().push((
+                self.waits.sleeps.lock().unwrap().len(),
+                observation.request_context,
+            ));
+            Ok(LockedResponseAction::RetrySameTask {
+                recovered: LockRecoveryResult {
+                    ignore_locks: if self.committed { vec![] } else { vec![42] },
+                    access_locks: if self.committed { vec![42] } else { vec![] },
+                    ..LockRecoveryResult::default()
+                },
+            })
+        }
+    }
+    for committed in [false, true] {
+        for shared in [false, true] {
+            for ordered in [false, true] {
+                for outcome in ["success", "exhaust", "cancel", "unhinted"] {
+                    let exhaust = outcome == "exhaust";
+                    let cancel = outcome == "cancel";
+                    let unhinted = outcome == "unhinted";
+                    for asynchronous in [false, true] {
+                        let calls = Rc::new(RefCell::new(Vec::new()));
+                        let observations = Arc::new(Mutex::new(Vec::new()));
+                        let waiter = Arc::new(RecordingRetryControl::default());
+                        waiter.fail_next_sleep.store(cancel, Ordering::SeqCst);
+                        let lock = KvrpcLockInfo {
+                            key: b"locked-key".to_vec(),
+                            primary_lock: b"primary".to_vec(),
+                            lock_version: 42,
+                            lock_type: 5,
+                            ..KvrpcLockInfo::default()
+                        };
+                        let lock = if shared {
+                            KvrpcLockInfo {
+                                shared_lock_infos: vec![
+                                    KvrpcLockInfo {
+                                        lock_version: 41,
+                                        ..lock.clone()
+                                    },
+                                    lock,
+                                ],
+                                ..KvrpcLockInfo::default()
+                            }
+                        } else {
+                            lock
+                        };
+                        let client = ScriptedClient {
+                            calls: Rc::clone(&calls),
+                            responses: (0..3)
+                                .map(|index| {
+                                    let mut lock = lock.clone();
+                                    if unhinted && index != 0 {
+                                        lock.lock_version = 43;
+                                        for child in &mut lock.shared_lock_infos {
+                                            child.lock_version = 43;
+                                        }
+                                    }
+                                    Ok(locked_response(lock))
+                                })
+                                .chain([Ok(response(b"unblocked"))])
+                                .collect(),
+                            events: Rc::default(),
+                            liveness: RefCell::default(),
+                            batch_errors: RefCell::default(),
+                            batch_ready_immediately: RefCell::new([true; 4].into()),
+                            batch_begin_count: None,
+                        };
+                        let shared_runtime = SharedReadRuntime::new_injected(
+                            client,
+                            RegionCache::new(ScriptedLoader {
+                                cluster_id: 9001,
+                                calls: Rc::default(),
+                                regions: [location(1, "a", "z", "tikv-1:20160")].into(),
+                            }),
+                        );
+                        let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
+                            shared_runtime,
+                            DirectUnaryRuntimeConfig {
+                                region_retry_waiter: waiter.clone(),
+                                region_retry_max_sleep: Duration::from_millis(if exhaust {
+                                    1
+                                } else {
+                                    100
+                                }),
+                                ..DirectUnaryRuntimeConfig::default()
+                            },
+                            Arc::new(Resolve {
+                                committed,
+                                waits: Arc::clone(&waiter),
+                                observations: Arc::clone(&observations),
+                            }),
+                        )
+                        .unwrap();
+                        let transport = if asynchronous {
+                            transport.with_async_dispatch()
+                        } else {
+                            transport
+                        };
+                        let mut runtime = InjectedQueryRuntime::new(transport);
+                        let mut request = metadata("a", "z");
+                        request.keep_order = ordered;
+                        let mut result = select_result(&mut runtime, &transport_request(request));
+                        if cancel {
+                            assert_eq!(
+                                result.next_raw().unwrap_err(),
+                                tidb_distsql::QueryResponseError::Cancelled
+                            );
+                            assert_eq!(calls.borrow().len(), 2);
+                        } else if exhaust {
+                            let error = result
+                                .next_raw()
+                                .expect_err("repeated ignored hints must exhaust the lock budget");
+                            assert_eq!(
+                                error,
+                                tidb_distsql::QueryResponseError::Sql {
+                                    code: 9004,
+                                    message: "[tikv:9004]Resolve lock timeout".to_owned()
+                                }
+                            );
+                            assert_eq!(calls.borrow().len(), 3);
+                        } else {
+                            assert_eq!(result.next_raw().unwrap(), Some(b"unblocked".to_vec()));
+                            assert_eq!(result.next_raw().unwrap(), None);
+                            assert_eq!(calls.borrow().len(), 4);
+                        }
+                        let observations = observations.lock().unwrap();
+                        let waits = waiter.sleeps.lock().unwrap();
+                        assert_eq!(
+                            waits.len(),
+                            if unhinted {
+                                0
+                            } else if exhaust || cancel {
+                                1
+                            } else {
+                                2
+                            }
+                        );
+                        assert_eq!(
+                            observations.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+                            if cancel {
+                                vec![0]
+                            } else if unhinted {
+                                vec![0, 0, 0]
+                            } else if exhaust {
+                                vec![0, 1]
+                            } else {
+                                vec![0, 1, 2]
+                            },
+                            "hint backoff precedes resolution"
+                        );
+                        assert!(observations[0].1.resolved_locks.is_empty());
+                        assert!(observations[0].1.committed_locks.is_empty());
+                        if !cancel {
+                            assert_eq!(
+                                if committed {
+                                    &observations[1].1.committed_locks
+                                } else {
+                                    &observations[1].1.resolved_locks
+                                },
+                                &[42]
+                            );
+                        }
+                        if !unhinted {
+                            assert_eq!(waits[0], Duration::from_millis(1));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
     for (role, encoded) in [
         (PeerRole::Voter, 0),

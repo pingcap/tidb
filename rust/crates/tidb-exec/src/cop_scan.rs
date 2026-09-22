@@ -1173,6 +1173,62 @@ mod tests {
     use tidb_expr::expression::Expression;
 
     #[test]
+    fn registered_storage_errors_reach_coprocessor_rows_and_chunks() {
+        use tidb_distsql::query_runtime::QueryResultSubset;
+        use tidb_distsql::{QueryResponse, QueryResponseError};
+
+        struct Failure;
+        impl QueryResponse for Failure {
+            fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+                Err(QueryResponseError::Sql {
+                    code: 9004,
+                    message: "[tikv:9004]Resolve lock timeout".to_owned(),
+                })
+            }
+            fn close(&mut self) {}
+        }
+
+        for chunk in [false, true] {
+            let field_types = vec![FieldType::new(FieldTypeCode::LongLong)];
+            let iter = SelectResponseIter::from_query_response(
+                Box::new(Failure),
+                field_types.clone(),
+                Vec::new(),
+                tidb_datatype::SessionTimeZone::utc(),
+                WarningCollector::new(),
+                tidb_distsql::select_result_metadata(SelectInput::default()),
+                None,
+            );
+            let mut stream = CopRowStream {
+                iter: Some(iter),
+                pending: None,
+                pending_row: 0,
+                field_types,
+                returned: 0,
+                predicates_applied: false,
+                plan_id: 0,
+                exhausted: false,
+            };
+            let error = if chunk {
+                stream.next_chunk(1).unwrap_err()
+            } else {
+                stream.next_row().unwrap_err()
+            };
+            match error {
+                StorageError::Sql(error) => {
+                    assert_eq!(error.code, 9004);
+                    assert_eq!(error.state, *b"HY000");
+                    assert_eq!(error.message, "[tikv:9004]Resolve lock timeout");
+                }
+                other => panic!("storage error lost its SQL identity: {other:?}"),
+            }
+            assert_eq!(stream.rows_returned(), 0);
+            stream.close();
+            assert!(stream.next_row().unwrap().is_none());
+        }
+    }
+
+    #[test]
     fn max_min_count_uses_the_go_tipb_aggregate_enums() {
         let mut column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
         column.index = 0;

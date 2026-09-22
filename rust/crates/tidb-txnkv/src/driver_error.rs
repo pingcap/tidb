@@ -172,6 +172,36 @@ pub enum StorageDriverError {
 }
 
 impl StorageDriverError {
+    /// Classifies the longest effective client-go backoff when its budget
+    /// is exhausted, using that category's source error identity or message.
+    #[must_use]
+    pub fn from_backoff(kind: crate::retry::RegionBackoffKind, detail: &str) -> Self {
+        use crate::retry::RegionBackoffKind;
+        match kind {
+            RegionBackoffKind::TikvRpc => Self::TiKvServerTimeout,
+            RegionBackoffKind::RegionMiss | RegionBackoffKind::RegionScheduling => {
+                Self::RegionUnavailable
+            }
+            RegionBackoffKind::TikvServerBusy => Self::Other(detail.to_owned()),
+            RegionBackoffKind::StaleCommand => Self::TiKvStaleCommand,
+            RegionBackoffKind::MaxTimestampNotSynced => Self::TiKvMaxTimestampNotSynced,
+            RegionBackoffKind::TxnLock
+            | RegionBackoffKind::TxnLockFast
+            | RegionBackoffKind::TxnNotFound => Self::ResolveLockTimeout,
+            RegionBackoffKind::TikvDiskFull => Self::Other("tikv disk full".to_owned()),
+            RegionBackoffKind::RegionRecoveryInProgress => {
+                Self::Other("region is being online unsafe recovered".to_owned())
+            }
+            RegionBackoffKind::RegionNotInitialized => {
+                Self::Other("region not Initialized".to_owned())
+            }
+            RegionBackoffKind::IsWitness => Self::Other("peer is witness".to_owned()),
+            RegionBackoffKind::PdRpc => Self::PdServerTimeout {
+                message: detail.to_owned(),
+            },
+        }
+    }
+
     /// Adds one error-chain layer.
     pub fn context(self, message: impl Into<String>) -> Self {
         Self::Context {

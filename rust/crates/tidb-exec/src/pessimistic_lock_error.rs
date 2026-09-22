@@ -237,29 +237,7 @@ fn shared_lock_lost_to_sql_error(start_ts: u64, key: &str) -> LockSqlError {
 }
 
 fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> LockSqlError {
-    let source = match kind {
-        RegionBackoffKind::TikvRpc => StorageDriverError::TiKvServerTimeout,
-        RegionBackoffKind::RegionMiss | RegionBackoffKind::RegionScheduling => {
-            StorageDriverError::RegionUnavailable
-        }
-        RegionBackoffKind::TikvServerBusy => StorageDriverError::Other(detail.to_owned()),
-        RegionBackoffKind::StaleCommand => StorageDriverError::TiKvStaleCommand,
-        RegionBackoffKind::MaxTimestampNotSynced => StorageDriverError::TiKvMaxTimestampNotSynced,
-        RegionBackoffKind::TxnLock
-        | RegionBackoffKind::TxnLockFast
-        | RegionBackoffKind::TxnNotFound => StorageDriverError::ResolveLockTimeout,
-        RegionBackoffKind::TikvDiskFull => StorageDriverError::Other("tikv disk full".to_owned()),
-        RegionBackoffKind::RegionRecoveryInProgress => {
-            StorageDriverError::Other("region is being online unsafe recovered".to_owned())
-        }
-        RegionBackoffKind::RegionNotInitialized => {
-            StorageDriverError::Other("region not Initialized".to_owned())
-        }
-        RegionBackoffKind::IsWitness => StorageDriverError::Other("peer is witness".to_owned()),
-        RegionBackoffKind::PdRpc => StorageDriverError::PdServerTimeout {
-            message: detail.to_owned(),
-        },
-    };
+    let source = StorageDriverError::from_backoff(kind, detail);
     match to_tidb_driver_error(&source) {
         ConvertedDriverError::Terror(converted) => LockSqlError {
             code: u16::try_from(converted.code().value())
