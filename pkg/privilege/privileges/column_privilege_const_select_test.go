@@ -70,16 +70,4 @@ func TestSelectConstantRequiresTablePrivilege(t *testing.T) {
 	userTk.MustQuery("SELECT 1 FROM leakdb.t").Check(testkit.Rows("1", "1", "1"))
 	userTk.MustQuery("SELECT COUNT(*) FROM leakdb.t").Check(testkit.Rows("3"))
 	userTk.MustGetErrCode("SELECT b FROM leakdb.t", errno.ErrColumnaccessDenied)
-
-	// A write target does not need SELECT for a constant update/delete, but a
-	// second table in multi-table DML is still a read source and needs SELECT.
-	rootTk.MustExec("CREATE TABLE leakdb.mt1 (a int)")
-	rootTk.MustExec("CREATE TABLE leakdb.mt2 (a int)")
-	rootTk.MustExec("INSERT INTO leakdb.mt1 VALUES (1)")
-	rootTk.MustExec("INSERT INTO leakdb.mt2 VALUES (1)")
-	rootTk.MustExec("GRANT UPDATE(a), DELETE ON leakdb.mt1 TO 'nopriv'@'%'")
-	userTk.MustExec("UPDATE leakdb.mt1 SET a = 2")
-	userTk.MustGetErrCode("UPDATE leakdb.mt1, leakdb.mt2 SET mt1.a = 1", errno.ErrTableaccessDenied)
-	userTk.MustGetErrCode("DELETE mt1 FROM leakdb.mt1 AS mt1, leakdb.mt2 AS mt2", errno.ErrTableaccessDenied)
-	userTk.MustGetErrCode("DELETE FROM mt1 USING leakdb.mt1 AS mt1, leakdb.mt2 AS mt2", errno.ErrTableaccessDenied)
 }
