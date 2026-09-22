@@ -198,6 +198,37 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.Equal(t, 0, len(metas))
 }
 
+func TestBackfillingSchedulerTableRangeScanError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
+	require.NoError(t, err)
+	sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
+		Param: backfillingSchedulerParamForTest(ctrl, store, dom.SysSessionPool()),
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// A non-empty table is required, otherwise an empty plan is the expected result.
+	tk.MustExec("create table t1(id int primary key, v int, key idx(v))")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
+	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
+	require.Nil(t, server)
+	task.Step = sch.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
+
+	// Simulate the very first snapshot range scan failing with a transient KV error.
+	// The error must be propagated instead of being reported as an empty table,
+	// otherwise the index would be published without any entry.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockSnapshotIterError", "1*return()")
+	ctx := util.WithInternalSourceType(context.Background(), "backfill")
+	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, []string{":4000"}, task.Step)
+	require.Error(t, err)
+	require.Nil(t, metas)
+}
+
 func TestCalculateRegionBatch(t *testing.T) {
 	// Test calculate in cloud storage.
 	batchCnt := ddl.CalculateRegionBatch(100, 8, false)
