@@ -398,6 +398,15 @@ pub struct PushdownTopN {
     pub limit: u64,
 }
 
+/// Go's coprocessor Limit over an already-truncated index column.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PushdownPrefixLimit {
+    /// Read at least this many rows and retain the final row's entire prefix group.
+    pub count: u64,
+    /// Position of the prefix column in the index scan's input schema.
+    pub column_offset: usize,
+}
+
 /// One base-table scan a backend may serve remotely.
 #[derive(Clone, Debug)]
 pub struct PushdownScanRequest {
@@ -430,6 +439,9 @@ pub struct PushdownScanRequest {
     pub topn: Option<PushdownTopN>,
     /// A row cap the backend may stop at. Best-effort: see the module doc.
     pub limit: Option<u64>,
+    /// A prefix-aware limit. Kept separate from the ordinary cap so a backend
+    /// that does not apply it cannot truncate the final prefix group.
+    pub prefix_limit: Option<PushdownPrefixLimit>,
     /// Go's IndexLookUp worker seeds the index coprocessor request's row
     /// paging window from its calculated handle batch size. `None` retains
     /// the session default used by ordinary table/covering scans.

@@ -349,11 +349,30 @@ where
         // those -- fewer rows than the query asked for, with nothing to say so.
         // This is the same hazard the staged buffer already guards against by
         // dropping the cap whenever rows are merged in locally.
+        if let Some(prefix) = &request.prefix_limit {
+            if lowered.len() != request.predicates.len()
+                || request.aggregate.is_some()
+                || request.topn.is_some()
+                || request.limit.is_some()
+                || request
+                    .index
+                    .as_ref()
+                    .is_none_or(|index| prefix.column_offset >= index.index_column_count)
+            {
+                return Err(refuse(
+                    "a prefix Limit requires a complete index Selection and no competing pushdown",
+                ));
+            }
+        }
         let remote_limit = if lowered.len() == request.predicates.len()
             && request.aggregate.is_none()
             && request.topn.is_none()
         {
-            request.limit
+            request
+                .prefix_limit
+                .as_ref()
+                .map(|limit| limit.count)
+                .or(request.limit)
         } else {
             None
         };
@@ -546,6 +565,28 @@ where
             ),
         }
         .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
+        if let Some(prefix) = &request.prefix_limit {
+            let column = request
+                .columns
+                .get(prefix.column_offset)
+                .ok_or_else(|| refuse("a prefix Limit column is outside the scan schema"))?;
+            let mut expression = tidb_expr::column::Column::new(
+                prefix.column_offset as i64 + 1,
+                column.field_type.clone(),
+            );
+            expression.index = prefix.column_offset as i64;
+            let expression = tidb_expr::pushdown_catalog::expression_to_pb(
+                &tidb_expr::expression::Expression::Column(expression),
+                &|offset| scan_column_descriptor(&columns, offset),
+            )
+            .ok_or_else(|| refuse("a prefix Limit column cannot be lowered to TiPB"))?;
+            dag.executors
+                .last_mut()
+                .and_then(|executor| executor.limit.as_mut())
+                .ok_or_else(|| refuse("the prefix Limit executor is missing"))?
+                .truncate_key_expr
+                .push(expression);
+        }
         if let Some(topn) = request.topn.as_ref() {
             let order_by = topn
                 .order_by

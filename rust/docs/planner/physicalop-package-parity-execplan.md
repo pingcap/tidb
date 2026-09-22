@@ -8299,3 +8299,132 @@ distributed execution, and sysbench/TPC-C/TPC-H/YCSB performance were not run
 for this checkpoint. The passing SQL fixture is native regression evidence,
 not a substitute for those gates. Disk cleanup removed the old 318 GB Rust
 build cache; only artifacts needed for these scoped checks were rebuilt.
+
+
+## Continue prefix Limit execution and transport against master (2026-09-22)
+
+
+Master remains `1400603a0c5220f16c90cb543a8b96cbcc641c94` after a fresh fetch.
+The exact TiPB dependency is `v0.0.0-20260908093239-fed7bc47c39d`, resolved to
+`fed7bc47c39d42d21d9febf9a02291d381b7696d`. Its `proto/executor.proto`
+defines `Limit.truncate_key_expr` as repeated Expr field 4. Go
+`PhysicalLimit.ToPB` sends the matched prefix column without a prefix length,
+because the index stream already contains truncated keys.
+
+The implementation must carry this descriptor from the embedded index Limit
+through the native index worker and the remote request, serialize field 4,
+and keep all rows sharing the threshold row's prefix. The ordinary numeric
+limit remains separate so a backend cannot interpret this descriptor as a
+hard row cap. Local index-side predicates must run before this limit;
+table-side predicates must retain their position after it. Reader reopen and
+cancellation must reset/release the boundary state. The SQL fixture should
+prove that four table rows are fetched through the tied prefix instead of
+all five, while retaining the same ascending and descending results.
+
+Extend the existing executor SQL, cursor and cop-scan request suites for
+result/lookup counts, NULL and collation keys, multi-column index positions,
+filter placement, and serialized wire expressions. This is continuing work
+inside the complete physicalop/executor package claim; the claim remains open
+until all package artifacts and workload gates are validated.
+
+### Progress and decisions for this checkpoint
+
+The embedded prefix Limit now reaches `IndexRangeSourceExec`, the remote scan
+request, and TiPB `Limit.truncate_key_expr`. The native cursor compares the
+encoded prefix datum after the count threshold, retaining the entire final
+group across lookup batches. It resets its boundary on open and releases it on close.
+The unfiltered cursor retains its existing path without allocating decoded
+index datums. The declared prefix position is resolved against the index input
+schema before any wire output projection.
+
+`DataSource.IsIndexCoveringColumns` on master covers integer and common handles
+as well as whole index columns. Rust's existing single-scan proof already had
+that logic, but filter splitting omitted handles and declared prefixes equal
+to the column length. Both decisions now use the same coverage helper. The
+physical builder retains index and table predicates separately; native index
+predicates run before ordinary and prefix limits, while table predicates run
+after the lookup. A rewritten LocalIndexLookUp retains its table-filter path.
+Column pruning remaps the index predicate, and aggregate lowering includes it
+only when its descriptor is complete.
+
+The original tied-prefix fixture fetched five table rows. Its new lookup-count
+assertion failed before the implementation and passes with four rows for both
+ASC and DESC, with identical SQL results. The handle-coverage correction first
+exposed another failure: `SELECT a FROM pi USE INDEX(idx) WHERE id > 1 LIMIT 1`
+returned zero rows because a rejected entry spent the raw-handle limit. The
+separate index predicate fixes that case and its offset variant. A clustered
+string-key predicate also failed with zero rows when the decoder read only
+the handle key. The index predicate now uses existing `DecodeIndexKV` behavior,
+including V1 restored data and appended common-handle columns; the restored
+full handle overrides a duplicate prefix index column. Both regressions were
+observed failing before their fixes and passing afterward.
+
+The SQL cases cover NULL, case-insensitive collation, multibyte prefixes,
+composite index positions, integer/common handles, duplicate prefix/handle
+columns, and index/table filter placement. The cursor case covers a 40-row tied
+group with seven-handle lookup batches, three-row output chunks, partial reads,
+reopen, and count zero. The transport test independently asserts protobuf tag 4,
+the input ColumnRef offset/type, and refusal of conflicting/invalid descriptors;
+its fake response tests transport only, not TiKV's tie implementation.
+
+### Validation receipt
+
+Commands run from `rust/` (all Cargo commands use this workspace's nightly
+configuration, existing lockfile and offline dependencies):
+
+```sh
+cargo test --offline --locked -j12 -p tidb-executor --lib index_prefix_reads --message-format=short -- --test-threads=1
+cargo test --offline --locked -j12 -p tidb-executor --lib access_path::tests --message-format=short -- --test-threads=1
+cargo test --offline --locked -j12 -p tidb-executor --lib driver::tests::index_ranges --message-format=short -- --test-threads=1
+cargo test --offline --locked -j12 -p tidb-executor --lib driver::tests::aggregates --message-format=short -- --test-threads=1
+cargo test --offline --locked -j12 -p tidb-executor --lib driver::tests::indexes --message-format=short -- --test-threads=1
+cargo test --offline --locked -j12 -p tidb-planner --lib find_best_task::dispatch::tests --message-format=short -- --test-threads=1
+cargo test --offline --locked -j12 -p tidb-exec --test all cop_scan_narrowed_output_source --message-format=short -- --test-threads=1
+cargo check --offline --locked -j12 -p tidb-exec -p tidb-session -p tidb-unistore --message-format=short
+```
+
+The executor suites passed 15, 35, 18, 31 and 4 tests respectively; the planner
+suite passed 31 tests. The transport suite passed both tests; the final dependency check passed
+for tidb-exec, tidb-session and tidb-unistore. Existing compiler warnings remain. Cargo regenerated protocol outputs from the modified
+`.proto` input; no generated source was hand edited. The one unistore edit only
+updates an existing test literal for the new field and adds no executor behavior.
+
+From the repository root, `make lint` passed (Go revive/dashboard gates),
+`git diff --check` passed, and
+`python3 /private/tmp/tidb-prefix-format.py --check` passed for modified ranges
+in all eleven changed Rust files. The temporary script invokes
+`rustfmt --unstable-features --edition 2021 --config skip_children=true
+--file-lines '<modified ranges>' --check <file>`; it includes the entire
+extracted coverage helper and new cursor/decoder methods. No Go, Bazel or module
+input changed, so this checkpoint does not trigger `make bazel_prepare`.
+
+### Remaining package gates and observed limitations
+
+The complete physicalop/executor package claim remains open. This is seed
+implementation and regression evidence, not whole-package acceptance. The
+58-artifact master inventory remains pinned to
+`1400603a0c5220f16c90cb543a8b96cbcc641c94`; historical dependent-package
+inventories still need re-audit before acceptance. The exact dependency pin for
+the added wire field is the TiPB commit recorded above.
+
+No original master Go package test suite, real TiKV prefix-limit query, or
+sysbench/TPC-C/TPC-H/YCSB comparison was run for this checkpoint. Fewer native
+fixture lookups are measured evidence, not a throughput or latency claim.
+Remote index cursors still refuse nonempty predicates in the existing storage
+adapter, so those shapes use the native filter path. Legacy TableAccess filter
+admission outside the retained physical builder is not covered by the new
+predicate separation. Native index predicates decode metadata/datums per entry;
+unfiltered scans avoid that added work, but filtered workload cost needs
+measurement before performance acceptance.
+
+An additional exploratory query remains a planner limitation to investigate:
+for `pd(a VARCHAR(20) PRIMARY KEY CLUSTERED, b INT, KEY idx(a(2)))`,
+`SELECT /*+ ORDER_INDEX(pd, idx) */ b FROM pd WHERE a > 'abb' ORDER BY a LIMIT 1`
+returned `physical planning produced no plan`. It is not counted as passing
+prefix-limit coverage. The duplicate prefix/handle decoder is instead exercised
+through the valid ordinary lookup `WHERE a = 'aba' LIMIT 1` with a string payload.
+Other package-wide gaps from earlier receipts remain open.
+
+Disk cleanup previously removed 318 GB of disposable Rust build artifacts.
+After rebuilding the scoped checks, `df -h .` reports 324 GiB available; user
+source and the two pre-existing untracked Rust files remain untouched.

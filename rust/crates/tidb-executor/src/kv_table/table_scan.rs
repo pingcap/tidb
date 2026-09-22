@@ -652,6 +652,7 @@ impl KvTable {
             output_offsets: output_offsets.map(<[usize]>::to_vec),
             topn: topn.cloned(),
             limit,
+            prefix_limit: None,
             paging_min_size: None,
             aggregate: None,
             desc: descending,
@@ -1355,6 +1356,7 @@ impl KvTable {
             output_offsets: None,
             topn: None,
             limit: None,
+            prefix_limit: None,
             paging_min_size: None,
             aggregate: Some(remote_aggregate),
             desc,
@@ -1599,6 +1601,7 @@ impl KvTable {
             output_offsets: None,
             topn: None,
             limit: None,
+            prefix_limit: None,
             paging_min_size: None,
             aggregate: Some(remote_aggregate),
             desc,
@@ -1631,6 +1634,75 @@ impl KvTable {
         Ok(Some(scan.stream))
     }
 
+    /// Materializes the index/handle columns in table-column order for an
+    /// index-side predicate. No record lookup occurs here.
+    pub(crate) fn index_filter_row(
+        &self,
+        index_id: i64,
+        handle: &TableHandle,
+        key: &[u8],
+        value: &[u8],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        let index = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .ok_or_else(|| KvTableError::Decode("index filter has no index".to_owned()))?;
+        // Go DecodeIndexKV restores clustered-handle columns from the index
+        // value. Decoding only the handle key loses nonbinary string bytes;
+        // a duplicate prefix index part must not overwrite the full handle.
+        let offsets: Vec<_> = index
+            .column_offsets
+            .iter()
+            .chain(&self.common_handle_offsets)
+            .copied()
+            .collect();
+        let columns: Vec<_> = offsets
+            .iter()
+            .map(|offset| {
+                let column = &self.columns[*offset];
+                tidb_codec::ColumnInfo {
+                    id: column.id,
+                    is_pk_handle: false,
+                    virtual_generated: false,
+                    field_type: column.field_type.clone(),
+                }
+            })
+            .collect();
+        let encoded = tidb_tablecodec::decode_index_kv(
+            self.use_new_collation,
+            key,
+            value,
+            index.column_offsets.len(),
+            if self.common_handle_offsets.is_empty() {
+                tidb_tablecodec::HandleStatus::NotNeeded
+            } else {
+                tidb_tablecodec::HandleStatus::Default
+            },
+            &columns,
+        )
+        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+        let mut row = vec![Datum::Null; self.columns.len()];
+        for ((offset, column), value) in offsets.iter().zip(&columns).zip(encoded) {
+            row[*offset] =
+                tidb_tablecodec::decode_column_value(&value, &column.field_type, Some(zone))
+                    .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+        }
+        if self.common_handle_offsets.is_empty() {
+            super::row_decoder::fill_handle_columns(
+                &self.columns,
+                self.pk_handle_offset,
+                &[],
+                &mut row,
+                handle,
+                zone,
+                self.use_new_collation,
+            )?;
+        }
+        Ok(row)
+    }
+
     /// Opens a coprocessor index scan whose rows carry only the indexed
     /// columns and the table handle. The access source consumes those rows as
     /// an ordered handle stream before issuing its table lookup batch.
@@ -1646,6 +1718,7 @@ impl KvTable {
         statement: &PushdownStatementContext,
         desc: bool,
         index_limit: Option<u64>,
+        prefix_limit: Option<&crate::remote_scan::PushdownPrefixLimit>,
         paging_min_size: Option<u64>,
         unordered: bool,
         handle_only: bool,
@@ -1945,6 +2018,7 @@ impl KvTable {
             output_offsets,
             topn,
             limit: index_limit,
+            prefix_limit: prefix_limit.cloned(),
             paging_min_size,
             aggregate: None,
             desc,
@@ -3553,6 +3627,16 @@ impl IndexRangeCursor {
     pub fn next_handle_in_partition(
         &mut self,
     ) -> Result<Option<(TableHandle, usize)>, KvTableError> {
+        self.next_handle_in_partition_if(|_, _, _| Ok(std::ops::ControlFlow::Continue(true)))
+    }
+
+    /// Applies an index-side Selection/Limit while the entry bytes are borrowed
+    /// from the iterator, before issuing any table lookup. Ordinary reads use
+    /// the no-op callback above and do not allocate or decode extra key values.
+    pub(crate) fn next_handle_in_partition_if<E: From<KvTableError>>(
+        &mut self,
+        mut admit: impl FnMut(&TableHandle, &[u8], &[u8]) -> Result<std::ops::ControlFlow<(), bool>, E>,
+    ) -> Result<Option<(TableHandle, usize)>, E> {
         if self.merge_by_index_key {
             loop {
                 let Some(position) = self.merge_heap.pop() else {
@@ -3569,12 +3653,23 @@ impl IndexRangeCursor {
                     self.global_partition_ids.as_deref(),
                     iterator.value(),
                 )?;
+                let decision = if self.global_partition_ids.is_none() || global_partition.is_some()
+                {
+                    admit(&handle, iterator.key().as_bytes(), iterator.value())?
+                } else {
+                    std::ops::ControlFlow::Continue(false)
+                };
                 iterator.next().map_err(KvTableError::from)?;
                 if iterator.valid() {
                     self.merge_heap.push(
                         cut_index_prefix(iterator.key().as_bytes()).to_vec(),
                         position,
                     );
+                }
+                match decision {
+                    std::ops::ControlFlow::Break(()) => return Ok(None),
+                    std::ops::ControlFlow::Continue(false) => continue,
+                    std::ops::ControlFlow::Continue(true) => {}
                 }
                 let partition = if self.global_partition_ids.is_some() {
                     let Some(partition) = global_partition else {
@@ -3607,7 +3702,17 @@ impl IndexRangeCursor {
                 self.global_partition_ids.as_deref(),
                 iterator.value(),
             )?;
+            let decision = if self.global_partition_ids.is_none() || global_partition.is_some() {
+                admit(&handle, iterator.key().as_bytes(), iterator.value())?
+            } else {
+                std::ops::ControlFlow::Continue(false)
+            };
             iterator.next().map_err(KvTableError::from)?;
+            match decision {
+                std::ops::ControlFlow::Break(()) => return Ok(None),
+                std::ops::ControlFlow::Continue(false) => continue,
+                std::ops::ControlFlow::Continue(true) => {}
+            }
             let partition = if self.global_partition_ids.is_some() {
                 let Some(partition) = global_partition else {
                     continue;

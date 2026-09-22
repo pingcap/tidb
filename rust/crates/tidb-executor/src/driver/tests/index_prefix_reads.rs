@@ -499,7 +499,12 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
     ] {
         let sql =
             format!("SELECT /*+ ORDER_INDEX(p, idx) */ a FROM p ORDER BY a {order} LIMIT 1, 2");
-        let rows = run_select_on(&sql, &catalog, &ctx).unwrap();
+        let (rows, ops) = crate::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
+        let rows = rows.unwrap();
+        assert_eq!(
+            ops.gets, 4,
+            "only the rows through the final prefix group need table lookups: {ops:?}"
+        );
         assert_eq!(
             rows.iter()
                 .map(|row| datum_text_for_test(&row[0]))
@@ -525,5 +530,115 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
             .collect::<Vec<_>>()
             .join(" ");
         assert!(text.contains("prefix_col:"), "{text}");
+    }
+}
+
+#[test]
+fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(true);
+    for (table, ddl, insert, sql, expected, gets) in [
+        (
+            "pn",
+            "a VARCHAR(20), KEY idx(a(2))",
+            "(NULL), (NULL), ('zz')",
+            "SELECT /*+ ORDER_INDEX(pn, idx) */ a FROM pn ORDER BY a LIMIT 1, 1",
+            None,
+            2,
+        ),
+        (
+            "pc",
+            "a VARCHAR(20) COLLATE utf8mb4_general_ci, KEY idx(a(2))",
+            "('abz'), ('ABa'), ('zz')",
+            "SELECT /*+ ORDER_INDEX(pc, idx) */ a FROM pc ORDER BY a LIMIT 1",
+            Some("ABa"),
+            2,
+        ),
+        (
+            "pu",
+            "a VARCHAR(20) COLLATE utf8mb4_bin, KEY idx(a(2))",
+            "('猫咪z'), ('猫咪a'), ('狗狗b')",
+            "SELECT /*+ ORDER_INDEX(pu, idx) */ a FROM pu ORDER BY a LIMIT 1, 1",
+            Some("猫咪a"),
+            3,
+        ),
+        (
+            "pm",
+            "id INT, a VARCHAR(20), KEY idx(id, a(2))",
+            "(1, 'abz'), (1, 'aba'), (2, 'zz')",
+            "SELECT /*+ ORDER_INDEX(pm, idx) */ a FROM pm ORDER BY id, a LIMIT 1",
+            Some("aba"),
+            2,
+        ),
+        (
+            "pi",
+            "id INT PRIMARY KEY, a VARCHAR(20), KEY idx(a(2))",
+            "(1, 'abz'), (2, 'abb'), (3, 'aba'), (4, 'zz')",
+            "SELECT /*+ ORDER_INDEX(pi, idx) */ a FROM pi WHERE id > 1 ORDER BY a LIMIT 1",
+            Some("aba"),
+            2,
+        ),
+        (
+            "pg",
+            "k VARCHAR(20) COLLATE utf8mb4_general_ci PRIMARY KEY CLUSTERED, a VARCHAR(20), KEY idx(a(2))",
+            "('KeyA', 'abz'), ('KeyB', 'abb'), ('KeyC', 'aba'), ('KeyD', 'zz')",
+            "SELECT /*+ ORDER_INDEX(pg, idx) */ a FROM pg WHERE k > 'KeyA' ORDER BY a LIMIT 1",
+            Some("aba"),
+            2,
+        ),
+        (
+            "pd",
+            "a VARCHAR(20) PRIMARY KEY CLUSTERED, b VARCHAR(20), KEY idx(a(2))",
+            "('abz', '1'), ('abb', '2'), ('aba', '3'), ('zz', '4')",
+            "SELECT b FROM pd USE INDEX(idx) WHERE a = 'aba' LIMIT 1",
+            Some("3"),
+            1,
+        ),
+        (
+            "pt",
+            "a VARCHAR(20), b INT, KEY idx(a(2))",
+            "('abz', 0), ('abb', 1), ('aba', 1), ('zz', 1)",
+            "SELECT /*+ ORDER_INDEX(pt, idx) */ a FROM pt WHERE b > 0 ORDER BY a LIMIT 1",
+            Some("aba"),
+            3,
+        ),
+    ] {
+        crate::run_create_table_on(&format!("CREATE TABLE {table} ({ddl})"), &mut catalog).unwrap();
+        run_insert_on(
+            &format!("INSERT INTO {table} VALUES {insert}"),
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap();
+        let (rows, ops) =
+            crate::storage::capture_storage_ops(|| run_select_on(sql, &catalog, &ctx));
+        let rows = rows.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(rows.len(), 1, "{sql}");
+        match expected {
+            Some(expected) => assert_eq!(datum_text_for_test(&rows[0][0]), expected, "{sql}"),
+            None => assert!(matches!(rows[0][0], Datum::Null), "{sql}"),
+        }
+        assert_eq!(ops.gets, gets, "{sql}: {ops:?}");
+        if table == "pi" {
+            let rows = run_select_on(
+                "SELECT a FROM pi USE INDEX(idx) WHERE id > 1 LIMIT 1",
+                &catalog,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+            assert_eq!(
+                rows.len(), 1,
+                "an ordinary lookup Limit also counts after the index predicate"
+            );
+            assert_eq!(datum_text_for_test(&rows[0][0]), "abb");
+            let rows = run_select_on(
+                "SELECT a FROM pi USE INDEX(idx) WHERE id > 1 LIMIT 1, 1",
+                &catalog,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(datum_text_for_test(&rows[0][0]), "aba");
+        }
     }
 }

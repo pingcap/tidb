@@ -211,7 +211,10 @@ pub fn limit_to_pb(limit: u64) -> Executor {
         selection: None,
         aggregation: None,
         top_n: None,
-        limit: Some(Limit { limit: Some(limit) }),
+        limit: Some(Limit {
+            limit: Some(limit),
+            ..Limit::default()
+        }),
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,

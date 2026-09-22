@@ -1458,44 +1458,51 @@ fn index_path_is_single_scan(
     ds: &crate::logical::DataSource,
     source_index: &crate::plan_builder::catalog::SourceIndex,
 ) -> bool {
-    ds.columns.iter().enumerate().all(|(position, column)| {
-        if (ds.pk_is_handle && column.is_primary_key)
-            || column.id == tidb_model::column::EXTRA_HANDLE_ID
-            || column.id == tidb_model::column::EXTRA_PHYS_TBL_ID
-        {
-            return true;
-        }
-        let schema_column = ds
-            .base
-            .base
-            .schema()
-            .and_then(|schema| schema.columns.get(position));
-        let field_type = schema_column.and_then(|column| column.ret_type.as_ref());
-        let full_length = |length: i64| {
-            length == tidb_datatype::UNSPECIFIED_LENGTH
-                || field_type.is_some_and(|field_type| length == field_type.flen())
-        };
-        if source_index.columns.iter().any(|index_column| {
-            full_length(index_column.length) && index_column.name.eq_ignore_ascii_case(&column.name)
-        }) {
-            return true;
-        }
-        let covered_by_handle = schema_column.is_some_and(|column| {
-            ds.common_handle_cols
-                .iter()
-                .zip(&ds.common_handle_lens)
-                .any(|(handle, length)| {
-                    handle.unique_id == column.unique_id && full_length(*length)
-                })
-        });
-        covered_by_handle
-            && !(ds.common_handle_version == 0
-                && tidb_datatype::new_collation_enabled()
-                && field_type.is_some_and(|field_type| {
-                    field_type.eval_type() == tidb_datatype::EvalType::String
-                        && !field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
-                }))
-    })
+    (0..ds.columns.len()).all(|position| index_covers_column(ds, source_index, position))
+}
+
+fn index_covers_column(
+    ds: &crate::logical::DataSource,
+    source_index: &crate::plan_builder::catalog::SourceIndex,
+    position: usize,
+) -> bool {
+    let Some(column) = ds.columns.get(position) else {
+        return false;
+    };
+    if (ds.pk_is_handle && column.is_primary_key)
+        || column.id == tidb_model::column::EXTRA_HANDLE_ID
+        || column.id == tidb_model::column::EXTRA_PHYS_TBL_ID
+    {
+        return true;
+    }
+    let schema_column = ds
+        .base
+        .base
+        .schema()
+        .and_then(|schema| schema.columns.get(position));
+    let field_type = schema_column.and_then(|column| column.ret_type.as_ref());
+    let full_length = |length: i64| {
+        length == tidb_datatype::UNSPECIFIED_LENGTH
+            || field_type.is_some_and(|field_type| length == field_type.flen())
+    };
+    if source_index.columns.iter().any(|index_column| {
+        full_length(index_column.length) && index_column.name.eq_ignore_ascii_case(&column.name)
+    }) {
+        return true;
+    }
+    let covered_by_handle = schema_column.is_some_and(|column| {
+        ds.common_handle_cols
+            .iter()
+            .zip(&ds.common_handle_lens)
+            .any(|(handle, length)| handle.unique_id == column.unique_id && full_length(*length))
+    });
+    covered_by_handle
+        && !(ds.common_handle_version == 0
+            && tidb_datatype::new_collation_enabled()
+            && field_type.is_some_and(|field_type| {
+                field_type.eval_type() == tidb_datatype::EvalType::String
+                    && !field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
+            }))
 }
 
 fn index_path_matches_order(
@@ -3263,12 +3270,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             index_lengths.clone(),
                         )
                     });
-                let covered = source_index
-                    .columns
-                    .iter()
-                    .filter(|column| column.length < 0)
-                    .filter_map(|column| ds.schema_column_for_index_column(column))
-                    .map(|column| column.unique_id)
+                let covered = ds
+                    .base
+                    .base
+                    .schema()
+                    .into_iter()
+                    .flat_map(|schema| schema.columns.iter().enumerate())
+                    .filter(|(position, _)| index_covers_column(ds, source_index, *position))
+                    .map(|(_, column)| column.unique_id)
                     .collect::<std::collections::BTreeSet<_>>();
                 heuristic = detach.as_ref().map(|detached| {
                     crate::find_best_task::candidate::HeuristicPath {
@@ -3512,20 +3521,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // access estimate), while the pushed-down Selection and the
                 // lookup's table side carry `finalStats`/`CountAfterIndex`,
                 // the per-outer-row runtime count.
-                let fully_covered_columns = source_index
-                    .columns
-                    .iter()
-                    .filter(|column| column.length < 0)
-                    .filter_map(|column| {
-                        ds.schema_column_for_index_column(column)
-                            .map(|column| column.unique_id)
-                    })
-                    .collect::<std::collections::BTreeSet<_>>();
+                // Go splitIndexFilterConditions uses the same handle/full-column
+                // coverage as IsSingleScan, including appended primary-key columns.
                 let (index_filters, table_filters): (Vec<_>, Vec<_>) =
                     remained_conds.into_iter().partition(|condition| {
                         tidb_expr::simple_expr::extract_columns(condition)
                             .iter()
-                            .all(|column| fully_covered_columns.contains(&column.unique_id))
+                            .all(|column| covered.contains(&column.unique_id))
                     });
                 // Retain candidates whose skyline facts are unavailable. In
                 // particular, do not invent CountAfterIndex for residual filters.

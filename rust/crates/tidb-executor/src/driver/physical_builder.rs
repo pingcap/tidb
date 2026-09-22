@@ -1417,8 +1417,22 @@ fn embedded_index_limit(plan: &PhysicalPlan) -> Option<(u64, u64)> {
     }
 }
 
-fn reader_has_selection(plan: &PhysicalPlan) -> bool {
-    matches!(plan, PhysicalPlan::Selection(_)) || plan.children().iter().any(reader_has_selection)
+fn embedded_index_prefix_limit(
+    plan: &PhysicalPlan,
+) -> Option<&tidb_planner::physical::PhysicalLimit> {
+    match plan {
+        PhysicalPlan::Limit(limit) if limit.prefix_col.is_some() => Some(limit),
+        _ => plan.children().iter().find_map(embedded_index_prefix_limit),
+    }
+}
+
+fn index_lookup_conditions(plan: &PhysicalPlan, output: &mut Vec<Expression>) {
+    for child in plan.children() {
+        index_lookup_conditions(child, output);
+    }
+    if let PhysicalPlan::Selection(selection) = plan {
+        output.extend(selection.conditions.iter().cloned());
+    }
 }
 
 fn lower_index_lookup_selections(
@@ -1599,6 +1613,35 @@ fn build_index_reader(
     } else {
         executor_ranges(&scan.ranges)
     };
+    let prefix_limit = embedded_index_prefix_limit(index_plan);
+    let prefix_index_offset = prefix_limit
+        .map(|limit| {
+            let prefix_id = limit
+                .prefix_col
+                .expect("a prefix Limit has a prefix column");
+            let column = scan
+                .cost_columns
+                .iter()
+                .chain(source_schema.columns.iter())
+                .find(|column| column.unique_id == prefix_id)
+                .ok_or_else(|| {
+                    DriverError::unsupported("a prefix Limit column is absent from its scan")
+                })?;
+            table
+                .indexes()
+                .iter()
+                .find(|index| index.id == scan.index_id)
+                .and_then(|index| {
+                    index
+                        .column_offsets
+                        .iter()
+                        .position(|offset| table.columns[*offset].id == column.id)
+                })
+                .ok_or_else(|| {
+                    DriverError::unsupported("a prefix Limit column is absent from its index")
+                })
+        })
+        .transpose()?;
     let logical_table_id = table.table_id;
     let stats = catalog.table_statistics(table.stats_physical_id());
     let physical_ids = table.record_physical_ids();
@@ -1638,12 +1681,21 @@ fn build_index_reader(
     if let Some(rows) = scan.base.base.stats_info().map(|stats| stats.row_count()) {
         source.accept_scan_estimate(rows);
     }
-    lower_index_lookup_selections(index_plan, &mut source, ctx)?;
-    let has_table_selection = table_plan.is_some_and(reader_has_selection);
-    if !has_table_selection && reader_has_selection(index_plan) && !source.accept_index_filter() {
-        return Err(DriverError::unsupported(
-            "a physical index lookup cannot apply its index-side Selection",
-        ));
+    if lookup_pushdown {
+        // A LocalIndexLookUp's rewritten index subtree includes table
+        // predicates; those still need full rows from the lookup.
+        lower_index_lookup_selections(index_plan, &mut source, ctx)?;
+    } else {
+        let mut conditions = Vec::new();
+        index_lookup_conditions(index_plan, &mut conditions);
+        let conditions = resolve_expressions(&conditions, source.schema())?;
+        source.set_index_conditions(conditions, ctx);
+    }
+    if let Some(limit) = prefix_limit {
+        source.set_prefix_limit(
+            limit.count,
+            prefix_index_offset.expect("resolved prefix position"),
+        );
     }
     // Go serializes the cloned table subtree through `IndexPlans` after a
     // successful local lookup rewrite. The retained `TablePlans` then exist

@@ -1351,6 +1351,51 @@ impl Executor for UniqueIndexPointSourceExec {
     }
 }
 
+struct IndexPrefixLimit {
+    descriptor: crate::remote_scan::PushdownPrefixLimit,
+    seen: u64,
+    boundary: Option<Vec<u8>>,
+    exhausted: bool,
+}
+
+impl IndexPrefixLimit {
+    fn reset(&mut self) {
+        self.seen = 0;
+        self.boundary = None;
+        self.exhausted = self.descriptor.count == 0;
+    }
+
+    fn admit_key(&mut self, key: &[u8]) -> Result<std::ops::ControlFlow<(), bool>, ExecError> {
+        if self.exhausted {
+            return Ok(std::ops::ControlFlow::Break(()));
+        }
+        if self.seen < self.descriptor.count {
+            self.seen += 1;
+            if self.seen < self.descriptor.count {
+                return Ok(std::ops::ControlFlow::Continue(true));
+            }
+        }
+        // Index keys already contain the truncated collation key. Compare
+        // its encoded datum, including NULL's marker, without fetching a row.
+        let (mut keys, _) = tidb_tablecodec::cut_index_key(key, self.descriptor.column_offset + 1)
+            .map_err(|error| {
+                ExecError::internal(format!("prefix index key cannot be decoded: {error:?}"))
+            })?;
+        let prefix = keys
+            .pop()
+            .ok_or_else(|| ExecError::internal("prefix index key is absent"))?;
+        match &self.boundary {
+            None => self.boundary = Some(prefix),
+            Some(boundary) if boundary != &prefix => {
+                self.exhausted = true;
+                return Ok(std::ops::ControlFlow::Break(()));
+            }
+            Some(_) => {}
+        }
+        Ok(std::ops::ControlFlow::Continue(true))
+    }
+}
+
 /// Walks a set of index ranges in index order, reading each row it finds:
 /// Go's `IndexRangeScan` with the table-row lookup above it, collapsed into
 /// one operator because this tier prints one node for the pair.
@@ -1493,10 +1538,14 @@ pub struct IndexRangeSourceExec {
     /// index. This is an execution hint; the ordinary row filter remains as
     /// a semantic check after the table lookup.
     index_filter: bool,
+    /// Selection retained inside the physical index subtree, before lookup.
+    index_probe: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// A bounded TopN that can run on the index stream before table lookup.
     top_n: Option<crate::remote_scan::PushdownTopN>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
     limit: Option<u64>,
+    /// Go's special index Limit, evaluated after index predicates and before lookup.
+    prefix_limit: Option<IndexPrefixLimit>,
     /// Handles skipped before a limit embedded in an ordered IndexLookUp.
     lookup_offset: u64,
     skipped_handles: u64,
@@ -1818,6 +1867,36 @@ impl IndexRangeSourceExec {
         self.extra_handle_slot = Some(slot);
     }
 
+    /// Retains the physical index Selection separately from table predicates.
+    pub(crate) fn set_index_conditions(
+        &mut self,
+        conditions: Vec<Expression>,
+        ctx: &crate::StmtContext,
+    ) {
+        self.index_probe = (!conditions.is_empty()).then(|| {
+            crate::predicate_pushdown::ScanFilterProbe::new(
+                crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
+                    conditions, ctx,
+                ),
+                ctx.clone(),
+                self.meta.new_chunk(),
+            )
+        });
+    }
+
+    /// Installs Go's special Limit from the selected physical index subtree.
+    pub(crate) fn set_prefix_limit(&mut self, count: u64, column_offset: usize) {
+        self.prefix_limit = Some(IndexPrefixLimit {
+            descriptor: crate::remote_scan::PushdownPrefixLimit {
+                count,
+                column_offset,
+            },
+            seen: 0,
+            boundary: None,
+            exhausted: count == 0,
+        });
+    }
+
     pub(crate) fn read_table_columns(&mut self, offsets: Vec<usize>) {
         // `_tidb_rowid` occupies a schema slot with no stored offset behind
         // it, so the two widths differ by exactly one when it is present.
@@ -1856,8 +1935,10 @@ impl IndexRangeSourceExec {
             filter: None,
             pushed: Vec::new(),
             index_filter: false,
+            index_probe: None,
             top_n: None,
             limit: None,
+            prefix_limit: None,
             lookup_offset: 0,
             skipped_handles: 0,
             limit_scanned_keys: 0,
@@ -2920,12 +3001,57 @@ impl IndexRangeSourceExec {
                 .map(|handle| (handle, 0)));
         }
         loop {
+            if self
+                .prefix_limit
+                .as_ref()
+                .is_some_and(|limit| limit.exhausted)
+            {
+                self.cursor = None;
+                return Ok(None);
+            }
             if let Some(cursor) = self.cursor.as_mut() {
-                let entry = cursor.next_handle_in_partition().map_err(ExecError::from)?;
+                let entry = if self.prefix_limit.is_some() || self.index_probe.is_some() {
+                    cursor.next_handle_in_partition_if(|handle, key, value| {
+                        if let Some(filter) = &mut self.index_probe {
+                            let row = self
+                                .table
+                                .index_filter_row(
+                                    self.index_id,
+                                    handle,
+                                    key,
+                                    value,
+                                    self.decode_context.zone(),
+                                )
+                                .map_err(ExecError::from)?;
+                            let mut projected: Vec<_> = self
+                                .keep
+                                .iter()
+                                .map(|offset| row[*offset].clone())
+                                .collect();
+                            if let (Some(slot), TableHandle::Int(handle)) =
+                                (self.extra_handle_slot, handle)
+                            {
+                                projected.insert(slot, Datum::Int(*handle));
+                            }
+                            if !filter.admits(&projected)? {
+                                return Ok(std::ops::ControlFlow::Continue(false));
+                            }
+                        }
+                        match &mut self.prefix_limit {
+                            Some(limit) => limit.admit_key(key),
+                            None => Ok(std::ops::ControlFlow::Continue(true)),
+                        }
+                    })?
+                } else {
+                    cursor.next_handle_in_partition().map_err(ExecError::from)?
+                };
                 if let Some(entry) = entry {
                     return Ok(Some(entry));
                 }
                 self.cursor = None;
+                if self.prefix_limit.as_ref().is_some_and(|limit| limit.exhausted) {
+                    return Ok(None);
+                }
             }
             if self.can_reorder_handles {
                 // An UNORDERED lookup opens ONE cursor over every range,
@@ -3559,6 +3685,9 @@ impl Executor for IndexRangeSourceExec {
         self.lookup_filter_complete = false;
         self.skipped_handles = 0;
         self.limit_scanned_keys = 0;
+        if let Some(limit) = &mut self.prefix_limit {
+            limit.reset();
+        }
         self.batch_partition = 0;
         self.pending_handle = None;
         self.partial_remote = None;
@@ -3599,7 +3728,9 @@ impl Executor for IndexRangeSourceExec {
         // a servable request is refused into the local cursor only by the
         // semantic guards above.
         let lowered: &[crate::predicate_pushdown::ScanPredicate] =
-            if self.index_filter || self.top_n.is_some() {
+            if let Some(filter) = &self.index_probe {
+                filter.predicates()
+            } else if self.index_filter || self.top_n.is_some() {
                 &self.pushed
             } else {
                 &[]
@@ -3617,7 +3748,19 @@ impl Executor for IndexRangeSourceExec {
             && self.top_n.is_none()
             && self.limit.is_none()
             && self.lookup_offset == 0;
-        if let Some(aggregate) = self.partial_aggregate.as_ref() {
+        let index_filter_described = self
+            .index_probe
+            .as_ref()
+            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
+        if let Some(aggregate) = self
+            .partial_aggregate
+            .as_ref()
+            .filter(|_| index_filter_described)
+        {
+            let mut aggregate_predicates = self.pushed.clone();
+            if let Some(filter) = &self.index_probe {
+                aggregate_predicates.extend_from_slice(filter.predicates());
+            }
             let context = self
                 .partial_context
                 .as_ref()
@@ -3628,7 +3771,7 @@ impl Executor for IndexRangeSourceExec {
                     self.index_id,
                     &self.ranges,
                     &self.keep,
-                    &self.pushed,
+                    &aggregate_predicates,
                     aggregate,
                     context,
                     self.decode_context.zone(),
@@ -3644,7 +3787,7 @@ impl Executor for IndexRangeSourceExec {
         // opening both would issue two full coprocessor requests. If the
         // aggregate shape is refused, retain the ordinary index stream for
         // the local partial fallback and the normal lookup path.
-        if self.partial_remote.is_none() {
+        if self.partial_remote.is_none() && index_filter_described {
             self.remote_index = self
                 .table
                 .pushdown_index_handle_cursor(
@@ -3680,6 +3823,7 @@ impl Executor for IndexRangeSourceExec {
                         self.limit
                             .map(|count| self.lookup_offset.saturating_add(count))
                     },
+                    self.prefix_limit.as_ref().map(|limit| &limit.descriptor),
                     // Go's IndexLookUp worker passes its calculated first
                     // handle batch as the index request's paging floor. The
                     // remote scan keeps the session default for all other
@@ -3886,6 +4030,9 @@ impl Executor for IndexRangeSourceExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
+        if let Some(limit) = &mut self.prefix_limit {
+            limit.reset();
+        }
         self.retain_partial_remote_stats();
         self.partial_remote = None;
         self.partial_rows = None;
@@ -3967,6 +4114,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             || self.limit.is_some()
             || self.partial_aggregate.is_some()
             || !self.pushed.is_empty()
+            || self.index_probe.is_some()
             || self.ranges.len() != 1
         {
             return false;
@@ -4052,7 +4200,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             .iter()
             .find(|index| index.id == self.index_id)
             .is_some_and(crate::kv_table::KvIndex::has_prefix);
-        if self.filter.is_some() && index_is_prefix {
+        if (self.filter.is_some() || self.index_probe.is_some()) && index_is_prefix {
             return false;
         }
         if aggregate
@@ -4131,8 +4279,18 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             }
             None => None,
         };
+        let index_probe = match &self.index_probe {
+            Some(filter) => {
+                let Some(filter) = filter.remapped_columns(keep, meta.new_chunk()) else {
+                    return false;
+                };
+                Some(filter)
+            }
+            None => None,
+        };
         self.meta = meta;
         self.filter = filter;
+        self.index_probe = index_probe;
         // The pushed descriptions must name the SAME row space the filter
         // evaluates. Both travel to remote lowerings (the handle-collection
         // stream and the filtered lookup) whose rows are projected through
@@ -4734,6 +4892,7 @@ impl IndexJoinLookupExec {
             self.decode_context.zone(),
             &self.statement,
             self.descending,
+            None,
             None,
             None,
             !self.keep_order,
@@ -6185,6 +6344,71 @@ mod tests {
                 ref other => panic!("expected an integer, got {other:?}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn prefix_limit_resets_after_partial_reads_and_retains_a_group_across_batches() {
+        use crate::table_access::TableAccess;
+        let ctx = crate::StmtContext::for_query();
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE p (a VARCHAR(20), KEY idx(a(2)))",
+            &mut catalog,
+        )
+        .unwrap();
+        let values = (0..40)
+            .map(|i| format!("('aa{i:03}')"))
+            .chain(std::iter::once("('zz999')".to_owned()))
+            .collect::<Vec<_>>()
+            .join(",");
+        crate::driver::run_insert_on(
+            &format!("INSERT INTO p VALUES {values}"),
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap();
+        let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in("test", "p") else {
+            panic!("table");
+        };
+        let field_type = table.columns()[0].field_type.clone();
+        let index_id = table.indexes()[0].id;
+        let schema = Schema::new(vec![tidb_expr::column::Column::new(1, field_type)]);
+        let mut source = IndexRangeSourceExec::new_with_context(
+            ExecutorMeta::new(schema, 0, 1, 3),
+            (**table).clone(),
+            index_id,
+            vec![IndexRange::full()],
+            crate::RowDecodeContext::for_test_query_utc(),
+        );
+        assert!(source.accept_keep_order(false));
+        source.set_lookup_size(7);
+        source.set_prefix_limit(1, 0);
+        source.open().unwrap();
+        let mut chunk = source.new_chunk();
+        source.next(&mut chunk).unwrap();
+        assert!(chunk.num_rows() > 0);
+        source.close().unwrap();
+        for _ in 0..2 {
+            source.open().unwrap();
+            let mut rows = 0;
+            loop {
+                source.next(&mut chunk).unwrap();
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                rows += chunk.num_rows();
+            }
+            assert_eq!(
+                rows, 40,
+                "every tied row survives across batch boundaries and reopen"
+            );
+            source.close().unwrap();
+        }
+        source.set_prefix_limit(0, 0);
+        source.open().unwrap();
+        source.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 0);
+        source.close().unwrap();
     }
 
     const ROWS: i64 = 5000;

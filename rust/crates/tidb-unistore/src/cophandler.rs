@@ -5473,7 +5473,10 @@ mod tests {
                 },
                 tipb::Executor {
                     tp: Some(tipb::ExecType::TypeLimit as i32),
-                    limit: Some(tipb::Limit { limit: Some(2) }),
+                    limit: Some(tipb::Limit {
+                        limit: Some(2),
+                        ..tipb::Limit::default()
+                    }),
                     ..tipb::Executor::default()
                 },
             ],

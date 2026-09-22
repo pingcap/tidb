@@ -444,6 +444,9 @@ message TopN {
 // has a place in the TiKV list form this projection covers.
 message Limit {
   optional uint64 limit = 1;
+  // TiDB master PhysicalLimit.ToPB sends the already-truncated index column.
+  // tipb fed7bc47c39d proto/executor.proto uses field 4 for these expressions.
+  repeated Expr truncate_key_expr = 4;
 }
 
 message Executor {

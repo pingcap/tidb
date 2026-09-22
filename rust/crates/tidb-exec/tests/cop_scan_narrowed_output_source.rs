@@ -61,6 +61,7 @@ struct Observation {
     conditions: usize,
     /// Values the fake encoded, flattened in wire order.
     sent_values: Vec<i64>,
+    prefix_limit: Option<tidb_proto::tipb::Limit>,
 }
 
 #[derive(Debug, Default)]
@@ -137,6 +138,7 @@ impl QueryTransport for FakeTransport {
             dag_output_offsets: dag_offsets.clone(),
             conditions: conditions.len(),
             sent_values: Vec::new(),
+            prefix_limit: dag.executors.iter().find_map(|executor| executor.limit.clone()),
         };
         let mut rows_data = Vec::new();
         for (id, tag) in region_rows() {
@@ -242,6 +244,7 @@ fn request_over(
         output_offsets,
         topn: None,
         limit: None,
+        prefix_limit: None,
         paging_min_size: None,
         aggregate: None,
         keep_order: false,
@@ -295,4 +298,61 @@ fn a_fully_lowered_projected_scan_sends_its_output_offsets_and_reads_narrow_rows
         "the conjunct travelled beside it"
     );
     assert_eq!(observation.sent_values.len(), region_rows().len());
+}
+
+#[test]
+fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
+    use tidb_executor::remote_scan::{PushdownIndexScan, PushdownPrefixLimit};
+    let region = Arc::new(FakeRegion::default());
+    let mut scan = request(Vec::new(), Some(vec![0]));
+    scan.index = Some(PushdownIndexScan {
+        index_id: 7,
+        declared_unique: false,
+        index_column_count: 2,
+        desc: false,
+    });
+    scan.columns[1].field_type = FieldType::new(FieldTypeCode::Varchar);
+    scan.columns[1].field_type.set_flen(20);
+    scan.columns.push(PushdownScanColumn {
+        id: -1,
+        field_type: FieldType::new(FieldTypeCode::LongLong),
+        is_handle: true,
+        origin_default: None,
+    });
+    scan.handle_index = Some(2);
+    scan.primary_column_ids.clear();
+    scan.primary_prefix_column_ids.clear();
+    scan.keep_order = true;
+    scan.prefix_limit = Some(PushdownPrefixLimit {
+        count: 2,
+        column_offset: 1,
+    });
+    let mut stream = scanner(&region).open(&scan).expect("prefix Limit lowers");
+    // This fake observes transport fields; native SQL tests cover tied rows.
+    assert!(stream.next_row().unwrap().is_some());
+    stream.close();
+    let observations = region.observations.lock().unwrap();
+    let [observation] = observations.as_slice() else {
+        panic!("one request");
+    };
+    assert_eq!(observation.dag_output_offsets, [0]);
+    let limit = observation.prefix_limit.as_ref().unwrap();
+    assert_eq!(limit.limit, Some(2));
+    let [key] = limit.truncate_key_expr.as_slice() else {
+        panic!("one prefix key");
+    };
+    assert_eq!(key.tp, Some(tidb_proto::tipb::ExprType::ColumnRef as i32));
+    assert_eq!(key.val.as_deref(), Some(&[128, 0, 0, 0, 0, 0, 0, 1][..]));
+    assert_eq!(key.field_type.as_ref().unwrap().tp, Some(15));
+    // Independent wire-tag check: master tipb's Limit.truncate_key_expr is
+    // field 4 (length-delimited tag 0x22), after field 1's count.
+    let encoded = limit.encode_to_vec();
+    assert_eq!(&encoded[..3], &[8, 2, 0x22]);
+    drop(observations);
+
+    scan.prefix_limit.as_mut().unwrap().column_offset = 3;
+    assert!(scanner(&region).open(&scan).is_err());
+    scan.prefix_limit.as_mut().unwrap().column_offset = 1;
+    scan.limit = Some(1);
+    assert!(scanner(&region).open(&scan).is_err());
 }
