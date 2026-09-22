@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -223,7 +224,8 @@ func TestCheckTTLJobIntervalInStarter(t *testing.T) {
 	})
 
 	require.NoError(t, checkTTLJobInterval("15m"))
-	require.ErrorContains(t, checkTTLJobInterval("1h"), "TTL_JOB_INTERVAL")
+	require.ErrorContains(t, checkTTLJobInterval("1h"),
+		fmt.Sprintf("TTL_JOB_INTERVAL other than '%s'", model.StarterDefaultTTLJobInterval))
 }
 
 type fakeExternalWorkloadManager struct {

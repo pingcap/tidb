@@ -180,7 +180,7 @@ func checkTTLJobInterval(jobInterval string) error {
 	}
 
 	if jobInterval != model.StarterDefaultTTLJobInterval {
-		return dbterror.ErrUnsupportedTTLJobIntervalInStarter
+		return dbterror.ErrUnsupportedTTLJobIntervalInStarter.FastGenByArgs(model.StarterDefaultTTLJobInterval)
 	}
 	return nil
 }
