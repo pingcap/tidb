@@ -1552,9 +1552,7 @@ func (m *MemArbitrator) allocateFromArbitrator(remainBytes int64) (bool, int64) 
 	return ok, reclaimedBytes
 }
 
-func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainBytes int64) {
-	underReclaimBytes := int64(0)
-
+func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainBytes int64) (reclaimed int64) {
 	// check under canceling pool entries
 	if m.underCancel.num > 0 {
 		now := m.innerTime()
@@ -1577,12 +1575,12 @@ func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainByte
 				ctx.fail = true
 				continue
 			}
-			underReclaimBytes += ctx.reclaim
+			reclaimed += ctx.reclaim
 		}
 	}
 
 	// remain-bytes <= 0
-	if underReclaimBytes >= remainBytes {
+	if reclaimed >= remainBytes {
 		return
 	}
 
@@ -1600,14 +1598,15 @@ func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainByte
 						entry.windUp(0, ArbitrateFail)
 					}
 					m.addUnderCancel(entry, entry.arbitratorMu.quota, m.innerTime())
-					underReclaimBytes += entry.arbitratorMu.quota
-					if underReclaimBytes >= remainBytes {
+					reclaimed += entry.arbitratorMu.quota
+					if reclaimed >= remainBytes {
 						return
 					}
 				}
 			}
 		}
 	}
+	return
 }
 
 func (m *MemArbitrator) allocateFromPrivilegedBudget(target *rootPoolEntry, remainBytes int64) (bool, int64) {
@@ -2868,7 +2867,7 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 							zap.Uint64("uid", entry.pool.uid),
 							zap.String("name", entry.pool.name),
 							zap.Int64("mem-used", memoryUsed),
-							zap.String("mem-priority", ctx.memPriority.String()),
+							zap.String("mem-priority", prio.String()),
 							zap.Int64("rest-to-reclaim", max(0, required-reclaimed)),
 						)
 						logWithFields(m.actions.Warn, "Start to `KILL` root pool", fields)
@@ -2883,6 +2882,38 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 				}
 			}
 		}
+	}
+
+	if m.entryMap.contextCache.num.Load() != 0 {
+		m.entryMap.contextCache.Range(func(_, value any) bool {
+			entry := value.(*rootPoolEntry)
+
+			if entry.arbitratorMu.underKill.start || entry.notRunning() {
+				return true
+			}
+
+			ctx := entry.ctx.Load()
+			if !ctx.available() {
+				return true
+			}
+
+			memoryUsed := ctx.arbitrateHelper.MemUsage().HeapInuse
+			if memoryUsed <= 0 {
+				return true
+			}
+
+			m.addUnderKill(entry, memoryUsed, m.innerTime())
+			reclaimed += memoryUsed
+			ctx.stop(ArbitratorOOMRiskKill)
+			newKillNum++
+			m.execMetrics.Risk.OOMKill[ctx.memPriority]++
+
+			if m.removeTask(entry) {
+				entry.windUp(0, ArbitrateFail)
+			}
+
+			return reclaimed < required
+		})
 	}
 	return
 }

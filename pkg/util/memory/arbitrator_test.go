@@ -2789,6 +2789,44 @@ func TestMemArbitrator(t *testing.T) {
 		m.deleteEntryForTest(e1, e2)
 		m.checkEntryForTest()
 	}
+	{
+		entry := m.addEntryForTest(
+			m.newCtxWithHelperForTest(
+				ArbitrationPriorityMedium,
+				NoWaitAverse,
+				RequirePrivilege,
+			),
+		)
+
+		helper := entry.ctx.Load().arbitrateHelper.(*arbitrateHelperForTest)
+		helper.heapUsedCB = func() int64 {
+			return 10000
+		}
+
+		killed := 0
+		helper.killCB = func() {
+			killed++
+		}
+
+		// The entry has no quota, but still reports heap usage through its context.
+		require.Zero(t, entry.arbitratorMu.quota)
+		require.Nil(t, entry.arbitratorMu.quotaShard)
+
+		m.prepareAlloc(entry, 1)
+		newKillNum, reclaimed := m.killTopnEntry(10000)
+
+		require.Equal(t, 1, newKillNum)
+		require.Equal(t, int64(10000), reclaimed)
+		require.Equal(t, 1, killed)
+		require.False(t, entry.ctx.Load().available())
+		require.Zero(t, m.TaskNum())
+		require.Equal(t, ArbitrateFail, m.waitAlloc(entry))
+		require.Equal(t, int64(1), m.underKill.num)
+		require.True(t, entry.arbitratorMu.underKill.start)
+
+		m.deleteEntryForTest(entry)
+		m.checkEntryForTest()
+	}
 }
 
 func TestBasicUtils(t *testing.T) {
