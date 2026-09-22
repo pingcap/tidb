@@ -1247,6 +1247,65 @@ fn max_one_row_and_hash_agg_preserve_the_no_cop_requirement() {
 }
 
 #[test]
+fn mpp_hash_agg_enumeration_matches_go_run_modes() {
+    use crate::logical::{BaseLogicalPlan, LogicalAggregation};
+    use crate::physical::{get_hash_aggs_with_mpp, AggMppRunMode, PhysicalPlan};
+    use crate::stats_info::StatsInfo;
+    use tidb_expr::aggregation::{names, AggFuncDesc};
+    use tidb_expr::{SessionTimeZone, ZonedNoColumns};
+
+    let allocator = PlanIdAllocator::new();
+    let input = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+    let value = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
+    let count = AggFuncDesc::new(
+        &ZonedNoColumns(SessionTimeZone::utc()),
+        names::COUNT,
+        vec![Expression::Column(value)],
+        false,
+    )
+    .expect("count descriptor");
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalAggregation::TYPE, 0);
+    base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+    base.base.set_schema(Some(Schema::new(vec![Column::new(
+        3,
+        FieldType::new(FieldTypeCode::LongLong),
+    )])));
+    base.set_has_tiflash(true);
+    let aggregation = LogicalAggregation::new(
+        base,
+        vec![count],
+        vec![Expression::Column(input.clone())],
+    );
+    let root = PhysicalProperty::default();
+    let plans = get_hash_aggs_with_mpp(&aggregation, &root, &allocator, 1.0, true, false);
+    let modes: Vec<AggMppRunMode> = plans
+        .iter()
+        .filter_map(|plan| match plan {
+            PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode != AggMppRunMode::NoMpp => {
+                Some(agg.mpp_run_mode)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(modes, [
+        AggMppRunMode::Mpp1Phase,
+        AggMppRunMode::Mpp2Phase,
+        AggMppRunMode::MppTiDB,
+    ]);
+    let one_phase = plans
+        .iter()
+        .find_map(|plan| match plan {
+            PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode == AggMppRunMode::Mpp1Phase => {
+                Some(agg.base.child_req_prop(0).expect("MPP child property"))
+            }
+            _ => None,
+        })
+        .expect("one-phase candidate");
+    assert_eq!(one_phase.mpp_partition_tp, MppPartitionType::Hash);
+    assert_eq!(one_phase.mpp_partition_cols[0].col.unique_id, input.unique_id);
+}
+
+#[test]
 fn a_table_dual_is_born_inside_its_own_root_task() {
     // `findBestTask4LogicalTableDual` (`physical_table_dual.go:79`): a
     // 0/1-row dual satisfies any order vacuously, so only a required order

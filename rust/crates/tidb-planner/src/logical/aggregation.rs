@@ -145,6 +145,34 @@ impl LogicalAggregation {
             .collect()
     }
 
+    /// Go `GetPotentialPartitionKeys` (`logical_aggregation.go:519`).
+    ///
+    /// TiFlash can hash-partition an aggregation only by bare group-by
+    /// columns.  Keep the complete column, including its type and collation,
+    /// because exchange matching uses the collation-aware partition key.
+    #[must_use]
+    pub fn get_potential_partition_keys(
+        &self,
+    ) -> Vec<crate::physical_property::MppPartitionColumn> {
+        self.group_by_items
+            .iter()
+            .filter_map(|item| match item {
+                Expression::Column(column) => Some(crate::physical_property::MppPartitionColumn {
+                    col: column.clone(),
+                    collate_id: column
+                        .get_static_type()
+                        .map(|field_type| {
+                            crate::physical_property::collate_id_for_partition(
+                                field_type.collation_name(),
+                            )
+                        })
+                        .unwrap_or(-1),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Go `GetUsedCols()` (`logical_aggregation.go:533`): every column read by
     /// a group-by item, an aggregate argument, or an aggregate `ORDER BY`.
     #[must_use]

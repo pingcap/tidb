@@ -66,6 +66,130 @@ pub struct FinalModeSplit {
     pub first_row_func_map: HashMap<usize, usize>,
 }
 
+/// Go `BasePhysicalAgg.ConvertAvgForMPP` (`base_physical_agg.go:209`).
+///
+/// TiFlash's MPP aggregation contract exposes AVG as a COUNT/SUM pair and
+/// reconstructs the original AVG in a projection above the aggregate.  This
+/// mutates the supplied physical HashAgg to the pair and returns that
+/// projection.  A non-AVG aggregate returns `None` without changing the
+/// plan.
+pub fn convert_avg_for_mpp(
+    plan: &mut crate::physical::PhysicalPlan,
+    alloc: &ColumnIdAllocator,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+) -> Result<Option<crate::physical::PhysicalProjection>, crate::plan_base::PlanError> {
+    use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
+    use tidb_expr::aggregation::names;
+    use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder};
+
+    let PhysicalPlan::HashAgg(agg) = plan else {
+        return Ok(None);
+    };
+    let Some(original_schema) = agg.base.base.schema().cloned() else {
+        return Ok(None);
+    };
+    if !agg
+        .agg_funcs
+        .iter()
+        .any(|function| function.name() == names::AVG)
+    {
+        return Ok(None);
+    }
+
+    let ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
+    let builder = RealFunctionBuilder::new(&ctx);
+    let mut new_schema = Schema {
+        columns: Vec::with_capacity(original_schema.columns.len() + agg.agg_funcs.len()),
+        pk_or_uk: original_schema.pk_or_uk.clone(),
+        nullable_uk: original_schema.nullable_uk.clone(),
+    };
+    let mut new_agg_funcs = Vec::with_capacity(agg.agg_funcs.len() * 2);
+    let mut projection_exprs = Vec::with_capacity(original_schema.columns.len());
+
+    for (index, function) in agg.agg_funcs.iter().enumerate() {
+        let Some(output_column) = original_schema.columns.get(index) else {
+            return Ok(None);
+        };
+        if function.name() != names::AVG {
+            new_agg_funcs.push(function.clone());
+            new_schema.columns.push(output_column.clone());
+            projection_exprs.push(Expression::Column(output_column.clone()));
+            continue;
+        }
+
+        let mut count = function.clone();
+        count.base.name = names::COUNT.to_owned();
+        if count.base.type_infer(&ctx).is_err() {
+            return Ok(None);
+        }
+        let count_column = Column::new(alloc.alloc(), count.base.ret_type.clone());
+
+        let mut sum = function.clone();
+        sum.base.name = names::SUM.to_owned();
+        if sum
+            .base
+            .type_infer_4_avg_sum(&function.base.ret_type)
+            .is_err()
+        {
+            return Ok(None);
+        }
+        let mut sum_column = output_column.clone();
+        sum_column.ret_type = Some(sum.base.ret_type.clone());
+
+        new_agg_funcs.push(count);
+        new_agg_funcs.push(sum);
+        new_schema.columns.push(count_column.clone());
+        new_schema.columns.push(sum_column.clone());
+
+        let count_expr = Expression::Column(count_column.clone());
+        let zero = Expression::Constant(tidb_expr::constant::Constant::new_zero());
+        let condition = builder
+            .new_function("eq", None, vec![count_expr.clone(), zero])
+            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+        let denominator = builder
+            .new_function(
+                "case",
+                None,
+                vec![
+                    condition,
+                    Expression::Constant(tidb_expr::constant::Constant::new_one()),
+                    count_expr,
+                ],
+            )
+            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+        let quotient = builder
+            .new_function(
+                "div",
+                Some(output_column.ret_type.clone().unwrap_or_else(|| function.base.ret_type.clone())),
+                vec![Expression::Column(sum_column), denominator],
+            )
+            .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+        projection_exprs.push(quotient);
+    }
+    for output_column in original_schema.columns.iter().skip(agg.agg_funcs.len()) {
+        projection_exprs.push(Expression::Column(output_column.clone()));
+    }
+
+    agg.agg_funcs = new_agg_funcs;
+    agg.base.base.set_schema(Some(new_schema));
+    let mut projection_base = BasePhysicalPlan::new(
+        plan_ids,
+        "Projection",
+        agg.base.base.query_block_offset(),
+    );
+    projection_base.base.set_stats(agg.base.base.stats_info().cloned());
+    projection_base.base.set_schema(Some(original_schema.clone()));
+    if let Some(prop) = agg.base.child_req_prop(0) {
+        projection_base.set_children_req_props(vec![Some(prop.clone_essential_fields())]);
+    }
+    Ok(Some(PhysicalProjection {
+        base: projection_base,
+        exprs: projection_exprs,
+        calculate_no_delay: false,
+        avoid_column_evaluator: false,
+    }))
+}
+
 /// Go `genFirstRowAggForGroupBy` (`:441`): one `firstrow(item)` per group-by
 /// item, for the TiDB-cop case whose executor does not output group-by
 /// values.
@@ -608,6 +732,50 @@ pub fn check_agg_can_push_cop_tikv(
     crate::pushdown::can_exprs_push_down_tikv(group_by_items)
 }
 
+/// Go `checkCanPushDownToMPP` together with the TiFlash branch of
+/// `CheckAggCanPushCop`.  TiFlash MPP currently permits DISTINCT only for
+/// COUNT and GROUP_CONCAT, and does not admit APPROX_COUNT_DISTINCT.
+#[must_use]
+pub fn check_agg_can_push_mpp(
+    agg_funcs: &[AggFuncDesc],
+    group_by_items: &[Expression],
+) -> bool {
+    let blacklist = HashMap::new();
+    for agg_func in agg_funcs {
+        if contain_virtual_column(&agg_func.base.args)
+            || contain_correlated_column(&agg_func.base.args)
+        {
+            return false;
+        }
+        if agg_func.has_distinct
+            && agg_func.name() != names::COUNT
+            && agg_func.name() != names::GROUP_CONCAT
+        {
+            return false;
+        }
+        if agg_func.name() == names::APPROX_COUNT_DISTINCT
+            || !tidb_expr::aggregation::check_agg_push_down(
+                agg_func,
+                tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+                &blacklist,
+            )
+            || !crate::pushdown::can_exprs_push_down_tiflash(&agg_func.base.args)
+        {
+            return false;
+        }
+        let order_by_exprs: Vec<Expression> = agg_func
+            .order_by_items
+            .iter()
+            .map(|item| item.expr.clone())
+            .collect();
+        if !crate::pushdown::can_exprs_push_down_tiflash(&order_by_exprs) {
+            return false;
+        }
+    }
+    !contain_virtual_column(group_by_items)
+        && crate::pushdown::can_exprs_push_down_tiflash(group_by_items)
+}
+
 /// Go `BasePhysicalAgg.NewPartialAggregate` (`base_physical_agg.go:279`) for
 /// a TiKV cop task: `(None, plan)` is Go's `(nil, p.Self)` — the aggregate
 /// stays whole — and `(Some(partial), final)` is the split, the partial
@@ -630,6 +798,76 @@ pub fn new_partial_aggregate(
     ),
     crate::plan_base::PlanError,
 > {
+    new_partial_aggregate_with_mode(ctx, alloc, plan, plan_ids, false)
+}
+
+/// Go `BasePhysicalAgg.NewPartialAggregate(kv.TiFlash, true)` for an MPP
+/// fragment.  The MPP split keeps DISTINCT forms that TiFlash supports and
+/// changes a final COUNT merge into SUM through
+/// [`build_final_mode_aggregation`].
+pub fn new_partial_aggregate_mpp(
+    ctx: &impl Columns,
+    alloc: &ColumnIdAllocator,
+    plan: crate::physical::PhysicalPlan,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+) -> Result<
+    (
+        Option<crate::physical::PhysicalPlan>,
+        crate::physical::PhysicalPlan,
+    ),
+    crate::plan_base::PlanError,
+> {
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, true, true)
+}
+
+/// Go `NewPartialAggregate(kv.TiFlash, false)` for the MPP-TiDB mode: the
+/// partial runs in TiFlash, but its final descriptor remains a normal COUNT
+/// merge because TiDB, rather than TiFlash, owns that final stage.
+pub fn new_partial_aggregate_mpp_tidb(
+    ctx: &impl Columns,
+    alloc: &ColumnIdAllocator,
+    plan: crate::physical::PhysicalPlan,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+) -> Result<
+    (
+        Option<crate::physical::PhysicalPlan>,
+        crate::physical::PhysicalPlan,
+    ),
+    crate::plan_base::PlanError,
+> {
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, true, false)
+}
+
+fn new_partial_aggregate_with_mode(
+    ctx: &impl Columns,
+    alloc: &ColumnIdAllocator,
+    plan: crate::physical::PhysicalPlan,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+    is_mpp: bool,
+) -> Result<
+    (
+        Option<crate::physical::PhysicalPlan>,
+        crate::physical::PhysicalPlan,
+    ),
+    crate::plan_base::PlanError,
+> {
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, false, is_mpp)
+}
+
+fn new_partial_aggregate_for_store(
+    ctx: &impl Columns,
+    alloc: &ColumnIdAllocator,
+    plan: crate::physical::PhysicalPlan,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+    is_tiflash: bool,
+    is_mpp: bool,
+) -> Result<
+    (
+        Option<crate::physical::PhysicalPlan>,
+        crate::physical::PhysicalPlan,
+    ),
+    crate::plan_base::PlanError,
+> {
     use crate::physical::PhysicalPlan;
     let (agg_funcs, group_by_items, is_stream) = match &plan {
         PhysicalPlan::HashAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, false),
@@ -640,7 +878,12 @@ pub fn new_partial_aggregate(
             ))
         }
     };
-    if !check_agg_can_push_cop_tikv(agg_funcs, group_by_items) {
+    let can_push = if is_tiflash {
+        check_agg_can_push_mpp(agg_funcs, group_by_items)
+    } else {
+        check_agg_can_push_cop_tikv(agg_funcs, group_by_items)
+    };
+    if !can_push {
         return Ok((None, plan));
     }
     // Go: with `tidb_opt_distinct_agg_push_down` OFF (the default,
@@ -649,7 +892,7 @@ pub fn new_partial_aggregate(
     // prefers a root-task plan for it. The live master capture for
     // `count(distinct from_address)` over `idx_from` is a single-phase
     // root HashAgg over a plain IndexReader: no cop partial stage.
-    if agg_funcs.iter().any(|function| function.has_distinct) {
+    if !is_tiflash && !is_mpp && agg_funcs.iter().any(|function| function.has_distinct) {
         return Ok((None, plan));
     }
     let original = AggInfo {
@@ -657,7 +900,7 @@ pub fn new_partial_aggregate(
         group_by_items: group_by_items.clone(),
         schema: plan.schema().cloned().unwrap_or_default(),
     };
-    let Some(mut split) = build_final_mode_aggregation(ctx, alloc, &original, true, false) else {
+    let Some(mut split) = build_final_mode_aggregation(ctx, alloc, &original, true, is_mpp) else {
         return Ok((None, plan));
     };
     // A stream aggregate whose split grew the group-by (a pushed distinct
@@ -690,6 +933,7 @@ pub fn new_partial_aggregate(
             base: final_base,
             agg_funcs: Vec::new(),
             group_by_items: Vec::new(),
+            ..Default::default()
         }),
         PhysicalPlan::StreamAgg(_) => PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {
             base: final_base,
@@ -837,6 +1081,46 @@ mod tests {
         assert_eq!(names_below, [names::COUNT, names::SUM]);
         assert_eq!(split.final_agg.agg_funcs[0].name(), names::AVG);
         assert_eq!(split.final_agg.agg_funcs[0].base.args.len(), 2);
+    }
+
+    #[test]
+    fn mpp_avg_conversion_exposes_count_sum_and_division_projection() {
+        let input = bigint_col(1);
+        let avg = agg(names::AVG, &input, false);
+        let output = Column::new(20, avg.base.ret_type.clone());
+        let plan_ids = crate::plan_base::PlanIdAllocator::new();
+        let column_ids = ColumnIdAllocator::new();
+        let mut base = crate::physical::BasePhysicalPlan::new(&plan_ids, "HashAgg", 0);
+        base.base.set_schema(Some(Schema::new(vec![output.clone()])));
+        base.set_children_req_props(vec![Some(
+            crate::physical_property::PhysicalProperty::default(),
+        )]);
+        let mut plan = crate::physical::PhysicalPlan::HashAgg(crate::physical::PhysicalHashAgg {
+            base,
+            agg_funcs: vec![avg],
+            group_by_items: Vec::new(),
+            ..Default::default()
+        });
+
+        let projection = convert_avg_for_mpp(&mut plan, &column_ids, &plan_ids)
+            .expect("AVG conversion")
+            .expect("AVG must be rewritten for MPP");
+        let crate::physical::PhysicalPlan::HashAgg(agg) = plan else {
+            panic!("AVG conversion must retain a HashAgg");
+        };
+        assert_eq!(
+            agg.agg_funcs
+                .iter()
+                .map(AggFuncDesc::name)
+                .collect::<Vec<_>>(),
+            [names::COUNT, names::SUM]
+        );
+        assert_eq!(agg.base.base.schema().expect("MPP schema").len(), 2);
+        assert_eq!(projection.exprs.len(), 1);
+        let Expression::ScalarFunction(function) = &projection.exprs[0] else {
+            panic!("AVG projection must divide SUM by COUNT");
+        };
+        assert_eq!(function.func_name.lowercase(), "div");
     }
 
     /// `select a, count(b) group by a`: the partial `firstrow(a)` duplicates

@@ -265,6 +265,7 @@ fn inject_proj_below_stream_agg(
         base: agg.base,
         agg_funcs: agg.agg_funcs,
         group_by_items: agg.group_by_items,
+        ..Default::default()
     };
     match inject_proj_below_agg(ctx, hash_like) {
         PhysicalPlan::HashAgg(rebuilt) => {
@@ -652,6 +653,7 @@ mod tests {
             base,
             agg_funcs,
             group_by_items,
+            ..Default::default()
         })
     }
 

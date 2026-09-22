@@ -1592,6 +1592,7 @@ pub(crate) fn physical_plan_for_logical(
     let mut dispatch = DispatchContext::new(plan_ids, &coster, 1.0)
         .with_expression_evaluator(&evaluate)
         .with_mpp_allowed(ctx.optimizer_cost_env().session.mpp_allowed)
+        .with_enable_skew_distinct_agg(ctx.enable_skew_distinct_agg())
         .with_mpp_warning_sink(ctx)
         .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
         .with_selectivity_factor(ctx.selectivity_factor())

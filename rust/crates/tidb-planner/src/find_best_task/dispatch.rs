@@ -159,6 +159,9 @@ pub struct DispatchContext<'a> {
     pub index_join_skyline_threshold: f64,
     /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
     pub mpp_allowed: bool,
+    /// Go `SessionVars.EnableSkewDistinctAgg`, which disables one-phase MPP
+    /// aggregation so skew-aware distinct rewrites can retain their exchange.
+    pub enable_skew_distinct_agg: bool,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
     pub mpp_warning_sink: Option<&'a dyn MppWarningSink>,
     /// Go `SessionVars.GetAllowPreferRangeScan()` (`tidb_opt_prefer_range_scan`,
@@ -215,6 +218,7 @@ impl<'a> DispatchContext<'a> {
             index_join_skyline_threshold: 1_000.0,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
+            enable_skew_distinct_agg: false,
             mpp_warning_sink: None,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
@@ -367,6 +371,14 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_mpp_allowed(mut self, allowed: bool) -> Self {
         self.mpp_allowed = allowed;
+        self
+    }
+
+    /// Carries Go's `EnableSkewDistinctAgg` session switch into physical
+    /// aggregation enumeration.
+    #[must_use]
+    pub const fn with_enable_skew_distinct_agg(mut self, enabled: bool) -> Self {
+        self.enable_skew_distinct_agg = enabled;
         self
     }
 
@@ -533,7 +545,14 @@ fn exhaust_physical_plans(
             // StreamAgg and immediately returns it when STREAM_AGG applies.
             // With no applicable hint both families share one cost search in
             // that same hash-then-stream order.
-            let mut hash_aggs = physical::get_hash_aggs(op, prop, ctx.allocator, ctx.skew_ratio);
+            let mut hash_aggs = physical::get_hash_aggs_with_mpp(
+                op,
+                prop,
+                ctx.allocator,
+                ctx.skew_ratio,
+                ctx.mpp_allowed,
+                ctx.enable_skew_distinct_agg,
+            );
             if !hash_aggs.is_empty()
                 && op.prefer_agg_type & crate::expression_rewriter::PREFER_HASH_AGG != 0
             {

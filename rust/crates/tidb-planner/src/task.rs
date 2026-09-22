@@ -1124,7 +1124,6 @@ mod tests {
     use crate::physical::PhysicalPlan;
     use crate::plan_base::PlanIdAllocator;
     use crate::stats_info::StatsInfo;
-
     // All WRITTEN: Go's coverage of the task layer is exercised through
     // planner integration suites; `task_base.go` has no unit tests of its
     // own beside them.
@@ -2046,15 +2045,191 @@ fn inherit_index_join_stats(
     }
 }
 
+/// Go `attach2TaskForMpp` for a physical HashAgg.  The MPP candidate carries
+/// the requested run mode; this helper performs the partial/final split and
+/// places the exchange between the two phases where the Go planner does.
+fn attach_hash_agg_to_mpp(
+    mut plan: PhysicalPlan,
+    mpp: MppTask,
+    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    allocator: &crate::plan_base::PlanIdAllocator,
+) -> Result<Task, PlanError> {
+    let PhysicalPlan::HashAgg(hash_agg) = &plan else {
+        unreachable!("MPP HashAgg attachment received a non-HashAgg plan");
+    };
+    let mode = hash_agg.mpp_run_mode;
+    let requested_partition_cols = hash_agg.mpp_partition_cols.clone();
+    let expr_ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
+    let mut avg_projection = None;
+    if matches!(
+        mode,
+        crate::physical::AggMppRunMode::Mpp1Phase
+            | crate::physical::AggMppRunMode::Mpp2Phase
+            | crate::physical::AggMppRunMode::MppScalar
+    ) {
+        if let Some(column_ids) = column_ids {
+            avg_projection =
+                crate::final_mode_agg::convert_avg_for_mpp(&mut plan, column_ids, allocator)?;
+        }
+    }
+
+    match mode {
+        crate::physical::AggMppRunMode::NoMpp
+        | crate::physical::AggMppRunMode::Mpp1Phase => {
+            let task = attach_plan_to_task(plan, Task::Mpp(mpp));
+            if let Some(projection) = avg_projection.take() {
+                Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task))
+            } else {
+                Ok(task)
+            }
+        }
+        crate::physical::AggMppRunMode::Mpp2Phase => {
+            let Some(column_ids) = column_ids else {
+                return Err(PlanError::internal(
+                    "MPP HashAgg partial construction needs a column allocator",
+                ));
+            };
+            let (Some(partial), final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp(
+                &expr_ctx,
+                column_ids,
+                plan,
+                allocator,
+            )? else {
+                return Ok(Task::invalid_task());
+            };
+            let task = attach_plan_to_task(partial, Task::Mpp(mpp));
+            let Task::Mpp(mpp) = task else {
+                unreachable!("partial HashAgg attachment must retain MPP task");
+            };
+            let partition_cols = if requested_partition_cols.is_empty() {
+                let PhysicalPlan::HashAgg(final_hash_agg) = &final_agg else {
+                    return Ok(Task::invalid_task());
+                };
+                final_hash_agg
+                    .group_by_items
+                    .iter()
+                    .map(|item| match item {
+                        Expression::Column(column) => Ok(
+                            crate::physical_property::MppPartitionColumn {
+                                collate_id: column
+                                    .get_static_type()
+                                    .map(|field_type| {
+                                        crate::physical_property::collate_id_for_partition(
+                                            field_type.collation_name(),
+                                        )
+                                    })
+                                    .unwrap_or(-1),
+                                col: column.clone(),
+                            },
+                        ),
+                        _ => Err(PlanError::internal(
+                            "MPP HashAgg partition key must be a column",
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                requested_partition_cols
+            };
+            if partition_cols.is_empty() {
+                return Ok(Task::invalid_task());
+            }
+            let required = crate::physical_property::PhysicalProperty {
+                task_tp: crate::task_type::TaskType::Mpp,
+                expected_cnt: f64::MAX,
+                mpp_partition_tp: MppPartitionType::Hash,
+                mpp_partition_cols: partition_cols.clone(),
+                ..crate::physical_property::PhysicalProperty::default()
+            };
+            let mpp = mpp.enforce_exchanger_impl(&required, allocator)?;
+            let task = attach_plan_to_task(final_agg, Task::Mpp(mpp));
+            if let Some(projection) = avg_projection.take() {
+                Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task))
+            } else {
+                Ok(task)
+            }
+        }
+        crate::physical::AggMppRunMode::MppTiDB => {
+            let Some(column_ids) = column_ids else {
+                return Err(PlanError::internal(
+                    "MPP HashAgg partial construction needs a column allocator",
+                ));
+            };
+            let (partial, final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp_tidb(
+                &expr_ctx,
+                column_ids,
+                plan,
+                allocator,
+            )?;
+            let task = if let Some(partial) = partial {
+                attach_plan_to_task(partial, Task::Mpp(mpp))
+            } else {
+                Task::Mpp(mpp)
+            };
+            let task = task.into_root_task(allocator)?;
+            let task = attach_plan_to_task(final_agg, task);
+            if let Some(projection) = avg_projection.take() {
+                Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task))
+            } else {
+                Ok(task)
+            }
+        }
+        crate::physical::AggMppRunMode::MppScalar => {
+            let required = crate::physical_property::PhysicalProperty {
+                task_tp: crate::task_type::TaskType::Mpp,
+                expected_cnt: f64::MAX,
+                mpp_partition_tp: MppPartitionType::SinglePartition,
+                ..crate::physical_property::PhysicalProperty::default()
+            };
+            if !crate::physical_property::need_enforce_exchanger(
+                mpp.partition_type(),
+                mpp.hash_cols(),
+                &required,
+                None,
+            ) {
+                let task = attach_plan_to_task(plan, Task::Mpp(mpp));
+                if let Some(projection) = avg_projection.take() {
+                    return Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task));
+                }
+                return Ok(task);
+            }
+            let Some(column_ids) = column_ids else {
+                return Err(PlanError::internal(
+                    "MPP HashAgg partial construction needs a column allocator",
+                ));
+            };
+            let (partial, final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp(
+                &expr_ctx,
+                column_ids,
+                plan,
+                allocator,
+            )?;
+            let mpp = if let Some(partial) = partial {
+                let task = attach_plan_to_task(partial, Task::Mpp(mpp));
+                let Task::Mpp(mpp) = task else {
+                    unreachable!("scalar partial HashAgg must retain MPP task");
+                };
+                mpp
+            } else {
+                mpp
+            };
+            let mpp = mpp.enforce_exchanger_impl(&required, allocator)?;
+            let task = attach_plan_to_task(final_agg, Task::Mpp(mpp));
+            if let Some(projection) = avg_projection.take() {
+                Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task))
+            } else {
+                Ok(task)
+            }
+        }
+    }
+}
+
 /// Go `Attach2Task` per operator — the ROOT-TASK slice.
 ///
 /// Every ported arm reproduces its Go body exactly for a root child task.
-/// The cop and MPP branches each need machinery that is not here —
-/// `expression.CanExprsPushDown` for the push-down decisions,
-/// `convertToRootTaskImpl` to finish a cop task into readers, the pushed
-/// TopN/Limit constructions — and REFUSE naming those symbols rather than
-/// composing something Go would not compose. A wrong push-down is a silent
-/// wrong plan; a refusal is a loud gap.
+/// Remaining cop and MPP gaps are kept explicit: cop conversion still needs
+/// `convertToRootTaskImpl`, while heavy-function TopN and scalar three-stage
+/// distinct aggregation still need their Go counterparts. A wrong push-down
+/// is a silent wrong plan; a refusal is a loud gap.
 /// Go `sinkIntoIndexLookUp` (`task.go:733`): after conversion, a root Limit
 /// SINKS into the `PhysicalIndexLookUpReader` (directly or under one
 /// Projection) as its `PushedLimit`, cutting the double read short — but
@@ -2927,10 +3102,7 @@ pub fn attach2_task(
                     Ok(attach_plan_to_task(plan, t))
                 }
             }
-            Task::Mpp(_mpp) => Err(PlanError::internal(
-                "attach2Task4PhysicalHashAgg's MPP phase construction requires \
-                 EnforceExchanger and PhysicalExchangeReceiver",
-            )),
+            Task::Mpp(mpp) => attach_hash_agg_to_mpp(plan, mpp, column_ids, allocator),
             root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task(allocator)?)),
         },
         // `attach2Task4PhysicalHashJoin` (`task.go:211`): convert BOTH
@@ -3084,6 +3256,7 @@ mod attach_tests {
     use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSelection, PhysicalSort};
     use crate::plan_base::PlanIdAllocator;
     use crate::stats_info::StatsInfo;
+    use tidb_expr::schema::Schema;
 
     // All WRITTEN: Go's Attach2Task coverage is planner-integration bound.
 
@@ -3288,6 +3461,93 @@ mod attach_tests {
         assert!(matches!(
             stream_task.plan(),
             Some(PhysicalPlan::StreamAgg(_))
+        ));
+    }
+
+    #[test]
+    fn mpp_two_phase_hash_agg_attaches_partial_exchange_and_final() {
+        use crate::expression_rewriter::ColumnIdAllocator;
+        use crate::physical::{AggMppRunMode, PhysicalHashAgg};
+        use crate::physical_property::MppPartitionColumn;
+        use tidb_expr::aggregation::{names, AggFuncDesc};
+        use tidb_expr::{SessionTimeZone, ZonedNoColumns};
+
+        let plan_allocator = PlanIdAllocator::new();
+        let column_allocator = ColumnIdAllocator::new();
+        let group = tidb_expr::column::Column::new(
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        let value = tidb_expr::column::Column::new(
+            2,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        let count = AggFuncDesc::new(
+            &ZonedNoColumns(SessionTimeZone::utc()),
+            names::COUNT,
+            vec![Expression::Column(value)],
+            false,
+        )
+        .expect("count descriptor");
+        let mut base = op_with_stats("HashAgg", 4.0);
+        base.base.set_schema(Some(Schema::new(vec![
+            tidb_expr::column::Column::new(
+                3,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+            group.clone(),
+        ])));
+        let hash = PhysicalPlan::HashAgg(PhysicalHashAgg {
+            base,
+            agg_funcs: vec![count],
+            group_by_items: vec![Expression::Column(group.clone())],
+            mpp_run_mode: AggMppRunMode::Mpp2Phase,
+            mpp_partition_cols: vec![MppPartitionColumn {
+                col: group.clone(),
+                collate_id: -1,
+            }],
+        });
+        let mut child_base = op_with_stats("Dual", 12.0);
+        child_base.base.set_schema(Some(Schema::new(vec![
+            group.clone(),
+            tidb_expr::column::Column::new(
+                2,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+        ])));
+        let child = Task::Mpp(MppTask::new(
+            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+                base: child_base,
+                row_count: 12,
+            }),
+            MppPartitionType::Any,
+            [],
+        ));
+        let attached = attach2_task(
+            hash,
+            vec![child],
+            Some(&column_allocator),
+            &plan_allocator,
+        )
+        .expect("MPP HashAgg attaches");
+        let Task::Mpp(mpp) = attached else {
+            panic!("two-phase MPP HashAgg remains an MPP task");
+        };
+        let Some(PhysicalPlan::HashAgg(final_agg)) = mpp.plan() else {
+            panic!("final HashAgg is the MPP task root");
+        };
+        let Some(PhysicalPlan::ExchangeReceiver(receiver)) = final_agg.base.children().first()
+        else {
+            panic!("hash exchange sits between partial and final aggregation");
+        };
+        let Some(PhysicalPlan::ExchangeSender(sender)) = receiver.base.children().first() else {
+            panic!("receiver owns the exchange sender");
+        };
+        assert_eq!(sender.hash_cols[0].col.unique_id, group.unique_id);
+        assert!(matches!(
+            sender.base.children().first(),
+            Some(PhysicalPlan::HashAgg(partial))
+                if partial.agg_funcs[0].mode == tidb_expr::aggregation::AggFunctionMode::Partial1
         ));
     }
 

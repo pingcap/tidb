@@ -53,6 +53,18 @@ impl MppTask {
         ) {
             return Ok(self.copy());
         }
+        self.enforce_exchanger_impl(required, allocator)
+    }
+
+    /// Go `MppTask.EnforceExchangerImpl` (`enforce.go:74`): always install
+    /// the exchange pair.  MPP two-phase aggregation uses this form after
+    /// its partial stage even when a caller has already checked the current
+    /// partition property.
+    pub fn enforce_exchanger_impl(
+        &self,
+        required: &PhysicalProperty,
+        allocator: &PlanIdAllocator,
+    ) -> Result<MppTask, PlanError> {
         let child = self
             .plan()
             .ok_or_else(|| PlanError::internal("MppTask.EnforceExchanger: empty plan"))?

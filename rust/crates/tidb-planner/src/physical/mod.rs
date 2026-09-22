@@ -50,7 +50,10 @@ use tidb_expr::schema::Schema;
 
 use crate::cost_usage::{CostVer2, PlanCostOption};
 use crate::find_best_task::LogicalJoinType;
-use crate::physical_property::{ColumnSortItem, PhysicalProperty, TaskType};
+use crate::physical_property::{
+    choose_partition_keys, ColumnSortItem, MppPartitionColumn, MppPartitionType, PhysicalProperty,
+    TaskType,
+};
 use crate::physical_table_reader::{
     MissingTableDescriptorError, ReadReqType, StoreType, TableScanCountError,
 };
@@ -2791,10 +2794,24 @@ pub fn get_phys_topn(
     ret
 }
 
+/// Go `AggMppRunMode` (`base_physical_agg.go:40`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AggMppRunMode {
+    /// The aggregate is a TiKV/root aggregate, not an MPP-specialized one.
+    #[default]
+    NoMpp,
+    /// One aggregate phase; the child must already have the group partition.
+    Mpp1Phase,
+    /// Partial aggregation, hash exchange, then final aggregation.
+    Mpp2Phase,
+    /// Partial aggregation in TiFlash and final aggregation in TiDB.
+    MppTiDB,
+    /// Scalar aggregation whose final result is gathered to one MPP worker.
+    MppScalar,
+}
+
 /// Go `physicalop.PhysicalHashAgg` (`physical_hash_agg.go:33`), the
-/// planning slice: the aggregate descriptors and grouping expressions.
-/// `TiFlashFineGrainedShuffle` and the MPP mode fields narrow with the
-/// tier.
+/// aggregate descriptors, grouping expressions, and MPP run contract.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalHashAgg {
     /// The shared physical base.
@@ -2803,6 +2820,10 @@ pub struct PhysicalHashAgg {
     pub agg_funcs: Vec<tidb_expr::aggregation::AggFuncDesc>,
     /// Go `GroupByItems`.
     pub group_by_items: Vec<tidb_expr::expression::Expression>,
+    /// Go `BasePhysicalAgg.MppRunMode`.
+    pub mpp_run_mode: AggMppRunMode,
+    /// Go `BasePhysicalAgg.MppPartitionCols`.
+    pub mpp_partition_cols: Vec<crate::physical_property::MppPartitionColumn>,
 }
 
 /// Go `getHashAggs` (`physical_hash_agg.go:52`), the root/cop loop: a hash
@@ -2820,10 +2841,31 @@ pub fn get_hash_aggs(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
 ) -> Vec<PhysicalPlan> {
+    get_hash_aggs_with_mpp(agg, prop, allocator, skew_ratio, false, false)
+}
+
+/// MPP-aware form of [`get_hash_aggs`].
+#[must_use]
+pub fn get_hash_aggs_with_mpp(
+    agg: &crate::logical::LogicalAggregation,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+    mpp_allowed: bool,
+    enable_skew_distinct_agg: bool,
+) -> Vec<PhysicalPlan> {
     if !prop.is_sort_item_empty() {
         return Vec::new();
     }
-    let task_types: &[TaskType] = if prop.index_join_prop.is_some() {
+    let can_push_mpp = mpp_allowed
+        && agg.base.has_tiflash()
+        && check_agg_can_push_mpp(agg);
+    if prop.task_tp == TaskType::Mpp && !can_push_mpp {
+        return Vec::new();
+    }
+    let task_types: &[TaskType] = if prop.is_flash_prop() {
+        &[TaskType::Mpp]
+    } else if prop.index_join_prop.is_some() {
         // Go's index-join inner side is CONSTRUCTED, not enumerated:
         // `constructIndexJoinInnerSideTaskWithAggCheck` attaches the
         // bottom-most aggregation straight onto the constructed cop task
@@ -2841,8 +2883,13 @@ pub fn get_hash_aggs(
             TaskType::Root,
         ]
     };
-    let mut hash_aggs = Vec::with_capacity(task_types.len());
+    let mut hash_aggs = Vec::with_capacity(task_types.len() + 4);
     for &tp in task_types {
+        // MPP candidates are built by `get_mpp_hash_aggs` below so the
+        // run-mode and TiFlash validity checks stay in one place.
+        if tp == TaskType::Mpp {
+            continue;
+        }
         let child_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: f64::MAX,
@@ -2865,9 +2912,202 @@ pub fn get_hash_aggs(
             base,
             agg_funcs: agg.agg_funcs.clone(),
             group_by_items: agg.group_by_items.clone(),
+            ..PhysicalHashAgg::default()
         }));
     }
+
+    // Go `getHashAggs` admits the TiFlash candidates only when the
+    // statement allows MPP, the logical subtree has a TiFlash replica, and
+    // every aggregate/group expression is accepted by the TiFlash pushdown
+    // contract.  Keep this gate before constructing candidates so a plan
+    // cannot become MPP merely because its parent asks for that task type.
+    if can_push_mpp && prop.index_join_prop.is_none() {
+        hash_aggs.extend(get_mpp_hash_aggs(
+            agg,
+            prop,
+            allocator,
+            skew_ratio,
+            enable_skew_distinct_agg,
+        ));
+    }
     hash_aggs
+}
+
+/// Go `checkCanPushDownToMPP` plus the TiFlash half of
+/// `CheckAggCanPushCop`.  The caller has already established the TiFlash
+/// replica and MPP session gates.
+fn check_agg_can_push_mpp(agg: &crate::logical::LogicalAggregation) -> bool {
+    crate::final_mode_agg::check_agg_can_push_mpp(&agg.agg_funcs, &agg.group_by_items)
+}
+
+fn get_mpp_hash_aggs(
+    agg: &crate::logical::LogicalAggregation,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+    enable_skew_distinct_agg: bool,
+) -> Vec<PhysicalPlan> {
+    let has_final_agg = agg
+        .agg_funcs
+        .first()
+        .is_some_and(|function| function.mode == tidb_expr::aggregation::AggFunctionMode::Final);
+    let stats = agg
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+    let mut result = Vec::new();
+    let build = |child_prop: PhysicalProperty,
+                 mode: AggMppRunMode,
+                 partition_cols: Vec<MppPartitionColumn>| {
+        let mut base = BasePhysicalPlan::new(allocator, "HashAgg", agg.base.base.query_block_offset());
+        base.base.set_stats(stats.clone());
+        base.base.set_schema(agg.base.base.schema().cloned());
+        base.set_children_req_props(vec![Some(child_prop)]);
+        let mut agg_funcs = agg.agg_funcs.clone();
+        if mode == AggMppRunMode::Mpp1Phase {
+            adjust_final_count_for_mpp(&mut agg_funcs);
+        }
+        PhysicalPlan::HashAgg(PhysicalHashAgg {
+            base,
+            agg_funcs,
+            group_by_items: agg.group_by_items.clone(),
+            mpp_run_mode: mode,
+            mpp_partition_cols: partition_cols,
+        })
+    };
+
+    let mut push_candidate = |child_prop: PhysicalProperty,
+                              mode: AggMppRunMode,
+                              partition_cols: Vec<MppPartitionColumn>| {
+        let candidate = build(child_prop, mode, partition_cols);
+        let valid = match &candidate {
+            PhysicalPlan::HashAgg(agg) => valid_mpp_agg(&agg.agg_funcs),
+            _ => false,
+        };
+        if valid {
+            result.push(candidate);
+        }
+    };
+
+    let potential = agg.get_potential_partition_keys();
+    let partition_cols = match prop.mpp_partition_tp {
+        MppPartitionType::Any => potential.clone(),
+        MppPartitionType::Hash => {
+            let Some(matches) = prop.is_subset_of(&potential) else {
+                return Vec::new();
+            };
+            choose_partition_keys(&potential, &matches)
+        }
+        MppPartitionType::Broadcast
+        | MppPartitionType::SinglePartition
+        | MppPartitionType::Unknown(_) => return Vec::new(),
+    };
+    if !agg.group_by_items.is_empty() {
+        // Go's one-phase candidate requires a non-empty group partition.  A
+        // required hash property is carried to the child so the generic
+        // enforcer can add an exchange when the scan does not provide it.
+        if !partition_cols.is_empty() && !enable_skew_distinct_agg {
+            let child_prop = PhysicalProperty {
+                task_tp: TaskType::Mpp,
+                expected_cnt: f64::MAX,
+                mpp_partition_tp: MppPartitionType::Hash,
+                mpp_partition_cols: partition_cols.clone(),
+                can_add_enforcer: true,
+                cte_producer_status: prop.cte_producer_status,
+                no_cop_push_down: prop.no_cop_push_down,
+                ..PhysicalProperty::default()
+            };
+            push_candidate(child_prop, AggMppRunMode::Mpp1Phase, Vec::new());
+        }
+        if has_final_agg {
+            return result;
+        }
+
+        // Two-phase MPP aggregation leaves the child layout unconstrained;
+        // attachment inserts the hash exchange between partial and final.
+        let child_prop = PhysicalProperty {
+            task_tp: TaskType::Mpp,
+            expected_cnt: f64::MAX,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
+            ..PhysicalProperty::default()
+        };
+        push_candidate(
+            child_prop.clone(),
+            AggMppRunMode::Mpp2Phase,
+            partition_cols,
+        );
+        if prop.task_tp == TaskType::Root {
+            push_candidate(child_prop, AggMppRunMode::MppTiDB, Vec::new());
+        }
+    } else if !has_final_agg {
+        let child_prop = PhysicalProperty {
+            task_tp: TaskType::Mpp,
+            expected_cnt: f64::MAX,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
+            ..PhysicalProperty::default()
+        };
+        let mode = if agg.has_distinct() || agg.has_order_by() {
+            AggMppRunMode::MppScalar
+        } else {
+            AggMppRunMode::MppTiDB
+        };
+        push_candidate(child_prop, mode, Vec::new());
+    }
+
+    let preferred_mode = if agg.prefer_agg_type & tidb_hint::PREFER_MPP_1_PHASE_AGG != 0 {
+        Some(AggMppRunMode::Mpp1Phase)
+    } else if agg.prefer_agg_type & tidb_hint::PREFER_MPP_2_PHASE_AGG != 0 {
+        Some(AggMppRunMode::Mpp2Phase)
+    } else {
+        None
+    };
+    if let Some(preferred_mode) = preferred_mode {
+        result.retain(|plan| {
+            matches!(plan, PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode == preferred_mode)
+        });
+    }
+    result
+}
+
+/// Go `finalAggAdjust` (`physical_hash_agg.go:133`): MPP one-phase final
+/// COUNT descriptors are represented as SUM because TiFlash's final mode
+/// consumes the partial count contract.
+fn adjust_final_count_for_mpp(agg_funcs: &mut [tidb_expr::aggregation::AggFuncDesc]) {
+    for function in agg_funcs {
+        if function.mode == tidb_expr::aggregation::AggFunctionMode::Final
+            && function.name() == tidb_expr::aggregation::names::COUNT
+        {
+            let return_type = function.base.ret_type.clone();
+            function.base.name = tidb_expr::aggregation::names::SUM.to_owned();
+            function.has_distinct = false;
+            function.order_by_items.clear();
+            function.base.type_infer_4_final_count(&return_type);
+        }
+    }
+}
+
+/// Go `validMppAgg` (`physical_hash_agg.go:157`): TiFlash requires all
+/// aggregate descriptors in one physical operator to use either final/complete
+/// mode or a non-final mode, never a mixture.
+fn valid_mpp_agg(agg_funcs: &[tidb_expr::aggregation::AggFuncDesc]) -> bool {
+    let Some(first) = agg_funcs.first() else {
+        return false;
+    };
+    let first_is_final = matches!(
+        first.mode,
+        tidb_expr::aggregation::AggFunctionMode::Final
+            | tidb_expr::aggregation::AggFunctionMode::Complete
+    );
+    agg_funcs.iter().skip(1).all(|function| {
+        matches!(
+            function.mode,
+            tidb_expr::aggregation::AggFunctionMode::Final
+                | tidb_expr::aggregation::AggFunctionMode::Complete
+        ) == first_is_final
+    })
 }
 
 /// Go `physicalop.PhysicalStreamAgg` (planning slice): the order-riding
@@ -3994,6 +4234,8 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 agg_funcs: op.agg_funcs.clone(),
                 group_by_items: op.group_by_items.clone(),
+                mpp_run_mode: op.mpp_run_mode,
+                mpp_partition_cols: op.mpp_partition_cols.clone(),
             }),
             Self::StreamAgg(op) => Self::StreamAgg(PhysicalStreamAgg {
                 base: base_of(&op.base),

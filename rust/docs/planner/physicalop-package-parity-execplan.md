@@ -59,7 +59,7 @@ their recorded stage. The latest verified state is summarized first.
   child fragments; StreamAgg converts to root. Focused physical and task-shape
   tests pass. The next exchange-enforcement checkpoint below adds the
   receiver/source pair and task hash-column contract; fragment scheduling,
-  HashAgg MPP phases, the heavy-function TopN global/projection rewrite, and
+  scalar three-stage MPP aggregation, the heavy-function TopN global/projection rewrite, and
   full package/workload acceptance remain open.
 
 - [x] (2026-09-21, MPP exchange-enforcement boundary) Rust now represents
@@ -68,8 +68,19 @@ their recorded stage. The latest verified state is summarized first.
   The source pair is included in clone, index resolution, plan-cache binding,
   cost, EXPLAIN, and local executor construction; focused enforcement and
   cost tests pass. Native fragment scheduling, task metadata transport,
-  function-dependency-aware hash equivalence, HashAgg MPP phases, heavy TopN,
+  function-dependency-aware hash equivalence, scalar three-stage MPP aggregation, heavy TopN,
   and whole-package/workload acceptance remain open.
+
+- [x] (2026-09-21, MPP HashAgg candidate and phase parity) HashAgg now carries
+  Go's MPP run mode and partition-column contract. Enumeration gates TiFlash
+  pushdown, MPP allowance, virtual/correlated columns, skew-distinct one-phase
+  suppression, required hash layouts, final/complete mode consistency, and
+  MPP1/MPP2 hints. MPP1 COUNT adjustment, AVG's COUNT/SUM projection,
+  TiFlash partial/final splitting, MPP2 exchange attachment, and the
+  MPP-TiDB COUNT merge mode are wired through task attachment. Focused
+  candidate, split, AVG-conversion, and attachment tests pass. Three-stage
+  scalar DISTINCT aggregation, TiFlash pre-aggregation mode, fragment
+  scheduling, heavy TopN, and whole-package/workload acceptance remain open.
 
 - [x] (2026-09-21, MaxOneRow enforced-MPP warning routing) The Go
   `CanSelfBeingPushedToCopImpl` refusal is now preserved before Rust's generic
@@ -7970,10 +7981,9 @@ partial operators use Go's wrapping offset-plus-count arithmetic, derive child
 statistics, and reset their schema from the attached child. Plain UnionAll and
 all-MPP Sequence consume child fragment plans into a fresh MPP task, while
 PartitionUnion remains invalid for TiFlash and StreamAgg converts to root as in
-the current Go branch. The existing task representation has no hash-column or
-multi-fragment receiver fields, so those metadata are preserved only where the
-Rust model can represent them; HashAgg MPP remains an explicit dependency on
-`EnforceExchanger` and `PhysicalExchangeReceiver`.
+the current Go branch. Exchange metadata now lives in the planner-owned task
+and receiver model; HashAgg MPP uses the same `EnforceExchanger` and
+`PhysicalExchangeReceiver` boundary.
 
 The focused receipts from `rust/` pass:
 
@@ -7992,8 +8002,8 @@ The added tests cover TiFlash candidate emission, supported and unsupported
 MPP unary expressions, partial Limit/TopN placement below the pass-through
 sender, UnionAll/Sequence fragment rebuilding, and StreamAgg root conversion.
 The Go heavy-function `getPushedDownTopN` projection/global rewrite,
-partial-order and TiDB-cop TopN branches, fragment scheduling, and HashAgg MPP
-phases remain explicit follow-up work; this checkpoint makes no whole-package
+partial-order and TiDB-cop TopN branches, fragment scheduling, and scalar
+three-stage MPP aggregation remain explicit follow-up work; this checkpoint makes no whole-package
 or workload performance claim.
 
 
@@ -8023,7 +8033,33 @@ Focused validation from `rust/`:
 
 The exchange tests cover insertion/reuse and child-plus-broadcast network
 cost. This checkpoint does not claim Go's multi-fragment scheduler, protobuf
-task encoding, runtime fragment metadata, FD-aware hash equivalence, MPP
-HashAgg partial/final phases, or full physicalop/workload acceptance. No
+task encoding, runtime fragment metadata, FD-aware hash equivalence, scalar
+three-stage MPP distinct aggregation, or full physicalop/workload acceptance. No
 sysbench, TPC-C, TPC-H, or YCSB performance improvement is inferred from the
 transport-boundary representation.
+
+
+## Continuing MPP HashAgg phase parity
+
+Go's `getHashAggs` and `tryToGetMppHashAggs` now have a matching Rust boundary:
+MPP properties refuse non-MPP candidates, TiFlash aggregate and expression
+gates run before enumeration, one-phase candidates carry required hash keys,
+and final/complete aggregate modes are validated as one family. The Rust
+candidate stores `MppRunMode` and `MppPartitionCols`, applies MPP1/MPP2 hints,
+skips MPP1 under `EnableSkewDistinctAgg`, and changes final COUNT to SUM in the
+same source branch.
+
+`Attach2Task` now converts AVG to COUNT/SUM plus the source CASE/DIV projection,
+splits TiFlash partial/final phases, inserts the hash exchange for MPP2,
+preserves the TiDB-owned COUNT merge for MPP-TiDB, and retains the scalar
+single-partition path. The focused receipts from `rust/` pass:
+
+    cargo check --offline --locked -j12 -p tidb-planner --message-format=short
+    cargo test --offline --locked -j12 -p tidb-planner --lib final_mode_agg::tests -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib physical::tests::mpp_hash_agg_enumeration_matches_go_run_modes -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib task::attach_tests::mpp_two_phase_hash_agg_attaches_partial_exchange_and_final -- --test-threads=1
+
+Three-stage scalar DISTINCT adjustment, TiFlash pre-aggregation mode,
+fragment scheduling/task metadata transport, heavy-function TopN, and complete
+physicalop/workload acceptance remain open. No sysbench, TPC-C, TPC-H, or YCSB
+performance result is inferred from these planner unit tests.
