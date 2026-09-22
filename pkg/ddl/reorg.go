@@ -335,6 +335,7 @@ func (rc *reorgCtx) setRU(ru float64) {
 func (rc *reorgCtx) getRU() float64 {
 	return rc.ru.Load()
 }
+
 // setMaxProgress updates the maximum progress if the new progress is greater.
 // It returns the current maximum progress (which may be unchanged if newProgress <= oldMax).
 // This prevents progress regression when statistics change during backfill.
