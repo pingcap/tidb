@@ -91,6 +91,11 @@ message Context {
   uint64 trace_control_flags = 37;
 }
 
+// Declaration anchor only: build.rs maps this name to the complete generated
+// tikv-client-kvproto type. Its schema stays in the pinned kvproto/proto owner;
+// no empty message binding is generated here.
+message ExecDetailsV2 {}
+
 // Exact pinned transactional point read.
 message GetRequest {
   Context context = 1;
@@ -105,7 +110,7 @@ message GetResponse {
   bytes value = 3;
   bool not_found = 4;
   reserved 5;
-  // Upstream field 6 is ExecDetailsV2 and is outside this bounded owner.
+  ExecDetailsV2 exec_details_v2 = 6;
   uint64 commit_ts = 7;
 }
 
@@ -122,7 +127,7 @@ message BatchGetResponse {
   errorpb.Error region_error = 1;
   repeated KvPair pairs = 2;
   reserved 3;
-  // Upstream field 4 is ExecDetailsV2 and is outside this bounded owner.
+  ExecDetailsV2 exec_details_v2 = 4;
   // A response-level error means TiKV could not inspect every key, so the
   // caller must resolve it and retry the complete request key set.
   KeyError error = 5;

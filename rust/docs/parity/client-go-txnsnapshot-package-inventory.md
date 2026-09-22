@@ -13,7 +13,7 @@ rust/docs/operations/store-copr-audit-execplan.md.
 | `snapshot.go` | 1552 | `2ea9ee7c2ac01c024aeec357388d4b2475323c3a179687c34c798e99085ab7d8` | tidb-txnkv transaction/coordinator/snapshot_read.rs, snapshot_batch_get.rs and region_batches.rs; cache/Get/BatchGet seed, full options/statistics/replica/tier behavior open |
 | `snapshot_async.go` | 321 | `bc29fa3f439714bcc4f73316787ff37dc761514df7fa869607fe52135abec022` | tidb-txnkv transaction/command_client.rs and snapshot_batch_get.rs; completion-order admission, scoped retry workers and cancellation/join integrated; published async/sync selection integrated; statistics/options gates open |
 | `snapshot_async_test.go` | 151 | `58761e072d346c24d79e439aa7976a6fb61100278aec49c3f502122ef9835b58` | snapshot_lock_wait_source cancellation/join regression holds both status and retry RPCs; original Go test also passes; live transport reconciliation remains open |
-| `snapshot_test.go` | 281 | `4b0ca6f81413776cebe4bf77572f1532c12e5139f338c1e9de02cd3de25dfd92` | snapshot source tests and point statistics owners; complete original test reconciliation open |
+| `snapshot_test.go` | 281 | `4b0ca6f81413776cebe4bf77572f1532c12e5139f338c1e9de02cd3de25dfd92` | vendored snapshot_stats.rs and native snapshot_lock_wait_source; six original point-response cases reconciled, complete package gates open |
 | `test_probe.go` | 74 | `d130a33d8d18dc3cf4d2b7e85f5578dc67df787ce0a4aa4d48935f379d01fc17` | Go support artifact; Rust scripted client seams, complete correspondence open |
 
 All seven package artifacts are listed, including production-compiled test
@@ -61,3 +61,22 @@ transactions; no snapshot-local flag shadows the process setting. The complete
 config dependency is inventoried in client-go-config-package-inventory.md.
 The snapshot lock suite is now a standalone Cargo target because its tests
 mutate process configuration; do not rely on `--test all snapshot_` to run it.
+
+Point-response runtime data now has an optional live collector. Get and both
+BatchGet modes retain the full pinned ExecDetailsV2 and record recognized
+physical responses, including key errors and misses. Region/transport errors,
+cache hits and ordinary Scan responses do not establish point coverage;
+scan-pair Get retries do. Missing details remain sticky, absent collectors are
+invalid, and empty collectors are valid without coverage. The vendored
+interceptor uses the same coverage/value owner as the native coordinator.
+Point scan counts and payload arithmetic preserve Go wrapping semantics.
+
+All six snapshot_test.go tests have source-corresponding Rust coverage:
+PointResponseStats and StandaloneScanDetail cases in snapshot_stats.rs;
+CloneAndMerge including self-merge; Invalid through the native absent-collector
+getter; CollectBatchGetResponseData through typed-response/payload cases;
+ConcurrentPointResponseWrites through eight synchronized native writers.
+The util dependency's complete inventory is client-go-util-package-inventory.md.
+This does not close the package: live SQL CollectRuntimeStats attachment,
+native RPC/backoff/lock-time aggregation, options/tier/replica/reverse scanner,
+all original support/fixtures and live build/workload gates remain open.

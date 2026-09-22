@@ -27,6 +27,7 @@ pub mod errorpb {
 
 /// The generated dependency-closed TiKV request-context package.
 pub mod kvrpcpb {
+    pub use tikv_client_kvproto::kvrpcpb::ExecDetailsV2;
     include!(concat!(env!("OUT_DIR"), "/kvrpcpb.rs"));
 }
 

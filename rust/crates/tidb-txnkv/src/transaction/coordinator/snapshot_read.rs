@@ -308,6 +308,7 @@ where
         &mut forward_backoff,
         &mut resolved_locks,
         resource_group_name,
+        None,
         key,
         call,
     )
@@ -322,6 +323,7 @@ fn snapshot_get_with<C, L, T>(
     forward_backoff: &mut RegionBackoffBudget,
     resolved_locks: &mut crate::lock::SnapshotLockSet,
     resource_group_name: Option<&str>,
+    stats: Option<&tikv_client::SnapshotRuntimeStats>,
     key: &[u8],
     call: &UnaryCallContext,
 ) -> Result<SnapshotGetResult, OptimisticCoordinatorError>
@@ -354,7 +356,7 @@ where
             ..KvrpcGetRequest::default()
         };
         rpc_count = rpc_count.wrapping_add(1);
-        let response = begin_get(runtime, &route, &context, &request, call)?;
+        let response = begin_get(runtime, &route, &context, &request, call, stats)?;
         if let Some(region_error) = response.response.region_error.as_ref() {
             recover_region_error_with(
                 runtime,
@@ -425,6 +427,7 @@ fn begin_get<C, L>(
     context: &tidb_proto::KvrpcContext,
     request: &KvrpcGetRequest,
     call: &UnaryCallContext,
+    stats: Option<&tikv_client::SnapshotRuntimeStats>,
 ) -> Result<TransactionBatchResponse<KvrpcGetResponse>, OptimisticCoordinatorError>
 where
     C: TransactionCommandClient,
@@ -438,7 +441,17 @@ where
         })?
         .publish_transaction_get(route.address(), request, context, call);
     match published {
-        PublishedCommand::Response(response) => Ok(response),
+        PublishedCommand::Response(response) => {
+            if let Some(stats) = stats.filter(|_| response.response.region_error.is_none()) {
+                let payload = if response.response.error.is_some() {
+                    0
+                } else {
+                    response.response.value.len() as u64
+                };
+                stats.record_point_response(response.response.exec_details_v2.as_ref(), payload);
+            }
+            Ok(response)
+        }
         PublishedCommand::BeforePublication(error)
         | PublishedCommand::AfterPublication { error, .. } => {
             Err(OptimisticCoordinatorError::SnapshotGet(error))
@@ -477,6 +490,7 @@ where
         &mut forward_backoff,
         &mut resolved_locks,
         resource_group_name,
+        None,
         start_key,
         end_key,
         limit,
@@ -494,6 +508,7 @@ fn snapshot_scan_with<C, L, T>(
     forward_backoff: &mut RegionBackoffBudget,
     resolved_locks: &mut crate::lock::SnapshotLockSet,
     resource_group_name: Option<&str>,
+    stats: Option<&tikv_client::SnapshotRuntimeStats>,
     start_key: &[u8],
     end_key: &[u8],
     limit: Option<usize>,
@@ -641,6 +656,7 @@ where
                     forward_backoff,
                     resolved_locks,
                     resource_group_name,
+                    stats,
                     &pair.key,
                     &page_call,
                 )?;
@@ -796,7 +812,14 @@ where
             };
             self.snapshot_get_rpc_count = self.snapshot_get_rpc_count.wrapping_add(1);
             rpc_count = rpc_count.wrapping_add(1);
-            let response = begin_get(&self.runtime, &route, &context, &request, call)?;
+            let response = begin_get(
+                &self.runtime,
+                &route,
+                &context,
+                &request,
+                call,
+                self.snapshot_runtime_stats.as_deref(),
+            )?;
             if let Some(region_error) = response.response.region_error.as_ref() {
                 recover_region_error_with(
                     &self.runtime,
@@ -929,6 +952,7 @@ where
             &self.timestamps,
             read_ts,
             self.resource_group_name.as_deref(),
+            self.snapshot_runtime_stats.as_deref(),
             &mut self.resolved_locks,
             &mut self.snapshot_batch_get_rpc_count,
             keys,
@@ -988,6 +1012,7 @@ where
             &mut RegionBackoffBudget::campaign_default(),
             &mut self.resolved_locks,
             self.resource_group_name.as_deref(),
+            self.snapshot_runtime_stats.as_deref(),
             start_key,
             end_key,
             limit,
@@ -1018,6 +1043,7 @@ where
             &mut RegionBackoffBudget::campaign_default(),
             &mut self.resolved_locks,
             self.resource_group_name.as_deref(),
+            self.snapshot_runtime_stats.as_deref(),
             start_key,
             end_key,
             None,

@@ -8,6 +8,7 @@ mod failpoint;
 pub mod iter;
 mod misc;
 mod pd_interceptor;
+mod point_response_stats;
 mod rate_limit;
 mod request_source;
 mod ru;
@@ -23,6 +24,7 @@ pub use misc::{
     session_id, with_recovery, with_session_id, GC_TIME_FORMAT,
 };
 pub use pd_interceptor::InterceptedPdClient;
+pub use point_response_stats::{PointReadScanDetail, PointResponseStats};
 pub use rate_limit::RateLimit;
 pub use request_source::*;
 pub use ru::RuDetails;

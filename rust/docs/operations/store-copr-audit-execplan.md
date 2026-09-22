@@ -38,6 +38,7 @@ directory; inventory every artifact and module build input before editing.
 - [x] Reconcile MaxTS first-lock behavior in both point-read entry paths; verify red/green Rust regressions and the original Go autocommit/hint tests.
 - [x] Integrate completion-order BatchGet recovery, independently progressing split workers, cancellation/join and resolving-record ownership; verify scoped regressions and the original Go cancellation test.
 - [x] Wire the published EnableAsyncBatchGet setting into each live BatchGet call and validate both concurrent execution modes.
+- [x] Preserve point-response execution details at the wire boundary and integrate optional runtime response statistics with live Get/BatchGet.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
 - [ ] Satisfy the remaining whole-package build/platform/generated/live-store and workload gates.
@@ -770,3 +771,155 @@ parent coprocessor package. The overall parity goal is still active.
 Revision note: connected the existing async setting to live BatchGet, shared
 the synchronous worker implementation, isolated global configuration tests,
 and recorded red/green evidence plus remaining whole-package acceptance gates.
+
+## Snapshot response statistics milestone
+
+
+After 2b6cb3be01, branch/master refresh is unchanged. The next missing boundary
+is snapshot runtime statistics. The live tidb-proto GetResponse and
+BatchGetResponse currently discard ExecDetailsV2, while the reusable vendored
+SnapshotRuntimeStats lacks master's point-response coverage and payload values.
+Preserve the complete existing generated ExecDetailsV2 type with prost's external
+type mapping, without re-encoding or copying response messages. Its authoritative
+schema and generated owner remain the vendored kvproto package; the local proto
+needs only a declaration anchor for that external type. Test full upstream wire
+round-tripping before changing this mapping; the old projection must lose the
+execution details and fail.
+
+Implement master's PointReadScanDetail and PointResponseStats in the existing
+client util owner and extend SnapshotRuntimeStats with atomic response coverage
+and payload recording. Missing detail, an absent collector and no responses are
+three distinct states. Key-error responses count with zero payload; region or
+transport failures do not establish coverage; successful BatchGet pairs count
+key plus value bytes even if the value is empty. Preserve sticky invalidity,
+value-copy independence, clone/merge/self-merge and wrapping integer semantics.
+Reconcile every original snapshot_test.go case, with complete util dependency
+inventory, while keeping the whole package claim open.
+
+Connect the collector to the live transaction's optional SetRuntimeStats owner,
+Get and both BatchGet modes; pass it into scan-pair Get retries without claiming
+ordinary Scan responses establish point coverage. Retain the existing physical RPC counters while auditing their collector
+integration separately. Ordinary reads without a collector must not acquire
+statistics locks or sample a clock. The existing SQL layer's
+full statistics option/reporting path and retry/lock metrics remain part of the
+open integration audit; do not label point-response data as complete runtime
+statistics or complete SQL instrumentation. Validate the native response paths,
+source fixtures, protocol compatibility, dependent compilation and make lint.
+
+Decision update: the native async sender already owns per-RPC timing below its
+completion future. Sampling the entire multi-batch admission loop would inflate
+later RPC durations, so do not substitute that measurement. This milestone
+records response data and TiKV execution details; the live collector's RPC,
+backoff and lock timing integration remains explicitly open alongside the SQL
+CollectRuntimeStats option path. Existing native point RPC counts are retained.
+The vendored interceptor continues its existing RPC accounting and now records
+response coverage/payload under the same lock as scan/time/pool details.
+
+The vendored library tests initially could not compile because two handcrafted
+test servers still used Tonic's removed BoxBody/ProstCodec/empty_body APIs.
+Update only those test fixtures to the exact Body/tonic_prost/Body::empty forms
+used by the current checked-in generated servers. This restores the required
+statistics validation gate without changing production transport behavior.
+
+### Response statistics outcome and validation receipt
+
+
+The protocol boundary now preserves Get field 6 and BatchGet field 4 using the
+already generated tikv-client-kvproto::kvrpcpb::ExecDetailsV2. The local proto
+contains only an external declaration anchor; build.rs maps it to that complete
+Rust type, and no checked-in generated output is edited. Cargo regenerates the
+local projection from its inputs. All eight dependency-closure message bodies
+(ExecDetailsV2, ScanDetailV2, TimeDetail, TimeDetailV2, PoolTaskDetails, WriteDetail,
+RUV2 and ExecutorInputs) were compared byte-for-byte against master's selected
+kvproto v0.0.0-20260820070758-623e58e60fa9/proto/kvrpcpb.proto and are identical.
+No protobuf encode/decode bridge or duplicate runtime-stat type is needed.
+
+PointReadScanDetail and PointResponseStats live in the vendored util owner.
+Their tests cover the original 16 merge-state pairs, valid empty state, present
+zero detail, missing detail, sticky invalidity, copy independence, self-merge
+and Go wrapping counters. SnapshotRuntimeStats publishes response coverage,
+payload and legacy scan/time/pool detail together under one lock. Clone and
+merge preserve that state, including self-merge. Standalone diagnostic scan
+records remain invisible to point coverage until a recognized point response
+exists, after which Go's aggregate scan counters are projected into the result.
+The existing vendored interceptor now accounts for Get, BatchGet and
+BufferBatchGet response payload and missing detail, without duplicating RPC
+accounting or admitting region errors as point responses.
+
+The native transaction can attach/detach an optional collector. Get, async and
+synchronous BatchGet, and Get retries for locked scan pairs share it. Every
+recognized response is recorded before handling key errors: Get contributes
+value bytes, successful batch pairs key plus value bytes, and response errors
+contribute zero. Region/transport errors and cache hits are excluded. An absent
+collector returns invalid data; an installed empty collector has valid data
+without coverage. Reads with no collector acquire no statistics lock and take
+no new clock sample. No SQL collector attachment, timing totals or workload
+performance benefit is claimed by this milestone.
+
+The wire regression first failed because a present zero-valued execution detail
+was lost. The native regressions also fail when collector calls are disabled:
+Get loses scan coverage and BatchGet reports zero scan work instead of two
+versions. Those temporary red probes restored production input/source in a
+finally block. Initial test-writing/compiler issues were corrected before these
+behavioral red proofs; they are not counted as regression evidence. Logs:
+/private/tmp/tidb-snapshot-stats-wire-red.log and live-red.log under that prefix.
+
+Final checks from rust/ passed:
+
+    cargo test --offline --locked -j12 -p tidb-proto --test transaction_wire_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test snapshot_lock_wait_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all snapshot_ --message-format=short
+    cargo test --manifest-path third_party/tikv-client-rs/Cargo.toml --offline --locked -j12 --lib point_response --message-format=short
+    cargo test --manifest-path third_party/tikv-client-rs/Cargo.toml --offline --locked -j12 --lib transaction::snapshot_stats --message-format=short
+    cargo test --manifest-path third_party/tikv-client-rs/Cargo.toml --offline --locked -j12 --lib source_test_batch_client_recover_after_server_restart --message-format=short
+    cargo test --manifest-path third_party/tikv-client-rs/Cargo.toml --offline --locked -j12 --lib source_receive_limit_applies_to_debug_service_responses --message-format=short
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+
+Those test selections pass four, 13, 12, 11, eight, one and one tests
+respectively (the two vendored stats filters overlap in seven cases). Logs use
+/private/tmp/tidb-snapshot-stats- with suffixes wire.log, snapshot.log,
+aggregate.log, point.log, runtime.log, batch-server.log, debug-server.log and
+check.log. The vendored library is its own workspace: a root -p tikv-client
+test invocation cannot compile its dev dependencies, so use --manifest-path.
+The local server tests needed sandbox permission to bind loopback sockets;
+both passed after permission was granted. Existing unrelated warnings remain.
+
+From /private/tmp/tidb-master-cc83514:
+
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/txnkv/txnsnapshot github.com/tikv/client-go/v2/util -run '^(TestSnapshotRuntimeStats.*|TestCollectBatchGetResponseDataPointResponseStats|TestPointResponseStats.*)$' -count=1 -v
+
+All six original snapshot tests and three util tests passed, including the
+original merge-state subtests. go.log under the same prefix records them. The
+selected packages use no failpoint.Inject calls; util's EvalFailpoint wrapper
+explicitly avoids transformation and these point-statistics tests do not use
+failpoints, so no source enable/disable transform was required.
+
+From the repository root:
+
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    rustfmt --edition 2021 --check rust/third_party/tikv-client-rs/src/util/point_response_stats.rs
+    git diff --check
+
+Lint passed with network permission after sandbox DNS prevented the pinned
+revive tool lookup. Scoped formatting preserves unrelated existing formatting;
+the new util module is formatted in full. No Go module/Go/Bazel input changed;
+the existing fresh-worktree Bazel gate remains unsatisfied because Bazel is
+unavailable. Full original package tests, race/nextgen/platform gates, live TiKV
+and matched sysbench/TPC-C/TPC-H/YCSB benchmarks remain unverified. Restoring the
+protocol detail incurs normal typed decoding for a field Go already decodes;
+its performance impact has not been measured.
+
+Changed owners are tidb-proto's manifest/build/input/export/wire test,
+tidb-txnkv's snapshot coordinator and source fixtures, the vendored util and
+snapshot statistics modules, two vendored test server fixtures, the workspace
+lockfile and these parity inventories/ExecPlan. Self-review checked the actual
+production diff, native error/coverage ordering, unchanged defaults and optional
+collection cost. The protected user-owned vs_helper.rs and fragment.rs remain
+untouched. The publishing refresh left master and branch unchanged. Commit and
+push the receipt with the code, verify remote equality, and keep the whole
+snapshot/util/coprocessor acceptance units and the overall goal active.
+
+Revision note: retained full point-read execution details, reconciled master's
+response coverage/payload values and source tests, connected optional live
+collection, and recorded the exact remaining SQL/timing/package gates.

@@ -3957,6 +3957,7 @@ version = "0.0.0"
 dependencies = [
  "prost 0.14.4",
  "prost-build",
+ "tikv-client-kvproto",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",

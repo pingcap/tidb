@@ -18,6 +18,12 @@ fn main() {
     println!("cargo:rerun-if-changed=proto/explain.proto");
 
     tonic_prost_build::configure()
+        // Share the full pinned response details with the native client stats
+        // owner. Never decode into a partial projection or transcode it later.
+        .extern_path(
+            ".kvrpcpb.ExecDetailsV2",
+            "::tikv_client_kvproto::kvrpcpb::ExecDetailsV2",
+        )
         .build_client(true)
         .build_server(true)
         .boxed(".encryptionpb.MasterKey.backend.kms")

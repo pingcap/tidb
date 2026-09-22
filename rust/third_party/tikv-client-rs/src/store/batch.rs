@@ -2578,7 +2578,7 @@ mod tests {
         B: Body + Send + 'static,
         B::Error: Into<StdError> + Send + 'static,
     {
-        type Response = http::Response<tonic::body::BoxBody>;
+        type Response = http::Response<tonic::body::Body>;
         type Error = Infallible;
         type Future = BoxFuture<Self::Response, Self::Error>;
 
@@ -2594,8 +2594,7 @@ mod tests {
                 "/tikvpb.Tikv/BatchCommands" => {
                     let service = self.service.clone();
                     Box::pin(async move {
-                        let mut grpc =
-                            tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
+                        let mut grpc = tonic::server::Grpc::new(tonic_prost::ProstCodec::default());
                         Ok(grpc.streaming(service, request).await)
                     })
                 }
@@ -2604,7 +2603,7 @@ mod tests {
                         .status(200)
                         .header("grpc-status", "12")
                         .header("content-type", "application/grpc")
-                        .body(tonic::body::empty_body())
+                        .body(tonic::body::Body::empty())
                         .unwrap())
                 }),
             }

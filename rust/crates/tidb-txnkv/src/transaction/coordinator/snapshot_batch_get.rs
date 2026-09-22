@@ -46,6 +46,7 @@ pub(super) fn snapshot_batch_get_with<C, L, T>(
     timestamps: &T,
     read_ts: u64,
     resource_group_name: Option<&str>,
+    stats: Option<&tikv_client::SnapshotRuntimeStats>,
     resolved_locks: &mut SnapshotLockSet,
     rpc_count: &mut u64,
     keys: &[Vec<u8>],
@@ -64,6 +65,7 @@ where
         timestamps,
         read_ts,
         resource_group_name,
+        stats,
         resolved_locks: Mutex::new(resolved_locks),
         values: Mutex::new(HashMap::new()),
         rpc_count: AtomicU64::new(0),
@@ -98,6 +100,7 @@ struct BatchGetState<'a, T> {
     timestamps: &'a T,
     read_ts: u64,
     resource_group_name: Option<&'a str>,
+    stats: Option<&'a tikv_client::SnapshotRuntimeStats>,
     resolved_locks: Mutex<&'a mut SnapshotLockSet>,
     values: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
     rpc_count: AtomicU64,
@@ -408,6 +411,22 @@ where
         recover_region_error_with(runtime, backoff, region_error, batch.attempt(), state.call)
             .map_err(snapshot_recovery_error)?;
         return Ok(Some(reply.request.keys));
+    }
+    if let Some(stats) = state.stats {
+        let payload = if response.error.is_some() {
+            0
+        } else {
+            response
+                .pairs
+                .iter()
+                .filter(|pair| pair.error.is_none())
+                .fold(0_u64, |bytes, pair| {
+                    bytes
+                        .wrapping_add(pair.key.len() as u64)
+                        .wrapping_add(pair.value.len() as u64)
+                })
+        };
+        stats.record_point_response(response.exec_details_v2.as_ref(), payload);
     }
     let mut locks = Vec::new();
     let mut keys = Vec::new();

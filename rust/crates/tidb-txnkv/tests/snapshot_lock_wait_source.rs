@@ -254,6 +254,9 @@ impl TransactionCommandClient for LockingClient {
             .unwrap()
             .get_contexts
             .push(context.clone());
+        if request.key == b"transport-error" {
+            return PublishedCommand::BeforePublication("injected transport failure".to_owned());
+        }
         if let Some(response) = self.get_responses.pop_front() {
             return self.respond(BatchCommandTag::Get, response);
         }
@@ -1766,4 +1769,267 @@ fn batch_get_reads_the_published_async_setting_on_every_call() {
         read_ts += 1;
     }
     assert_eq!(transaction.snapshot_point_rpc_counts(), (0, 9));
+}
+
+fn response_exec_detail(
+    total: u64,
+    processed: u64,
+    size: u64,
+) -> tidb_proto::kvrpcpb::ExecDetailsV2 {
+    use tikv_client::proto::kvrpcpb;
+    kvrpcpb::ExecDetailsV2 {
+        scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+            total_versions: total,
+            processed_versions: processed,
+            processed_versions_size: size,
+            ..Default::default()
+        }),
+        time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+            process_wall_time_ns: 29,
+            ..Default::default()
+        }),
+        read_pool_task_details: Some(kvrpcpb::PoolTaskDetails {
+            poll_count: 3,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
+    let _config = snapshot_test_config();
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let mut client = LockingClient::new(recorded);
+    client.remaining_locked = 0;
+    client.status_response = Some(KvrpcCheckTxnStatusResponse {
+        commit_version: START_TS,
+        ..Default::default()
+    });
+    client.get_responses = [
+        KvrpcGetResponse {
+            error: Some(KvrpcKeyError {
+                locked: Some(LockingClient::live_lock()),
+                ..Default::default()
+            }),
+            value: b"ignored".to_vec(),
+            exec_details_v2: Some(response_exec_detail(2, 1, 10)),
+            ..Default::default()
+        },
+        KvrpcGetResponse {
+            value: b"abc".to_vec(),
+            exec_details_v2: Some(response_exec_detail(3, 2, 20)),
+            ..Default::default()
+        },
+        KvrpcGetResponse::default(),
+        KvrpcGetResponse {
+            error: Some(KvrpcKeyError {
+                abort: "fatal".to_owned(),
+                ..Default::default()
+            }),
+            value: b"ignored".to_vec(),
+            ..Default::default()
+        },
+    ]
+    .into();
+    let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        runtime.clone(),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+    assert!(!transaction.snapshot_point_response_stats().is_valid());
+    let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
+    transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
+    assert_eq!(
+        transaction.snapshot_point_response_stats(),
+        tikv_client::util::PointResponseStats::default()
+    );
+    let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+    assert_eq!(
+        transaction.snapshot_get(ROW_KEY, &call).unwrap().value,
+        Some(b"abc".to_vec())
+    );
+    let point = transaction.snapshot_point_response_stats();
+    assert!(point.scan_detail_complete());
+    assert!(point.payload_complete());
+    assert_eq!(
+        point.scan_detail,
+        tikv_client::util::PointReadScanDetail {
+            total_keys: 5,
+            processed_keys: 3,
+            processed_keys_size: 30
+        }
+    );
+    assert_eq!(
+        point.payload_bytes, 3,
+        "Get excludes key bytes and error payload"
+    );
+    assert_eq!(stats.time_detail().process_time, Duration::from_nanos(58));
+    assert_eq!(stats.read_pool_task_details().unwrap().task_count, 2);
+    assert_eq!(
+        transaction.snapshot_get(ROW_KEY, &call).unwrap().rpc_count,
+        0
+    );
+    assert_eq!(
+        stats.point_response_stats(),
+        point,
+        "cache hits are not physical responses"
+    );
+    assert!(transaction
+        .snapshot_get(b"miss", &call)
+        .unwrap()
+        .value
+        .is_none());
+    assert!(transaction.snapshot_get(b"fatal", &call).is_err());
+    assert!(!stats.point_response_stats().scan_detail_complete());
+    assert_eq!(stats.point_response_stats().payload_bytes, 3);
+    let saved = stats.point_response_stats();
+    transaction.set_snapshot_runtime_stats(None);
+    transaction.snapshot_get(b"uncollected", &call).unwrap();
+    assert!(!transaction.snapshot_point_response_stats().is_valid());
+    assert_eq!(stats.point_response_stats(), saved);
+    let empty = Arc::new(tikv_client::SnapshotRuntimeStats::new());
+    transaction.set_snapshot_runtime_stats(Some(Arc::clone(&empty)));
+    transaction.snapshot_get(ROW_KEY, &call).unwrap();
+    assert!(transaction.snapshot_get(b"transport-error", &call).is_err());
+    runtime
+        .client()
+        .lock()
+        .unwrap()
+        .get_responses
+        .push_back(KvrpcGetResponse {
+            region_error: Some(tidb_proto::errorpb::Error {
+                raft_entry_too_large: Some(Default::default()),
+                ..Default::default()
+            }),
+            exec_details_v2: Some(response_exec_detail(99, 99, 99)),
+            ..Default::default()
+        });
+    assert!(transaction.snapshot_get(b"region-error", &call).is_err());
+    assert_eq!(
+        empty.point_response_stats(),
+        tikv_client::util::PointResponseStats::default()
+    );
+    // Scanner pair errors are reread with Get; the enclosing Scan is not a
+    // recognized point response and must not create missing-detail coverage.
+    runtime
+        .client()
+        .lock()
+        .unwrap()
+        .scan_responses
+        .push_back(KvrpcScanResponse {
+            pairs: vec![tidb_proto::KvrpcKvPair {
+                error: Some(KvrpcKeyError {
+                    locked: Some(LockingClient::live_lock()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+    runtime
+        .client()
+        .lock()
+        .unwrap()
+        .get_responses
+        .push_back(KvrpcGetResponse {
+            value: b"scan-value".to_vec(),
+            exec_details_v2: Some(response_exec_detail(1, 1, 10)),
+            ..Default::default()
+        });
+    transaction
+        .snapshot_scan(b"a", b"z", Some(1), &call)
+        .unwrap();
+    assert!(empty.point_response_stats().scan_detail_complete());
+    assert_eq!(empty.point_response_stats().payload_bytes, 10);
+}
+
+#[test]
+fn snapshot_response_stats_batch_modes_retries_and_pair_errors() {
+    let _config = snapshot_test_config();
+    for enable_async in [false, true] {
+        let mut config = tidb_config::config_tree::new_config();
+        config.performance.enable_async_batch_get = enable_async;
+        tidb_config::config_tree::config::store_global_config(config);
+        let (client, keys) = two_batch_worker_fixture();
+        client
+            .keyed_batch_responses
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_mut(&keys[5120])
+            .unwrap()
+            .exec_details_v2 = Some(response_exec_detail(2, 1, 10));
+        let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+        let mut transaction = RealOptimisticTransaction::new_injected(
+            runtime.clone(),
+            TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+            CALL_TIMEOUT,
+            START_TS,
+            Instant::now(),
+            4,
+            4096,
+        )
+        .unwrap();
+        let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
+        transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
+        let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+        let values = transaction.snapshot_batch_get(&keys, &call).unwrap();
+        assert_eq!(values, vec![(keys[5120].clone(), b"batch-value".to_vec())]);
+        let point = stats.point_response_stats();
+        assert_eq!(point.scan_detail.total_keys, 2);
+        assert_eq!(
+            point.payload_bytes,
+            (keys[5120].len() + b"batch-value".len()) as u64
+        );
+        assert!(point.payload_complete());
+        assert!(
+            !point.scan_detail_complete(),
+            "missing detail on either worker or retry is sticky"
+        );
+        transaction.snapshot_batch_get(&keys, &call).unwrap();
+        assert_eq!(stats.point_response_stats(), point);
+        let pair = |key: &[u8], value: &[u8]| tidb_proto::KvrpcKvPair {
+            key: key.to_vec(),
+            value: value.to_vec(),
+            ..Default::default()
+        };
+        runtime
+            .client()
+            .lock()
+            .unwrap()
+            .batch_responses
+            .push_back(KvrpcBatchGetResponse {
+                pairs: vec![
+                    pair(b"aa", b"bbb"),
+                    pair(b"missing", b""),
+                    tidb_proto::KvrpcKvPair {
+                        error: Some(KvrpcKeyError {
+                            abort: "pair error".to_owned(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    pair(b"zz", b"q"),
+                ],
+                exec_details_v2: Some(response_exec_detail(3, 2, 20)),
+                ..Default::default()
+            });
+        assert!(transaction
+            .snapshot_batch_get(&[b"aa".to_vec()], &call)
+            .is_err());
+        assert_eq!(
+            stats.point_response_stats().payload_bytes,
+            point.payload_bytes + 15,
+            "account every successful pair before handling the first pair error"
+        );
+        assert_eq!(stats.point_response_stats().scan_detail.total_keys, 5);
+    }
 }

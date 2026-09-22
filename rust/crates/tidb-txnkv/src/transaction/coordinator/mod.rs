@@ -251,6 +251,7 @@ pub struct RealOptimisticTransaction<C, L, T> {
     snapshot_get_rpc_count: u64,
     snapshot_batch_get_rpc_count: u64,
     snapshot_cache: snapshot_read::SnapshotCache,
+    snapshot_runtime_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
     /// Transactions whose locks every later read from this snapshot may step
     /// over, and transactions whose committed value every later read must see
     /// through their lock.
@@ -396,6 +397,7 @@ where
             snapshot_get_rpc_count: 0,
             snapshot_batch_get_rpc_count: 0,
             snapshot_cache: snapshot_read::SnapshotCache::default(),
+            snapshot_runtime_stats: None,
             resolved_locks: crate::lock::SnapshotLockSet::default(),
         })
     }
@@ -407,6 +409,27 @@ where
         (
             self.snapshot_get_rpc_count,
             self.snapshot_batch_get_rpc_count,
+        )
+    }
+
+    /// Go `KVSnapshot.SetRuntimeStats`; `None` disables response collection.
+    pub fn set_snapshot_runtime_stats(
+        &mut self,
+        stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
+    ) {
+        self.snapshot_runtime_stats = stats;
+    }
+
+    /// Go point-response data and coverage. An absent collector is invalid;
+    /// an installed collector with no responses is valid without coverage.
+    pub fn snapshot_point_response_stats(&self) -> tikv_client::util::PointResponseStats {
+        self.snapshot_runtime_stats.as_ref().map_or_else(
+            || {
+                let mut stats = tikv_client::util::PointResponseStats::default();
+                stats.invalidate();
+                stats
+            },
+            |stats| stats.point_response_stats(),
         )
     }
 

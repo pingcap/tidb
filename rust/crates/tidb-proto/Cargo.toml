@@ -10,6 +10,7 @@ build = "build.rs"
 prost.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
+tikv-client-kvproto = { path = "../../third_party/tikv-client-rs/kvproto" }
 
 [build-dependencies]
 prost-build.workspace = true

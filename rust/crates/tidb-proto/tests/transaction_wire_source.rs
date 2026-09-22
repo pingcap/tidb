@@ -215,3 +215,53 @@ fn transaction_messages_keep_exact_batchcommands_tags() {
         response
     );
 }
+
+#[test]
+fn point_read_responses_preserve_complete_execution_details() {
+    use tikv_client_kvproto::kvrpcpb as upstream;
+    let detail = upstream::ExecDetailsV2 {
+        scan_detail_v2: Some(upstream::ScanDetailV2 {
+            total_versions: 11,
+            processed_versions: 7,
+            processed_versions_size: 70,
+            ia_remote_read_segment_bytes: 101,
+            ..Default::default()
+        }),
+        time_detail_v2: Some(upstream::TimeDetailV2 {
+            process_wall_time_ns: 29,
+            ..Default::default()
+        }),
+        read_pool_task_details: Some(upstream::PoolTaskDetails {
+            poll_count: 3,
+            ..Default::default()
+        }),
+        ru_v2: Some(upstream::Ruv2 {
+            storage_processed_keys_get: 7,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    for detail in [None, Some(upstream::ExecDetailsV2::default()), Some(detail)] {
+        let get = upstream::GetResponse {
+            value: b"value".to_vec(),
+            exec_details_v2: detail,
+            ..Default::default()
+        };
+        let wire = get.encode_to_vec();
+        let decoded = GetResponse::decode(wire.as_slice()).unwrap();
+        assert_eq!(
+            upstream::GetResponse::decode(decoded.encode_to_vec().as_slice()).unwrap(),
+            get
+        );
+        let batch = upstream::BatchGetResponse {
+            exec_details_v2: detail,
+            ..Default::default()
+        };
+        let wire = batch.encode_to_vec();
+        let decoded = tidb_proto::KvrpcBatchGetResponse::decode(wire.as_slice()).unwrap();
+        assert_eq!(
+            upstream::BatchGetResponse::decode(decoded.encode_to_vec().as_slice()).unwrap(),
+            batch
+        );
+    }
+}
