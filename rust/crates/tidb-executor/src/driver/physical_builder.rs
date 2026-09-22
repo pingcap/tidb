@@ -1614,7 +1614,7 @@ fn build_index_reader(
         source.read_extra_handle(slot);
     }
     source.read_table_columns(keep);
-    source.set_lookup_concurrency(ctx.executor_concurrency());
+    source.set_lookup_concurrency(ctx.index_lookup_concurrency());
     source.set_lookup_size(ctx.index_lookup_size());
     if lookup_pushdown {
         source.enable_lookup_pushdown();
@@ -3657,6 +3657,7 @@ fn build_index_merge_reader(
                     PushdownStatementContext::from_stmt(ctx)
                         .with_plan_id(i64::from(scan.base.base.id())),
                 );
+                source.set_lookup_concurrency(ctx.index_lookup_concurrency());
                 source.set_lookup_size(ctx.index_lookup_size());
                 if let Some(counters) = state.runtime_counters.as_mut() {
                     counters.insert(runtime_plan_key(partial), source.produced_rows().into());

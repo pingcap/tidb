@@ -2665,6 +2665,18 @@ impl StmtContext {
         self.executor_concurrency
     }
 
+    /// Go `SessionVars.IndexLookupConcurrency()`: the deprecated per-operator
+    /// value resolved to `tidb_executor_concurrency` when unset.
+    #[must_use]
+    pub fn index_lookup_concurrency(&self) -> usize {
+        let resolved = self.optimizer_cost_env().session.index_lookup_concurrency;
+        if resolved > 0.0 {
+            resolved as usize
+        } else {
+            self.executor_concurrency
+        }
+    }
+
     /// Go `SessionVars.IndexLookupJoinConcurrency()`: the deprecated
     /// per-operator value resolved to `tidb_executor_concurrency` when unset.
     #[must_use]
@@ -4263,21 +4275,25 @@ mod tests {
     fn index_lookup_join_concurrency_uses_statement_override_and_fallback() {
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
         env.session.union_concurrency = 9.0;
+        env.session.index_lookup_concurrency = 3.0;
         env.session.index_lookup_join_concurrency = 2.0;
         env.session.index_join_batch_size = 17.0;
         env.session.index_lookup_size = 19.0;
         let overridden = super::StmtContext::for_query().with_optimizer_cost_env(env);
         assert_eq!(overridden.executor_concurrency(), 9);
+        assert_eq!(overridden.index_lookup_concurrency(), 3);
         assert_eq!(overridden.index_lookup_join_concurrency(), 2);
         assert_eq!(overridden.index_join_batch_size(), 17);
         assert_eq!(overridden.index_lookup_size(), 19);
 
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
         env.session.union_concurrency = 7.0;
+        env.session.index_lookup_concurrency = -1.0;
         env.session.index_lookup_join_concurrency = -1.0;
         env.session.index_join_batch_size = 0.0;
         env.session.index_lookup_size = 0.0;
         let fallback = super::StmtContext::for_query().with_optimizer_cost_env(env);
+        assert_eq!(fallback.index_lookup_concurrency(), 7);
         assert_eq!(fallback.index_lookup_join_concurrency(), 7);
         assert_eq!(fallback.index_join_batch_size(), 1);
         assert_eq!(fallback.index_lookup_size(), 1);

@@ -8164,3 +8164,11 @@ batch growth, paging seeds, and index-merge survivor chunks; standalone source
 defaults remain 20,000. Focused batch-growth, worker-width, and all twenty
 index-merge executor tests pass. This closes the lookup-size selection gap
 without claiming whole executor-package or workload acceptance.
+
+The same reader paths now resolve Go's separate
+`tidb_index_lookup_concurrency` setting, falling back to
+`tidb_executor_concurrency` when the deprecated variable is unset. The value
+controls regular index double-read workers and direct index-merge partial
+readers; the statement override/fallback regression passes. This closes the
+worker-width selection gap without claiming whole executor-package or
+workload acceptance.
