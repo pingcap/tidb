@@ -106,10 +106,14 @@ func TestEvictedConcurrentWithRotate(t *testing.T) {
 	ss.Add(GenerateStmtExecInfo4Test("digest3"))
 
 	var wg sync.WaitGroup
+	// Release both workers together so the fast Evicted loop cannot finish
+	// before the rotator starts and silently skip the concurrency under test.
+	start := make(chan struct{})
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		<-start
 		for range 100 {
 			_ = ss.Evicted()
 		}
@@ -118,6 +122,7 @@ func TestEvictedConcurrentWithRotate(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		<-start
 		for range 50 {
 			ss.windowLock.Lock()
 			ss.rotate(timeNow())
@@ -128,5 +133,6 @@ func TestEvictedConcurrentWithRotate(t *testing.T) {
 		}
 	}()
 
+	close(start)
 	wg.Wait()
 }
