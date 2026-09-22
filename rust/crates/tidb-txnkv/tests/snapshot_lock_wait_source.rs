@@ -28,6 +28,8 @@
 //! implements, because a lock that stays alive for exactly N probes cannot be
 //! produced on demand against a live cluster.
 
+// aggregate-test: standalone (mutates the process configuration)
+
 #![allow(missing_docs)]
 
 use std::sync::{Arc, Mutex};
@@ -56,6 +58,15 @@ use tidb_txnkv::transaction::{
     PublishedCommand, RealOptimisticTransaction, TransactionCommandClient,
 };
 use tidb_txnkv::SharedReadRuntime;
+
+// Every test holds this guard until its request workers have joined. The
+// standalone test process prevents global flag changes reaching other suites.
+fn snapshot_test_config() -> std::sync::MutexGuard<'static, ()> {
+    static CONFIG_LOCK: Mutex<()> = Mutex::new(());
+    let guard = CONFIG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    tidb_config::config_tree::config::store_global_config(tidb_config::config_tree::new_config());
+    guard
+}
 
 const START_TS: u64 = 100;
 /// The blocking transaction's own start timestamp, older than the reader's.
@@ -141,6 +152,7 @@ struct Recorded {
     get_contexts: Vec<KvrpcContext>,
     scans: Vec<(KvrpcScanRequest, KvrpcContext)>,
     batch_requests: Vec<KvrpcBatchGetRequest>,
+    async_batch_calls: usize,
     batch_contexts: Vec<KvrpcContext>,
     status_checks: Vec<KvrpcCheckTxnStatusRequest>,
     status_get_attempts: Vec<(u64, usize)>,
@@ -151,6 +163,10 @@ struct Recorded {
 /// transport runs at all.
 #[derive(Clone)]
 struct LockingClient {
+    reject_async: bool,
+    initial_batch_barrier: Option<Arc<(Mutex<usize>, std::sync::Condvar)>>,
+    keyed_batch_responses:
+        Option<Arc<Mutex<std::collections::BTreeMap<Vec<u8>, KvrpcBatchGetResponse>>>>,
     remaining_locked: u64,
     request_ids: u64,
     recorded: Arc<Mutex<Recorded>>,
@@ -169,6 +185,9 @@ struct LockingClient {
 impl LockingClient {
     fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
         Self {
+            reject_async: false,
+            initial_batch_barrier: None,
+            keyed_batch_responses: None,
             remaining_locked: LOCKED_RESPONSES,
             request_ids: 0,
             recorded,
@@ -283,6 +302,32 @@ impl TransactionCommandClient for LockingClient {
             .unwrap()
             .batch_contexts
             .push(context.clone());
+        // Mirror production BatchGet admission: an RPC started after a held
+        // status reply must still observe cancellation/deadline expiry.
+        if call.cancellation().is_cancelled() || call.timeout().is_zero() {
+            return PublishedCommand::BeforePublication("BatchGet admission cancelled".to_owned());
+        }
+        if let Some(barrier) = &self.initial_batch_barrier {
+            let mut entered = barrier.0.lock().unwrap();
+            *entered += 1;
+            barrier.1.notify_all();
+            let (entered, _) = barrier
+                .1
+                .wait_timeout_while(entered, Duration::from_secs(2), |entered| *entered < 2)
+                .unwrap();
+            if *entered < 2 {
+                return PublishedCommand::BeforePublication(
+                    "synchronous initial BatchGet workers did not overlap".to_owned(),
+                );
+            }
+        }
+        let keyed_response = self
+            .keyed_batch_responses
+            .as_ref()
+            .and_then(|responses| responses.lock().unwrap().remove(&request.keys[0]));
+        if let Some(response) = keyed_response {
+            return self.respond(BatchCommandTag::BatchGet, response);
+        }
         if let Some(response) = self.batch_responses.pop_front() {
             return self.respond(BatchCommandTag::BatchGet, response);
         }
@@ -356,6 +401,17 @@ impl TransactionCommandClient for LockingClient {
         requests: &[tidb_txnkv::transaction::TransactionBatchGetRequest<'_>],
         call: &UnaryCallContext,
     ) -> Vec<tidb_txnkv::transaction::TransactionBatchGetFuture> {
+        self.recorded.lock().unwrap().async_batch_calls += 1;
+        if self.reject_async {
+            return requests
+                .iter()
+                .map(|_| {
+                    Box::pin(futures::future::ready(PublishedCommand::BeforePublication(
+                        "async BatchGet was disabled by the published configuration".to_owned(),
+                    ))) as tidb_txnkv::transaction::TransactionBatchGetFuture
+                })
+                .collect();
+        }
         let mut gate = self
             .first_batch_gate
             .as_ref()
@@ -544,6 +600,7 @@ impl LockRecoveryClient for LockingClient {
 /// with "snapshot lock retry budget exhausted".
 #[test]
 fn a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts() {
+    let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let runtime = SharedReadRuntime::new_injected(
         LockingClient::new(Arc::clone(&recorded)),
@@ -893,6 +950,7 @@ fn assert_batch_read_limits_and_pending_retries() {
 
 #[test]
 fn scan_pair_locks_use_point_get_without_replaying_clean_rows() {
+    let _config = snapshot_test_config();
     for shared in [false, true] {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut client = LockingClient::new(Arc::clone(&recorded));
@@ -980,6 +1038,7 @@ fn scan_pair_locks_use_point_get_without_replaying_clean_rows() {
 
 #[test]
 fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
+    let _config = snapshot_test_config();
     for batch in [false, true] {
         for committed in [false, true] {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
@@ -1055,6 +1114,7 @@ fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
 
 #[test]
 fn batch_get_retries_keep_physical_response_boundaries() {
+    let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(Arc::clone(&recorded));
     client.remaining_locked = 0;
@@ -1122,6 +1182,7 @@ fn batch_get_retries_keep_physical_response_boundaries() {
 
 #[test]
 fn scan_response_locks_wait_without_stamping_read_hints() {
+    let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(Arc::clone(&recorded));
     client.remaining_locked = 0;
@@ -1183,6 +1244,7 @@ fn scan_response_locks_wait_without_stamping_read_hints() {
 
 #[test]
 fn max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock() {
+    let _config = snapshot_test_config();
     for scan_pair in [false, true] {
         for read_ts in [START_TS, u64::MAX] {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
@@ -1305,6 +1367,7 @@ fn max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock() {
 
 #[test]
 fn batch_get_lock_recovery_workers_make_independent_progress() {
+    let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(Arc::clone(&recorded));
     client.remaining_locked = 0;
@@ -1382,26 +1445,32 @@ fn two_batch_worker_fixture() -> (LockingClient, Vec<Vec<u8>>) {
         ..Default::default()
     });
     let keys: Vec<_> = (0..5121).map(|i| format!("{i:05}").into_bytes()).collect();
-    client.batch_responses = [
-        KvrpcBatchGetResponse::default(),
-        KvrpcBatchGetResponse {
-            error: Some(KvrpcKeyError {
-                locked: Some(KvrpcLockInfo {
-                    key: keys[5120].clone(),
-                    primary_lock: keys[5120].clone(),
-                    ..LockingClient::live_lock()
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-    ]
-    .into();
+    client.keyed_batch_responses = Some(Arc::new(Mutex::new(
+        [
+            (keys[0].clone(), KvrpcBatchGetResponse::default()),
+            (
+                keys[5120].clone(),
+                KvrpcBatchGetResponse {
+                    error: Some(KvrpcKeyError {
+                        locked: Some(KvrpcLockInfo {
+                            key: keys[5120].clone(),
+                            primary_lock: keys[5120].clone(),
+                            ..LockingClient::live_lock()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into(),
+    )));
     (client, keys)
 }
 
 #[test]
 fn batch_get_recovery_starts_before_an_earlier_rpc_completes() {
+    let _config = snapshot_test_config();
     let (mut client, keys) = two_batch_worker_fixture();
     let (ready, gate) = futures::channel::oneshot::channel();
     client.first_batch_gate = Some(Arc::new(Mutex::new(Some(gate))));
@@ -1430,105 +1499,120 @@ fn batch_get_recovery_starts_before_an_earlier_rpc_completes() {
 
 #[test]
 fn batch_get_joins_retry_workers_before_returning_cancellation_or_sibling_error() {
-    for hold_retry in [false, true] {
-        for mode in ["cancel", "deadline", "sibling-error"] {
-            let (mut client, keys) = two_batch_worker_fixture();
-            let hold = Arc::new((Mutex::new((false, false)), std::sync::Condvar::new()));
-            if hold_retry {
-                client.retry_hold = Some(Arc::clone(&hold));
-            } else {
-                client.status_hold = Some(Arc::clone(&hold));
-            }
-            if mode == "sibling-error" {
-                client.batch_responses[0].error = Some(KvrpcKeyError {
-                    abort: "fatal sibling response".to_owned(),
-                    ..Default::default()
-                });
-            }
-            let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
-            let mut transaction = RealOptimisticTransaction::new_injected(
-                runtime.clone(),
-                TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
-                CALL_TIMEOUT,
-                START_TS,
-                Instant::now(),
-                4,
-                4096,
-            )
-            .unwrap();
-            let call = UnaryCallContext::with_timeout(if mode == "deadline" {
-                Duration::from_millis(100)
-            } else {
-                CALL_TIMEOUT
-            });
-            let cancel = call.cancellation().clone();
-            let (done, completed) = std::sync::mpsc::channel();
-            let worker = std::thread::spawn(move || {
-                let result = transaction.snapshot_batch_get(&keys, &call);
-                done.send(()).unwrap();
-                (transaction, result)
-            });
-            let state = hold.0.lock().unwrap();
-            let (state, _) = hold
-                .1
-                .wait_timeout_while(state, Duration::from_secs(2), |state| !state.0)
+    let _config = snapshot_test_config();
+    for enable_async in [false, true] {
+        let mut config = tidb_config::config_tree::new_config();
+        config.performance.enable_async_batch_get = enable_async;
+        tidb_config::config_tree::config::store_global_config(config);
+        for hold_retry in [false, true] {
+            for mode in ["cancel", "deadline", "sibling-error"] {
+                let (mut client, keys) = two_batch_worker_fixture();
+                let hold = Arc::new((Mutex::new((false, false)), std::sync::Condvar::new()));
+                if hold_retry {
+                    client.retry_hold = Some(Arc::clone(&hold));
+                } else {
+                    client.status_hold = Some(Arc::clone(&hold));
+                }
+                if mode == "sibling-error" {
+                    client
+                        .keyed_batch_responses
+                        .as_ref()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .get_mut(&keys[0])
+                        .unwrap()
+                        .error = Some(KvrpcKeyError {
+                        abort: "fatal sibling response".to_owned(),
+                        ..Default::default()
+                    });
+                }
+                let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+                let mut transaction = RealOptimisticTransaction::new_injected(
+                    runtime.clone(),
+                    TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+                    CALL_TIMEOUT,
+                    START_TS,
+                    Instant::now(),
+                    4,
+                    4096,
+                )
                 .unwrap();
-            assert!(
-                state.0,
-                "retry worker must enter the held status RPC: {mode}"
-            );
-            drop(state);
-            let active_locks = runtime.resolving_locks();
-            if mode == "cancel" {
-                cancel.cancel();
-            }
-            let wait = if mode == "deadline" {
-                Duration::from_millis(150)
-            } else {
-                Duration::from_millis(30)
-            };
-            let early = completed.recv_timeout(wait);
-            hold.0.lock().unwrap().1 = true;
-            hold.1.notify_all();
-            let (mut transaction, result) = worker.join().unwrap();
-            assert_eq!(active_locks.len(), 1,
-                "the worker retains one resolving record through status, backoff and retry RPC: retry={hold_retry}, mode={mode}");
-            assert!(
-                early.is_err(),
-                "BatchGet returned while its retry worker still owned request state: {mode}"
-            );
-            assert!(result.is_err(), "{mode}");
-            if mode == "sibling-error" {
-                assert!(result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("fatal sibling response"));
-                assert_eq!(
-                    transaction.snapshot_point_rpc_counts(),
-                    (0, 3),
-                    "sibling recovery was allowed to finish"
+                let call = UnaryCallContext::with_timeout(if mode == "deadline" {
+                    Duration::from_millis(100)
+                } else {
+                    CALL_TIMEOUT
+                });
+                let cancel = call.cancellation().clone();
+                let (done, completed) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let result = transaction.snapshot_batch_get(&keys, &call);
+                    done.send(()).unwrap();
+                    (transaction, result)
+                });
+                let state = hold.0.lock().unwrap();
+                let (state, _) = hold
+                    .1
+                    .wait_timeout_while(state, Duration::from_secs(2), |state| !state.0)
+                    .unwrap();
+                assert!(
+                    state.0,
+                    "retry worker must enter the held status RPC: {mode}"
                 );
+                drop(state);
+                let active_locks = runtime.resolving_locks();
+                if mode == "cancel" {
+                    cancel.cancel();
+                }
+                let wait = if mode == "deadline" {
+                    Duration::from_millis(150)
+                } else {
+                    Duration::from_millis(30)
+                };
+                let early = completed.recv_timeout(wait);
+                hold.0.lock().unwrap().1 = true;
+                hold.1.notify_all();
+                let (mut transaction, result) = worker.join().unwrap();
+                assert_eq!(active_locks.len(), 1,
+                "the worker retains one resolving record through status, backoff and retry RPC: retry={hold_retry}, mode={mode}, async={enable_async}");
+                assert!(
+                    early.is_err(),
+                    "BatchGet returned while its retry worker still owned request state: {mode}"
+                );
+                assert!(result.is_err(), "{mode}");
+                if mode == "sibling-error" {
+                    assert!(result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("fatal sibling response"));
+                    assert_eq!(
+                        transaction.snapshot_point_rpc_counts(),
+                        (0, 3),
+                        "sibling recovery was allowed to finish"
+                    );
+                }
+                assert!(
+                    runtime.resolving_locks().is_empty(),
+                    "worker guard released before return"
+                );
+                let before = transaction.snapshot_point_rpc_counts();
+                assert_eq!(
+                    transaction
+                        .snapshot_get(b"05120", &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+                        .unwrap()
+                        .rpc_count,
+                    1,
+                    "an unsuccessful BatchGet cannot populate the snapshot cache"
+                );
+                assert_eq!(transaction.snapshot_point_rpc_counts().0, before.0 + 1);
             }
-            assert!(
-                runtime.resolving_locks().is_empty(),
-                "worker guard released before return"
-            );
-            let before = transaction.snapshot_point_rpc_counts();
-            assert_eq!(
-                transaction
-                    .snapshot_get(b"05120", &UnaryCallContext::with_timeout(CALL_TIMEOUT))
-                    .unwrap()
-                    .rpc_count,
-                1,
-                "an unsuccessful BatchGet cannot populate the snapshot cache"
-            );
-            assert_eq!(transaction.snapshot_point_rpc_counts().0, before.0 + 1);
         }
     }
 }
 
 #[test]
 fn batch_get_split_retries_run_children_independently() {
+    let _config = snapshot_test_config();
     struct SplitRegion;
     impl RegionLoader for SplitRegion {
         fn cluster_id(&self) -> u64 {
@@ -1614,4 +1698,72 @@ fn batch_get_split_retries_run_children_independently() {
     assert_eq!(values[b"a".as_slice()], b"batch-value");
     assert_eq!(values[b"z".as_slice()], b"batch-value");
     assert_eq!(transaction.snapshot_point_rpc_counts(), (0, 5));
+}
+
+#[test]
+fn batch_get_reads_the_published_async_setting_on_every_call() {
+    let _config = snapshot_test_config();
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let client = LockingClient::new(Arc::clone(&recorded));
+    let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        runtime.clone(),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+    let keys: Vec<_> = (0..5121).map(|i| format!("{i:05}").into_bytes()).collect();
+    let mut read_ts = START_TS;
+    let mut expected_async_calls = 0;
+    for enable_async in [false, true, false] {
+        // Publish through the same owner as server startup, after the
+        // transaction exists. Each operation must observe the current flag.
+        let mut config = tidb_config::config_tree::new_config();
+        config.performance.enable_async_batch_get = enable_async;
+        tidb_config::config_tree::config::store_global_config(config);
+        let barrier = Arc::new((Mutex::new(0), std::sync::Condvar::new()));
+        {
+            let mut client = runtime.client().lock().unwrap();
+            client.reject_async = !enable_async;
+            client.initial_batch_barrier = (!enable_async).then(|| Arc::clone(&barrier));
+        }
+        let values = transaction
+            .snapshot_batch_get_at(
+                &keys,
+                read_ts,
+                &UnaryCallContext::with_timeout(CALL_TIMEOUT),
+            )
+            .unwrap();
+        assert_eq!(values.len(), keys.len());
+        if enable_async {
+            expected_async_calls += 1;
+        } else {
+            assert_eq!(*barrier.0.lock().unwrap(), 2);
+        }
+        assert_eq!(
+            recorded.lock().unwrap().async_batch_calls,
+            expected_async_calls
+        );
+        runtime.client().lock().unwrap().initial_batch_barrier = None;
+        read_ts += 1;
+        let single = transaction
+            .snapshot_batch_get_at(
+                &keys[..1],
+                read_ts,
+                &UnaryCallContext::with_timeout(CALL_TIMEOUT),
+            )
+            .unwrap();
+        assert_eq!(single, vec![(keys[0].clone(), b"batch-value".to_vec())]);
+        assert_eq!(
+            recorded.lock().unwrap().async_batch_calls,
+            expected_async_calls,
+            "a single physical batch bypasses async admission in either mode"
+        );
+        read_ts += 1;
+    }
+    assert_eq!(transaction.snapshot_point_rpc_counts(), (0, 9));
 }

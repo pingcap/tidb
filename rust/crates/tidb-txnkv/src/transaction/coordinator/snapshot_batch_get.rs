@@ -56,6 +56,9 @@ where
     L: RegionRecoveryLoader + Send + Sync,
     T: TimestampSource + Sync,
 {
+    // Go captures the published setting once per BatchGet, after cache lookup
+    // and before grouping. Existing snapshots observe configuration updates.
+    let enable_async = tidb_config::tikvcfg::async_batch_get_enabled();
     let mut groups = group_snapshot_keys(runtime, keys).map_err(read_error)?;
     let state = BatchGetState {
         timestamps,
@@ -76,8 +79,15 @@ where
             RegionBackoffBudget::campaign_default(),
             None,
         )
-    } else {
+    } else if enable_async {
         run_initial_batches(runtime, &state, groups)
+    } else {
+        run_sync_batches(
+            runtime,
+            &state,
+            groups,
+            &RegionBackoffBudget::campaign_default(),
+        )
     };
     *rpc_count = rpc_count.wrapping_add(state.rpc_count.load(Ordering::Relaxed));
     result?;
@@ -326,37 +336,54 @@ where
         }
         // Go recursively groups a split retry with tryAsyncAPI=false; each
         // child owns a fork of the already charged backoffer, never a new budget.
-        return std::thread::scope(|scope| {
-            let (sender, receiver) = std::sync::mpsc::channel();
-            let mut error = None;
-            for group in groups {
-                let worker_runtime = runtime.fork_client();
-                let worker_backoff = backoff.fork();
-                let sender = sender.clone();
-                if let Err(spawn) = std::thread::Builder::new()
-                    .name("snapshot-batch-retry".into())
-                    .spawn_scoped(scope, move || {
-                        let _ = sender.send(run_batch(
-                            &worker_runtime,
-                            state,
-                            group,
-                            worker_backoff,
-                            None,
-                        ));
-                    })
-                {
-                    error = Some(read_error(spawn));
-                }
-            }
-            drop(sender);
-            for result in receiver {
-                if let Err(next) = result {
-                    error = Some(next);
-                }
-            }
-            error.map_or(Ok(()), Err)
-        });
+        return run_sync_batches(runtime, state, groups, &backoff);
     }
+}
+
+// Both the disabled-async initial path and split retries use Go's synchronous
+// worker path. Fork the existing budget; joining the scope retains all request
+// state until every worker has stopped, including after cancellation/errors.
+fn run_sync_batches<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    state: &BatchGetState<'_, T>,
+    groups: Vec<RegionKeyBatch>,
+    backoff: &RegionBackoffBudget,
+) -> ReadResult
+where
+    C: TransactionCommandClient + LockRecoveryClient + Clone + Send,
+    L: RegionRecoveryLoader + Send + Sync,
+    T: TimestampSource + Sync,
+{
+    std::thread::scope(|scope| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut error = None;
+        for group in groups {
+            let worker_runtime = runtime.fork_client();
+            let worker_backoff = backoff.fork();
+            let sender = sender.clone();
+            if let Err(spawn) = std::thread::Builder::new()
+                .name("snapshot-batch-get".into())
+                .spawn_scoped(scope, move || {
+                    let _ = sender.send(run_batch(
+                        &worker_runtime,
+                        state,
+                        group,
+                        worker_backoff,
+                        None,
+                    ));
+                })
+            {
+                error = Some(read_error(spawn));
+            }
+        }
+        drop(sender);
+        for result in receiver {
+            if let Err(next) = result {
+                error = Some(next);
+            }
+        }
+        error.map_or(Ok(()), Err)
+    })
 }
 
 fn handle_response<C, L, T>(

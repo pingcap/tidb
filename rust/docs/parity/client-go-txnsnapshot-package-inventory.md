@@ -11,7 +11,7 @@ rust/docs/operations/store-copr-audit-execplan.md.
 | `client_helper.go` | 168 | `1c8fe55bca147827b9f1f0ae9c2f07480029657cfcb2a3350c925b288c4b04e6` | tidb-txnkv lock resolver and snapshot request contexts; partial hint/wrapper/cache/metrics integration |
 | `scan.go` | 360 | `624db2aaeff610817fcea812a2bb9a9f35b0fa383d93dea4702210f783bbb698` | tidb-txnkv transaction/coordinator/snapshot_read.rs; forward scan only, original scanner lifecycle/reverse/options remain open |
 | `snapshot.go` | 1552 | `2ea9ee7c2ac01c024aeec357388d4b2475323c3a179687c34c798e99085ab7d8` | tidb-txnkv transaction/coordinator/snapshot_read.rs, snapshot_batch_get.rs and region_batches.rs; cache/Get/BatchGet seed, full options/statistics/replica/tier behavior open |
-| `snapshot_async.go` | 321 | `bc29fa3f439714bcc4f73316787ff37dc761514df7fa869607fe52135abec022` | tidb-txnkv transaction/command_client.rs and snapshot_batch_get.rs; completion-order admission, scoped retry workers and cancellation/join integrated; configuration/statistics/options gates open |
+| `snapshot_async.go` | 321 | `bc29fa3f439714bcc4f73316787ff37dc761514df7fa869607fe52135abec022` | tidb-txnkv transaction/command_client.rs and snapshot_batch_get.rs; completion-order admission, scoped retry workers and cancellation/join integrated; published async/sync selection integrated; statistics/options gates open |
 | `snapshot_async_test.go` | 151 | `58761e072d346c24d79e439aa7976a6fb61100278aec49c3f502122ef9835b58` | snapshot_lock_wait_source cancellation/join regression holds both status and retry RPCs; original Go test also passes; live transport reconciliation remains open |
 | `snapshot_test.go` | 281 | `4b0ca6f81413776cebe4bf77572f1532c12e5139f338c1e9de02cd3de25dfd92` | snapshot source tests and point statistics owners; complete original test reconciliation open |
 | `test_probe.go` | 74 | `d130a33d8d18dc3cf4d2b7e85f5578dc67df787ce0a4aa4d48935f379d01fc17` | Go support artifact; Rust scripted client seams, complete correspondence open |
@@ -28,7 +28,7 @@ Get and BatchGet pass the exact sent request hints into read lock resolution.
 BatchGet resolves per physical response with a worker-owned backoffer. Scanner
 pair errors use snapshot.get; response-level errors use ResolveLocks with
 ForRead false and do not stamp resolved/committed hints onto Scan RPCs. Full
-scanner iteration, asynchronous configuration/statistics, cache/options,
+scanner iteration, asynchronous runtime statistics, cache/options,
 replica routing, metrics, original tests and platform/build gates remain open.
 
 The MaxTS first-lock shortcut is now represented in both live point-read paths,
@@ -50,5 +50,14 @@ and run their children independently. Scoped workers are joined on success,
 sibling failure, cancellation and deadline; failed operations do not populate
 the snapshot cache. Get and BatchGet retain/update their resolving-lock token
 through the full retry lifetime. The complete original async runtime statistics,
-EnableAsyncBatchGet option wiring, remaining snapshot options and all other
+remaining snapshot options and all other
 whole-package gates are still open. See the worker milestone in the ExecPlan.
+
+EnableAsyncBatchGet now reads the existing published client configuration per
+uncached call. Disabled async mode runs independent synchronous workers with
+the same scoped join/result/backoff owner used by split retries. Single-batch
+calls bypass async admission in either mode. Runtime changes reach existing
+transactions; no snapshot-local flag shadows the process setting. The complete
+config dependency is inventoried in client-go-config-package-inventory.md.
+The snapshot lock suite is now a standalone Cargo target because its tests
+mutate process configuration; do not rely on `--test all snapshot_` to run it.

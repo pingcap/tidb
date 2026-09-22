@@ -37,6 +37,7 @@ directory; inventory every artifact and module build input before editing.
 - [x] Reconcile the live snapshot lock-hint, scan lock, per-batch retry and registered exhaustion boundaries; preserve the whole-package claim as open.
 - [x] Reconcile MaxTS first-lock behavior in both point-read entry paths; verify red/green Rust regressions and the original Go autocommit/hint tests.
 - [x] Integrate completion-order BatchGet recovery, independently progressing split workers, cancellation/join and resolving-record ownership; verify scoped regressions and the original Go cancellation test.
+- [x] Wire the published EnableAsyncBatchGet setting into each live BatchGet call and validate both concurrent execution modes.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
 - [ ] Satisfy the remaining whole-package build/platform/generated/live-store and workload gates.
@@ -655,3 +656,117 @@ fragment.rs, refresh before publishing, and keep the goal active.
 Revision note: replaced the serial BatchGet recovery loop, reconciled the
 resolving-record lifetime exposed by the new lifecycle tests, and retained
 explicit remaining complete-package validation boundaries.
+
+## BatchGet configuration milestone
+
+
+Master and the working branch were refreshed again without changes after
+72b3f402dd. snapshot.go reads client-go's global EnableAsyncBatchGet for each
+uncached BatchGet. A false value selects concurrent synchronous workers, not
+serial reads; the one-batch bypass is independent of the flag. Rust currently
+ignores the setting. Reuse tidb-config::tikvcfg, which already receives the
+TiDB performance setting through StoreGlobalConfig, rather than adding another
+configuration authority. Add a borrowed boolean accessor to avoid cloning the
+entire configuration on the read path, and an acyclic tidb-txnkv dependency on
+that existing owner. Reuse the split-child worker implementation for initial
+synchronous batches, preserving forked retry budgets and join-before-return.
+
+First add a regression that changes the published TiDB configuration after
+constructing a transaction. With async disabled, reject async admission and
+require two synchronous RPCs to overlap; with async enabled, require async
+admission. Exercise the single-batch bypass in both modes. Isolate the existing
+snapshot lock tests in their own Cargo integration-test process and serialize
+their global configuration changes, so unrelated tests cannot race with them.
+Then extend cancellation, deadline and sibling-error lifecycle cases to both
+modes. Run that target, the remaining aggregate snapshot tests, coordinator and
+region-recovery tests, dependent compilation, scoped formatting and make lint.
+Keep package acceptance open: runtime statistics, options, original tests and
+live workload measurements remain required.
+
+### Configuration outcome, discoveries and validation
+
+
+The live coordinator now reads EnableAsyncBatchGet from the existing
+published tidb-config::tikvcfg owner after cache lookup and before region
+grouping, matching snapshot.go. The accessor copies only the boolean under
+the existing read lock. No configuration copy or second setting is introduced.
+The added workspace dependency is acyclic; Cargo.lock adds only tidb-config
+to tidb-txnkv's dependency list. The first offline Cargo invocation refreshed
+that local lockfile edge; all subsequent checks used --locked.
+
+The false branch reuses run_sync_batches, extracted from the existing split
+retry path. Each batch gets an independently borrowed client and a fork of the
+existing retry budget. The scope joins every worker before returning, including
+after ordinary errors, cancellation or deadline expiry. One physical batch
+still runs directly in either configuration. The original true branch retains
+completion-order admission and recovery. No request options or new behavior
+beyond the upstream flag were added.
+
+The new regression failed before the production fix with
+"async BatchGet was disabled by the published configuration". It now changes
+false/true/false after transaction construction, checks two synchronous initial
+RPCs overlap, verifies async admission only when enabled, and exercises the
+single-batch bypass at each setting. Shared keyed response fixtures allow the
+existing cancellation/deadline/sibling-error test to run both configurations
+while pausing either status resolution or the retry RPC (12 cases). During
+validation the synchronous deadline case exposed a fixture omission: unlike
+Tonic admission, the fake accepted new requests after expiration. The fixture
+now mirrors the existing production admission cancellation/deadline checks;
+no additional production cancellation policy was introduced.
+
+snapshot_lock_wait_source is now an explicit standalone Cargo test target.
+Its tests serialize changes to process configuration and reset to the TiDB
+default before each test. The aggregate target excludes it, preventing global
+configuration races with unrelated tests. The complete eleven-artifact config
+dependency inventory, including both nextgen variants and original test
+lifecycle, is client-go-config-package-inventory.md; package acceptance remains
+open. Self-review found only the intended dependency/configuration/worker/test
+and receipt changes; the two user-owned files remain untracked and untouched.
+
+From rust/, these commands passed:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test snapshot_lock_wait_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all snapshot_ --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib transaction::coordinator --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all region_error_recovery_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-config --lib tikvcfg::tests --message-format=short
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+
+The tests passed 11, 12, 24, 26 and five cases (78 total). Existing warnings
+remain. Logs are /private/tmp/tidb-batch-config-{snapshot,aggregate,coordinator,
+region,config,check}.log. The pre-fix regression is red.log under that prefix;
+its command omitted --locked solely to record the new workspace dependency.
+
+From /private/tmp/tidb-master-cc83514 at master
+0b505ecc58b659655345b7bb85a619db02f94300:
+
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/txnkv/txnsnapshot -run '^TestAsyncBatchGetCancellationWaitsForRetryWorker$' -count=1 -v
+
+The original Go test passed in 0.122s (go.log under the same prefix). There is
+no failpoint injection in txnsnapshot, so no source transformation was needed.
+This is supplementary original-test evidence, not a complete Go package gate.
+
+From the repository root:
+
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+Lint passed after granting network access for the pinned revive tool; the
+sandboxed attempt could not resolve proxy.golang.org. Scoped formatting avoids
+unrelated existing formatting changes. No Go, Go module or Bazel input changed.
+The previously unsatisfied fresh-worktree bazel_prepare gate still requires a
+Bazel installation. Live TiKV, nextgen/build variants, complete original test
+reconciliation and matched sysbench/TPC-C/TPC-H/YCSB benchmarks were not run.
+The async=false path uses native scoped threads; no workload throughput or
+latency improvement is claimed without those measurements. Disk remains at
+about 233 GiB available after the earlier cleanup.
+
+Publishing refresh left origin/master and origin/hparser-integration unchanged.
+Commit and push these eight files, verify remote equality, and continue the open
+snapshot package's runtime statistics/options/tier/replica/scanner gates and the
+parent coprocessor package. The overall parity goal is still active.
+
+Revision note: connected the existing async setting to live BatchGet, shared
+the synchronous worker implementation, isolated global configuration tests,
+and recorded red/green evidence plus remaining whole-package acceptance gates.

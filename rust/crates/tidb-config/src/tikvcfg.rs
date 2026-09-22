@@ -473,6 +473,14 @@ pub fn get_global_config() -> Config {
         .clone()
 }
 
+/// Read Go client config `EnableAsyncBatchGet` without copying the configuration.
+pub fn async_batch_get_enabled() -> bool {
+    global_config()
+        .read()
+        .expect("TiKV global config lock poisoned")
+        .enable_async_batch_get
+}
+
 /// Go client config `StoreGlobalConfig`.
 pub fn store_global_config(config: Config) {
     *global_config()

@@ -21,6 +21,7 @@ hyper.workspace = true
 prost.workspace = true
 serde_json.workspace = true
 tidb-codec = { path = "../tidb-codec" }
+tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-proto = { path = "../tidb-proto" }
@@ -35,6 +36,10 @@ tonic.workspace = true
 [[test]]
 name = "all"
 path = "tests/all.rs"
+
+[[test]]
+name = "snapshot_lock_wait_source"
+path = "tests/snapshot_lock_wait_source.rs"
 
 [[test]]
 name = "snapshot_scan_page_deadline_source"
