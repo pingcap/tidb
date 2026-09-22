@@ -1,0 +1,43 @@
+diff --git a/go/private/context.bzl b/go/private/context.bzl
+--- a/go/private/context.bzl
++++ b/go/private/context.bzl
+@@ -577,8 +577,8 @@
+             mandatory = True,
+             providers = [GoStdLib],
+         ),
+-        "_whitelist_function_transition": attr.label(
+-            default = "@bazel_tools//tools/whitelists/function_transition_whitelist",
++        "_allowlist_function_transition": attr.label(
++            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
+         ),
+     },
+     doc = """go_context_data gathers information about the build configuration.
+diff --git a/go/private/rules/nogo.bzl b/go/private/rules/nogo.bzl
+--- a/go/private/rules/nogo.bzl
++++ b/go/private/rules/nogo.bzl
+@@ -102,8 +102,8 @@
+         "_cgo_context_data": attr.label(default = "//:cgo_context_data_proxy"),
+         "_go_config": attr.label(default = "//:go_config"),
+         "_stdlib": attr.label(default = "//:stdlib"),
+-        "_whitelist_function_transition": attr.label(
+-            default = "@bazel_tools//tools/whitelists/function_transition_whitelist",
++        "_allowlist_function_transition": attr.label(
++            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
+         ),
+     },
+     toolchains = [GO_TOOLCHAIN],
+diff --git a/go/tools/builders/generate_test_main.go b/go/tools/builders/generate_test_main.go
+--- a/go/tools/builders/generate_test_main.go
++++ b/go/tools/builders/generate_test_main.go
+@@ -146,3 +146,8 @@
+-	if err != nil || totalShards <= 1 {
+-		return allTests
+-	}
++	if err != nil || totalShards <= 1 {
++		return allTests
++	}
++	file, err := os.Create(os.Getenv("TEST_SHARD_STATUS_FILE"))
++	if err != nil {
++		log.Fatalf("Failed to touch TEST_SHARD_STATUS_FILE: %v", err)
++	}
++	_ = file.Close()
