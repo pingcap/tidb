@@ -8920,7 +8920,7 @@ path and must be reconciled within the whole-package audit.
 - [x] Run the cc83514fa9 master SQL comparison and targeted native/transport validation.
 - [x] Repeat the Go SQL comparison at freshly fetched master 64e8c4c05e.
 - [x] Run compilation, scoped formatting, lint and self-review.
-- [ ] Commit and push this checkpoint; verify the published branch.
+- [x] Commit and push this checkpoint; verify the published branch.
 
 ### Decision Log
 
@@ -9104,3 +9104,11 @@ This is an operation-count regression proof; it is not a throughput benchmark.
 Disk remains at approximately 273 GiB available after the earlier 318 GB cleanup;
 active Rust build output is approximately 17 GB, and the reusable Go oracle cache
 is 3.5 GB. No user data or preexisting untracked Rust file was changed.
+
+Publication: commit `8e3427821cb157f3d0c089888e79db555b913b97`
+(`executor: preserve master index-join reader semantics`) is pushed to
+origin/hparser-integration. The final pull was already up to date; after push,
+`git rev-list --left-right --count HEAD...origin/hparser-integration` returned
+`0 0`. Only the user's preexisting untracked `tidb-expr/src/vs_helper.rs` and
+`tidb-planner/src/fragment.rs` remained. This publication receipt is a docs-only
+follow-up; it does not change the validated code or close any whole-package gate.
