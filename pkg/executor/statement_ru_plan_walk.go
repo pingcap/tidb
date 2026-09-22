@@ -256,7 +256,7 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 	})
 	if publishFinalized {
 		finalized.ttlJob = owner.ttlJobAtInstall
-		publishStatementRUFinalizedSnapshot(a, finalized)
+		publishStatementRUFinalizedSnapshot(a, &finalized)
 		return finalized.result.TotalRU
 	}
 	return 0
@@ -272,8 +272,8 @@ func calculateStatementRUPointLookup(
 	if planID <= 0 {
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
-	calculator, ok := newStatementRUTerminalCalculator(metrics, setup, rootEOF)
-	if !ok {
+	var calculator statementRUCalculator
+	if !initStatementRUTerminalCalculator(&calculator, metrics, setup, rootEOF) {
 		return statementRUTerminalFailure(rootEOF), false
 	}
 	var beforePoint ruv2.StmtUnits
@@ -348,8 +348,8 @@ func calculateStatementRUInternal(
 	if flat == nil || len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin == nil {
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
-	calculator, ok := newStatementRUTerminalCalculator(metrics, setup, rootEOF)
-	if !ok {
+	var calculator statementRUCalculator
+	if !initStatementRUTerminalCalculator(&calculator, metrics, setup, rootEOF) {
 		return statementRUTerminalFailure(rootEOF), false
 	}
 	planInfo := classifyStatementRUPlan(flat.Main[0].Origin)
@@ -414,28 +414,29 @@ func calculateStatementRUInternal(
 	return finalized, ok
 }
 
-func newStatementRUTerminalCalculator(
+func initStatementRUTerminalCalculator(
+	calculator *statementRUCalculator,
 	metrics *execdetails.RUV2Metrics,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
-) (statementRUCalculator, bool) {
+) bool {
 	if !rootEOF {
-		return statementRUCalculator{}, false
+		return false
 	}
-	calculator := newStatementRUCalculator(setup)
+	*calculator = newStatementRUCalculator(setup)
 	// Add the statement-wide RUv2 TiKV coprocessor response bytes once.
 	// Per-reader accounting would count the same aggregate more than once.
 	if metrics != nil && !metrics.Bypass() {
 		netBytes := metrics.TiKVCoprocessorResponseBytes()
 		if netBytes < 0 {
-			return statementRUCalculator{}, false
+			return false
 		}
 		calculator.units.NetBytes = float64(netBytes)
 		if calculator.report != nil && netBytes != 0 {
 			calculator.report.add(statementRUTiKV, statementRUCopTransport, ruv2.StmtUnits{NetBytes: float64(netBytes)})
 		}
 	}
-	return calculator, true
+	return true
 }
 
 type statementRUForestKind uint8
@@ -555,7 +556,8 @@ func calculateStatementRUPlanChildFirst(
 	var beforeSubtreeTiFlashRU float64
 	if operatorRUs != nil {
 		beforeSubtree = calculator.units
-		beforeSubtreeTiFlashRU = calculator.tiFlashRU(currentStatementRUWeights())
+		weights := currentStatementRUWeights()
+		beforeSubtreeTiFlashRU = calculator.tiFlashRU(&weights)
 	}
 	children := make([]statementRUOperatorResult, len(operator.ChildrenIdx))
 	childState := statementRUOperatorComplete
@@ -612,7 +614,8 @@ func calculateStatementRUPlanChildFirst(
 		beforeOperator = calculator.units
 	}
 	if operatorRUs != nil {
-		beforeOperatorTiFlashRU = calculator.tiFlashRU(currentStatementRUWeights())
+		weights := currentStatementRUWeights()
+		beforeOperatorTiFlashRU = calculator.tiFlashRU(&weights)
 	}
 
 	switch origin := operator.Origin.(type) {
@@ -1036,9 +1039,9 @@ func calculateStatementRUPlanChildFirst(
 			cumUnits = cumUnits.Add(rootOwnedUnits)
 		}
 		weights := currentStatementRUWeights()
-		selfResult, _ := ruv2.Calculate(selfUnits, weights)
-		cumResult, _ := ruv2.Calculate(cumUnits, weights)
-		tiFlashRU := calculator.tiFlashRU(weights)
+		selfResult, _ := selfUnits.Calculate(&weights)
+		cumResult, _ := cumUnits.Calculate(&weights)
+		tiFlashRU := calculator.tiFlashRU(&weights)
 		selfResult.TotalRU += (tiFlashRU - beforeOperatorTiFlashRU) * (statementRUTiFlashMultiplier - 1)
 		cumResult.TotalRU += (tiFlashRU - beforeSubtreeTiFlashRU) * (statementRUTiFlashMultiplier - 1)
 		operatorRUs[operatorIndex].SelfRU = selfResult.TotalRU

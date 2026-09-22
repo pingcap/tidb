@@ -395,7 +395,7 @@ func BenchmarkStatementRUFinalizePublication(b *testing.B) {
 		if !ok {
 			b.Fatal("valid benchmark units failed to finalize")
 		}
-		publishStatementRUFinalizedSnapshot(fixture.stmt, finalized)
+		publishStatementRUFinalizedSnapshot(fixture.stmt, &finalized)
 		statementRUFinalizedSink = finalized
 	}
 }
@@ -463,7 +463,7 @@ func BenchmarkStatementRUReportingModes(b *testing.B) {
 				if !ok {
 					b.Fatal("calculation failed")
 				}
-				publishStatementRUFinalizedSnapshot(nil, finalized)
+				publishStatementRUFinalizedSnapshot(nil, &finalized)
 				statementRUFinalizedSink = finalized
 			}
 		})
