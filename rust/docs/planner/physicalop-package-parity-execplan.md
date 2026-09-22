@@ -40,6 +40,15 @@ their recorded stage. The latest verified state is summarized first.
   representation, statement-session/cache behavior, full physicalop inventory,
   and workload acceptance remain open.
 
+- [x] (2026-09-21, MPP-to-root reader boundary) `MppTask.ConvertToRootTaskImpl`
+  now builds Go's TiFlash `ExchangeSender(PassThrough) -> TableReader` root
+  boundary, expands virtual columns before construction, preserves task
+  warnings, and routes source-shaped root-only conditions through the existing
+  root Selection helper. Invalid condition placement returns the Go invalid
+  task. A focused planner task-shape regression passes; multi-fragment
+  ExchangeReceiver construction and remaining MPP enforcement/attachment arms
+  remain open.
+
 - [x] (2026-09-21, MaxOneRow enforced-MPP warning routing) The Go
   `CanSelfBeingPushedToCopImpl` refusal is now preserved before Rust's generic
   non-root task gate, so a `MaxOneRow` MPP refusal raises the source warning
@@ -3467,15 +3476,12 @@ prerequisite, not the lint recipes. Final diff whitespace check passed.
 ### 2026-09-21: MPP dependency audit and direct TPC-H comparison
 
 Previous turn was progress: session MPP gates now retain Go semantics and
-77 scoped tests pass. Current source was re-read before this audit. LIMIT's
-MPP candidate is still missing. Adding it alone does not complete the path:
-attach2Task4PhysicalLimit still rejects MPP, and MppTask.ConvertToRootTaskImpl
-still rejects construction of ExchangeSender/TableReader. The Go conversion
-also expands virtual columns, collects per-scan partition pruning metadata,
-retains single-table PlanPartInfo, validates root-filter placement and derives
-selection statistics. Rust MppTask lacks HashCols/TblColHists; its table reader
-lacks the complete partition metadata path. This requires cohesive integration,
-not merely enabling another candidate. No partial MPP path was added here.
+77 scoped tests pass. At that audit point LIMIT's MPP candidate and the direct
+MPP-to-root reader conversion were both missing. The latter is now closed by
+the focused `MppTask::into_root_task` receipt recorded below; LIMIT's MPP
+attachment, multi-fragment ExchangeReceiver, per-scan partition metadata,
+and the remaining MPP task fields remain open. No package completion is
+claimed from the direct conversion alone.
 
 To strengthen outstanding workload correctness evidence meanwhile, rebuilt:
 
@@ -7896,3 +7902,28 @@ physicalop package, live TiFlash behavior, other MPP operator/task gaps, and
 the sysbench/TPC-C/TPC-H/YCSB performance gates remain open. The red result,
 green results, formatting, lint, and publication receipts are recorded with
 this checkpoint.
+
+
+## Continuing MPP-to-root conversion parity
+
+Go's `MppTask.ConvertToRootTaskImpl` creates a pass-through
+`PhysicalExchangeSender` around the MPP fragment and exposes it through a
+TiFlash `PhysicalTableReader`. It expands virtual-column dependencies before
+building that boundary, copies task warnings to the new root task, and turns
+root-only conditions into a source Selection. Conditions attached to any
+other MPP shape return Go's invalid task.
+
+Rust now performs that same owned conversion in `MppTask::into_root_task` and
+uses it from `Task::into_root_task`; the sender and reader receive fresh plan
+IDs from the caller's allocator and retain the fragment schema/statistics.
+The focused source-shape regression passes:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib \
+      task::tests::mpp_task_converts_to_tiflash_reader_with_passthrough_sender \
+      -- --test-threads=1
+
+`cargo check --offline --locked -j12 -p tidb-planner` also passes. This closes
+the direct MPP-to-root construction refusal but does not yet add Go's
+multi-fragment `PhysicalExchangeReceiver`, task metadata, or the remaining
+MPP enforcement/attachment branches. No TiFlash cluster execution or
+sysbench/TPC-C/TPC-H/YCSB performance result is inferred from this unit test.

@@ -23,17 +23,9 @@
 //!   `CopTask.FinishIndexPlan`, `GetStoreType`, `handleRootTaskConds`.
 //!
 //! [`attach2_task`] attaches owned physical candidates. Cop conversion builds
-//! table, index and index-lookup readers; unsupported MPP/index-merge paths
-//! return explicit errors. This remains seed work, not a whole core package.
-//!
-//! # Refusals, each naming its Go symbol
-//!
-//! * `MppTask.ConvertToRootTaskImpl` (`task_base.go:298-355`): builds a
-//!   `PhysicalExchangeSender` + `PhysicalTableReader` pair, runs
-//!   `cardinality.Selectivity` over `RootTaskConds`, and can fall back to
-//!   `base.InvalidTask`. Building plans is `Attach2Task`-batch work;
-//!   [`Task::convert_to_root_task`] refuses for an MPP task rather than
-//!   fabricating a reader.
+//! table, index and index-lookup readers; MPP conversion now builds Go's
+//! pass-through sender/table-reader boundary. Unsupported MPP/index-merge
+//! paths in the surrounding attachment matrix remain explicit errors.
 //!
 //! # Narrowings
 //!
@@ -49,7 +41,7 @@
 
 use crate::physical::PhysicalPlan;
 use crate::physical_property::MppPartitionType;
-use crate::physical_table_reader::StoreType;
+use crate::physical_table_reader::{ReadReqType, StoreType};
 use crate::plan_base::PlanError;
 use std::sync::Arc;
 use tidb_expr::expression::Expression;
@@ -275,6 +267,75 @@ impl MppTask {
         copied.warnings = SimpleWarnings::default();
         copied.warnings.copy_of(&self.warnings);
         copied
+    }
+
+    /// Go `MppTask.ConvertToRootTaskImpl` (`task_base.go:298-355`): expose an
+    /// MPP fragment through a TiFlash table reader and a pass-through sender.
+    /// The sender is deliberately kept in the pushed-down `TablePlan`, so
+    /// root conversion has the same reader boundary as Go's
+    /// `GenerateRootMPPTasks` path.
+    pub fn into_root_task(
+        mut self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> Result<Task, PlanError> {
+        let mut plan = self
+            .plan
+            .take()
+            .ok_or_else(|| PlanError::internal("MppTask.ConvertToRootTaskImpl: empty plan"))?;
+        virtual_columns::expand(&mut plan)?;
+        if !self.root_task_conds.is_empty()
+            && !matches!(&*plan, PhysicalPlan::TableScan(_))
+            && !matches!(
+                &*plan,
+                PhysicalPlan::Selection(selection)
+                    if matches!(selection.base.children(), [PhysicalPlan::TableScan(_)])
+            )
+        {
+            // Go returns base.InvalidTask when root-only conditions are
+            // attached to anything other than a table scan (or its direct
+            // Selection wrapper). Keeping the invalid task is observable by
+            // candidate comparison, so do not attach a root Selection here.
+            return Ok(Task::invalid_task());
+        }
+
+        let mut sender_base = crate::physical::BasePhysicalPlan::new(
+            allocator,
+            "ExchangeSender",
+            plan.query_block_offset(),
+        );
+        sender_base.base.set_stats(plan.stats_info().cloned());
+        sender_base.base.set_schema(plan.schema().cloned());
+        sender_base.set_children(vec![*plan]);
+        let sender = PhysicalPlan::ExchangeSender(crate::physical::PhysicalExchangeSender {
+            base: sender_base,
+            exchange_type: crate::physical::ExchangeType::PassThrough,
+            hash_cols: Vec::new(),
+        });
+
+        let mut reader_base = crate::physical::BasePhysicalPlan::new(
+            allocator,
+            "TableReader",
+            sender.query_block_offset(),
+        );
+        reader_base.base.set_stats(sender.stats_info().cloned());
+        reader_base.base.set_schema(sender.schema().cloned());
+        let reader = PhysicalPlan::TableReader(crate::physical::PhysicalTableReader {
+            base: reader_base,
+            table_plan: Some(Box::new(sender)),
+            store_type: StoreType::TiFlash,
+            is_common_handle: false,
+            read_req_type: ReadReqType::Mpp,
+        });
+
+        let mut root = RootTask::default();
+        root.set_plan(reader);
+        if self.warnings.warning_count() > 0 {
+            root.warnings.copy_of(&self.warnings);
+        }
+        let conds = std::mem::take(&mut self.root_task_conds);
+        Ok(Task::Root(CopTask::handle_root_task_conds(
+            conds, root, allocator,
+        )))
     }
 }
 
@@ -1019,10 +1080,7 @@ impl Task {
         match self {
             Task::Root(task) => Ok(Task::Root(task)),
             Task::Cop(task) => task.convert_to_root_task_impl(allocator),
-            Task::Mpp(_) => Err(PlanError::internal(
-                "MppTask.ConvertToRootTaskImpl (task_base.go:298) is not ported: it \
-                 builds a PhysicalExchangeSender + PhysicalTableReader pair",
-            )),
+            Task::Mpp(task) => task.into_root_task(allocator),
         }
     }
 
@@ -1080,6 +1138,62 @@ mod tests {
             ranges: crate::ranger::types::Ranges::new(),
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn mpp_task_converts_to_tiflash_reader_with_passthrough_sender() {
+        let task = Task::Mpp(MppTask::new(
+            table_scan_with_rows(7.0),
+            MppPartitionType::Any,
+            [],
+        ));
+        let converted = task
+            .into_root_task(&PlanIdAllocator::new())
+            .expect("the MPP fragment converts at the root boundary");
+        let Task::Root(root) = converted else {
+            panic!("MPP conversion must produce a root task");
+        };
+        let PhysicalPlan::TableReader(reader) = root.get_plan() else {
+            panic!("MPP conversion must build a table reader");
+        };
+        assert_eq!(reader.store_type, StoreType::TiFlash);
+        assert_eq!(reader.read_req_type, ReadReqType::Mpp);
+        let Some(PhysicalPlan::ExchangeSender(sender)) = reader.table_plan.as_deref() else {
+            panic!("the table reader must own the pass-through sender");
+        };
+        assert_eq!(
+            sender.exchange_type,
+            crate::physical::ExchangeType::PassThrough
+        );
+        assert!(sender.hash_cols.is_empty());
+        assert!(matches!(
+            sender.base.children(),
+            [PhysicalPlan::TableScan(_)]
+        ));
+
+        let mut filtered = MppTask::new(table_scan_with_rows(7.0), MppPartitionType::Any, []);
+        filtered.root_task_conds = vec![Expression::Column(column_with_id(1))];
+        let Task::Root(filtered_root) = Task::Mpp(filtered)
+            .into_root_task(&PlanIdAllocator::new())
+            .expect("a scan-root condition becomes a root selection")
+        else {
+            panic!("filtered MPP conversion must produce a root task");
+        };
+        assert!(matches!(
+            filtered_root.get_plan(),
+            PhysicalPlan::Selection(_)
+        ));
+
+        let mut misplaced = MppTask::new(
+            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual::default()),
+            MppPartitionType::Any,
+            [],
+        );
+        misplaced.root_task_conds = vec![Expression::Column(column_with_id(1))];
+        let converted = Task::Mpp(misplaced)
+            .into_root_task(&PlanIdAllocator::new())
+            .expect("Go returns an invalid task for misplaced root conditions");
+        assert!(converted.invalid());
     }
 
     fn column_with_id(id: i64) -> tidb_expr::column::Column {
