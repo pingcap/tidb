@@ -8428,3 +8428,114 @@ Other package-wide gaps from earlier receipts remain open.
 Disk cleanup previously removed 318 GB of disposable Rust build artifacts.
 After rebuilding the scoped checks, `df -h .` reports 324 GiB available; user
 source and the two pre-existing untracked Rust files remain untouched.
+
+
+## Continue forced prefix-order candidate parity (2026-09-22)
+
+
+The working branch was pulled first and remains synchronized with origin.
+Master advanced to `2339f8171265558ab30b6e564b2e3a854e53e8ea`; the intervening
+changes affect DDL split tests, importer code and executor SHOW. Physicalop,
+its generator inputs and the planner files used by this checkpoint are
+unchanged. The package inventory is revalidated against the new pin below.
+
+### Progress
+
+
+- [x] Reproduce the reported unselected-sort-column planning failure.
+- [x] Inspect master `LogicalTopN.PruneColumns` and `handlePartialOrderTopN`.
+- [x] Retain master's ForcePartialOrder state across candidate enumeration.
+- [x] Verify forced/no-order/nonmatching cases, SQL results and required gates.
+- [x] Prepare the validated checkpoint for commit/push; package acceptance stays open.
+
+### Surprises & Discoveries
+
+
+The no-plan query is not yet evidence of a Rust-specific bug. Master prunes
+TopN's output schema to parent-visible columns, then explicitly returns
+InvalidTask when the partial prefix column is absent from that schema
+(`logical_top_n.go:PruneColumns`, `task.go:handlePartialOrderTopN`). ORDER_INDEX
+also rejects ordinary unordered candidates. Rust reproduces this control flow;
+changing the root schema solely to make that query pass would depart from the
+reference. The exploratory success assertion was removed. This is source
+analysis, not an execution receipt from a master Go binary.
+
+A separate confirmed gap is `AccessPath.ForcePartialOrder`: master marks a
+matching forced path during skyline pruning, then rejects later ordinary/full
+order candidates for that path. Rust enumerates partial candidates first, but
+did not retain that mark. A regression now requests a partial path followed by
+an ordinary path in one search, with forced/unforced, NO_ORDER_INDEX and
+unmatched-property variants.
+
+### Decision Log
+
+
+Keep candidate state in `DispatchContext`, keyed by the DataSource object's
+identity and index ID, alongside the existing per-object task cache. This
+models master's mutable access-path flag without mutating the immutable logical
+plan or leaking a hint into another statement, table occurrence or static
+partition copy. Record the mark at the partial-match stage, before conversion
+and cost selection, only with the session feature enabled, a forced path and
+no NO_ORDER_INDEX veto. Reject subsequent non-partial conversions for that
+marked path. Preserve normal forced-index behavior when no match was found.
+
+### Validation and remaining scope
+
+
+Extend the existing planner prefix-match and executor prefix-read suites.
+Run the planner dispatch suite, executor prefix SQL suite, dependent compilation,
+`make lint`, scoped formatting and `git diff --check`. No Go/Bazel/module source
+changes are planned. The entire physicalop package and its dependent packages
+remain the acceptance units; this checkpoint does not claim whole-package or
+workload benchmark completion.
+
+
+### Outcomes & Retrospective
+
+
+The forced-path transition failed before the production change: after a matched
+forced partial-order search, Rust still returned a valid ordinary cop task.
+It now refuses that ordinary task like master. Unforced paths, NO_ORDER_INDEX,
+and nonmatching properties retain ordinary candidates. The mark is made before
+a covering index can be refused as a double-read task, and it does not affect
+another already-existing DataSource with the same Go plan ID/index ID.
+Empty index ranges become a zero-row TableDual before property matching; the
+new test uses a collation-resolved `a = NULL` condition and an unmatched partial
+order. A previously marked nonempty immutable path is refused early on later
+ordinary searches, avoiding another range build for a task that cannot win.
+
+The SQL fixture now exercises ORDER_INDEX, USE INDEX, FORCE INDEX and USE_INDEX
+in ASC and DESC directions. Each retains the correct tied-prefix results and
+fetches four table rows. NO_ORDER_INDEX and a disabled partial-order setting
+retain ordinary TopN, fetch all five fixture rows, and produce the same result.
+These are native storage-operation counts, not workload throughput measurements.
+
+The inventory verifier read every artifact via `git show` at the resolved master
+pin, verified all 58 package hashes and all five generation/module-input hashes,
+and compared the full tracked package file list with the inventory. All hashes
+remain unchanged; the inventory revision/date were updated. No package acceptance
+status was changed.
+
+Validation commands from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib find_best_task::dispatch::tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_prefix_reads --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib partial_order --message-format=short -- --test-threads=1
+    cargo check --offline --locked -j12 -p tidb-executor -p tidb-session --message-format=short
+
+The suites passed 31, 15 and four tests respectively (the partial-order filter
+repeats one dispatch test). The dependent crates compile; existing warnings
+remain. From the repository root, `make lint`, `git diff --check`, and
+`python3 /private/tmp/tidb-prefix-format.py --check` passed. The formatting script
+uses nightly rustfmt on changed ranges; the two extended test functions were
+also formatted as complete functions. No Go/Bazel/module inputs changed, so
+`make bazel_prepare` was not required.
+
+The changes are in `find_best_task/dispatch.rs`, the existing executor
+`driver/tests/index_prefix_reads.rs` suite, this ExecPlan and its source inventory.
+The production change intentionally affects forced-index candidate admission;
+its source contract is master's skyline marking and convertToIndexScan gate.
+The unselected-sort-column failure was investigated, not changed. A master Go
+runtime receipt, complete original-package tests, real TiKV execution and
+sysbench/TPC-C/TPC-H/YCSB measurements remain outstanding, along with the earlier
+package-wide obligations. User-owned untracked files remain untouched.

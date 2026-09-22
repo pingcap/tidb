@@ -48,7 +48,7 @@
 //! Joins refuse toward [`crate::find_best_task`]'s own specialized search,
 //! which owns candidate enumeration for them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::enforce::enforce_property;
 use crate::logical::LogicalPlan;
@@ -188,6 +188,9 @@ pub struct DispatchContext<'a> {
     /// property. Numeric plan IDs are explain identities and are deliberately
     /// shared by static-partition DataSource copies.
     task_map: HashMap<(usize, Vec<u8>), Task>,
+    /// Go AccessPath.ForcePartialOrder survives the partial candidate search.
+    /// DataSource object identity keeps separate table occurrences independent.
+    forced_partial_order_paths: HashSet<(usize, i64)>,
     /// Go `SessionVars.AllocPlanColumnID`: the column-id allocator the
     /// aggregate partial/final split draws fresh columns from. `None` keeps
     /// pre-split searches working; a search that can push aggregates sets it
@@ -239,6 +242,7 @@ impl<'a> DispatchContext<'a> {
             prefer_range_scan: true,
             index_merge_enabled: false,
             task_map: HashMap::new(),
+            forced_partial_order_paths: HashSet::new(),
             column_ids: None,
         }
     }
@@ -3099,42 +3103,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 let Some(source_index) = ds.indexes.get(*index) else {
                     continue 'paths;
                 };
-                let partial_order_match = partial_order
-                    .and_then(|info| match_partial_order_property(ds, source_index, info));
-                if partial_order.is_some() && partial_order_match.is_none() {
+                let path_key = (std::ptr::from_ref(ds).addr(), source_index.id);
+                if partial_order.is_none() && ctx.forced_partial_order_paths.contains(&path_key) {
+                    // The earlier match already proved this immutable path's
+                    // ranges nonempty; do not rebuild them for a refused task.
                     continue 'paths;
                 }
-                let keep_order = ordered || partial_order_match.is_some();
-                if (!keep_order && ds.force_keep_order_index_ids.contains(&source_index.id))
-                    || (keep_order && ds.force_no_keep_order_index_ids.contains(&source_index.id))
-                {
-                    continue 'paths;
-                }
-                if ordered && !index_path_matches_order(ds, source_index, prop) {
-                    continue 'paths;
-                }
-                // `convertToIndexScan`: a path that is NOT a single scan
-                // reads the table rows back through an IndexLookUp double
-                // read (`BuildIndexLookUpTask` at conversion) — the cop task
-                // carries BOTH halves, exactly Go's shape.
-                let single_scan = index_path_is_single_scan(ds, source_index);
-                // The two COP property kinds are disjoint: a covering index
-                // is single-read, while a lookup is multi-read.
-                if (prop.task_tp == TaskType::CopSingleRead && !single_scan)
-                    || (cop_multi_read && single_scan)
-                {
-                    continue 'paths;
-                }
-                let mut base = crate::physical::BasePhysicalPlan::new(
-                    ctx.allocator,
-                    "IndexScan",
-                    ds.base.base.query_block_offset(),
-                );
-                if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
-                    base.base
-                        .set_noncacheable_reason("IndexScan of partial index is uncacheable");
-                }
-                base.base.set_schema(ds.base.base.schema().cloned());
                 // Go `detachCondAndBuildRangeForPath`: the index columns
                 // (schema columns at the index's offsets) detach the pushed
                 // conditions into this path's ranges.
@@ -3223,6 +3197,51 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 {
                     return Ok(empty_range_dual_task(ds, ctx));
                 }
+                let partial_order_match = partial_order
+                    .and_then(|info| match_partial_order_property(ds, source_index, info));
+                if partial_order.is_some() && partial_order_match.is_none() {
+                    continue 'paths;
+                }
+                if ctx.partial_ordered_index_for_topn
+                    && partial_order_match.is_some()
+                    && ds.forced_index_ids.contains(&source_index.id)
+                    && !ds.force_no_keep_order_index_ids.contains(&source_index.id)
+                {
+                    // Go skylinePruning marks the path before conversion, even
+                    // if this candidate's single/double-read task is refused.
+                    ctx.forced_partial_order_paths.insert(path_key);
+                }
+                let keep_order = ordered || partial_order_match.is_some();
+                if (!keep_order && ds.force_keep_order_index_ids.contains(&source_index.id))
+                    || (keep_order && ds.force_no_keep_order_index_ids.contains(&source_index.id))
+                {
+                    continue 'paths;
+                }
+                if ordered && !index_path_matches_order(ds, source_index, prop) {
+                    continue 'paths;
+                }
+                // `convertToIndexScan`: a path that is NOT a single scan
+                // reads the table rows back through an IndexLookUp double
+                // read (`BuildIndexLookUpTask` at conversion) — the cop task
+                // carries BOTH halves, exactly Go's shape.
+                let single_scan = index_path_is_single_scan(ds, source_index);
+                // The two COP property kinds are disjoint: a covering index
+                // is single-read, while a lookup is multi-read.
+                if (prop.task_tp == TaskType::CopSingleRead && !single_scan)
+                    || (cop_multi_read && single_scan)
+                {
+                    continue 'paths;
+                }
+                let mut base = crate::physical::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    "IndexScan",
+                    ds.base.base.query_block_offset(),
+                );
+                if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
+                    base.base
+                        .set_noncacheable_reason("IndexScan of partial index is uncacheable");
+                }
+                base.base.set_schema(ds.base.base.schema().cloned());
                 // Go `indexFilters := c.eqOrInCount > 0 || ...` plus
                 // `!c.isFullRange`: this candidate is what the prefer-range
                 // override keeps.
@@ -5152,7 +5171,8 @@ mod tests {
         let column = Column::new(11, field_type);
         let mut base = BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(100.0, [])));
-        base.base.set_schema(Some(Schema::new(vec![column.clone()])));
+        base.base
+            .set_schema(Some(Schema::new(vec![column.clone()])));
         let mut source = DataSource {
             base,
             physical_table_id: 7,
@@ -5182,10 +5202,9 @@ mod tests {
             ..PhysicalProperty::default()
         };
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let task = find_best_task_4_logical_data_source_without_enforcer(
-            &source, &partial, &mut ctx,
-        )
-        .expect("partial-order index path plans");
+        let task =
+            find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
+                .expect("partial-order index path plans");
         let Task::Cop(cop) = task else {
             panic!("the partial-order child remains a cop task");
         };
@@ -5233,6 +5252,125 @@ mod tests {
                 "order hint: {force_order}, no-order hint: {force_no_order}"
             );
         }
+
+        // Master marks matching forced paths during the partial-order search,
+        // before ordinary TopN candidates are costed. NO_ORDER_INDEX and an
+        // unmatched property must preserve ordinary forced-index behavior.
+        source.force_keep_order_index_ids.clear();
+        for (forced, no_order, matches) in [
+            (true, false, true),
+            (false, false, true),
+            (true, true, true),
+            (true, false, false),
+        ] {
+            source.forced_index_ids = if forced {
+                [3].into_iter().collect()
+            } else {
+                Default::default()
+            };
+            source.force_no_keep_order_index_ids = if no_order {
+                [3].into_iter().collect()
+            } else {
+                Default::default()
+            };
+            let mut partial = partial.clone();
+            if !matches {
+                partial.partial_order_info.as_mut().unwrap().sort_items[0]
+                    .col
+                    .unique_id = 99;
+            }
+            let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+                .with_partial_ordered_index_for_topn(true);
+            let _ =
+                find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
+                    .unwrap();
+            let ordinary = PhysicalProperty {
+                task_tp: TaskType::CopMultiRead,
+                ..PhysicalProperty::default()
+            };
+            let task =
+                find_best_task_4_logical_data_source_without_enforcer(&source, &ordinary, &mut ctx)
+                    .unwrap();
+            assert_eq!(
+                task.invalid(),
+                forced && !no_order && matches,
+                "forced={forced}, no-order={no_order}, matched={matches}"
+            );
+        }
+
+        // Separate occurrences can share a Go plan ID and an index ID. A
+        // mark on one occurrence must not affect an already-existing other.
+        source.forced_index_ids = [3].into_iter().collect();
+        source.force_no_keep_order_index_ids.clear();
+        let other = source.clone();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+            .with_partial_ordered_index_for_topn(true);
+        let _ = find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
+            .unwrap();
+        let ordinary = PhysicalProperty {
+            task_tp: TaskType::CopMultiRead,
+            ..PhysicalProperty::default()
+        };
+        assert!(!find_best_task_4_logical_data_source_without_enforcer(
+            &other, &ordinary, &mut ctx
+        )
+        .unwrap()
+        .invalid());
+
+        // Skyline marks the path even when CopMultiRead conversion is later
+        // refused because the common handle makes the index covering.
+        let mut covering = source.clone();
+        covering.is_common_handle = true;
+        covering.common_handle_version = 1;
+        covering.common_handle_cols = covering.base.base.schema().unwrap().columns.clone();
+        covering.common_handle_lens = vec![-1];
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+            .with_partial_ordered_index_for_topn(true);
+        assert!(find_best_task_4_logical_data_source_without_enforcer(
+            &covering, &partial, &mut ctx
+        )
+        .unwrap()
+        .invalid());
+        let single = PhysicalProperty {
+            task_tp: TaskType::CopSingleRead,
+            ..PhysicalProperty::default()
+        };
+        assert!(find_best_task_4_logical_data_source_without_enforcer(
+            &covering, &single, &mut ctx
+        )
+        .unwrap()
+        .invalid());
+
+        // Go returns an empty-range dual before matching order or marking
+        // forced paths. An impossible predicate needs no index ordering.
+        let filter_column = source.base.base.schema().unwrap().columns[0].clone();
+        let mut equality = tidb_expr::scalar_function::ScalarFunction::new(
+            tidb_ast::CiString::new("eq"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![
+                tidb_expr::expression::Expression::Column(filter_column.clone()),
+                tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(
+                    tidb_datatype::Datum::Null,
+                    FieldType::new(FieldTypeCode::Varchar),
+                )),
+            ],
+        );
+        equality.collation.set_charset_and_collation(
+            "utf8mb4",
+            filter_column.ret_type.as_ref().unwrap().collation_name(),
+        );
+        source.pushed_down_conds =
+            vec![tidb_expr::expression::Expression::ScalarFunction(equality)];
+        let mut unmatched = partial.clone();
+        unmatched.partial_order_info.as_mut().unwrap().sort_items[0]
+            .col
+            .unique_id = 99;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+            .with_partial_ordered_index_for_topn(true);
+        let empty =
+            find_best_task_4_logical_data_source_without_enforcer(&source, &unmatched, &mut ctx)
+                .unwrap();
+        assert!(matches!(empty.plan(), Some(PhysicalPlan::TableDual(dual)) if dual.row_count == 0));
     }
 
     #[test]

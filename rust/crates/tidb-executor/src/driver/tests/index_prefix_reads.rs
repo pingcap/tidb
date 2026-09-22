@@ -10,8 +10,10 @@
 //! prefix while differing after it. A fixture without that second row cannot
 //! tell a correct read from a truncated one.
 //!
-//! Every expectation was captured from real TiDB through `gorun` before it
-//! was written down. Mirrors Go `pkg/tablecodec`'s `TruncateIndexValue`,
+//! The original prefix fixtures were captured from real TiDB through `gorun`.
+//! The partial-order cases also check the pinned master source contract and
+//! native lookup counts; they are not fresh master Go execution receipts.
+//! Mirrors Go `pkg/tablecodec`'s `TruncateIndexValue`,
 //! `pkg/util/ranger`'s `cutPrefixForPoints`, and the covering / ordering /
 //! point-get rules in `pkg/planner/core`.
 
@@ -497,39 +499,55 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
         ("ASC", vec!["abcaa", "abcmm"]),
         ("DESC", vec!["abczz", "abcmm"]),
     ] {
-        let sql =
-            format!("SELECT /*+ ORDER_INDEX(p, idx) */ a FROM p ORDER BY a {order} LIMIT 1, 2");
-        let (rows, ops) = crate::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
-        let rows = rows.unwrap();
-        assert_eq!(
-            ops.gets, 4,
-            "only the rows through the final prefix group need table lookups: {ops:?}"
-        );
-        assert_eq!(
-            rows.iter()
-                .map(|row| datum_text_for_test(&row[0]))
-                .collect::<Vec<_>>(),
-            expected
-        );
-        let stmt = tidb_parser::parse(&sql).unwrap();
-        let Stmt::Query(query) = &stmt else {
-            panic!("query");
-        };
-        let QueryStmt::Select(select) = &**query else {
-            panic!("select");
-        };
-        let (_, plan) =
-            explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
-        let text = plan
-            .iter()
-            .flatten()
-            .map(|datum| match datum {
-                Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-                other => format!("{other:?}"),
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(text.contains("prefix_col:"), "{text}");
+        for (hint, clause, enabled, prefix) in [
+            ("/*+ ORDER_INDEX(p, idx) */", "", true, true),
+            ("", "USE INDEX(idx)", true, true),
+            ("", "FORCE INDEX(idx)", true, true),
+            ("/*+ USE_INDEX(p, idx) */", "", true, true),
+            (
+                "/*+ NO_ORDER_INDEX(p, idx) */",
+                "USE INDEX(idx)",
+                true,
+                false,
+            ),
+            ("", "USE INDEX(idx)", false, false),
+        ] {
+            let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(enabled);
+            let sql = format!("SELECT {hint} a FROM p {clause} ORDER BY a {order} LIMIT 1, 2");
+            let (rows, ops) =
+                crate::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
+            let rows = rows.unwrap();
+            assert_eq!(
+                ops.gets,
+                if prefix { 4 } else { 5 },
+                "{sql}: prefix optimization={prefix}: {ops:?}"
+            );
+            assert_eq!(
+                rows.iter()
+                    .map(|row| datum_text_for_test(&row[0]))
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            let stmt = tidb_parser::parse(&sql).unwrap();
+            let Stmt::Query(query) = &stmt else {
+                panic!("query");
+            };
+            let QueryStmt::Select(select) = &**query else {
+                panic!("select");
+            };
+            let (_, plan) =
+                explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+            let text = plan
+                .iter()
+                .flatten()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(text.contains("prefix_col:"), prefix, "{sql}: {text}");
+        }
     }
 }
 
