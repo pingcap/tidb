@@ -2884,6 +2884,9 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 		}
 	}
 
+	// A running root pool may have no quota while still holding memory from
+	// the await-free pool. Such entries are not indexed by quotaShards, so
+	// scan contextCache as well when looking for reclaimable root pools.
 	if m.entryMap.contextCache.num.Load() != 0 {
 		m.entryMap.contextCache.Range(func(_, value any) bool {
 			entry := value.(*rootPoolEntry)
