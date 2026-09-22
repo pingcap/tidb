@@ -55,6 +55,7 @@ type ExecBeginInfo struct {
 type ExecFinishInfo struct {
 	RUDetails       *util.RUDetails
 	User            string
+	TotalRUV2       float64 // Finalized statement RU v2, available only at execution finish.
 	OutNetworkBytes uint64
 	ExecDuration    time.Duration
 	TopRUEnabled    bool
@@ -147,20 +148,20 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, info 
 	item.DurationCount++
 	item.NetworkOutBytes += info.OutNetworkBytes
 	if info.TopRUEnabled {
-		s.addRUOnFinishLocked(info.User, sqlDigest, planDigest, info.RUDetails, info.ExecDuration)
+		s.addRUOnFinishLocked(sqlDigest, planDigest, info)
 	} else {
 		s.clearRUExecCtxLocked()
 	}
 	// Count more data here.
 }
 
-func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest []byte, ru *util.RUDetails, execDuration time.Duration) {
+func (s *StatementStats) addRUOnFinishLocked(sqlDigest, planDigest []byte, info *ExecFinishInfo) {
 	if s.execCtx == nil {
 		// No matching begin was recorded, so delta cannot be computed correctly.
 		return
 	}
 	key := RUKey{
-		User:       user,
+		User:       info.User,
 		SQLDigest:  BinaryDigest(sqlDigest),
 		PlanDigest: BinaryDigest(planDigest),
 	}
@@ -170,7 +171,10 @@ func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest 
 	}
 	defer s.clearRUExecCtxLocked()
 
-	currentTotalRU := currentRUTotal(s.execCtx, ru)
+	currentTotalRU := currentRUTotal(s.execCtx, info.RUDetails)
+	if s.execCtx.RUVersion == rmclient.RUVersionV2 {
+		currentTotalRU = info.TotalRUV2
+	}
 	if currentTotalRU <= 0 {
 		return
 	}
@@ -185,7 +189,7 @@ func (s *StatementStats) addRUOnFinishLocked(user string, sqlDigest, planDigest 
 	}
 	incr := s.getOrCreateRUIncrementLocked(key)
 	incr.TotalRU += deltaRU
-	incr.ExecDuration += uint64(execDuration.Nanoseconds())
+	incr.ExecDuration += uint64(info.ExecDuration.Nanoseconds())
 }
 
 func (s *StatementStats) getOrCreateRUIncrementLocked(key RUKey) *RUIncrement {

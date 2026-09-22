@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -88,6 +89,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvtrace "github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
@@ -1811,7 +1813,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults, statementRUTotal)
 	a.SummaryStmt(succ, statementRUTotal)
-	a.observeStmtFinishedForTopProfiling()
+	a.observeStmtFinishedForTopProfiling(statementRUTotal)
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
@@ -1914,6 +1916,34 @@ func firstStatementRUTotal(statementRUTotal []float64) float64 {
 		return 0
 	}
 	return statementRUTotal[0]
+}
+
+// ruDetailsForStatementLog selects the RU values exposed by slow logs and
+// statement summaries without changing the shared execution accounting.
+func (a *ExecStmt) ruDetailsForStatementLog(ruDetails *util.RUDetails, statementRUTotal []float64) *util.RUDetails {
+	do := domain.GetDomain(a.Ctx)
+	if do == nil || do.GetRUVersion() != rmclient.RUVersionV2 {
+		return ruDetails
+	}
+	// Cursor fetches can emit slow logs before the statement RU total is finalized.
+	if len(statementRUTotal) == 0 {
+		return ruDetails
+	}
+
+	totalRU := statementRUTotal[0]
+	consumption := rmpb.Consumption{RRU: totalRU}
+	kind := classifyStatementRUPlan(a.Plan).kind
+	if kind == statementRUPlanWrite || kind == statementRUPlanCommit {
+		// Explicit transactions account for their committed write payload on COMMIT.
+		consumption.RRU, consumption.WRU = 0, totalRU
+	}
+	var waitDuration time.Duration
+	if ruDetails != nil {
+		waitDuration = ruDetails.RUWaitDuration()
+	}
+	logRUDetails := util.NewRUDetails()
+	logRUDetails.Update(&consumption, waitDuration)
+	return logRUDetails
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error, statementRUTotal float64) {
@@ -2060,6 +2090,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 		slowItems = &variable.SlowQueryLogItems{}
 	}
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
+	slowItems.RUDetails = a.ruDetailsForStatementLog(slowItems.RUDetails, statementRUTotal)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			if !slowItems.IsSyncStatsFailed {
@@ -2067,7 +2098,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 			}
 		}
 	})
-	slowLog := sessVars.SlowLogFormat(slowItems, statementRUTotal...)
+	slowLog := sessVars.SlowLogFormat(slowItems)
 	logutil.SlowQueryLogger.Warn(slowLog)
 
 	if trace.IsEnabled() {
@@ -2364,8 +2395,7 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
-	stmtExecInfo.RUDetail = ruDetail
-	stmtExecInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
+	stmtExecInfo.RUDetail = a.ruDetailsForStatementLog(ruDetail, statementRUTotal)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
@@ -2572,7 +2602,7 @@ func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
 	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
 }
 
-func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
+func (a *ExecStmt) observeStmtFinishedForTopProfiling(statementRUTotal ...float64) {
 	vars := a.Ctx.GetSessionVars()
 	if vars == nil {
 		return
@@ -2594,6 +2624,7 @@ func (a *ExecStmt) observeStmtFinishedForTopProfiling() {
 		TopRUEnabled:    topRU,
 	}
 	if topRU {
+		finishInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
 		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
 			finishInfo.RUDetails, _ = ruDetailRaw.(*util.RUDetails)
 		}

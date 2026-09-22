@@ -416,8 +416,8 @@ FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`
 }
 
 func TestLoadDataReplace(t *testing.T) {
-	require.NotNil(t, fix56408Store)
-	tk := testkit.NewTestKit(t, fix56408Store)
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
 	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
 	tk.MustExec("INSERT INTO load_data_replace VALUES(1,'val 1'),(2,'val 2')")
@@ -484,19 +484,23 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 }
 
 func TestLoadDataFromServerFile(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
+	tk.MustExec("use test; drop table if exists load_data_test")
 	tk.MustExec("create table load_data_test (a int)")
 	err := tk.ExecToErr("load data infile 'remote.csv' into table load_data_test")
 	require.ErrorContains(t, err, "[executor:8154]Don't support load data from tidb-server's disk.")
 }
 
-var fix56408Store kv.Storage
+var loadDataStore kv.Storage
+var loadDataLowPriorityClient checkKVPrioClient
 
-func prepareFix56408Store() func() {
+func prepareLoadDataStore() func() {
 	gctuner.GlobalMemoryLimitTuner.Stop()
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+		loadDataLowPriorityClient.Client = c
+		return &loadDataLowPriorityClient
+	}))
 	if err != nil {
 		panic(err)
 	}
@@ -513,10 +517,10 @@ func prepareFix56408Store() func() {
 	dom.SetStatsUpdating(true)
 	sm := testkit.MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
-	fix56408Store = store
+	loadDataStore = store
 
 	return func() {
-		fix56408Store = nil
+		loadDataStore = nil
 		dom.Close()
 		if err := store.Close(); err != nil {
 			panic(err)
@@ -526,8 +530,8 @@ func prepareFix56408Store() func() {
 }
 
 func TestFix56408(t *testing.T) {
-	require.NotNil(t, fix56408Store)
-	tk := testkit.NewTestKit(t, fix56408Store)
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS a;")
 	tk.MustExec("create table a(id int,name varchar(20),addr varchar(100),primary key (id) nonclustered);")
 	loadSQL := "LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE a FIELDS terminated by '|';"
@@ -606,16 +610,13 @@ func (c *checkKVPrioClient) SendRequest(ctx context.Context, addr string, req *t
 }
 
 func TestLoadDataLowPrioritySetsKVLowPriority(t *testing.T) {
-	cli := &checkKVPrioClient{}
-	store := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}))
+	require.NotNil(t, loadDataStore)
+	cli := &loadDataLowPriorityClient
 
 	// Use a context marker so the priority checker only applies to requests issued by this test execution.
 	ctx := context.WithValue(context.Background(), cli, 42)
 
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, loadDataStore)
 	sctx := tk.Session().(sessionctx.Context)
 
 	tk.MustExec("use test")

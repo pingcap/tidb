@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
+	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/stretchr/testify/require"
@@ -1225,7 +1226,7 @@ func testHandleBatchCopResponseMergedAndUnansweredTasks(t *testing.T) {
 	mergedTask := &copTask{taskID: 1}
 	inlineTask := &copTask{taskID: 2}
 	inlineData := []byte("inline-task-data")
-	responses, remains, err := worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{
+	responses, remains, err := worker.handleBatchCopResponse(bo, &requestLockHints{}, nil, &coprocessor.Response{
 		BatchResponses: []*coprocessor.StoreBatchTaskResponse{
 			{
 				TaskId:                 mergedTask.taskID,
@@ -1252,7 +1253,7 @@ func testHandleBatchCopResponseMergedAndUnansweredTasks(t *testing.T) {
 	require.Equal(t, int64(7), runawayChecker.processedKeys.Load())
 
 	unansweredTask := &copTask{taskID: 3}
-	responses, remains, err = worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{}, map[uint64]*batchedCopTask{
+	responses, remains, err = worker.handleBatchCopResponse(bo, &requestLockHints{}, nil, &coprocessor.Response{}, map[uint64]*batchedCopTask{
 		unansweredTask.taskID: {task: unansweredTask},
 	})
 	require.NoError(t, err)
@@ -1267,6 +1268,92 @@ type apiV2StoreBatchLockClient struct {
 	tikv.Client
 	copResponse              *tikvrpc.Response
 	checkTxnStatusPrimaryKey []byte
+}
+
+type ignoredLockHintCopClient struct {
+	tikv.Client
+	lockTS        uint64
+	committedHint bool
+	lockResponses int32
+	alwaysLocked  bool
+	copRequests   atomic.Int32
+	missingHint   atomic.Bool
+	onRequest     func(*tikvrpc.Request) *tikvrpc.Response
+}
+
+func (c *ignoredLockHintCopClient) SendRequest(
+	ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	if c.onRequest != nil {
+		if resp := c.onRequest(req); resp != nil {
+			return resp, nil
+		}
+	}
+	if req.Type != tikvrpc.CmdCop {
+		return c.Client.SendRequest(ctx, addr, req, timeout)
+	}
+
+	hints := req.ResolvedLocks
+	if c.committedHint {
+		hints = req.CommittedLocks
+	}
+	found := false
+	for _, txnID := range hints {
+		if txnID == c.lockTS {
+			found = true
+			break
+		}
+	}
+	if !found {
+		c.missingHint.Store(true)
+	}
+
+	requestCount := c.copRequests.Add(1)
+	if c.alwaysLocked || requestCount <= c.lockResponses {
+		return &tikvrpc.Response{Resp: &coprocessor.Response{Locked: &kvrpcpb.LockInfo{
+			Key:         []byte("key"),
+			PrimaryLock: []byte("primary"),
+			LockVersion: c.lockTS,
+			LockType:    kvrpcpb.Op_PessimisticLock,
+		}}}, nil
+	}
+	return &tikvrpc.Response{Resp: &coprocessor.Response{}}, nil
+}
+
+func newIgnoredLockHintCopWorker(
+	t *testing.T, client *ignoredLockHintCopClient, committedHint bool,
+) (*copIteratorWorker, *copTask) {
+	baseClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithSingleStore(cluster)
+	client.Client = baseClient
+	client.committedHint = committedHint
+
+	tikvStore, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	t.Cleanup(copStore.Close)
+
+	ctx := context.Background()
+	killed := uint32(0)
+	req := &kv.Request{
+		Tp:          kv.ReqTypeDAG,
+		StartTs:     100,
+		StoreType:   kv.TiKV,
+		KeyRanges:   kv.NewNonPartitionedKeyRanges(BuildKeyRanges("a", "z")),
+		Concurrency: 1,
+	}
+	it, errResp := (&CopClient{store: copStore}).BuildCopIterator(ctx, req, kv.NewVariables(&killed), &kv.ClientSendOption{})
+	require.Nil(t, errResp)
+	require.Len(t, it.tasks, 1)
+	if committedHint {
+		it.committedLocks.Put(client.lockTS)
+	} else {
+		it.resolvedLocks.Put(client.lockTS)
+	}
+	return newCopIteratorWorker(it, nil), it.tasks[0]
 }
 
 func (c *apiV2StoreBatchLockClient) SendRequest(
@@ -1363,6 +1450,7 @@ func testHandleBatchCopResponseResolvesAPIV2ChildLock(t *testing.T) {
 	}
 	_, _, err = worker.handleBatchCopResponse(
 		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
+		&requestLockHints{},
 		nil,
 		decodedResp.Resp.(*coprocessor.Response),
 		map[uint64]*batchedCopTask{child.taskID: {task: child}},
@@ -1380,6 +1468,174 @@ func TestHandleBatchCopResponse(t *testing.T) {
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
 	t.Run("rebuilds a store batch after a Region cache miss", testHandleStoreBatchRegionCacheMiss)
 	t.Run("picks the store batch RPC timeout", testStoreBatchCopRPCTimeout)
+	t.Run("backs off when TiKV ignores lock hints", testCoprocessorBacksOffWhenTiKVIgnoresLockHint)
+	t.Run("stops after repeated ignored lock hints", testCoprocessorStopsAfterRepeatedIgnoredLockHint)
+	t.Run("backs off once per response for ignored lock hints", testCoprocessorBacksOffOncePerResponseForIgnoredLockHints)
+}
+
+func testCoprocessorBacksOffOncePerResponseForIgnoredLockHints(t *testing.T) {
+	for _, hint := range []struct {
+		name      string
+		committed bool
+	}{
+		{name: "resolved"},
+		{name: "committed", committed: true},
+	} {
+		t.Run(hint.name, func(t *testing.T) {
+			for _, test := range []struct {
+				name            string
+				children        int
+				parentTxnID     uint64
+				firstChildTxnID uint64
+				sharedLock      bool
+			}{
+				{name: "four children", children: 4, firstChildTxnID: 42},
+				{name: "many children", children: 64, firstChildTxnID: 42},
+				{name: "parent and children", children: 4, parentTxnID: 42, firstChildTxnID: 42},
+				{name: "unhinted parent", children: 4, parentTxnID: 41, firstChildTxnID: 42},
+				{name: "unhinted first child", children: 4, firstChildTxnID: 41},
+				{name: "different hinted transactions", children: 4, firstChildTxnID: 43},
+				{name: "shared child lock", children: 4, firstChildTxnID: 42, sharedLock: true},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					var cleanedKeys atomic.Int32
+					client := &ignoredLockHintCopClient{
+						lockTS: 42,
+						onRequest: func(req *tikvrpc.Request) *tikvrpc.Response {
+							switch req.Type {
+							case tikvrpc.CmdCheckTxnStatus:
+								var commitTS uint64
+								if hint.committed {
+									commitTS = req.CheckTxnStatus().LockTs + 1
+								}
+								return &tikvrpc.Response{Resp: &kvrpcpb.CheckTxnStatusResponse{CommitVersion: commitTS}}
+							case tikvrpc.CmdResolveLock:
+								cleanedKeys.Add(int32(len(req.ResolveLock().Keys)))
+								return &tikvrpc.Response{Resp: &kvrpcpb.ResolveLockResponse{}}
+							}
+							return nil
+						},
+					}
+					worker, task := newIgnoredLockHintCopWorker(t, client, hint.committed)
+					lockHints := &requestLockHints{}
+					if hint.committed {
+						lockHints.committed = []uint64{42, 43}
+					} else {
+						lockHints.resolved = []uint64{42, 43}
+					}
+					newLock := func(txnID uint64, key byte) *kvrpcpb.LockInfo {
+						return &kvrpcpb.LockInfo{
+							Key:         []byte{'k', key},
+							PrimaryLock: []byte{'p', byte(txnID)},
+							LockVersion: txnID,
+							LockTtl:     1,
+							TxnSize:     uint64(test.children + 1),
+							LockType:    kvrpcpb.Op_Put,
+						}
+					}
+					resp := &coprocessor.Response{}
+					expectedRetries, expectedCleanedKeys := test.children, test.children
+					if test.parentTxnID != 0 {
+						resp.Locked = newLock(test.parentTxnID, 0)
+						expectedRetries++
+						expectedCleanedKeys++
+					}
+					task.batchTaskList = make(map[uint64]*batchedCopTask, test.children)
+					for i := range test.children {
+						id := uint64(i + 1)
+						lock := newLock(42, byte(id))
+						if i == 0 {
+							lock.LockVersion = test.firstChildTxnID
+							lock.PrimaryLock = []byte{'p', byte(test.firstChildTxnID)}
+							if test.sharedLock {
+								lock = &kvrpcpb.LockInfo{SharedLockInfos: []*kvrpcpb.LockInfo{newLock(41, byte(id)), lock}}
+								expectedCleanedKeys++
+							}
+						}
+						task.batchTaskList[id] = &batchedCopTask{task: &copTask{taskID: id}}
+						resp.BatchResponses = append(resp.BatchResponses, &coprocessor.StoreBatchTaskResponse{TaskId: id, Locked: lock})
+					}
+					killed := uint32(0)
+					vars := kv.NewVariables(&killed)
+					vars.BackoffLockFast = 1
+					vars.BackOffWeight = 1
+					// One hinted-lock backoff fits, but repeated backoffs for the same
+					// response exhaust this budget without making the regression slow.
+					bo := backoff.NewBackofferWithVars(context.Background(), 20, vars)
+					result, err := worker.handleCopResponse(bo, lockHints, nil, &copResponse{pbResp: resp}, nil, nil, task, 0)
+					require.NoError(t, err)
+					require.Len(t, result.remains, expectedRetries)
+					require.Equal(t, 1, bo.GetBackoffTimes()["txnLockFast"])
+					// Suppressing duplicate hint backoffs must still resolve every lock.
+					require.Eventually(t, func() bool {
+						return cleanedKeys.Load() == int32(expectedCleanedKeys)
+					}, time.Second, time.Millisecond)
+				})
+			}
+		})
+	}
+}
+
+func testCoprocessorBacksOffWhenTiKVIgnoresLockHint(t *testing.T) {
+	const lockTS = uint64(42)
+	for _, test := range []struct {
+		name      string
+		committed bool
+	}{
+		{name: "resolved"},
+		{name: "committed", committed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &ignoredLockHintCopClient{
+				lockTS:        lockTS,
+				lockResponses: 2,
+			}
+			ctx := context.Background()
+			worker, task := newIgnoredLockHintCopWorker(t, client, test.committed)
+			bo := backoff.NewBackofferWithVars(ctx, 3000, nil)
+			for expectedBackoffs := 1; expectedBackoffs <= 2; expectedBackoffs++ {
+				result, err := worker.handleTaskOnce(bo, task)
+				require.NoError(t, err)
+				require.Equal(t, map[string]int{"txnLockFast": expectedBackoffs}, bo.GetBackoffTimes())
+				require.Len(t, result.remains, 1)
+				task = result.remains[0]
+			}
+
+			result, err := worker.handleTaskOnce(bo, task)
+			require.NoError(t, err)
+			require.NotNil(t, result.resp)
+			require.Empty(t, result.remains)
+			require.Equal(t, int32(3), client.copRequests.Load())
+			require.False(t, client.missingHint.Load())
+		})
+	}
+}
+
+func testCoprocessorStopsAfterRepeatedIgnoredLockHint(t *testing.T) {
+	client := &ignoredLockHintCopClient{
+		lockTS:       42,
+		alwaysLocked: true,
+	}
+	worker, task := newIgnoredLockHintCopWorker(t, client, false)
+	killed := uint32(0)
+	vars := kv.NewVariables(&killed)
+	vars.BackoffLockFast = 1
+	vars.BackOffWeight = 1
+	bo := backoff.NewBackofferWithVars(context.Background(), 2, vars)
+
+	for expectedBackoffs := 1; expectedBackoffs <= 2; expectedBackoffs++ {
+		result, err := worker.handleTaskOnce(bo, task)
+		require.NoError(t, err)
+		require.Equal(t, map[string]int{"txnLockFast": expectedBackoffs}, bo.GetBackoffTimes())
+		require.Len(t, result.remains, 1)
+		task = result.remains[0]
+	}
+
+	_, err := worker.handleTaskOnce(bo, task)
+	require.ErrorIs(t, err, derr.ErrResolveLockTimeout)
+	require.Equal(t, map[string]int{"txnLockFast": 2}, bo.GetBackoffTimes())
+	require.Equal(t, int32(3), client.copRequests.Load())
+	require.False(t, client.missingHint.Load())
 }
 
 func testHandleStoreBatchRegionCacheMiss(t *testing.T) {
@@ -1438,7 +1694,7 @@ func testHandleStoreBatchRegionCacheMiss(t *testing.T) {
 	}
 
 	result, err := newCopIteratorWorker(it, nil).handleCopResponse(
-		backoff.NewBackofferWithVars(ctx, 3000, nil), nil,
+		backoff.NewBackofferWithVars(ctx, 3000, nil), &requestLockHints{}, nil,
 		&copResponse{pbResp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}}},
 		nil, nil, failedTask, 0,
 	)
@@ -1470,6 +1726,7 @@ func testHandleBatchCopResponseResolvesChildLock(t *testing.T) {
 
 	_, _, err = worker.handleBatchCopResponse(
 		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
+		&requestLockHints{},
 		nil,
 		&coprocessor.Response{BatchResponses: []*coprocessor.StoreBatchTaskResponse{{
 			TaskId: child.taskID,
@@ -1552,7 +1809,7 @@ func testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T
 		},
 	}
 
-	_, remains, err := worker.handleBatchCopResponse(bo, parentRPCCtx, resp, map[uint64]*batchedCopTask{
+	_, remains, err := worker.handleBatchCopResponse(bo, &requestLockHints{}, parentRPCCtx, resp, map[uint64]*batchedCopTask{
 		childTask.taskID: {task: childTask},
 	})
 	require.NoError(t, err)
@@ -1608,6 +1865,7 @@ func testHandleBatchCopResponseFallbackCountersAfterRegionSplit(t *testing.T) {
 	}
 	_, retryTasks, err := worker.handleBatchCopResponse(
 		bo,
+		&requestLockHints{},
 		nil,
 		&coprocessor.Response{
 			BatchResponses: []*coprocessor.StoreBatchTaskResponse{

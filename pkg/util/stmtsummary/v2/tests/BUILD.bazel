@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
+        "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/parser/auth",
         "//pkg/planner/core",
@@ -20,7 +21,11 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/meta_storagepb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//resource_group/controller",
         "@org_uber_go_goleak//:goleak",
     ],
 )

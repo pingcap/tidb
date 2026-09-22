@@ -310,7 +310,6 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
-	TotalRUV2         float64
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
@@ -1023,7 +1022,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	ssStats.StmtNetworkTrafficSummary.Add(sei.TiKVExecDetails)
 
 	// request-units
-	ssStats.StmtRUSummary.Add(sei.RUDetail, sei.TotalRUV2)
+	ssStats.StmtRUSummary.Add(sei.RUDetail)
 
 	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
 	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
@@ -1126,12 +1125,10 @@ type StmtRUSummary struct {
 	MaxRRU            float64       `json:"max_rru"`
 	MaxWRU            float64       `json:"max_wru"`
 	MaxRUWaitDuration time.Duration `json:"max_ru_wait_duration"`
-	SumRUV2           float64       `json:"sum_ruv2"`
-	MaxRUV2           float64       `json:"max_ruv2"`
 }
 
 // Add add a new sample value to the ru summary record.
-func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 float64) {
+func (s *StmtRUSummary) Add(info *util.RUDetails) {
 	if info != nil {
 		rru := info.RRU()
 		s.SumRRU += rru
@@ -1149,10 +1146,6 @@ func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 float64) {
 			s.MaxRUWaitDuration = ruWaitDur
 		}
 	}
-	s.SumRUV2 += totalRUV2
-	if s.MaxRUV2 < totalRUV2 {
-		s.MaxRUV2 = totalRUV2
-	}
 }
 
 // Merge merges the value of 2 ru summary records.
@@ -1168,10 +1161,6 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
-	}
-	s.SumRUV2 += other.SumRUV2
-	if s.MaxRUV2 < other.MaxRUV2 {
-		s.MaxRUV2 = other.MaxRUV2
 	}
 }
 

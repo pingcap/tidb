@@ -119,6 +119,7 @@ go_test(
     flaky = True,
     shard_count = 38,
     deps = [
+        "//br/pkg/utils",
         "//pkg/config",
         "//pkg/config/configtypes",
         "//pkg/config/deploymode",
