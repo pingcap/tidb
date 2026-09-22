@@ -2344,6 +2344,27 @@ fn complete_physical_index_join(
     Ok(())
 }
 
+/// Go `containVirtualColumn` (`core/task.go:1125-1142`): a pushdown
+/// expression may refer to a generated column only when the MPP child schema
+/// does not identify that column as virtual.
+fn contains_virtual_column_in_plan(
+    expressions: &[tidb_expr::expression::Expression],
+    plan: &PhysicalPlan,
+) -> bool {
+    let Some(schema) = plan.schema() else {
+        return false;
+    };
+    let virtual_ids: std::collections::HashSet<i64> = schema
+        .columns
+        .iter()
+        .filter(|column| column.unique_id > 0 && column.virtual_expr.is_some())
+        .map(|column| column.unique_id)
+        .collect();
+    tidb_expr::simple_expr::extract_columns_from_expressions(expressions, None)
+        .iter()
+        .any(|column| virtual_ids.contains(&column.unique_id))
+}
+
 pub fn attach2_task(
     plan: PhysicalPlan,
     mut tasks: Vec<Task>,
@@ -2364,17 +2385,24 @@ pub fn attach2_task(
         // `attach2Task4PhysicalSelection` (`task.go:1598`): Go has NO cop
         // push at attach — a cop child CONVERTS and the selection lands at
         // root (pushed filters ride the DataSource's PushedDownConds
-        // instead). Only the MPP arm pushes, gated on the TiFlash
-        // `CanExprsPushDown`; refused by name.
+        // instead). The MPP arm pushes when TiFlash's
+        // `CanExprsPushDown` admits every condition, and converts otherwise.
         PhysicalPlan::Selection(_) => match &first {
             Task::Root(_) | Task::Cop(_) => {
                 let converted = first.into_root_task(allocator)?;
                 Ok(attach_plan_to_task(plan, converted))
             }
-            Task::Mpp(_) => Err(PlanError::internal(
-                "attach2Task4PhysicalSelection's MPP arm needs the TiFlash \
-                 CanExprsPushDown, not ported",
-            )),
+            Task::Mpp(_) => {
+                let PhysicalPlan::Selection(selection) = &plan else {
+                    unreachable!("the arm matched Selection");
+                };
+                if crate::pushdown::can_exprs_push_down_tiflash(&selection.conditions) {
+                    Ok(attach_plan_to_task(plan, first))
+                } else {
+                    let converted = first.into_root_task(allocator)?;
+                    Ok(attach_plan_to_task(plan, converted))
+                }
+            }
         },
         // `attach2Task4PhysicalWindow` (`task.go:2230`): convert the child to
         // a root task and attach. The TiFlash MPP arm is absent with that
@@ -2398,7 +2426,8 @@ pub fn attach2_task(
         // expr passes the TiKV gate (`crate::pushdown`); an unfinished
         // index half finishes first (the conservative arm of
         // `canPushToIndexPlan`'s column check). Otherwise, and for a root
-        // child, convert-then-attach. The MPP arm refuses by name.
+        // child, convert-then-attach. The MPP arm uses the TiFlash admission
+        // gate and converts when a projection cannot be pushed.
         PhysicalPlan::Projection(_) => match &first {
             Task::Root(_) => {
                 let converted = first.into_root_task(allocator)?;
@@ -2430,10 +2459,17 @@ pub fn attach2_task(
                     Ok(attach_plan_to_task(plan, converted))
                 }
             }
-            Task::Mpp(_) => Err(PlanError::internal(
-                "attach2Task4PhysicalProjection's MPP arm needs the TiFlash \
-                 CanExprsPushDown, not ported",
-            )),
+            Task::Mpp(_) => {
+                let PhysicalPlan::Projection(projection) = &plan else {
+                    unreachable!("the arm matched Projection");
+                };
+                if crate::pushdown::can_exprs_push_down_tiflash(&projection.exprs) {
+                    Ok(attach_plan_to_task(plan, first))
+                } else {
+                    let converted = first.into_root_task(allocator)?;
+                    Ok(attach_plan_to_task(plan, converted))
+                }
+            }
         },
         // `attach2Task4PhysicalLimit` (`task.go:619`): the SINGLE-READ cop
         // branch pushes a partial limit — `Count = Offset + Count`, offset
@@ -2495,11 +2531,43 @@ pub fn attach2_task(
                     }
                     t
                 }
-                Task::Mpp(_) => {
-                    return Err(PlanError::internal(
-                        "attach2Task4PhysicalLimit's MPP arm (task.go:713) is \
-                         not ported",
-                    ));
+                Task::Mpp(mpp) => {
+                    let new_count = limit.offset.wrapping_add(limit.count);
+                    let stats = mpp
+                        .plan
+                        .as_deref()
+                        .and_then(PhysicalPlan::stats_info)
+                        .map(|profile| profile.derive_limit_stats(new_count as f64));
+                    let mut base = crate::physical::BasePhysicalPlan::new(
+                        allocator,
+                        "Limit",
+                        plan.query_block_offset(),
+                    );
+                    base.base.set_stats(stats);
+                    base.base
+                        .set_schema(mpp.plan.as_deref().and_then(PhysicalPlan::schema).cloned());
+                    let pushed = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                        base,
+                        partition_by: limit.partition_by.clone(),
+                        offset: 0,
+                        count: new_count,
+                        prefix_col: None,
+                        prefix_len: 0,
+                    });
+                    let mut pushed_task = attach_plan_to_task(pushed, Task::Mpp(mpp));
+                    // Go sets the pushed Limit schema from its child after
+                    // attachment so generated columns retain the exact child
+                    // schema object.
+                    if let Some(PhysicalPlan::Limit(pushed_limit)) = pushed_task.plan_mut() {
+                        let child_schema = pushed_limit
+                            .base
+                            .children()
+                            .first()
+                            .and_then(PhysicalPlan::schema)
+                            .cloned();
+                        pushed_limit.base.base.set_schema(child_schema);
+                    }
+                    pushed_task.into_root_task(allocator)?
                 }
             };
             // "Skip limit with partition on the root."
@@ -2532,7 +2600,8 @@ pub fn attach2_task(
         // RootTask. Go's MPP arm: a PartitionUnion over any MPP child is the
         // invalid task outright ("PartitionUnion cannot pushdown to
         // tiflash"); a plain union over MPP children needs
-        // `attach2MppTasks4PhysicalUnionAll`, refused by name.
+        // `attach2MppTasks4PhysicalUnionAll`, which creates one MPP task over
+        // the child fragment plans.
         PhysicalPlan::UnionAll(_) => {
             let mut tasks = {
                 let mut all = vec![first];
@@ -2543,9 +2612,26 @@ pub fn attach2_task(
                 if plan.base().base.tp() == "PartitionUnion" {
                     return Ok(Task::invalid_task());
                 }
-                return Err(PlanError::internal(
-                    "attach2MppTasks4PhysicalUnionAll (task.go) is not ported",
-                ));
+                let mut child_plans = Vec::with_capacity(tasks.len());
+                for task in tasks {
+                    let Task::Mpp(mut mpp) = task else {
+                        return Ok(Task::invalid_task());
+                    };
+                    let Some(child) = mpp.plan.take() else {
+                        return Ok(Task::invalid_task());
+                    };
+                    child_plans.push(*child);
+                }
+                if child_plans.is_empty() {
+                    return Ok(Task::invalid_task());
+                }
+                let mut mpp_plan = plan;
+                mpp_plan.base_mut().set_children(child_plans);
+                return Ok(Task::Mpp(MppTask::new(
+                    mpp_plan,
+                    crate::physical_property::MppPartitionType::Any,
+                    [],
+                )));
             }
             let mut plan = plan;
             let mut children = Vec::with_capacity(tasks.len());
@@ -2619,18 +2705,33 @@ pub fn attach2_task(
         // Go's own body ("if !isMpp { return tasks[len(tasks)-1] }"), a
         // quirk reproduced rather than fixed: on a root-tier plan the CTE
         // producers are wired elsewhere, not through this attach. The
-        // all-MPP arm builds an MppTask over the last child's partition
-        // columns — unported, refused by name.
+        // all-MPP arm builds an MppTask over the last child's partition type;
+        // the current task representation has no hash-column list.
         PhysicalPlan::Sequence(_) => {
             let mut all = vec![first];
             all.append(&mut tasks);
             if all.iter().any(|task| !matches!(task, Task::Mpp(_))) {
                 return Ok(all.pop().expect("the vec was built with at least one task"));
             }
-            Err(PlanError::internal(
-                "attach2Task4PhysicalSequence's all-MPP arm (task.go:2269, \
-                 NewMppTask over GetHashCols) is not ported",
-            ))
+            let Some(Task::Mpp(last)) = all.last() else {
+                unreachable!("the all-MPP branch proved every task is MPP");
+            };
+            let partition_type = last.partition_type();
+            let mut child_plans = Vec::with_capacity(all.len());
+            let mut warnings = Vec::with_capacity(all.len());
+            for task in all {
+                let Task::Mpp(mut mpp) = task else {
+                    unreachable!("the all-MPP branch proved every task is MPP");
+                };
+                let Some(child) = mpp.plan.take() else {
+                    return Ok(Task::invalid_task());
+                };
+                child_plans.push(*child);
+                warnings.push(mpp.warnings);
+            }
+            let mut sequence = plan;
+            sequence.base_mut().set_children(child_plans);
+            Ok(Task::Mpp(MppTask::new(sequence, partition_type, warnings)))
         }
         // `attach2Task4PhysicalTopN` (`task.go:1249`), the SIMPLE path:
         // when the by-items carry columns, pass the TiKV gate, and the cop
@@ -2638,8 +2739,8 @@ pub fn attach2_task(
         // `Count = Offset + Count`, offset removed, `DeriveLimitStats` over
         // the open half (`getPushedDownTopN`'s non-heavy half) — then
         // convert and attach the ROOT TopN above (partition-by root skip).
-        // The heavy-function rewrite, partial-order, TiDB-cop,
-        // index-merge-advisory, and virtual-column arms narrow by name.
+        // The heavy-function rewrite, partial-order, TiDB-cop, and
+        // index-merge-advisory arms narrow by name.
         PhysicalPlan::TopN(_) => {
             let PhysicalPlan::TopN(topn) = &plan else {
                 unreachable!("the arm matched TopN");
@@ -2701,10 +2802,59 @@ pub fn attach2_task(
                     }
                     Task::Cop(cop).into_root_task(allocator)?
                 }
-                Task::Mpp(_) => {
-                    return Err(PlanError::internal(
-                        "attach2Task4PhysicalTopN's MPP arm is not ported",
-                    ));
+                Task::Mpp(mpp) => {
+                    let by_exprs: Vec<tidb_expr::expression::Expression> =
+                        topn.by_items.iter().map(|item| item.expr.clone()).collect();
+                    let columns =
+                        tidb_expr::simple_expr::extract_columns_from_expressions(&by_exprs, None);
+                    let need_push_down = !columns.is_empty();
+                    let pushable = need_push_down
+                        && crate::pushdown::can_exprs_push_down_tiflash(&by_exprs)
+                        && !contains_virtual_column_in_plan(
+                            &by_exprs,
+                            mpp.plan.as_deref().ok_or_else(|| {
+                                PlanError::internal("MPP TopN attachment received an empty task")
+                            })?,
+                        );
+                    if pushable {
+                        let new_count = topn.offset.wrapping_add(topn.count);
+                        let stats = mpp
+                            .plan
+                            .as_deref()
+                            .and_then(PhysicalPlan::stats_info)
+                            .map(|profile| profile.derive_limit_stats(new_count as f64));
+                        let mut base = crate::physical::BasePhysicalPlan::new(
+                            allocator,
+                            "TopN",
+                            plan.query_block_offset(),
+                        );
+                        base.base.set_stats(stats);
+                        base.base.set_schema(
+                            mpp.plan.as_deref().and_then(PhysicalPlan::schema).cloned(),
+                        );
+                        let pushed = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+                            base,
+                            by_items: topn.by_items.clone(),
+                            partition_by: topn.partition_by.clone(),
+                            offset: 0,
+                            count: new_count,
+                            prefix_col: topn.prefix_col,
+                            prefix_len: topn.prefix_len,
+                        });
+                        let mut pushed_task = attach_plan_to_task(pushed, Task::Mpp(mpp));
+                        if let Some(PhysicalPlan::TopN(pushed_topn)) = pushed_task.plan_mut() {
+                            let child_schema = pushed_topn
+                                .base
+                                .children()
+                                .first()
+                                .and_then(PhysicalPlan::schema)
+                                .cloned();
+                            pushed_topn.base.base.set_schema(child_schema);
+                        }
+                        pushed_task.into_root_task(allocator)?
+                    } else {
+                        Task::Mpp(mpp).into_root_task(allocator)?
+                    }
                 }
             };
             if !topn.partition_by.is_empty() {
@@ -2729,9 +2879,10 @@ pub fn attach2_task(
                     attach_agg_over_cop(plan, cop, column_ids, allocator)
                 }
             }
-            Task::Mpp(_) => Err(PlanError::internal(
-                "attach2Task4PhysicalStreamAgg's MPP arm is not ported",
-            )),
+            Task::Mpp(mpp) => {
+                let converted = Task::Mpp(mpp).into_root_task(allocator)?;
+                Ok(attach_plan_to_task(plan, converted))
+            }
             root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task(allocator)?)),
         },
         // `attach2Task4PhysicalHashAgg` (`task.go:2162`): same split, gated
@@ -2745,8 +2896,9 @@ pub fn attach2_task(
                     Ok(attach_plan_to_task(plan, t))
                 }
             }
-            Task::Mpp(_) => Err(PlanError::internal(
-                "attach2Task4PhysicalHashAgg's MPP arm is not ported",
+            Task::Mpp(_mpp) => Err(PlanError::internal(
+                "attach2Task4PhysicalHashAgg's MPP phase construction requires \
+                 EnforceExchanger and PhysicalExchangeReceiver",
             )),
             root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task(allocator)?)),
         },
@@ -2921,6 +3073,191 @@ mod attach_tests {
             },
         ));
         Task::Root(root)
+    }
+
+    fn mpp_task_over(rows: f64) -> Task {
+        Task::Mpp(MppTask::new(
+            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+                base: op_with_stats("Dual", rows),
+                row_count: 0,
+            }),
+            MppPartitionType::Any,
+            [],
+        ))
+    }
+
+    #[test]
+    fn mpp_unary_attachment_follows_tiflash_pushdown_and_root_fallback() {
+        let selection = PhysicalPlan::Selection(PhysicalSelection {
+            base: op_with_stats("Selection", 8.0),
+            ..PhysicalSelection::default()
+        });
+        let pushed = attach2_task(
+            selection,
+            vec![mpp_task_over(10.0)],
+            None,
+            &PlanIdAllocator::new(),
+        )
+        .expect("an empty Selection is TiFlash-pushable");
+        assert!(matches!(pushed, Task::Mpp(_)));
+        assert!(matches!(pushed.plan(), Some(PhysicalPlan::Selection(_))));
+
+        let mut unsupported = tidb_expr::scalar_function::ScalarFunction::default();
+        unsupported.func_name = tidb_ast::CiString::new("tan");
+        let selection = PhysicalPlan::Selection(PhysicalSelection {
+            base: op_with_stats("Selection", 8.0),
+            conditions: vec![tidb_expr::expression::Expression::ScalarFunction(
+                unsupported,
+            )],
+            ..PhysicalSelection::default()
+        });
+        let converted = attach2_task(
+            selection,
+            vec![mpp_task_over(10.0)],
+            None,
+            &PlanIdAllocator::new(),
+        )
+        .expect("an unsupported Selection converts to root");
+        assert!(matches!(converted, Task::Root(_)));
+        assert!(matches!(converted.plan(), Some(PhysicalPlan::Selection(_))));
+
+        let projection = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+            base: op_with_stats("Projection", 8.0),
+            ..crate::physical::PhysicalProjection::default()
+        });
+        let projected = attach2_task(
+            projection,
+            vec![mpp_task_over(10.0)],
+            None,
+            &PlanIdAllocator::new(),
+        )
+        .expect("an empty Projection is TiFlash-pushable");
+        assert!(matches!(projected, Task::Mpp(_)));
+        assert!(matches!(
+            projected.plan(),
+            Some(PhysicalPlan::Projection(_))
+        ));
+    }
+
+    #[test]
+    fn mpp_limit_and_topn_keep_the_partial_operator_inside_the_reader() {
+        let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+            base: op_with_stats("Limit", 5.0),
+            offset: 2,
+            count: 3,
+            ..crate::physical::PhysicalLimit::default()
+        });
+        let limited = attach2_task(
+            limit,
+            vec![mpp_task_over(20.0)],
+            None,
+            &PlanIdAllocator::new(),
+        )
+        .expect("MPP Limit attaches");
+        let Some(PhysicalPlan::Limit(root_limit)) = limited.plan() else {
+            panic!("the original Limit remains at root");
+        };
+        let Some(PhysicalPlan::TableReader(reader)) = root_limit.base.children().first() else {
+            panic!("root Limit reads through a TableReader");
+        };
+        let Some(PhysicalPlan::ExchangeSender(sender)) = reader.table_plan.as_deref() else {
+            panic!("the MPP reader owns the pass-through sender");
+        };
+        let Some(PhysicalPlan::Limit(pushed_limit)) = sender.base.children().first() else {
+            panic!("the partial Limit is below the sender");
+        };
+        assert_eq!(pushed_limit.offset, 0);
+        assert_eq!(pushed_limit.count, 5);
+
+        let by_item = tidb_expr::aggregation::ByItems::new(
+            tidb_expr::expression::Expression::Column(tidb_expr::column::Column::new(
+                1,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            )),
+            false,
+        );
+        let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+            base: op_with_stats("TopN", 5.0),
+            by_items: vec![by_item],
+            offset: 4,
+            count: 6,
+            ..crate::physical::PhysicalTopN::default()
+        });
+        let topned = attach2_task(
+            topn,
+            vec![mpp_task_over(20.0)],
+            None,
+            &PlanIdAllocator::new(),
+        )
+        .expect("MPP TopN attaches");
+        let Some(PhysicalPlan::TopN(root_topn)) = topned.plan() else {
+            panic!("the original TopN remains at root");
+        };
+        let Some(PhysicalPlan::TableReader(reader)) = root_topn.base.children().first() else {
+            panic!("root TopN reads through a TableReader");
+        };
+        let Some(PhysicalPlan::ExchangeSender(sender)) = reader.table_plan.as_deref() else {
+            panic!("the MPP reader owns the pass-through sender");
+        };
+        let Some(PhysicalPlan::TopN(pushed_topn)) = sender.base.children().first() else {
+            panic!("the partial TopN is below the sender");
+        };
+        assert_eq!(pushed_topn.offset, 0);
+        assert_eq!(pushed_topn.count, 10);
+    }
+
+    #[test]
+    fn mpp_union_sequence_and_stream_agg_preserve_go_task_shapes() {
+        let union = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll {
+            base: op_with_stats("Union", 20.0),
+            mpp: true,
+        });
+        let union_task = attach2_task(
+            union,
+            vec![mpp_task_over(10.0), mpp_task_over(11.0)],
+            None,
+            &PlanIdAllocator::new(),
+        )
+        .expect("MPP UnionAll attaches");
+        assert!(matches!(union_task, Task::Mpp(_)));
+        assert_eq!(union_task.plan().expect("union plan").children().len(), 2);
+
+        let sequence = PhysicalPlan::Sequence(crate::physical::PhysicalSequence {
+            base: op_with_stats("Sequence", 20.0),
+        });
+        let sequence_task = attach2_task(
+            sequence,
+            vec![mpp_task_over(10.0), mpp_task_over(11.0)],
+            None,
+            &PlanIdAllocator::new(),
+        )
+        .expect("MPP Sequence attaches");
+        assert!(matches!(sequence_task, Task::Mpp(_)));
+        assert_eq!(
+            sequence_task
+                .plan()
+                .expect("sequence plan")
+                .children()
+                .len(),
+            2
+        );
+
+        let stream_agg = PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {
+            base: op_with_stats("StreamAgg", 2.0),
+            ..crate::physical::PhysicalStreamAgg::default()
+        });
+        let stream_task = attach2_task(
+            stream_agg,
+            vec![mpp_task_over(10.0)],
+            None,
+            &PlanIdAllocator::new(),
+        )
+        .expect("MPP StreamAgg converts to root");
+        assert!(matches!(stream_task, Task::Root(_)));
+        assert!(matches!(
+            stream_task.plan(),
+            Some(PhysicalPlan::StreamAgg(_))
+        ));
     }
 
     #[test]

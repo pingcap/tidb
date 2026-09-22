@@ -49,6 +49,18 @@ their recorded stage. The latest verified state is summarized first.
   ExchangeReceiver construction and remaining MPP enforcement/attachment arms
   remain open.
 
+- [x] (2026-09-21, MPP unary and set-operation attachment) Selection and
+  Projection enumeration now admits a TiFlash child property only when the
+  statement allows MPP, the logical plan has TiFlash, and the shared scalar
+  pushdown policy accepts every expression. MPP Selection/Projection attachment
+  follows the same push-or-convert rule. Limit and simple TopN push a partial
+  `offset=0, count=offset+count` operator into the MPP fragment before the
+  root boundary; UnionAll and all-MPP Sequence rebuild one MPP task over their
+  child fragments; StreamAgg converts to root. Focused physical and task-shape
+  tests pass. ExchangeReceiver/EnforceExchanger and HashAgg MPP phases, the
+  heavy-function TopN global/projection rewrite, and full package/workload
+  acceptance remain open.
+
 - [x] (2026-09-21, MaxOneRow enforced-MPP warning routing) The Go
   `CanSelfBeingPushedToCopImpl` refusal is now preserved before Rust's generic
   non-root task gate, so a `MaxOneRow` MPP refusal raises the source warning
@@ -7927,3 +7939,49 @@ the direct MPP-to-root construction refusal but does not yet add Go's
 multi-fragment `PhysicalExchangeReceiver`, task metadata, or the remaining
 MPP enforcement/attachment branches. No TiFlash cluster execution or
 sysbench/TPC-C/TPC-H/YCSB performance result is inferred from this unit test.
+
+
+## Continuing MPP unary and set-operation attachment parity
+
+The pinned Go physical operator package admits TiFlash candidates for Selection
+and Projection from `physical_selection.go` and `physical_projection.go`, then
+lets `attach2Task4PhysicalSelection` and
+`attach2Task4PhysicalProjection` push the operator only when
+`CanExprsPushDown(..., kv.TiFlash)` succeeds. Rust now exposes the same
+TiFlash admission through the shared `infer_pushdown` signature catalog,
+including recursive arguments, dedicated cast names, and unresolved-signature
+refusal. Candidate dispatch receives the statement's MPP flag and TiFlash
+replica bit; the legacy public enumeration wrappers still produce the root-only
+shape for callers without that context.
+
+`attach2Task` now follows the source MPP branches for unary Selection and
+Projection, the MPP Limit partial, and the simple TiFlash TopN partial. The
+partial operators use Go's wrapping offset-plus-count arithmetic, derive child
+statistics, and reset their schema from the attached child. Plain UnionAll and
+all-MPP Sequence consume child fragment plans into a fresh MPP task, while
+PartitionUnion remains invalid for TiFlash and StreamAgg converts to root as in
+the current Go branch. The existing task representation has no hash-column or
+multi-fragment receiver fields, so those metadata are preserved only where the
+Rust model can represent them; HashAgg MPP remains an explicit dependency on
+`EnforceExchanger` and `PhysicalExchangeReceiver`.
+
+The focused receipts from `rust/` pass:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib \
+      pushdown::tests -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib \
+      physical::tests::selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed \
+      -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib \
+      task::attach_tests -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib \
+      'physical::tests' -- --test-threads=1
+    cargo check --offline --locked -j12 -p tidb-planner --message-format=short
+
+The added tests cover TiFlash candidate emission, supported and unsupported
+MPP unary expressions, partial Limit/TopN placement below the pass-through
+sender, UnionAll/Sequence fragment rebuilding, and StreamAgg root conversion.
+The Go heavy-function `getPushedDownTopN` projection/global rewrite,
+partial-order and TiDB-cop TopN branches, ExchangeReceiver construction,
+EnforceExchanger, and HashAgg MPP phases remain explicit follow-up work; this
+checkpoint makes no whole-package or workload performance claim.

@@ -1467,6 +1467,60 @@ fn a_selection_enumerates_one_root_candidate_with_scaled_stats() {
 }
 
 #[test]
+fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
+    use crate::logical::{BaseLogicalPlan, LogicalProjection, LogicalSelection};
+    use crate::stats_info::StatsInfo;
+
+    let allocator = PlanIdAllocator::new();
+    let mut selection_base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
+    selection_base
+        .base
+        .set_stats(Some(StatsInfo::new(10.0, [])));
+    selection_base.set_has_tiflash(true);
+    let selection = LogicalSelection::new(selection_base, Vec::new());
+    let selection_plans = exhaust_physical_plans_4_logical_selection_with_mpp(
+        &selection,
+        &PhysicalProperty::default(),
+        &allocator,
+        1.0,
+        true,
+    );
+    assert_eq!(selection_plans.len(), 2);
+    assert_eq!(
+        selection_plans[1]
+            .base()
+            .child_req_prop(0)
+            .expect("MPP child property")
+            .task_tp,
+        TaskType::Mpp
+    );
+
+    let mut projection_base = BaseLogicalPlan::new(&allocator, LogicalProjection::TYPE, 0);
+    projection_base
+        .base
+        .set_stats(Some(StatsInfo::new(10.0, [])));
+    projection_base.set_has_tiflash(true);
+    let projection = LogicalProjection::new(projection_base, Vec::new());
+    let projection_plans = exhaust_physical_plans_4_logical_projection_with_mpp(
+        &projection,
+        &PhysicalProperty::default(),
+        &allocator,
+        1.0,
+        true,
+        true,
+    );
+    assert_eq!(projection_plans.len(), 2);
+    assert_eq!(
+        projection_plans[1]
+            .base()
+            .child_req_prop(0)
+            .expect("MPP child property")
+            .task_tp,
+        TaskType::Mpp
+    );
+}
+
+#[test]
 fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
     // `TryToGetChildProp` + `tryTransformSortItems`
     // (`logical_projection.go:524,553`): a bare column maps through, a

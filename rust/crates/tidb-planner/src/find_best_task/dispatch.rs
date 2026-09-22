@@ -417,23 +417,25 @@ fn exhaust_physical_plans(
         (slices, true)
     };
     match plan {
-        LogicalPlan::Selection(op) => {
-            Ok(one(physical::exhaust_physical_plans_4_logical_selection(
+        LogicalPlan::Selection(op) => Ok(one(
+            physical::exhaust_physical_plans_4_logical_selection_with_mpp(
                 op,
                 prop,
                 ctx.allocator,
                 ctx.skew_ratio,
-            )))
-        }
-        LogicalPlan::Projection(op) => {
-            Ok(one(physical::exhaust_physical_plans_4_logical_projection(
+                ctx.mpp_allowed,
+            ),
+        )),
+        LogicalPlan::Projection(op) => Ok(one(
+            physical::exhaust_physical_plans_4_logical_projection_with_mpp(
                 op,
                 prop,
                 ctx.allocator,
                 ctx.skew_ratio,
                 ctx.allow_projection_push_down,
-            )))
-        }
+                ctx.mpp_allowed,
+            ),
+        )),
         LogicalPlan::Sort(op) => Ok(one(physical::exhaust_physical_plans_4_logical_sort(
             op,
             prop,

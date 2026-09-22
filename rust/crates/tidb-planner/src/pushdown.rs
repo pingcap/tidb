@@ -31,6 +31,13 @@ pub fn can_exprs_push_down_tikv(exprs: &[Expression]) -> bool {
     exprs.iter().all(can_expr_push_down_tikv)
 }
 
+/// Go `CanExprsPushDown(ctx, exprs, kv.TiFlash)` over the expression families
+/// represented by the shared TiPB scalar catalog.
+#[must_use]
+pub fn can_exprs_push_down_tiflash(exprs: &[Expression]) -> bool {
+    exprs.iter().all(can_expr_push_down_tiflash)
+}
+
 fn can_expr_push_down_tikv(expr: &Expression) -> bool {
     use tidb_expr::infer_pushdown::{scalar_expr_supported_by_tikv, PushDownPolicy};
     use tidb_expr::pushdown_catalog::{PbScalar, ScalarFuncSig};
@@ -83,6 +90,37 @@ fn can_expr_push_down_tikv(expr: &Expression) -> bool {
         return false;
     }
     scalar_expr_supported_by_tikv(&PushDownPolicy::new(policy_name, signature))
+}
+
+fn can_expr_push_down_tiflash(expr: &Expression) -> bool {
+    use tidb_expr::infer_pushdown::{scalar_expr_supported_by_flash, PushDownPolicy};
+    use tidb_expr::pushdown_catalog::{PbScalar, ScalarFuncSig};
+
+    let Expression::ScalarFunction(function) = expr else {
+        return true;
+    };
+    if !function.args.iter().all(can_expr_push_down_tiflash) {
+        return false;
+    }
+    let name = function.func_name.lowercase();
+    let policy_name = if name.starts_with("cast_") {
+        "cast"
+    } else {
+        name.as_ref()
+    };
+    let signature = match tidb_expr::pushdown_catalog::from_expression(expr) {
+        Some(PbScalar::Call { signature, .. }) => signature.sig,
+        _ => ScalarFuncSig::Unspecified,
+    };
+    let mut policy = PushDownPolicy::new(policy_name, signature);
+    if policy_name == "cast" {
+        // TiFlash's cast policy uses both declared types. The catalog's
+        // resolved signature is still authoritative; an unresolved internal
+        // cast is refused rather than guessed.
+        policy.source_type = function.args.first().and_then(Expression::static_type);
+        policy.return_type = expr.static_type();
+    }
+    scalar_expr_supported_by_flash(&policy)
 }
 
 #[cfg(test)]
@@ -146,5 +184,29 @@ mod tests {
         // The mapping is name-prefix only; a name outside the cast family is
         // still decided by the shared policy.
         assert!(!can_exprs_push_down_tikv(&[func("castaway", vec![col])]));
+    }
+
+    #[test]
+    fn tiflash_admission_uses_the_shared_signature_policy() {
+        let col = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::LongLong)));
+        let one = Expression::Constant(Constant::new(
+            Datum::Int(1),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        assert!(can_exprs_push_down_tiflash(&[func(
+            "eq",
+            vec![col.clone(), one.clone()],
+        )]));
+        assert!(can_exprs_push_down_tiflash(&[func(
+            "if",
+            vec![col.clone(), one.clone(), one.clone()],
+        )]));
+        // TiFlash does not admit TiKV-only signatures such as RAND, and an
+        // unresolved function is rejected without a catalog signature.
+        assert!(!can_exprs_push_down_tiflash(&[func(
+            "rand",
+            vec![col.clone()]
+        )]));
+        assert!(!can_exprs_push_down_tiflash(&[func("tan", vec![col])]));
     }
 }

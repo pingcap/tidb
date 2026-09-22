@@ -200,9 +200,7 @@ pub struct PhysicalSelection {
 /// Go builds up to TWO child properties. The second is the MPP property,
 /// admitted only when `canPushDownToTiFlash` — a guard over TiFlash
 /// replicas (`GetHasTiFlash`), virtual columns, and
-/// `expression.CanExprsPushDown`. With no TiFlash tier in this port that
-/// guard evaluates false exactly as it does on a TiFlash-less Go cluster,
-/// so the MPP branch is structurally absent rather than refused.
+/// `expression.CanExprsPushDown`.
 /// `admitIndexJoinProps` narrows the same way: with no index-join property
 /// on the ported [`PhysicalProperty`], Go's function returns the property
 /// list unchanged, which is this body.
@@ -213,6 +211,18 @@ pub fn exhaust_physical_plans_4_logical_selection(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
 ) -> Vec<PhysicalPlan> {
+    exhaust_physical_plans_4_logical_selection_with_mpp(p, prop, allocator, skew_ratio, false)
+}
+
+/// MPP-aware form of [`exhaust_physical_plans_4_logical_selection`].
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
+    p: &crate::logical::LogicalSelection,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+    mpp_allowed: bool,
+) -> Vec<PhysicalPlan> {
     let mut child_prop = prop.clone_essential_fields();
     child_prop.index_join_prop = prop.index_join_prop.clone();
     let stats = p
@@ -220,18 +230,40 @@ pub fn exhaust_physical_plans_4_logical_selection(
         .base
         .stats_info()
         .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
-    let mut base = BasePhysicalPlan::new(
-        allocator,
-        crate::logical::LogicalSelection::TYPE,
-        p.base.base.query_block_offset(),
-    );
-    base.base.set_stats(stats);
-    base.set_children_req_props(vec![Some(child_prop)]);
-    vec![PhysicalPlan::Selection(PhysicalSelection {
-        base,
-        conditions: p.conditions.clone(),
-        from_data_source: false,
-    })]
+    let contains_virtual_column = p.conditions.iter().any(|expr| {
+        tidb_expr::simple_expr::extract_columns(expr)
+            .iter()
+            .any(|column| column.virtual_expr.is_some())
+    });
+    let mut child_props = vec![child_prop];
+    if prop.task_tp != TaskType::Mpp
+        && mpp_allowed
+        && p.base.has_tiflash()
+        && !contains_virtual_column
+        && crate::pushdown::can_exprs_push_down_tiflash(&p.conditions)
+    {
+        let mut mpp_prop = prop.clone_essential_fields();
+        mpp_prop.task_tp = TaskType::Mpp;
+        mpp_prop.index_join_prop = prop.index_join_prop.clone();
+        child_props.push(mpp_prop);
+    }
+    child_props
+        .into_iter()
+        .map(|child_prop| {
+            let mut base = BasePhysicalPlan::new(
+                allocator,
+                crate::logical::LogicalSelection::TYPE,
+                p.base.base.query_block_offset(),
+            );
+            base.base.set_stats(stats.clone());
+            base.set_children_req_props(vec![Some(child_prop)]);
+            PhysicalPlan::Selection(PhysicalSelection {
+                base,
+                conditions: p.conditions.clone(),
+                from_data_source: false,
+            })
+        })
+        .collect()
 }
 
 /// Go `physicalop.PhysicalProjection` (`physical_projection.go`, whole
@@ -256,10 +288,9 @@ pub struct PhysicalProjection {
 ///
 /// `TryToGetChildProp` decides admission: a required order that runs
 /// through a computed expression cannot cross a projection, and the
-/// enumeration returns empty. The TiKV candidate follows Go's
-/// `AllowProjectionPushDown`, expression-pushdown, virtual-column, and
-/// performance-benefit gates. The TiFlash candidate remains absent with no
-/// TiFlash tier, exactly as on a TiFlash-less Go cluster.
+/// enumeration returns empty. The TiFlash candidate follows Go's replica and
+/// expression gates. The TiKV candidate follows Go's `AllowProjectionPushDown`,
+/// expression-pushdown, virtual-column, and performance-benefit gates.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_projection(
     p: &crate::logical::LogicalProjection,
@@ -267,6 +298,26 @@ pub fn exhaust_physical_plans_4_logical_projection(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
     allow_projection_push_down: bool,
+) -> Vec<PhysicalPlan> {
+    exhaust_physical_plans_4_logical_projection_with_mpp(
+        p,
+        prop,
+        allocator,
+        skew_ratio,
+        allow_projection_push_down,
+        false,
+    )
+}
+
+/// MPP-aware form of [`exhaust_physical_plans_4_logical_projection`].
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
+    p: &crate::logical::LogicalProjection,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+    allow_projection_push_down: bool,
+    mpp_allowed: bool,
 ) -> Vec<PhysicalPlan> {
     let Some(child_prop) = p.try_to_get_child_prop(prop) else {
         return Vec::new();
@@ -277,6 +328,16 @@ pub fn exhaust_physical_plans_4_logical_projection(
         .stats_info()
         .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
     let mut child_props = vec![child_prop.clone()];
+    if child_prop.task_tp != TaskType::Mpp
+        && mpp_allowed
+        && p.base.has_tiflash()
+        && crate::pushdown::can_exprs_push_down_tiflash(&p.exprs)
+    {
+        let mut mpp_prop = child_prop.clone_essential_fields();
+        mpp_prop.task_tp = TaskType::Mpp;
+        mpp_prop.index_join_prop = prop.index_join_prop.clone();
+        child_props.push(mpp_prop);
+    }
     let child_schema_len = p
         .base
         .children()
