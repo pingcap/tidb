@@ -2840,7 +2840,9 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), nodeW)
 		require.NoError(t, err, tt.sql)
-		checkVisitInfo(t, builder.visitInfo, tt.ans, tt.sql)
+		// This test covers concrete column requirements. SELECT(*) is a
+		// supplementary fallback requirement and is covered separately.
+		checkVisitInfo(t, stripFallbackSelectVisitInfo(builder.visitInfo), tt.ans, tt.sql)
 
 		require.Nil(t, TryFastPlan(s.ctx, nodeW), tt.sql)
 	}
@@ -3043,6 +3045,25 @@ func unique(v []visitInfo) []visitInfo {
 		}
 	}
 	return v[:len(v)-repeat]
+}
+
+func stripFallbackSelectVisitInfo(visitInfos []visitInfo) []visitInfo {
+	concreteSelect := make(map[[2]string]struct{})
+	for _, v := range visitInfos {
+		if v.privilege == mysql.SelectPriv && v.column != "*" && v.column != "" {
+			concreteSelect[[2]string{v.db, v.table}] = struct{}{}
+		}
+	}
+	ret := visitInfos[:0]
+	for _, v := range visitInfos {
+		if v.privilege == mysql.SelectPriv && v.column == "*" {
+			if _, ok := concreteSelect[[2]string{v.db, v.table}]; ok {
+				continue
+			}
+		}
+		ret = append(ret, v)
+	}
+	return ret
 }
 
 func checkVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {

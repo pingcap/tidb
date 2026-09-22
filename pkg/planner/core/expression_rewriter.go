@@ -2815,29 +2815,6 @@ func hasLimit(plan base.LogicalPlan) bool {
 }
 
 func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName) {
-	// A table-level SELECT requirement (`column == "*"`) recorded by
-	// buildDataSource is implied by a column-level SELECT requirement on the same
-	// table, so drop it here to keep the effective requirement set minimal and
-	// the reported error precise. Tables whose columns are never referenced are
-	// untouched and keep the table-level requirement that prevents
-	// `SELECT <constant> FROM t` from bypassing the privilege check.
-	visited := make(map[[2]string]struct{}, len(columnVisited))
-	for _, colName := range columnVisited {
-		visited[[2]string{colName.Schema.L, colName.Table.L}] = struct{}{}
-	}
-	if len(visited) > 0 {
-		kept := b.visitInfo[:0]
-		for _, v := range b.visitInfo {
-			if v.privilege == mysql.SelectPriv && v.column == "*" {
-				if _, ok := visited[[2]string{v.db, v.table}]; ok {
-					continue
-				}
-			}
-			kept = append(kept, v)
-		}
-		b.visitInfo = kept
-	}
-
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
 	views := b.SavedViews
 	switch {
