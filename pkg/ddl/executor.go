@@ -4287,6 +4287,11 @@ func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.I
 				return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_JOB_INTERVAL"))
 			}
 		}
+		if ttlCronJobSchedule != nil {
+			if err := checkTTLJobInterval(*ttlCronJobSchedule); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	job = &model.Job{

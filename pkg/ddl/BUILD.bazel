@@ -331,6 +331,7 @@ go_test(
         "table_split_test.go",
         "table_test.go",
         "tiflash_replica_test.go",
+        "ttl_sql_test.go",
         "ttl_test.go",
     ],
     embed = [":ddl"],

@@ -304,6 +304,10 @@ func TestTTLDefaultJobInterval(t *testing.T) {
 	d, err := duration.ParseDuration(DefaultTTLJobInterval)
 	require.NoError(t, err)
 	require.Equal(t, 24*time.Hour, d)
+	// test default value of `StarterDefaultTTLJobInterval` is valid.
+	d, err = duration.ParseDuration(StarterDefaultTTLJobInterval)
+	require.NoError(t, err)
+	require.Equal(t, 15*time.Minute, d)
 	// test default value of `OldDefaultTTLJobInterval` is valid.
 	d, err = duration.ParseDuration(OldDefaultTTLJobInterval)
 	require.NoError(t, err)
