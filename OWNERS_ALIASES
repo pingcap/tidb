@@ -1,0 +1,3 @@
+# See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
+# The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
+aliases: {}
