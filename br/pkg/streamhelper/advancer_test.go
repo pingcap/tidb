@@ -273,21 +273,19 @@ func TestClearCache(t *testing.T) {
 		return nil
 	}
 	failedStoreID := uint64(0)
-	hasFailed := false
+	hasFailed := atomic.NewBool(false)
 	for _, s := range c.stores {
 		s.clientMu.Lock()
+		sid := s.GetID()
 		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
-			// mark this store cache cleared
-			failedStoreID = s.GetID()
-			if !hasFailed {
-				hasFailed = true
+			// Mark one contacted store failed, independent of region leader placement.
+			if hasFailed.CompareAndSwap(false, true) {
+				failedStoreID = sid
 				return errors.New("failed to get checkpoint")
 			}
 			return nil
 		}
 		s.clientMu.Unlock()
-		// mark one store failed is enough
-		break
 	}
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
