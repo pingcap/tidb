@@ -62,6 +62,8 @@ struct Observation {
     /// Values the fake encoded, flattened in wire order.
     sent_values: Vec<i64>,
     prefix_limit: Option<tidb_proto::tipb::Limit>,
+    topn: Option<tidb_proto::tipb::TopN>,
+    executor_types: Vec<i32>,
 }
 
 #[derive(Debug, Default)]
@@ -138,13 +140,42 @@ impl QueryTransport for FakeTransport {
             dag_output_offsets: dag_offsets.clone(),
             conditions: conditions.len(),
             sent_values: Vec::new(),
-            prefix_limit: dag.executors.iter().find_map(|executor| executor.limit.clone()),
+            prefix_limit: dag
+                .executors
+                .iter()
+                .find_map(|executor| executor.limit.clone()),
+            topn: dag
+                .executors
+                .iter()
+                .find_map(|executor| executor.top_n.clone()),
+            executor_types: dag
+                .executors
+                .iter()
+                .map(|executor| executor.tp.unwrap())
+                .collect(),
         };
-        let mut rows_data = Vec::new();
-        for (id, tag) in region_rows() {
-            if !conditions.iter().all(|condition| admits(condition, id)) {
-                continue;
+        let mut rows: Vec<_> = region_rows()
+            .into_iter()
+            .filter(|(id, _)| conditions.iter().all(|condition| admits(condition, *id)))
+            .collect();
+        if let Some(topn) = &observation.topn {
+            let [order] = topn.order_by.as_slice() else {
+                panic!("one order key")
+            };
+            let expression = order.expr.as_ref().unwrap();
+            assert_eq!(
+                expression.tp,
+                Some(tidb_proto::tipb::ExprType::ColumnRef as i32)
+            );
+            let (_, offset) = tidb_codec::decode_int(expression.val.as_deref().unwrap()).unwrap();
+            rows.sort_by_key(|(id, tag)| if offset == 0 { *id } else { *tag });
+            if order.desc == Some(true) {
+                rows.reverse();
             }
+            rows.truncate(topn.limit.unwrap() as usize);
+        }
+        let mut rows_data = Vec::new();
+        for (id, tag) in rows {
             for offset in &dag_offsets {
                 let value = match *offset {
                     1 => tag,
@@ -355,4 +386,66 @@ fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
     scan.prefix_limit.as_mut().unwrap().column_offset = 1;
     scan.limit = Some(1);
     assert!(scanner(&region).open(&scan).is_err());
+}
+
+#[test]
+fn index_topn_filters_and_orders_input_columns_before_returning_only_handles() {
+    use tidb_executor::remote_scan::{PushdownIndexScan, PushdownTopN, PushdownTopNOrder};
+    let region = Arc::new(FakeRegion::default());
+    let mut predicate = lowered_conjunct();
+    let ScanPredicate::Compare(comparison) = &mut predicate else {
+        unreachable!()
+    };
+    comparison.literal = Datum::Int(3);
+    let mut scan = request(vec![predicate], Some(vec![1]));
+    scan.index = Some(PushdownIndexScan {
+        index_id: 7,
+        declared_unique: false,
+        index_column_count: 1,
+        desc: false,
+    });
+    scan.columns[1].id = -1;
+    scan.columns[1].is_handle = true;
+    scan.primary_column_ids.clear();
+    scan.primary_prefix_column_ids.clear();
+    scan.handle_index = Some(0);
+    scan.topn = Some(PushdownTopN {
+        order_by: vec![PushdownTopNOrder {
+            offset: 0,
+            desc: true,
+        }],
+        limit: 2,
+    });
+    let mut stream = scanner(&region)
+        .open(&scan)
+        .expect("index TopN can return only handles");
+    assert!(stream.predicates_applied());
+    let mut handles = Vec::new();
+    while let Some(row) = stream.next_row().unwrap() {
+        assert_eq!(row.len(), 1);
+        handles.push(row[0].clone());
+    }
+    stream.close();
+    assert_eq!(handles, [Datum::Int(60), Datum::Int(50)]);
+    let observations = region.observations.lock().unwrap();
+    let [observation] = observations.as_slice() else {
+        panic!("one request")
+    };
+    assert_eq!(
+        observation.executor_types,
+        [
+            ExecType::TypeIndexScan as i32,
+            ExecType::TypeSelection as i32,
+            ExecType::TypeTopN as i32,
+        ]
+    );
+    assert_eq!(observation.dag_output_offsets, [1]);
+    assert_eq!(observation.conditions, 1);
+    let topn = observation.topn.as_ref().unwrap();
+    assert_eq!(
+        topn.order_by[0].expr.as_ref().unwrap().val.as_deref(),
+        Some(&[128, 0, 0, 0, 0, 0, 0, 0][..])
+    );
+    assert_eq!(topn.limit, Some(2));
+    assert_eq!(observation.sent_values, [60, 50]);
 }

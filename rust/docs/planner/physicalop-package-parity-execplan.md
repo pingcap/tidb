@@ -8539,3 +8539,169 @@ The unselected-sort-column failure was investigated, not changed. A master Go
 runtime receipt, complete original-package tests, real TiKV execution and
 sysbench/TPC-C/TPC-H/YCSB measurements remain outstanding, along with the earlier
 package-wide obligations. User-owned untracked files remain untouched.
+
+
+## Continue remote index Selection parity (2026-09-22)
+
+
+Master remains `2339f8171265558ab30b6e564b2e3a854e53e8ea` after a fresh fetch;
+the working branch is synchronized with origin. The previous forced-prefix
+checkpoint made authoritative progress and remains pushed.
+
+### Progress
+
+
+- [x] Inspect master index request output offsets and Rust's blanket predicate refusal.
+- [x] Add failing coverage for covered-index predicates and schema remapping.
+- [x] Admit complete covered predicates, preserve native fallback, and retain Go's handle projection.
+- [x] Validate native/remote filter, projection and limit interactions and commit the checkpoint.
+- [ ] Push the rebased checkpoint after the final receipt update.
+
+### Decision Log
+
+
+Master `buildIndexScanOutputOffsets` returns handles for an unpartitioned double
+read after the index Selection/Limit; ordering columns are additionally needed
+for partition merges. The Rust remote cursor currently refuses every nonempty
+predicate before reaching its remapper. Removing that guard alone is unsound:
+the remapper can pick a truncated index copy instead of a full common-handle
+copy, hidden rowid slots are absent from its compact source map, and a backend
+can return a stream without confirming that it evaluated all predicates.
+
+Keep the full index-plus-handle input schema for expressions. Map predicates and
+TopN keys only to full stored columns, prefer the complete handle when an indexed
+copy is truncated, and map an explicit hidden-rowid slot separately from stored
+table offsets. A backend must confirm complete predicate application before its
+handle stream is consumed; otherwise close it and use the existing native path.
+After accepted Selection/TopN/Limit execution, project only handles for a double
+read. Preserve complete projected values for a covering IndexReader. Partitioned
+and dirty reads retain their existing fallback guards.
+
+### Validation and remaining scope
+
+
+Reuse the remote-cursor request fixtures, access-path fixtures and cop-scan
+transport suites. First demonstrate the blanket-refusal regression, then test
+reordered/pruned schemas, prefix/common-handle duplicates, hidden handles,
+uncovered predicate refusal, incomplete backend rejection and stream closure.
+Exercise wire expressions before projection and the SQL prefix-filter suite.
+Run dependent compilation, `make lint`, scoped formatting and diff review.
+These steps advance the existing complete physicalop/executor package claim;
+whole-package acceptance and the four workload benchmarks remain open.
+
+### Implementation and regression evidence
+
+The remote index cursor now maps the complete source schema, including the
+hidden-rowid insertion slot, to the index executor's input columns. A declared
+prefix only supplies a full value when its length equals the declared column
+length or is unspecified. Common-handle copies are admitted with the same full
+length and old-version/new-collation restrictions as master. An uncovered
+predicate or covering projection refuses before opening a backend request.
+The cursor closes and refuses a stream that does not acknowledge every predicate.
+
+Master `PhysicalIndexScan.InitSchema` appends integer handles even when a declared
+index part has the same column ID. Rust now preserves that trailing copy, just
+as it already preserves common-handle duplicates. Handle decoding uses the
+trailing positions; covering projection selects a complete copy, including a
+full indexed value when its common-handle copy is truncated.
+
+`IndexRangeSourceExec` carries both its physical index Selection and a later
+accepted index filter, requiring complete descriptions before remote execution.
+It supplies the hidden-handle source slot and requests handle-only double-read
+output after Selection, Limit or TopN. Covering reads retain result values.
+The coprocessor lowering now permits projection after TopN, which preserves
+its input schema; aggregation and incomplete predicates still refuse projection.
+
+The covered-predicate test failed before the fix because no request reached the
+capture backend (`/private/tmp/tidb-index-selection-red.log`). With the old TopN
+projection guard restored, the transport test failed with Unsupported before
+opening its stream (`/private/tmp/tidb-index-topn-red.log`); it passes after removal.
+The transport fixture evaluates numeric Selection and TopN before projection and
+returns handles 60 and 50, with wire executor order IndexScan, Selection, TopN.
+Native SQL tests remain the evidence for tied-prefix Limit row semantics; the
+prefix transport fixture only checks the protobuf contract.
+
+The expanded source regression also reopens with a later accepted filter and
+checks that both predicate descriptions reach the remote request. It verifies a
+single correct table row and stream closure before the table lookup. Request
+fixtures cover all hidden-handle insertion positions, reordered/pruned schemas,
+whole versus truncated index and primary parts, common-handle restoration
+eligibility, duplicate integer handles, covering values, and incomplete-backend
+closure. These fixtures do not replace a real TiKV run.
+
+Validation commands (from `rust/` unless stated otherwise):
+
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_selection_remaps_pruned_columns_before_handle_projection --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib remote_cursor_tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib access_path::tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_prefix_reads --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-exec --test all cop_scan_narrowed_output_source --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-exec --test cop_scan_partial_predicate_limit_source --message-format=short -- --test-threads=1
+    cargo check --offline --locked -j12 -p tidb-executor -p tidb-exec -p tidb-session --message-format=short
+
+From the repository root:
+
+    make lint
+    python3 /private/tmp/tidb-index-selection-format.py --check
+    git diff --check
+
+The five suites passed 31, 35, 15, three and eight tests respectively (92 distinct
+tests). The dependent crates compile with existing warnings. `make lint` first
+failed because sandbox DNS could not resolve proxy.golang.org for its pinned
+revive installation; rerunning with network/cache access passed. The narrowed
+transport suite is registered under `--test all`; trying its file stem as a
+standalone target was a command-selection error, corrected above. Two test-only
+name/trait imports were corrected before the successful access-path run.
+No Go, Bazel, dependency or generated artifact changed, so bazel_prepare is not
+required. Scoped nightly rustfmt avoids preexisting unrelated formatting drift.
+
+Changed files are `tidb-executor/src/kv_table/table_scan.rs`,
+`tidb-executor/src/access_path.rs`, `tidb-exec/src/cop_scan.rs`, its existing
+`tests/cop_scan_narrowed_output_source.rs` fixture, and this ExecPlan. The main
+compatibility risk is the distinction between full input-column positions and
+projected response positions; the new request and transport regressions cover
+that distinction without claiming real backend compatibility validation.
+Potential savings are remote predicate evaluation and sending only handles for
+filtered/TopN double reads. No workload throughput improvement is claimed.
+
+Master Go runtime comparison, real TiKV execution, all original whole-package
+tests/artifacts/gates and sysbench/TPC-C/TPC-H/YCSB measurements remain open.
+This is seed evidence within the existing whole-package claim, not completion of
+a package or an independently transcreated feature. The two user-owned untracked
+Rust files remain untouched. After the earlier 318 GB target cleanup and scoped
+rebuilds, target uses 14 GB and the filesystem has about 320 GiB free.
+
+The integer-handle regression was also checked with the old deduplication branch
+restored: it failed with column IDs `[1]` instead of `[1, 1]`
+(`/private/tmp/tidb-index-handle-red.log`). Restoring the fix and rerunning all
+31 remote-cursor tests passed. The exact regression command was:
+
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_selection_keeps_duplicate_handles_and_full_covering_values --message-format=short -- --test-threads=1
+
+A final fetch kept master at the same pin and found one new working-branch
+commit, `cefb9da070` (table-scan Selection ExpectedCnt statistics). Integrate it
+by rebasing the reviewed checkpoint, then rerun the planner dispatch and SQL
+prefix-index suites before pushing. The remote request/transport code does not
+overlap that incoming change.
+
+Master's `DataSource.indexCoveringColumn` is the source for full-value coverage.
+Its `IsIndexCoveringCondition` also permits IS NULL over a truncated prefix; that
+expression-aware optimization remains outside this checkpoint's conservative
+full-column remapper. The new truncated-value regressions use equality with a
+complete string, so they do not misclassify IS NULL as requiring full bytes.
+Unsupported remapping retains the existing local execution path.
+
+### Rebase validation and outcome
+
+The checkpoint rebased cleanly onto `cefb9da070`, preserving the incoming
+ExpectedCnt statistics change. These commands passed after rebase:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib find_best_task::dispatch::tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_prefix_reads --message-format=short -- --test-threads=1
+
+All 31 planner tests and 15 SQL tests passed. With the earlier suites, this
+checkpoint has 123 distinct passing targeted tests; repeated red/green and
+post-rebase executions are not added to that count. No unrelated source changes
+or user-owned untracked files were included. The reviewed checkpoint is committed;
+only publishing the commit remains in this milestone. Whole-package acceptance
+and workload measurements remain outstanding.

@@ -1712,6 +1712,7 @@ impl KvTable {
         index_id: i64,
         ranges: &[IndexRange],
         scan_keep: &[usize],
+        scan_extra_handle_slot: Option<usize>,
         predicates: &[ScanPredicate],
         topn: Option<&PushdownTopN>,
         zone: &SessionTimeZone,
@@ -1740,11 +1741,7 @@ impl KvTable {
         {
             return Ok(None);
         }
-        // An index-handle cursor only returns index/handle columns. A
-        // residual predicate may reference a table column outside that
-        // layout; falling back keeps the local Selection on a complete row
-        // instead of evaluating it against a narrower chunk.
-        if !predicates.is_empty() {
+        if scan_extra_handle_slot.is_some_and(|slot| slot > scan_keep.len()) {
             return Ok(None);
         }
         let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
@@ -1776,19 +1773,73 @@ impl KvTable {
             table_offsets.push(Some(*offset));
         }
         if let Some(offset) = self.pk_handle_offset {
-            if !table_offsets.contains(&Some(offset)) {
-                table_offsets.push(Some(offset));
-            }
+            // InitSchema also appends an integer handle already present in
+            // the index. TiKV subtracts this trailing slot from the width to
+            // determine how many declared index datums to decode.
+            table_offsets.push(Some(offset));
         }
         if self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty() {
             table_offsets.push(None);
         }
+        let common_primary = crate::handle_range::clustered_primary_metadata(self);
+        let complete_columns = table_offsets
+            .iter()
+            .enumerate()
+            .map(|(position, offset)| {
+                let Some(offset) = offset else {
+                    return true;
+                };
+                let Some(column) = self.columns.get(*offset) else {
+                    return false;
+                };
+                let full_length = |length| {
+                    length == tidb_datatype::UNSPECIFIED_LENGTH
+                        || length == column.field_type.flen()
+                };
+                if position < index.column_offsets.len() {
+                    return full_length(index.prefix_length(position));
+                }
+                if self.pk_handle_offset == Some(*offset) {
+                    return true;
+                }
+                // Go's indexCoveringColumn requires a complete value; a
+                // prefix or old unrestored common-handle string cannot supply it.
+                common_primary.as_ref().is_some_and(|primary| {
+                    primary
+                        .column_offsets
+                        .iter()
+                        .position(|part| part == offset)
+                        .is_some_and(|part| full_length(primary.prefix_length(part)))
+                }) && !(self.common_handle_version == 0
+                    && self.use_new_collation
+                    && column.field_type.eval_type() == tidb_datatype::EvalType::String
+                    && !column
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::BINARY))
+            })
+            .collect::<Vec<_>>();
+        // Predicates name the source's pruned schema, including a possible
+        // hidden handle between stored columns. Mask truncated index copies
+        // so a duplicate full common-handle copy supplies the value instead.
         let layout = table_offsets
             .iter()
-            .map(|offset| {
-                offset
-                    .and_then(|offset| scan_keep.iter().position(|kept| *kept == offset))
-                    .unwrap_or(usize::MAX)
+            .zip(&complete_columns)
+            .map(|(offset, complete)| {
+                if !complete {
+                    return usize::MAX;
+                }
+                match offset {
+                    Some(offset) => scan_keep
+                        .iter()
+                        .position(|kept| kept == offset)
+                        .map(|slot| {
+                            slot + usize::from(
+                                scan_extra_handle_slot.is_some_and(|extra| slot >= extra),
+                            )
+                        }),
+                    None => scan_extra_handle_slot,
+                }
+                .unwrap_or(usize::MAX)
             })
             .collect::<Vec<_>>();
         let Some(predicates) = predicates
@@ -1852,7 +1903,7 @@ impl KvTable {
         let handle_indices = if self.common_handle_offsets.is_empty() {
             vec![table_offsets
                 .iter()
-                .position(|offset| *offset == self.pk_handle_offset || offset.is_none())
+                .rposition(|offset| *offset == self.pk_handle_offset || offset.is_none())
                 .unwrap_or(0)]
         } else {
             self.common_handle_offsets
@@ -1919,13 +1970,12 @@ impl KvTable {
             });
         // `output_offsets` addresses the full executor schema, while the
         // cursor consumes the projected response schema. Keep both mappings
-        // explicit: a plain double read projects the original handle slots
+        // explicit: a double read projects the original handle slots
         // and then sees them densely at positions 0..handle_count.
-        // A residual predicate may still reference any table/index column.
-        // Narrowing to handles in that case shifts the response coordinates
-        // and makes local evaluation index past the returned chunk. Keep the
-        // complete schema unless this is a predicate-free handle-only read.
-        let narrow_to_handles = handle_only && predicates.is_empty() && topn.is_none();
+        // Selection and TopN address the full input schema; projection runs
+        // afterward, like Go's buildIndexScanOutputOffsets. Before consuming
+        // the stream below, require all predicates to have been applied.
+        let narrow_to_handles = handle_only;
         let output_offsets = narrow_to_handles.then(|| handle_indices.clone());
         let returned_handle_indices = if narrow_to_handles {
             (0..handle_indices.len()).collect::<Vec<_>>()
@@ -1966,31 +2016,22 @@ impl KvTable {
         // project a covering row back into the pruned table schema. A primary
         // key column uses the trailing handle copy, not an indexed sort-key
         // copy (prefix/collation encodings may differ).
-        let projected_indices = projected_keep
-            .map(|keep| {
+        let projected_indices = if let Some(keep) = projected_keep {
+            let Some(indices) =
                 keep.iter()
                     .map(|offset| {
-                        if self.pk_handle_offset == Some(*offset) {
-                            table_offsets
-                                .iter()
-                                .rposition(|candidate| *candidate == Some(*offset))
-                        } else {
-                            table_offsets
-                                .iter()
-                                .position(|candidate| *candidate == Some(*offset))
-                        }
-                        .ok_or_else(|| {
-                            KvTableError::Decode(format!(
-                                "covering index omitted a requested table column \
-                                 (requested_offset={offset}, keep={keep:?}, table_offsets={table_offsets:?}, \
-                                 pk_handle_offset={:?}, common_handle_offsets={:?})",
-                                self.pk_handle_offset, self.common_handle_offsets,
-                            ))
-                        })
+                        table_offsets.iter().zip(&complete_columns).rposition(
+                            |(candidate, complete)| *complete && *candidate == Some(*offset),
+                        )
                     })
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .transpose()?;
+                    .collect::<Option<Vec<_>>>()
+            else {
+                return Ok(None);
+            };
+            Some(indices)
+        } else {
+            None
+        };
         let request = PushdownScanRequest {
             table_id: self.table_id,
             index: Some(PushdownIndexScan {
@@ -2012,9 +2053,7 @@ impl KvTable {
                 .collect(),
             primary_prefix_column_ids: Vec::new(),
             predicates,
-            // A plain double read does not consume indexed values. Select
-            // only the trailing handle columns after TiKV evaluates the
-            // index scan; predicates and TopN retain the complete schema.
+            // Select handle columns after the full index executor stack.
             output_offsets,
             topn,
             limit: index_limit,
@@ -2036,6 +2075,10 @@ impl KvTable {
         };
         let mut scan = scan.map_err(KvTableError::from)?;
         if !scan.staged.is_empty() {
+            scan.stream.close();
+            return Ok(None);
+        }
+        if !request.predicates.is_empty() && !scan.stream.predicates_applied() {
             scan.stream.close();
             return Ok(None);
         }
@@ -5369,11 +5412,35 @@ mod remote_cursor_tests {
         }
     }
 
-    /// Records the one request a builder sends, then declines to serve it so
-    /// the test can assert on the wire shape itself.
-    #[derive(Debug)]
+    /// Records requests and optionally acknowledges complete predicate execution.
+    #[derive(Clone, Debug, Default)]
     struct RequestCapture {
         captured: std::sync::Arc<std::sync::Mutex<Option<crate::remote_scan::PushdownScanRequest>>>,
+        response_predicates_applied: Option<bool>,
+        closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    struct CapturedIndexStream {
+        predicates_applied: bool,
+        closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl PushdownRowStream for CapturedIndexStream {
+        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            Ok(None)
+        }
+
+        fn rows_returned(&self) -> u64 {
+            0
+        }
+
+        fn predicates_applied(&self) -> bool {
+            self.predicates_applied
+        }
+
+        fn close(&mut self) {
+            self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     impl TableStorage for RequestCapture {
@@ -5405,7 +5472,15 @@ mod remote_cursor_tests {
                 .captured
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner()) = Some(request.clone());
-            None
+            self.response_predicates_applied.map(|predicates_applied| {
+                Ok(crate::remote_scan::PushdownScan {
+                    stream: Box::new(CapturedIndexStream {
+                        predicates_applied,
+                        closed: std::sync::Arc::clone(&self.closed),
+                    }),
+                    staged: Vec::new(),
+                })
+            })
         }
 
         fn key_count(&self) -> usize {
@@ -5415,9 +5490,7 @@ mod remote_cursor_tests {
         fn clear(&mut self) {}
 
         fn clone_box(&self) -> Box<dyn TableStorage> {
-            Box::new(RequestCapture {
-                captured: std::sync::Arc::clone(&self.captured),
-            })
+            Box::new(self.clone())
         }
     }
 
@@ -5491,6 +5564,396 @@ mod remote_cursor_tests {
             origin_default: None,
             comment: String::new(),
             generated: None,
+        }
+    }
+
+    #[test]
+    fn index_selection_remaps_pruned_columns_before_handle_projection() {
+        use crate::predicate_pushdown::{ScanComparison, ScanComparisonOp};
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let mut table = KvTable::with_storage(
+            91,
+            vec![
+                bigint_column(1, "id"),
+                bigint_column(2, "a"),
+                bigint_column(3, "v"),
+            ],
+            Box::new(RequestCapture {
+                captured: std::sync::Arc::clone(&captured),
+                ..RequestCapture::default()
+            }),
+        );
+        table.set_pk_handle_offset(0);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 7,
+                name: "idx_a".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![1],
+                prefix_lengths: vec![UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        let predicate = ScanPredicate::Compare(ScanComparison {
+            column_offset: 1,
+            column_type: table.columns[1].field_type.clone(),
+            literal_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            op: ScanComparisonOp::Gt,
+            literal: Datum::Int(6),
+            column_on_left: true,
+            collation: tidb_datatype::Collation::Utf8Mb4Bin,
+        });
+        assert!(table
+            .pushdown_index_handle_cursor(
+                7,
+                &[IndexRange::full()],
+                &[2, 1, 0],
+                None,
+                &[predicate],
+                None,
+                &SessionTimeZone::utc(),
+                &PushdownStatementContext::default(),
+                false,
+                Some(1),
+                None,
+                None,
+                false,
+                true,
+                None,
+            )
+            .unwrap()
+            .is_none());
+        let request = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("covered index Selection reaches the backend");
+        let [ScanPredicate::Compare(predicate)] = request.predicates.as_slice() else {
+            panic!("one index comparison");
+        };
+        assert_eq!(predicate.column_offset, 0);
+        assert_eq!(request.output_offsets, Some(vec![1]));
+        assert_eq!(request.limit, Some(1));
+    }
+
+    fn index_selection_table(capture: RequestCapture, prefix_length: i64) -> KvTable {
+        let mut a = bigint_column(2, "a");
+        a.field_type = FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_flen(20);
+        let mut table = KvTable::with_storage(
+            91,
+            vec![bigint_column(1, "id"), a, bigint_column(3, "v")],
+            Box::new(capture),
+        )
+        .with_new_collation_mode(true);
+        table.set_pk_handle_offset(0);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 7,
+                name: "idx_a".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![1],
+                prefix_lengths: vec![prefix_length],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        table
+    }
+
+    fn index_selection_predicate(offset: u32, field_type: FieldType) -> ScanPredicate {
+        use crate::predicate_pushdown::{ScanComparison, ScanComparisonOp};
+        let collation = tidb_datatype::Collation::Utf8Mb4Bin;
+        let literal = if field_type.eval_type() == tidb_datatype::EvalType::String {
+            Datum::new_collation_string(b"abc".to_vec(), collation)
+        } else {
+            Datum::Int(7)
+        };
+        ScanPredicate::Compare(ScanComparison {
+            column_offset: offset,
+            column_type: field_type.clone(),
+            literal_type: field_type,
+            op: ScanComparisonOp::Eq,
+            literal,
+            column_on_left: true,
+            collation,
+        })
+    }
+
+    #[test]
+    fn index_selection_uses_only_complete_index_or_handle_values() {
+        // (prefix, common handle, handle version, new collation, source slot,
+        //  expected index-executor slot). Source schema is [v, a, id].
+        for (prefix, common, version, new_collation, slot, expected) in [
+            (-1, false, 1, true, 1, Some(0)),
+            (20, false, 1, true, 1, Some(0)),
+            (2, false, 1, true, 1, None),
+            (-1, false, 1, true, 0, None),
+            (2, false, 1, true, 2, Some(1)),
+            (2, true, 1, true, 1, Some(2)),
+            (2, true, 0, true, 1, None),
+            (2, true, 0, false, 1, Some(2)),
+            (-1, true, 0, true, 1, Some(0)),
+        ] {
+            let capture = RequestCapture {
+                response_predicates_applied: Some(true),
+                ..RequestCapture::default()
+            };
+            let mut table = index_selection_table(capture.clone(), prefix)
+                .with_new_collation_mode(new_collation);
+            if common {
+                table.pk_handle_offset = None;
+                table.set_common_handle_offsets(vec![0, 1]);
+                table.set_common_handle_version(version);
+            }
+            let predicate = index_selection_predicate(
+                slot,
+                table.columns[[2, 1, 0][slot as usize]].field_type.clone(),
+            );
+            let prefix_limit = (prefix == 2).then_some(crate::remote_scan::PushdownPrefixLimit {
+                count: 1,
+                column_offset: 0,
+            });
+            let cursor = table
+                .pushdown_index_handle_cursor(
+                    7,
+                    &[IndexRange::full()],
+                    &[2, 1, 0],
+                    None,
+                    &[predicate],
+                    None,
+                    &SessionTimeZone::utc(),
+                    &PushdownStatementContext::default(),
+                    false,
+                    None,
+                    prefix_limit.as_ref(),
+                    None,
+                    false,
+                    true,
+                    None,
+                )
+                .unwrap();
+            assert_eq!(cursor.is_some(), expected.is_some(), "prefix={prefix}, common={common}, version={version}, new_collation={new_collation}, slot={slot}");
+            let request = capture.captured.lock().unwrap().clone();
+            if let Some(expected) = expected {
+                let request = request.unwrap();
+                let [ScanPredicate::Compare(comparison)] = request.predicates.as_slice() else {
+                    panic!("one index predicate");
+                };
+                assert_eq!(comparison.column_offset, expected);
+                assert_eq!(
+                    request.output_offsets,
+                    Some(if common { vec![1, 2] } else { vec![1] })
+                );
+                assert_eq!(request.prefix_limit, prefix_limit);
+                assert_eq!(
+                    cursor.as_ref().unwrap().handle_indices,
+                    if common { vec![0, 1] } else { vec![0] }
+                );
+                drop(cursor);
+                assert!(capture.closed.load(std::sync::atomic::Ordering::SeqCst));
+            } else {
+                assert!(
+                    request.is_none(),
+                    "uncovered predicates must not reach the backend"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn index_selection_maps_hidden_handle_slots_and_checks_backend_application() {
+        for extra_slot in 0..=2 {
+            for applied in [false, true] {
+                let capture = RequestCapture {
+                    response_predicates_applied: Some(applied),
+                    ..RequestCapture::default()
+                };
+                let mut table = index_selection_table(capture.clone(), -1);
+                table.pk_handle_offset = None;
+                // Stored source columns [a, v], with _tidb_rowid inserted at
+                // extra_slot. Neither source nor wire positions are table offsets.
+                let a_slot = usize::from(extra_slot == 0);
+                let predicates = vec![
+                    ScanPredicate::IsNull {
+                        column_offset: extra_slot as u32,
+                        column_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        negated: true,
+                    },
+                    ScanPredicate::IsNull {
+                        column_offset: a_slot as u32,
+                        column_type: table.columns[1].field_type.clone(),
+                        negated: true,
+                    },
+                ];
+                let topn = PushdownTopN {
+                    order_by: vec![crate::remote_scan::PushdownTopNOrder {
+                        offset: a_slot,
+                        desc: true,
+                    }],
+                    limit: 2,
+                };
+                let cursor = table
+                    .pushdown_index_handle_cursor(
+                        7,
+                        &[IndexRange::full()],
+                        &[1, 2],
+                        Some(extra_slot),
+                        &predicates,
+                        Some(&topn),
+                        &SessionTimeZone::utc(),
+                        &PushdownStatementContext::default(),
+                        false,
+                        None,
+                        None,
+                        None,
+                        false,
+                        true,
+                        None,
+                    )
+                    .unwrap();
+                assert_eq!(cursor.is_some(), applied);
+                assert_eq!(
+                    capture.closed.load(std::sync::atomic::Ordering::SeqCst),
+                    !applied
+                );
+                let request = capture.captured.lock().unwrap().clone().unwrap();
+                let offsets: Vec<_> = request
+                    .predicates
+                    .iter()
+                    .map(|predicate| {
+                        let ScanPredicate::IsNull { column_offset, .. } = predicate else {
+                            panic!("IS NOT NULL")
+                        };
+                        *column_offset
+                    })
+                    .collect();
+                assert_eq!(offsets, [1, 0]);
+                assert_eq!(request.topn.unwrap().order_by[0].offset, 0);
+                assert_eq!(request.output_offsets, Some(vec![1]));
+                assert_eq!(request.handle_index, Some(0));
+                assert_eq!(request.columns[1].id, EXTRA_HANDLE_COLUMN_ID);
+                drop(cursor);
+                assert!(capture.closed.load(std::sync::atomic::Ordering::SeqCst));
+            }
+        }
+    }
+
+    #[test]
+    fn index_selection_keeps_duplicate_handles_and_full_covering_values() {
+        for common in [false, true] {
+            let capture = RequestCapture {
+                response_predicates_applied: Some(true),
+                ..RequestCapture::default()
+            };
+            let mut table = index_selection_table(capture.clone(), 2);
+            let (projected, expected_ids, expected_handle, expected_projection) = if common {
+                table.pk_handle_offset = None;
+                table.set_common_handle_offsets(vec![0, 1]);
+                table.set_common_handle_version(1);
+                (1, vec![2, 1, 2], vec![1, 2], vec![2])
+            } else {
+                table.indexes_mut()[0].column_offsets = vec![0];
+                table.indexes_mut()[0].prefix_lengths = vec![-1];
+                (0, vec![1, 1], vec![1], vec![1])
+            };
+            let cursor = table
+                .pushdown_index_handle_cursor(
+                    7,
+                    &[IndexRange::full()],
+                    &[0, 1, 2],
+                    None,
+                    &[],
+                    None,
+                    &SessionTimeZone::utc(),
+                    &PushdownStatementContext::default(),
+                    false,
+                    None,
+                    None,
+                    None,
+                    false,
+                    false,
+                    Some(&[projected]),
+                )
+                .unwrap()
+                .unwrap();
+            let request = capture.captured.lock().unwrap().clone().unwrap();
+            assert_eq!(
+                request
+                    .columns
+                    .iter()
+                    .map(|column| column.id)
+                    .collect::<Vec<_>>(),
+                expected_ids
+            );
+            assert_eq!(cursor.handle_indices, expected_handle);
+            assert_eq!(cursor.projected_indices, Some(expected_projection));
+            assert!(request.output_offsets.is_none());
+        }
+    }
+
+    #[test]
+    fn index_selection_refuses_truncated_primary_values_even_for_covering_output() {
+        for index_prefix in [-1, 2] {
+            let capture = RequestCapture {
+                response_predicates_applied: Some(true),
+                ..RequestCapture::default()
+            };
+            let mut table = index_selection_table(capture.clone(), index_prefix);
+            table.pk_handle_offset = None;
+            table.set_common_handle_offsets(vec![0, 1]);
+            table.set_common_handle_version(1);
+            let mut primary = table.indexes()[0].clone();
+            primary.id = 0;
+            primary.name = "PRIMARY".to_owned();
+            primary.column_offsets = vec![0, 1];
+            primary.prefix_lengths = vec![-1, 2];
+            table.add_index(primary, true);
+            // A full index part can still supply a value that the clustered
+            // handle truncates; two truncated copies cannot supply it.
+            for filtered in [false, true] {
+                let predicates = if filtered {
+                    vec![index_selection_predicate(
+                        1,
+                        table.columns[1].field_type.clone(),
+                    )]
+                } else {
+                    Vec::new()
+                };
+                let cursor = table
+                    .pushdown_index_handle_cursor(
+                        7,
+                        &[IndexRange::full()],
+                        &[0, 1, 2],
+                        None,
+                        &predicates,
+                        None,
+                        &SessionTimeZone::utc(),
+                        &PushdownStatementContext::default(),
+                        false,
+                        None,
+                        None,
+                        None,
+                        false,
+                        false,
+                        Some(&[1]),
+                    )
+                    .unwrap();
+                assert_eq!(cursor.is_some(), index_prefix == -1);
+                if let Some(cursor) = cursor {
+                    assert_eq!(cursor.projected_indices, Some(vec![0]));
+                } else {
+                    assert!(capture.captured.lock().unwrap().is_none());
+                }
+            }
         }
     }
 
@@ -5713,6 +6176,7 @@ mod remote_cursor_tests {
             ],
             Box::new(RequestCapture {
                 captured: std::sync::Arc::clone(&captured),
+                ..RequestCapture::default()
             }),
         );
         table.set_common_handle_offsets(vec![0, 1]);
@@ -5835,6 +6299,7 @@ mod remote_cursor_tests {
             ],
             Box::new(RequestCapture {
                 captured: std::sync::Arc::clone(&captured),
+                ..RequestCapture::default()
             }),
         );
         // idx_a carries only `a` (offset 0); the aggregate below groups by
@@ -6493,6 +6958,7 @@ mod remote_cursor_tests {
             vec![bigint_column(1, "v")],
             Box::new(RequestCapture {
                 captured: std::sync::Arc::clone(&captured),
+                ..RequestCapture::default()
             }),
         );
         let handles = vec![

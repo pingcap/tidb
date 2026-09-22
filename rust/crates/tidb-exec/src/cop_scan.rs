@@ -317,14 +317,11 @@ where
         // narrowing it cannot answer exactly -- once the narrower row crosses
         // the wire, no residual conjunct can be repeated locally over the
         // dropped columns. So the narrowing travels when EVERY predicate
-        // lowers and the executor stack stays [Scan, Selection?]: an
-        // aggregate replaces the output schema the offsets index into, and
-        // either aggregate or TopN must keep today's refusal.
+        // lowers. Selection, Limit and TopN preserve the input schema and
+        // run before projection; aggregation replaces that schema.
         let wire_output_offsets: Option<Vec<u32>> = match request.output_offsets.as_ref() {
             None => None,
-            Some(offsets)
-                if predicates_applied && request.aggregate.is_none() && request.topn.is_none() =>
-            {
+            Some(offsets) if predicates_applied && request.aggregate.is_none() => {
                 if offsets
                     .iter()
                     .any(|offset| *offset >= request.columns.len())

@@ -3727,14 +3727,28 @@ impl Executor for IndexRangeSourceExec {
         // the local walk, which is exactly the shape that cannot afford it;
         // a servable request is refused into the local cursor only by the
         // semantic guards above.
-        let lowered: &[crate::predicate_pushdown::ScanPredicate] =
-            if let Some(filter) = &self.index_probe {
-                filter.predicates()
-            } else if self.index_filter || self.top_n.is_some() {
-                &self.pushed
+        let index_predicates = self
+            .index_probe
+            .as_ref()
+            .map_or(&[][..], |filter| filter.predicates());
+        // Both the physical index Selection and any later accepted index
+        // filter must travel before a remote Limit or TopN counts rows.
+        let legacy_index_filter = self.index_filter || self.top_n.is_some();
+        let lowered = if legacy_index_filter && !self.pushed.is_empty() {
+            if index_predicates.is_empty() {
+                std::borrow::Cow::Borrowed(self.pushed.as_slice())
             } else {
-                &[]
-            };
+                std::borrow::Cow::Owned(
+                    index_predicates
+                        .iter()
+                        .chain(&self.pushed)
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                )
+            }
+        } else {
+            std::borrow::Cow::Borrowed(index_predicates)
+        };
         // go's rolling `fetchHandles` keeps up to `2 x DistSQLConcurrency`
         // region requests in flight and orders them only when the read's
         // answer IS the walk -- a covering/keep-order read, a TopN, or a
@@ -3751,7 +3765,9 @@ impl Executor for IndexRangeSourceExec {
         let index_filter_described = self
             .index_probe
             .as_ref()
-            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
+            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described)
+            && (!legacy_index_filter || self.filter.as_ref()
+                .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described));
         if let Some(aggregate) = self
             .partial_aggregate
             .as_ref()
@@ -3794,7 +3810,8 @@ impl Executor for IndexRangeSourceExec {
                     self.index_id,
                     &self.ranges,
                     &self.keep,
-                    lowered,
+                    self.extra_handle_slot,
+                    &lowered,
                     self.top_n.as_ref(),
                     self.decode_context.zone(),
                     &self.statement,
@@ -3830,12 +3847,9 @@ impl Executor for IndexRangeSourceExec {
                     // scan shapes.
                     (!self.covering).then_some(self.batch_size as u64),
                     order_free,
-                    // A double-read index worker consumes only handles from
-                    // the index side when no predicate or TopN is evaluated
-                    // there. Go's `buildIndexScanOutputOffsets` emits exactly
-                    // those handle columns; a covering reader must retain
-                    // its indexed values because they are the result rows.
-                    !self.covering && lowered.is_empty() && self.top_n.is_none(),
+                    // Go projects handles after the index Selection/TopN.
+                    // A covering reader retains its result values instead.
+                    !self.covering,
                     (self.covering && self.extra_handle_slot.is_none())
                         .then_some(self.keep.as_slice()),
                 )
@@ -4887,6 +4901,7 @@ impl IndexJoinLookupExec {
             index_id,
             &ranges,
             &keep,
+            None,
             &predicates,
             None,
             self.decode_context.zone(),
@@ -6575,14 +6590,16 @@ mod tests {
 
     #[test]
     fn pushed_limit_closes_index_before_inline_table_lookup() {
+        use crate::table_access::TableAccess;
         let check_close = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let request = Arc::new(std::sync::Mutex::new(None));
         let mut table = KvTable::with_storage(
             89,
             vec![column("a", 1), column("b", 2)],
             Box::new(CoveringIndexStorage {
                 inner: MemTableStorage::new(),
                 gets: Arc::default(),
-                request: Arc::default(),
+                request: Arc::clone(&request),
                 closed: Arc::default(),
                 require_closed_before_get: Arc::clone(&check_close),
             }),
@@ -6626,12 +6643,49 @@ mod tests {
             crate::RowDecodeContext::for_test_query_utc(),
         );
         check_close.store(true, Ordering::SeqCst);
+        let mut b = tidb_expr::column::Column::new(2, long());
+        b.index = 1;
+        let condition = Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
+            tidb_ast::CiString::new("gt"),
+            long(),
+            vec![
+                Expression::Column(b),
+                Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(6), long())),
+            ],
+        ));
+        let ctx = crate::StmtContext::for_query();
+        source.set_index_conditions(vec![condition.clone()], &ctx);
         source.limit = Some(1);
         source.open().unwrap();
+        assert!(
+            source.remote_index.is_some(),
+            "the covered predicate uses the remote index stream"
+        );
         let mut chunk = source.new_chunk();
         source.next(&mut chunk).unwrap();
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 42);
+        let first_request = request.lock().unwrap().clone().unwrap();
+        assert_eq!(first_request.predicates.len(), 1);
+        assert_eq!(first_request.output_offsets, Some(vec![1]));
+        assert_eq!(first_request.limit, Some(1));
+        source.close().unwrap();
+
+        let filter = crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
+            vec![condition],
+            &ctx,
+        );
+        assert!(source.accept_scan_filter(&filter, &ctx));
+        assert!(source.accept_index_filter());
+        source.open().unwrap();
+        source.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 1);
+        assert_eq!(chunk.get_row(0).get_int64(0), 42);
+        assert_eq!(
+            request.lock().unwrap().as_ref().unwrap().predicates.len(),
+            2,
+            "later accepted index conditions must not replace the physical Selection"
+        );
         source.close().unwrap();
     }
 
