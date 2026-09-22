@@ -763,12 +763,6 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	}
 	defer w.sessPool.Put(evalSessCtx)
 	evalSess := sess.NewSession(evalSessCtx)
-	scheduleTimeZone, err := mviewTableInfo.MaterializedView.RefreshScheduleTimeZone.GetLocation()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	restore := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, mviewTableInfo.MaterializedView.RefreshScheduleSQLMode, scheduleTimeZone)
-	defer restore()
 	next, shouldUpdate, err := deriveCreateMaterializedViewNextUnixSeconds(ctx, evalSess, mviewSchemaName, mviewTableInfo.Name.O, mviewTableInfo.MaterializedView)
 	if err != nil {
 		return errors.Trace(err)
@@ -792,12 +786,6 @@ func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, ml
 	defer w.sessPool.Put(evalSessCtx)
 	evalSess := sess.NewSession(evalSessCtx)
 	info := mlogTableInfo.MaterializedViewLog
-	tz, err := info.PurgeScheduleTimeZone.GetLocation()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	restore := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, info.PurgeScheduleSQLMode, tz)
-	defer restore()
 	next, shouldUpdate, err := deriveCreateMaterializedViewLogNextUnixSeconds(ctx, evalSess, mlogSchemaName, mlogTableInfo.Name.O, info)
 	if err != nil {
 		return errors.Trace(err)

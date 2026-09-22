@@ -88,6 +88,45 @@ func MaterializedScheduleErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMa
 	}
 }
 
+// SetMaterializedScheduleEvalSession configures a session for evaluating a
+// materialized view schedule expression and returns a function that restores
+// the session state.
+func SetMaterializedScheduleEvalSession(
+	sctx sessionctx.Context,
+	sqlMode mysql.SQLMode,
+	scheduleTimeZone *time.Location,
+) func() {
+	sessVars := sctx.GetSessionVars() //nolint:forbidigo
+	originalSQLMode := sessVars.SQLMode
+	originalNoBackslashEscaped := sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped)
+	originalTypeFlags := sessVars.StmtCtx.TypeFlags()
+	originalErrLevels := sessVars.StmtCtx.ErrLevels()
+	originalTimeZone := sessVars.TimeZone
+	originalStmtTimeZone := sessVars.StmtCtx.TimeZone()
+
+	sessVars.SQLMode = sqlMode
+	// SQLMode is assigned directly below instead of through SetSystemVar, so keep
+	// the corresponding server status flag synchronized for this evaluation.
+	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
+	sessVars.StmtCtx.SetTypeFlags(MaterializedScheduleTypeFlagsWithSQLMode(sqlMode))
+	sessVars.StmtCtx.SetErrLevels(MaterializedScheduleErrLevelsWithSQLMode(sqlMode))
+	sessVars.TimeZone = scheduleTimeZone
+	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
+
+	return func() {
+		sessVars.SQLMode = originalSQLMode
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, originalNoBackslashEscaped)
+		sessVars.StmtCtx.SetTypeFlags(originalTypeFlags)
+		sessVars.StmtCtx.SetErrLevels(originalErrLevels)
+		sessVars.TimeZone = originalTimeZone
+		if originalStmtTimeZone != nil {
+			sessVars.StmtCtx.SetTimeZone(originalStmtTimeZone)
+		} else {
+			sessVars.StmtCtx.SetTimeZone(sessVars.Location())
+		}
+	}
+}
+
 // EvalMaterializedScheduleExpr parses and evaluates a persisted materialized
 // view schedule expression. The caller must configure evalSctx with the
 // schedule's SQL mode, conversion flags, error levels, and timezone first.
@@ -150,33 +189,8 @@ func DeriveMaterializedScheduleNextTime(
 		return nil, true, nil
 	}
 
-	sessVars := evalSctx.GetSessionVars()
-	origSQLMode := sessVars.SQLMode
-	origNoBackslashEscaped := sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped)
-	origTypeFlags := sessVars.StmtCtx.TypeFlags()
-	origErrLevels := sessVars.StmtCtx.ErrLevels()
-	origTimeZone := sessVars.TimeZone
-	origStmtTimeZone := sessVars.StmtCtx.TimeZone()
-	sessVars.SQLMode = scheduleSQLMode
-	// SQLMode is assigned directly below instead of through SetSystemVar, so keep
-	// the corresponding server status flag synchronized for this evaluation.
-	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, scheduleSQLMode.HasNoBackslashEscapesMode())
-	sessVars.StmtCtx.SetTypeFlags(MaterializedScheduleTypeFlagsWithSQLMode(scheduleSQLMode))
-	sessVars.StmtCtx.SetErrLevels(MaterializedScheduleErrLevelsWithSQLMode(scheduleSQLMode))
-	sessVars.TimeZone = scheduleTimeZone
-	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
-	defer func() {
-		sessVars.SQLMode = origSQLMode
-		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origNoBackslashEscaped)
-		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
-		sessVars.StmtCtx.SetErrLevels(origErrLevels)
-		sessVars.TimeZone = origTimeZone
-		if origStmtTimeZone != nil {
-			sessVars.StmtCtx.SetTimeZone(origStmtTimeZone)
-		} else {
-			sessVars.StmtCtx.SetTimeZone(sessVars.Location())
-		}
-	}()
+	restore := SetMaterializedScheduleEvalSession(evalSctx, scheduleSQLMode, scheduleTimeZone)
+	defer restore()
 
 	// Execute a separate statement to refresh the statement timestamp cache.
 	// Schedule expressions can contain NOW(), which must use the current

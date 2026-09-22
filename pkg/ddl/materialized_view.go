@@ -1051,9 +1051,6 @@ func (e *executor) alterMaterializedViewLogPurge(ctx sessionctx.Context, schemaI
 	// evaluation or acquiring an info-table row lock held by a running purge. Errors
 	// below therefore do not roll back the completed DDL job; lock contention becomes
 	// a warning.
-	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, sessionVars.SQLMode, purgeScheduleTimeZone)
-	defer restoreEvalSession()
-
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
 	ddlSess := sess.NewSession(ctx)
 	nextPurgeUnixSeconds, shouldUpdateNextPurgeUnixSeconds, err := deriveMaterializedScheduleNextUnixSecondsForDDL(kctx, ddlSess, schemaName.O, mlogName.O, purgeStartWith, purgeNext, sessionVars.SQLMode, purgeScheduleTimeZone, logAlterMaterializedViewLogPurgeNextUnixSecondsUpdateNull)
@@ -1108,9 +1105,6 @@ func (e *executor) alterMaterializedViewRefresh(ctx sessionctx.Context, schemaID
 	// evaluation or acquiring an info-table row lock held by a running refresh. Errors
 	// below therefore do not roll back the completed DDL job; lock contention becomes
 	// a warning.
-	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, sessionVars.SQLMode, refreshScheduleTimeZone)
-	defer restoreEvalSession()
-
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
 	ddlSess := sess.NewSession(ctx)
 	nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds, err := deriveMaterializedScheduleNextUnixSecondsForDDL(kctx, ddlSess, schemaName.O, viewName.O, refreshStartWith, refreshNext, sessionVars.SQLMode, refreshScheduleTimeZone, logAlterMaterializedViewRefreshNextUnixSecondsUpdateNull)

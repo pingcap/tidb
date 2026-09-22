@@ -77,6 +77,8 @@ func deriveMaterializedScheduleNextUnixSecondsForDDL(
 	if startExpr == "" && nextExpr == "" {
 		return nil, true, nil
 	}
+	restore := expression.SetMaterializedScheduleEvalSession(ddlSess.Session(), scheduleSQLMode, scheduleTimeZone)
+	defer restore()
 
 	nowTime, err := loadCreateMaterializedViewScheduleNow(ctx, ddlSess)
 	if err != nil {
@@ -188,42 +190,6 @@ func logCreateMaterializedViewLogNextUnixSecondsUpdateNull(
 		zap.String("purgeStartWith", startExpr),
 		zap.String("purgeNext", nextExpr),
 	)
-}
-
-func setCreateMaterializedViewScheduleEvalSession(
-	sctx sessionctx.Context,
-	sqlMode mysql.SQLMode,
-	scheduleTimeZone *time.Location,
-) func() {
-	sessVars := sctx.GetSessionVars() //nolint:forbidigo
-	originalSQLMode := sessVars.SQLMode
-	originalTypeFlags := sessVars.StmtCtx.TypeFlags()
-	originalErrLevels := sessVars.StmtCtx.ErrLevels()
-
-	var originalTZ *time.Location
-	if sessVars.TimeZone != nil {
-		tz := *sessVars.TimeZone
-		originalTZ = &tz
-	}
-	originalStmtTZ := sessVars.StmtCtx.TimeZone()
-
-	sessVars.SQLMode = sqlMode
-	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sqlMode))
-	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sqlMode))
-	sessVars.TimeZone = scheduleTimeZone
-	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
-
-	return func() {
-		sessVars.SQLMode = originalSQLMode
-		sessVars.StmtCtx.SetErrLevels(originalErrLevels)
-		sessVars.StmtCtx.SetTypeFlags(originalTypeFlags)
-		sessVars.TimeZone = originalTZ
-		if originalStmtTZ != nil {
-			sessVars.StmtCtx.SetTimeZone(originalStmtTZ)
-			return
-		}
-		sessVars.StmtCtx.SetTimeZone(sessVars.Location())
-	}
 }
 
 func loadCreateMaterializedViewScheduleNow(ctx context.Context, ddlSess *sess.Session) (types.Time, error) {
