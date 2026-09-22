@@ -358,6 +358,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         table_id: 1,
         partition: None,
         index_id: None,
+        access_cols: None,
         ranges: vec![point_range(0)],
         range_rebuild: Some(PointRangeRebuild::Table(TableRangeRebuild::int_handle(
             vec![parameter_condition("eq", handle, 0)],
@@ -371,6 +372,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         base: BasePhysicalPlan::with_id(12, "BatchPointGet", 0),
         table_id: 1,
         index_id: Some(2),
+        access_cols: None,
         unsigned_handle: false,
         ranges: vec![point_range(0), point_range(1)],
         partition_ids: None,
@@ -452,6 +454,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         table_id: 1,
         partition: None,
         index_id: None,
+        access_cols: None,
         ranges: vec![template_range.clone()],
         range_rebuild: Some(PointRangeRebuild::Table(TableRangeRebuild::common_handle(
             conditions(),
@@ -464,6 +467,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         table_id: 1,
         partition: None,
         index_id: Some(5),
+        access_cols: None,
         ranges: vec![template_range],
         range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
             conditions(),
@@ -537,6 +541,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
         table_id: 1,
         partition: None,
         index_id: Some(5),
+        access_cols: None,
         ranges: vec![template_range],
         range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
             vec![Expression::ScalarFunction(eq)],
@@ -608,6 +613,7 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
         base: BasePhysicalPlan::with_id(33, "BatchPointGet", 0),
         table_id: 1,
         index_id: Some(5),
+        access_cols: None,
         unsigned_handle: false,
         ranges: vec![template_range.clone(), template_range],
         partition_ids: None,

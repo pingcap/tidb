@@ -1328,6 +1328,12 @@ fn test_source_remaining_leaf_operators() {
         union_all_cost(&children, 5.0, true).value(),
         100.0 / 1_000_000_000.0
     );
+    let mut recalculate = PlanCostOption::new();
+    recalculate.with_cost_flag(crate::cost_usage::COST_FLAG_RECALCULATE);
+    assert_eq!(
+        union_all_cost_with_option(Some(&recalculate), &children, 5.0, true).value(),
+        100.0
+    );
     // Apply re-runs its probe once per build row -- no batching discount.
     let probe = recorded_child(10.0);
     assert_eq!(

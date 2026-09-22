@@ -40,7 +40,7 @@
 //!   children, conservative and shape-neutral.
 
 use crate::cardinality::row_size::RowSizeColumn;
-use crate::cost_usage::CostVer2;
+use crate::cost_usage::{CostVer2, PlanCostOption};
 use crate::physical::PhysicalPlan;
 use crate::plan_base::PlanError;
 use crate::plan_cost_ver2::{
@@ -70,11 +70,12 @@ pub struct CostEnv {
 }
 
 /// The default-factor coster.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Ver2Coster {
     factors: Ver2Factors,
     session_factors: CostFactorVars,
     session: CostSessionOpts,
+    cost_option: Option<crate::cost_usage::PlanCostOption>,
 }
 
 impl TaskCoster for Ver2Coster {
@@ -116,6 +117,7 @@ impl Ver2Coster {
             factors,
             session_factors,
             session,
+            cost_option: None,
         }
     }
 
@@ -126,11 +128,48 @@ impl Ver2Coster {
             factors: env.factors.clone(),
             session_factors: env.cost_factors.clone(),
             session: env.session,
+            cost_option: None,
         }
     }
 
+    /// Prices one physical plan with the same recursive operator dispatch the
+    /// volcano task comparison uses. The standalone physical-plan API has no
+    /// session owner in Rust, so callers that have a statement snapshot use
+    /// [`Self::from_env`] first; the default constructor retains Go's default
+    /// factor/session values for detached plans and unit tests.
+    #[must_use]
+    pub fn plan_cost(
+        &self,
+        plan: &PhysicalPlan,
+        task_type: TaskType,
+        is_child_of_inl: bool,
+    ) -> CostVer2 {
+        self.price_with_scan_context(plan, task_type, Some(is_child_of_inl))
+    }
+
+    /// Prices one detached plan while honoring Go's recalculation/trace
+    /// option flags. The production task comparator keeps this unset because
+    /// it compares only numeric costs; the physical-plan compatibility API
+    /// supplies the caller's option here.
+    #[must_use]
+    pub fn plan_cost_with_option(
+        &self,
+        plan: &PhysicalPlan,
+        task_type: TaskType,
+        is_child_of_inl: bool,
+        option: PlanCostOption,
+    ) -> CostVer2 {
+        let mut coster = self.clone();
+        coster.cost_option = Some(option);
+        coster.plan_cost(plan, task_type, is_child_of_inl)
+    }
+
+    fn cost_option(&self) -> Option<&crate::cost_usage::PlanCostOption> {
+        self.cost_option.as_ref()
+    }
+
     fn rows(plan: &PhysicalPlan) -> f64 {
-        plan.stats_info().map_or(1.0, |stats| stats.row_count())
+        crate::plan_cost_ver2::cardinality(plan.stats_info().map_or(1.0, |stats| stats.row_count()))
     }
 
     /// Go `getAvgRowSize(plan.StatsInfo(), plan.Schema().Columns)`: a plan
@@ -224,41 +263,49 @@ impl Ver2Coster {
             // no probe RangeInfo, and the penalty inputs default exactly as
             // a pseudo-stats session's do.
             PhysicalPlan::TableScan(scan) => {
-                crate::plan_cost_ver2::table_scan_cost(
-                    None,
-                    crate::plan_cost_ver2::TableScanInput {
+                let row_size = if scan.cost_columns.is_empty() {
+                    Self::row_size(plan)
+                } else {
+                    Self::row_size_for_columns(
+                        scan.cost_columns
+                            .iter()
+                            .filter(|column| column.id != crate::plan_builder::EXTRA_COMMIT_TS_ID),
+                        plan.stats_info()
+                            .and_then(crate::stats_info::StatsInfo::hist_coll),
+                    )
+                };
+                if scan.store_type == crate::physical_table_reader::StoreType::TiFlash {
+                    crate::plan_cost_ver2::tiflash_table_scan_cost(
+                        self.cost_option(),
                         rows,
-                        row_size: if scan.cost_columns.is_empty() {
-                            Self::row_size(plan)
-                        } else {
-                            Self::row_size_for_columns(
-                                scan.cost_columns.iter().filter(|column| {
-                                    column.id != crate::plan_builder::EXTRA_COMMIT_TS_ID
-                                }),
-                                plan.stats_info()
-                                    .and_then(crate::stats_info::StatsInfo::hist_coll),
-                            )
+                        Self::row_size(plan),
+                        &self.factors.tiflash_scan,
+                        self.session_factors.table_tiflash_scan,
+                    )
+                } else {
+                    crate::plan_cost_ver2::table_scan_cost(
+                        self.cost_option(),
+                        crate::plan_cost_ver2::TableScanInput {
+                            rows,
+                            row_size,
+                            is_child_of_inl,
+                            // Go `ranger.HasFullRange(ts.Ranges, unsignedIntHandle)`;
+                            // an unfilled range list reads as the full scan.
+                            has_full_range_scan: scan.ranges.is_empty()
+                                || crate::ranger::types::has_full_range(&scan.ranges, false),
+                            penalty: scan.table_scan_penalty,
                         },
-                        is_child_of_inl,
-                        // Go `ranger.HasFullRange(ts.Ranges, unsignedIntHandle)`;
-                        // an unfilled range list reads as the full scan.
-                        has_full_range_scan: scan.ranges.is_empty()
-                            || crate::ranger::types::has_full_range(&scan.ranges, false),
-                        penalty: scan.table_scan_penalty,
-                    },
-                    if scan.desc {
-                        &self.factors.tikv_desc_scan
-                    } else {
-                        &self.factors.tikv_scan
-                    },
-                    &self.session_factors,
-                )
+                        self.factors
+                            .task_scan(false, scan.store_type, task_type, scan.desc),
+                        &self.session_factors,
+                    )
+                }
             }
             // `getPlanCostVer24PhysicalIndexScan`, including Go's untraced
             // `(index-id % 100) / 1e6` tie-breaker between same-cost
             // indexes.
             PhysicalPlan::IndexScan(scan) => crate::plan_cost_ver2::index_scan_cost(
-                None,
+                self.cost_option(),
                 rows,
                 if scan.cost_columns.is_empty() {
                     Self::row_size(plan)
@@ -269,12 +316,13 @@ impl Ver2Coster {
                             .and_then(crate::stats_info::StatsInfo::hist_coll),
                     )
                 },
-                if scan.desc {
-                    &self.factors.tikv_desc_scan
-                } else {
-                    &self.factors.tikv_scan
-                },
-                1.0,
+                self.factors.task_scan(
+                    false,
+                    crate::physical_table_reader::StoreType::TiKv,
+                    task_type,
+                    scan.desc,
+                ),
+                self.session_factors.index_scan,
                 Some(scan.index_id),
             ),
             // `getPlanCostVer24PhysicalTableReader` / `...IndexReader`:
@@ -287,22 +335,49 @@ impl Ver2Coster {
                     .table_plan
                     .as_deref()
                     .map_or(rows, |plan| Self::rows(plan));
+                let child_task_type =
+                    if reader.store_type == crate::physical_table_reader::StoreType::TiFlash {
+                        TaskType::Mpp
+                    } else {
+                        TaskType::CopSingleRead
+                    };
                 let inner = reader.table_plan.as_deref().map_or_else(
                     || crate::cost_usage::ZERO_COST_VER2,
-                    |plan| self.price(plan, TaskType::CopSingleRead),
+                    |plan| self.price(plan, child_task_type),
                 );
-                crate::cost_usage::div_cost_ver2(
+                let net_owner = if reader
+                    .table_plan
+                    .as_deref()
+                    .is_some_and(|plan| matches!(plan, PhysicalPlan::ExchangeSender(_)))
+                {
+                    crate::plan_cost_ver2::NetOwner::TiDbToTiFlash
+                } else {
+                    crate::plan_cost_ver2::NetOwner::TiDbToTiKv
+                };
+                let mut cost = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         inner,
                         net_cost(
-                            None,
+                            self.cost_option(),
                             child_rows,
                             Self::row_size(plan),
-                            &self.factors.tidb_to_kv_net,
+                            self.factors.task_net(false, net_owner),
                         ),
                     ]),
                     self.session.distsql_scan_concurrency,
-                )
+                );
+                if reader.store_type == crate::physical_table_reader::StoreType::TiFlash
+                    && self.session.mpp_enforced
+                    && !self.cost_option().is_some_and(|option| {
+                        option.cost_flag() & crate::cost_usage::COST_FLAG_RECALCULATE != 0
+                    })
+                {
+                    cost = crate::cost_usage::div_cost_ver2(
+                        &cost,
+                        crate::plan_cost_ver2::MPP_ENFORCED_DISCOUNT,
+                    );
+                }
+                crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.table_reader)
             }
             // `getPlanCostVer24PhysicalIndexLookUpReader`
             // (`plan_cost_ver2.go:359`): index side + (table side +
@@ -325,6 +400,9 @@ impl Ver2Coster {
                 }
                 let dist_concurrency = self.session.distsql_scan_concurrency;
                 let double_read_concurrency = self.session.index_lookup_concurrency;
+                let net_factor = self
+                    .factors
+                    .task_net(false, crate::plan_cost_ver2::NetOwner::TiDbToTiKv);
 
                 let index_plan = reader.index_plan.as_deref();
                 let index_child = index_plan.map_or_else(
@@ -334,10 +412,10 @@ impl Ver2Coster {
                 let index_side = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         net_cost(
-                            None,
+                            self.cost_option(),
                             index_rows,
                             index_plan.map_or_else(|| Self::row_size(plan), Self::row_size),
-                            &self.factors.tidb_to_kv_net,
+                            net_factor,
                         ),
                         index_child,
                     ]),
@@ -352,10 +430,10 @@ impl Ver2Coster {
                 let table_side = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         net_cost(
-                            None,
+                            self.cost_option(),
                             table_rows,
                             table_plan.map_or_else(|| Self::row_size(plan), Self::row_size),
-                            &self.factors.tidb_to_kv_net,
+                            net_factor,
                         ),
                         table_child,
                     ]),
@@ -365,7 +443,7 @@ impl Ver2Coster {
                 let double_read_rows = index_rows;
                 let cpu_factor = self.factors.task_cpu(task_type);
                 let double_read_cpu = crate::cost_usage::new_cost_ver2(
-                    None,
+                    self.cost_option(),
                     cpu_factor,
                     double_read_rows * cpu_factor.value(),
                     || format!("double-read-cpu({double_read_rows}*{cpu_factor})"),
@@ -376,9 +454,9 @@ impl Ver2Coster {
                 let double_read = crate::cost_usage::sum_cost_ver2(&[
                     double_read_cpu,
                     crate::plan_cost_ver2::double_read_cost(
-                        None,
+                        self.cost_option(),
                         double_read_tasks,
-                        &self.factors.tidb_request,
+                        self.factors.task_request(false),
                     ),
                 ]);
 
@@ -396,7 +474,13 @@ impl Ver2Coster {
                 {
                     cost = crate::cost_usage::mul_cost_ver2(&cost, 0.6);
                 }
-                cost
+                if reader
+                    .pushed_limit
+                    .is_some_and(|limit| table_rows <= limit.count as f64)
+                {
+                    cost = crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.limit);
+                }
+                crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.index_lookup)
             }
             PhysicalPlan::IndexReader(reader) => {
                 let child_rows = reader
@@ -407,36 +491,43 @@ impl Ver2Coster {
                     || crate::cost_usage::ZERO_COST_VER2,
                     |plan| self.price(plan, TaskType::CopSingleRead),
                 );
-                crate::cost_usage::div_cost_ver2(
+                let cost = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         inner,
                         net_cost(
-                            None,
+                            self.cost_option(),
                             child_rows,
                             Self::row_size(plan),
-                            &self.factors.tidb_to_kv_net,
+                            self.factors
+                                .task_net(false, crate::plan_cost_ver2::NetOwner::TiDbToTiKv),
                         ),
                     ]),
                     self.session.distsql_scan_concurrency,
-                )
+                );
+                crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.index_reader)
             }
             // `getPlanCostVer24PhysicalIndexMergeReader`: every partial and
             // the table side price as (net + child) / dist-concurrency.
             PhysicalPlan::IndexMergeReader(reader) => {
-                let side = |plan: &PhysicalPlan| crate::plan_cost_ver2::IndexMergeSide {
-                    rows: Self::rows(plan).max(crate::plan_cost_ver2::MIN_NUM_ROWS),
-                    row_size: Self::row_size(plan),
-                    child_cost: self.price_with_scan_context(
-                        plan,
-                        TaskType::CopMultiRead,
-                        Some(false),
-                    ),
+                let side = |plan: &PhysicalPlan, is_child_of_inl: bool| {
+                    crate::plan_cost_ver2::IndexMergeSide {
+                        rows: Self::rows(plan).max(crate::plan_cost_ver2::MIN_NUM_ROWS),
+                        row_size: Self::row_size(plan),
+                        child_cost: self.price_with_scan_context(
+                            plan,
+                            TaskType::CopMultiRead,
+                            Some(is_child_of_inl),
+                        ),
+                    }
                 };
-                let index_sides: Vec<crate::plan_cost_ver2::IndexMergeSide> =
-                    reader.partial_plans_raw.iter().map(&side).collect();
-                let table_side = reader.table_plan.as_deref().map(&side);
+                let index_sides: Vec<crate::plan_cost_ver2::IndexMergeSide> = reader
+                    .partial_plans_raw
+                    .iter()
+                    .map(|plan| side(plan, false))
+                    .collect();
+                let table_side = reader.table_plan.as_deref().map(|plan| side(plan, true));
                 crate::plan_cost_ver2::index_merge_reader_cost(
-                    None,
+                    self.cost_option(),
                     table_side.as_ref(),
                     &index_sides,
                     &self.factors.tidb_to_kv_net,
@@ -468,7 +559,7 @@ impl Ver2Coster {
                     })
                     .collect();
                 top_n_cost(
-                    None,
+                    self.cost_option(),
                     child_rows,
                     (topn.count, topn.offset),
                     Self::row_size(plan),
@@ -476,7 +567,7 @@ impl Ver2Coster {
                     (
                         self.factors.task_cpu(task_type),
                         self.factors.task_mem(task_type),
-                        1.0,
+                        self.session_factors.topn,
                     ),
                     &child_cost,
                 )
@@ -501,7 +592,7 @@ impl Ver2Coster {
                     })
                     .collect::<Vec<_>>();
                 sort_cost(
-                    None,
+                    self.cost_option(),
                     (child_rows, Self::row_size(plan)),
                     &by_scalar,
                     (&self.factors, &self.session_factors),
@@ -526,7 +617,7 @@ impl Ver2Coster {
                 crate::cost_usage::sum_cost_ver2(&[
                     self.children_cost(plan, task_type, is_child_of_inl),
                     filter_cost(
-                        None,
+                        self.cost_option(),
                         child_rows,
                         &is_scalar,
                         self.factors.task_cpu(task_type),
@@ -544,7 +635,7 @@ impl Ver2Coster {
                     })
                     .collect();
                 projection_cost(
-                    None,
+                    self.cost_option(),
                     rows,
                     &is_scalar,
                     self.factors.task_cpu(task_type),
@@ -567,11 +658,14 @@ impl Ver2Coster {
                     })
                     .collect();
                 stream_agg_cost(
-                    None,
+                    self.cost_option(),
                     child_rows,
                     agg.agg_funcs.len(),
                     &group_scalar,
-                    (self.factors.task_cpu(task_type), 1.0),
+                    (
+                        self.factors.task_cpu(task_type),
+                        self.session_factors.stream_agg,
+                    ),
                     &self.children_cost(plan, task_type, is_child_of_inl),
                 )
             }
@@ -596,7 +690,7 @@ impl Ver2Coster {
                     .first()
                     .is_some_and(Self::child_can_provide_order_for_stream_agg);
                 hash_agg_cost(
-                    None,
+                    self.cost_option(),
                     HashAggInput {
                         input_rows: child_rows,
                         output_rows: rows,
@@ -642,7 +736,7 @@ impl Ver2Coster {
                 let left_cost = self.price_with_scan_context(left, task_type, is_child_of_inl);
                 let right_cost = self.price_with_scan_context(right, task_type, is_child_of_inl);
                 merge_join_cost(
-                    None,
+                    self.cost_option(),
                     (Self::rows(left), Self::rows(right)),
                     (&left_conditions, &right_conditions, &other_conditions),
                     (join.left_join_keys.len(), join.right_join_keys.len()),
@@ -695,7 +789,7 @@ impl Ver2Coster {
                 let build_cost = self.price_with_scan_context(build, task_type, is_child_of_inl);
                 let probe_cost = self.price_with_scan_context(probe, task_type, is_child_of_inl);
                 hash_join_cost(
-                    None,
+                    self.cost_option(),
                     HashJoinInput {
                         build_rows: Self::rows(build),
                         probe_rows: Self::rows(probe),
@@ -714,6 +808,79 @@ impl Ver2Coster {
                     (&build_cost, &probe_cost),
                 )
             }
+            // `getPlanCostVer24PhysicalApply`: an Apply re-runs its inner
+            // child once per outer row, so the probe cost is multiplied by
+            // the build cardinality without the index-join batch discount.
+            PhysicalPlan::Apply(apply) => {
+                let [build, probe] = plan.children() else {
+                    return self.children_cost(plan, task_type, is_child_of_inl);
+                };
+                let scalar_flags = |conditions: &[tidb_expr::expression::Expression]| {
+                    conditions
+                        .iter()
+                        .map(|condition| {
+                            matches!(
+                                condition,
+                                tidb_expr::expression::Expression::ScalarFunction(_)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let build_cost = self.price(build, task_type);
+                let probe_cost = self.price(probe, task_type);
+                crate::plan_cost_ver2::apply_cost(
+                    self.cost_option(),
+                    Self::rows(build),
+                    Self::rows(probe),
+                    (
+                        &scalar_flags(&apply.hash_join.left_conditions),
+                        &scalar_flags(&apply.hash_join.right_conditions),
+                    ),
+                    self.factors.task_cpu(task_type),
+                    (&build_cost, &probe_cost),
+                )
+            }
+            // `getPlanCostVer24PhysicalUnionAll`: child costs are shared by
+            // the union workers, with Go's enforced-MPP comparison discount.
+            PhysicalPlan::UnionAll(union) => {
+                let child_costs = plan
+                    .children()
+                    .iter()
+                    .map(|child| self.price(child, task_type))
+                    .collect::<Vec<_>>();
+                crate::plan_cost_ver2::union_all_cost_with_option(
+                    self.cost_option(),
+                    &child_costs,
+                    self.session.union_concurrency,
+                    union.mpp && self.session.mpp_enforced,
+                )
+            }
+            // Go's fast-plan distinction is represented by `access_cols`:
+            // plans built by the statement fast path are free, while
+            // optimizer-created point plans pay one network read.
+            PhysicalPlan::PointGet(point) => crate::plan_cost_ver2::point_get_cost(
+                self.cost_option(),
+                1.0,
+                Self::row_size(plan),
+                &self.factors.tidb_to_kv_net,
+                point.access_cols.is_some(),
+            ),
+            PhysicalPlan::BatchPointGet(point) => crate::plan_cost_ver2::point_get_cost(
+                self.cost_option(),
+                Self::rows(plan),
+                Self::row_size(plan),
+                &self.factors.tidb_to_kv_net,
+                point.access_cols.is_some(),
+            ),
+            // `getPlanCostVer24PhysicalCTE`: reading a CTE charges only the
+            // projection work for the CTE's output schema; producer work is
+            // owned by the sequence and is not paid by each consumer.
+            PhysicalPlan::CTE(_) => crate::plan_cost_ver2::cte_cost(
+                self.cost_option(),
+                rows,
+                plan.schema().map_or(0, |schema| schema.columns.len()),
+                self.factors.task_cpu(task_type),
+            ),
             PhysicalPlan::IndexJoin(join) => {
                 let [left, right] = plan.children() else {
                     return self.children_cost(plan, task_type, is_child_of_inl);
@@ -740,7 +907,7 @@ impl Ver2Coster {
                 let build_cost = self.price_with_scan_context(build, task_type, is_child_of_inl);
                 let probe_cost = self.price_with_scan_context(probe, task_type, is_child_of_inl);
                 index_join_cost(
-                    None,
+                    self.cost_option(),
                     IndexJoinInput {
                         build_rows: Self::rows(build),
                         build_row_size: Self::row_size(build),
@@ -780,5 +947,97 @@ impl Ver2Coster {
             // Everything else prices as its children, conservative.
             _ => self.children_cost(plan, task_type, is_child_of_inl),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physical::{
+        BasePhysicalPlan, PhysicalCTE, PhysicalPlan, PhysicalPointGet, PhysicalTableDual,
+        PhysicalUnionAll,
+    };
+    use crate::plan_base::PlanIdAllocator;
+    use crate::stats_info::StatsInfo;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_expr::schema::Schema;
+
+    fn point(id: i32, access_cols: bool) -> PhysicalPlan {
+        let mut base = BasePhysicalPlan::with_id(id, "Point_Get", 0);
+        base.base.set_stats(Some(StatsInfo::new(1.0, [])));
+        let column = Column::new(id.into(), FieldType::new(FieldTypeCode::LongLong));
+        base.base
+            .set_schema(Some(Schema::new(vec![column.clone()])));
+        PhysicalPlan::PointGet(PhysicalPointGet {
+            base,
+            table_id: i64::from(id),
+            partition: None,
+            index_id: None,
+            access_cols: access_cols.then_some(vec![column]),
+            ranges: Vec::new(),
+            range_rebuild: None,
+        })
+    }
+
+    fn root(plan: PhysicalPlan) -> Task {
+        let mut task = crate::task::RootTask::default();
+        task.set_plan(plan);
+        Task::Root(task)
+    }
+
+    #[test]
+    fn package_specific_ver2_operators_use_their_go_cost_bodies() {
+        let coster = Ver2Coster::default();
+        let fast = coster
+            .task_cost(&root(point(1, false)))
+            .expect("fast point plan cost");
+        let point_cost = coster
+            .task_cost(&root(point(2, true)))
+            .expect("optimizer point plan cost");
+        assert_eq!(fast, 0.0);
+        assert!(point_cost > 0.0);
+
+        let allocator = PlanIdAllocator::new();
+        let mut union_base = BasePhysicalPlan::new(&allocator, "Union", 0);
+        union_base.set_children(vec![point(3, true), point(4, true)]);
+        let union = PhysicalPlan::UnionAll(PhysicalUnionAll {
+            base: union_base,
+            mpp: false,
+        });
+        let union_cost = coster.task_cost(&root(union)).expect("union-all cost");
+        assert!((union_cost - point_cost * 2.0 / 5.0).abs() < 1e-9);
+
+        let mut cte_base = BasePhysicalPlan::new(&allocator, "CTE", 0);
+        cte_base.base.set_stats(Some(StatsInfo::new(10.0, [])));
+        cte_base.base.set_schema(Some(Schema::new(vec![Column::new(
+            10,
+            FieldType::new(FieldTypeCode::LongLong),
+        )])));
+        let cte = PhysicalPlan::CTE(PhysicalCTE {
+            base: cte_base,
+            seed_plan: Box::new(PhysicalPlan::TableDual(PhysicalTableDual {
+                base: BasePhysicalPlan::new(&allocator, "TableDual", 0),
+                row_count: 0,
+            })),
+            recursive_plan: None,
+            id_for_storage: 1,
+            is_distinct: false,
+            has_limit: false,
+            limit_beg: 0,
+            limit_end: 0,
+            cte_as_name: String::new(),
+            cte_name: String::new(),
+        });
+        let cte_cost = coster.task_cost(&root(cte)).expect("cte cost");
+        assert!(cte_cost > 0.0);
+
+        let mut option = PlanCostOption::new();
+        option.with_cost_flag(crate::cost_usage::COST_FLAG_TRACE);
+        let detached = point(5, true);
+        let traced = detached
+            .get_plan_cost_ver2(TaskType::Root, option, false)
+            .expect("detached plan cost");
+        assert!(traced.trace().is_some());
     }
 }

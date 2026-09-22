@@ -30,6 +30,16 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, Ver2 operator cost dispatch) The Rust production coster now
+  reaches the Go `Apply`, `UnionAll`, `PointGet`, `BatchPointGet`, and `CTE`
+  formula bodies, forwards trace/recalculation options through every priced
+  formula, applies the reader/scan cost factors, and preserves the Go fast
+  point-plan `AccessCols == nil` distinction. Detached
+  `PhysicalPlan::get_plan_cost_ver2` delegates the same source-shaped
+  dispatcher. Focused cost-dispatch and planner checks pass; exchange-receiver
+  representation, statement-session/cache behavior, full physicalop inventory,
+  and workload acceptance remain open.
+
 - [x] (2026-09-21, MaxOneRow enforced-MPP warning routing) The Go
   `CanSelfBeingPushedToCopImpl` refusal is now preserved before Rust's generic
   non-root task gate, so a `MaxOneRow` MPP refusal raises the source warning
@@ -207,10 +217,9 @@ their recorded stage. The latest verified state is summarized first.
   regressions and the 53 physical, 18 task and 36 cost-golden tests pass.
   Ordinary SQL construction clips excessive LIMIT values in Go; this closes
   an internal planner contract gap, not a demonstrated SQL crash or speedup.
-- [ ] Current warning audit: MaxOneRow still lacks Go's enforced-MPP warning.
-  The correct integration requires both normal EXPLAIN warnings and extra
-  warnings for other statements, gated by allowMPP && enforceMPP. Do not
-  approximate it by always appending a normal warning. See receipt below.
+- [x] (historical warning audit, closed above) MaxOneRow's enforced-MPP warning
+  now routes through the statement warning sink, with normal EXPLAIN warnings
+  and extra warnings for other statements under `allowMPP && enforceMPP`.
 - [x] (2026-09-21, YCSB RPC attribution) Four additional 50,000-operation
   changing-value samples passed exact cross-engine reads and storage checks.
   TiKV prewrite means (3.59–4.45ms) explain most of aggregate UPDATE latency
@@ -585,14 +594,12 @@ their recorded stage. The latest verified state is summarized first.
   now have focused passing regressions. Legacy nested `GroupingSets` and
   TiFlash `Expand`/`Expand2` serialization remain open, so this item is not
   complete.
-- [ ] (2026-09-01) Consolidating plan cost on the wired Ver2 dispatcher:
-  removed the unused generic Ver1/free-operator and Ver2/TODO methods plus
-  the false table-scan PB-refusal test. The production coster now dispatches
-  pinned Apply, UnionAll, IndexMergeReader, ExchangeReceiver, CTE, PointGet,
-  and BatchPointGet formulas. Point plans now retain Go's `AccessCols == nil`
-  distinction, so fast plans cost zero while optimizer-created point plans use
-  one-row or estimated-cardinality network cost. Focused regressions pass;
-  selectable Ver1 and remaining session/cache/trace semantics remain open.
+- [ ] (2026-09-01, continuing) Consolidating plan cost on the wired Ver2
+  dispatcher: the production coster now dispatches the available pinned
+  Apply, UnionAll, IndexMergeReader, CTE, PointGet, and BatchPointGet formulas,
+  with reader/scan factors and option tracing wired in the latest receipt.
+  ExchangeReceiver still lacks a corresponding Rust physical-plan variant;
+  selectable Ver1 and remaining session/cache semantics remain open.
 - [ ] Read and map every remaining pinned production and generated file to its
   owning Rust implementation and consumer.
 - [ ] Reconcile both pinned test files (`fragment_test.go` and
@@ -768,13 +775,13 @@ batch; scalar mode emits one per row. The final receipt includes Go evidence.
   `pkg/executor/expand.go:53-58`; the focused Rust integration test exercises
   one cached child chunk through every level projection.
 
-- Observation: `PhysicalPlan::get_plan_cost_ver1`,
-  `PhysicalPlan::get_plan_cost_ver2`, and its blanket `to_pb` were disconnected
-  seed APIs after the planner acquired the common Ver2 coster and DAG request
-  serializer. The generic cost path priced real operators as free or returned
-  a TODO, while the blanket PB path made a table scan take Go's base error
-  instead of its override.
-  Evidence: repository-wide call search found only self-tests for those
+- Observation: `PhysicalPlan::get_plan_cost_ver1` and its blanket `to_pb` remain
+  disconnected seed APIs after the planner acquired the common Ver2 coster and
+  DAG request serializer. The generic Ver2 path previously priced real
+  operators as free or returned a TODO; it now delegates the recursive
+  source-shaped dispatcher, while the blanket PB path still makes a table scan
+  take Go's base error instead of its override.
+  Evidence: repository-wide call search found only self-tests for these
   methods; `find_best_task::coster::Ver2Coster` is the production comparison
   path and `tidb-exec::dag_request` is the wired TiKV serialization path.
 
@@ -1052,7 +1059,8 @@ Latest cost-path WIP checks:
 
     cd rust
     cargo check --locked -p tidb-planner
-    cargo test --locked -p tidb-planner package_specific_ver2_operators_do_not_fall_back_to_child_sum -- --nocapture
+    cargo test --locked -p tidb-planner package_specific_ver2_operators_use_their_go_cost_bodies -- --nocapture
+    cargo test --locked -p tidb-planner --lib plan_cost_ver2::golden_tests -- --nocapture
 
 The following focused executor test was attempted but did not reach the test
 because the dirty worktree's unrelated `kv_table.rs` test code does not compile

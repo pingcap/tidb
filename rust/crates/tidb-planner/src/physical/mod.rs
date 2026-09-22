@@ -2400,6 +2400,10 @@ pub struct PhysicalPointGet {
     pub partition: Option<PointGetPartition>,
     /// The selected index, or `None` for a table handle.
     pub index_id: Option<i64>,
+    /// Go `PointGetPlan.accessCols`: `None` identifies the statement-level
+    /// fast-plan path, while `Some` identifies an optimizer-created point
+    /// plan whose lookup contributes network cost.
+    pub access_cols: Option<Vec<tidb_expr::column::Column>>,
     /// The single point range represented by this plan.
     pub ranges: crate::ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
@@ -2424,6 +2428,8 @@ pub struct PhysicalBatchPointGet {
     pub table_id: i64,
     /// The selected index, or `None` for table handles.
     pub index_id: Option<i64>,
+    /// Go `BatchPointGetPlan.accessCols`; see [`PhysicalPointGet::access_cols`].
+    pub access_cols: Option<Vec<tidb_expr::column::Column>>,
     /// Go `UnsignedHandle` (`physical_batch_point_get.go`): the table handle
     /// column is unsigned, so `handle:` values print as their uint64 reading
     /// (`strconv.FormatUint`), never the signed reinterpretation.
@@ -3304,17 +3310,19 @@ impl PhysicalPlan {
 
     /// Go `GetPlanCostVer2(taskType, option, isChildOfINL...)` (`<1st>`).
     ///
-    /// A `todo`: [`CostVer2`] has no public constructor or summation in this
-    /// crate yet, and inventing one here would be a second cost model.
+    /// The production planner owns its statement-local cost environment at
+    /// [`crate::find_best_task::coster::Ver2Coster`]. Detached physical plans
+    /// use the same recursive dispatcher with Go's default factors here. The
+    /// option flags are forwarded to every formula so detached callers retain
+    /// the source behavior for cost tracing.
     pub fn get_plan_cost_ver2(
         &self,
-        _task_type: TaskType,
-        _option: PlanCostOption,
-        _is_child_of_inl: bool,
+        task_type: TaskType,
+        option: PlanCostOption,
+        is_child_of_inl: bool,
     ) -> Result<CostVer2, PlanError> {
-        Err(PlanError::internal(
-            "todo: PhysicalPlan::get_plan_cost_ver2 needs costusage.SumCostVer2",
-        ))
+        Ok(crate::find_best_task::coster::Ver2Coster::default()
+            .plan_cost_with_option(self, task_type, is_child_of_inl, option))
     }
 
     // Go `Attach2Task(...Task) Task` (`<2nd>`) lives at
@@ -3827,6 +3835,7 @@ impl PhysicalPlan {
                 table_id: op.table_id,
                 partition: op.partition.clone(),
                 index_id: op.index_id,
+                access_cols: op.access_cols.clone(),
                 ranges: op.ranges.clone(),
                 range_rebuild: op.range_rebuild.clone(),
             }),
@@ -3834,6 +3843,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 table_id: op.table_id,
                 index_id: op.index_id,
+                access_cols: op.access_cols.clone(),
                 ranges: op.ranges.clone(),
                 partition_ids: op.partition_ids.clone(),
                 unsigned_handle: op.unsigned_handle,

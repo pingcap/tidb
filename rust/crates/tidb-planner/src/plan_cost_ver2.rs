@@ -1465,8 +1465,26 @@ pub fn apply_cost(
 /// concurrency, then the enforced-MPP discount when it applies.
 #[must_use]
 pub fn union_all_cost(child_costs: &[CostVer2], concurrency: f64, mpp_enforced: bool) -> CostVer2 {
+    union_all_cost_with_option(None, child_costs, concurrency, mpp_enforced)
+}
+
+/// `union_all_cost` with the source option that controls the enforced-MPP
+/// display-cost exception. Explain's recalculation flag must show the real
+/// cost instead of the comparison discount.
+#[must_use]
+pub fn union_all_cost_with_option(
+    option: Option<&PlanCostOption>,
+    child_costs: &[CostVer2],
+    concurrency: f64,
+    mpp_enforced: bool,
+) -> CostVer2 {
     let cost = div_cost_ver2(&sum_cost_ver2(child_costs), concurrency);
-    if mpp_enforced {
+    if mpp_enforced
+        && !crate::cost_usage::has_cost_flag(
+            option.map_or(0, |option| option.cost_flag()),
+            crate::cost_usage::COST_FLAG_RECALCULATE,
+        )
+    {
         div_cost_ver2(&cost, MPP_ENFORCED_DISCOUNT)
     } else {
         cost

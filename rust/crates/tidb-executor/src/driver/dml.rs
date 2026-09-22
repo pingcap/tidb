@@ -2692,6 +2692,7 @@ fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPl
             table_id: scan.table_id,
             partition: None,
             index_id: None,
+            access_cols: Some(scan.cost_columns.clone()),
             ranges: scan.ranges.clone(),
             range_rebuild: Some(PointRangeRebuild::Table(rebuild)),
         });

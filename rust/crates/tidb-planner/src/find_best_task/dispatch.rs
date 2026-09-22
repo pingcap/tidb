@@ -2730,6 +2730,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 physical_table_id: None,
                             }),
                             index_id: None,
+                            access_cols: Some(ds.table_columns.clone()),
                             ranges,
                             range_rebuild: table_range_rebuild
                                 .clone()
@@ -2740,6 +2741,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             base: point_base,
                             table_id: explicit_physical_id.unwrap_or(ds.physical_table_id),
                             index_id: None,
+                            access_cols: Some(ds.table_columns.clone()),
                             ranges,
                             unsigned_handle: handle_type.is_unsigned(),
                             partition_ids: None,
@@ -3200,6 +3202,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             table_id: ds.physical_table_id,
                             partition: None,
                             index_id: Some(source_index.id),
+                            access_cols: Some(if single_scan {
+                                index_cols.clone()
+                            } else {
+                                ds.table_columns.clone()
+                            }),
                             ranges: ranges.clone(),
                             range_rebuild: index_range_rebuild
                                 .clone()
@@ -3210,6 +3217,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             base: point_base,
                             table_id: ds.physical_table_id,
                             index_id: Some(source_index.id),
+                            access_cols: Some(if single_scan {
+                                index_cols.clone()
+                            } else {
+                                ds.table_columns.clone()
+                            }),
                             ranges: ranges.clone(),
                             unsigned_handle: false,
                             partition_ids: None,

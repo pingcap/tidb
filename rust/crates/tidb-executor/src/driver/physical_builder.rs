@@ -5268,6 +5268,7 @@ mod tests {
             table_id: 43,
             partition: None,
             index_id: None,
+            access_cols: None,
             ranges: vec![tidb_planner::ranger::types::Range {
                 low_val: vec![Datum::Int(2)],
                 high_val: vec![Datum::Int(2)],
@@ -5332,6 +5333,7 @@ mod tests {
             table_id: 46,
             partition: None,
             index_id: Some(8),
+            access_cols: None,
             ranges: vec![tidb_planner::ranger::types::Range {
                 low_val: vec![Datum::Int(20)],
                 high_val: vec![Datum::Int(20)],
@@ -5383,6 +5385,7 @@ mod tests {
             base,
             table_id: 44,
             index_id: None,
+            access_cols: None,
             unsigned_handle: true,
             ranges: [3, 1, 3, 9].into_iter().map(point_range).collect(),
             partition_ids: None,
@@ -5449,6 +5452,7 @@ mod tests {
             base,
             table_id: 45,
             index_id: Some(8),
+            access_cols: None,
             unsigned_handle: false,
             ranges: [30, 10, 30, 90].into_iter().map(point_range).collect(),
             partition_ids: None,
