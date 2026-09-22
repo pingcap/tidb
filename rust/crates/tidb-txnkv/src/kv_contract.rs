@@ -392,7 +392,7 @@ pub struct CoprRequestLimiter {
     blocking_guard: Mutex<()>,
     /// Drivers that found the limiter full and yielded instead of blocking
     /// (see `register_waker`); every release wakes them all.
-    waiters: Mutex<Vec<std::task::Waker>>,
+    waiters: Mutex<std::collections::VecDeque<std::task::Waker>>,
 }
 
 impl fmt::Debug for CoprRequestLimiter {
@@ -413,7 +413,7 @@ impl CoprRequestLimiter {
             available: Notify::new(),
             blocking_wait: Condvar::new(),
             blocking_guard: Mutex::new(()),
-            waiters: Mutex::new(Vec::new()),
+            waiters: Mutex::new(std::collections::VecDeque::new()),
         }
     }
 
@@ -425,15 +425,23 @@ impl CoprRequestLimiter {
     /// after registering: a release between the failed acquire and the
     /// registration wakes nobody.
     pub fn register_waker(&self, waker: std::task::Waker) {
-        // Push directly: the waiters list drains on every release, so a
-        // registration lives at most one release cycle, and the O(n)
-        // `will_wake` dedup scan ran on the hot path of a saturated limiter
-        // (6.7% of the SF50 q10 probe). A duplicate entry only causes one
-        // redundant wake of an already-polled task.
+        // FIFO parking: the oldest parked driver is woken first, so a
+        // saturated limiter cannot starve an early registrant. The dedup
+        // keeps one entry per driver across spurious re-polls.
+        let mut waiters = self.waiters.lock().unwrap_or_else(|p| p.into_inner());
+        if !waiters.iter().any(|known| known.will_wake(&waker)) {
+            waiters.push_back(waker);
+        }
+    }
+
+    /// Removes a driver's registration after it stopped waiting (it acquired
+    /// a token or finished); a stale entry would consume a wake meant for a
+    /// parked driver.
+    pub fn deregister_waker(&self, waker: &std::task::Waker) {
         self.waiters
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .push(waker);
+            .retain(|known| !known.will_wake(waker));
     }
 
     /// Blocks until one token is acquired or either cancellation future
@@ -497,12 +505,18 @@ impl CoprRequestLimiter {
                 AtomicOrdering::Acquire,
             ) {
                 Ok(_) => {
+                    // One released token admits exactly one waiter: wake the
+                    // OLDEST parked driver (FIFO, no starvation) and keep the
+                    // rest parked. The wake-all herd was the top contended
+                    // futex of the SF50 q10 probe.
+                    let waiter = self
+                        .waiters
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .pop_front();
                     self.available.notify_one();
                     self.blocking_wait.notify_one();
-                    let waiters = std::mem::take(
-                        &mut *self.waiters.lock().unwrap_or_else(|p| p.into_inner()),
-                    );
-                    for waiter in waiters {
+                    if let Some(waiter) = waiter {
                         waiter.wake();
                     }
                     return;
