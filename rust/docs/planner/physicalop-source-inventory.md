@@ -1,6 +1,13 @@
 # Physicalop source inventory
 
-Audit revision: `aba629bb455dc09d6a5d98b3c39a542bb1189b9d`.
+Audit reference: TiDB `origin/master`, fetched 2026-09-21 (local time).
+Resolved revision: `1400603a0c5220f16c90cb543a8b96cbcc641c94`.
+
+The user defines Go parity as TiDB master. Read reference artifacts with
+`git show <resolved-master-revision>:<path>`; the working branch Go files
+can differ. Refresh master and record its resolved commit when advancing
+the audit. Dependent-package inventories below retain their historical pins
+and require re-audit against master before acceptance.
 
 Status: **incomplete; no whole-package parity claim**. This inventory records
 every tracked artifact in the upstream package. Hashes identify source bytes,
@@ -11,9 +18,9 @@ the focused regression receipts in the ExecPlan do not discharge that gate.
 
 | Artifact (relative to `pkg/planner/core/operator/physicalop/`) | Role | SHA-256 |
 | --- | --- | --- |
-| `BUILD.bazel` | build metadata | `4d46d3519ce30e351ebaad439cce82aefcf8852ebb17181ef1b347ecffe2a42e` |
-| `base_physical_agg.go` | production | `f1b5b22be1bb6bf81bd6c26e374ca541d9d3e19dec2131b52b5fe10f046bb250` |
-| `base_physical_join.go` | production | `d852de5c0d2d779c792edf00336bcc6463deae55f0869dea760001774dd49039` |
+| `BUILD.bazel` | build metadata | `2cf3a3de47fc1c3b7274cc86c93fd3b2ee66a2edaefa5a8195555cb0400a9a33` |
+| `base_physical_agg.go` | production | `1d28bb64282cfaa2f2e714c63301c16403fd482814571e70efc2159bd44be9dc` |
+| `base_physical_join.go` | production | `fb4adb2a13c982764839fa063a3b9ff3565866ce0320b8315333b92c9588cbe4` |
 | `base_physical_plan.go` | production | `fac3b9fcd4a51241af5a53d875d1d9696c2c345b35794a3aa7324be174bcbfda` |
 | `enforce.go` | production | `056e1c6ccad302f24e2dc35cc26ab136bfcd584a48d9f52b29c2dc86ad03ea5a` |
 | `foreign_key.go` | production | `29414c494148f5fe9dcc17741317ac8541284b4a0c0b0818e36c132ed014f549` |
@@ -21,20 +28,21 @@ the focused regression receipts in the ExecPlan do not discharge that gate.
 | `fragment_test.go` | original tests | `b7f9622583def1133d023512f01de1124b9116f381aad532caeadb3e052d1f41` |
 | `nominal_sort.go` | production | `e92994942d6b21bd7a3403a80fec6f600ef77d065352447b3032aeb37cdcc34d` |
 | `physical_apply.go` | production | `8a7cfce083b8d2dc4c3b4cda95ef653415d18c099dbacda730b6ea78512a4daf` |
-| `physical_batch_point_get.go` | production | `af1fbc5b0c66747ba2314645269ea6eb82894f4c5ef3a448335e8cc6244e44c7` |
+| `physical_batch_point_get.go` | production | `c662f7783d35df21336174c5573ca4d52970d5e0427c11a2002abbe70a3876a9` |
+| `physical_batch_point_get_test.go` | original tests | `82a4274c686d9febfe487e7dee605a1ebc485aa41de7b5a1c8edd722e2e20215` |
 | `physical_common_plans.go` | production | `b1a0a4b76eb18951fbb4c536aa3710f6b02534b17a92b46950c89214d7c64a68` |
 | `physical_cte.go` | production | `6223410e99a11ab15400dc218786c4cb4d300ea58370a461704c5b86217401f9` |
 | `physical_cte_table.go` | production | `4ca4d93c9ebbeda3e37eea7d656f2a424eb959a46f162e265ae2d7bdbad4e1b1` |
 | `physical_exchange_receiver.go` | production | `dbac31e1b885c149dd7cef0bd654384e48a2124bfe23ef811263697c2421f64f` |
 | `physical_exchange_sender.go` | production | `f6bf05352b37a278f3550b14a6eb33af87d5c65b8df9b2f3fd18f47dd03cc048` |
 | `physical_expand.go` | production | `cd88b89d960100563aa780b5d4c9b5bc78a7354861c00849768adead297b4ea0` |
-| `physical_hash_agg.go` | production | `2d3d1ff0a9a5eaf27d8f3be9f1794d072c614ccf5a2bfb45e57eea0702ff690e` |
-| `physical_hash_join.go` | production | `71e1c5b255bf31dc344da673d6581353f0d9278e51bf437ff7e57cdd9ad58e86` |
+| `physical_hash_agg.go` | production | `ff2730c8214b404b864bdb8b1da82af98274c075c360123bd9d836b960f4168b` |
+| `physical_hash_join.go` | production | `c7cd643ade39c2303a71c7afe0c20573b02f41bf787f1c4184c67158e7f9bed8` |
 | `physical_index_hash_join.go` | production | `d83fbe5afadaa2a854f28335104eee5526b77ac97882892e20199a5d202a30a3` |
 | `physical_index_join.go` | production | `fa9f0e8bdc8f05e996f86dd07e67e5f4fb5950841fb6f93d3171f9c092c416d9` |
 | `physical_index_merge_join.go` | production | `ba15d3255af623a23474a708890ee1ae7eef436d5c1a25e7c5f82d02e2ccf471` |
 | `physical_index_reader.go` | production | `975e2c2c596c4ce699db1e66664402f9631bfdb52aaedafd8f4d01838c6a050b` |
-| `physical_index_scan.go` | production | `289009d9709fa748bc9a1dc95b33f72b09860fe56e73b93273b187734446e653` |
+| `physical_index_scan.go` | production | `6214122edfbc4c5d4129e94ed44757cc64ac6ba31ec33d2f0dac3eadf4e63755` |
 | `physical_indexlookup.go` | production | `87b822c2085290ba81ec043a6c00172e6f26426e6198bb7727aefbb5c2e23b0d` |
 | `physical_indexlookup_reader.go` | production | `c65e1cb478ab3332006a7c225685edca3eaa54b1136ccd01eab072e58eedb3e9` |
 | `physical_indexmerge_reader.go` | production | `4a23c43c5413a967c0c556fe4e3bf371488439d5d38622408ffa3efc1c603281` |
@@ -60,7 +68,7 @@ the focused regression receipts in the ExecPlan do not discharge that gate.
 | `physical_union_all.go` | production | `528703cc3969e2e68a6c6be61e05de3d9bb33618d8e7966d4617ee37b466e0fa` |
 | `physical_union_scan.go` | production | `045559e3b39d84659dc33290d9a54ff94f498669423a582f70c56113ce7f126f` |
 | `physical_utils.go` | production | `5bb906977898130c0a50a76f1854feaea37a74f37a3472f7d71d0b89c61648f2` |
-| `physical_utils_test.go` | original tests | `9cd537e41d93212bef96d024b2566035e2a7c7c049df05d9fff42e9cb803399b` |
+| `physical_utils_test.go` | original tests | `ae0a20839af8d9aa3442de6f3e37e05fbace1f5bb12fffc1a9511cb70aa1a96d` |
 | `physical_window.go` | production | `16aae9ab1fc41dbfd03e23b2d5b4e999d94c404b20f2cefd74417014f5568189` |
 | `plan_clone_generated.go` | generated production | `ee5deff27d09c8f57ed5aba9079adba04c8350296ce45c4f8169c460e77ecd50` |
 | `single_scan_index_join.go` | production | `bdda651f445f64317fcef63777f0e85e6ad72aa2d0974bca62afa442a8ed630f` |
@@ -70,7 +78,7 @@ the focused regression receipts in the ExecPlan do not discharge that gate.
 | `tiflash_predicate_push_down.go` | production | `4dfe67be2920170614d800a906ac026242c9a6f6bd9fdbe74e418b78cb06920e` |
 
 The package has 53 handwritten production Go files, one generated production
-Go file, two original test files, and one Bazel build file. There is no `doc.go`,
+Go file, three original test files, and one Bazel build file. There is no `doc.go`,
 nested fixture directory, or platform/build-tag source variant in this pinned
 tree. Production files can still contain runtime platform-dependent behavior;
 absence of build tags is not evidence that those branches are covered.
@@ -90,8 +98,8 @@ transitive sources.
 | `pkg/planner/core/generator/plan_cache/BUILD.bazel` | `18478c79434c04481a69853ced44be7bcad7707075544b237757e2a0c6b5ee87` |
 | `pkg/planner/core/generator/plan_cache/plan_clone_generator.go` | `bfdd34d08ec2db413226ef282cf624f7206d28dda43b032e0b602434f289a7ac` |
 | `pkg/planner/core/generator/plan_cache/plan_clone_test.go` | `f7d3e07caf11e9d7b7700bd5f40ffb970f8c75fc31ddae2273913c195bee2ce8` |
-| `go.mod` | `a2f0229f01a3156b8ff95ef39b557236125435d91200429856ff81ed10c7b7ac` |
-| `go.sum` | `833b6f2127500f40eb2d9e76bcd472869221c4ac93fdc1065f176c99568a879b` |
+| `go.mod` | `4145c35b252c18bf570e8084adf4847b08f47637e843a10522eb8ba1d0119d52` |
+| `go.sum` | `34c46c6495a85778238c4f95320b1179612f1fe41064a8872db408252db61775` |
 
 ## Confirmed current integration gap
 

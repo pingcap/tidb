@@ -1375,7 +1375,7 @@ context_configuration! {
 
     /// Sets Go's `tidb_opt_partial_ordered_index_for_topn` planning gate.
     #[must_use]
-    pub const fn with_partial_ordered_index_for_topn(mut self, enabled: bool) -> Self {
+    pub fn with_partial_ordered_index_for_topn(mut self, enabled: bool) -> Self {
         self.partial_ordered_index_for_topn = enabled;
         self
     }

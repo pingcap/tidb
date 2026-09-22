@@ -1558,11 +1558,21 @@ fn match_partial_order_property(
         if column.unique_id != order.col.unique_id {
             return None;
         }
-        if index_column.length != tidb_datatype::UNSPECIFIED_LENGTH {
+        // Go IndexInfo2FullCols normalizes a declared full-length prefix.
+        let length = if column
+            .ret_type
+            .as_ref()
+            .is_some_and(|field_type| field_type.flen() == index_column.length)
+        {
+            tidb_datatype::UNSPECIFIED_LENGTH
+        } else {
+            index_column.length
+        };
+        if length != tidb_datatype::UNSPECIFIED_LENGTH {
             if position + 1 != index_columns.len() {
                 return None;
             }
-            prefix = Some((column.clone(), index_column.length));
+            prefix = Some((column.clone(), length));
         }
     }
     let Some((prefix_col, prefix_len)) = prefix else {
@@ -3087,12 +3097,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if partial_order.is_some() && partial_order_match.is_none() {
                     continue 'paths;
                 }
-                if (!ordered && ds.force_keep_order_index_ids.contains(&source_index.id))
-                    || (ordered && ds.force_no_keep_order_index_ids.contains(&source_index.id))
+                let keep_order = ordered || partial_order_match.is_some();
+                if (!keep_order && ds.force_keep_order_index_ids.contains(&source_index.id))
+                    || (keep_order && ds.force_no_keep_order_index_ids.contains(&source_index.id))
                 {
                     continue 'paths;
                 }
-                let keep_order = ordered || partial_order_match.is_some();
                 if ordered && !index_path_matches_order(ds, source_index, prop) {
                     continue 'paths;
                 }
@@ -5135,11 +5145,13 @@ mod tests {
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
-        let column = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        let mut field_type = FieldType::new(FieldTypeCode::Varchar);
+        field_type.set_flen(20);
+        let column = Column::new(11, field_type);
         let mut base = BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(100.0, [])));
         base.base.set_schema(Some(Schema::new(vec![column.clone()])));
-        let source = DataSource {
+        let mut source = DataSource {
             base,
             physical_table_id: 7,
             columns: vec![DataSourceColumn {
@@ -5186,6 +5198,39 @@ mod tests {
             cop.index_plan.as_deref(),
             Some(PhysicalPlan::IndexScan(scan)) if scan.keep_order && !scan.desc
         ));
+
+        let mut full_length = source.indexes[0].clone();
+        full_length.columns[0].length = 20;
+        assert!(
+            match_partial_order_property(
+                &source,
+                &full_length,
+                partial.partial_order_info.as_ref().unwrap(),
+            )
+            .is_none(),
+            "a declared prefix at the full field length is not truncated"
+        );
+
+        for (force_order, force_no_order, valid) in [(true, false, true), (false, true, false)] {
+            source.force_keep_order_index_ids = if force_order {
+                [3].into_iter().collect()
+            } else {
+                Default::default()
+            };
+            source.force_no_keep_order_index_ids = if force_no_order {
+                [3].into_iter().collect()
+            } else {
+                Default::default()
+            };
+            let task =
+                find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
+                    .unwrap();
+            assert_eq!(
+                !task.invalid(),
+                valid,
+                "order hint: {force_order}, no-order hint: {force_no_order}"
+            );
+        }
     }
 
     #[test]

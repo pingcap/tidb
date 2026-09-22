@@ -1554,65 +1554,77 @@ mod tests {
 
     #[test]
     fn partial_order_topn_pushes_prefix_limit_and_keeps_root_topn() {
-        let allocator = PlanIdAllocator::new();
-        let schema = tidb_expr::schema::Schema::new(vec![column_with_id(1)]);
-        let cop = Task::Cop(CopTask {
-            index_plan: Some(Box::new(scan_with_schema(
-                &allocator,
-                "IndexScan",
-                schema.clone(),
-                100.0,
-            ))),
-            table_plan: Some(Box::new(scan_with_schema(
-                &allocator,
-                "TableScan",
-                schema.clone(),
-                100.0,
-            ))),
-            partial_order_match_result: Some(
-                crate::physical_property::PartialOrderMatchResult {
-                    matched: true,
-                    prefix_col: Some(column_with_id(1)),
-                    prefix_len: 4,
+        for partitioned in [false, true] {
+            let allocator = PlanIdAllocator::new();
+            let schema = tidb_expr::schema::Schema::new(vec![column_with_id(1)]);
+            let cop = Task::Cop(CopTask {
+                index_plan: Some(Box::new(scan_with_schema(
+                    &allocator,
+                    "IndexScan",
+                    schema.clone(),
+                    100.0,
+                ))),
+                table_plan: Some(Box::new(scan_with_schema(
+                    &allocator,
+                    "TableScan",
+                    schema.clone(),
+                    100.0,
+                ))),
+                partial_order_match_result: Some(
+                    crate::physical_property::PartialOrderMatchResult {
+                        matched: true,
+                        prefix_col: Some(column_with_id(1)),
+                        prefix_len: 4,
+                    },
+                ),
+                ..CopTask::default()
+            });
+            let mut topn_base = crate::physical::BasePhysicalPlan::new(&allocator, "TopN", 0);
+            topn_base.base.set_schema(Some(schema));
+            topn_base.base.set_stats(Some(StatsInfo::new(5.0, [])));
+            let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+                base: topn_base,
+                by_items: vec![tidb_expr::aggregation::ByItems::new(
+                    Expression::Column(column_with_id(1)),
+                    false,
+                )],
+                partition_by: if partitioned {
+                    vec![crate::physical_property::SortItem::from_column(
+                        column_with_id(1),
+                        false,
+                    )]
+                } else {
+                    vec![]
                 },
-            ),
-            ..CopTask::default()
-        });
-        let mut topn_base = crate::physical::BasePhysicalPlan::new(&allocator, "TopN", 0);
-        topn_base.base.set_schema(Some(schema));
-        topn_base.base.set_stats(Some(StatsInfo::new(5.0, [])));
-        let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
-            base: topn_base,
-            by_items: vec![tidb_expr::aggregation::ByItems::new(
-                Expression::Column(column_with_id(1)),
-                false,
-            )],
-            offset: 2,
-            count: 3,
-            ..Default::default()
-        });
+                offset: 2,
+                count: 3,
+                ..Default::default()
+            });
 
-        let task = attach2_task(topn, vec![cop], None, &allocator).expect("attaches");
-        let Some(PhysicalPlan::TopN(root_topn)) = task.plan() else {
-            panic!("partial-order TopN stays at the root: {:?}", task.plan());
-        };
-        assert_eq!((root_topn.offset, root_topn.count), (2, 3));
-        assert_eq!(root_topn.prefix_col, Some(1));
-        assert_eq!(root_topn.prefix_len, 4);
-        let Some(PhysicalPlan::IndexLookUpReader(reader)) = root_topn.base.children().first()
-        else {
-            panic!("the cop task converts to an index lookup reader");
-        };
-        let Some(PhysicalPlan::Limit(limit)) = reader.index_plan.as_deref() else {
-            panic!("the prefix limit is pushed to the index plan");
-        };
-        assert_eq!((limit.offset, limit.count), (0, 5));
-        assert_eq!(limit.prefix_col, Some(1));
-        assert_eq!(limit.prefix_len, 4);
-        assert!(matches!(
-            limit.base.children().first(),
-            Some(PhysicalPlan::IndexScan(_))
-        ));
+            let task = attach2_task(topn, vec![cop], None, &allocator).expect("attaches");
+            let Some(PhysicalPlan::TopN(root_topn)) = task.plan() else {
+                panic!("partial-order TopN stays at the root: {:?}", task.plan());
+            };
+            assert_eq!((root_topn.offset, root_topn.count), (2, 3));
+            assert_eq!(root_topn.prefix_col, Some(1));
+            assert_eq!(root_topn.prefix_len, 4);
+            let Some(PhysicalPlan::IndexLookUpReader(reader)) = root_topn.base.children().first()
+            else {
+                panic!("the cop task converts to an index lookup reader");
+            };
+            let Some(PhysicalPlan::Limit(limit)) = reader.index_plan.as_deref() else {
+                panic!("the prefix limit is pushed to the index plan");
+            };
+            assert_eq!((limit.offset, limit.count), (0, 5));
+            assert_eq!(limit.prefix_col, Some(1));
+            assert_eq!(limit.prefix_len, 4);
+            assert!(limit.partition_by.is_empty());
+            assert_eq!(!root_topn.partition_by.is_empty(), partitioned);
+            assert!(matches!(
+                limit.base.children().first(),
+                Some(PhysicalPlan::IndexScan(_))
+            ));
+        }
     }
 
     #[test]
@@ -3292,8 +3304,8 @@ pub fn attach2_task(
         // `Count = Offset + Count`, offset removed, `DeriveLimitStats` over
         // the open half (`getPushedDownTopN`'s non-heavy half) — then
         // convert and attach the ROOT TopN above (partition-by root skip).
-        // The heavy-function rewrite, partial-order, TiDB-cop, and
-        // index-merge-advisory arms narrow by name.
+        // The partial-order path below retains the root even for partitioned
+        // TopN, as Go handlePartialOrderTopN requires.
         PhysicalPlan::TopN(_) => {
             let PhysicalPlan::TopN(topn) = &plan else {
                 unreachable!("the arm matched TopN");
@@ -3349,7 +3361,7 @@ pub fn attach2_task(
                         cop.index_plan = Some(Box::new(PhysicalPlan::Limit(
                             crate::physical::PhysicalLimit {
                                 base,
-                                partition_by: partial_topn.partition_by.clone(),
+                                partition_by: Vec::new(),
                                 offset: 0,
                                 count: new_count,
                                 prefix_col: Some(prefix_col.unique_id),
@@ -3359,9 +3371,6 @@ pub fn attach2_task(
                     }
 
                     let converted = Task::Cop(cop).into_root_task(allocator)?;
-                    if !partial_topn.partition_by.is_empty() {
-                        return Ok(converted);
-                    }
                     return Ok(attach_plan_to_task(
                         PhysicalPlan::TopN(partial_topn),
                         converted,

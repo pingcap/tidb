@@ -1630,6 +1630,48 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
 }
 
 #[test]
+fn partial_order_projection_maps_columns_and_rejects_computed_keys() {
+    use crate::logical::{BaseLogicalPlan, LogicalProjection};
+    use crate::physical_property::{PartialOrderInfo, SortItem};
+
+    let allocator = PlanIdAllocator::new();
+    let ty = FieldType::new(FieldTypeCode::LongLong);
+    let output = Column::new(101, ty.clone());
+    let input = Column::new(1, ty.clone());
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalProjection::TYPE, 0);
+    base.base
+        .set_schema(Some(Schema::new(vec![output.clone()])));
+    let mut projection = LogicalProjection::new(base, vec![Expression::Column(input.clone())]);
+    let prop = PhysicalProperty {
+        task_tp: TaskType::CopMultiRead,
+        partial_order_info: Some(PartialOrderInfo {
+            sort_items: vec![SortItem::from_column(output, true)],
+        }),
+        ..PhysicalProperty::default()
+    };
+    let child = projection.try_to_get_child_prop(&prop).unwrap();
+    let order = child.partial_order_info.unwrap();
+    assert_eq!(order.sort_items, vec![SortItem::from_column(input, true)]);
+    assert_eq!(
+        prop.partial_order_info.as_ref().unwrap().sort_items[0]
+            .col
+            .unique_id,
+        101
+    );
+
+    projection.exprs[0] = Expression::ScalarFunction(ScalarFunction::default());
+    assert!(projection.try_to_get_child_prop(&prop).is_none());
+    projection.exprs[0] = Expression::Constant(Constant::new(Datum::Null, ty));
+    assert!(projection
+        .try_to_get_child_prop(&prop)
+        .unwrap()
+        .partial_order_info
+        .unwrap()
+        .sort_items
+        .is_empty());
+}
+
+#[test]
 fn a_physical_sort_retains_scalar_by_items_like_go() {
     // Go `getPhysicalSort` copies `LogicalSort.ByItems` verbatim. Only the
     // separate NominalSort candidate requires column-only items.

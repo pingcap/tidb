@@ -475,3 +475,55 @@ fn modify_column_keeps_a_prefix_the_new_type_can_carry() {
         Err(DriverError::BlobKeyWithoutLength(ref column)) if column == "a"
     ));
 }
+
+#[test]
+fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(true);
+    crate::run_create_table_on(
+        "CREATE TABLE p (a VARCHAR(20), KEY idx(a(3)))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO p VALUES ('abczz'), ('abcaa'), ('abcmm'), ('aaa'), ('zzz')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    for (order, expected) in [
+        ("ASC", vec!["abcaa", "abcmm"]),
+        ("DESC", vec!["abczz", "abcmm"]),
+    ] {
+        let sql =
+            format!("SELECT /*+ ORDER_INDEX(p, idx) */ a FROM p ORDER BY a {order} LIMIT 1, 2");
+        let rows = run_select_on(&sql, &catalog, &ctx).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| datum_text_for_test(&row[0]))
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let stmt = tidb_parser::parse(&sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("select");
+        };
+        let (_, plan) =
+            explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+        let text = plan
+            .iter()
+            .flatten()
+            .map(|datum| match datum {
+                Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(text.contains("prefix_col:"), "{text}");
+    }
+}

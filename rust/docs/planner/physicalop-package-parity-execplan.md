@@ -13,10 +13,16 @@ do not claim package acceptance.
 
 Rust planning must produce, cost, clone, rebuild, serialize, and attach the
 same physical operators and distributed tasks as pinned Go package
-`pkg/planner/core/operator/physicalop` at the current audit baseline
-`aba629bb455dc09d6a5d98b3c39a542bb1189b9d`. The physicalop source tree is
-unchanged from `be35d4c762f4a8252c059ab0eedc24b310270b8c`; its current
-57-artifact inventory and hashes are in `physicalop-source-inventory.md`.
+`pkg/planner/core/operator/physicalop` from TiDB **master**, as clarified by
+the user on 2026-09-21. The current resolved `origin/master` revision is
+`1400603a0c5220f16c90cb543a8b96cbcc641c94` (fetched 2026-09-21 local time).
+Its complete 58-artifact inventory and hashes are in
+`physicalop-source-inventory.md`. The working branch's Go sources differ from
+master: always read the reference through `git show <resolved-revision>:<path>`
+or an isolated checkout of that revision. Refresh `origin/master` before
+advancing the reference audit and record the resolved commit for reproducibility.
+Historical inventories and receipts must be rechecked against master; a prior
+branch pin is not the user's parity target.
 Earlier progress below was
 measured against `e2788410d8d696605e8cb002585877a063ccc909` and is historical
 evidence, not acceptance of the current package. A user should observe the same
@@ -26,6 +32,20 @@ Rust-only policy, cache-only physical path, named refusal, ignored substitute,
 or missing Go branch.
 
 ## Progress
+
+- [x] (2026-09-21, master reference) Fetch `origin/master` and regenerate the
+  complete physicalop source and generation-input inventory at
+  `1400603a0c5220f16c90cb543a8b96cbcc641c94`. All previous acceptance
+  evidence remains historical until checked against master.
+- [x] (2026-09-21, partial-order corrections) Map projection columns, honor
+  order/no-order index hints, normalize declared full-length prefixes, and
+  retain partitioned root TopN with an unpartitioned index Limit. Three
+  planner regressions failed before the fixes; the full-length assertion
+  failed in a subsequent run before its fix. All four filtered planner tests
+  and the SQL ascending/descending prefix-tie cases now pass. Correct the
+  prior statement builder's invalid `const` signature; executor/session
+  compilation and `make lint` pass. Complete executor/remote-limit behavior
+  is still open.
 
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
@@ -671,6 +691,15 @@ their recorded stage. The latest verified state is summarized first.
 
 ## Surprises & Discoveries
 
+The master-reference audit found that partial-order projection properties were
+cloned without mapping output columns to input columns, ordered-index hints
+looked only at ordinary sort items, and partitioned partial-order attachment
+dropped the root TopN. Master explicitly always retains that root and leaves
+the pushed index Limit unpartitioned. The double-read executor currently
+extracts its index scan and selections but does not lower the embedded
+prefix Limit. The generic Limit builder uses an ordinary cap; end-to-end
+index-limit and remote transport parity must not be inferred from plan tests.
+
 Deferred/correlated grouping (2026-09-21): Go's Constant.VecEvalXxx forwards the
 requested evaluation domain to its deferred child, using the child's own
 metadata for conversions. CorrelatedColumn.VecEvalXxx broadcasts one typed
@@ -883,6 +912,12 @@ batch; scalar mode emits one per row. The final receipt includes Go evidence.
 
 ## Decision Log
 
+- Decision (2026-09-21, user clarification): use latest TiDB master as Go
+  reference, resolving each audit to an explicit fetched commit. Keep the
+  Rust work on `hparser-integration`; reading a reference does not require
+  merging unrelated master Go changes. Re-audit historical package evidence
+  before any package acceptance claim.
+
 - Decision: expose the requested typed Constant domain and implement correlated
   typed evaluation in the expression owner. Unwrap vectorized deferred chains
   only to supported constant/correlated/same-domain column leaves; retain the
@@ -982,6 +1017,12 @@ batch; scalar mode emits one per row. The final receipt includes Go evidence.
   Date/Author: 2026-09-01 / Codex.
 
 ## Outcomes & Retrospective
+
+The master baseline now includes all 58 physicalop artifacts, including the
+master batch-point-get tests missing from the old inventory. Updating hashes
+is provenance evidence only; it does not validate behavior. Whole physicalop
+and dependent-package acceptance and sysbench/TPC-C/TPC-H/YCSB performance
+gates remain open.
 
 The 2026-09-21 typed-constant checkpoint corrects observable key bytes,
 warnings and fatal-error order, and adds a measured stream-grouping optimization.
@@ -8188,7 +8229,9 @@ excluded for this property, and the match result travels on `CopTask`.
 `Attach2Task` now follows Go's `handlePartialOrderTopN`: it resolves the
 matched prefix column in the TopN schema, pushes a prefix-aware Limit with
 `Offset + Count` onto the unfinished index plan when the CopTask permits it,
-and retains the root TopN (skipping that root only for partitioned TopN).
+and attempted to retain the root TopN. The follow-up master audit found that
+the partitioned case incorrectly omitted the root and copied partition keys
+onto the index Limit; the master-reference correction below fixes that error.
 Focused planner receipts pass:
 
     cargo check --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --message-format=short
@@ -8198,3 +8241,61 @@ Focused planner receipts pass:
 The remaining TopN branches, complete physicalop package acceptance, and the
 sysbench/TPC-C/TPC-H/YCSB performance gates remain open; these tests do not
 claim whole-package or workload parity.
+
+
+## Master-reference correction receipt (2026-09-21)
+
+
+Go means TiDB master. This checkpoint uses freshly fetched
+`1400603a0c5220f16c90cb543a8b96cbcc641c94`, not the working branch's Go
+snapshot. The complete physicalop inventory contains 58 package artifacts
+and five direct generation/module inputs at that revision. The older
+inventories of dependent packages remain explicitly historical.
+
+Changed files and behavior:
+
+- `rust/crates/tidb-planner/src/logical/projection.rs` maps partial-order items
+  through the projection, preserves direction and column metadata, drops
+  constants/absent items, and rejects computed expressions as master does.
+- `rust/crates/tidb-planner/src/find_best_task/dispatch.rs` honors
+  ORDER_INDEX/NO_ORDER_INDEX for partial order and uses master's effective
+  index lengths, treating a prefix equal to the field length as a full column.
+- `rust/crates/tidb-planner/src/task.rs` always retains the root partial-order
+  TopN and leaves partition keys off the pushed prefix Limit.
+- `rust/crates/tidb-planner/src/physical/tests.rs`, plus existing dispatch/task
+  tests, cover the corrected planner behavior. The dispatch fixture now uses
+  a real string prefix type.
+- `rust/crates/tidb-executor/src/stmt_context.rs` uses the ordinary builder
+  method signature supported by the context-configuration macro. The prior
+  `const fn` prevented the executor/session from compiling.
+- `rust/crates/tidb-executor/src/driver/tests/index_prefix_reads.rs` checks
+  ascending/descending offset TopN rows across a tied prefix and confirms
+  EXPLAIN selects the partial-order path.
+- This ExecPlan and `rust/docs/planner/physicalop-source-inventory.md` record
+  the master target, regenerated hashes, evidence and remaining gates.
+
+Validation from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib partial_order --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib partial_order_topn_keeps_competing_rows_with_the_same_prefix --message-format=short -- --test-threads=1
+    cargo check --offline --locked -j12 -p tidb-executor -p tidb-session --message-format=short
+
+The first planner regression run failed on projection mapping, ORDER_INDEX,
+and root TopN retention (one pass, three failures). The next run failed only
+the newly added full-field-length regression. The final run passes all four
+filtered tests. The SQL test passes both ASC and DESC cases. Native executor
+and session checks pass after correcting the macro signature. Existing
+compiler warnings remain. From repository root, `make lint` and
+`git diff --check` pass; rustfmt checks cover modified ranges using the
+workspace's Rust 2021 edition. No Go or Bazel artifacts changed, so
+`make bazel_prepare` and failpoint instrumentation were not required.
+
+Risks and remaining evidence: these are correctness fixes; no benchmark speedup
+is claimed. The double-read executor still does not lower the embedded special
+prefix Limit, and generic/remote limit transport requires further package work.
+ForcePartialOrder state for forced-index candidate ordering remains open.
+Original Go tests at the fetched master pin, full package parity gates,
+distributed execution, and sysbench/TPC-C/TPC-H/YCSB performance were not run
+for this checkpoint. The passing SQL fixture is native regression evidence,
+not a substitute for those gates. Disk cleanup removed the old 318 GB Rust
+build cache; only artifacts needed for these scoped checks were rebuilt.

@@ -146,9 +146,7 @@ impl LogicalProjection {
 
     /// Go `TryToGetChildProp` (`logical_projection.go:524`): the parent's
     /// property expressed over this projection's child, or `None` when a
-    /// required order runs through a computed expression. The
-    /// `PartialOrderInfo` and `AdvisorySortItems` passes narrow with those
-    /// unported fields.
+    /// required order runs through a computed expression.
     #[must_use]
     pub fn try_to_get_child_prop(
         &self,
@@ -157,6 +155,25 @@ impl LogicalProjection {
         let mut new_prop = prop.clone_essential_fields();
         if !prop.sort_items.is_empty() {
             new_prop.sort_items = self.try_transform_sort_items(&prop.sort_items)?;
+        }
+        if let Some(partial) = &prop.partial_order_info {
+            let schema = self.base.base.schema()?;
+            let mut sort_items = Vec::with_capacity(partial.sort_items.len());
+            for item in &partial.sort_items {
+                let Ok(index) = usize::try_from(schema.column_index(&item.col)) else {
+                    // Go tryTransformSortItemPtrs skips absent constant items.
+                    continue;
+                };
+                match self.exprs.get(index)? {
+                    Expression::Column(column) => sort_items.push(
+                        crate::physical_property::SortItem::from_column(column.clone(), item.desc),
+                    ),
+                    Expression::ScalarFunction(_) => return None,
+                    Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+                }
+            }
+            new_prop.partial_order_info =
+                Some(crate::physical_property::PartialOrderInfo { sort_items });
         }
         Some(new_prop)
     }
