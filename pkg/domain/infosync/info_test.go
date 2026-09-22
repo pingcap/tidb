@@ -331,7 +331,8 @@ func TestDoRequestRetryLeader(t *testing.T) {
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer cluster.Terminate(t)
 
-	client := cluster.RandClient()
+	client, err := cluster.ClusterClient()
+	require.NoError(t, err)
 	var (
 		leader string
 	)
