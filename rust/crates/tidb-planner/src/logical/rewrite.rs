@@ -350,11 +350,39 @@ pub(crate) fn analyzed_filter_selectivity(
             // negated string match (NOT LIKE / NOT REGEXP) is covered by
             // `GetNegateStrMatchDefaultSelectivity()` = 1 - the string-match
             // default (0.1), NOT the generic 0.8 factor; `c not like '%a%'`
-            // on the unanalyzed fixture prints 9000.00 in Go.
+            // on the unanalyzed fixture prints 9000.00 in Go. Before that
+            // fallback, Go's `notCoveredNegateStrMatch` arm first runs
+            // `GetSelectivityByFilter` — with the shipped
+            // `tidb_default_string_match_selectivity = 0`, TopN-assisted
+            // estimation evaluates the whole negated filter against the
+            // stats-ver-2 TopN values and histogram bounds; only an
+            // unusable collection keeps the 0.9 default. TPC-H Q13's
+            // `not(like(o_comment, '%pending%deposits%'))` estimates
+            // 99.6% from TopN in Go, not 90%.
             ("not", [inner @ Expression::ScalarFunction(negated)]) => {
                 let lowered = negated.func_name.lowercase();
                 if lowered == "like" || lowered == "regexp" {
-                    selectivity_total *= 1.0 - DEFAULT_STRING_MATCH_SELECTIVITY;
+                    let stats_based = match negated.args.as_slice() {
+                        [Expression::Column(column), Expression::Constant(pattern), rest @ ..]
+                            if rest
+                                .iter()
+                                .all(|argument| matches!(argument, Expression::Constant(_))) =>
+                        {
+                            if lowered == "like" {
+                                stats_negate_like_selectivity(
+                                    table_stats,
+                                    column,
+                                    &pattern.value,
+                                    escape_from_constant(rest.first()),
+                                )
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    selectivity_total *=
+                        stats_based.unwrap_or(1.0 - DEFAULT_STRING_MATCH_SELECTIVITY);
                 } else {
                     selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
                 }
@@ -438,6 +466,126 @@ fn histogram_prefix_selectivity(
         }
     }
     Some((matched / realtime as f64).max(1.0 / realtime as f64))
+}
+
+/// Go `GetSelectivityByFilter`'s negate string-match arm: a single-column
+/// `not(like(col, pattern, escape))` evaluated against the stats-ver-2
+/// TopN values (weighted by their counts) and the histogram's bucket
+/// bounds (upper bounds weighted by `Repeat`, lower bounds as uniform
+/// samples of the non-TopN remainder), plus the NULL partition. Returns
+/// `None` when the collection carries no stats-ver-2 histogram so the
+/// caller keeps the 0.9 default.
+fn stats_negate_like_selectivity(
+    table_stats: &StatsInfo,
+    column: &tidb_expr::column::Column,
+    pattern: &tidb_datatype::Datum,
+    escape: Option<u8>,
+) -> Option<f64> {
+    let pattern_bytes = match pattern {
+        tidb_datatype::Datum::Bytes(bytes) => bytes.clone(),
+        tidb_datatype::Datum::String(string) => string.bytes().to_vec(),
+        _ => return None,
+    };
+    let hist_coll = table_stats.hist_coll()?;
+    let column_stats = hist_coll.histogram(column.unique_id)?;
+    if column_stats.stats_ver != 2 {
+        return None;
+    }
+    let realtime = hist_coll.realtime_count();
+    if realtime <= 0 {
+        return None;
+    }
+    let hist_not_null = column_stats.histogram.not_null_count();
+    let topn_total = column_stats
+        .topn
+        .as_ref()
+        .map_or(0.0, |topn| topn.total_count() as f64);
+    let null_count = column_stats.histogram.null_count as f64;
+    let total_cnt = hist_not_null + topn_total + null_count;
+    if total_cnt <= 0.0 {
+        return None;
+    }
+
+    // The filter is `not(like(...))`: a value is selected when it does NOT
+    // match the pattern. Non-string values cannot match a LIKE pattern.
+    let filter_keeps = |value: &tidb_datatype::Datum| -> Option<bool> {
+        let text = match value {
+            tidb_datatype::Datum::Bytes(bytes) => bytes.as_slice(),
+            tidb_datatype::Datum::String(string) => string.bytes(),
+            _ => return Some(true),
+        };
+        Some(!tidb_expr::like_match_with_collation(
+            text,
+            &pattern_bytes,
+            escape,
+            tidb_datatype::Collation::Utf8Mb4Bin,
+        ))
+    };
+
+    // TopN arm: each entry is one encoded value; decode then evaluate.
+    let mut topn_selected = 0.0_f64;
+    if let Some(topn) = &column_stats.topn {
+        for entry in topn.entries() {
+            let (_, value) = tidb_codec::decode_one(&entry.encoded).ok()?;
+            if filter_keeps(&value)? {
+                topn_selected += entry.count as f64;
+            }
+        }
+    }
+    let topn_sel = topn_selected / total_cnt;
+
+    // Histogram arm: upper bounds carry their bucket's `Repeat` rows;
+    // lower bounds act as random samples regarded equally.
+    let mut repeat_total = 0.0_f64;
+    let mut repeat_selected = 0.0_f64;
+    let mut lower_bound_matches = 0.0_f64;
+    for bucket in &column_stats.histogram.buckets {
+        repeat_total += bucket.repeat as f64;
+        if filter_keeps(&bucket.upper_bound)? {
+            repeat_selected += bucket.repeat as f64;
+        }
+        if filter_keeps(&bucket.lower_bound)? {
+            lower_bound_matches += 1.0;
+        }
+    }
+    let hist_sel = if hist_not_null > 0.0 {
+        let bucket_count = column_stats.histogram.buckets.len() as f64;
+        let upper_bounds_ratio = (repeat_total / hist_not_null).min(1.0);
+        let lower_bounds_ratio = 1.0 - upper_bounds_ratio;
+        let upper_bounds_sel = if repeat_total > 0.0 {
+            repeat_selected / repeat_total
+        } else {
+            0.0
+        };
+        let lower_bounds_sel = if bucket_count > 0.0 {
+            lower_bound_matches / bucket_count
+        } else {
+            0.0
+        };
+        (lower_bounds_sel * lower_bounds_ratio + upper_bounds_sel * upper_bounds_ratio)
+            * (hist_not_null / total_cnt)
+    } else {
+        0.0
+    };
+
+    // `not(like(NULL, ...))` evaluates to NULL, which a filter drops, so
+    // the NULL partition is never selected under a negate string match.
+    let null_sel = 0.0;
+
+    Some(topn_sel + hist_sel + null_sel)
+}
+
+/// Go reads the LIKE escape as `expression.ConstInt`'s value; the escape
+/// argument is optional and non-integer values yield `None` (the matcher
+/// then defaults to backslash, as Go's default escape does).
+fn escape_from_constant(constant: Option<&Expression>) -> Option<u8> {
+    match constant {
+        Some(Expression::Constant(constant)) => match &constant.value {
+            tidb_datatype::Datum::Int(value) => Some(*value as u8),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Go `cardinality.Selectivity`'s equality arm over the loaded histogram:
