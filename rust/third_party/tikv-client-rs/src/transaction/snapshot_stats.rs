@@ -25,6 +25,8 @@ pub enum SnapshotRpcCommand {
     BatchGet,
     BufferBatchGet,
     Scan,
+    /// ClientHelper lock-resolution call, potentially containing multiple RPCs.
+    ResolveLock,
 }
 
 impl fmt::Display for SnapshotRpcCommand {
@@ -34,6 +36,7 @@ impl fmt::Display for SnapshotRpcCommand {
             Self::BatchGet => "BatchGet",
             Self::BufferBatchGet => "BufferBatchGet",
             Self::Scan => "Scan",
+            Self::ResolveLock => "ResolveLock",
         })
     }
 }
@@ -598,7 +601,7 @@ impl SnapshotRuntimeStats {
         Self::default()
     }
 
-    /// Return the number of completed physical RPCs for `command`.
+    /// Return completed RPC attempts or ResolveLock helper calls for `command`.
     pub fn rpc_count(&self, command: SnapshotRpcCommand) -> u64 {
         self.inner
             .lock()
@@ -608,8 +611,7 @@ impl SnapshotRuntimeStats {
             .map_or(0, |stat| stat.count)
     }
 
-    /// Return the cumulative transport duration for completed physical RPCs
-    /// for `command`.
+    /// Return cumulative RPC duration, or helper duration for ResolveLock.
     pub fn rpc_duration(&self, command: SnapshotRpcCommand) -> Duration {
         self.inner
             .lock()
@@ -737,8 +739,8 @@ impl SnapshotRuntimeStats {
         })
     }
 
-    /// Record a completed physical snapshot RPC, including failed attempts.
-    fn record_rpc(&self, command: SnapshotRpcCommand, duration: Duration) {
+    /// Record a completed snapshot RPC or ResolveLock helper call, including errors.
+    pub fn record_rpc(&self, command: SnapshotRpcCommand, duration: Duration) {
         let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
         let stat = inner.rpc.entry(command).or_default();
         stat.count += 1;

@@ -259,6 +259,8 @@ pub struct TransactionBatchGetRequest<'a> {
     pub request: KvrpcBatchGetRequest,
     /// Region context stamped with the transaction's resolved locks.
     pub context: KvrpcContext,
+    /// Optional per-snapshot RPC statistics, retained until each completion.
+    pub stats: Option<std::sync::Arc<tikv_client::SnapshotRuntimeStats>>,
 }
 
 /// One region-routed Prewrite submitted as part of a concurrent write round.
@@ -379,6 +381,10 @@ pub trait TransactionCommandClient {
         requests
             .iter()
             .map(|request| {
+                let _observation = crate::rpc::SnapshotRpcObservation::start(
+                    request.stats.as_ref(),
+                    tikv_client::SnapshotRpcCommand::BatchGet,
+                );
                 self.publish_transaction_batch_get(
                     request.address,
                     &request.request,
@@ -614,12 +620,13 @@ impl TransactionCommandClient for TonicCoprocessorClient {
     ) -> Vec<PublishedCommand<KvrpcBatchGetResponse>> {
         complete_published_batch(
             requests.iter().map(|request| {
-                self.begin_transaction_batch_get(
+                self.begin_transaction_batch_get_with_stats(
                     request.address,
                     None,
                     &request.request,
                     &request.context,
                     call,
+                    request.stats.as_ref(),
                 )
                 .map_err(|error| error.to_string())
             }),
@@ -636,12 +643,13 @@ impl TransactionCommandClient for TonicCoprocessorClient {
             .iter()
             .map(|request| {
                 let pending = self
-                    .begin_transaction_batch_get(
+                    .begin_transaction_batch_get_with_stats(
                         request.address,
                         None,
                         &request.request,
                         &request.context,
                         call,
+                        request.stats.as_ref(),
                     )
                     .map_err(|error| error.to_string());
                 Box::pin(async move {
@@ -930,13 +938,30 @@ mod tests {
                 assert!(matches!(&results[0], PublishedCommand::BeforePublication(error) if !error.is_empty()));
             };
         }
-        check_batch!(publish_transaction_batch_gets, TransactionBatchGetRequest);
+        let stats = std::sync::Arc::new(tikv_client::SnapshotRuntimeStats::new());
+        let results = client.publish_transaction_batch_gets(
+            &[TransactionBatchGetRequest {
+                address,
+                request: Default::default(),
+                context: Default::default(),
+                stats: Some(std::sync::Arc::clone(&stats)),
+            }],
+            &UnaryCallContext::with_timeout(Duration::from_secs(2)),
+        );
+        assert!(
+            matches!(&results[0], PublishedCommand::BeforePublication(error) if !error.is_empty())
+        );
+        assert_eq!(
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
+            1
+        );
         let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
         let pending = client.begin_transaction_batch_gets(
             &[TransactionBatchGetRequest {
                 address,
                 request: Default::default(),
                 context: Default::default(),
+                stats: Some(std::sync::Arc::clone(&stats)),
             }],
             &call,
         );
@@ -945,6 +970,10 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(
             matches!(&results[0], PublishedCommand::BeforePublication(error) if !error.is_empty())
+        );
+        assert_eq!(
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
+            2
         );
         check_batch!(publish_prewrites, TransactionPrewriteRequest);
         check_batch!(publish_commits, TransactionCommitRequest);

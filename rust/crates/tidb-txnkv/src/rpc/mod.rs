@@ -30,6 +30,7 @@ pub use error::{
 pub use execution::{execution_runtime, go_max_procs, query_worker_runtime, wait_with_call};
 pub use liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 pub use tonic_coprocessor::TonicCoprocessorClient;
+pub(crate) use transaction::SnapshotRpcObservation;
 pub use transaction::{
     TransactionBatchPending, TransactionBatchPublication, TransactionBatchResponse,
 };

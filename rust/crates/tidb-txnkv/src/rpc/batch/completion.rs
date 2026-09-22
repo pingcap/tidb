@@ -39,6 +39,7 @@ struct ReplyState {
 struct ReplyDelivery {
     sender: Option<oneshot::Sender<Reply>>,
     cancel_listeners: Vec<CancelListener>,
+    snapshot_rpc: Option<crate::rpc::SnapshotRpcObservation>,
 }
 
 impl fmt::Debug for ReplyState {
@@ -76,12 +77,15 @@ impl BatchCommandCompletion {
         match &self.kind {
             CompletionKind::Callback(callback) => callback.schedule(result),
             CompletionKind::Response(state) => {
-                let sender = state
-                    .delivery
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .sender
-                    .take();
+                let sender = {
+                    let mut delivery = state.delivery.lock().unwrap_or_else(|p| p.into_inner());
+                    // Finish accounting under the terminal gate: a racing
+                    // cancellation must not return ahead of the winning reply's
+                    // stats. The stats lock protects data only and never enters
+                    // transport code, so it cannot acquire this reply lock.
+                    drop(delivery.snapshot_rpc.take());
+                    delivery.sender.take()
+                };
                 if let Some(sender) = sender {
                     let _ = sender.send(result);
                 }
@@ -147,6 +151,7 @@ pub(in crate::rpc) fn reply_pair() -> (BatchCommandCompletion, BatchReply) {
         delivery: Mutex::new(ReplyDelivery {
             sender: Some(sender),
             cancel_listeners: Vec::new(),
+            snapshot_rpc: None,
         }),
     });
     (
@@ -177,6 +182,24 @@ impl Wake for ReplyNotifier {
 }
 
 impl BatchReply {
+    /// Installed before transport admission, so an immediate response cannot
+    /// precede its observer. Uninstrumented requests acquire no additional lock.
+    pub(in crate::rpc) fn observe_snapshot_rpc(
+        &mut self,
+        observation: Option<crate::rpc::SnapshotRpcObservation>,
+    ) {
+        if let Some(observation) = observation {
+            let mut delivery = self
+                .state
+                .delivery
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            debug_assert!(delivery.sender.is_some());
+            debug_assert!(delivery.snapshot_rpc.is_none());
+            delivery.snapshot_rpc = Some(observation);
+        }
+    }
+
     pub(in crate::rpc) fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
         let waker = Waker::from(Arc::new(ReplyNotifier {
             notifier: notifier.clone(),
@@ -271,6 +294,7 @@ impl BatchReply {
                 .delivery
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
+            drop(state.snapshot_rpc.take());
             self.state.cancelled.store(true, Ordering::Release);
             (
                 state.sender.take(),
@@ -344,5 +368,104 @@ mod tests {
         cancellation.cancel();
 
         assert_eq!(waiting.join().unwrap(), Err(CompletionError::Cancelled));
+    }
+
+    #[test]
+    fn snapshot_rpc_stats_stop_at_delivery_before_the_reader_polls() {
+        use crate::rpc::{DirectUnaryClientError, SnapshotRpcObservation};
+        use std::sync::Arc;
+        use tikv_client::{SnapshotRpcCommand, SnapshotRuntimeStats};
+        for fail in [false, true] {
+            let stats = Arc::new(SnapshotRuntimeStats::new());
+            let (completion, mut pull) = reply_pair();
+            pull.observe_snapshot_rpc(SnapshotRpcObservation::start(
+                Some(&stats),
+                SnapshotRpcCommand::BatchGet,
+            ));
+            if fail {
+                completion.schedule_error(super::BatchInflightError::Transport(
+                    DirectUnaryClientError::Closed,
+                ));
+            } else {
+                completion.schedule(Ok(OpaqueBatchCommand::new(
+                    BatchCommandTag::BatchGet,
+                    bytes::Bytes::new(),
+                )));
+            }
+            // Delivery must finish accounting even if this ready reader waits
+            // behind another request indefinitely. No wall-clock sleep needed.
+            assert_eq!(stats.rpc_count(SnapshotRpcCommand::BatchGet), 1);
+            let duration = stats.rpc_duration(SnapshotRpcCommand::BatchGet);
+            assert_eq!(pull.try_complete().unwrap().unwrap().is_err(), fail);
+            completion.schedule_error(super::BatchInflightError::Transport(
+                DirectUnaryClientError::Closed,
+            ));
+            pull.cancel();
+            drop(pull);
+            assert_eq!(stats.rpc_count(SnapshotRpcCommand::BatchGet), 1);
+            assert_eq!(stats.rpc_duration(SnapshotRpcCommand::BatchGet), duration);
+        }
+    }
+
+    #[test]
+    fn snapshot_rpc_stats_account_once_when_a_reader_cancels_or_drops() {
+        use crate::rpc::SnapshotRpcObservation;
+        use std::sync::Arc;
+        use tikv_client::{SnapshotRpcCommand, SnapshotRuntimeStats};
+        for explicit_cancel in [false, true] {
+            let stats = Arc::new(SnapshotRuntimeStats::new());
+            let (completion, mut pull) = reply_pair();
+            pull.observe_snapshot_rpc(SnapshotRpcObservation::start(
+                Some(&stats),
+                SnapshotRpcCommand::BatchGet,
+            ));
+            if explicit_cancel {
+                pull.cancel();
+                pull.cancel();
+                assert_eq!(stats.rpc_count(SnapshotRpcCommand::BatchGet), 1);
+            }
+            drop(pull);
+            assert_eq!(stats.rpc_count(SnapshotRpcCommand::BatchGet), 1);
+            let duration = stats.rpc_duration(SnapshotRpcCommand::BatchGet);
+            completion.schedule(Ok(OpaqueBatchCommand::new(
+                BatchCommandTag::BatchGet,
+                bytes::Bytes::new(),
+            )));
+            drop(completion);
+            assert_eq!(stats.rpc_count(SnapshotRpcCommand::BatchGet), 1);
+            assert_eq!(stats.rpc_duration(SnapshotRpcCommand::BatchGet), duration);
+        }
+    }
+
+    #[test]
+    fn snapshot_rpc_stats_are_final_when_cancellation_races_delivery() {
+        use crate::rpc::SnapshotRpcObservation;
+        use std::sync::{Arc, Barrier};
+        use tikv_client::{SnapshotRpcCommand, SnapshotRuntimeStats};
+        for _ in 0..32 {
+            let stats = Arc::new(SnapshotRuntimeStats::new());
+            let (completion, mut pull) = reply_pair();
+            pull.observe_snapshot_rpc(SnapshotRpcObservation::start(
+                Some(&stats),
+                SnapshotRpcCommand::BatchGet,
+            ));
+            let start = Arc::new(Barrier::new(2));
+            let ready = Arc::clone(&start);
+            let worker = std::thread::spawn(move || {
+                ready.wait();
+                completion.schedule(Ok(OpaqueBatchCommand::new(
+                    BatchCommandTag::BatchGet,
+                    bytes::Bytes::new(),
+                )));
+            });
+            start.wait();
+            pull.cancel();
+            assert_eq!(stats.rpc_count(SnapshotRpcCommand::BatchGet), 1);
+            let duration = stats.rpc_duration(SnapshotRpcCommand::BatchGet);
+            worker.join().unwrap();
+            drop(pull);
+            assert_eq!(stats.rpc_count(SnapshotRpcCommand::BatchGet), 1);
+            assert_eq!(stats.rpc_duration(SnapshotRpcCommand::BatchGet), duration);
+        }
     }
 }

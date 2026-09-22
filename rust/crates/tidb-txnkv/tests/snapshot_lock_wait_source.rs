@@ -1222,6 +1222,8 @@ fn scan_response_locks_wait_without_stamping_read_hints() {
         4096,
     )
     .unwrap();
+    let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
+    transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
     assert_eq!(
         transaction
             .snapshot_scan(
@@ -1232,6 +1234,10 @@ fn scan_response_locks_wait_without_stamping_read_hints() {
             )
             .unwrap(),
         vec![(ROW_KEY.to_vec(), b"resolved".to_vec())]
+    );
+    assert_eq!(
+        stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
+        0
     );
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.scans.len(), 2);
@@ -1870,6 +1876,11 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
         point.payload_bytes, 3,
         "Get excludes key bytes and error payload"
     );
+    assert_eq!(stats.rpc_count(tikv_client::SnapshotRpcCommand::Get), 2);
+    assert_eq!(
+        stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
+        1
+    );
     assert_eq!(stats.time_detail().process_time, Duration::from_nanos(58));
     assert_eq!(stats.read_pool_task_details().unwrap().task_count, 2);
     assert_eq!(
@@ -1881,6 +1892,7 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
         point,
         "cache hits are not physical responses"
     );
+    assert_eq!(stats.rpc_count(tikv_client::SnapshotRpcCommand::Get), 2);
     assert!(transaction
         .snapshot_get(b"miss", &call)
         .unwrap()
@@ -1889,11 +1901,13 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
     assert!(transaction.snapshot_get(b"fatal", &call).is_err());
     assert!(!stats.point_response_stats().scan_detail_complete());
     assert_eq!(stats.point_response_stats().payload_bytes, 3);
+    assert_eq!(stats.rpc_count(tikv_client::SnapshotRpcCommand::Get), 4);
     let saved = stats.point_response_stats();
     transaction.set_snapshot_runtime_stats(None);
     transaction.snapshot_get(b"uncollected", &call).unwrap();
     assert!(!transaction.snapshot_point_response_stats().is_valid());
     assert_eq!(stats.point_response_stats(), saved);
+    assert_eq!(stats.rpc_count(tikv_client::SnapshotRpcCommand::Get), 4);
     let empty = Arc::new(tikv_client::SnapshotRuntimeStats::new());
     transaction.set_snapshot_runtime_stats(Some(Arc::clone(&empty)));
     transaction.snapshot_get(ROW_KEY, &call).unwrap();
@@ -1916,6 +1930,7 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
         empty.point_response_stats(),
         tikv_client::util::PointResponseStats::default()
     );
+    assert_eq!(empty.rpc_count(tikv_client::SnapshotRpcCommand::Get), 2);
     // Scanner pair errors are reread with Get; the enclosing Scan is not a
     // recognized point response and must not create missing-detail coverage.
     runtime
@@ -1948,6 +1963,38 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
         .unwrap();
     assert!(empty.point_response_stats().scan_detail_complete());
     assert_eq!(empty.point_response_stats().payload_bytes, 10);
+    assert_eq!(empty.rpc_count(tikv_client::SnapshotRpcCommand::Get), 3);
+    assert_eq!(
+        empty.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
+        0
+    );
+    {
+        let mut client = runtime.client().lock().unwrap();
+        client.status_response = Some(KvrpcCheckTxnStatusResponse {
+            error: Some(KvrpcKeyError {
+                abort: "lock resolution failed".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        // A fresh transaction avoids the status cache of the earlier success.
+        client.get_responses.push_back(KvrpcGetResponse {
+            error: Some(KvrpcKeyError {
+                locked: Some(KvrpcLockInfo {
+                    lock_version: 80,
+                    ..LockingClient::live_lock()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+    }
+    assert!(transaction.snapshot_get(b"failed-lock", &call).is_err());
+    assert_eq!(empty.rpc_count(tikv_client::SnapshotRpcCommand::Get), 4);
+    assert_eq!(
+        empty.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
+        1
+    );
 }
 
 #[test]
@@ -1984,6 +2031,14 @@ fn snapshot_response_stats_batch_modes_retries_and_pair_errors() {
         let values = transaction.snapshot_batch_get(&keys, &call).unwrap();
         assert_eq!(values, vec![(keys[5120].clone(), b"batch-value".to_vec())]);
         let point = stats.point_response_stats();
+        assert_eq!(
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
+            3
+        );
+        assert_eq!(
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
+            1
+        );
         assert_eq!(point.scan_detail.total_keys, 2);
         assert_eq!(
             point.payload_bytes,
@@ -1996,6 +2051,10 @@ fn snapshot_response_stats_batch_modes_retries_and_pair_errors() {
         );
         transaction.snapshot_batch_get(&keys, &call).unwrap();
         assert_eq!(stats.point_response_stats(), point);
+        assert_eq!(
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
+            3
+        );
         let pair = |key: &[u8], value: &[u8]| tidb_proto::KvrpcKvPair {
             key: key.to_vec(),
             value: value.to_vec(),
@@ -2031,5 +2090,13 @@ fn snapshot_response_stats_batch_modes_retries_and_pair_errors() {
             "account every successful pair before handling the first pair error"
         );
         assert_eq!(stats.point_response_stats().scan_detail.total_keys, 5);
+        assert_eq!(
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
+            4
+        );
+        assert_eq!(
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
+            1
+        );
     }
 }

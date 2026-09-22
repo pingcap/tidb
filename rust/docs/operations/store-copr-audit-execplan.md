@@ -39,6 +39,7 @@ directory; inventory every artifact and module build input before editing.
 - [x] Integrate completion-order BatchGet recovery, independently progressing split workers, cancellation/join and resolving-record ownership; verify scoped regressions and the original Go cancellation test.
 - [x] Wire the published EnableAsyncBatchGet setting into each live BatchGet call and validate both concurrent execution modes.
 - [x] Preserve point-response execution details at the wire boundary and integrate optional runtime response statistics with live Get/BatchGet.
+- [x] Integrate native point-read RPC counts/durations and ClientHelper ResolveLock accounting at the physical completion boundary; verify the terminal delivery/cancellation race.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
 - [ ] Satisfy the remaining whole-package build/platform/generated/live-store and workload gates.
@@ -79,6 +80,15 @@ attempt cap, busy loop, hidden retry policy or a success fallback. Hint checking
 belongs only on a lock response; successful request dispatch must retain its
 current cost. Preserve Rust ownership across asynchronous completion and
 callbacks while matching Go's externally observable contract.
+
+- Decision: Account an observed RPC inside the existing reply terminal gate,
+  before waking the reader or allowing competing cancellation to return.
+  Rationale: Taking the observer then updating stats outside that gate permits
+  cancellation to return before the winning delivery publishes its count. The
+  stats mutex protects only data and never calls transport, so the nested
+  acquisition has no inverse lock path. No collector installs no observer and
+  adds no clock sample, allocation or completion-lock acquisition.
+  Date/Author: 2026-09-22 / Codex.
 
 ## Validation and recovery
 
@@ -923,3 +933,111 @@ snapshot/util/coprocessor acceptance units and the overall goal active.
 Revision note: retained full point-read execution details, reconciled master's
 response coverage/payload values and source tests, connected optional live
 collection, and recorded the exact remaining SQL/timing/package gates.
+
+## Native snapshot RPC statistics milestone
+
+
+The branch was pulled after 744dc7d8e2 and master remains unchanged. The attached
+collector currently receives point-response details, but not native RPC totals.
+Go region_request.go records each SendRequest duration at its terminal response
+or error, and async handling likewise records before result processing. Do not
+measure the whole batch round or the time a ready response awaits its caller.
+Use an optional observer at the existing BatchReply terminal gate for native
+async requests. Install it before admission; response, error, cancellation and
+dropped futures must consume it exactly once. No collector means no new clock
+sample, allocation or completion-lock acquisition. Synchronous Get and retry
+BatchGet can measure their single blocking publication directly.
+
+Carry the optional collector with TransactionBatchGetRequest, reuse the
+existing independently driven Tonic completions, and preserve legacy publication
+APIs. The default in-process publication path measures each actual call. Extend
+SnapshotRpcCommand with Go's ResolveLock command and time ClientHelper-style
+point lock resolution, including errors and ignored-hint backoff but excluding
+the caller's subsequent TTL wait. Scanner response-level lock resolution has
+no ClientHelper stats and stays excluded. Backoff aggregation and the full SQL
+CollectRuntimeStats lifecycle remain open dependency integration work.
+
+First extend the live response regression to require Get/BatchGet/ResolveLock
+counts in the attached collector; verify the old code fails. Add completion
+boundary tests proving a delivered response is already counted before polling,
+with no second count on consume/drop, and that cancellation/drop/transport
+failure account once. Validate native admission identity, both async settings,
+clone/merge, scoped snapshot tests, dependent compilation and lint. Keep the
+complete txnsnapshot package as the atomic acceptance unit, still open.
+
+
+## Native snapshot RPC validation receipt (2026-09-22)
+
+
+Master remains 0b505ecc58b659655345b7bb85a619db02f94300 and retains the pinned
+client-go module recorded above. The pre-change regression returned zero RPCs
+instead of two Get attempts and three BatchGet attempts, recorded in
+/private/tmp/tidb-snapshot-rpc-red.log. The exact failing command, from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test snapshot_lock_wait_source snapshot_response_stats_ --message-format=short
+
+The implementation carries optional statistics with each BatchGet admission,
+uses the retained response channel's terminal gate for async duration/count,
+and wraps synchronous Get/BatchGet publications and point lock-helper calls.
+ResolveLock is a helper invocation count, not the count of its internal status
+or resolve RPCs. No read-result, retry, transport-identity or request-default
+behavior was changed. The gate consumes its optional observation once, before
+publishing response/cancellation. Its data-only stats lock cannot reenter the
+reply gate. This ordering closes a delivery/cancellation race found during
+self-review without introducing another queue, callback or completion lock.
+
+Validated from rust/:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test snapshot_lock_wait_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib rpc::batch::completion::tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib transaction_admission_errors_remain_before_publication --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all snapshot_ --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all batch_tonic_stream_source:: --message-format=short
+    cargo test --manifest-path third_party/tikv-client-rs/Cargo.toml --offline --locked -j12 --lib transaction::snapshot_stats --message-format=short
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+
+These passed with 13, 5, 1, 12, 8 and 8 tests respectively (47 Rust tests), plus
+dependent compilation. Logs under /private/tmp/tidb-snapshot-rpc- are source,
+completion, admission, aggregate, transport, runtime and check.log. The eight
+Tonic fixture tests had loopback-bind permission. The 13 snapshot tests cover
+both async settings, physical retries, cache/detach, region/transport/key
+errors, failed lock resolution and exclusion of Scanner response-level locks.
+The completion tests verify accounting before polling, duplicate completion,
+cancellation/drop, and 32 concurrent delivery/cancellation races without sleeps.
+
+From /private/tmp/tidb-master-cc83514:
+
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/txnkv/txnsnapshot -run '^(TestSnapshotRuntimeStats.*|TestCollectBatchGetResponseDataPointResponseStats|TestAsyncBatchGetCancellationWaitsForRetryWorker)$' -count=1 -v
+
+All seven selected original tests passed; go.log under the same prefix contains
+the result. This package has no failpoint.Inject calls to transform. From root:
+
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+Lint passed with permission for the pinned Go tool. Scoped formatting and diff
+checks passed. No Go/Bazel/module input changed. The earlier fresh-worktree
+Bazel gate remains unsatisfied because Bazel is unavailable. No full-package,
+platform/nextgen, live TiKV or matched sysbench/TPC-C/TPC-H/YCSB performance gate
+is claimed. The optional collector adds a stats update only when attached;
+workload overhead has not been measured. Free space is approximately 221 GiB
+after the earlier cache cleanup and these rebuilds.
+
+Changed files are tidb-txnkv's rpc/batch/completion.rs, rpc/mod.rs,
+rpc/transaction.rs, transaction/command_client.rs, coordinator/snapshot_read.rs,
+coordinator/snapshot_batch_get.rs and tests/snapshot_lock_wait_source.rs;
+vendored transaction/snapshot_stats.rs; this plan and the txnsnapshot inventory.
+Self-review checked lifetime/drop ordering, cancellation visibility, timing
+boundaries, detached/cache behavior and unchanged uninstrumented defaults.
+The user-owned untracked vs_helper.rs and fragment.rs remain untouched.
+
+The whole txnsnapshot acceptance unit remains open. Native backoff,
+ResolveLockDetail, request-error/replica stats and SQL CollectRuntimeStats
+attachment still require integration, in addition to the package's remaining
+scanner/options/replica/tier behavior and original build/workload gates.
+Commit and push this evidence without claiming the package transcreated.
+
+Revision note: completed optional native RPC/helper statistics, made terminal
+accounting visible before cancellation returns, and recorded validation and
+remaining whole-package work.

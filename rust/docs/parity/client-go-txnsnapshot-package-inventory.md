@@ -78,5 +78,22 @@ getter; CollectBatchGetResponseData through typed-response/payload cases;
 ConcurrentPointResponseWrites through eight synchronized native writers.
 The util dependency's complete inventory is client-go-util-package-inventory.md.
 This does not close the package: live SQL CollectRuntimeStats attachment,
-native RPC/backoff/lock-time aggregation, options/tier/replica/reverse scanner,
+native backoff/resolver-detail integration, options/tier/replica/reverse scanner,
 all original support/fixtures and live build/workload gates remain open.
+
+Native Get and both BatchGet modes now also record optional RPC count/duration,
+including region/transport/key errors and physical retries. Cache hits and
+reads after collector detachment do not change the old collector. Async Tonic
+BatchGet stops timing at its original response/error/cancellation gate, before
+reader polling, and accounts a dropped future once. The gate finishes the
+statistics update before a racing cancellation may return; the nested stats
+lock protects data only and cannot reenter transport. Default in-process
+clients measure each synchronous publication. Requests without a collector
+sample no additional clock and install no observer.
+
+ClientHelper-style point lock resolution records one ResolveLock call even on
+failure. The following TTL wait and ordinary Scanner response-level resolution
+are excluded as in the pinned source. This is separate from the original
+ResolveLockDetail field, whose native aggregation remains open, as do backoff,
+request-error/replica statistics and live SQL attachment. The 2026-09-22 RPC
+receipt in the ExecPlan records the red/green and cancellation-race evidence.

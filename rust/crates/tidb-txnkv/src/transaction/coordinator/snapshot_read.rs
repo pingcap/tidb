@@ -20,6 +20,7 @@
 //! to each read; locked scan pairs are reread through Get.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use tidb_proto::{
     KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcScanRequest, KvrpcScanResponse,
 };
@@ -90,6 +91,7 @@ pub(super) fn resolve_snapshot_locks<C, L, T>(
     backoff: &mut RegionBackoffBudget,
     for_read: bool,
     record: &mut Option<crate::ResolvingLocksGuard>,
+    stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Result<crate::lock::LockRecoveryResult, OptimisticCoordinatorError>
 where
     C: LockRecoveryClient,
@@ -97,6 +99,10 @@ where
     T: TimestampSource,
 {
     record_blocking_locks(runtime, locks, read_ts, record);
+    let _observation = crate::rpc::SnapshotRpcObservation::start(
+        stats,
+        tikv_client::SnapshotRpcCommand::ResolveLock,
+    );
     // Only the hints sent by this physical read can have been ignored.
     if for_read {
         backoff_ignored_snapshot_hints(locks, context, backoff, call)?;
@@ -323,7 +329,7 @@ fn snapshot_get_with<C, L, T>(
     forward_backoff: &mut RegionBackoffBudget,
     resolved_locks: &mut crate::lock::SnapshotLockSet,
     resource_group_name: Option<&str>,
-    stats: Option<&tikv_client::SnapshotRuntimeStats>,
+    stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
     key: &[u8],
     call: &UnaryCallContext,
 ) -> Result<SnapshotGetResult, OptimisticCoordinatorError>
@@ -391,6 +397,7 @@ where
                     forward_backoff,
                     true,
                     &mut resolving_record,
+                    stats,
                 )?;
                 resolved_locks.absorb(&recovery);
                 wait_snapshot_lock_ttl(&recovery, forward_backoff, call)?;
@@ -427,19 +434,20 @@ fn begin_get<C, L>(
     context: &tidb_proto::KvrpcContext,
     request: &KvrpcGetRequest,
     call: &UnaryCallContext,
-    stats: Option<&tikv_client::SnapshotRuntimeStats>,
+    stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Result<TransactionBatchResponse<KvrpcGetResponse>, OptimisticCoordinatorError>
 where
     C: TransactionCommandClient,
     L: RegionRecoveryLoader,
 {
-    let published = runtime
-        .client()
-        .try_lock()
-        .map_err(|_| {
+    let published = {
+        let mut client = runtime.client().try_lock().map_err(|_| {
             OptimisticCoordinatorError::SnapshotGet("TiKV client is already borrowed".to_owned())
-        })?
-        .publish_transaction_get(route.address(), request, context, call);
+        })?;
+        let _observation =
+            crate::rpc::SnapshotRpcObservation::start(stats, tikv_client::SnapshotRpcCommand::Get);
+        client.publish_transaction_get(route.address(), request, context, call)
+    };
     match published {
         PublishedCommand::Response(response) => {
             if let Some(stats) = stats.filter(|_| response.response.region_error.is_none()) {
@@ -508,7 +516,7 @@ fn snapshot_scan_with<C, L, T>(
     forward_backoff: &mut RegionBackoffBudget,
     resolved_locks: &mut crate::lock::SnapshotLockSet,
     resource_group_name: Option<&str>,
-    stats: Option<&tikv_client::SnapshotRuntimeStats>,
+    stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
     start_key: &[u8],
     end_key: &[u8],
     limit: Option<usize>,
@@ -624,6 +632,7 @@ where
                 forward_backoff,
                 false,
                 &mut None,
+                None,
             )?;
             wait_snapshot_lock_ttl(&recovery, forward_backoff, &page_call)?;
             continue;
@@ -818,7 +827,7 @@ where
                 &context,
                 &request,
                 call,
-                self.snapshot_runtime_stats.as_deref(),
+                self.snapshot_runtime_stats.as_ref(),
             )?;
             if let Some(region_error) = response.response.region_error.as_ref() {
                 recover_region_error_with(
@@ -855,6 +864,7 @@ where
                         &mut read_backoff,
                         true,
                         &mut resolving_record,
+                        self.snapshot_runtime_stats.as_ref(),
                     )?;
                     self.resolved_locks.absorb(&recovery);
                     wait_snapshot_lock_ttl(&recovery, &mut read_backoff, call)?;
@@ -952,7 +962,7 @@ where
             &self.timestamps,
             read_ts,
             self.resource_group_name.as_deref(),
-            self.snapshot_runtime_stats.as_deref(),
+            self.snapshot_runtime_stats.as_ref(),
             &mut self.resolved_locks,
             &mut self.snapshot_batch_get_rpc_count,
             keys,
@@ -1012,7 +1022,7 @@ where
             &mut RegionBackoffBudget::campaign_default(),
             &mut self.resolved_locks,
             self.resource_group_name.as_deref(),
-            self.snapshot_runtime_stats.as_deref(),
+            self.snapshot_runtime_stats.as_ref(),
             start_key,
             end_key,
             limit,
@@ -1043,7 +1053,7 @@ where
             &mut RegionBackoffBudget::campaign_default(),
             &mut self.resolved_locks,
             self.resource_group_name.as_deref(),
-            self.snapshot_runtime_stats.as_deref(),
+            self.snapshot_runtime_stats.as_ref(),
             start_key,
             end_key,
             None,

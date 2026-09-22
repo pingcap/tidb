@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use futures::stream::{FuturesUnordered, StreamExt};
 use tidb_proto::{KvrpcBatchGetRequest, KvrpcBatchGetResponse, KvrpcContext};
@@ -46,7 +46,7 @@ pub(super) fn snapshot_batch_get_with<C, L, T>(
     timestamps: &T,
     read_ts: u64,
     resource_group_name: Option<&str>,
-    stats: Option<&tikv_client::SnapshotRuntimeStats>,
+    stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
     resolved_locks: &mut SnapshotLockSet,
     rpc_count: &mut u64,
     keys: &[Vec<u8>],
@@ -100,7 +100,7 @@ struct BatchGetState<'a, T> {
     timestamps: &'a T,
     read_ts: u64,
     resource_group_name: Option<&'a str>,
-    stats: Option<&'a tikv_client::SnapshotRuntimeStats>,
+    stats: Option<&'a Arc<tikv_client::SnapshotRuntimeStats>>,
     resolved_locks: Mutex<&'a mut SnapshotLockSet>,
     values: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
     rpc_count: AtomicU64,
@@ -191,6 +191,7 @@ where
             address: batch.address(),
             request,
             context,
+            stats: state.stats.cloned(),
         })
         .collect();
     let pending = runtime
@@ -310,11 +311,22 @@ where
         } else {
             let (request, context) = state.request(&mut batch);
             state.rpc_count.fetch_add(1, Ordering::Relaxed);
-            let published = runtime
-                .client()
-                .try_lock()
-                .map_err(|_| read_error("TiKV client is already borrowed"))?
-                .publish_transaction_batch_get(batch.address(), &request, &context, state.call);
+            let published = {
+                let mut client = runtime
+                    .client()
+                    .try_lock()
+                    .map_err(|_| read_error("TiKV client is already borrowed"))?;
+                let _observation = crate::rpc::SnapshotRpcObservation::start(
+                    state.stats,
+                    tikv_client::SnapshotRpcCommand::BatchGet,
+                );
+                client.publish_transaction_batch_get(
+                    batch.address(),
+                    &request,
+                    &context,
+                    state.call,
+                )
+            };
             BatchReply {
                 request,
                 context,
@@ -466,6 +478,7 @@ where
             backoff,
             true,
             record,
+            state.stats,
         )?;
         state
             .resolved_locks
