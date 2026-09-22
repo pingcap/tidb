@@ -137,7 +137,7 @@ func (w *worker) onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job
 		}
 		if jobCtx.deferStorageClassTransitionStaging {
 			jobCtx.pendingStorageClassTransitions = append(jobCtx.pendingStorageClassTransitions, pending)
-		} else if err := pending.stage(jobCtx.stepCtx, w.sess); err != nil {
+		} else if err := pending.stage(jobCtx.stepCtx, w.sess, jobCtx.storageClassTransitionManager); err != nil {
 			return ver, errors.Trace(err)
 		}
 	}
@@ -255,10 +255,12 @@ func prepareExplicitStorageClassTransition(
 func (pending pendingStorageClassTransition) stage(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 ) error {
 	err := stageStorageClassTransitions(
 		ctx,
 		se,
+		manager,
 		pending.tblInfo,
 		pending.old,
 		pending.schemaVersion,
@@ -274,7 +276,7 @@ func (pending pendingStorageClassTransition) stage(
 
 func (w *worker) flushPendingStorageClassTransitions(jobCtx *jobContext) error {
 	for _, pending := range jobCtx.pendingStorageClassTransitions {
-		if err := pending.stage(jobCtx.stepCtx, w.sess); err != nil {
+		if err := pending.stage(jobCtx.stepCtx, w.sess, jobCtx.storageClassTransitionManager); err != nil {
 			return errors.Trace(err)
 		}
 	}

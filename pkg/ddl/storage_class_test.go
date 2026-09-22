@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync/atomic"
 	"testing"
 
@@ -955,6 +956,19 @@ func TestStorageClassTransitionHistoryInsertionRetry(t *testing.T) {
 			tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY)")
 			tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
 
+			var failObservation atomic.Bool
+			mockStorageClassTransitionStores(t, func(w http.ResponseWriter, _ *http.Request) {
+				if failObservation.Load() {
+					http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				_, _ = w.Write([]byte(`{"ready":3,"total":4}`))
+			})
+			_, err := ddl.PollStorageClassTransitionsForTest(
+				context.Background(), domain.GetDomain(tk.Session()).DDL(), ddlsess.NewSession(tk.Session()))
+			require.NoError(t, err)
+			failObservation.Store(true)
+
 			// Read durable metadata and history before the failed step is retried.
 			checkTK := testkit.NewTestKit(t, store)
 			var retryTable *model.TableInfo
@@ -973,7 +987,8 @@ func TestStorageClassTransitionHistoryInsertionRetry(t *testing.T) {
 				defer func() { _ = txn.Rollback() }()
 				retryTable, retryErr = meta.NewMutator(txn).GetTable(job.SchemaID, job.TableID)
 				retrySchemaVersion = job.LastSchemaVersion
-				retryHistory = checkTK.MustQuery(`SELECT direction, state FROM mysql.tidb_storage_class_transition_history
+				retryHistory = checkTK.MustQuery(`SELECT direction, state, total_replicas, completed_replicas
+					FROM mysql.tidb_storage_class_transition_history
 					WHERE table_name = 't' ORDER BY start_ts`).Rows()
 			})
 
@@ -984,15 +999,16 @@ func TestStorageClassTransitionHistoryInsertionRetry(t *testing.T) {
 			require.NotNil(t, retryTable)
 			require.Equal(t, model.StorageClassTierIA, retryTable.StorageClassTier)
 			require.Zero(t, retrySchemaVersion)
-			require.Equal(t, testkit.Rows("TO_IA RUNNING"), retryHistory)
+			require.Equal(t, testkit.Rows("TO_IA RUNNING <nil> <nil>"), retryHistory)
 			for _, column := range retryTable.Columns {
 				if column.Name.L == "c" {
 					require.NotEqual(t, model.StatePublic, column.State)
 				}
 			}
-			tk.MustQuery(`SELECT direction, state FROM mysql.tidb_storage_class_transition_history
+			tk.MustQuery(`SELECT direction, state, total_replicas, completed_replicas
+				FROM mysql.tidb_storage_class_transition_history
 				WHERE table_name = 't' ORDER BY start_ts`).Check(testkit.Rows(
-				"TO_IA SUPERSEDED", "TO_STANDARD RUNNING"))
+				"TO_IA SUPERSEDED 4 3", "TO_STANDARD RUNNING <nil> <nil>"))
 		})
 	}
 }
@@ -1089,6 +1105,24 @@ func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
 	))
 	tk.MustQuery("SHOW COLUMNS FROM mysql.tidb_storage_class_transition_history LIKE 'progress'").Check(testkit.Rows())
 
+	// A replacement DDL reads the owner's last observation and writes its
+	// counters together with SUPERSEDED, without periodic history updates.
+	var failObservation atomic.Bool
+	mockStorageClassTransitionStores(t, func(w http.ResponseWriter, _ *http.Request) {
+		if failObservation.Load() {
+			http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"ready":3,"total":4}`))
+	})
+	d := domain.GetDomain(tk.Session()).DDL()
+	_, err := ddl.PollStorageClassTransitionsForTest(context.Background(), d, ddlsess.NewSession(tk.Session()))
+	require.NoError(t, err)
+	require.Len(t, d.StorageClassTransitionStatuses(), 1)
+	require.True(t, d.StorageClassTransitionStatuses()[0].StatusValid)
+	tk.MustQuery(`SELECT total_replicas, completed_replicas
+		FROM mysql.tidb_storage_class_transition_history WHERE state = 'RUNNING'`).Check(testkit.Rows("<nil> <nil>"))
+	failObservation.Store(true)
 	tk.MustExec("ALTER TABLE t STORAGE_CLASS STANDARD")
 	tk.MustQuery(`SELECT direction, state, COUNT(*)
 		FROM mysql.tidb_storage_class_transition_history
@@ -1096,6 +1130,15 @@ func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
 		"TO_IA SUPERSEDED 1",
 		"TO_STANDARD RUNNING 1",
 	))
+	tk.MustQuery(`SELECT total_replicas, completed_replicas, finish_time IS NOT NULL, duration IS NOT NULL
+		FROM mysql.tidb_storage_class_transition_history WHERE state = 'SUPERSEDED'`).Check(testkit.Rows("4 3 1 1"))
+	tk.MustQuery(`SELECT total_replicas, completed_replicas
+		FROM mysql.tidb_storage_class_transition_history WHERE state = 'RUNNING'`).Check(testkit.Rows("<nil> <nil>"))
+	// Without a successful observation, superseding must keep the counts unknown.
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+	tk.MustQuery(`SELECT state, total_replicas, completed_replicas
+		FROM mysql.tidb_storage_class_transition_history WHERE direction = 'TO_STANDARD'`).Check(
+		testkit.Rows("SUPERSEDED <nil> <nil>"))
 
 	// Replacing a physical partition ends the old operation and starts a new
 	// one for every current physical target configured for the same tier.
@@ -1182,7 +1225,7 @@ func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
 		 start_time, physical_targets)
 		VALUES ('test', 'not_published', 90001, 'TO_IA', 'RUNNING', %d, 90001,
 		 '2020-01-01 00:00:00', '[{"physical_id":90001}]')`, currentSchemaVersion+1))
-	_, err := ddl.PollStorageClassTransitionsForTest(
+	_, err = ddl.PollStorageClassTransitionsForTest(
 		context.Background(), domain.GetDomain(tk.Session()).DDL(), se)
 	require.NoError(t, err)
 	tk.MustQuery(`SELECT state FROM mysql.tidb_storage_class_transition_history
