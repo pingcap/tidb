@@ -21,6 +21,13 @@ use regex::{Regex, RegexBuilder};
 
 use crate::EvalError;
 
+/// Go `regexpMemorizedSig`: a cached pattern retains either its compiled
+/// expression or the compile error produced for this statement context.
+#[derive(Clone, Debug)]
+pub(crate) struct CachedRegexp {
+    pub(crate) result: Result<Regex, EvalError>,
+}
+
 fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
     if pattern.is_empty() {
         return Err(EvalError::Unsupported("empty regular expression pattern"));
@@ -50,17 +57,53 @@ fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
 }
 
 /// Compiles one of TiDB's RE2-compatible regular expressions for the scalar
-/// functions in `builtin_ext::regexp`.  Keeping compilation here makes the
+/// functions in `builtin_ext::regexp`. Keeping compilation here makes the
 /// `[NOT] REGEXP` predicate and the positional regexp family share exactly
 /// the same empty-pattern, flag, and syntax validation rules.
 pub(crate) fn compile_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
     build_regexp(pattern, match_type)
 }
 
+/// Go `getRegexpMatchType`'s collation-derived initial flag. Explicit match
+/// type flags are appended so the rightmost user flag keeps precedence.
+pub(crate) fn regexp_match_type_with_collation(
+    match_type: &str,
+    collation: tidb_datatype::Collation,
+) -> String {
+    let initial = if tidb_datatype::is_ci_collation(collation.name()) {
+        "i"
+    } else {
+        ""
+    };
+    format!("{initial}{match_type}")
+}
+
+/// Returns a compiled pattern, memoizing the result when Go's signature says
+/// both pattern-bearing arguments are constant within the statement context.
+/// The `Result` itself is cached so an invalid pattern is reported repeatedly
+/// without recompiling, matching `regexpMemorizedSig.memorizedErr`.
+pub(crate) fn get_cached_regexp(
+    cache: &crate::builtin_ext::BuiltinFuncCache<CachedRegexp>,
+    context_id: u64,
+    cache_enabled: bool,
+    pattern: &str,
+    match_type: &str,
+) -> Result<Regex, EvalError> {
+    if !cache_enabled {
+        return compile_regexp(pattern, match_type);
+    }
+    let cached = cache.get_or_init_cache(context_id, || {
+        Ok::<_, EvalError>(CachedRegexp {
+            result: compile_regexp(pattern, match_type),
+        })
+    })?;
+    cached.result.clone()
+}
+
 /// `REGEXP_LIKE(expr, pat[, match_type])` over the seed evaluator's UTF-8
-/// scalar value domain. Go's session-selected collation, warning channel,
-/// vectorized chunk path, and context-aware regexp cache remain outside this
-/// function; callers provide only the source `match_type`.
+/// scalar value domain. Callers provide only the source `match_type`; the
+/// scalar-function layer supplies statement-context caching where the Go
+/// signature permits it.
 pub(crate) fn regexp_like(text: &str, pattern: &str, match_type: &str) -> Result<bool, EvalError> {
     Ok(build_regexp(pattern, match_type)?.is_match(text))
 }
@@ -92,12 +135,8 @@ pub(crate) fn regexp_match_with_collation(
     pattern: &str,
     collation: tidb_datatype::Collation,
 ) -> Result<bool, EvalError> {
-    let match_type = if tidb_datatype::is_ci_collation(collation.name()) {
-        "i"
-    } else {
-        ""
-    };
-    regexp_like(text, pattern, match_type)
+    let match_type = regexp_match_type_with_collation("", collation);
+    regexp_like(text, pattern, &match_type)
 }
 
 /// `[NOT] REGEXP` matching for the statistics TopN-assisted estimation path
@@ -122,12 +161,8 @@ pub(crate) fn regexp_like_with_collation(
     match_type: &str,
     collation: tidb_datatype::Collation,
 ) -> Result<bool, EvalError> {
-    let initial = if tidb_datatype::is_ci_collation(collation.name()) {
-        "i"
-    } else {
-        ""
-    };
-    regexp_like(text, pattern, &format!("{initial}{match_type}"))
+    let match_type = regexp_match_type_with_collation(match_type, collation);
+    regexp_like(text, pattern, &match_type)
 }
 
 #[cfg(test)]

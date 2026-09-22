@@ -17,16 +17,16 @@
 //!
 //! This module owns the scalar value-domain portions of
 //! `REGEXP_SUBSTR`, `REGEXP_INSTR`, and `REGEXP_REPLACE`.  TiDB's Go
-//! signatures additionally select collations, cache compiled expressions,
-//! issue statement warnings, and expose vectorized/DAG paths.  Those are
-//! intentionally not synthesized here: this seed evaluator accepts only
-//! evaluated UTF-8 scalar values and reports unsupported typed/session
-//! boundaries honestly.
+//! signatures additionally select collations, issue statement warnings, and
+//! expose vectorized/DAG paths. This evaluator accepts evaluated UTF-8 scalar
+//! values; its scalar-function caller supplies the source's context-keyed
+//! compiled-pattern and replacement-instruction caches.
 
 use regex::{Captures, Regex};
 
+use super::BuiltinFuncCache;
 use crate::coerce::coerce_str;
-use crate::regexp::compile_regexp;
+use crate::regexp::{compile_regexp, CachedRegexp};
 use crate::{Datum, EvalError};
 
 const INVALID_INDEX: &str = "Index out of bounds in regular expression search";
@@ -42,6 +42,56 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("REGEXP_SUBSTR", 2..=5) => Some(regexp_substr(vals)),
         ("REGEXP_INSTR", 2..=6) => Some(regexp_instr(vals)),
         ("REGEXP_REPLACE", 3..=6) => Some(regexp_replace(vals)),
+        _ => None,
+    }
+}
+
+/// Values-only regexp dispatch with Go's statement-context memoization. The
+/// caller supplies the build-time constness decisions because this tier has
+/// already evaluated the argument expressions.
+pub(crate) fn dispatch_with_cache(
+    name: &str,
+    vals: &[Datum],
+    context_id: u64,
+    cache_pattern: bool,
+    cache_replacement: bool,
+    regexp_cache: &BuiltinFuncCache<CachedRegexp>,
+    replacement_cache: &BuiltinFuncCache<Vec<ReplacementPart>>,
+) -> Option<Result<Datum, EvalError>> {
+    let compile = |pattern: &str, match_type: &str| {
+        if !cache_pattern {
+            return compile_regexp(pattern, match_type);
+        }
+        let cached = regexp_cache.get_or_init_cache(context_id, || {
+            Ok::<_, EvalError>(CachedRegexp {
+                result: compile_regexp(pattern, match_type),
+            })
+        });
+        match cached {
+            Ok(cached) => cached.result.clone(),
+            Err(error) => Err(error),
+        }
+    };
+    let resolve_replacement = |value: &str| {
+        if !cache_replacement {
+            return Ok(replacement_parts(value));
+        }
+        let cached = replacement_cache
+            .get_or_init_cache(context_id, || Ok::<_, EvalError>(replacement_parts(value)));
+        match cached {
+            Ok(cached) => Ok(cached.as_ref().clone()),
+            Err(error) => Err(error),
+        }
+    };
+
+    match (name, vals.len()) {
+        ("REGEXP_SUBSTR", 2..=5) => Some(regexp_substr_with_compiler(vals, compile)),
+        ("REGEXP_INSTR", 2..=6) => Some(regexp_instr_with_compiler(vals, compile)),
+        ("REGEXP_REPLACE", 3..=6) => Some(regexp_replace_with_compiler(
+            vals,
+            compile,
+            resolve_replacement,
+        )),
         _ => None,
     }
 }
@@ -93,6 +143,13 @@ fn required_string(value: &Datum) -> Result<Option<String>, EvalError> {
 }
 
 fn regexp_substr(vals: &[Datum]) -> Result<Datum, EvalError> {
+    regexp_substr_with_compiler(vals, compile_regexp)
+}
+
+fn regexp_substr_with_compiler(
+    vals: &[Datum],
+    compile: impl FnOnce(&str, &str) -> Result<Regex, EvalError>,
+) -> Result<Datum, EvalError> {
     let (Some(text), Some(pattern)) = (required_string(&vals[0])?, required_string(&vals[1])?)
     else {
         return Ok(Datum::Null);
@@ -123,7 +180,7 @@ fn regexp_substr(vals: &[Datum]) -> Result<Datum, EvalError> {
     };
 
     let (_, trimmed) = trim_at(&text, pos)?;
-    let regexp = compile_regexp(&pattern, &match_type)?;
+    let regexp = compile(&pattern, &match_type)?;
     let matched = regexp
         .find_iter(trimmed)
         .nth((occurrence - 1) as usize)
@@ -132,6 +189,13 @@ fn regexp_substr(vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 fn regexp_instr(vals: &[Datum]) -> Result<Datum, EvalError> {
+    regexp_instr_with_compiler(vals, compile_regexp)
+}
+
+fn regexp_instr_with_compiler(
+    vals: &[Datum],
+    compile: impl FnOnce(&str, &str) -> Result<Regex, EvalError>,
+) -> Result<Datum, EvalError> {
     let (Some(text), Some(pattern)) = (required_string(&vals[0])?, required_string(&vals[1])?)
     else {
         return Ok(Datum::Null);
@@ -173,7 +237,7 @@ fn regexp_instr(vals: &[Datum]) -> Result<Datum, EvalError> {
     };
 
     let (_, trimmed) = trim_at(&text, pos)?;
-    let regexp = compile_regexp(&pattern, &match_type)?;
+    let regexp = compile(&pattern, &match_type)?;
     let Some(matched) = regexp.find_iter(trimmed).nth((occurrence - 1) as usize) else {
         return Ok(Datum::Int(0));
     };
@@ -189,8 +253,8 @@ fn regexp_instr(vals: &[Datum]) -> Result<Datum, EvalError> {
     ))
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum ReplacementPart {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ReplacementPart {
     Group(usize),
     Literal(Vec<u8>),
 }
@@ -199,7 +263,7 @@ enum ReplacementPart {
 /// tokenizes a backslash followed by one ASCII digit as a capture reference;
 /// every other escaped byte is inserted literally and a trailing backslash is
 /// ignored.  This is copied from `getInstructions` in the Go source.
-fn replacement_parts(replacement: &str) -> Vec<ReplacementPart> {
+pub(crate) fn replacement_parts(replacement: &str) -> Vec<ReplacementPart> {
     let bytes = replacement.as_bytes();
     let mut parts = Vec::new();
     let mut literal = Vec::new();
@@ -282,6 +346,16 @@ fn replace_matches(
 }
 
 fn regexp_replace(vals: &[Datum]) -> Result<Datum, EvalError> {
+    regexp_replace_with_compiler(vals, compile_regexp, |replacement| {
+        Ok(replacement_parts(replacement))
+    })
+}
+
+fn regexp_replace_with_compiler(
+    vals: &[Datum],
+    compile: impl FnOnce(&str, &str) -> Result<Regex, EvalError>,
+    resolve_replacement: impl FnOnce(&str) -> Result<Vec<ReplacementPart>, EvalError>,
+) -> Result<Datum, EvalError> {
     let (Some(text), Some(pattern), Some(replacement)) = (
         required_string(&vals[0])?,
         required_string(&vals[1])?,
@@ -319,8 +393,8 @@ fn regexp_replace(vals: &[Datum]) -> Result<Datum, EvalError> {
     };
 
     let (byte, trimmed) = trim_at(&text, pos)?;
-    let regexp = compile_regexp(&pattern, &match_type)?;
-    let parts = replacement_parts(&replacement);
+    let regexp = compile(&pattern, &match_type)?;
+    let parts = resolve_replacement(&replacement)?;
     let replaced = replace_matches(trimmed, &regexp, &parts, occurrence)?;
     let mut output = String::with_capacity(byte + replaced.len());
     output.push_str(&text[..byte]);

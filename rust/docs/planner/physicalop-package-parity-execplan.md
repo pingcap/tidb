@@ -7727,3 +7727,33 @@ This closes the concrete FIND_IN_SET cache gap but does not accept the whole
 expression, types, planner, executor, or workload packages. Native ignored
 cases, complete production/build/generated/support inventories, and full
 sysbench/TPC-C/TPC-H/YCSB measurements remain open under the original goal.
+
+
+## Continuing regexp cache parity
+
+Go's `regexpBaseFuncSig.memorizedRegexp` and
+`builtinRegexpReplaceFuncSig.instCache` now use the Rust context-keyed cache.
+`REGEXP`, `REGEXP_LIKE`, `REGEXP_SUBSTR`, `REGEXP_INSTR`, and
+`REGEXP_REPLACE` admit a pattern cache only when Go's corresponding pattern
+and match-type arguments are `ConstOnlyInContext`; replacement instructions
+follow the independent replacement-constness rule. Cached compile results keep
+errors as well as successful `Regex` values, so an invalid constant pattern is
+reported repeatedly without recompilation. The cache resets on expression
+argument invalidation and clone, and a new statement context replaces the old
+entry. Lazy argument and NULL checks remain before compilation, matching the
+Go evaluation order.
+
+The former ignored `regexp_cache_identity_by_statement_context` source test is
+now active. It covers non-constant bypass, same-context reuse, context
+replacement, cached compile errors, clone reset, and the concrete
+`REGEXP_REPLACE` pattern/instruction dispatch. The focused command passes:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib regexp_vec_cache_source -- --test-threads=1
+
+All six enabled regexp source-cache tests pass. The full native expression
+run reaches 1214 passing tests with one sandbox-blocked localhost JSON-schema
+fixture; no regexp failure remains. The benchmark-only regexp test remains
+ignored because the Go `testing.B` harness has no equivalent native gate.
+The changed Rust files pass rustfmt and `git diff --check`; the exact lint
+target also passes with the repository's already-installed revive binary while
+its offline bootstrap step is bypassed.

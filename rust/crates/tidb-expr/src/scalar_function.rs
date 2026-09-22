@@ -286,6 +286,9 @@ pub struct ScalarFunction {
     in_string_has_null: bool,
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
     find_in_set_cache: crate::builtin_ext::BuiltinFuncCache<crate::builtin_ext::FindInSetLookup>,
+    regexp_cache: crate::builtin_ext::BuiltinFuncCache<crate::regexp::CachedRegexp>,
+    regexp_replace_instruction_cache:
+        crate::builtin_ext::BuiltinFuncCache<Vec<crate::builtin_ext::regexp::ReplacementPart>>,
 }
 
 fn arithmetic_symbol(op: tidb_ast::BinaryOp) -> Option<&'static str> {
@@ -665,6 +668,8 @@ impl ScalarFunction {
         self.in_string_has_null = false;
         self.json_schema_cache = Default::default();
         self.find_in_set_cache = Default::default();
+        self.regexp_cache = Default::default();
+        self.regexp_replace_instruction_cache = Default::default();
     }
 
     /// Go `BuiltinGroupingImplSig.SetMetadata`: install validated grouping
@@ -1885,8 +1890,11 @@ impl ScalarFunction {
         // around this call by the rewriter -- see `Expr::Regexp`'s own doc.
         if name == "regexp" && self.args.len() == 2 {
             let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
             let pattern = self.args[1].eval(ctx, row)?;
-            if value.is_null() || pattern.is_null() {
+            if pattern.is_null() {
                 return Ok(Datum::Null);
             }
             let text = value
@@ -1895,11 +1903,16 @@ impl ScalarFunction {
             let pattern = pattern
                 .sql_string()
                 .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP pattern"))?;
-            let matched = crate::regexp::regexp_match_with_collation(
-                &text,
+            let match_type =
+                crate::regexp::regexp_match_type_with_collation("", self.derived_collation());
+            let regex = crate::regexp::get_cached_regexp(
+                &self.regexp_cache,
+                ctx.context_id(),
+                self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT,
                 &pattern,
-                self.derived_collation(),
+                &match_type,
             )?;
+            let matched = regex.is_match(&text);
             return Ok(Datum::Int(i64::from(matched)));
         }
         if name == "regexp_like" && matches!(self.args.len(), 2 | 3) {
@@ -1929,12 +1942,21 @@ impl ScalarFunction {
             } else {
                 String::new()
             };
-            let matched = crate::regexp::regexp_like_with_collation(
-                &text,
-                &pattern,
+            let match_type = crate::regexp::regexp_match_type_with_collation(
                 &match_type,
                 self.derived_collation(),
+            );
+            let cache_pattern = self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
+            let cache_match_type =
+                self.args.len() < 3 || self.args[2].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
+            let regex = crate::regexp::get_cached_regexp(
+                &self.regexp_cache,
+                ctx.context_id(),
+                cache_pattern && cache_match_type,
+                &pattern,
+                &match_type,
             )?;
+            let matched = regex.is_match(&text);
             return Ok(Datum::Int(i64::from(matched)));
         }
         // The charset boundary: `to_binary`/`from_binary` are the implicit
@@ -2716,6 +2738,38 @@ impl ScalarFunction {
         let vals = crate::arg_eval_type::wrap_datetime_args(&upper, vals, &arg_types, ctx)?;
         let vals = crate::arg_eval_type::wrap_int_args(&upper, vals, &arg_types, ctx)?;
         let vals = crate::arg_eval_type::wrap_string_args(&upper, vals, &arg_types, ctx)?;
+        if matches!(
+            upper.as_str(),
+            "REGEXP_SUBSTR" | "REGEXP_INSTR" | "REGEXP_REPLACE"
+        ) {
+            let cache_pattern = self
+                .args
+                .get(1)
+                .is_some_and(|argument| argument.const_level() >= ConstLevel::ONLY_IN_CONTEXT);
+            let match_type_index = match upper.as_str() {
+                "REGEXP_SUBSTR" if self.args.len() == 5 => Some(4),
+                "REGEXP_INSTR" if self.args.len() == 6 => Some(5),
+                "REGEXP_REPLACE" if self.args.len() == 6 => Some(5),
+                _ => None,
+            };
+            let cache_match_type = match_type_index
+                .is_none_or(|index| self.args[index].const_level() >= ConstLevel::ONLY_IN_CONTEXT);
+            let cache_replacement = upper == "REGEXP_REPLACE"
+                && self
+                    .args
+                    .get(2)
+                    .is_some_and(|argument| argument.const_level() >= ConstLevel::ONLY_IN_CONTEXT);
+            return crate::builtin_ext::regexp::dispatch_with_cache(
+                &upper,
+                &vals,
+                ctx.context_id(),
+                cache_pattern && cache_match_type,
+                cache_replacement,
+                &self.regexp_cache,
+                &self.regexp_replace_instruction_cache,
+            )
+            .expect("the native regexp family is registered");
+        }
         if upper == "ORD" {
             return crate::string_fn::ord_with_type(
                 &vals,

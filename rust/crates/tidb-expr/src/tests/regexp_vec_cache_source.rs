@@ -273,17 +273,100 @@ fn regexp_constant_pattern_corpus_matches_scalar_evaluation() {
 ///
 /// Go requires the compiled pattern to be REUSED only when both pattern and
 /// match type are build-time constants, keyed by statement context id, and
-/// verified by pointer identity across calls. The value behaviors riding on
-/// that cache (identical results whether cached or not) are fully pinned by
-/// the sweeps above; the caching itself has no Rust counterpart — this tier
-/// compiles per evaluation and carries no statement-context registry.
-///
-/// go-parity-gap: regexp memoization keyed on statement context id (and the
-/// tryVecMemorizedRegexp seam) is unported; observable matches covered by the
-/// matrix tests above.
+/// verified by pointer identity across calls. The Rust scalar evaluator now
+/// uses the same context-keyed cache; this test pins its concrete lifecycle,
+/// including the non-constant bypass, context replacement and cached compile
+/// errors.
 #[test]
-#[ignore = "go-parity-gap: statement-context-keyed compiled-regexp memoization is unmodeled"]
-fn regexp_cache_identity_by_statement_context_gap() {}
+fn regexp_cache_identity_by_statement_context() {
+    use crate::builtin_ext::BuiltinFuncCache;
+    use crate::regexp::{get_cached_regexp, CachedRegexp};
+    use std::sync::Arc;
+
+    let cache = BuiltinFuncCache::<CachedRegexp>::default();
+    assert!(get_cached_regexp(&cache, 7, false, "uncached", "").is_ok());
+    assert!(cache.get_cache(7).is_none());
+
+    let first = get_cached_regexp(&cache, 7, true, "ccc", "").expect("compile first pattern");
+    assert_eq!(first.as_str(), "ccc");
+    let cached = cache.get_cache(7).expect("cached pattern");
+    assert_eq!(
+        cached.result.as_ref().expect("cached compile").as_str(),
+        "ccc"
+    );
+    let hit = cache.get_cache(7).expect("same-context hit");
+    assert!(Arc::ptr_eq(&cached, &hit));
+
+    let second = get_cached_regexp(&cache, 8, true, "ddd", "").expect("new context pattern");
+    assert_eq!(second.as_str(), "ddd");
+    let replacement = cache.get_cache(8).expect("replaced context cache");
+    assert!(!Arc::ptr_eq(&cached, &replacement));
+
+    let error = get_cached_regexp(&cache, 9, true, "(", "");
+    assert!(matches!(
+        error,
+        Err(crate::EvalError::Unsupported(
+            "invalid regular expression pattern"
+        ))
+    ));
+    let cached_error = cache.get_cache(9).expect("compile error is memoized");
+    assert!(cached_error.result.is_err());
+    assert!(get_cached_regexp(&cache, 9, true, "ccc", "").is_err());
+
+    let clone = cache.clone();
+    assert!(clone.get_cache(9).is_none());
+
+    let regexp_cache = BuiltinFuncCache::<CachedRegexp>::default();
+    let replacement_cache = BuiltinFuncCache::default();
+    let first = crate::builtin_ext::regexp::dispatch_with_cache(
+        "REGEXP_REPLACE",
+        &[
+            Datum::new_string("abc".to_owned()),
+            Datum::new_string("a".to_owned()),
+            Datum::new_string("X".to_owned()),
+        ],
+        11,
+        true,
+        true,
+        &regexp_cache,
+        &replacement_cache,
+    )
+    .expect("replace dispatch")
+    .expect("replace result");
+    assert_eq!(first, Datum::new_string("Xbc".to_owned()));
+    let same_context = crate::builtin_ext::regexp::dispatch_with_cache(
+        "REGEXP_REPLACE",
+        &[
+            Datum::new_string("abc".to_owned()),
+            Datum::new_string("c".to_owned()),
+            Datum::new_string("Y".to_owned()),
+        ],
+        11,
+        true,
+        true,
+        &regexp_cache,
+        &replacement_cache,
+    )
+    .expect("replace dispatch")
+    .expect("replace result");
+    assert_eq!(same_context, Datum::new_string("Xbc".to_owned()));
+    let new_context = crate::builtin_ext::regexp::dispatch_with_cache(
+        "REGEXP_REPLACE",
+        &[
+            Datum::new_string("abc".to_owned()),
+            Datum::new_string("c".to_owned()),
+            Datum::new_string("Y".to_owned()),
+        ],
+        12,
+        true,
+        true,
+        &regexp_cache,
+        &replacement_cache,
+    )
+    .expect("replace dispatch")
+    .expect("replace result");
+    assert_eq!(new_context, Datum::new_string("abY".to_owned()));
+}
 
 /// go-parity-gap: Go testing.B microbenchmarks behind the vec regexp cases
 /// (`BenchmarkVectorizedBuiltinRegexpForConstants`,
