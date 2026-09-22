@@ -64,12 +64,37 @@ Remaining: q10's greedy node-assembly order (equal-condition argument
 direction only; shapes and build sides now match) and q18's internal
 Column# allocator numbering.
 
+## q10 probe profile on the current head (1695754376, 2026-09-22)
+
+A clean perf capture (binary not replaced mid-run) of the q10
+IndexHashJoin probe shows the dispatcher's limiter/waiter machinery, not
+the data path, as the top cost:
+
+* 11.1% `Mutex::lock_contended` under `CoprRequestLimiter::register_waker`
+* 6.7% `register_waker` itself (the `will_wake` linear dedup scan)
+* 8.3% `QueryCopStoreLimiter::get_store_limiter` (RwLock read + Arc clone
+  + hash, contended across the probe workers)
+* 6.7% `acquire_request_attempt_limiter` + 6.5%
+  `with_request_selection`/`dispatch_attempts` (region-cache selection)
+
+Together roughly a third of the query sits in request-admission overhead.
+The rust direct-unary driver yields and registers a waker when the
+per-store limiter is saturated (blocking the runtime thread would strand
+the response's own in-flight tokens), then the next release wakes every
+registered driver. Go's worker blocks on a native semaphore instead --
+zero waker traffic. A wake-one variant was attempted and reverted
+(52f7c601906b4): with stale entries in the waiters list, popping the most
+recent registrant starves the live ones (q10 hung 1700s+). A correct
+cheaper design needs deregistration-aware waker tracking or handing the
+token directly to a parked driver.
+
 ## Next levers, in expected-value order
 
-1. IndexHashJoin inner-probe batching/prefetch (q10, q17): Go fetches the
-   inner handle ranges in worker-sized batches through
-   `pkg/executor/internal/exec` IndexJoinRuntime with per-region
-   concurrency; profile where the rust probe serializes.
+1. Coprocessor request-admission redesign for the index-join probe
+   (q10/q17): replace the yield+register+thundering-herd limiter path with
+   Go-style blocking admission on the dedicated worker threads (or a
+   deregistration-aware waiter queue); the profile above puts ~30% of q10
+   in that admission machinery alone.
 2. Parallel HashAgg group-map footprint (q13, q2): 7.5M-group maps exceed
    the 1GB query quota and spill while Go's equivalent stays resident;
    shrink the per-group key/state representation.
