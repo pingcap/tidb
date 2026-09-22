@@ -35,6 +35,8 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	for i := 0; i < 14; i++ {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
@@ -73,6 +75,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
 		})
+		t.Logf("SQL: %s; actual normalized plan: %v; expected: %v", tt, normalizedPlanRows, output[i].Plan)
 		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
 	}
 }

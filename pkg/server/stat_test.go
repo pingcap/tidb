@@ -67,6 +67,8 @@ func TestUptime(t *testing.T) {
 }
 
 func TestInitStatsSessionBlockGC(t *testing.T) {
+	// Earlier tests can disable stats globally; this test needs the init-stats session.
+	session.SetStatsLease(3 * time.Second)
 	origConfig := config.GetGlobalConfig()
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
