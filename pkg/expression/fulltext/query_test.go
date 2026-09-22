@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,7 +74,7 @@ func TestBuildDocument(t *testing.T) {
 	require.Empty(t, doc.Columns[1].Tokens)
 	require.Equal(t, []int{0}, doc.Columns[2].Positions["foo"])
 	require.Equal(t, 2, doc.TokenFreq["foo"])
-	require.True(t, doc.hasToken("baz"))
+	require.True(t, doc.hasToken("baz", nil))
 }
 
 func TestCompileBooleanQueryStandard(t *testing.T) {
@@ -190,6 +191,27 @@ func TestCompileBooleanQueryStandardPrefix(t *testing.T) {
 	require.False(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz foo"}}))
 	require.False(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz barista"}}))
 	require.True(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz qux"}}))
+}
+
+func TestCompileBooleanQueryUsesColumnCollation(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+
+	config := standardConfigForTest()
+	config.Collation = "utf8mb4_bin"
+	require.False(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "QUICK runner"}}))
+	require.True(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "quick runner"}}))
+	require.False(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "café"}}))
+
+	config.Collation = "utf8mb4_general_ci"
+	require.True(t, matchQueryForTest(t, config, "+quick", []ColumnInput{{Text: "QUICK runner"}}))
+	require.True(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "café"}}))
+	require.True(t, matchQueryForTest(t, config, `"QUICK runner"`, []ColumnInput{{Text: "quick runner"}}))
+	require.True(t, matchQueryForTest(t, config, "qui*", []ColumnInput{{Text: "QUICK runner"}}))
+
+	config.Collation = "utf8mb4_0900_ai_ci"
+	require.True(t, matchQueryForTest(t, config, "+cafe", []ColumnInput{{Text: "CAFÉ"}}))
 }
 
 func TestCompileBooleanQueryRepeatedTokenPhraseMiss(t *testing.T) {

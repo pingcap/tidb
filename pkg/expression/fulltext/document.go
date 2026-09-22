@@ -14,6 +14,12 @@
 
 package fulltext
 
+import (
+	"sort"
+
+	"github.com/pingcap/tidb/pkg/util/collate"
+)
+
 // ColumnInput is one MATCH column value for local fulltext evaluation.
 type ColumnInput struct {
 	Text   string
@@ -65,24 +71,66 @@ func BuildDocument(columns []ColumnInput, analyzer Analyzer) (*Document, error) 
 	return doc, nil
 }
 
-func (doc *Document) hasToken(token string) bool {
+func (doc *Document) hasToken(token string, collator collate.Collator) bool {
 	if doc == nil {
 		return false
 	}
-	_, ok := doc.TokenSet[token]
-	return ok
-}
-
-func (doc *Document) hasTokenPrefix(prefix string) bool {
-	if doc == nil {
-		return false
+	if collator == nil {
+		_, ok := doc.TokenSet[token]
+		return ok
 	}
-	for token := range doc.TokenSet {
-		if stringsHasPrefix(token, prefix) {
+	for candidate := range doc.TokenSet {
+		if collator.Compare(candidate, token) == 0 {
 			return true
 		}
 	}
 	return false
+}
+
+func (doc *Document) hasTokenPrefix(prefix string, collator collate.Collator) bool {
+	if doc == nil {
+		return false
+	}
+	for token := range doc.TokenSet {
+		if tokenHasPrefix(token, prefix, collator) {
+			return true
+		}
+	}
+	return false
+}
+
+func (col ColumnDocument) positionsFor(token string, collator collate.Collator) []int {
+	if collator == nil {
+		return col.Positions[token]
+	}
+	var positions []int
+	for candidate, candidatePositions := range col.Positions {
+		if collator.Compare(candidate, token) == 0 {
+			positions = append(positions, candidatePositions...)
+		}
+	}
+	if len(positions) > 1 {
+		sort.Ints(positions)
+	}
+	return positions
+}
+
+func tokenHasPrefix(token, prefix string, collator collate.Collator) bool {
+	if collator == nil {
+		return stringsHasPrefix(token, prefix)
+	}
+	pattern := collator.Pattern()
+	escaped := make([]byte, 0, len(prefix)+1)
+	for i := 0; i < len(prefix); i++ {
+		switch prefix[i] {
+		case '\\', '%', '_':
+			escaped = append(escaped, '\\')
+		}
+		escaped = append(escaped, prefix[i])
+	}
+	escaped = append(escaped, '%')
+	pattern.Compile(string(escaped), '\\')
+	return pattern.DoMatch(token)
 }
 
 func stringsHasPrefix(s, prefix string) bool {

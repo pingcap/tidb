@@ -2390,6 +2390,12 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		er.err = err
 		return
 	}
+	// MATCH token equality follows the collation of the first MATCH column.
+	// Keep the collation in the local evaluator config so the no-TiFlash path
+	// uses the same comparison semantics as the TiFlash FTS expression.
+	if len(cols) > 0 {
+		config.Collation = cols[0].GetType(er.sctx.GetEvalCtx()).GetCollate()
+	}
 	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
 	if constExpr, isConst := against.(*expression.Constant); isConst &&
 		!expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {

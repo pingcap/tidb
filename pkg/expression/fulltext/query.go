@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression/matchagainst"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // Query is an executable no-score boolean fulltext query.
@@ -29,6 +30,7 @@ type Query struct {
 	documentMatchCost float64
 	matchesNothing    bool
 	selectivityTerm   string
+	collator          collate.Collator
 }
 
 // CompileBooleanQuery parses and normalizes a BOOLEAN MODE query for local
@@ -53,6 +55,7 @@ func CompileBooleanQuery(search string, config AnalyzerConfig) (*Query, error) {
 		matchCost:         work.fixed,
 		documentMatchCost: work.perDocument,
 		matchesNothing:    queryNodeMatchesNothing(root),
+		collator:          parserInfoFromConfig(config).collator,
 	}
 	if config.ParserType == model.FullTextParserTypeStandardV1 && !query.matchesNothing {
 		query.selectivityTerm, _ = singlePositiveTerm(root)
@@ -65,7 +68,7 @@ func (q *Query) Match(doc *Document) bool {
 	if q == nil || q.root == nil {
 		return false
 	}
-	return q.root.match(doc)
+	return q.root.match(doc, q.collator)
 }
 
 // MatchCost returns fixed query work such as term lookups and phrase setup.
@@ -115,12 +118,12 @@ func parseBooleanQuery(search string, parserType model.FullTextParserType) (*mat
 }
 
 type queryNode interface {
-	match(doc *Document) bool
+	match(doc *Document, collator collate.Collator) bool
 }
 
 type neverNode struct{}
 
-func (neverNode) match(*Document) bool {
+func (neverNode) match(*Document, collate.Collator) bool {
 	return false
 }
 
@@ -128,16 +131,16 @@ type termNode struct {
 	token string
 }
 
-func (n termNode) match(doc *Document) bool {
-	return doc.hasToken(n.token)
+func (n termNode) match(doc *Document, collator collate.Collator) bool {
+	return doc.hasToken(n.token, collator)
 }
 
 type prefixNode struct {
 	prefix string
 }
 
-func (n prefixNode) match(doc *Document) bool {
-	return doc.hasTokenPrefix(n.prefix)
+func (n prefixNode) match(doc *Document, collator collate.Collator) bool {
+	return doc.hasTokenPrefix(n.prefix, collator)
 }
 
 type phraseNode struct {
@@ -146,13 +149,13 @@ type phraseNode struct {
 	failure []int
 }
 
-func (n phraseNode) match(doc *Document) bool {
+func (n phraseNode) match(doc *Document, collator collate.Collator) bool {
 	if doc == nil || len(n.tokens) == 0 || len(n.tokens) != len(n.offsets) {
 		return false
 	}
 	for _, col := range doc.Columns {
 		if n.isDense() {
-			if n.matchDense(col) {
+			if n.matchDense(col, collator) {
 				return true
 			}
 			continue
@@ -163,19 +166,19 @@ func (n phraseNode) match(doc *Document) bool {
 		// intersection before repeated common-token lists are scanned.
 		anchor := -1
 		for i, token := range n.tokens {
-			positions := col.Positions[token]
+			positions := col.positionsFor(token, collator)
 			if len(positions) == 0 {
 				anchor = -1
 				break
 			}
-			if anchor < 0 || len(positions) < len(col.Positions[n.tokens[anchor]]) {
+			if anchor < 0 || len(positions) < len(col.positionsFor(n.tokens[anchor], collator)) {
 				anchor = i
 			}
 		}
 		if anchor < 0 {
 			continue
 		}
-		anchorPositions := col.Positions[n.tokens[anchor]]
+		anchorPositions := col.positionsFor(n.tokens[anchor], collator)
 		candidates := make([]int, len(anchorPositions))
 		for i, position := range anchorPositions {
 			candidates[i] = position - n.offsets[anchor]
@@ -184,7 +187,7 @@ func (n phraseNode) match(doc *Document) bool {
 			if i == anchor || len(candidates) == 0 {
 				continue
 			}
-			candidates = intersectPhraseStarts(candidates, col.Positions[n.tokens[i]], n.offsets[i])
+			candidates = intersectPhraseStarts(candidates, col.positionsFor(n.tokens[i], collator), n.offsets[i])
 		}
 		if len(candidates) > 0 {
 			return true
@@ -205,12 +208,14 @@ func (n phraseNode) isDense() bool {
 	return true
 }
 
-func (n phraseNode) matchDense(col ColumnDocument) bool {
+func (n phraseNode) matchDense(col ColumnDocument, collator collate.Collator) bool {
 	if len(col.Tokens) < len(n.tokens) {
 		return false
 	}
 	failure := n.failure
-	if len(failure) != len(n.tokens) {
+	if collator != nil {
+		failure = buildPhraseFailureWithCollator(n.tokens, collator)
+	} else if len(failure) != len(n.tokens) {
 		failure = buildPhraseFailure(n.tokens)
 	}
 	matched := 0
@@ -220,10 +225,10 @@ func (n phraseNode) matchDense(col ColumnDocument) bool {
 			matched = 0
 		}
 		previousPosition = token.Position
-		for matched > 0 && token.Text != n.tokens[matched] {
+		for matched > 0 && !tokensEqual(token.Text, n.tokens[matched], collator) {
 			matched = failure[matched-1]
 		}
-		if token.Text == n.tokens[matched] {
+		if tokensEqual(token.Text, n.tokens[matched], collator) {
 			matched++
 			if matched == len(n.tokens) {
 				return true
@@ -231,6 +236,27 @@ func (n phraseNode) matchDense(col ColumnDocument) bool {
 		}
 	}
 	return false
+}
+
+func tokensEqual(lhs, rhs string, collator collate.Collator) bool {
+	if collator == nil {
+		return lhs == rhs
+	}
+	return collator.Compare(lhs, rhs) == 0
+}
+
+func buildPhraseFailureWithCollator(tokens []string, collator collate.Collator) []int {
+	failure := make([]int, len(tokens))
+	for i, matched := 1, 0; i < len(tokens); i++ {
+		for matched > 0 && !tokensEqual(tokens[i], tokens[matched], collator) {
+			matched = failure[matched-1]
+		}
+		if tokensEqual(tokens[i], tokens[matched], collator) {
+			matched++
+		}
+		failure[i] = matched
+	}
+	return failure
 }
 
 func buildPhraseFailure(tokens []string) []int {
@@ -369,14 +395,14 @@ func singlePositiveTerm(node queryNode) (string, bool) {
 	return term.token, true
 }
 
-func (n groupNode) match(doc *Document) bool {
+func (n groupNode) match(doc *Document, collator collate.Collator) bool {
 	for _, child := range n.must {
-		if !child.match(doc) {
+		if !child.match(doc, collator) {
 			return false
 		}
 	}
 	for _, child := range n.mustNot {
-		if child.match(doc) {
+		if child.match(doc, collator) {
 			return false
 		}
 	}
@@ -384,7 +410,7 @@ func (n groupNode) match(doc *Document) bool {
 		return true
 	}
 	for _, child := range n.should {
-		if child.match(doc) {
+		if child.match(doc, collator) {
 			return true
 		}
 	}
@@ -525,13 +551,18 @@ func normalizePrefixTerm(
 				children = append(children, termNode{token: token.Text})
 			}
 		}
+<<<<<<< HEAD
 
 		// MySQL applies '*' to only the last word of a split term. The
 		// wildcard also keeps that word when it is shorter than the normal
 		// minimum token size or is a stopword.
 		tail := sourceTokens[len(sourceTokens)-1]
 		if charLen(tail.Text) <= parserInfo.innodbFtMaxTokenSize {
-			children = append(children, prefixNode{prefix: strings.ToLower(tail.Text)})
+			prefix := tail.Text
+			if parserInfo.collator == nil {
+				prefix = strings.ToLower(prefix)
+			}
+			children = append(children, prefixNode{prefix: prefix})
 		}
 		return combineBooleanTermNodes(children, modifier), nil
 	case model.FullTextParserTypeNgramV1:
@@ -539,7 +570,11 @@ func normalizePrefixTerm(
 			return nil, nil
 		}
 		if charLen(sourceTokens[0].Text) < parserInfo.ngramTokenSize {
-			return prefixNode{prefix: strings.ToLower(sourceTokens[0].Text)}, nil
+			prefix := sourceTokens[0].Text
+			if parserInfo.collator == nil {
+				prefix = strings.ToLower(prefix)
+			}
+			return prefixNode{prefix: prefix}, nil
 		}
 		tokens, err := analyzer.Analyze(text)
 		if err != nil {

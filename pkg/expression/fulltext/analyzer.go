@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // Token is the analyzed fulltext token.
@@ -38,7 +39,10 @@ type Token struct {
 // AnalyzerConfig is the fulltext analyzer configuration used for local
 // MATCH ... AGAINST evaluation.
 type AnalyzerConfig struct {
-	ParserType             model.FullTextParserType
+	ParserType model.FullTextParserType
+	// Collation is the collation of the MATCH column. An empty value keeps the
+	// legacy analyzer behavior used by standalone analyzer tests.
+	Collation              string
 	InnodbFtMinTokenSize   int
 	InnodbFtMaxTokenSize   int
 	InnodbFtEnableStopword bool
@@ -51,6 +55,7 @@ type AnalyzerConfig struct {
 // order-sensitive comparison also catches malformed or non-canonical metadata.
 func (c AnalyzerConfig) Equal(other AnalyzerConfig) bool {
 	return c.ParserType == other.ParserType &&
+		c.Collation == other.Collation &&
 		c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
 		c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
 		c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
@@ -178,7 +183,9 @@ func AnalyzeStandardV1(sctx sessionctx.Context, text string) ([]Token, error) {
 func analyzeStandardV1(text string, parserInfo parserInfo) []Token {
 	tokens := PreserveUnderscoreTokenize(text)
 	tokens = lengthFilter(tokens, parserInfo.innodbFtMinTokenSize, parserInfo.innodbFtMaxTokenSize)
-	tokens = lowerFilter(tokens)
+	if parserInfo.collator == nil {
+		tokens = lowerFilter(tokens)
+	}
 	tokens = stopwordFilter(tokens, parserInfo)
 	return tokens
 }
@@ -200,7 +207,9 @@ func AnalyzeNgramV1(sctx sessionctx.Context, text string) ([]Token, error) {
 func analyzeNgramV1(text string, parserInfo parserInfo) []Token {
 	tokens := PreserveUnderscoreTokenize(text)
 	tokens = ngramFilter(tokens, parserInfo.ngramTokenSize, parserInfo.ngramTokenSize)
-	tokens = lowerFilter(tokens)
+	if parserInfo.collator == nil {
+		tokens = lowerFilter(tokens)
+	}
 	return tokens
 }
 
@@ -209,14 +218,20 @@ type parserInfo struct {
 	innodbFtMaxTokenSize int
 	ngramTokenSize       int
 	stopwords            map[string]struct{}
+	collator             collate.Collator
 }
 
 func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
+	var collator collate.Collator
+	if config.Collation != "" {
+		collator = collate.GetCollator(config.Collation)
+	}
 	return parserInfo{
 		innodbFtMinTokenSize: config.InnodbFtMinTokenSize,
 		innodbFtMaxTokenSize: config.InnodbFtMaxTokenSize,
 		ngramTokenSize:       config.NgramTokenSize,
 		stopwords:            stopwordSetFromConfig(config),
+		collator:             collator,
 	}
 }
 
@@ -327,12 +342,30 @@ func stopwordFilter(tokens []Token, parserInfo parserInfo) []Token {
 
 	out := tokens[:0]
 	for _, token := range tokens {
-		if _, ok := parserInfo.stopwords[token.Text]; !ok {
+		if !parserInfo.isStopword(token.Text) {
 			out = append(out, token)
 		}
 	}
 	clear(tokens[len(out):])
 	return out
+}
+
+func (p parserInfo) isStopword(token string) bool {
+	// Stopword lookup is intentionally case-insensitive even when the MATCH
+	// column uses a binary collation. This matches the existing TiDB/TiFlash
+	// analyzer behavior and keeps collation from changing the stopword list.
+	if _, ok := p.stopwords[strings.ToLower(token)]; ok {
+		return true
+	}
+	if p.collator == nil {
+		return false
+	}
+	for stopword := range p.stopwords {
+		if p.collator.Compare(token, stopword) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func stopwordSet(words ...string) map[string]struct{} {
