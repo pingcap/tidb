@@ -1269,9 +1269,9 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	u, _, err := e.parseDataSourcePath()
-	if err != nil {
-		return err
+	u, _, err2 := e.parseDataSourcePath()
+	if err2 != nil {
+		return err2
 	}
 
 	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
@@ -1281,9 +1281,9 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	e.dataStore = s
 
 	if e.IsGlobalSort() {
-		store, err := GetSortStore(ctx, e.Plan.CloudStorageURI)
-		if err != nil {
-			return err
+		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
+		if err3 != nil {
+			return err3
 		}
 		e.globalSortStore = store
 	}
@@ -1361,10 +1361,13 @@ func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
 	if !objstore.IsLocal(u) {
 		commonPrefix = fileNameKey[:idx]
 	}
+	// Keep the default page size: a page can contain entries that are not
+	// openable files, such as s3's empty directory items, and a smaller page
+	// size would make us issue one list request per skipped entry before
+	// finding one.
 	err = sourceStore.WalkDir(ctx, &storeapi.WalkOption{
 		ObjPrefix:  commonPrefix,
 		SkipSubDir: true,
-		ListCount:  1,
 	}, func(remotePath string, _ int64) error {
 		reader, err := sourceStore.Open(ctx, remotePath, nil)
 		if err != nil {
@@ -1550,9 +1553,9 @@ func (r *compressionEstimator) estimate(
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	u, fileNameKey, err := e.parseDataSourcePath()
-	if err != nil {
-		return err
+	u, fileNameKey, err2 := e.parseDataSourcePath()
+	if err2 != nil {
+		return err2
 	}
 
 	if objstore.IsLocal(u) {
@@ -1571,19 +1574,21 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				"the file suffix is not supported when import from server disk")
 		}
-		if _, err := os.Stat(filepath.Dir(e.Path)); err != nil {
+		dir := filepath.Dir(e.Path)
+		_, err := os.Stat(dir)
+		if err != nil {
 			// permission denied / file not exist error, etc.
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				err.Error())
 		}
 	}
 	// try to find pattern error in advance
-	if err = checkDataSourceGlob(fileNameKey); err != nil {
-		return err
+	if err2 = checkDataSourceGlob(fileNameKey); err2 != nil {
+		return err2
 	}
 
-	if err = e.InitDataStore(ctx); err != nil {
-		return err
+	if err2 = e.InitDataStore(ctx); err2 != nil {
+		return err2
 	}
 
 	s := e.dataStore
@@ -1600,16 +1605,16 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
 	if idx == -1 {
-		fileReader, err := s.Open(ctx, fileNameKey, nil)
-		if err != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "Please check the file location is correct")
+		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
+		if err2 != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the file location is correct")
 		}
 		defer func() {
 			terror.Log(fileReader.Close())
 		}()
-		size, err := fileReader.Seek(0, io.SeekEnd)
-		if err != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to read file size by seek")
+		size, err3 := fileReader.Seek(0, io.SeekEnd)
+		if err3 != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
@@ -1700,8 +1705,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
-		if err = e.CheckNonCSVFormatOptions(); err != nil {
-			return err
+		if err2 = e.CheckNonCSVFormatOptions(); err2 != nil {
+			return err2
 		}
 	}
 	var totalSize, totalRealSize int64
