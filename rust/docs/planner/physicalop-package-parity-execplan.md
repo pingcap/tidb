@@ -8157,3 +8157,10 @@ The same statement snapshot now supplies Go's `tidb_index_join_batch_size` to
 the live executor. Batch growth retains the source doubling rule while using
 the configured cap, and a focused context regression covers both the explicit
 value and the invalid-value clamp used by native standalone callers.
+
+Regular index double reads and index-merge table tasks now consume the same
+statement's `tidb_index_lookup_size` cap. The cap is applied to estimate-based
+batch growth, paging seeds, and index-merge survivor chunks; standalone source
+defaults remain 20,000. Focused batch-growth, worker-width, and all twenty
+index-merge executor tests pass. This closes the lookup-size selection gap
+without claiming whole executor-package or workload acceptance.

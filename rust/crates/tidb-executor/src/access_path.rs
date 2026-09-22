@@ -1570,8 +1570,11 @@ pub struct IndexRangeSourceExec {
     /// different row of the partition the limit lands in.
     lookup_pushdown: bool,
     /// Go's `indexWorker.batchSize`: how many handles the next batch collects,
-    /// doubling per batch up to [`MAX_HANDLE_BATCH`].
+    /// doubling per batch up to the statement's `IndexLookupSize`.
     batch_size: usize,
+    /// Go `SessionVars.IndexLookupSize`, the cap for handle batches in this
+    /// reader. Standalone sources retain the Go default.
+    max_lookup_batch_size: usize,
     /// A keep-order parent's output window, used only to seed the first
     /// lookup task. It neither caps the scan nor changes plan shape.
     initial_batch_size: usize,
@@ -1720,20 +1723,35 @@ fn calculate_lookup_batch_size(
     initial_batch_size: usize,
     index_paging: bool,
 ) -> usize {
-    let mut batch_size = initial_batch_size.clamp(1, MAX_HANDLE_BATCH);
+    calculate_lookup_batch_size_with_cap(
+        estimated_rows,
+        initial_batch_size,
+        index_paging,
+        MAX_HANDLE_BATCH,
+    )
+}
+
+fn calculate_lookup_batch_size_with_cap(
+    estimated_rows: Option<f64>,
+    initial_batch_size: usize,
+    index_paging: bool,
+    max_batch_size: usize,
+) -> usize {
+    let max_batch_size = max_batch_size.max(1);
+    let mut batch_size = initial_batch_size.clamp(1, max_batch_size);
     if index_paging {
         return batch_size;
     }
     let estimated_rows = estimated_rows
         .filter(|rows| rows.is_finite() && *rows > 0.0)
         .map_or(0, |rows| rows as usize);
-    if estimated_rows >= MAX_HANDLE_BATCH {
-        return MAX_HANDLE_BATCH;
+    if estimated_rows >= max_batch_size {
+        return max_batch_size;
     }
     while batch_size < estimated_rows {
         batch_size = batch_size.saturating_mul(2);
-        if batch_size >= MAX_HANDLE_BATCH {
-            return MAX_HANDLE_BATCH;
+        if batch_size >= max_batch_size {
+            return max_batch_size;
         }
     }
     batch_size
@@ -1855,6 +1873,7 @@ impl IndexRangeSourceExec {
             pending_handle: None,
             lookup_pushdown: false,
             batch_size: INIT_HANDLE_BATCH,
+            max_lookup_batch_size: MAX_HANDLE_BATCH,
             initial_batch_size: INIT_HANDLE_BATCH,
             index_paging: false,
             lookup_rows: Vec::new(),
@@ -1934,6 +1953,13 @@ impl IndexRangeSourceExec {
     /// Installs Go `SessionVars.IndexLookupConcurrency()` for this executor.
     pub(crate) fn set_lookup_concurrency(&mut self, width: usize) {
         self.lookup_concurrency = width.max(1);
+    }
+
+    /// Installs Go `SessionVars.IndexLookupSize` for this executor. The
+    /// session variable is the cap for index-worker handle batches; it is
+    /// distinct from the parent chunk size and lookup worker concurrency.
+    pub(crate) fn set_lookup_size(&mut self, size: usize) {
+        self.max_lookup_batch_size = size.max(1);
     }
 
     /// Enables Go's `LocalIndexLookUp` storage-side lookup mode. The planner
@@ -2166,7 +2192,7 @@ impl IndexRangeSourceExec {
                 self.limit_scanned_keys += 1;
             }
         }
-        self.batch_size = (self.batch_size * 2).min(MAX_HANDLE_BATCH);
+        self.batch_size = (self.batch_size * 2).min(self.max_lookup_batch_size);
         if self.dirty_merge {
             // Go's UnionScan split: a handle whose record key the open
             // transaction staged belongs to the ADDED stream (`getOneRow`
@@ -3520,10 +3546,11 @@ impl Executor for IndexRangeSourceExec {
         self.scanned.set(0);
         self.batch.clear();
         self.batch_at = 0;
-        self.batch_size = calculate_lookup_batch_size(
+        self.batch_size = calculate_lookup_batch_size_with_cap(
             self.estimated_rows,
             self.initial_batch_size,
             self.index_paging,
+            self.max_lookup_batch_size,
         );
         self.lookup_rows.clear();
         self.lookup_row_at = 0;
@@ -4158,8 +4185,8 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             return false;
         }
         self.initial_batch_size = usize::try_from(size)
-            .unwrap_or(MAX_HANDLE_BATCH)
-            .clamp(1, MAX_HANDLE_BATCH);
+            .unwrap_or(self.max_lookup_batch_size)
+            .clamp(1, self.max_lookup_batch_size);
         self.index_paging = true;
         true
     }
@@ -6476,6 +6503,14 @@ mod tests {
         );
         assert_eq!(calculate_lookup_batch_size(Some(5_000.0), 100, true), 100);
         assert_eq!(calculate_lookup_batch_size(None, 100, false), 100);
+        assert_eq!(
+            calculate_lookup_batch_size_with_cap(Some(5_000.0), 100, false, 512),
+            512
+        );
+        assert_eq!(
+            calculate_lookup_batch_size_with_cap(Some(5_000.0), 100, false, 1),
+            1
+        );
     }
 
     /// Go copies `SessionVars.IndexLookupConcurrency()` into every
@@ -6496,6 +6531,7 @@ mod tests {
             crate::RowDecodeContext::for_test_query_utc(),
         );
         source.set_lookup_concurrency(13);
+        source.set_lookup_size(13);
         source.open().unwrap();
         assert_eq!(
             source
@@ -6505,6 +6541,7 @@ mod tests {
                 .width,
             13
         );
+        assert_eq!(source.batch_size, 13);
         source.close().unwrap();
     }
 

@@ -1615,6 +1615,7 @@ fn build_index_reader(
     }
     source.read_table_columns(keep);
     source.set_lookup_concurrency(ctx.executor_concurrency());
+    source.set_lookup_size(ctx.index_lookup_size());
     if lookup_pushdown {
         source.enable_lookup_pushdown();
     }
@@ -3647,7 +3648,7 @@ fn build_index_merge_reader(
                 } else {
                     executor_ranges(&scan.ranges)
                 };
-                let source = IndexRangeSourceExec::new_with_statement(
+                let mut source = IndexRangeSourceExec::new_with_statement(
                     meta(ctx, partial, partial_schema),
                     partial_table.clone(),
                     scan.index_id,
@@ -3656,6 +3657,7 @@ fn build_index_merge_reader(
                     PushdownStatementContext::from_stmt(ctx)
                         .with_plan_id(i64::from(scan.base.base.id())),
                 );
+                source.set_lookup_size(ctx.index_lookup_size());
                 if let Some(counters) = state.runtime_counters.as_mut() {
                     counters.insert(runtime_plan_key(partial), source.produced_rows().into());
                 }
@@ -3728,6 +3730,7 @@ fn build_index_merge_reader(
         partials,
         reader.is_intersection_type,
     )
+    .with_batch_size(ctx.index_lookup_size())
     .with_output_columns(output_columns)
     .with_by_items(by_items);
     lower_index_merge_selections(table_plan, &mut executor, &schema, ctx)?;
