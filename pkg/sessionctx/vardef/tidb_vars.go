@@ -142,17 +142,6 @@ const (
 	// TiDBDMLMaxExecutionTime is the maximum execution time for transactional DML statements and COMMIT, in milliseconds.
 	TiDBDMLMaxExecutionTime = "tidb_dml_max_execution_time"
 
-	// TiDBMLogPurgeBatchSize is used to split PURGE MATERIALIZED VIEW LOG into multiple delete batches.
-	TiDBMLogPurgeBatchSize = "tidb_mlog_purge_batch_size"
-	// TiDBMLogPurgeMinRate controls the minimum target delete rate for adaptive MLog purge throttling.
-	TiDBMLogPurgeMinRate = "tidb_mlog_purge_min_rate"
-	// TiDBMLogPurgeRateBudgetRatio controls the fraction of the scheduling window that purge may spend deleting.
-	TiDBMLogPurgeRateBudgetRatio = "tidb_mlog_purge_rate_budget_ratio"
-	// TiDBMLogPurgeDeleteTiFlashThreads controls TiFlash threads used by MLog purge DELETE statements.
-	TiDBMLogPurgeDeleteTiFlashThreads = "tidb_mlog_purge_delete_tiflash_threads"
-	// TiDBMLogLogSlowPurge controls whether MLog purge statements are recorded in the slow query log.
-	TiDBMLogLogSlowPurge = "tidb_mlog_log_slow_purge"
-
 	// The following session variables controls the memory quota during query execution.
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
@@ -1764,11 +1753,6 @@ const (
 	DefTiDBEnableBatchDML                             = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
 	DefTiDBMViewMaintainMemQuota                      = int64(2 * size.GB)
-	DefTiDBMLogPurgeBatchSize                         = 10000
-	DefTiDBMLogPurgeMinRate                           = 2000
-	DefTiDBMLogPurgeRateBudgetRatio                   = 0.5
-	DefTiDBMLogPurgeDeleteTiFlashThreads              = 0
-	DefTiDBMLogLogSlowPurge                           = false
 	DefTiDBMViewMaintainImportThreads                 = 0
 	DefTiDBMViewMaintainImportDiskQuota               = ""
 	DefTiDBStatsCacheMemQuota                         = 0
@@ -1862,8 +1846,6 @@ const (
 	DefTiDBTTLDeleteBatchSize                         = 100
 	DefTiDBTTLDeleteBatchMaxSize                      = 10240
 	DefTiDBTTLDeleteBatchMinSize                      = 1
-	DefTiDBMLogPurgeBatchMaxSize                      = 1000000
-	DefTiDBMLogPurgeBatchMinSize                      = 1
 	DefTiDBTTLDeleteRateLimit                         = 0
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0
@@ -2100,7 +2082,6 @@ var (
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
-	MLogLogSlowPurge                = atomic.NewBool(DefTiDBMLogLogSlowPurge)
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")
