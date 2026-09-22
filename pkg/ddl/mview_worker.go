@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -293,7 +292,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			job.State = model.JobStateRollingback
 			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
-		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, job.SchemaName, mviewTableInfo, job.SnapshotVer, job.SQLMode); err != nil {
+		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, job.SchemaName, mviewTableInfo, job.SnapshotVer); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
@@ -750,7 +749,7 @@ func warmupCreateMaterializedViewRefreshInfoTxn(ctx context.Context, ddlSess *se
 	return errors.Trace(convertCreateMaterializedViewRefreshInfoTableNotExistsErr(err))
 }
 
-func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewSchemaName string, mviewTableInfo *model.TableInfo, readTS uint64, sqlMode mysql.SQLMode) error {
+func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewSchemaName string, mviewTableInfo *model.TableInfo, readTS uint64) error {
 	if mviewTableInfo == nil || mviewTableInfo.MaterializedView == nil {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid materialized view metadata")
 	}
@@ -764,12 +763,6 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	}
 	defer w.sessPool.Put(evalSessCtx)
 	evalSess := sess.NewSession(evalSessCtx)
-	scheduleTimeZone, err := mviewTableInfo.MaterializedView.RefreshScheduleTimeZone.GetLocation()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	restore := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, sqlMode, scheduleTimeZone)
-	defer restore()
 	next, shouldUpdate, err := deriveCreateMaterializedViewNextUnixSeconds(ctx, evalSess, mviewSchemaName, mviewTableInfo.Name.O, mviewTableInfo.MaterializedView)
 	if err != nil {
 		return errors.Trace(err)
@@ -793,12 +786,6 @@ func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, ml
 	defer w.sessPool.Put(evalSessCtx)
 	evalSess := sess.NewSession(evalSessCtx)
 	info := mlogTableInfo.MaterializedViewLog
-	tz, err := info.PurgeScheduleTimeZone.GetLocation()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	restore := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, info.DefinitionSQLMode, tz)
-	defer restore()
 	next, shouldUpdate, err := deriveCreateMaterializedViewLogNextUnixSeconds(ctx, evalSess, mlogSchemaName, mlogTableInfo.Name.O, info)
 	if err != nil {
 		return errors.Trace(err)
@@ -1171,8 +1158,9 @@ func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job, se *sess
 	tblInfo.MaterializedView.RefreshMethod = args.RefreshMethod
 	tblInfo.MaterializedView.RefreshStartWith = args.RefreshStartWith
 	tblInfo.MaterializedView.RefreshNext = args.RefreshNext
-	if args.UpdateRefreshScheduleTimeZone {
+	if args.UpdateRefreshSchedule {
 		tblInfo.MaterializedView.RefreshScheduleTimeZone = args.RefreshScheduleTimeZone.Clone()
+		tblInfo.MaterializedView.RefreshScheduleSQLMode = args.RefreshScheduleSQLMode
 	}
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
@@ -1240,8 +1228,9 @@ func onAlterMaterializedViewLogPurge(jobCtx *jobContext, job *model.Job, se *ses
 	tblInfo.MaterializedViewLog.PurgeMethod = args.PurgeMethod
 	tblInfo.MaterializedViewLog.PurgeStartWith = args.PurgeStartWith
 	tblInfo.MaterializedViewLog.PurgeNext = args.PurgeNext
-	if args.UpdatePurgeScheduleTimeZone {
+	if args.UpdatePurgeSchedule {
 		tblInfo.MaterializedViewLog.PurgeScheduleTimeZone = args.PurgeScheduleTimeZone.Clone()
+		tblInfo.MaterializedViewLog.PurgeScheduleSQLMode = args.PurgeScheduleSQLMode
 	}
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {

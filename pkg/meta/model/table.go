@@ -874,6 +874,7 @@ type MaterializedViewInfo struct {
 	AlertOverdueSec                 int64               `json:"alert_overdue_sec,omitempty"`
 	AlertRefreshFailed              bool                `json:"alert_refresh_failed,omitempty"`
 	DefinitionSQLMode               mysql.SQLMode       `json:"definition_sql_mode"`
+	RefreshScheduleSQLMode          mysql.SQLMode       `json:"refresh_schedule_sql_mode"`
 	DefinitionDivPrecisionIncrement int                 `json:"definition_div_precision_increment"`
 	DefinitionTimeZone              TimeZoneLocation    `json:"definition_time_zone"`
 	RefreshScheduleTimeZone         TimeZoneLocation    `json:"refresh_schedule_time_zone"`
@@ -895,6 +896,7 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 		AlertOverdueSec:                 i.AlertOverdueSec,
 		AlertRefreshFailed:              i.AlertRefreshFailed,
 		DefinitionSQLMode:               i.DefinitionSQLMode,
+		RefreshScheduleSQLMode:          i.RefreshScheduleSQLMode,
 		DefinitionDivPrecisionIncrement: i.DefinitionDivPrecisionIncrement,
 		DefinitionTimeZone:              i.DefinitionTimeZone.Clone(),
 		RefreshScheduleTimeZone:         i.RefreshScheduleTimeZone.Clone(),
@@ -918,7 +920,7 @@ type MaterializedViewLogInfo struct {
 	PurgeStartWith           string           `json:"purge_start_with,omitempty"`
 	PurgeNext                string           `json:"purge_next,omitempty"`
 	LogAccumulationAlertRows *uint64          `json:"log_accumulation_alert_rows,omitempty"`
-	DefinitionSQLMode        mysql.SQLMode    `json:"definition_sql_mode"`
+	PurgeScheduleSQLMode     mysql.SQLMode    `json:"purge_schedule_sql_mode"`
 	PurgeScheduleTimeZone    TimeZoneLocation `json:"purge_schedule_time_zone"`
 }
 
@@ -953,7 +955,7 @@ func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 		PurgeMethod:           i.PurgeMethod,
 		PurgeStartWith:        i.PurgeStartWith,
 		PurgeNext:             i.PurgeNext,
-		DefinitionSQLMode:     i.DefinitionSQLMode,
+		PurgeScheduleSQLMode:  i.PurgeScheduleSQLMode,
 		PurgeScheduleTimeZone: i.PurgeScheduleTimeZone.Clone(),
 	}
 	if i.LogAccumulationAlertRows != nil {
