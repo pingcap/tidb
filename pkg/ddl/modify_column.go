@@ -2692,6 +2692,14 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.I
 		if indexType != model.ColumnarIndexTypeNA {
 			continue
 		}
+		if idxInfo.IsTiKVFullTextIndex() {
+			// The index tokenizes the column, so the column must stay text;
+			// the key-length rules do not apply to it.
+			if err := checkTiKVFullTextColumn(col); err != nil {
+				return err
+			}
+			continue
+		}
 
 		prefixLength := types.UnspecifiedLength
 		if types.IsTypePrefixable(col.FieldType.GetType()) && col.FieldType.GetFlen() > ic.Length {

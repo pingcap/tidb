@@ -540,7 +540,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	canUseFastCheck := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.IsColumnarIndex() {
+		if idx.MVIndex || idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() {
 			canUseFastCheck = false
 			break
 		}

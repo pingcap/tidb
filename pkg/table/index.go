@@ -131,6 +131,15 @@ type IndexKVGenerator struct {
 	i          int
 	// Only used by non multi-value index.
 	idxVals []types.Datum
+	// err, when set, is returned by the first Next and makes the generator
+	// yield nothing else.
+	err error
+}
+
+// NewErrIndexKVGenerator creates a generator that reports err instead of
+// producing any KV, for an index whose values could not be derived.
+func NewErrIndexKVGenerator(err error) IndexKVGenerator {
+	return IndexKVGenerator{err: err}
 }
 
 // NewMultiValueIndexKVGenerator creates a new IndexKVGenerator for multi-value indexes.
@@ -177,6 +186,10 @@ func NewPlainIndexKVGenerator(
 // Next returns the next index key and value.
 // For non multi-value indexes, there is only one index kv.
 func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool, error) {
+	if iter.err != nil {
+		iter.i++
+		return nil, nil, false, iter.err
+	}
 	var val []types.Datum
 	if iter.isMultiValue {
 		val = iter.allIdxVals[iter.i]
@@ -197,6 +210,9 @@ func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool,
 
 // Valid returns true if the generator is not exhausted.
 func (iter *IndexKVGenerator) Valid() bool {
+	if iter.err != nil {
+		return iter.i == 0
+	}
 	if iter.isMultiValue {
 		return iter.i < len(iter.allIdxVals)
 	}

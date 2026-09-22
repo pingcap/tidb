@@ -1970,12 +1970,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			// Skip checking clustered index.
 			continue
 		}
-		if idxInfo.IsTiKVFullTextIndex() {
-			// Its entries are analyzed terms, which an index lookup would
-			// decode as column values; the index is checked from the record
-			// side instead.
-			continue
-		}
 		if idxInfo.State != model.StatePublic {
 			logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public",
 				zap.String("index", idxInfo.Name.O),
@@ -2004,6 +1998,12 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			}
 		}
 		indexInfos = append(indexInfos, idxInfo)
+		if idxInfo.IsTiKVFullTextIndex() {
+			// Its entries are analyzed terms, which an index lookup would
+			// decode as column values; the executor checks it from the
+			// record side instead, so it gets no reader.
+			continue
+		}
 		// For partition tables except global index.
 		if pi := tbl.Meta().GetPartitionInfo(); pi != nil && !idxInfo.Global {
 			for _, def := range pi.Definitions {
@@ -2023,7 +2023,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 		}
 		indexLookUpReaders = append(indexLookUpReaders, reader)
 	}
-	if len(indexLookUpReaders) == 0 {
+	if len(indexLookUpReaders) == 0 && len(indexInfos) == 0 {
 		return nil, nil, nil
 	}
 	return indexLookUpReaders, indexInfos, nil
@@ -2062,9 +2062,6 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 		}
 		if idx.Meta().State != model.StatePublic {
 			return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.Meta().State)
-		}
-		if idx.Meta().IsTiKVFullTextIndex() {
-			return nil, errors.Errorf("admin check index is not supported for fulltext index %s", as.Index)
 		}
 		p.CheckIndex = true
 		readerPlans, indexInfos, err = b.buildPhysicalIndexLookUpReaders(ctx, tblName.Schema, tbl, []table.Index{idx})

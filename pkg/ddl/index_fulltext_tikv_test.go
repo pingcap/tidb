@@ -16,12 +16,16 @@ package ddl_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -125,7 +129,7 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 	tk.MustExec("analyze table t_alter index idx")
 	tk.MustQuery("show warnings").CheckContain("analyzing fulltext index is not supported, skip idx")
 	tk.MustExec("analyze table t_alter")
-	tk.MustContainErrMsg("admin check index t_alter idx", "admin check index is not supported for fulltext index idx")
+	tk.MustExec("admin check index t_alter idx")
 
 	// Partitioned tables build one local index per partition.
 	tk.MustExec("create table pt (id int, body text, fulltext index idx (body)) partition by hash(id) partitions 2")
@@ -183,4 +187,173 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 		tk.MustExec("set global innodb_ft_max_token_size = 84")
 	}()
 	tk.MustContainErrMsg("create fulltext index idx_bounds on t (title)", "minimum token size 16 above maximum 10, which admits no token")
+}
+
+// fullTextEntries reads every entry of a FULLTEXT index built in TiKV as
+// handle -> term -> positions.
+func fullTextEntries(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) map[int64]map[string][]int {
+	entries := make(map[int64]map[string][]int)
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, txn.Rollback()) }()
+	physicalIDs := []int64{tblInfo.ID}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		physicalIDs = physicalIDs[:0]
+		for _, def := range pi.Definitions {
+			physicalIDs = append(physicalIDs, def.ID)
+		}
+	}
+	for _, pid := range physicalIDs {
+		prefix := tablecodec.EncodeTableIndexPrefix(pid, idxInfo.ID)
+		iter, err := txn.Iter(prefix, prefix.PrefixNext())
+		require.NoError(t, err)
+		for iter.Valid() {
+			term, err := tables.DecodeTiKVFullTextIndexKey(iter.Key())
+			require.NoError(t, err)
+			handle, err := tablecodec.DecodeIndexHandle(iter.Key(), iter.Value(), 1)
+			require.NoError(t, err)
+			positions, err := tablecodec.DecodeTiKVFullTextIndexValue(iter.Value())
+			require.NoError(t, err)
+			if entries[handle.IntValue()] == nil {
+				entries[handle.IntValue()] = make(map[string][]int)
+			}
+			entries[handle.IntValue()][string(term)] = positions
+			require.NoError(t, iter.Next())
+		}
+		iter.Close()
+	}
+	return entries
+}
+
+// TestFullTextIndexBuiltInTiKVEntries covers the entries a FULLTEXT index
+// holds: one per distinct term per row, keyed by the term and carrying the
+// term's positions, kept in step with inserts, updates, deletes and backfill.
+func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Every write below is checked against the row by the mutation checker
+	// and against the store by assertions.
+	tk.MustExec("set tidb_enable_mutation_checker = 1")
+	tk.MustExec("set tidb_txn_assertion_level = strict")
+
+	tk.MustExec("create table t (id int primary key, n int, body text, fulltext index idx (body))")
+	tk.MustExec("insert into t values (1, 0, 'hello world of distributed sql'), (2, 0, 'sql sql sql'), (3, 0, null), (4, 0, ''), (5, 0, 'of')")
+	tblInfo, idxInfo := tikvFullTextIndex(t, dom, "t", "idx")
+	// "of" is shorter than innodb_ft_min_token_size and drops out, but the
+	// positions of the tokens around it are their ordinals in the stream.
+	require.Equal(t, map[int64]map[string][]int{
+		1: {"hello": {0}, "world": {1}, "distributed": {3}, "sql": {4}},
+		2: {"sql": {0, 1, 2}},
+	}, fullTextEntries(t, tk, tblInfo, idxInfo))
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx")
+
+	// The check reads the index: removing one term's entry behind its back
+	// is reported, and putting it back clears the report.
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	prefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idxInfo.ID)
+	iter, err := txn.Iter(prefix, prefix.PrefixNext())
+	require.NoError(t, err)
+	require.True(t, iter.Valid())
+	removedKey, removedValue := iter.Key().Clone(), append([]byte(nil), iter.Value()...)
+	iter.Close()
+	require.NoError(t, txn.Delete(removedKey))
+	require.NoError(t, txn.Commit(context.Background()))
+	tk.MustContainErrMsg("admin check table t", "data inconsistency in table: t, index: idx, handle: 1")
+	tk.MustContainErrMsg("admin check index t idx", "data inconsistency in table: t, index: idx, handle: 1")
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
+	require.NoError(t, txn.Set(removedKey, removedValue))
+	require.NoError(t, txn.Commit(context.Background()))
+	tk.MustExec("admin check table t")
+
+	// Updating the document replaces its entries; updating another column
+	// leaves them alone; deleting the row removes them.
+	tk.MustExec("update t set body = 'relational storage' where id = 1")
+	tk.MustExec("update t set n = 1 where id = 2")
+	tk.MustExec("update t set body = 'now indexed' where id = 3")
+	tk.MustExec("update t set body = null where id = 2")
+	tk.MustExec("delete from t where id = 5")
+	require.Equal(t, map[int64]map[string][]int{
+		1: {"relational": {0}, "storage": {1}},
+		3: {"now": {0}, "indexed": {1}},
+	}, fullTextEntries(t, tk, tblInfo, idxInfo))
+	tk.MustExec("admin check table t")
+
+	// The same within one transaction, including a row that is inserted,
+	// rewritten and removed before commit.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (6, 0, 'transient text'), (7, 0, 'kept text')")
+	tk.MustExec("update t set body = 'kept words' where id = 7")
+	tk.MustExec("update t set n = 2 where id = 7")
+	tk.MustExec("delete from t where id = 6")
+	tk.MustExec("update t set body = 'relational engine' where id = 1")
+	tk.MustExec("commit")
+	require.Equal(t, map[int64]map[string][]int{
+		1: {"relational": {0}, "engine": {1}},
+		3: {"now": {0}, "indexed": {1}},
+		7: {"kept": {0}, "words": {1}},
+	}, fullTextEntries(t, tk, tblInfo, idxInfo))
+	tk.MustExec("admin check table t")
+	tk.MustExec("rollback")
+
+	// NGRAM entries are the grams, positioned by character.
+	tk.MustExec("create table ng (id int primary key, body varchar(100), fulltext index idx (body) with parser ngram)")
+	tk.MustExec("insert into ng values (1, 'abcab'), (2, '数据库')")
+	ngInfo, ngIdx := tikvFullTextIndex(t, dom, "ng", "idx")
+	require.Equal(t, map[int64]map[string][]int{
+		1: {"ab": {0, 3}, "bc": {1}, "ca": {2}},
+		2: {"数据": {0}, "据库": {1}},
+	}, fullTextEntries(t, tk, ngInfo, ngIdx))
+	tk.MustExec("admin check table ng")
+
+	// Adding the index to a populated table backfills it, and a long NGRAM
+	// document fans out into one entry per distinct gram with all of its
+	// positions.
+	tk.MustExec("create table backfilled (id int primary key, body text)")
+	long := strings.Repeat("the quick brown fox jumps over the lazy dog ", 500)
+	tk.MustExec("insert into backfilled values (1, 'distributed sql database'), (2, null), (3, ?)", long)
+	tk.MustExec("alter table backfilled add fulltext index idx (body) with parser ngram")
+	bfInfo, bfIdx := tikvFullTextIndex(t, dom, "backfilled", "idx")
+	entries := fullTextEntries(t, tk, bfInfo, bfIdx)
+	require.Len(t, entries, 2)
+	require.Equal(t, []int{0}, entries[1]["di"])
+	// Grams are positioned densely across the token stream: "the" is the
+	// first word and, 19 grams later, the seventh.
+	require.Len(t, entries[3]["th"], 1000)
+	require.Equal(t, []int{0, 19}, entries[3]["th"][:2])
+	tk.MustExec("admin check table backfilled")
+	tk.MustExec("update backfilled set body = concat(body, ' end') where id = 3")
+	tk.MustExec("admin check table backfilled")
+
+	// Each partition holds the entries of its own rows.
+	tk.MustExec("create table pt (id int primary key, body text, fulltext index idx (body)) partition by hash(id) partitions 2")
+	tk.MustExec("insert into pt values (1, 'first partition'), (2, 'second partition')")
+	ptInfo, ptIdx := tikvFullTextIndex(t, dom, "pt", "idx")
+	require.Equal(t, map[int64]map[string][]int{
+		1: {"first": {0}, "partition": {1}},
+		2: {"second": {0}, "partition": {1}},
+	}, fullTextEntries(t, tk, ptInfo, ptIdx))
+	tk.MustExec("admin check table pt")
+	tk.MustExec("delete from pt where id = 1")
+	tk.MustExec("admin check table pt")
+	tk.MustExec("alter table pt drop index idx")
+
+	// The column must stay text the analyzer can read.
+	tk.MustContainErrMsg("alter table t modify column body int", "FULLTEXT index requires a string column")
+	// A collation change under an index is refused before the index rules
+	// are consulted, which covers the binary and other-charset cases.
+	tk.MustContainErrMsg("alter table t modify column body blob", "Unsupported modifying collation")
+	tk.MustContainErrMsg("alter table t modify column body text charset gbk", "Unsupported modifying collation")
+	tk.MustExec("alter table t modify column body varchar(500)")
+	tk.MustExec("admin check table t")
+	tk.MustContainErrMsg("create table bad_charset (body text charset gbk, fulltext index idx (body))", "FULLTEXT index requires a utf8mb4, utf8, ascii or latin1 column")
 }

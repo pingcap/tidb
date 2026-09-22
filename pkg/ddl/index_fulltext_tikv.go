@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -87,17 +88,8 @@ func buildTiKVFullTextInfoWithCheck(
 	if colInfo == nil {
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name, tblInfo.Name)
 	}
-	if !types.IsString(colInfo.FieldType.GetType()) {
-		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(
-			"FULLTEXT index requires a string column, but %s is %s", colInfo.Name, colInfo.FieldType.String())
-	}
-	// A binary column holds bytes, not text. The analyzer would still produce
-	// tokens from it, splitting whatever byte sequences happen to look like
-	// words, so the index would build and quietly contain nonsense.
-	if types.IsBinaryStr(&colInfo.FieldType) {
-		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(
-			"FULLTEXT index requires a non-binary string column, but %s is %s",
-			colInfo.Name, colInfo.FieldType.String())
+	if err := checkTiKVFullTextColumn(colInfo); err != nil {
+		return nil, err
 	}
 
 	parserType := model.FullTextParserTypeStandardV1
@@ -120,4 +112,31 @@ func buildTiKVFullTextInfoWithCheck(
 		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(fmt.Sprintf("FULLTEXT index with %s", err))
 	}
 	return &info, nil
+}
+
+// checkTiKVFullTextColumn checks that a column can be tokenized: it must hold
+// text the analyzer can read.
+func checkTiKVFullTextColumn(colInfo *model.ColumnInfo) error {
+	if !types.IsString(colInfo.FieldType.GetType()) {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack(
+			"FULLTEXT index requires a string column, but %s is %s", colInfo.Name, colInfo.FieldType.String())
+	}
+	// A binary column holds bytes, not text. The analyzer would still produce
+	// tokens from it, splitting whatever byte sequences happen to look like
+	// words, so the index would build and quietly contain nonsense.
+	if types.IsBinaryStr(&colInfo.FieldType) {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack(
+			"FULLTEXT index requires a non-binary string column, but %s is %s",
+			colInfo.Name, colInfo.FieldType.String())
+	}
+	// The analyzer reads UTF-8. TiDB stores the other charsets it supports
+	// in their own encoding, which would tokenize as garbage.
+	switch colInfo.GetCharset() {
+	case charset.CharsetUTF8MB4, charset.CharsetUTF8, charset.CharsetASCII, charset.CharsetLatin1:
+	default:
+		return dbterror.ErrUnsupportedIndexType.GenWithStack(
+			"FULLTEXT index requires a utf8mb4, utf8, ascii or latin1 column, but %s is %s",
+			colInfo.Name, colInfo.GetCharset())
+	}
+	return nil
 }
