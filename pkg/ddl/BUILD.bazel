@@ -323,6 +323,7 @@ go_test(
         "stat_test.go",
         "storage_class_partition_test.go",
         "storage_class_test.go",
+        "storage_class_transition_history_test.go",
         "storage_class_transition_poll_test.go",
         "storage_class_transition_test.go",
         "table_mode_test.go",
