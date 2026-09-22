@@ -639,10 +639,7 @@ impl IndexLookupSource {
 
     fn set_probes(&mut self, probes: crate::access_path::IndexJoinProbes) -> Result<(), ExecError> {
         match self {
-            Self::Leaf(source) => {
-                source.set_probes(probes);
-                Ok(())
-            }
+            Self::Leaf(source) => source.set_probes(probes),
             Self::Composite {
                 exec,
                 probes: shared,

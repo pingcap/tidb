@@ -2208,10 +2208,12 @@ mod tests {
         // inner task to one table reader. This exceeds the former 4,096-range
         // Rust split, which opened multiple independent scan sessions and
         // made TPC-H q21 associate an incomplete inner set with the task.
-        source.set_probes(crate::access_path::IndexJoinProbes {
-            keys: (1..=4097).map(|probe| vec![Datum::Int(probe)]).collect(),
-            bound_values: Vec::new(),
-        });
+        source
+            .set_probes(crate::access_path::IndexJoinProbes {
+                keys: (1..=4097).map(|probe| vec![Datum::Int(probe)]).collect(),
+                bound_values: Vec::new(),
+            })
+            .unwrap();
 
         let (rows, ops) = capture_storage_ops(|| {
             source.open().unwrap();

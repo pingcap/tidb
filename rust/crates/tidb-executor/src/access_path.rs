@@ -4715,7 +4715,7 @@ impl LookupForkTemplate {
             probe_bound_ops: self.probe_bound_ops.clone(),
             probe_bound_values: Vec::new(),
         };
-        task.set_probes(probes);
+        task.set_probes(probes)?;
         if task.open_prefetched_common_handle_cursor()? {
             Ok(Ok(task))
         } else {
@@ -4903,7 +4903,9 @@ impl IndexJoinLookupExec {
     /// `produced` is NOT reset: it accumulates across batches, because the
     /// operator EXPLAIN prints is the inner reader as a whole and Go's
     /// `actRows` for it is the total over every batch, not the last one's.
-    pub(crate) fn set_probes(&mut self, probes: IndexJoinProbes) {
+    /// Range construction and remote reader initialization errors propagate
+    /// to the outer task before it consumes any inner rows.
+    pub(crate) fn set_probes(&mut self, probes: IndexJoinProbes) -> Result<(), ExecError> {
         self.probes = probes.keys;
         self.probe_bound_values = probes.bound_values;
         self.next_probe = 0;
@@ -4913,7 +4915,7 @@ impl IndexJoinLookupExec {
         self.remote_handles = None;
         self.lookup_rows.clear();
         self.lookup_row_at = 0;
-        self.open_remote_index_handles();
+        self.open_remote_index_handles()
     }
 
     /// Streams one secondary-index batch's handles through the coprocessor,
@@ -4925,25 +4927,19 @@ impl IndexJoinLookupExec {
     /// single-range MVCC scan -- N probes cost N round trips there instead of
     /// roughly the region count.
     ///
-    /// A pure accelerator: any refusal or open failure restores the walk
-    /// position and leaves the byte-level cursor path exactly as it was.
-    fn open_remote_index_handles(&mut self) {
+    /// An unsupported request shape restores the native walk. Range and
+    /// backend errors propagate like Go BuildExecutorForIndexJoin errors.
+    fn open_remote_index_handles(&mut self) -> Result<(), ExecError> {
         let LookupObject::Index(index_id) = self.object else {
-            return;
+            return Ok(());
         };
         let first_probe = self.next_probe;
         let mut ranges = Vec::with_capacity(self.probes.len().saturating_sub(first_probe));
         while let Some((probe, bounds)) = self.next_probe_with_bounds() {
-            match self.probe_index_ranges(&probe, &bounds) {
-                Ok(probe_ranges) => ranges.extend(probe_ranges),
-                Err(_) => {
-                    self.next_probe = first_probe;
-                    return;
-                }
-            }
+            ranges.extend(self.probe_index_ranges(&probe, &bounds)?);
         }
         if ranges.is_empty() {
-            return;
+            return Ok(());
         }
         let filters = if self.covering {
             &self.filters
@@ -4961,36 +4957,39 @@ impl IndexJoinLookupExec {
         // A handle-only response cannot recheck missing index predicates.
         if !self.covering && predicates.len() != filters.len() {
             self.next_probe = first_probe;
-            return;
+            return Ok(());
         }
         // Go rebuilds the exact reader family in the completed inner task.
         // A PhysicalIndexReader returns its covered projection from this
         // stream; a PhysicalIndexLookUpReader consumes only handles and then
         // opens the table-side reader. Preserve the physical scan's order
         // whenever its parent requires it.
-        match self.table.pushdown_index_handle_cursor(
-            index_id,
-            &ranges,
-            &keep,
-            None,
-            &predicates,
-            None,
-            self.decode_context.zone(),
-            &self.statement,
-            self.descending,
-            None,
-            None,
-            None,
-            !self.keep_order,
-            !self.covering,
-            self.covering.then_some(keep.as_slice()),
-            self.covering,
-        ) {
-            Ok(Some(stream)) => self.remote_handles = Some(stream),
-            // Refused or failed: reopen the probes over the local cursor, the
-            // only reader this source offered before the stream existed.
-            _ => self.next_probe = first_probe,
+        match self
+            .table
+            .pushdown_index_handle_cursor(
+                index_id,
+                &ranges,
+                &keep,
+                None,
+                &predicates,
+                None,
+                self.decode_context.zone(),
+                &self.statement,
+                self.descending,
+                None,
+                None,
+                None,
+                !self.keep_order,
+                !self.covering,
+                self.covering.then_some(keep.as_slice()),
+                self.covering,
+            )
+            .map_err(ExecError::from)?
+        {
+            Some(stream) => self.remote_handles = Some(stream),
+            None => self.next_probe = first_probe,
         }
+        Ok(())
     }
 
     /// The thread-safe description of a forked common-handle prefix task, or
@@ -5045,15 +5044,16 @@ impl IndexJoinLookupExec {
         self.shared_generation = 0;
     }
 
-    fn refresh_shared_probes(&mut self) {
+    fn refresh_shared_probes(&mut self) -> Result<(), ExecError> {
         let Some(shared) = self.shared_probes.as_ref().cloned() else {
-            return;
+            return Ok(());
         };
         let shared = shared.lock().unwrap();
         if self.shared_generation != shared.generation {
-            self.set_probes(shared.probes.clone());
+            self.set_probes(shared.probes.clone())?;
             self.shared_generation = shared.generation;
         }
+        Ok(())
     }
 
     /// Installs the complete object-key shape built by the index ranger.
@@ -5468,11 +5468,7 @@ impl IndexJoinLookupExec {
                                 self.descending,
                                 self.keep_order,
                             )
-                            .map_err(|error| {
-                                ExecError::unsupported(format!(
-                                    "index range is not scannable: {error:?}"
-                                ))
-                            })?,
+                            .map_err(ExecError::from)?,
                     );
                 }
                 LookupObject::Handle => {
@@ -5505,9 +5501,7 @@ impl IndexJoinLookupExec {
     fn next_common_handle_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         loop {
             if let Some(cursor) = self.remote_cursor.as_mut() {
-                let row = cursor.next_row().map_err(|error| {
-                    ExecError::unsupported(format!("common-handle remote lookup failed: {error:?}"))
-                })?;
+                let row = cursor.next_row().map_err(ExecError::from)?;
                 if row.is_some() {
                     return Ok(row);
                 }
@@ -5565,11 +5559,7 @@ impl IndexJoinLookupExec {
                 crate::remote_scan::PushdownReadEngine::TiKv,
                 0,
             )
-            .map_err(|error| {
-                ExecError::unsupported(format!(
-                    "common-handle remote lookup is not scannable: {error:?}"
-                ))
-            })?;
+            .map_err(ExecError::from)?;
         if let Some(cursor) = remote_cursor {
             self.remote_cursor = Some(cursor);
         } else {
@@ -5582,7 +5572,7 @@ impl IndexJoinLookupExec {
                         self.keep_order,
                         &self.decode_context,
                     )
-                    .map_err(|_| ExecError::unsupported("common handle range is not scannable"))?,
+                    .map_err(ExecError::from)?,
             );
         }
         Ok(true)
@@ -5658,11 +5648,7 @@ impl IndexJoinLookupExec {
                 let want = cap - req.num_rows();
                 let appended = cursor
                     .append_clean_chunk(&mut scratch, want, false)
-                    .map_err(|error| {
-                        ExecError::unsupported(format!(
-                            "common-handle remote lookup failed: {error:?}"
-                        ))
-                    })?;
+                    .map_err(ExecError::from)?;
                 match appended {
                     Some(0) => {
                         self.lookup_chunk = Some(scratch);
@@ -5743,11 +5729,7 @@ impl IndexJoinLookupExec {
                 crate::remote_scan::PushdownReadEngine::TiKv,
                 0,
             )
-            .map_err(|error| {
-                ExecError::unsupported(format!(
-                    "common-handle remote lookup is not scannable: {error:?}"
-                ))
-            })?;
+            .map_err(ExecError::from)?;
         match remote_cursor {
             Some(cursor) => {
                 self.remote_cursor = Some(cursor);
@@ -5792,12 +5774,9 @@ impl IndexJoinLookupExec {
             .map_err(ExecError::from)
     }
 
-    /// One window's rows through a record-range coprocessor scan, or `None`
-    /// where that shape is refused OR the request cannot be served right now
-    /// (dirty staging, partitions, non-integer handles, a region that lost
-    /// its leader mid-drain); the caller then reads the batch-get way, as
-    /// before, so a transient routing failure costs a slower correct answer
-    /// instead of failing the statement.
+    /// One window's rows through a record-range coprocessor scan. `None`
+    /// permits the native reader for an unsupported shape (dirty staging,
+    /// partitions or non-integer handles); execution failures propagate.
     fn window_rows_by_ranges(
         &mut self,
         handles: &[TableHandle],
@@ -5808,21 +5787,27 @@ impl IndexJoinLookupExec {
             .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
         let predicates =
             scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
-        let Ok(Some(staged)) = self.table.stage_rows_by_handles_filtered(
-            handles,
-            &keep,
-            &predicates,
-            self.decode_context.zone(),
-            &self.statement,
-            self.meta.max_chunk_size(),
-        ) else {
+        let Some(staged) = self
+            .table
+            .stage_rows_by_handles_filtered(
+                handles,
+                &keep,
+                &predicates,
+                self.decode_context.zone(),
+                &self.statement,
+                self.meta.max_chunk_size(),
+            )
+            .map_err(ExecError::from)?
+        else {
             return Ok(None);
         };
         // The drain restores the caller's handle order; the join matches by
         // value, so emitting the found rows in that order is fine, and a
         // handle naming no stored row simply contributes nothing -- the same
         // answer the batch-get gave as a `None` slot.
-        let Ok(Some((pairs, _, _))) = KvTable::finish_rows_by_handles(handles, staged) else {
+        let Some((pairs, _, _)) =
+            KvTable::finish_rows_by_handles(handles, staged).map_err(ExecError::from)?
+        else {
             return Ok(None);
         };
         Ok(Some(pairs.into_iter().map(|(_, row)| Some(row)).collect()))
@@ -5831,22 +5816,7 @@ impl IndexJoinLookupExec {
     fn next_batched_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         if !matches!(self.object, LookupObject::CommonHandle) {
             if let Some(remote) = self.remote_handles.as_mut() {
-                match remote.next_handle() {
-                    Ok(handle) => return Ok(handle),
-                    Err(_) => {
-                        // The stream died under us -- a region lost its
-                        // leader mid-drain, or an entry failed to decode.
-                        // This batch has emitted nothing yet and its probes
-                        // were fully consumed when the stream opened, so
-                        // restarting them over the local cursor re-reads
-                        // exactly the same key set: a slower answer instead
-                        // of a failed statement.
-                        self.remote_handles = None;
-                        self.cursor = None;
-                        self.record_cursor = None;
-                        self.next_probe = 0;
-                    }
-                }
+                return remote.next_handle().map_err(ExecError::from);
             }
             return self.next_handle(None);
         }
@@ -5866,9 +5836,7 @@ impl IndexJoinLookupExec {
     fn next_lookup_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         if self.covering {
             if let Some(remote) = self.remote_handles.as_mut() {
-                return remote.next_projected_row().map_err(|error| {
-                    ExecError::unsupported(format!("covering index-join read failed: {error:?}"))
-                });
+                return remote.next_projected_row().map_err(ExecError::from);
             }
             if self.table.partition().is_none()
                 && !self.table.has_dirty_content(&self.statement.staged_writes)
@@ -6047,7 +6015,7 @@ impl Executor for IndexJoinLookupExec {
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        self.refresh_shared_probes();
+        self.refresh_shared_probes()?;
         req.reset();
         if self.common_handle_prefix_lookup() {
             if let Some(output_columns) = self.chunk_output_columns() {
@@ -6149,7 +6117,16 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
+    struct LookupReadFailure {
+        index: bool,
+        after_rows: Option<u64>,
+        chunks: bool,
+        error: StorageError,
+    }
+
+    #[derive(Debug, Clone)]
     struct CoveringIndexStorage {
+        failure: Option<LookupReadFailure>,
         closed: Arc<std::sync::atomic::AtomicBool>,
         require_closed_before_get: Arc<std::sync::atomic::AtomicBool>,
         inner: MemTableStorage,
@@ -6158,6 +6135,7 @@ mod tests {
     }
 
     struct CoveringIndexRows {
+        failure: Option<LookupReadFailure>,
         closed: Arc<std::sync::atomic::AtomicBool>,
         rows: std::collections::VecDeque<Vec<Datum>>,
         returned: u64,
@@ -6165,9 +6143,32 @@ mod tests {
 
     impl crate::remote_scan::PushdownRowStream for CoveringIndexRows {
         fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            if let Some(failure) = &self.failure {
+                if failure
+                    .after_rows
+                    .is_some_and(|after| self.returned >= after)
+                {
+                    return Err(failure.error.clone());
+                }
+            }
             let row = self.rows.pop_front();
             self.returned += u64::from(row.is_some());
             Ok(row)
+        }
+
+        fn supports_chunks(&self) -> bool {
+            self.failure.as_ref().is_some_and(|failure| failure.chunks)
+        }
+
+        fn next_chunk(&mut self, _required_rows: usize) -> Result<Option<Chunk>, StorageError> {
+            let Some(row) = self.next_row()? else {
+                return Ok(None);
+            };
+            let mut chunk = Chunk::new_with_capacity(&vec![long(); row.len()], 1);
+            for (offset, value) in row.iter().enumerate() {
+                chunk.append_datum(offset, value);
+            }
+            Ok(Some(chunk))
         }
 
         fn rows_returned(&self) -> u64 {
@@ -6234,27 +6235,48 @@ mod tests {
             &mut self,
             request: &crate::remote_scan::PushdownScanRequest,
         ) -> Option<Result<crate::remote_scan::PushdownScan, StorageError>> {
-            if request.index.is_none() {
+            let failure = self
+                .failure
+                .as_ref()
+                .filter(|failure| failure.index == request.index.is_some())
+                .cloned();
+            if request.index.is_none() && failure.is_none() {
                 return None;
             }
             *self
                 .request
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner()) = Some(request.clone());
+            if let Some(failure) = &failure {
+                if failure.after_rows.is_none() {
+                    return Some(Err(failure.error.clone()));
+                }
+            }
+            let row = if request.index.is_some() {
+                vec![Datum::Int(7), Datum::Int(101)]
+            } else {
+                request
+                    .columns
+                    .iter()
+                    .map(|column| match column.id {
+                        1 => Datum::Int(42),
+                        2 => Datum::Int(7),
+                        crate::remote_scan::EXTRA_HANDLE_COLUMN_ID => Datum::Int(101),
+                        id => panic!("unexpected fixture column {id}"),
+                    })
+                    .collect()
+            };
+            let row = request
+                .output_offsets
+                .as_ref()
+                .map_or(row.clone(), |offsets| {
+                    offsets.iter().map(|offset| row[*offset].clone()).collect()
+                });
             Some(Ok(crate::remote_scan::PushdownScan {
-                // Full index executor schema: indexed b, then integer handle.
                 stream: Box::new(CoveringIndexRows {
+                    failure,
                     closed: Arc::clone(&self.closed),
-                    rows: std::collections::VecDeque::from([
-                        if let Some(offsets) = &request.output_offsets {
-                            offsets
-                                .iter()
-                                .map(|i| [Datum::Int(7), Datum::Int(101)][*i].clone())
-                                .collect()
-                        } else {
-                            vec![Datum::Int(7), Datum::Int(101)]
-                        },
-                    ]),
+                    rows: std::collections::VecDeque::from([row]),
                     returned: 0,
                 }),
                 staged: Vec::new(),
@@ -6658,6 +6680,7 @@ mod tests {
             89,
             vec![column("a", 1), column("b", 2)],
             Box::new(CoveringIndexStorage {
+                failure: None,
                 closed: Arc::default(),
                 require_closed_before_get: Arc::default(),
                 inner: MemTableStorage::new(),
@@ -6702,14 +6725,16 @@ mod tests {
         source.mark_covering();
         source.set_keep_order(true);
         source.open().unwrap();
-        source.set_probes(IndexJoinProbes {
-            keys: vec![
-                vec![Datum::Int(7)],
-                vec![Datum::Int(2)],
-                vec![Datum::Int(8)],
-            ],
-            bound_values: Vec::new(),
-        });
+        source
+            .set_probes(IndexJoinProbes {
+                keys: vec![
+                    vec![Datum::Int(7)],
+                    vec![Datum::Int(2)],
+                    vec![Datum::Int(8)],
+                ],
+                bound_values: Vec::new(),
+            })
+            .unwrap();
 
         let mut chunk = source.new_chunk();
         source.next(&mut chunk).unwrap();
@@ -6759,10 +6784,12 @@ mod tests {
         )]);
         source.set_column_projection(Some(vec![0]), []);
         source.open().unwrap();
-        source.set_probes(IndexJoinProbes {
-            keys: vec![vec![Datum::Int(7)]],
-            bound_values: Vec::new(),
-        });
+        source
+            .set_probes(IndexJoinProbes {
+                keys: vec![vec![Datum::Int(7)]],
+                bound_values: Vec::new(),
+            })
+            .unwrap();
         source.next(&mut chunk).unwrap();
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 42);
@@ -6771,6 +6798,151 @@ mod tests {
         assert_eq!(captured.output_offsets, Some(vec![1]));
         assert_eq!(gets.load(Ordering::Relaxed), 1);
         source.close().unwrap();
+    }
+
+    #[test]
+    fn index_join_reader_failures_preserve_sql_errors_without_replaying_probes() {
+        let expected = crate::MysqlError::new(1365, "injected inner-reader division by zero");
+        let mut failures = Vec::new();
+        let drain = |source: &mut IndexJoinLookupExec| -> Result<usize, ExecError> {
+            let mut chunk = source.new_chunk();
+            let mut count = 0;
+            loop {
+                source.next(&mut chunk)?;
+                if chunk.num_rows() == 0 {
+                    return Ok(count);
+                }
+                count += chunk.num_rows();
+            }
+        };
+        for reader in ["covering", "lookup", "handle", "common"] {
+            for after_rows in [None, Some(0), Some(1)] {
+                for chunks in [false, true] {
+                    for mode in ["direct", "shared", "fork"] {
+                        if mode == "fork" && reader != "common" {
+                            continue;
+                        }
+                        let gets = Arc::new(AtomicUsize::new(0));
+                        let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        let mut table = KvTable::with_storage(
+                            89,
+                            vec![column("a", 1), column("b", 2)],
+                            Box::new(CoveringIndexStorage {
+                                failure: Some(LookupReadFailure {
+                                    index: matches!(reader, "covering" | "lookup"),
+                                    after_rows,
+                                    chunks,
+                                    error: StorageError::Sql(expected.clone()),
+                                }),
+                                closed: Arc::clone(&closed),
+                                require_closed_before_get: Arc::default(),
+                                inner: MemTableStorage::new(),
+                                gets: Arc::clone(&gets),
+                                request: Arc::default(),
+                            }),
+                        );
+                        if reader == "common" {
+                            table.set_common_handle_offsets(vec![0, 1]);
+                        }
+                        table.add_index(
+                            crate::kv_table::KvIndex {
+                                id: 1,
+                                name: "ib".to_owned(),
+                                comment: String::new(),
+                                unique: false,
+                                column_offsets: vec![1],
+                                prefix_lengths: vec![-1],
+                                visible: true,
+                                global: false,
+                                global_index_version: 0,
+                                clustered_primary: false,
+                            },
+                            false,
+                        );
+                        table
+                            .insert_row_with_row_id(
+                                &[Datum::Int(42), Datum::Int(7)],
+                                Some(101),
+                                0,
+                                &crate::StmtContext::for_query(),
+                            )
+                            .unwrap();
+                        gets.store(0, Ordering::Relaxed);
+                        let (object, key, offsets) = match reader {
+                            "covering" => (LookupObject::Index(1), 7, vec![1]),
+                            "lookup" => (LookupObject::Index(1), 7, vec![0, 1]),
+                            "handle" => (LookupObject::Handle, 101, vec![0, 1]),
+                            "common" => (LookupObject::CommonHandle, 42, vec![0, 1]),
+                            _ => unreachable!(),
+                        };
+                        let schema = Schema::new(
+                            offsets
+                                .iter()
+                                .map(|offset| {
+                                    tidb_expr::column::Column::new(*offset as i64 + 1, long())
+                                })
+                                .collect(),
+                        );
+                        let mut source = IndexJoinLookupExec::new_with_context(
+                            ExecutorMeta::new(schema, 0, 1, 1),
+                            table,
+                            object,
+                            crate::RowDecodeContext::for_test_query_utc(),
+                        );
+                        source.set_column_projection(Some(offsets), []);
+                        if reader == "common" {
+                            source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
+                        }
+                        if reader == "covering" {
+                            source.mark_covering();
+                        }
+                        source.open().unwrap();
+                        let shared = Arc::new(Mutex::new(SharedIndexJoinProbes::default()));
+                        let outcome: Result<usize, ExecError> = (|| {
+                            let probes = IndexJoinProbes {
+                                keys: vec![vec![Datum::Int(key)]],
+                                bound_values: Vec::new(),
+                            };
+                            match mode {
+                                "shared" => {
+                                    shared.lock().unwrap().publish(probes);
+                                    source.set_shared_probes(Arc::clone(&shared));
+                                }
+                                "fork" => {
+                                    let template = source.fork_template().unwrap();
+                                    let Ok(mut task) = template.open(probes)? else {
+                                        panic!("test reader must open remotely");
+                                    };
+                                    return drain(&mut task);
+                                }
+                                _ => source.set_probes(probes)?,
+                            }
+                            drain(&mut source)
+                        })();
+                        source.close().unwrap();
+                        if !matches!(&outcome, Err(ExecError::Mysql(error)) if error == &expected)
+                            || gets.load(Ordering::Relaxed) != 0
+                            || (after_rows.is_some() && !closed.load(Ordering::SeqCst))
+                        {
+                            failures.push(format!("{reader}, mode={mode}, after={after_rows:?}, chunks={chunks}: {outcome:?}, gets={}, closed={}",
+                            gets.load(Ordering::Relaxed), closed.load(Ordering::SeqCst)));
+                        }
+                        // An aborted task must not poison reopen or retain its
+                        // unread rows when the next probe batch is empty.
+                        source.open().unwrap();
+                        let empty = IndexJoinProbes::default();
+                        if mode == "shared" {
+                            shared.lock().unwrap().publish(empty);
+                        } else {
+                            source.set_probes(empty).unwrap();
+                        }
+                        assert_eq!(drain(&mut source).unwrap(), 0);
+                        source.close().unwrap();
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]
@@ -6810,7 +6982,7 @@ mod tests {
             };
             for _ in 0..2 {
                 source.open().unwrap();
-                source.set_probes(probes(&[5, 2, 4]));
+                source.set_probes(probes(&[5, 2, 4])).unwrap();
                 let mut chunk = source.new_chunk();
                 source.next(&mut chunk).unwrap();
                 assert_eq!(chunk.num_rows(), 1);
@@ -6820,7 +6992,7 @@ mod tests {
                 );
                 // Replacing a partially drained task must drop the old range
                 // cursor and preserve the new task's filter/projection.
-                source.set_probes(probes(&[7, 1, 3]));
+                source.set_probes(probes(&[7, 1, 3])).unwrap();
                 let mut result = Vec::new();
                 loop {
                     source.next(&mut chunk).unwrap();
@@ -6830,7 +7002,7 @@ mod tests {
                     result.push(chunk.get_row(0).get_int64(0));
                 }
                 assert_eq!(result, if descending { vec![7, 3] } else { vec![3, 7] });
-                source.set_probes(probes(&[]));
+                source.set_probes(probes(&[])).unwrap();
                 source.next(&mut chunk).unwrap();
                 assert_eq!(chunk.num_rows(), 0);
                 source.close().unwrap();
@@ -6844,7 +7016,7 @@ mod tests {
             let values = (1..INDEX_LOOKUP_BATCH_SIZE as i64 + 4)
                 .rev()
                 .collect::<Vec<_>>();
-            source.set_probes(probes(&values));
+            source.set_probes(probes(&values)).unwrap();
             let mut chunk = source.new_chunk();
             let mut result = Vec::new();
             loop {
@@ -6875,7 +7047,7 @@ mod tests {
             )]);
             source.set_column_projection(Some(vec![2]), []);
             source.open().unwrap();
-            source.set_probes(probes(&[7, 1, 3]));
+            source.set_probes(probes(&[7, 1, 3])).unwrap();
             source.next(&mut chunk).unwrap();
             assert_eq!(chunk.num_rows(), 0);
             assert_eq!(
@@ -6896,6 +7068,7 @@ mod tests {
             89,
             vec![column("a", 1), column("b", 2)],
             Box::new(CoveringIndexStorage {
+                failure: None,
                 inner: MemTableStorage::new(),
                 gets: Arc::default(),
                 request: Arc::clone(&request),

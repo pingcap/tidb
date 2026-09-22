@@ -385,10 +385,12 @@ fn a_complete_common_handle_probe_reads_one_record() {
         LookupProbePart::Dynamic(0),
         LookupProbePart::Dynamic(1),
     ]);
-    source.set_probes(crate::access_path::IndexJoinProbes {
-        keys: vec![vec![Datum::Int(1), Datum::Int(2)]],
-        bound_values: Vec::new(),
-    });
+    source
+        .set_probes(crate::access_path::IndexJoinProbes {
+            keys: vec![vec![Datum::Int(1), Datum::Int(2)]],
+            bound_values: Vec::new(),
+        })
+        .unwrap();
 
     assert_eq!(
         drain(&mut source, &[long(), long()]),
@@ -404,10 +406,12 @@ fn a_common_handle_prefix_probe_reads_every_matching_record() {
     let table = common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
     let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
-    source.set_probes(crate::access_path::IndexJoinProbes {
-        keys: vec![vec![Datum::Int(1)]],
-        bound_values: Vec::new(),
-    });
+    source
+        .set_probes(crate::access_path::IndexJoinProbes {
+            keys: vec![vec![Datum::Int(1)]],
+            bound_values: Vec::new(),
+        })
+        .unwrap();
 
     assert_eq!(
         drain(&mut source, &[long(), long()]),
@@ -426,10 +430,12 @@ fn a_ddl_common_handle_prefix_probe_reads_every_matching_record() {
     let table = ddl_common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
     let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
-    source.set_probes(crate::access_path::IndexJoinProbes {
-        keys: vec![vec![Datum::Int(1)]],
-        bound_values: Vec::new(),
-    });
+    source
+        .set_probes(crate::access_path::IndexJoinProbes {
+            keys: vec![vec![Datum::Int(1)]],
+            bound_values: Vec::new(),
+        })
+        .unwrap();
 
     assert_eq!(
         drain(&mut source, &[long(), long()]),
@@ -554,10 +560,12 @@ fn index_join_static_templates_preserve_tuple_identity() {
         LookupProbePart::Alternatives(vec![Datum::Int(7), Datum::Int(8)]),
         LookupProbePart::Dynamic(0),
     ]);
-    source.set_probes(crate::access_path::IndexJoinProbes {
-        keys: vec![vec![Datum::Int(9)]],
-        bound_values: vec![],
-    });
+    source
+        .set_probes(crate::access_path::IndexJoinProbes {
+            keys: vec![vec![Datum::Int(9)]],
+            bound_values: vec![],
+        })
+        .unwrap();
     assert_eq!(
         drain(&mut source, &[long(), long(), long()]),
         vec![

@@ -9112,3 +9112,149 @@ origin/hparser-integration. The final pull was already up to date; after push,
 `0 0`. Only the user's preexisting untracked `tidb-expr/src/vs_helper.rs` and
 `tidb-planner/src/fragment.rs` remained. This publication receipt is a docs-only
 follow-up; it does not change the validated code or close any whole-package gate.
+
+## Continue index-join reader error and lifecycle parity (2026-09-22)
+
+
+### Purpose and current source evidence
+
+
+The preceding checkpoint d47f168793 is pushed, the branch is synchronized, and
+fresh fetch/pull keeps master at 64e8c4c05e. This is verified progress. Continue
+the existing whole physicalop/core/executor/join package units without making a
+partial-package completion claim. Current master dataReaderBuilder propagates
+range construction and reader Open errors; innerWorker.fetchInnerResults returns
+Next failures and closes the inner reader. The Rust secondary-index path instead
+swallows open errors and can reset all probes after a stream error, duplicating
+handles already collected. Its table-fetch window also hides open/drain errors
+behind point reads. Common-handle and covering error wrappers lose typed SQL
+codes. Capability refusal is already distinct (Ok(None)); execution failure must
+remain an error, as in master.
+
+### Progress
+
+
+- [x] Refresh branch/master and inspect current master reader/error contracts.
+- [x] Reproduce open/read/partial-read failures for all inner-reader families.
+- [x] Propagate secondary-index range, remote reader and typed SQL errors through native Rust Result boundaries.
+- [x] Verify capability refusal, close/reopen and shared/worker probe lifecycles.
+- [x] Run scoped regression, compilation and lint gates; self-review the diff.
+- [ ] Commit and push this bounded checkpoint.
+
+### Decision Log
+
+
+Retain the existing native fallback for explicit unsupported backend shapes.
+Propagate genuine backend, SQL, range and decoding failures, including those
+after partial batches. Replaying consumed probes is not a valid storage retry;
+region retries belong below this executor boundary. Make probe installation
+fallible and carry Result through existing leaf/shared/fork callers instead of
+inventing an error-suppression policy or returning rows after an error. Preserve
+SQL code/state/message through the existing typed conversion. Use existing
+access-path storage fakes with failure injection and the original master source
+contracts as the regression oracle. Reconcile adjacent common-handle/window
+paths as part of the same reader lifecycle audit.
+
+### Validation and remaining scope
+
+
+Exercise remote open failures, read failures before and after rows, row/chunk
+transport, covering/noncovering secondary-index readers, integer table readers
+and common-handle prefix table readers. Confirm failed streams close and no
+fallback point reads occur. Existing refused-capability, successful join, probe
+reset and partition/dirty-read suites must remain green. Run targeted executor
+and transport suites, dependent compilation, changed-code formatting and make
+lint. Complete original package artifacts/gates, real TiKV and matched workload
+measurements remain open. Record exact commands and limitations below.
+
+### Regression evidence and implementation
+
+
+The initial 24-case regression failed against d47f168793. Secondary-index Open
+and table-window Open/read errors disappeared behind native fallback; a
+noncovering stream returning one handle and then failing produced two rows for
+one stored record. Covering and common-handle failures lost their original SQL
+error type. The red output is
+`/private/tmp/tidb-index-join-errors-red.log`.
+
+The final regression exercises 54 combinations: covering IndexReader,
+noncovering IndexLookUpReader, integer-handle TableReader and common-handle
+prefix TableReader; Open failure, failure before the first row and after one
+row; row/chunk transport; direct/shared probes and the supported common-handle
+fork task. Every case preserves the injected SQL error 1365, SQLSTATE 22012 and
+message, performs zero fallback record gets, closes an opened failed stream and
+can reopen with an empty next batch. The failure is an injected storage SQL
+error, not a claim about evaluation of division by zero in a SELECT.
+
+Probe installation now returns Result through the leaf, shared and fork entry
+points. Index range construction and remote Open errors propagate; only explicit
+Ok(None) capability refusal selects the native path. A failing handle stream
+does not reset/replay consumed probes. Record-window stage/drain errors and
+covering/common-handle remote errors use the existing typed KvTableError to
+ExecError conversion. Complete common-handle point-key encoding remains an
+explicit adjacent audit item: this checkpoint does not alter its existing
+out-of-domain handling without a corresponding master-backed regression.
+
+Production changes are confined to `tidb-executor/src/access_path.rs` and its
+caller in `join.rs`. Existing successful callers in `remote_scan.rs` and
+`tests_index_join.rs` now unwrap the fallible installation in their tests.
+Failure injection extends the existing access-path fake storage, with no
+production fault hook or additional Go-absent feature.
+
+### Validation receipt
+
+
+From `rust/`, these commands passed (counts in the same order: 37, 23, 17, 17,
+31 and 33 tests). The 54-case matrix is one test within the first two filters.
+
+    cargo test --offline --locked -j12 -p tidb-executor --lib access_path::tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_join --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib driver::tests::joins --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib driver::tests::index_prefix_reads --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib remote_scan::tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-executor --lib kv_table::table_scan::remote_cursor_tests --message-format=short
+    cargo check --offline --locked -j12 -p tidb-executor -p tidb-exec -p tidb-session --message-format=short
+
+From the repository root:
+
+    make lint
+    python3 /private/tmp/tidb-index-join-errors-format.py --check
+    git diff --check
+
+The temporary formatter checks only modified Rust functions/lines. Existing
+unrelated formatting and the two user-owned untracked files remain untouched.
+Validation logs have prefix `/private/tmp/tidb-index-join-errors-`, with suffixes
+`access.log`, `joins.log`, `sql-joins.log`, `prefix.log`, `remote.log`,
+`cursors.log`, `compile.log` and `lint.log`. A final `index_join` run after
+removing the unverified common-handle point-key encoding edit is recorded in
+`final.log`. Existing compiler warnings remain.
+
+From the clean master worktree `/private/tmp/tidb-master-cc83514` at
+64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59:
+
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache ./tools/check/failpoint-go-test.sh pkg/executor/join/test/indexjoin -run '^(TestIndexLookupJoinHang|TestIssue45716)$' -count=1 -v
+
+Both original tests passed (package runtime 2.070s). TestIndexLookupJoinHang
+exercises error-path Close across INL_JOIN, INL_HASH_JOIN and INL_MERGE_JOIN;
+it intentionally ignores Next errors and does not establish exact SQL error
+codes. TestIssue45716 checks that an injected inner-reader panic reaches the
+caller. The wrapper enabled the actual failpoint transformation and disabled it
+on exit, returning its refcount to zero. The master worktree was clean after
+cleanup. The exact output is `tidb-index-join-errors-go.log` under `/private/tmp`.
+
+The earlier fresh-workspace `make bazel_prepare` failure (missing bazel) remains
+an unsatisfied master-worktree gate. These direct Go tests are supplementary
+runtime evidence. No Go source, module or Bazel metadata changed in the working
+branch, so its change-based bazel_prepare gate is not triggered.
+
+### Outcome and remaining gates
+
+
+This checkpoint fixes swallowed errors and duplicate replay within the open
+whole-package audit. It is seed evidence, not completion of physicalop, core,
+executor or join. Correctness risk is the boundary between capability refusal
+and genuine execution failure; tests cover both existing fallback paths and
+the newly propagated failures. The unchanged complete common-handle encoding
+edge, full original package/platform/generated/build gates and real TiKV remain
+open. No sysbench, TPC-C, TPC-H or YCSB throughput claim is made from these
+operation/error regressions. Matched workload measurements remain required.
