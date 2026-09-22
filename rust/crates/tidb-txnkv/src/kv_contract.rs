@@ -492,12 +492,21 @@ impl CoprRequestLimiter {
                 AtomicOrdering::Acquire,
             ) {
                 Ok(_) => {
+                    // One released token admits exactly one waiter. Waking
+                    // ALL registered drivers turns every release into a
+                    // thundering herd: the losers re-take the waiters mutex
+                    // to register again, which perf showed as the top
+                    // contended futex on the SF50 q10 probe. Wake the most
+                    // recent registrant and keep the rest parked -- each
+                    // later release wakes the next one.
+                    let waiter =
+                        self.waiters
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .pop();
                     self.available.notify_one();
                     self.blocking_wait.notify_one();
-                    let waiters = std::mem::take(
-                        &mut *self.waiters.lock().unwrap_or_else(|p| p.into_inner()),
-                    );
-                    for waiter in waiters {
+                    if let Some(waiter) = waiter {
                         waiter.wake();
                     }
                     return;
