@@ -169,25 +169,16 @@ pub(super) enum JsonModifyMode {
 /// `pkg/expression/builtin_json.go` / `pkg/types/json_binary_functions.go`.
 /// Value strings remain JSON strings because the source disables
 /// `ParseToJSONFlag4Expr` for every value argument.
-pub(super) fn json_modify(
+pub(crate) fn parse_json_modify_paths(
     vals: &[Datum],
-    arg_types: &[Option<FieldType>],
-    mode: JsonModifyMode,
-) -> Result<Datum, EvalError> {
+) -> Result<Option<Vec<super::path::JsonPath>>, EvalError> {
     if vals.len() < 3 || vals.len().is_multiple_of(2) {
         return Err(EvalError::Unsupported("JSON modification arity"));
     }
-    let Some(mut document) = parse_json_document_argument(&vals[0])? else {
-        return Ok(Datum::Null);
-    };
-    for (pair, types) in vals[1..]
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .zip(arg_types[1..].as_chunks::<2>().0)
-    {
-        let Some(path) = coerce_str(&pair[0])? else {
-            return Ok(Datum::Null);
+    let mut paths = Vec::with_capacity((vals.len() - 1) / 2);
+    for path_value in vals[1..].iter().step_by(2) {
+        let Some(path) = coerce_str(path_value)? else {
+            return Ok(None);
         };
         let path = parse_path(&path)?;
         if path.could_match_multiple
@@ -200,6 +191,52 @@ pub(super) fn json_modify(
         {
             return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
+        paths.push(path);
+    }
+    Ok(Some(paths))
+}
+
+/// Applies a previously parsed path list. Go's `jsonModify` parses all paths
+/// before it evaluates any values; callers use this entry point when the path
+/// list is cached for a context-only constant.
+pub(super) fn json_modify_with_paths(
+    vals: &[Datum],
+    arg_types: &[Option<FieldType>],
+    mode: JsonModifyMode,
+    paths: &[super::path::JsonPath],
+) -> Result<Datum, EvalError> {
+    if vals.len() < 3 || vals.len().is_multiple_of(2) {
+        return Err(EvalError::Unsupported("JSON modification arity"));
+    }
+    if paths.len() != (vals.len() - 1) / 2 {
+        return Err(EvalError::Unsupported("JSON modification paths"));
+    }
+    let Some(document) = parse_json_document_argument(&vals[0])? else {
+        return Ok(Datum::Null);
+    };
+    json_modify_with_document(document, vals, arg_types, mode, paths)
+}
+
+/// Applies parsed paths to an already parsed document. The separate entry
+/// point lets the scalar evaluator preserve Go's document-before-path error
+/// order without reparsing the document on the cached path hot path.
+pub(super) fn json_modify_with_document(
+    mut document: Json,
+    vals: &[Datum],
+    arg_types: &[Option<FieldType>],
+    mode: JsonModifyMode,
+    paths: &[super::path::JsonPath],
+) -> Result<Datum, EvalError> {
+    if vals.len() < 3 || vals.len().is_multiple_of(2) {
+        return Err(EvalError::Unsupported("JSON modification arity"));
+    }
+    for ((pair, types), path) in vals[1..]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(arg_types[1..].as_chunks::<2>().0)
+        .zip(paths)
+    {
         let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
         let exists = descend_exact_mut(&mut document, &path.legs).is_some();
         match mode {
@@ -222,6 +259,23 @@ pub(super) fn json_modify(
         }
     }
     Ok(Datum::new_string(format_json(&document)))
+}
+
+pub(super) fn json_modify(
+    vals: &[Datum],
+    arg_types: &[Option<FieldType>],
+    mode: JsonModifyMode,
+) -> Result<Datum, EvalError> {
+    if vals.len() < 3 || vals.len().is_multiple_of(2) {
+        return Err(EvalError::Unsupported("JSON modification arity"));
+    }
+    let Some(document) = parse_json_document_argument(&vals[0])? else {
+        return Ok(Datum::Null);
+    };
+    let Some(paths) = parse_json_modify_paths(vals)? else {
+        return Ok(Datum::Null);
+    };
+    json_modify_with_document(document, vals, arg_types, mode, &paths)
 }
 
 fn insert_missing_path(document: &mut Json, legs: &[PathLeg], value: &Json) {

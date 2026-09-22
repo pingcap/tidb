@@ -56,7 +56,7 @@ pub(super) fn json_extract(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `pkg/types/json_path_expr.go`; ranges and wildcards carry the same
 /// `CouldMatchMultipleValues` flag used by JSON_LENGTH.
 #[derive(Debug)]
-pub(super) struct JsonPath {
+pub(crate) struct JsonPath {
     pub(super) legs: Vec<PathLeg>,
     pub(super) could_match_multiple: bool,
 }

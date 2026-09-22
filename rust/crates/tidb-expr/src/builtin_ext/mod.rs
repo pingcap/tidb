@@ -38,7 +38,9 @@ pub(crate) use compare2::{extremum_with_signature, interval_lazy, GlCmpStringMod
 pub(crate) use crypto::eval_aes_lazy;
 pub(crate) use json::{
     cast_as_json, cast_as_json_typed, cast_as_json_value_typed,
-    dispatch_typed as json_dispatch_typed, JsonSchemaCache,
+    dispatch_typed as json_dispatch_typed,
+    dispatch_typed_with_paths_and_document as json_dispatch_typed_with_paths_and_document,
+    parse_json_document_argument, parse_json_modify_paths, JsonPath, JsonSchemaCache,
 };
 pub(crate) use string2::{
     build_find_in_set_lookup, find_in_set_lookup, find_in_set_with_collation, FindInSetLookup,

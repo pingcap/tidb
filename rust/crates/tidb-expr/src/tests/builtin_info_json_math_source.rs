@@ -1571,6 +1571,82 @@ fn json_schema_valid_cache_replaces_context_only_schema() {
     );
 }
 
+/// Go's `jsonModify` keeps context-only constant paths in the signature's
+/// cache. A prepared path is stable for one statement context and is replaced
+/// for the next context, while value arguments are still evaluated per row.
+#[test]
+fn json_modify_path_cache_replaces_context_only_paths() {
+    struct PathContext {
+        context_id: u64,
+        path: Datum,
+    }
+
+    impl Columns for PathContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn context_id(&self) -> u64 {
+            self.context_id
+        }
+
+        fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+            (order == 0)
+                .then(|| self.path.clone())
+                .ok_or(EvalError::Unsupported("unbound prepared parameter"))
+        }
+    }
+
+    let mut path = Constant::new(json_s("$.a"), text_ft());
+    path.param_marker = Some(ParamMarker { order: 0 });
+    let function = ScalarFunction::new(
+        CiString::new("json_set"),
+        text_ft(),
+        vec![
+            const_arg(json_s("{}")),
+            Expression::Constant(path),
+            const_arg(Datum::Int(1)),
+        ],
+    );
+    let row = tidb_chunk::row::Row::empty();
+    assert_eq!(
+        function
+            .eval(
+                &PathContext {
+                    context_id: 11,
+                    path: json_s("$.a"),
+                },
+                row,
+            )
+            .unwrap(),
+        json_s(r#"{"a": 1}"#)
+    );
+    assert_eq!(
+        function
+            .eval(
+                &PathContext {
+                    context_id: 11,
+                    path: json_s("$.b"),
+                },
+                row,
+            )
+            .unwrap(),
+        json_s(r#"{"a": 1}"#)
+    );
+    assert_eq!(
+        function
+            .eval(
+                &PathContext {
+                    context_id: 12,
+                    path: json_s("$.b"),
+                },
+                row,
+            )
+            .unwrap(),
+        json_s(r#"{"b": 1}"#)
+    );
+}
+
 /// Go `pkg/expression/builtin_json_vec_test.go:152 TestVectorizedBuiltinJSONFunc`.
 #[test]
 fn vectorized_builtin_json_func() {

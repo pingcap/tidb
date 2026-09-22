@@ -52,7 +52,10 @@ mod value;
 
 use construct::{json_array, json_object, json_quote, json_unquote};
 use merge::{json_merge, json_merge_patch};
-use modify::{json_array_append, json_array_insert, json_modify, json_remove, JsonModifyMode};
+use modify::{
+    json_array_append, json_array_insert, json_modify, json_modify_with_document,
+    json_modify_with_paths, json_remove, JsonModifyMode,
+};
 use path::json_extract;
 use predicate::{json_contains, json_contains_path, json_member_of, json_overlaps};
 use report::{json_keys, json_length, json_schema_valid, json_sum_crc32, json_type, json_valid};
@@ -62,6 +65,8 @@ use text::json_pretty;
 use crate::{Datum, EvalError};
 use tidb_datatype::FieldType;
 
+pub(crate) use modify::parse_json_modify_paths;
+pub(crate) use path::JsonPath;
 pub(crate) use report::JsonSchemaCache;
 pub(crate) use value::{
     cast_as_json, cast_as_json_typed, cast_as_json_value_typed, parse_json_document_argument,
@@ -138,16 +143,74 @@ pub(crate) fn dispatch_typed(
     vals: &[Datum],
     arg_types: &[Option<FieldType>],
 ) -> Option<Result<Datum, EvalError>> {
+    dispatch_typed_with_paths(name, vals, arg_types, None)
+}
+
+/// Typed JSON dispatch with an optional context-cached path list for the three
+/// `JSON_{SET,INSERT,REPLACE}` modifiers. All other families keep the ordinary
+/// typed path, and a missing path cache falls back to per-call parsing.
+pub(crate) fn dispatch_typed_with_paths(
+    name: &str,
+    vals: &[Datum],
+    arg_types: &[Option<FieldType>],
+    cached_paths: Option<&[JsonPath]>,
+) -> Option<Result<Datum, EvalError>> {
     debug_assert_eq!(vals.len(), arg_types.len());
     match (name, vals.len()) {
         ("JSON_ARRAY", 0..) => Some(json_array(vals, arg_types)),
         ("JSON_OBJECT", 0..) => Some(json_object(vals, arg_types)),
-        ("JSON_SET", 3..) => Some(json_modify(vals, arg_types, JsonModifyMode::Set)),
-        ("JSON_INSERT", 3..) => Some(json_modify(vals, arg_types, JsonModifyMode::Insert)),
-        ("JSON_REPLACE", 3..) => Some(json_modify(vals, arg_types, JsonModifyMode::Replace)),
+        ("JSON_SET", 3..) => Some(match cached_paths {
+            Some(paths) => json_modify_with_paths(vals, arg_types, JsonModifyMode::Set, paths),
+            None => json_modify(vals, arg_types, JsonModifyMode::Set),
+        }),
+        ("JSON_INSERT", 3..) => Some(match cached_paths {
+            Some(paths) => json_modify_with_paths(vals, arg_types, JsonModifyMode::Insert, paths),
+            None => json_modify(vals, arg_types, JsonModifyMode::Insert),
+        }),
+        ("JSON_REPLACE", 3..) => Some(match cached_paths {
+            Some(paths) => json_modify_with_paths(vals, arg_types, JsonModifyMode::Replace, paths),
+            None => json_modify(vals, arg_types, JsonModifyMode::Replace),
+        }),
         ("JSON_ARRAY_APPEND", 3..) => Some(json_array_append(vals, arg_types)),
         ("JSON_ARRAY_INSERT", 3..) => Some(json_array_insert(vals, arg_types)),
         ("JSON_PRETTY", 1) => Some(json_pretty(&vals[0])),
+        _ => None,
+    }
+}
+
+/// Typed JSON dispatch for a cached path list and an already parsed document.
+/// This preserves Go's document-first NULL/error boundary while avoiding a
+/// second document parse on the cached path hot path.
+pub(crate) fn dispatch_typed_with_paths_and_document(
+    name: &str,
+    vals: &[Datum],
+    arg_types: &[Option<FieldType>],
+    paths: &[JsonPath],
+    document: serde_json::Value,
+) -> Option<Result<Datum, EvalError>> {
+    debug_assert_eq!(vals.len(), arg_types.len());
+    match (name, vals.len()) {
+        ("JSON_SET", 3..) => Some(json_modify_with_document(
+            document,
+            vals,
+            arg_types,
+            JsonModifyMode::Set,
+            paths,
+        )),
+        ("JSON_INSERT", 3..) => Some(json_modify_with_document(
+            document,
+            vals,
+            arg_types,
+            JsonModifyMode::Insert,
+            paths,
+        )),
+        ("JSON_REPLACE", 3..) => Some(json_modify_with_document(
+            document,
+            vals,
+            arg_types,
+            JsonModifyMode::Replace,
+            paths,
+        )),
         _ => None,
     }
 }

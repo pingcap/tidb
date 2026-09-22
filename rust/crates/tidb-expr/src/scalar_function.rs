@@ -285,6 +285,8 @@ pub struct ScalarFunction {
     in_string_non_const_args: Vec<usize>,
     in_string_has_null: bool,
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
+    json_modify_path_cache:
+        crate::builtin_ext::BuiltinFuncCache<Option<Vec<crate::builtin_ext::JsonPath>>>,
     find_in_set_cache: crate::builtin_ext::BuiltinFuncCache<crate::builtin_ext::FindInSetLookup>,
     regexp_cache: crate::builtin_ext::BuiltinFuncCache<crate::regexp::CachedRegexp>,
     regexp_replace_instruction_cache:
@@ -669,6 +671,7 @@ impl ScalarFunction {
         self.in_string_non_const_args.clear();
         self.in_string_has_null = false;
         self.json_schema_cache = Default::default();
+        self.json_modify_path_cache = Default::default();
         self.find_in_set_cache = Default::default();
         self.regexp_cache = Default::default();
         self.regexp_replace_instruction_cache = Default::default();
@@ -2807,6 +2810,31 @@ impl ScalarFunction {
                 &vals,
                 arg_types.first().and_then(Option::as_ref),
             );
+        }
+        if matches!(upper.as_str(), "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE")
+            && self.args.get(1..).is_some_and(|arguments| {
+                !arguments.is_empty()
+                    && arguments
+                        .iter()
+                        .step_by(2)
+                        .all(|argument| argument.const_level() >= ConstLevel::ONLY_IN_CONTEXT)
+            })
+        {
+            let Some(document) = crate::builtin_ext::parse_json_document_argument(&vals[0])? else {
+                return Ok(Datum::Null);
+            };
+            let paths = self
+                .json_modify_path_cache
+                .get_or_init_cache(ctx.context_id(), || {
+                    crate::builtin_ext::parse_json_modify_paths(&vals)
+                })?;
+            let Some(paths) = paths.as_ref() else {
+                return Ok(Datum::Null);
+            };
+            return crate::builtin_ext::json_dispatch_typed_with_paths_and_document(
+                &upper, &vals, &arg_types, paths, document,
+            )
+            .expect("the native JSON modification family is registered");
         }
         if let Some(result) = crate::builtin_ext::json_dispatch_typed(&upper, &vals, &arg_types) {
             return result;

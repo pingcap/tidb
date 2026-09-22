@@ -7818,3 +7818,29 @@ The complete expression run after this cache change reaches 1216 passed with
 that one same permission-denied bind. The package and workload acceptance
 gates remain open, including the Go failpoint-only cache-refresh oracle and
 the full sysbench/TPC-C/TPC-H/YCSB measurements.
+
+
+## Continuing JSON modification path parity
+
+The Go `jsonModify` source marks its path-expression loop as a hot-path cache
+opportunity when path arguments are constants. Rust now gives
+`JSON_SET`/`JSON_INSERT`/`JSON_REPLACE` a context-keyed parsed-path cache when
+all path arguments are `ConstOnlyInContext`; row-dependent paths still parse
+normally. The cached path path uses the existing exact-leg validation and
+mutation semantics, keeps value arguments per-row, and parses the document
+before cached paths so NULL and document errors retain Go's ordering. Cache
+errors are not retained and clone/invalidation reset the entry with the shared
+cache lifecycle.
+
+The active source test changes a prepared path within one context (the cached
+path remains) and then uses a new context (the path is replaced). The focused
+receipts from `rust/` are:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib json_modify_path_cache_replaces_context_only_paths -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-expr --lib 'builtin_ext::json::tests::json_set_insert_replace_go_vectors' -- --test-threads=1
+
+Both pass. The complete expression gate is rerun before publication; the
+latest full run reaches 1217 passed with the same sandbox-blocked localhost
+JSON-schema bind (one failure). The broader package and
+sysbench/TPC-C/TPC-H/YCSB acceptance gates remain open. The session plan-cache
+regressions selections remain green: 28 non-prepared and 45 prepared tests.
