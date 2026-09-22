@@ -425,10 +425,15 @@ impl CoprRequestLimiter {
     /// after registering: a release between the failed acquire and the
     /// registration wakes nobody.
     pub fn register_waker(&self, waker: std::task::Waker) {
-        let mut waiters = self.waiters.lock().unwrap_or_else(|p| p.into_inner());
-        if !waiters.iter().any(|known| known.will_wake(&waker)) {
-            waiters.push(waker);
-        }
+        // Push directly: the waiters list drains on every release, so a
+        // registration lives at most one release cycle, and the O(n)
+        // `will_wake` dedup scan ran on the hot path of a saturated limiter
+        // (6.7% of the SF50 q10 probe). A duplicate entry only causes one
+        // redundant wake of an already-polled task.
+        self.waiters
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(waker);
     }
 
     /// Blocks until one token is acquired or either cancellation future
