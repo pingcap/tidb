@@ -208,7 +208,7 @@ fn build_tikv_unary_request_inner(
         timeout_override_ms: (task.tikv_client_read_timeout_ms > 0)
             .then_some(task.tikv_client_read_timeout_ms),
         context,
-        encoded_request: prepared.request().encode_to_vec(),
+        encoded_request: prepared.encoded_request().clone(),
     }
 }
 

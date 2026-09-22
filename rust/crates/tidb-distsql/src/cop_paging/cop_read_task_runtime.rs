@@ -45,6 +45,12 @@ pub struct PreparedCopReadTask {
     page_index: u32,
     task: RegionTaskEnvelope,
     request: CoprocessorRequestEnvelope,
+    /// The request's protobuf encoding, built once. A task re-sends the same
+    /// immutable envelope on every retry and every limiter-wake re-poll, and
+    /// a perf capture of the SF50 q10 index-join probe showed those repeated
+    /// encodes running inline on the waking worker (17.6% encode + 7% varint
+    /// of the whole query); caching the bytes turns a re-send into a clone.
+    encoded_request: std::sync::OnceLock<Vec<u8>>,
     cache_key: Option<Vec<u8>>,
 }
 
@@ -80,6 +86,13 @@ impl PreparedCopReadTask {
     #[must_use]
     pub const fn request(&self) -> &CoprocessorRequestEnvelope {
         &self.request
+    }
+
+    /// The request's protobuf bytes, encoded once and reused by every send.
+    #[must_use]
+    pub fn encoded_request(&self) -> &Vec<u8> {
+        self.encoded_request
+            .get_or_init(|| self.request.encode_to_vec())
     }
 
     /// Exact cache key retained with the matching in-flight lookup.
@@ -1040,6 +1053,7 @@ impl CopReadTaskRuntime {
             page_index,
             task,
             request,
+            encoded_request: std::sync::OnceLock::new(),
             cache_key: lookup.as_ref().map(|lookup| lookup.key().to_vec()),
         });
         self.prepared.push(prepared.clone());
