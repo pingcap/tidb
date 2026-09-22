@@ -62,6 +62,7 @@ type regionCacheStoreDetail struct {
 	Failed     int      `json:"failed"`
 	InProgress bool     `json:"in_progress,omitempty"`
 	Errors     []string `json:"errors,omitempty"`
+	ObservedAt int64    `json:"observed_at,omitempty"`
 }
 
 type regionCacheHTTPResult struct {
@@ -70,6 +71,7 @@ type regionCacheHTTPResult struct {
 	Failed     int                      `json:"failed"`
 	InProgress bool                     `json:"in_progress,omitempty"`
 	Errors     []string                 `json:"errors,omitempty"`
+	ObservedAt int64                    `json:"observed_at,omitempty"`
 	Stores     []regionCacheStoreDetail `json:"stores,omitempty"`
 	veto       bool
 }
@@ -96,11 +98,21 @@ func parseDetail(req *http.Request) bool {
 	return raw == "1" || raw == "true"
 }
 
+func (out *regionCacheHTTPResult) noteObserved(ts int64) {
+	if ts <= 0 {
+		return
+	}
+	if out.ObservedAt == 0 || ts < out.ObservedAt {
+		out.ObservedAt = ts
+	}
+}
+
 func (out *regionCacheHTTPResult) finish() {
 	if len(out.Errors) > 8 {
 		out.Errors = out.Errors[:8]
 	}
-	out.Ready = out.Remaining == 0 && out.Failed == 0 && !out.InProgress && !out.veto && len(out.Errors) == 0
+	// Errors are diagnostic. ready only depends on remaining/failed/in_progress/veto.
+	out.Ready = out.Remaining == 0 && out.Failed == 0 && !out.InProgress && !out.veto
 }
 
 func collectRegionCacheStores(primary kv.Storage) []regionCacheStore {
@@ -149,6 +161,7 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 				Remaining:  status.Matched,
 				Failed:     status.Failed,
 				InProgress: status.InProgress,
+				ObservedAt: status.ObservedAt,
 			}
 			item.Ready = item.Remaining == 0 && item.Failed == 0 && !item.InProgress
 			if !item.Ready {
@@ -160,6 +173,7 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 				out.InProgress = true
 			}
 			out.Errors = append(out.Errors, item.Errors...)
+			out.noteObserved(item.ObservedAt)
 			if detail {
 				out.Stores = append(out.Stores, item)
 			}
@@ -192,11 +206,12 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			}
 			res := st.RefreshStoreCache(ctx, storeID)
 			item := regionCacheStoreDetail{
-				Keyspace:  st.GetKeyspace(),
-				ClusterID: st.GetClusterID(),
-				Remaining: res.Remaining,
-				Failed:    res.Failed,
-				Errors:    res.Errors,
+				Keyspace:   st.GetKeyspace(),
+				ClusterID:  st.GetClusterID(),
+				Remaining:  res.Remaining,
+				Failed:     res.Failed,
+				Errors:     res.Errors,
+				ObservedAt: res.ObservedAt,
 			}
 			item.Ready = res.Ready && item.Remaining == 0 && item.Failed == 0
 			if !item.Ready {
@@ -205,6 +220,7 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			out.Remaining += item.Remaining
 			out.Failed += item.Failed
 			out.Errors = append(out.Errors, item.Errors...)
+			out.noteObserved(item.ObservedAt)
 			if detail {
 				out.Stores = append(out.Stores, item)
 			}

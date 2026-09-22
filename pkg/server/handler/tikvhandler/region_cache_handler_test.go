@@ -90,7 +90,7 @@ func TestRegionCacheHandlerGetPost(t *testing.T) {
 	require.NotContains(t, w.Body.String(), `"scanned"`)
 	require.NotContains(t, w.Body.String(), `"matched"`)
 	require.NotContains(t, w.Body.String(), `"updated"`)
-	require.NotContains(t, w.Body.String(), `"observed_at"`)
+	require.Equal(t, int64(1), got.ObservedAt)
 
 	req = httptest.NewRequest(http.MethodGet, "/regions/cache/status?store_id=7&detail=1", nil)
 	w = httptest.NewRecorder()
@@ -100,6 +100,7 @@ func TestRegionCacheHandlerGetPost(t *testing.T) {
 	require.Len(t, got.Stores, 1)
 	require.Equal(t, "ks1", got.Stores[0].Keyspace)
 	require.Equal(t, uint64(99), got.Stores[0].ClusterID)
+	require.Equal(t, int64(1), got.Stores[0].ObservedAt)
 
 	req = httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7", nil)
 	w = httptest.NewRecorder()
@@ -319,7 +320,7 @@ func TestRegionCacheHandlerPostStopsLaterStoresAfterCancel(t *testing.T) {
 
 func TestRegionCacheHandlerZeroCountsKeepNotReady(t *testing.T) {
 	fake := &fakeCacheStore{
-		refresh: tikv.StoreCacheRefreshResult{Remaining: 0, Failed: 0, Ready: false, Errors: []string{"context canceled"}},
+		refresh: tikv.StoreCacheRefreshResult{Remaining: 0, Failed: 0, Ready: false, Errors: []string{"context canceled"}, ObservedAt: 9},
 		ks:      "ks1",
 		cid:     1,
 	}
@@ -335,4 +336,25 @@ func TestRegionCacheHandlerZeroCountsKeepNotReady(t *testing.T) {
 	require.False(t, got.Ready)
 	require.False(t, got.InProgress)
 	require.Contains(t, got.Errors, "context canceled")
+	require.Equal(t, int64(9), got.ObservedAt)
+}
+
+func TestRegionCacheHandlerDiagnosticErrorsDoNotBlockReady(t *testing.T) {
+	fake := &fakeCacheStore{
+		refresh: tikv.StoreCacheRefreshResult{Remaining: 0, Failed: 0, Ready: true, Errors: []string{"stale probe timeout"}, ObservedAt: 11},
+		ks:      "ks1",
+		cid:     1,
+	}
+	h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: fake}})
+	req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var got regionCacheHTTPResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Equal(t, 0, got.Remaining)
+	require.Equal(t, 0, got.Failed)
+	require.True(t, got.Ready)
+	require.Contains(t, got.Errors, "stale probe timeout")
+	require.Equal(t, int64(11), got.ObservedAt)
 }
