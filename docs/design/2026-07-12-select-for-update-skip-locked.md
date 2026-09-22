@@ -206,7 +206,12 @@ Executor:
   child is exhausted. Examined rows get locked whether or not a Limit above ends up
   returning them (as in MySQL); unexamined rows stay unlocked, so concurrent
   `LIMIT 1` queue workers pop disjoint rows while each locks only the row it returns.
-  Memory use is bounded by a single chunk — there is no statement-wide buffering.
+  `SelectLockExec` itself holds no statement-wide buffer — its memory use is bounded
+  by a single chunk. (This bound is scoped to the lock operator: the no-index TopN
+  fallback above it retains up to `Offset + Count` rows in its heap, with spilling
+  governed by `tidb_enable_tmp_storage_on_oom` as for any TopN.) The lock batch size
+  follows the parent's required rows, which `SelectLockExec` preserves across its
+  chunk reset, so a `LIMIT 1` locks one candidate per batch.
   `runPessimisticSelectForUpdate` drains the executor before returning results to the
   client, so no skipped row can escape before locks resolve.
 - `PointGet`/`BatchPointGet`: a skipped row/index key produces no output row and does
