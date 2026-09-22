@@ -106,6 +106,15 @@ fn unix_arg_nanos(value: &Datum) -> Result<Option<(i128, usize)>, EvalError> {
             let Some(text) = coerce_str(other)? else {
                 return Ok(None);
             };
+            // go's `builtinFromUnixTimeSig` takes an ETDecimal argument, so a
+            // textual source was already cast: a wholly non-numeric string
+            // (`'a'`) casts to 0 and answers the epoch, while a numeric
+            // spelling keeps its own scale.
+            let trimmed = text.trim();
+            let (int_part, _) = trimmed.split_once('.').unwrap_or((trimmed, ""));
+            if int_part.parse::<i64>().is_err() {
+                return Ok(Some((0_i128, 0)));
+            }
             (text, 6)
         }
     };

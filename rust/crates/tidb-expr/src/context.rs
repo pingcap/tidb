@@ -145,7 +145,21 @@ pub enum EvalError {
     /// `INSERT`. Carries the fully formatted message, which is the same text
     /// the warning spelling appends.
     AllowedPacketOverflowed(String),
-    /// Go `types.ErrTruncatedWrongVal` (1292) raised at error level, carrying
+    /// go raises `ErrNotSupportedYet` (1235) for functions whose classes are
+    /// registered but refuse to build outside their hosting feature.
+    NotImplemented(&'static str),
+    /// Go `types.ErrWrongValueForType` (1411): a builtin argument carries a
+    /// value of the wrong shape for its type. The three fields render go's
+    /// `Incorrect %s value: '%.200s' for function %s`.
+    WrongValueForType {
+        /// The value class go names (`uuid`, ...).
+        value_class: &'static str,
+        /// The offending source text.
+        value: String,
+        /// The builtin's own name.
+        function: &'static str,
+    },
+    /// go `types.ErrTruncatedWrongVal` (1292) raised at error level, carrying
     /// the already-formatted message body. A SELECT never reaches this arm --
     /// `ResetContextOfStmt` gives it `WithTruncateAsWarning(true)` with no
     /// mode input -- but a strict `INSERT` does, so the condition needs an

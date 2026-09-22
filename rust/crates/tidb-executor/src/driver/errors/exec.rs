@@ -199,7 +199,14 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // Porting boundaries with no TiDB answer to match: TiDB evaluates
         // these, so there is no Go message for "not ported yet". The carried
         // text is the whole diagnostic.
-        EvalError::Unsupported(reason) => MysqlError::unknown(reason),
+        EvalError::WrongValueForType {
+            value_class,
+            value,
+            function,
+        } => MysqlError::new(
+            1411,
+            format!("Incorrect {value_class} value: '{value}' for function {function}"),
+        ),
         // Go `ErrBadField` with `clauseMsg[expressionClause]` — the clause a
         // resolution site without its own clause name reports.
         EvalError::UnknownColumn(column) => {

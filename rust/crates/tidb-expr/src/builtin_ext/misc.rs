@@ -219,7 +219,13 @@ fn bin_to_uuid(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> 
         return Ok(Datum::Null);
     };
     if input.len() != 16 {
-        return Err(EvalError::Unsupported("invalid binary UUID length"));
+        // go `builtinBinToUUIDSig.evalString`:
+        // `types.ErrWrongValueForType("uuid", str, "bin_to_uuid")` (1411).
+        return Err(EvalError::WrongValueForType {
+            value_class: "uuid",
+            value: String::from_utf8_lossy(&input).into_owned(),
+            function: "bin_to_uuid",
+        });
     }
     let mut uuid = [0_u8; 16];
     uuid.copy_from_slice(&input);

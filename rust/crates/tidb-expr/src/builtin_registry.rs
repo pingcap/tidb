@@ -127,7 +127,6 @@ static FUNCTION_CLASSES: &[(&str, usize, Option<usize>)] = &[
     ("dayofweek", 1, Some(1)),
     ("dayofyear", 1, Some(1)),
     ("decode", 2, Some(2)),
-    ("default_func", 1, Some(1)),
     ("degrees", 1, Some(1)),
     ("div", 2, Some(2)),
     ("elt", 2, None),
@@ -483,6 +482,15 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
     let unavailable = match name {
         "default_func" => Some("DEFAULT"),
         "uuid_short" => Some("UUID_SHORT"),
+        // go declares both FTS functions in `funcs` but building outside a
+        // fulltext index answers `ErrNotSupportedYet` (1235)
+        // (`pkg/expression/builtin_fts.go`).
+        "fts_match_word" => {
+            return crate::EvalError::NotImplemented("fts_match_word")
+        }
+        "match_against" => {
+            return crate::EvalError::NotImplemented("match_against")
+        }
         _ => None,
     };
     if let Some(display_name) = unavailable {
@@ -559,7 +567,10 @@ mod tests {
         assert!(FUNCTION_CLASSES
             .windows(2)
             .all(|pair| pair[0].0 < pair[1].0));
-        assert_eq!(FUNCTION_CLASSES.len(), 309, "Go funcs map has 309 entries");
+        // 308: go's funcs map has no `default_func` key -- `DEFAULT(col)` is a
+        // planner rewrite and a bare `default_func()` call answers 1305
+        // FUNCTION-not-exist through GetFunctionClass's registry miss.
+        assert_eq!(FUNCTION_CLASSES.len(), 308, "Go funcs map has 309 entries");
     }
 
     /// Spot-checks arities transcribed from Go's `funcs` map literal,
