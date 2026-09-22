@@ -2920,7 +2920,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .set_schema(ds.base.base.schema().cloned());
                         selection_base
                             .base
-                            .set_stats(ds.base.base.stats_info().cloned());
+                            .set_stats(
+                                ds.base.base.stats_info().cloned().map(|stats| {
+                                    stats.scale_by_expect_cnt(
+                                        prop.expected_cnt,
+                                        ctx.skew_ratio,
+                                    )
+                                }),
+                            );
                         selection_base.set_children(vec![point]);
                         point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,
@@ -3081,9 +3088,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     selection_base
                         .base
                         .set_schema(ds.base.base.schema().cloned());
-                    selection_base
-                        .base
-                        .set_stats(ds.base.base.stats_info().cloned());
+                    // Go `PhysicalSelection.Init` (physical_selection.go:78):
+                    // the selection's stats scale by the required property's
+                    // ExpectedCnt -- a Limit above the scan caps the
+                    // selection's estimate.
+                    selection_base.base.set_stats(
+                        ds.base.base.stats_info().cloned().map(|stats| {
+                            stats.scale_by_expect_cnt(
+                                prop.expected_cnt,
+                                ctx.skew_ratio,
+                            )
+                        }),
+                    );
                     selection_base.set_children(vec![scan]);
                     PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                         base: selection_base,
@@ -3422,7 +3438,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .set_schema(ds.base.base.schema().cloned());
                         selection_base
                             .base
-                            .set_stats(ds.base.base.stats_info().cloned());
+                            .set_stats(
+                                ds.base.base.stats_info().cloned().map(|stats| {
+                                    stats.scale_by_expect_cnt(
+                                        prop.expected_cnt,
+                                        ctx.skew_ratio,
+                                    )
+                                }),
+                            );
                         selection_base.set_children(vec![point]);
                         point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,
