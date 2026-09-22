@@ -21,6 +21,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -1001,7 +1002,25 @@ func printRestoreMetrics() {
 }
 
 func checkSnapshotRestoreMode(ctx context.Context, cfg *RestoreConfig) error {
-	_, _, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	var backupMeta *backuppb.BackupMeta
+	var err error
+	if cfg.BackupID.IsZero() {
+		_, _, backupMeta, err = ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	} else {
+		u, s, storageErr := GetStorage(ctx, cfg.Storage, &cfg.Config)
+		if storageErr != nil {
+			return errors.Trace(storageErr)
+		}
+		resolvedStorage := &taskrepo.SnapshotStorageRef{
+			BackupID:    cfg.BackupID,
+			RootBackend: u,
+			RootStorage: s,
+		}
+		if err := resolvedStorage.Validate(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		backupMeta, err = resolvedStorage.LoadBackupMeta(ctx, &cfg.CipherInfo, cfg.CheckRequirements)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
