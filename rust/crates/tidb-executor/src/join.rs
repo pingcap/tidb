@@ -1352,6 +1352,10 @@ pub struct JoinExec<C: Columns> {
     kind: JoinKind,
     native_hash: bool,
     concurrency: usize,
+    /// Go `SessionVars.IndexLookupJoinConcurrency()`, resolved at statement
+    /// construction. Standalone executor tests retain the source default;
+    /// the physical builder replaces it with the session value.
+    index_lookup_concurrency: usize,
     outer_filter: Vec<Expression>,
     filter_is_left: bool,
     /// The complete logical `ON` clause. The nested-loop reference path must
@@ -1533,6 +1537,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             // plan's own `na_equal_conditions` count can.
             na_keys: Vec::new(),
             concurrency: 1,
+            index_lookup_concurrency: INDEX_LOOKUP_JOIN_CONCURRENCY,
             outer_filter: Vec::new(),
             filter_is_left: true,
             conditions,
@@ -1601,6 +1606,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         );
         executor.index_lookup = Some(plan);
         executor
+    }
+
+    /// Sets Go's per-statement `IndexLookupJoinConcurrency` after the
+    /// executor has been built. The session layer resolves the deprecated
+    /// variable's unset value to `tidb_executor_concurrency` before this
+    /// setter is called.
+    pub(crate) fn set_index_lookup_concurrency(&mut self, concurrency: usize) {
+        self.index_lookup_concurrency = concurrency.max(1);
     }
 
     fn left_exec(&self) -> &dyn Executor {
@@ -2201,7 +2214,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             let prefetch_disabled = template.is_none();
             let lane_pool = Arc::new(crate::worker_pool::LanePool::new(
                 "tidb-index-join",
-                INDEX_LOOKUP_JOIN_CONCURRENCY,
+                self.index_lookup_concurrency,
             ));
             self.index_task_lanes = Some(Arc::clone(&lane_pool));
             self.index_task_shared = Some(Arc::new(IndexTaskShared {
@@ -2228,7 +2241,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 state.prefetch_disabled = prefetch_disabled;
                 if !prefetch_disabled && self.index_hash == Some(false) {
                     state.unordered = Some(IndexUnordered::new(
-                        INDEX_LOOKUP_JOIN_CONCURRENCY,
+                        self.index_lookup_concurrency,
                         &self.tracker,
                     ));
                 }
@@ -2265,6 +2278,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             left,
             right,
             keys,
+            index_lookup_concurrency,
             tracker,
             memory,
             index_lookup,
@@ -2318,7 +2332,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 memory,
                 shared,
                 lane_pool,
-                INDEX_LOOKUP_JOIN_CONCURRENCY,
+                *index_lookup_concurrency,
             )?;
         }
         let synchronous = |plan: &mut IndexLookupPlan,
@@ -2411,7 +2425,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             memory,
             shared,
             lane_pool,
-            INDEX_LOOKUP_JOIN_CONCURRENCY.saturating_sub(1),
+            index_lookup_concurrency.saturating_sub(1),
         )?;
         match task.source {
             PendingIndexLookupSource::Draining { results } => {

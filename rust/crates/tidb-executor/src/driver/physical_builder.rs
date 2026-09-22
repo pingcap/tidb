@@ -2550,6 +2550,7 @@ fn build_index_join(
         ctx.statement_memory(),
         lookup,
     );
+    executor.set_index_lookup_concurrency(ctx.index_lookup_join_concurrency());
     executor.set_vectorized_expression(ctx.enable_vectorized_expression());
     if join.kind == tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin {
         executor.set_index_hash_join(join.keep_outer_order);

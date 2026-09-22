@@ -8133,3 +8133,22 @@ Focused receipts from `rust/` pass:
 Runtime protobuf encoding, native fragment scheduling/task metadata, the
 remaining TopN branches, complete physicalop package acceptance, and the
 sysbench/TPC-C/TPC-H/YCSB performance gates remain open.
+
+
+## Continuing index-lookup join concurrency parity
+
+The live Rust index-lookup path is `JoinExec` in `tidb-executor/src/join.rs`;
+the standalone `index_lookup_join.rs` source carrier is not part of the
+production module graph. Go resolves `IndexLookUpJoin` worker count from
+`SessionVars.IndexLookupJoinConcurrency()`, including the deprecated variable's
+fallback to `tidb_executor_concurrency`. Rust previously used a fixed five
+worker pool even though the session snapshot already carried the resolved
+cost-model value.
+
+Rust now exposes the resolved statement value through `StmtContext`, installs
+it in the physical index-join builder, and uses it for both ordered prefetch
+lanes and unordered index-hash workers. Standalone executor construction keeps
+Go's default five workers. The focused statement-resolution test and all ten
+index-join executor tests pass. This closes the per-statement concurrency
+selection gap; it does not claim whole join-package acceptance or the complete
+sysbench/TPC-C/TPC-H/YCSB performance gates.

@@ -2665,6 +2665,21 @@ impl StmtContext {
         self.executor_concurrency
     }
 
+    /// Go `SessionVars.IndexLookupJoinConcurrency()`: the deprecated
+    /// per-operator value resolved to `tidb_executor_concurrency` when unset.
+    #[must_use]
+    pub fn index_lookup_join_concurrency(&self) -> usize {
+        let resolved = self
+            .optimizer_cost_env()
+            .session
+            .index_lookup_join_concurrency;
+        if resolved > 0.0 {
+            resolved as usize
+        } else {
+            self.executor_concurrency
+        }
+    }
+
     /// Go `SessionVars.ProjectionConcurrency()`: `tidb_projection_concurrency`
     /// when set, else `tidb_executor_concurrency` (the session resolves that
     /// fallback into the cost environment).
@@ -4227,6 +4242,22 @@ impl Columns for StmtContext {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn index_lookup_join_concurrency_uses_statement_override_and_fallback() {
+        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+        env.session.union_concurrency = 9.0;
+        env.session.index_lookup_join_concurrency = 2.0;
+        let overridden = super::StmtContext::for_query().with_optimizer_cost_env(env);
+        assert_eq!(overridden.executor_concurrency(), 9);
+        assert_eq!(overridden.index_lookup_join_concurrency(), 2);
+
+        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+        env.session.union_concurrency = 7.0;
+        env.session.index_lookup_join_concurrency = -1.0;
+        let fallback = super::StmtContext::for_query().with_optimizer_cost_env(env);
+        assert_eq!(fallback.index_lookup_join_concurrency(), 7);
+    }
+
     #[test]
     fn enforced_mpp_warning_uses_go_explain_and_extra_handlers() {
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
