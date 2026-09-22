@@ -393,9 +393,15 @@ pub struct StmtContextData {
     /// `SHOW WARNINGS` prints in its `Level` column. Without the level here
     /// every executor-tier note would arrive at the session as a `Warning`.
     warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+    /// Go `StmtCtx.ExtraWarnHandler`: diagnostics retained for slow-log
+    /// output, but deliberately excluded from SHOW WARNINGS and OK counts.
+    extra_warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
     /// Go's `StatementContext.LastMessage`, which UPDATE publishes for the
     /// OK packet's length-encoded info field.
     message: Arc<Mutex<String>>,
+    /// Go `StmtCtx.InExplainStmt`, which decides whether an enforced-MPP
+    /// refusal is an ordinary warning or an extra warning.
+    in_explain_stmt: bool,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`StmtContext::enter_cop_eval`]).
     ///
@@ -1730,7 +1736,9 @@ impl StmtContext {
         Self(Arc::new(StmtContextData {
             context_id: NEXT_STATEMENT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
             warnings: Arc::default(),
+            extra_warnings: Arc::default(),
             message: Arc::default(),
+            in_explain_stmt: false,
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
             before_executor_first_run: session.before_executor_first_run,
@@ -1903,6 +1911,19 @@ impl StmtContext {
     pub fn with_statement_class(mut self, class: StatementClass) -> Self {
         self.statement_class = class;
         self
+    }
+
+    /// Records whether this statement is being planned under `EXPLAIN`.
+    #[must_use]
+    pub fn with_in_explain_stmt(mut self, enabled: bool) -> Self {
+        self.in_explain_stmt = enabled;
+        self
+    }
+
+    /// Whether planner diagnostics should use the ordinary warning handler.
+    #[must_use]
+    pub fn in_explain_stmt(&self) -> bool {
+        self.in_explain_stmt
     }
 
     /// Which `ResetContextOfStmt` arm built this context.
@@ -3281,6 +3302,38 @@ impl StmtContext {
         self.append_warning(code, message);
     }
 
+    /// Records a warning in Go's extra-warning handler. Extra warnings are
+    /// retained for diagnostics and slow-log consumers, not SHOW WARNINGS.
+    pub fn append_extra_warning_parts(&self, code: u16, message: &str) {
+        self.append_extra_leveled(WarningLevel::Warning, code, message);
+    }
+
+    /// Go `SessionVars.RaiseWarningWhenMPPEnforced`: only an actually
+    /// enforced MPP statement raises, and EXPLAIN routes to ordinary warnings
+    /// while every other statement uses the extra-warning handler.
+    pub fn append_mpp_warning(&self, message: &str) {
+        if !self.optimizer_cost_env().session.mpp_enforced {
+            return;
+        }
+        if self.in_explain_stmt {
+            self.append_warning_parts(1105, message);
+        } else {
+            self.append_extra_warning_parts(1105, message);
+        }
+    }
+
+    /// Drains Go's extra-warning handler without exposing entries through the
+    /// ordinary statement warning path.
+    #[must_use]
+    pub fn take_extra_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
+        std::mem::take(
+            &mut *self
+                .extra_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
     /// Records one optimizer warning even when physical-plan enumeration
     /// revisits the same logical operator through several candidates.
     pub fn append_warning_once_parts(&self, code: u16, message: &str) {
@@ -3635,6 +3688,16 @@ impl StmtContext {
             return;
         }
         warnings.push((level, code, message.to_owned()));
+    }
+
+    fn append_extra_leveled(&self, level: WarningLevel, code: u16, message: &str) {
+        let mut warnings = self
+            .extra_warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if warnings.len() < MAX_WARNING_COUNT {
+            warnings.push((level, code, message.to_owned()));
+        }
     }
 }
 
@@ -4115,6 +4178,43 @@ impl Columns for StmtContext {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn enforced_mpp_warning_uses_go_explain_and_extra_handlers() {
+        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+        env.session.mpp_enforced = true;
+
+        let explain = super::StmtContext::for_query()
+            .with_optimizer_cost_env(env.clone())
+            .with_in_explain_stmt(true);
+        explain.append_mpp_warning("explain refusal");
+        assert_eq!(
+            explain.take_warnings(),
+            vec![(
+                tidb_distsql::WarningLevel::Warning,
+                1105,
+                "explain refusal".to_owned()
+            )]
+        );
+        assert!(explain.take_extra_warnings().is_empty());
+
+        let ordinary = super::StmtContext::for_query().with_optimizer_cost_env(env);
+        ordinary.append_mpp_warning("ordinary refusal");
+        assert!(ordinary.take_warnings().is_empty());
+        assert_eq!(
+            ordinary.take_extra_warnings(),
+            vec![(
+                tidb_distsql::WarningLevel::Warning,
+                1105,
+                "ordinary refusal".to_owned()
+            )]
+        );
+
+        let unenforced = super::StmtContext::for_query();
+        unenforced.append_mpp_warning("ignored refusal");
+        assert!(unenforced.take_warnings().is_empty());
+        assert!(unenforced.take_extra_warnings().is_empty());
+    }
+
     #[test]
     fn range_fallback_honors_force_plan_cache() {
         let (control, _) =

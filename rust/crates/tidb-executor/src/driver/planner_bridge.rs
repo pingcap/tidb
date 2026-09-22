@@ -575,6 +575,12 @@ impl tidb_planner::logical::rule::HintWarningSink for crate::StmtContext {
     }
 }
 
+impl tidb_planner::find_best_task::dispatch::MppWarningSink for crate::StmtContext {
+    fn raise_mpp_warning(&self, message: &str) {
+        crate::StmtContext::append_mpp_warning(self, message);
+    }
+}
+
 /// Builds the name-resolution scope of one `FROM` node through Go's logical
 /// `buildResultSetNode` path. Correlation discovery needs the logical schema
 /// and output names, not an executor or a second AST-side join builder.
@@ -1586,6 +1592,7 @@ pub(crate) fn physical_plan_for_logical(
     let mut dispatch = DispatchContext::new(plan_ids, &coster, 1.0)
         .with_expression_evaluator(&evaluate)
         .with_mpp_allowed(ctx.optimizer_cost_env().session.mpp_allowed)
+        .with_mpp_warning_sink(ctx)
         .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
         .with_selectivity_factor(ctx.selectivity_factor())
         .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())

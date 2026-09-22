@@ -72,10 +72,12 @@ impl Session {
         // switch for the same reason: a query warns on truncation while a
         // strict write rejects it. Plain EXPLAIN still only builds the
         // pipeline, so no row is produced and no write runs.
-        let ctx = self.statement_context(matches!(
-            crate::classify::statement_kind_of(target),
-            crate::classify::StatementKind::Dml
-        ));
+        let ctx = self
+            .statement_context(matches!(
+                crate::classify::statement_kind_of(target),
+                crate::classify::StatementKind::Dml
+            ))
+            .with_in_explain_stmt(true);
         if explain.analyze {
             let (columns, rows) = match target {
                 Stmt::Query(query) => self.with_catalog_mut(|catalog| match &**query {

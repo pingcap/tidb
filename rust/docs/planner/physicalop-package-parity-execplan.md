@@ -30,6 +30,15 @@ or missing Go branch.
 The entries below are checkpoints; older counts and pending items describe
 their recorded stage. The latest verified state is summarized first.
 
+- [x] (2026-09-21, MaxOneRow enforced-MPP warning routing) The Go
+  `CanSelfBeingPushedToCopImpl` refusal is now preserved before Rust's generic
+  non-root task gate, so a `MaxOneRow` MPP refusal raises the source warning
+  instead of silently returning an invalid task. Planner dispatch carries a
+  statement-context warning sink; enforced warnings use ordinary warning
+  storage for EXPLAIN and Go's extra-warning storage otherwise. Focused red/
+  green planner and executor tests pass. Other MPP operator/task gaps and
+  whole-package/workload acceptance remain open.
+
 - [x] (2026-09-21, cache expectations) Go rows, cache-hit statuses and
   explanation warnings confirm both recorded cache failures were stale test
   expectations. Corrected tests preserve typed-entry controls and row checks;
@@ -7844,3 +7853,38 @@ latest full run reaches 1217 passed with the same sandbox-blocked localhost
 JSON-schema bind (one failure). The broader package and
 sysbench/TPC-C/TPC-H/YCSB acceptance gates remain open. The session plan-cache
 regressions selections remain green: 28 non-prepared and 45 prepared tests.
+
+
+## Continuing MaxOneRow enforced-MPP warning parity
+
+Go's `findBestTask` first applies the operator-self task-type check. A
+`LogicalMaxOneRow` therefore refuses an MPP property before physical
+enumeration and raises `RaiseWarningWhenMPPEnforced`; its root ordered path
+reaches `ExhaustPhysicalPlans4LogicalMaxOneRow`, which raises the same source
+message when order is refused. Rust previously returned the generic invalid
+task before either side effect, and its statement context had no
+`InExplainStmt`/extra-warning split.
+
+Rust dispatch now accepts an optional statement-context warning sink and
+preserves the MaxOneRow MPP refusal warning immediately before the generic
+non-root return. The root physical arm retains the source condition for an
+ordered property. `StmtContext::append_mpp_warning` applies the captured Go
+`allowMPP && enforceMPP` gate, stores code 1105 in ordinary warnings for
+EXPLAIN/EXPLAIN ANALYZE, and stores it in a bounded extra-warning handler for
+ordinary statements. EXPLAIN contexts are marked at the session boundary;
+ordinary warning retrieval remains separate from extra-warning retrieval.
+
+The initial red planner command failed because the MPP early return produced
+no sink entry. After the early-return side effect was added, the focused
+commands from `rust/` pass:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib max_one_row_refusal_raises_the_source_warning_once_per_refusal -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib enforced_mpp_warning_uses_go_explain_and_extra_handlers -- --test-threads=1
+
+The tests cover root ordered refusal, MPP refusal, supported root planning,
+EXPLAIN versus ordinary warning storage, and the unenforced no-op. Rust-only
+production/test/docs changes require no `make bazel_prepare`; the complete
+physicalop package, live TiFlash behavior, other MPP operator/task gaps, and
+the sysbench/TPC-C/TPC-H/YCSB performance gates remain open. The red result,
+green results, formatting, lint, and publication receipts are recorded with
+this checkpoint.

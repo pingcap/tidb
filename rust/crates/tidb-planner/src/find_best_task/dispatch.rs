@@ -55,7 +55,7 @@ use crate::logical::LogicalPlan;
 use crate::physical::{self, PhysicalPlan};
 use crate::physical_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
-use crate::task::{Task, attach2_task};
+use crate::task::{attach2_task, Task};
 use crate::task_type::TaskType;
 
 /// Go `getTaskPlanCost`'s pricing half: what a built task costs.
@@ -66,6 +66,17 @@ pub trait TaskCoster {
     /// The task's plan cost; called only on VALID tasks — the invalid-task
     /// `MaxFloat64` arm is [`compare_task_cost`]'s own, as in Go.
     fn task_cost(&self, task: &Task) -> Result<f64, PlanError>;
+}
+
+/// Go `SessionVars.RaiseWarningWhenMPPEnforced`'s statement-context sink.
+///
+/// Physical enumeration stays in the planner crate, while warning buffers
+/// and the `InExplainStmt`/extra-warning split belong to the session
+/// executor. This trait carries that side effect across the crate boundary
+/// without making the planner depend on a session implementation.
+pub trait MppWarningSink {
+    /// Raises one source-shaped MPP refusal warning when enforcement is on.
+    fn raise_mpp_warning(&self, message: &str);
 }
 
 /// Go `compareTaskCost` (`find_best_task.go:479`): whether `cur` beats
@@ -148,6 +159,8 @@ pub struct DispatchContext<'a> {
     pub index_join_skyline_threshold: f64,
     /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
     pub mpp_allowed: bool,
+    /// Statement-context sink for Go's enforced-MPP refusal warnings.
+    pub mpp_warning_sink: Option<&'a dyn MppWarningSink>,
     /// Go `SessionVars.GetAllowPreferRangeScan()` (`tidb_opt_prefer_range_scan`,
     /// default ON): under unreliable statistics a range-scan path carrying an
     /// `=`/`IN` prefix wins over a full table scan even when its estimated
@@ -202,6 +215,7 @@ impl<'a> DispatchContext<'a> {
             index_join_skyline_threshold: 1_000.0,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
+            mpp_warning_sink: None,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
             index_merge_enabled: false,
@@ -356,6 +370,14 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// Attach the session statement-context sink used by physical refusal
+    /// warnings. The planner remains usable without a session in unit tests.
+    #[must_use]
+    pub const fn with_mpp_warning_sink(mut self, sink: &'a dyn MppWarningSink) -> Self {
+        self.mpp_warning_sink = Some(sink);
+        self
+    }
+
     /// Go `SessionVars.GetAllowPreferRangeScan()`.
     #[must_use]
     pub const fn with_prefer_range_scan(mut self, value: bool) -> Self {
@@ -429,9 +451,20 @@ fn exhaust_physical_plans(
             ctx.allocator,
             ctx.skew_ratio,
         ))),
-        LogicalPlan::MaxOneRow(op) => Ok(one(
-            physical::exhaust_physical_plans_4_logical_max_one_row(op, prop, ctx.allocator),
-        )),
+        LogicalPlan::MaxOneRow(op) => {
+            if !prop.is_sort_item_empty() || prop.is_flash_prop() {
+                if let Some(sink) = ctx.mpp_warning_sink {
+                    sink.raise_mpp_warning(
+                        "MPP mode may be blocked because operator `MaxOneRow` is not supported now.",
+                    );
+                }
+            }
+            Ok(one(physical::exhaust_physical_plans_4_logical_max_one_row(
+                op,
+                prop,
+                ctx.allocator,
+            )))
+        }
         LogicalPlan::UnionAll(op) => Ok(one(physical::exhaust_physical_plans_4_logical_union_all(
             op,
             prop,
@@ -1074,6 +1107,24 @@ fn find_best_task_uncached(
             ctx.enable_inl_join_inner_multi_pattern,
         ) {
             return Ok(Task::invalid_task());
+        }
+    }
+
+    // Go checks whether the operator itself can satisfy a coprocessor or MPP
+    // property before applying the generic non-root refusal. `LogicalMaxOneRow`
+    // fails that check and raises its enforced-MPP warning even though no
+    // physical plan is enumerated. Keep that side effect before the same
+    // invalid-task result; otherwise the warning disappears at this early
+    // return.
+    if matches!(
+        prop.task_tp,
+        TaskType::CopSingleRead | TaskType::CopMultiRead | TaskType::Mpp
+    ) && matches!(plan, LogicalPlan::MaxOneRow(_))
+    {
+        if let Some(sink) = ctx.mpp_warning_sink {
+            sink.raise_mpp_warning(
+                "MPP mode may be blocked because operator `MaxOneRow` is not supported now.",
+            );
         }
     }
 
@@ -3969,9 +4020,12 @@ mod tests {
 
     use super::*;
     use crate::logical::mem_table::MemTableColumn;
-    use crate::logical::{BaseLogicalPlan, LogicalMemTable, LogicalSelection, LogicalTableDual};
+    use crate::logical::{
+        BaseLogicalPlan, LogicalMaxOneRow, LogicalMemTable, LogicalSelection, LogicalTableDual,
+    };
     use crate::physical_property::SortItem;
     use crate::stats_info::StatsInfo;
+    use std::cell::RefCell;
     use tidb_datatype::{
         FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,
     };
@@ -3986,6 +4040,61 @@ mod tests {
             }
             Ok(task.plan().map_or(f64::MAX, count))
         }
+    }
+
+    struct RecordingMppWarningSink(RefCell<Vec<String>>);
+
+    impl MppWarningSink for RecordingMppWarningSink {
+        fn raise_mpp_warning(&self, message: &str) {
+            self.0.borrow_mut().push(message.to_owned());
+        }
+    }
+
+    #[test]
+    fn max_one_row_refusal_raises_the_source_warning_once_per_refusal() {
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let sink = RecordingMppWarningSink(RefCell::new(Vec::new()));
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_mpp_warning_sink(&sink);
+        let mut base = BaseLogicalPlan::new(&allocator, LogicalMaxOneRow::TYPE, 0);
+        let mut dual_base = BaseLogicalPlan::new(&allocator, LogicalTableDual::TYPE, 0);
+        dual_base.base.set_stats(Some(StatsInfo::new(1.0, [])));
+        base.set_children(vec![LogicalPlan::TableDual(LogicalTableDual::new(
+            dual_base, 1,
+        ))]);
+        let logical = LogicalPlan::MaxOneRow(LogicalMaxOneRow::new(base));
+
+        let ordered = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+        assert!(find_best_task(&logical, &ordered, &mut ctx)
+            .expect("ordered refusal is a valid search result")
+            .invalid());
+        assert_eq!(
+            sink.0.borrow().as_slice(),
+            ["MPP mode may be blocked because operator `MaxOneRow` is not supported now."]
+        );
+
+        let mpp = PhysicalProperty {
+            task_tp: TaskType::Mpp,
+            ..PhysicalProperty::default()
+        };
+        assert!(find_best_task(&logical, &mpp, &mut ctx)
+            .expect("MPP refusal is a valid search result")
+            .invalid());
+        assert_eq!(sink.0.borrow().len(), 2);
+
+        let cop = PhysicalProperty {
+            task_tp: TaskType::CopSingleRead,
+            ..PhysicalProperty::default()
+        };
+        assert!(find_best_task(&logical, &cop, &mut ctx)
+            .expect("cop refusal is a valid search result")
+            .invalid());
+        assert_eq!(sink.0.borrow().len(), 3);
+
+        let root = find_best_task(&logical, &PhysicalProperty::default(), &mut ctx)
+            .expect("root MaxOneRow remains supported");
+        assert!(!root.invalid());
+        assert_eq!(sink.0.borrow().len(), 3);
     }
 
     fn dual(allocator: &PlanIdAllocator, rows: f64) -> LogicalPlan {
@@ -4355,8 +4464,8 @@ mod tests {
     #[test]
     fn read_from_storage_tiflash_selects_the_tiflash_table_path() {
         use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
         use crate::logical::data_source::PREFER_TIFLASH;
+        use crate::logical::DataSource;
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
@@ -4417,8 +4526,8 @@ mod tests {
         // table scan's ranges with `(5, +inf]`; an indexed `b = 7` fills
         // the index scan's ranges with the point.
         use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -4621,8 +4730,8 @@ mod tests {
         // becomes one lexicographic range per deciding handle column rather
         // than stopping after the declared `a` key part.
         use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
         use tidb_expr::constant::Constant;
@@ -4731,8 +4840,8 @@ mod tests {
         // `BuildIndexLookUpTask` — while a covering index still plans the
         // plain IndexReader.
         use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -4864,8 +4973,8 @@ mod tests {
 
     #[test]
     fn a_constant_index_prefix_is_skipped_when_matching_order() {
-        use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -4973,8 +5082,8 @@ mod tests {
     #[test]
     fn index_join_keeps_a_usable_prefix_when_trailing_columns_are_pruned() {
         use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
         use crate::physical_property::IndexJoinRuntimeProp;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{FieldType, FieldTypeCode};
