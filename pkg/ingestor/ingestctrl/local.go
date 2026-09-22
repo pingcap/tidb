@@ -868,7 +868,7 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 		_ = spkv.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	rpcCli := newTiKVRPCClient(rpcOpts...)
+	rpcCli := diagnosticclient.WrapKV(newTiKVRPCClient(rpcOpts...))
 	tikvCli, err := newTiKVStore("lightning-local-backend", codecPDCli, spkv, rpcCli)
 	if err != nil {
 		if rpcCli != nil {

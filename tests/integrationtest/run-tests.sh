@@ -327,7 +327,17 @@ function wait_for_tidb_server()
 
 function stop_tidb_server()
 {
-    kill -15 "$SERVER_PID"
+    kill -15 "$SERVER_PID" 2>/dev/null || true
+    for _ in $(seq 1 30); do
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    if kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "tidb-server(PID: $SERVER_PID) did not stop gracefully, sending SIGKILL" >&2
+        kill -9 "$SERVER_PID" 2>/dev/null || true
+    fi
     wait "$SERVER_PID" || true
     SERVER_PID=""
 }

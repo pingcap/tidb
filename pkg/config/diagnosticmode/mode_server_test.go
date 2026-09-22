@@ -170,6 +170,10 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 	})
 	t.Cleanup(view.Stop)
 
+	statsLease := vardef.GetStatsLease()
+	t.Cleanup(func() {
+		vardef.SetStatsLease(statsLease)
+	})
 	session.DisableStats4Test()
 
 	// Diagnostic startup requires an existing bootstrap version and system tables.
