@@ -181,7 +181,7 @@ func TestStatementRUMPPPublication(t *testing.T) {
 		}
 		sc.RuntimeStatsColl.RecordTiFlashExecutionSummaries(ids, []*tipb.ExecutorExecutionSummary{summary})
 	}
-	finalized, operators, ok := calculateStatementRUWithOperators(flat, sc.RuntimeStatsColl, ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+	finalized, operators, ok := calculateStatementRUWithOperators(flat, sc.RuntimeStatsColl, ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup(), true)
 	require.True(t, ok)
 	require.Equal(t, float64(19), finalized.units.CPUWork)
 	require.Equal(t, float64(300), finalized.units.ScanBytes)
