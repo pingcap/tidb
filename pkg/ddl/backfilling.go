@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -167,6 +168,9 @@ type backfillCtx struct {
 	table      table.Table
 	batchCnt   int
 	jobContext *ReorgContext
+	// accountTxnRU reports whether the reorg backfill transactions of this job
+	// are converted into RU with the general DDL transaction-KV formula.
+	accountTxnRU bool
 
 	metricCounter   prometheus.Counter
 	conflictCounter prometheus.Counter
@@ -215,16 +219,17 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
 	metricTableID := backfillMetricsTableID(rInfo, label)
 	return &backfillCtx{
-		id:         id,
-		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
-		warnings:   warnHandler,
-		exprCtx:    exprCtx,
-		tblCtx:     tblCtx,
-		loc:        exprCtx.GetEvalCtx().Location(),
-		schemaName: schemaName,
-		table:      tbl,
-		batchCnt:   batchCnt,
-		jobContext: jobCtx,
+		id:           id,
+		ddlCtx:       rInfo.jobCtx.oldDDLCtx,
+		warnings:     warnHandler,
+		exprCtx:      exprCtx,
+		tblCtx:       tblCtx,
+		loc:          exprCtx.GetEvalCtx().Location(),
+		schemaName:   schemaName,
+		table:        tbl,
+		batchCnt:     batchCnt,
+		jobContext:   jobCtx,
+		accountTxnRU: reorgBackfillAccountsTxnRU(rInfo.Job),
 		metricCounter: getBackfillTotalByTableID(
 			metricTableID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 		conflictCounter: getBackfillTotalByTableID(
@@ -249,6 +254,52 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 			Entry: entrySizeLimit,
 			Total: kv.TxnTotalSizeLimit.Load(),
 		})
+	}
+}
+
+// accountBackfillTxnRU converts the bytes written by one committed reorg
+// backfill transaction into RU, reusing the general DDL transaction-KV
+// formula, and accumulates it on the job's reorg context so runReorgJob can
+// carry it to the foreground worker. It is a no-op for jobs that do not use
+// that formula.
+func (w *backfillCtx) accountBackfillTxnRU(jobID int64, writtenBytes int) {
+	failpoint.InjectCall("accountBackfillTxnRU", jobID, w.accountTxnRU, writtenBytes)
+	if !w.accountTxnRU || !kerneltype.IsNextGen() {
+		return
+	}
+	rc := w.getReorgCtx(jobID)
+	if rc == nil {
+		return
+	}
+	rc.increaseRU(float64(writtenBytes) * currentDDLRUWeights().TxnKVBytes)
+}
+
+// reorgBackfillAccountsTxnRU reports whether the reorg backfill transactions of
+// a job are converted into RU with the general DDL transaction-KV formula.
+// Partition reorganization jobs and reorg type MODIFY/CHANGE COLUMN jobs opt
+// in. Other jobs keep their existing accounting: distributed add-index charges
+// the ingest KV size, and the remaining reorganization jobs account nothing for
+// their backfill.
+func reorgBackfillAccountsTxnRU(job *model.Job) bool {
+	if isPartitionReorgDDL(job.Type) {
+		return true
+	}
+	if job.Type != model.ActionModifyColumn {
+		return false
+	}
+	// A MODIFY/CHANGE COLUMN job only creates reorg backfill workers when it
+	// rewrites the row or index data, which is exactly ModifyTypeReorg and
+	// ModifyTypeIndexReorg. The type is persisted in the job args before the
+	// reorg stage, so it is available across DDL rounds and owner changes.
+	args, err := model.GetModifyColumnArgs(job)
+	if err != nil {
+		return false
+	}
+	switch args.ModifyColumnType {
+	case model.ModifyTypeReorg, model.ModifyTypeIndexReorg:
+		return true
+	default:
+		return false
 	}
 }
 

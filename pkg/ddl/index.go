@@ -1907,7 +1907,14 @@ func doReorgWorkForCreateIndex(
 				zap.String("table", tbl.Meta().Name.O))
 			return true, ver, nil
 		}
-		return runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		if done && err == nil {
+			// This path has no metadata transition of its own, so persist the RU
+			// staged by the backfill once the reorg is done. The merge process
+			// below accounts it after its own table-state transition instead.
+			accountPendingReorgRU(jobCtx, job, nil)
+		}
+		return done, ver, err
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
@@ -2886,6 +2893,9 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	// writtenBytes samples the payload buffered by the txn that finally
+	// commits, so a retried RunInNewTxn overwrites it instead of double counting.
+	var writtenBytes int
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) (err error) {
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
@@ -2944,9 +2954,13 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 			taskCtx.addedCount++
 		}
 
+		writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillData", 3000)
+	if errInTxn == nil {
+		w.accountBackfillTxnRU(jobID, writtenBytes)
+	}
 	failpoint.Inject("mockDMLExecution", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecution != nil {
