@@ -1,11 +1,11 @@
 # `pkg/kv` — Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`febee17ec716d86b1e355e5400ef9e4f4f190bad` (2026-09-02).
+`64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59` (refreshed 2026-09-22).
 
 ## Complete Go inventory
 
-The package contains exactly 30 tracked artifacts and 5,435 lines. Every
+The package contains exactly 30 tracked artifacts and 5,437 lines. Every
 production file, test, benchmark, and Bazel target was read before editing.
 There is no package `doc.go`, fixture, generated Go source, or
 platform-specific Go variant. The complete function inventory contains 288
@@ -32,7 +32,7 @@ functions, including 36 top-level Test/Benchmark declarations.
 | `main_test.go` | 36 | `d62d0f9f7bb83a0313edac95e4f1f3eb4e0abf9f` | `fa97a86ce3a5d763c4c27d62dc45d2a77313e61c480bf84890f1d0cdb5549737` |
 | `mock_test.go` | 88 | `10db70da8ebbce5dc4ecdb327b36a06327de65eb` | `55c967418dd78f68404ae7eb590b86e65ea1971969ce7c9db2ce2eb64768821f` |
 | `mpp.go` | 265 | `f56738aab639d33507e2cbe5a5d22444c841d78f` | `ad57eaaabf5bddd07132caece41414db02908d509df7b9faf8caabfdc79d1c47` |
-| `option.go` | 296 | `e3401865720474d73bd867a6eaaa243cf87832aa` | `c1879ec5e3e733c44e36e622f35c97c2f4fcceffa7cf817fd16b613530303558` |
+| `option.go` | 298 | `2328394edb39902076933ff52b55412576f45af9` | `fdc0dc3ac352c94d9fa049b8cf0709d22e344b66c125091010c23493347b2fa4` |
 | `option_test.go` | 111 | `922a1bc00f348c642a3479117c80561bc61ac9c6` | `c4276ab38599a43873ad1b7fa4e953a400419680ce21a5b40ebfc6b513d7177f` |
 | `txn.go` | 246 | `848e7cd40d3f3009fb63050028c60bb2b02f4b15` | `706b23ece00d35e068cb35fb12c7ec63dff67fb470fa7a53e27a6960690ff222` |
 | `txn_scope_var.go` | 76 | `34d0a1a2a9291b2ec8d599ba424278a2fcf8eb5d` | `b165536242490032fbfdeea8ec9fd7cb307571b9972154b4782744be4ecf9c95` |
@@ -117,6 +117,10 @@ request fields were absent.
 
 ## Validation
 
+The commands below are historical evidence from the earlier package batches.
+Current-master waiter validation is recorded in the September 22 continuation
+of `rust/docs/operations/kv-audit-execplan.md`.
+
 Profile: **Ready** for this package batch; the repository-wide package loop
 remains in progress.
 
@@ -182,3 +186,19 @@ the suite passes.
   already-completed-result branch avoids a receipt lookup.
 - Not verified locally: external etcd/live TiKV integration, Bazel analysis,
   the Go real-cluster paths, and the omitted full `pkg/kv` client integrations.
+
+## Current-master refresh, 2026-09-22
+
+All 30 artifact names, line counts, Git blobs and SHA-256 hashes above were
+recomputed from the current master commit. Relative to the original September 2
+pin, only option.go changes: InternalTxnMViewMaintenance is already present as
+INTERNAL_TXN_MVIEW_MAINTENANCE in the Rust owner. The limiter's Go channel
+contracts and original tests are unchanged. This inventory refresh does not
+close the package's integration or build gates. The cancellation/waiter follow-up
+is tracked in rust/docs/operations/kv-audit-execplan.md.
+
+The follow-up adds the missing source concurrency test (32 workers, 640 total
+acquisitions, capacity three), fixes cancellation notification transfer, and
+owns dispatcher waiter registrations through admission and shutdown. All 38
+Rust KV source tests and the five original master limiter tests pass; exact
+commands, red/green evidence and remaining gates are in that ExecPlan.

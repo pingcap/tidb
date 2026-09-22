@@ -211,6 +211,51 @@ mod concurrent {
     }
 
     #[test]
+    fn closing_a_limiter_blocked_reader_does_not_consume_the_next_readers_wake() {
+        use std::task::{Wake, Waker};
+        struct Ready(AtomicUsize);
+        impl Wake for Ready {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        for ordered in [false, true] {
+            let limiter = tidb_txnkv::new_copr_request_limiter(1).unwrap();
+            assert!(limiter.try_acquire());
+            let clones = Arc::new(AtomicUsize::new(0));
+            let (mut runtime, incoming, _) =
+                runtime_with_clones([location(1, "a", "z", "tikv-1:20160")], Arc::clone(&clones));
+            let baseline = clones.load(Ordering::SeqCst);
+            let mut request = metadata("a", "z");
+            request.keep_order = ordered;
+            request.copr_request_limiter = Some(Arc::clone(&limiter));
+            let mut result = select(&mut runtime, request, Arc::new(AtomicBool::new(true)));
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while clones.load(Ordering::SeqCst) == baseline {
+                assert!(std::time::Instant::now() < deadline, "worker must start");
+                std::thread::yield_now();
+            }
+            assert!(matches!(
+                incoming.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            result.close();
+            let ready = Arc::new(Ready(AtomicUsize::new(0)));
+            let waker = Waker::from(Arc::clone(&ready));
+            limiter.register_waker(waker.clone());
+            limiter.release();
+            assert_eq!(
+                ready.0.load(Ordering::SeqCst),
+                1,
+                "closed reader left a stale waiter"
+            );
+            assert!(limiter.try_acquire());
+            limiter.deregister_waker(&waker);
+            limiter.release();
+        }
+    }
+
+    #[test]
     fn unopened_region_tasks_do_not_fork_clients() {
         let clones = Arc::new(AtomicUsize::new(0));
         let keys: Vec<_> = (0..=64).map(|index| format!("k{index:03}")).collect();

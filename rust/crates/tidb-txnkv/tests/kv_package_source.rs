@@ -198,6 +198,51 @@ fn TestCoprRequestLimiterRedundantReleasePanics() {
     assert_eq!(message, Some("release a redundant cop request token"));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn TestCoprRequestLimiterConcurrentAcquireRelease() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let limiter = new_copr_request_limiter(3).unwrap();
+    let active = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..32 {
+        let limiter = Arc::clone(&limiter);
+        let active = Arc::clone(&active);
+        let max_active = Arc::clone(&max_active);
+        tasks.spawn(async move {
+            for _ in 0..20 {
+                assert!(
+                    !limiter
+                        .acquire_with_context(std::future::pending(), std::future::pending())
+                        .await
+                );
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                max_active.fetch_max(current, Ordering::SeqCst);
+                assert!(current <= 3);
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+                limiter.release();
+            }
+        });
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(result) = tasks.join_next().await {
+            result.expect("concurrent limiter worker");
+        }
+    })
+    .await
+    .expect("all 640 acquisitions complete");
+    assert!(max_active.load(Ordering::SeqCst) <= 3);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    for _ in 0..3 {
+        assert!(limiter.try_acquire(), "all tokens returned");
+    }
+    assert!(!limiter.try_acquire());
+    for _ in 0..3 {
+        limiter.release();
+    }
+}
+
 #[test]
 fn TestQueryCopStoreLimiter() {
     assert!(new_query_cop_store_limiter(0).is_none());

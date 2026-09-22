@@ -391,7 +391,7 @@ pub struct CoprRequestLimiter {
     blocking_wait: Condvar,
     blocking_guard: Mutex<()>,
     /// Drivers that found the limiter full and yielded instead of blocking
-    /// (see `register_waker`); every release wakes them all.
+    /// (see `register_waker`); each release wakes one queued driver.
     waiters: Mutex<std::collections::VecDeque<std::task::Waker>>,
 }
 
@@ -434,14 +434,22 @@ impl CoprRequestLimiter {
         }
     }
 
-    /// Removes a driver's registration after it stopped waiting (it acquired
-    /// a token or finished); a stale entry would consume a wake meant for a
-    /// parked driver.
+    /// Removes a driver's registration after it acquired a token or finished.
+    /// If release already selected this driver but it leaves a slot free,
+    /// pass the notification to another queued driver.
     pub fn deregister_waker(&self, waker: &std::task::Waker) {
-        self.waiters
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|known| !known.will_wake(waker));
+        let successor = {
+            let mut waiters = self.waiters.lock().unwrap_or_else(|p| p.into_inner());
+            waiters.retain(|known| !known.will_wake(waker));
+            if self.in_use.load(AtomicOrdering::Acquire) < self.capacity {
+                waiters.pop_front()
+            } else {
+                None
+            }
+        };
+        if let Some(successor) = successor {
+            successor.wake();
+        }
     }
 
     /// Blocks until one token is acquired or either cancellation future
@@ -871,5 +879,54 @@ mod tests {
             1,
             "a consumed registration stays consumed"
         );
+    }
+
+    #[test]
+    fn cancelled_selected_limiter_waiter_passes_free_capacity_to_next_driver() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::task::{Wake, Waker};
+        struct Count(AtomicUsize);
+        impl Wake for Count {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        for cancel_before_release in [false, true] {
+            let first = Arc::new(Count(AtomicUsize::new(0)));
+            let second = Arc::new(Count(AtomicUsize::new(0)));
+            let third = Arc::new(Count(AtomicUsize::new(0)));
+            let first_waker = Waker::from(Arc::clone(&first));
+            let second_waker = Waker::from(Arc::clone(&second));
+            let third_waker = Waker::from(Arc::clone(&third));
+            let limiter = new_copr_request_limiter(1).unwrap();
+            assert!(limiter.try_acquire());
+            limiter.register_waker(first_waker.clone());
+            limiter.register_waker(second_waker.clone());
+            limiter.register_waker(third_waker.clone());
+            if cancel_before_release {
+                limiter.deregister_waker(&first_waker);
+                assert_eq!(second.0.load(Ordering::SeqCst), 0);
+                limiter.release();
+                assert_eq!(first.0.load(Ordering::SeqCst), 0);
+            } else {
+                limiter.release();
+                assert_eq!(first.0.load(Ordering::SeqCst), 1);
+                assert_eq!(second.0.load(Ordering::SeqCst), 0);
+                // The selected driver cancels before acquiring. No other
+                // request owns a token whose release could wake the next.
+                limiter.deregister_waker(&first_waker);
+            }
+            assert_eq!(second.0.load(Ordering::SeqCst), 1);
+            assert_eq!(third.0.load(Ordering::SeqCst), 0, "wake only one successor");
+            assert!(limiter.try_acquire());
+            limiter.deregister_waker(&second_waker);
+            assert_eq!(third.0.load(Ordering::SeqCst), 0, "the slot is occupied");
+            limiter.release();
+            assert_eq!(third.0.load(Ordering::SeqCst), 1);
+            assert!(limiter.try_acquire());
+            limiter.deregister_waker(&third_waker);
+            limiter.release();
+        }
     }
 }

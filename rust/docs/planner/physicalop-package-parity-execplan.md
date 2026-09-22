@@ -9139,7 +9139,7 @@ remain an error, as in master.
 - [x] Propagate secondary-index range, remote reader and typed SQL errors through native Rust Result boundaries.
 - [x] Verify capability refusal, close/reopen and shared/worker probe lifecycles.
 - [x] Run scoped regression, compilation and lint gates; self-review the diff.
-- [ ] Commit and push this bounded checkpoint.
+- [x] Commit and push this bounded checkpoint (`14620bca2f`); remote divergence is `0 0`.
 
 ### Decision Log
 

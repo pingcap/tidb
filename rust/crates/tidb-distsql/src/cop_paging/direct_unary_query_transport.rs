@@ -716,6 +716,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             sync_only_chains: BTreeSet::new(),
             pending_batches: BTreeMap::new(),
             completion_notifier: CompletionNotifier::new(),
+            limiter_waiter: None,
             independent_driver: false,
             task_worker: false,
             unordered_inflight: BTreeSet::new(),
@@ -868,6 +869,8 @@ pub struct DirectUnaryQueryResponse<C, L> {
     /// Shared completion-order queue corresponding to Go's unordered
     /// `copIterator.respChan`.
     completion_notifier: CompletionNotifier,
+    /// A parked driver's queue entry, distinct from its acquired RPC tokens.
+    limiter_waiter: Option<RequestAttemptWaiter>,
     independent_driver: bool,
     // The lite and concurrent Go workers both process split descendants
     // sequentially. Ordering across initial tasks belongs to CopIterator.
@@ -915,6 +918,40 @@ impl Drop for RequestAttemptPermit {
     }
 }
 
+struct RequestAttemptWaiter {
+    limiter: Arc<CoprRequestLimiter>,
+    waker: std::task::Waker,
+}
+
+impl RequestAttemptWaiter {
+    fn register(
+        slot: &mut Option<Self>,
+        limiter: &Arc<CoprRequestLimiter>,
+        waker: std::task::Waker,
+    ) {
+        if slot.as_ref().is_none_or(|waiting| {
+            !Arc::ptr_eq(&waiting.limiter, limiter) || !waiting.waker.will_wake(&waker)
+        }) {
+            // A route or driver replacement must retire the old entry before
+            // parking again. Drop also transfers an unused notification.
+            *slot = None;
+            *slot = Some(Self {
+                limiter: Arc::clone(limiter),
+                waker: waker.clone(),
+            });
+        }
+        // A previous notification consumed the queue entry; register again
+        // if a competing acquirer took the freed slot before this poll.
+        limiter.register_waker(waker);
+    }
+}
+
+impl Drop for RequestAttemptWaiter {
+    fn drop(&mut self) {
+        self.limiter.deregister_waker(&self.waker);
+    }
+}
+
 struct PendingBatchAttempt {
     dispatch: PreparedRegionDispatch,
     pending: Box<dyn PendingRequest + Send>,
@@ -924,6 +961,7 @@ struct PendingBatchAttempt {
 
 impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
     fn drop(&mut self) {
+        self.limiter_waiter = None;
         for attempt in self.pending_batches.values_mut() {
             attempt.pending.cancel();
         }
@@ -964,6 +1002,18 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     }
 
     fn pull(
+        &mut self,
+        required_rows: usize,
+        blocking: bool,
+    ) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        let result = self.pull_inner(required_rows, blocking);
+        if !matches!(result, Ok(Some(_)) | Err(QueryResponseError::Pending)) {
+            self.limiter_waiter = None;
+        }
+        result
+    }
+
+    fn pull_inner(
         &mut self,
         _required_rows: usize,
         blocking: bool,
@@ -1254,6 +1304,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             self.metadata.copr_request_limiter.clone()
         };
         let Some(limiter) = limiter else {
+            self.limiter_waiter = None;
             return Ok(RequestAttemptPermit(None));
         };
 
@@ -1263,6 +1314,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         // optional execution deadline, so the blocking adapter checks those same
         // two exits while retaining the token through response settlement.
         if limiter.try_acquire() {
+            self.limiter_waiter = None;
             return Ok(RequestAttemptPermit(Some(limiter)));
         }
         // Go's worker (`coprocessor.go:1918` `setRequestAttemptLimiter`)
@@ -1278,9 +1330,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         // let the driver settle what is pending before it asks again.
         if self.independent_driver || !self.pending_batches.is_empty() {
             if let Some(waker) = self.completion_notifier.waker() {
-                limiter.register_waker(waker);
+                RequestAttemptWaiter::register(&mut self.limiter_waiter, &limiter, waker);
             }
             if limiter.try_acquire() {
+                self.limiter_waiter = None;
                 return Ok(RequestAttemptPermit(Some(limiter)));
             }
             return Err(DirectUnaryTransportError::LimiterBackpressure);
@@ -2228,6 +2281,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> QueryResponse
     }
 
     fn close(&mut self) {
+        self.limiter_waiter = None;
         self.cancellation.cancel();
         self.closed = true;
     }
@@ -2258,6 +2312,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> super::cop_iterator::CopTask
 
     fn set_waker(&mut self, waker: std::task::Waker) {
         self.independent_driver = true;
+        if let Some(waiting) = &self.limiter_waiter {
+            let limiter = Arc::clone(&waiting.limiter);
+            RequestAttemptWaiter::register(&mut self.limiter_waiter, &limiter, waker.clone());
+        }
         self.completion_notifier.set_waker(waker);
         for (&logical_task_id, attempt) in &mut self.pending_batches {
             attempt
@@ -2354,6 +2412,7 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
                     sync_only_chains,
                     pending_batches,
                     completion_notifier: CompletionNotifier::new(),
+                    limiter_waiter: None,
                     independent_driver: false,
                     task_worker: true,
                     unordered_inflight: BTreeSet::new(),
@@ -2369,9 +2428,66 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
-    use super::{try_borrow_client, DirectUnaryTransportError};
+    use super::{try_borrow_client, DirectUnaryTransportError, RequestAttemptWaiter};
+
+    #[test]
+    fn limiter_waiter_ownership_retires_acquired_cancelled_and_replaced_drivers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{Wake, Waker};
+        struct Count(AtomicUsize);
+        impl Wake for Count {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let count = || Arc::new(Count(AtomicUsize::new(0)));
+        let first = count();
+        let next = count();
+        let other = count();
+        let limiter = tidb_txnkv::new_copr_request_limiter(2).unwrap();
+        assert!(limiter.try_acquire());
+        assert!(limiter.try_acquire());
+        let mut slot = None;
+        RequestAttemptWaiter::register(&mut slot, &limiter, Waker::from(Arc::clone(&first)));
+        RequestAttemptWaiter::register(&mut slot, &limiter, Waker::from(Arc::clone(&first)));
+        // Replace a driver while saturated; its old waker must never fire.
+        RequestAttemptWaiter::register(&mut slot, &limiter, Waker::from(Arc::clone(&next)));
+        limiter.register_waker(Waker::from(Arc::clone(&other)));
+        limiter.release();
+        assert_eq!(first.0.load(Ordering::SeqCst), 0);
+        assert_eq!(next.0.load(Ordering::SeqCst), 1);
+        // The selected response closes before acquire. Drop must transfer
+        // the unused notification, even though its queue entry was popped.
+        drop(slot.take());
+        assert_eq!(other.0.load(Ordering::SeqCst), 1);
+        assert!(limiter.try_acquire());
+        limiter.deregister_waker(&Waker::from(Arc::clone(&other)));
+
+        // An unrelated wake can let a driver acquire while its registration
+        // is still queued behind another one. Acquiring must retire it.
+        limiter.register_waker(Waker::from(Arc::clone(&other)));
+        RequestAttemptWaiter::register(&mut slot, &limiter, Waker::from(Arc::clone(&next)));
+        limiter.release();
+        assert!(limiter.try_acquire());
+        drop(slot.take());
+        limiter.release();
+        assert_eq!(next.0.load(Ordering::SeqCst), 1, "no stale acquire wake");
+
+        // A retry to a new store leaves no registration on the old store.
+        let new_store = tidb_txnkv::new_copr_request_limiter(1).unwrap();
+        assert!(new_store.try_acquire());
+        RequestAttemptWaiter::register(&mut slot, &limiter, Waker::from(Arc::clone(&first)));
+        RequestAttemptWaiter::register(&mut slot, &new_store, Waker::from(Arc::clone(&next)));
+        limiter.release();
+        assert_eq!(first.0.load(Ordering::SeqCst), 0);
+        new_store.release();
+        assert_eq!(next.0.load(Ordering::SeqCst), 2);
+        drop(slot);
+        assert!(new_store.try_acquire());
+        new_store.release();
+    }
 
     #[test]
     fn shared_client_borrow_conflict_is_a_typed_lifecycle_error() {
