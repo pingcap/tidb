@@ -7757,3 +7757,39 @@ ignored because the Go `testing.B` harness has no equivalent native gate.
 The changed Rust files pass rustfmt and `git diff --check`; the exact lint
 target also passes with the repository's already-installed revive binary while
 its offline bootstrap step is bypassed.
+
+
+## Continuing LIKE/ILIKE pattern cache parity
+
+Go's `patternCache` compiles wildcard tokens once when both the pattern and
+escape arguments are constant in the statement context. Rust now keeps the
+same context-keyed lifetime for `LIKE` and `ILIKE`: the existing binary fast
+path, collation-aware matcher, escape handling, and ILIKE lower-casing remain
+the matching implementation, while only the compiled pattern is reused. Row-
+dependent patterns or escapes bypass the cache, and argument invalidation
+resets it through the same scalar-function cache lifecycle used by the other
+expression caches.
+
+The active native source test covers same-context reuse, changed-pattern
+isolation, context replacement, and ILIKE matching. The focused commands from
+`rust/` pass:
+
+    cargo test --offline --locked -j12 -p tidb-expr --lib like -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-expr --lib like_pattern_cache_reuses_only_within_context -- --test-threads=1
+
+The selections pass 52 and 1 tests respectively. A full native expression run
+after the cache change reaches 1215 passing tests with the same one
+sandbox-blocked localhost JSON-schema fixture; no LIKE/ILIKE failure remains.
+Both prepared and non-prepared session-plan-cache selections continue to pass
+(45 and 28 tests). Changed Rust files pass rustfmt and `git diff --check`.
+`make lint` was attempted with the repository's installed revive binary, but
+the local sandbox blocks the Go build-cache stat and the dashboard-linter's
+uncached module lookup; the normal offline bootstrap also cannot resolve the
+pinned revive module. The previous exact lint receipt remains valid because
+this checkpoint changes only Rust and documentation.
+
+This closes the concrete LIKE/ILIKE compiled-pattern cache gap but does not
+accept the whole expression, types, planner, executor, or workload packages.
+Native ignored cases, complete production/build/generated/support inventories,
+and full sysbench/TPC-C/TPC-H/YCSB measurements remain open under the original
+goal.

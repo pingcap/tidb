@@ -151,6 +151,65 @@ fn test_ilike() {
     }
 }
 
+/// Go `builtinLikeSig`/`builtinIlikeSig` retain compiled wildcard patterns
+/// only while both pattern and escape are stable within one statement
+/// context. This pins the cache's same-context reuse and context replacement
+/// for both case-sensitive and ASCII-folded patterns.
+#[test]
+fn like_pattern_cache_reuses_only_within_context() {
+    use crate::builtin_ext::BuiltinFuncCache;
+    use crate::like::{CompiledIlikePattern, CompiledLikePattern};
+    use std::sync::Arc;
+    use tidb_datatype::Collation;
+
+    let like_cache = BuiltinFuncCache::<CompiledLikePattern>::default();
+    let first = like_cache
+        .get_or_init_cache(1, || {
+            Ok::<_, crate::EvalError>(CompiledLikePattern::new(
+                b"a%",
+                b'\\',
+                Collation::Utf8Mb4Bin,
+            ))
+        })
+        .expect("LIKE pattern");
+    assert!(first.is_match(b"abc"));
+    let hit = like_cache.get_cache(1).expect("LIKE cache hit");
+    assert!(Arc::ptr_eq(&first, &hit));
+    let same_context = like_cache
+        .get_or_init_cache(1, || {
+            Ok::<_, crate::EvalError>(CompiledLikePattern::new(
+                b"b%",
+                b'\\',
+                Collation::Utf8Mb4Bin,
+            ))
+        })
+        .expect("LIKE same-context hit");
+    assert!(same_context.is_match(b"abc"));
+    let new_context = like_cache
+        .get_or_init_cache(2, || {
+            Ok::<_, crate::EvalError>(CompiledLikePattern::new(
+                b"b%",
+                b'\\',
+                Collation::Utf8Mb4Bin,
+            ))
+        })
+        .expect("LIKE replacement");
+    assert!(new_context.is_match(b"bcd"));
+    assert!(!new_context.is_match(b"abc"));
+
+    let ilike_cache = BuiltinFuncCache::<CompiledIlikePattern>::default();
+    let ilike = ilike_cache
+        .get_or_init_cache(3, || {
+            Ok::<_, crate::EvalError>(CompiledIlikePattern::new(
+                b"A%",
+                b'\\',
+                Collation::Utf8Mb4Bin,
+            ))
+        })
+        .expect("ILIKE pattern");
+    assert!(ilike.is_match(b"abc"));
+}
+
 /// go-parity-gap: `TestVectorizedBuiltinIlikeFunc`
 /// (`pkg/expression/builtin_ilike_test.go:161`) runs the fixed
 /// candidate-pair generators through the vec-vs-scalar differential harness

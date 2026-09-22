@@ -20,7 +20,83 @@ use std::cmp::Ordering;
 use tidb_datatype::Collation;
 use tidb_util::stringutil::{
     compile_pattern, do_match_customized, lower_one_string, lower_one_string_excluding_escape_char,
+    PatternType,
 };
+
+/// Go `collate.WildcardPattern`, retained by `builtinLikeSig.patternCache`.
+/// The compiled wildcard tokens are immutable and safe to share across rows
+/// in one statement context.
+#[derive(Clone, Debug)]
+pub(crate) struct CompiledLikePattern {
+    collation: Collation,
+    pattern: Vec<u8>,
+    escape: u8,
+    weights: Vec<char>,
+    types: Vec<PatternType>,
+}
+
+impl CompiledLikePattern {
+    pub(crate) fn new(pattern: &[u8], escape: u8, collation: Collation) -> Self {
+        let (weights, types) = compile_pattern(pattern, escape);
+        Self {
+            collation,
+            pattern: pattern.to_vec(),
+            escape,
+            weights,
+            types,
+        }
+    }
+
+    pub(crate) fn is_match(&self, text: &[u8]) -> bool {
+        if self.collation == Collation::Binary
+            || (text.is_ascii()
+                && self.pattern.is_ascii()
+                && matches!(
+                    self.collation,
+                    Collation::AsciiBin
+                        | Collation::Latin1Bin
+                        | Collation::Utf8Bin
+                        | Collation::Utf8Mb4Bin
+                ))
+        {
+            return do_match_binary_pattern(text, &self.pattern, self.escape);
+        }
+        do_match_customized(text, &self.weights, &self.types, |left, right| {
+            collation_char_equal(left, right, self.collation)
+        })
+    }
+}
+
+/// Go `builtinIlikeSig.patternCache` stores the lowercased binary wildcard
+/// pattern and its possibly transformed escape byte.
+#[derive(Clone, Debug)]
+pub(crate) struct CompiledIlikePattern {
+    pattern: CompiledLikePattern,
+}
+
+impl CompiledIlikePattern {
+    pub(crate) fn new(pattern: &[u8], escape: u8, collation: Collation) -> Self {
+        let (pattern_bytes, escape) = if escape.is_ascii_alphabetic() {
+            lower_ascii_excluding_escape(pattern, escape)
+        } else {
+            (lower_ascii(pattern), escape)
+        };
+        let binary_collation = if collation == Collation::Binary {
+            Collation::Binary
+        } else {
+            Collation::Utf8Mb4Bin
+        };
+        Self {
+            pattern: CompiledLikePattern::new(&pattern_bytes, escape, binary_collation),
+        }
+    }
+
+    pub(crate) fn is_match(&self, text: &[u8]) -> bool {
+        let mut text = text.to_vec();
+        lower_one_string(&mut text);
+        self.pattern.is_match(&text)
+    }
+}
 
 /// Matches `text` against a `LIKE` pattern (`%` any run, `_` one character),
 /// case-sensitively. Greedy scan with backtracking on the most recent `%`.

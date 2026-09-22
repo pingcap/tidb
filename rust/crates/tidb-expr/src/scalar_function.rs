@@ -289,6 +289,8 @@ pub struct ScalarFunction {
     regexp_cache: crate::builtin_ext::BuiltinFuncCache<crate::regexp::CachedRegexp>,
     regexp_replace_instruction_cache:
         crate::builtin_ext::BuiltinFuncCache<Vec<crate::builtin_ext::regexp::ReplacementPart>>,
+    like_pattern_cache: crate::builtin_ext::BuiltinFuncCache<crate::like::CompiledLikePattern>,
+    ilike_pattern_cache: crate::builtin_ext::BuiltinFuncCache<crate::like::CompiledIlikePattern>,
 }
 
 fn arithmetic_symbol(op: tidb_ast::BinaryOp) -> Option<&'static str> {
@@ -670,6 +672,8 @@ impl ScalarFunction {
         self.find_in_set_cache = Default::default();
         self.regexp_cache = Default::default();
         self.regexp_replace_instruction_cache = Default::default();
+        self.like_pattern_cache = Default::default();
+        self.ilike_pattern_cache = Default::default();
     }
 
     /// Go `BuiltinGroupingImplSig.SetMetadata`: install validated grouping
@@ -1835,20 +1839,48 @@ impl ScalarFunction {
                 return Ok(Datum::Null);
             };
             let escape = escape as u8;
+            let cache_pattern = self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
+            let cache_escape = self.args[2].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
             let matched = if name == "ilike" {
-                crate::like::ilike_match_with_collation(
-                    text,
-                    pattern,
-                    escape,
-                    self.derived_collation(),
-                )
+                if cache_pattern && cache_escape {
+                    let cached =
+                        self.ilike_pattern_cache
+                            .get_or_init_cache(ctx.context_id(), || {
+                                Ok::<_, EvalError>(crate::like::CompiledIlikePattern::new(
+                                    &pattern,
+                                    escape,
+                                    self.derived_collation(),
+                                ))
+                            })?;
+                    cached.is_match(&text)
+                } else {
+                    crate::like::ilike_match_with_collation(
+                        text,
+                        pattern,
+                        escape,
+                        self.derived_collation(),
+                    )
+                }
             } else {
-                crate::like_match_with_collation(
-                    text,
-                    pattern,
-                    Some(escape),
-                    self.derived_collation(),
-                )
+                if cache_pattern && cache_escape {
+                    let cached =
+                        self.like_pattern_cache
+                            .get_or_init_cache(ctx.context_id(), || {
+                                Ok::<_, EvalError>(crate::like::CompiledLikePattern::new(
+                                    &pattern,
+                                    escape,
+                                    self.derived_collation(),
+                                ))
+                            })?;
+                    cached.is_match(&text)
+                } else {
+                    crate::like_match_with_collation(
+                        text,
+                        pattern,
+                        Some(escape),
+                        self.derived_collation(),
+                    )
+                }
             };
             return Ok(Datum::Int(i64::from(matched)));
         }
