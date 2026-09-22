@@ -201,7 +201,6 @@ go_test(
         "//pkg/planner/core/operator/physicalop",
         "//pkg/session/sessionapi",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
