@@ -1623,12 +1623,41 @@ fn optimize_greedy(
     if nodes.len() < 2 {
         return Ok(nodes.pop());
     }
-    // Go `joinReorderGreedySolver.solve` starts with `s.curJoinGroup[0]`, the
-    // cheapest node after the stable cost sort, and never retries another
-    // start. Trying the first two starts is a Rust-only enhancement that
-    // changed Go's join order (and therefore the schema-restore Projection).
-    optimize_greedy_with_start(context, detector, &nodes, 0, group)
+    // Go `joinOrderGreedy.optimize` (`join_order.go:612-638`): with no hint
+    // node and at least two nodes, the greedy runs TWICE -- start index 0 and
+    // start index 1 -- and keeps the result whose cumulative cost is
+    // significantly less (relative 1e-12), falling back to start 0.
+    // Go `chooseBestGreedyStart(2, ...)`: run the greedy from queue position 0
+    // and 1, keeping the first result that wins by a significant margin.
+    let mut best: Option<Node> = None;
+    for start_index in 0..2 {
+        if let Some(candidate) =
+            optimize_greedy_with_start(context, detector, &nodes, start_index, group)?
+        {
+            let wins = best.as_ref().is_none_or(|best| {
+                cum_cost_significantly_less(candidate.cumulative_cost, best.cumulative_cost)
+            });
+            if wins {
+                best = Some(candidate);
+            }
+        }
+    }
+    if let Some(result) = best {
+        return Ok(Some(result));
+    }
+    Ok(None)
 }
+
+/// Go `cumCostSignificantlyLess` (`join_order.go:645`): a cost only beats an
+/// existing best when it is smaller by more than a 1e-12 relative margin.
+fn cum_cost_significantly_less(cost: f64, best_cost: f64) -> bool {
+    if cost >= best_cost {
+        return false;
+    }
+    let scale = 1.0_f64.max(cost.abs().max(best_cost.abs()));
+    best_cost - cost > scale * 1e-12
+}
+
 
 fn build_bushy_tree_from_dp(
     context: &RuleContext<'_>,
