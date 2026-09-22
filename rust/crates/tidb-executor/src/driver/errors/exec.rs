@@ -113,6 +113,19 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // HY000 (3150, 3064), and a sequence failure is either 4135 (HY000)
         // or 1146 (42S02). Deriving it from the code is the only answer that
         // holds for every one.
+        EvalError::Unsupported(reason) => MysqlError::unknown(reason),
+        EvalError::NotImplemented(name) => MysqlError::new(
+            1235,
+            format!("This version of TiDB doesn't yet support '{name}'"),
+        ),
+        EvalError::WrongValueForType {
+            value_class,
+            value,
+            function,
+        } => MysqlError::new(
+            1411,
+            format!("Incorrect {value_class} value: '{value}' for function {function}"),
+        ),
         EvalError::Json(json) => MysqlError::coded(json.code(), json.message()),
         EvalError::Sequence(sequence) => MysqlError::coded(sequence.code(), sequence.message()),
         // The collation class is how a user learns a query needs an explicit
