@@ -526,6 +526,64 @@ fn committed_primary_resolves_exact_secondary_through_same_authorities() {
     assert_eq!(resolve_context.region_id, 2);
 }
 
+/// Go `LockResolver.resolveLocks` defers small-transaction lite cleanup until
+/// all statuses are known, then sends one exact key list per region. A writer
+/// resolves synchronously, so this checks the source's non-async fallback.
+#[test]
+fn small_write_locks_are_batched_by_transaction_and_region() {
+    let commit_ts = 1_200 << 18;
+    let status = KvrpcCheckTxnStatusResponse {
+        commit_version: commit_ts,
+        ..KvrpcCheckTxnStatusResponse::default()
+    };
+    let (runtime, recorded) = runtime(vec![status.clone(), status.clone(), status]);
+    let locks = [
+        BlockingLock::Optimistic(OptimisticLock {
+            key: b"b".to_vec(),
+            ..secondary()
+        }),
+        BlockingLock::Optimistic(secondary()),
+        BlockingLock::Optimistic(OptimisticLock {
+            key: b"secondary-2".to_vec(),
+            ..secondary()
+        }),
+    ];
+
+    let result = resolve_blocking_locks(
+        &runtime,
+        &locks,
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &AdvancingTimestampSource::new([1_100 << 18, 1_100 << 18, 1_100 << 18]),
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.statuses,
+        vec![
+            ResolvedTxnStatus::Committed(commit_ts),
+            ResolvedTxnStatus::Committed(commit_ts),
+            ResolvedTxnStatus::Committed(commit_ts),
+        ]
+    );
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 3);
+    assert_eq!(recorded.resolves.len(), 2);
+    assert_eq!(
+        recorded
+            .resolves
+            .iter()
+            .map(|(_, request, context)| (context.region_id, request.keys.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, vec![b"b".to_vec()]),
+            (2, vec![b"secondary".to_vec(), b"secondary-2".to_vec()]),
+        ]
+    );
+}
+
 #[test]
 fn rolled_back_status_uses_zero_commit_version() {
     for action in [
@@ -1207,6 +1265,10 @@ fn a_freshly_refreshed_blocker_is_assumed_alive_without_a_status_rpc() {
 /// A statement blocked by both protocols at once cleans each its own way.
 #[test]
 fn a_mixed_blocker_set_uses_each_locks_own_cleanup_protocol() {
+    let mut pessimistic = blocking_pessimistic(b"secondary", 0);
+    if let BlockingLock::Pessimistic(lock) = &mut pessimistic {
+        lock.txn_id = 2_000 << 18;
+    }
     let (runtime, recorded) = runtime(vec![
         // The optimistic blocker committed.
         KvrpcCheckTxnStatusResponse {
@@ -1219,18 +1281,27 @@ fn a_mixed_blocker_set_uses_each_locks_own_cleanup_protocol() {
             action: KvrpcTxnAction::TtlExpirePessimisticRollback as i32,
             ..KvrpcCheckTxnStatusResponse::default()
         },
+        // A second small optimistic blocker from the same transaction.
+        KvrpcCheckTxnStatusResponse {
+            commit_version: 1_200 << 18,
+            ..KvrpcCheckTxnStatusResponse::default()
+        },
     ]);
 
     let result = resolve_blocking_locks(
         &runtime,
         &[
             BlockingLock::Optimistic(secondary()),
-            blocking_pessimistic(b"secondary", 0),
+            pessimistic,
+            BlockingLock::Optimistic(OptimisticLock {
+                key: b"secondary-2".to_vec(),
+                ..secondary()
+            }),
         ],
         1_300 << 18,
         &KvrpcContext::default(),
         &call(),
-        &AdvancingTimestampSource::new([1_100 << 18, 1_100 << 18]),
+        &AdvancingTimestampSource::new([1_100 << 18, 1_100 << 18, 1_100 << 18]),
         // A blocking WRITE waits locks out; it never steps over them.
         false,
     )
@@ -1243,21 +1314,28 @@ fn a_mixed_blocker_set_uses_each_locks_own_cleanup_protocol() {
             statuses: vec![
                 ResolvedTxnStatus::Committed(1_200 << 18),
                 ResolvedTxnStatus::RolledBack,
+                ResolvedTxnStatus::Committed(1_200 << 18),
             ],
             // The optimistic blocker committed at or before this caller, so
             // its value is readable through the lock; the pessimistic blocker
             // left nothing behind, so its lock is merely stepped over.
-            ignore_locks: vec![1_000 << 18],
-            access_locks: vec![1_000 << 18],
+            ignore_locks: vec![2_000 << 18],
+            access_locks: vec![1_000 << 18, 1_000 << 18],
         }
     );
     let recorded = recorded.borrow();
-    assert_eq!(recorded.checks.len(), 2);
+    assert_eq!(recorded.checks.len(), 3);
     assert!(!recorded.checks[0].1.resolving_pessimistic_lock);
     assert!(recorded.checks[1].1.resolving_pessimistic_lock);
-    // Exactly one of each cleanup command, never both for the same lock.
+    assert!(!recorded.checks[2].1.resolving_pessimistic_lock);
+    // Small optimistic locks batch together even with a pessimistic lock
+    // between them. Each lock still uses its own cleanup command.
     assert_eq!(recorded.resolves.len(), 1);
     assert_eq!(recorded.resolves[0].1.commit_version, 1_200 << 18);
+    assert_eq!(
+        recorded.resolves[0].1.keys,
+        vec![b"secondary".to_vec(), b"secondary-2".to_vec()]
+    );
     assert_eq!(recorded.pessimistic_rollbacks.len(), 1);
 }
 

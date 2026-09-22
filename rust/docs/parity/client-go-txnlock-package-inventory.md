@@ -38,3 +38,14 @@ The direct-unary cop response delegate now borrows the current per-region
 budget through blocking-lock status/cleanup recovery, matching
 coprocessor.go:2674-2728's shared Backoffer path. This is focused caller seed
 evidence; complete caller and package reconciliation remains open.
+
+The synchronous writer path now defers cleanup of small optimistic locks until
+all statuses are known, then sends one exact-key ResolveLock request per
+transaction and region. `lock_resolver_source.rs` verifies three locks from
+one transaction split across two regions produce two requests with the exact
+region-specific keys, and verifies interleaved optimistic locks still batch
+around a distinct pessimistic transaction. This matches
+`LockResolver.resolveLocks` and
+`batchLiteResolveLocks` in the pinned `lock_resolver.go`. Read-side asynchronous
+cleanup, resolver options/cache/metrics, original Go support/test reconciliation,
+and every whole-package acceptance gate remain open.

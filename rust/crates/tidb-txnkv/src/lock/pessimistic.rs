@@ -33,9 +33,11 @@ use crate::{ResolvingLock, SharedReadRuntime, UnaryCallContext};
 
 use super::model::{BlockingLock, PessimisticLock};
 use super::resolver::{
-    check_cancelled, check_lock_call, classify_determined_status, map_rpc_error, query_txn_status,
-    recover_lock_region_error, remaining_lock_ttl, resolve_optimistic_locks_with_backoff,
-    route_key_attempt, LockStatus, LockStatusQuery,
+    check_cancelled, check_lock_call, classify_determined_status, flush_lite_resolve_cleanups,
+    map_rpc_error, query_txn_status, recover_lock_region_error, remaining_lock_ttl,
+    resolve_optimistic_lock_refs_collecting, resolve_optimistic_lock_refs_with_backoff,
+    resolve_optimistic_locks_with_backoff, route_key_attempt, LiteResolveCleanups, LockStatus,
+    LockStatusQuery,
 };
 use super::{
     LockRecoveryClient, LockRecoveryError, LockRecoveryResult, ResolvedTxnStatus, TimestampSource,
@@ -158,6 +160,35 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
+    // Go's synchronous writer path collects small optimistic locks before
+    // issuing lite ResolveLock requests, batching exact keys by transaction
+    // and region. The read path schedules independent asynchronous cleanup,
+    // while pessimistic locks require their own rollback protocol.
+    if !for_read
+        && locks
+            .iter()
+            .all(|lock| matches!(lock, BlockingLock::Optimistic(_)))
+    {
+        let optimistic_locks = locks
+            .iter()
+            .filter_map(|lock| match lock {
+                BlockingLock::Optimistic(lock) => Some(lock),
+                BlockingLock::Pessimistic(_) => None,
+            })
+            .collect::<Vec<_>>();
+        return resolve_optimistic_lock_refs_with_backoff(
+            runtime,
+            &optimistic_locks,
+            caller_start_ts,
+            base_context,
+            call,
+            timestamp_source,
+            for_read,
+            backoff,
+        );
+    }
+
+    let mut lite_cleanups = LiteResolveCleanups::default();
     let mut result = LockRecoveryResult {
         statuses: Vec::with_capacity(locks.len()),
         ..LockRecoveryResult::default()
@@ -176,6 +207,17 @@ where
             continue;
         }
         let outcome = match lock {
+            BlockingLock::Optimistic(lock) if !for_read => resolve_optimistic_lock_refs_collecting(
+                runtime,
+                std::slice::from_ref(&lock),
+                caller_start_ts,
+                base_context,
+                call,
+                timestamp_source,
+                for_read,
+                backoff,
+                &mut lite_cleanups,
+            )?,
             BlockingLock::Optimistic(lock) => resolve_optimistic_locks_with_backoff(
                 runtime,
                 std::slice::from_ref(lock),
@@ -207,6 +249,7 @@ where
         result.ignore_locks.extend(outcome.ignore_locks);
         result.access_locks.extend(outcome.access_locks);
     }
+    flush_lite_resolve_cleanups(runtime, &mut lite_cleanups, base_context, call, backoff)?;
     result.ttl = minimum_wait.unwrap_or_default();
     Ok(result)
 }

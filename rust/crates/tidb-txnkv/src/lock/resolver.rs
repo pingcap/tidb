@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -482,12 +483,135 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
+    resolve_optimistic_lock_iter_with_backoff(
+        runtime,
+        locks.iter(),
+        caller_start_ts,
+        base_context,
+        call,
+        timestamp_source,
+        for_read,
+        backoff,
+    )
+}
+
+pub(super) fn resolve_optimistic_lock_refs_with_backoff<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: &[&OptimisticLock],
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    for_read: bool,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<LockRecoveryResult, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource + ?Sized,
+{
+    resolve_optimistic_lock_iter_with_backoff(
+        runtime,
+        locks.iter().copied(),
+        caller_start_ts,
+        base_context,
+        call,
+        timestamp_source,
+        for_read,
+        backoff,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_optimistic_lock_iter_with_backoff<'a, C, L, T, I>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: I,
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    for_read: bool,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<LockRecoveryResult, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource + ?Sized,
+    I: IntoIterator<Item = &'a OptimisticLock>,
+{
+    let mut lite_cleanups = LiteResolveCleanups::default();
+    let result = resolve_optimistic_lock_iter_collecting(
+        runtime,
+        locks,
+        caller_start_ts,
+        base_context,
+        call,
+        timestamp_source,
+        for_read,
+        backoff,
+        &mut lite_cleanups,
+    )?;
+    flush_lite_resolve_cleanups(runtime, &mut lite_cleanups, base_context, call, backoff)?;
+    Ok(result)
+}
+
+pub(super) fn resolve_optimistic_lock_refs_collecting<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: &[&OptimisticLock],
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    for_read: bool,
+    backoff: &mut RegionBackoffBudget,
+    lite_cleanups: &mut LiteResolveCleanups,
+) -> Result<LockRecoveryResult, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource + ?Sized,
+{
+    resolve_optimistic_lock_iter_collecting(
+        runtime,
+        locks.iter().copied(),
+        caller_start_ts,
+        base_context,
+        call,
+        timestamp_source,
+        for_read,
+        backoff,
+        lite_cleanups,
+    )
+}
+
+fn resolve_optimistic_lock_iter_collecting<'a, C, L, T, I>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: I,
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    for_read: bool,
+    backoff: &mut RegionBackoffBudget,
+    lite_cleanups: &mut LiteResolveCleanups,
+) -> Result<LockRecoveryResult, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource + ?Sized,
+    I: IntoIterator<Item = &'a OptimisticLock>,
+{
+    let locks = locks.into_iter();
     let mut result = LockRecoveryResult {
-        statuses: Vec::with_capacity(locks.len()),
+        statuses: Vec::with_capacity(locks.size_hint().0),
         ..LockRecoveryResult::default()
     };
     let mut minimum_wait = None::<Duration>;
+    let lite_threshold = tikv_client::config::get_global_config()
+        .tikv_client
+        .resolve_lock_lite_threshold;
     for lock in locks {
+        let defer_lite_cleanup = !for_read && lock.txn_size < lite_threshold;
         // Go `resolve(l, forceSyncCommit)` (`lock_resolver.go:577-621`) is a
         // closure that calls itself exactly once more, with forceSyncCommit
         // set, when the async-commit recovery reports a secondary that is not
@@ -501,6 +625,7 @@ where
             call,
             timestamp_source,
             false,
+            defer_lite_cleanup,
             backoff,
         ) {
             Err(LockRecoveryError::NonAsyncCommitLock) => resolve_one_optimistic_lock(
@@ -511,6 +636,7 @@ where
                 call,
                 timestamp_source,
                 true,
+                defer_lite_cleanup,
                 backoff,
             )?,
             other => other?,
@@ -532,7 +658,22 @@ where
                 min_commit_ts_pushed: true,
                 ..
             } => result.ignore_locks.push(lock.txn_id),
-            OneLockOutcome::Resolved(status) => {
+            OneLockOutcome::Resolved {
+                status,
+                pending_lite_cleanup,
+            } => {
+                if pending_lite_cleanup {
+                    let cleanup =
+                        lite_cleanups
+                            .0
+                            .entry(lock.txn_id)
+                            .or_insert_with(|| LiteResolveCleanup {
+                                status,
+                                primary: lock.primary.clone(),
+                                keys: Vec::new(),
+                            });
+                    cleanup.keys.push(lock.key.clone());
+                }
                 result.statuses.push(status);
                 result.classify(lock.txn_id, status, caller_start_ts);
             }
@@ -545,6 +686,48 @@ where
     }
     result.ttl = minimum_wait.unwrap_or_default();
     Ok(result)
+}
+
+pub(super) fn flush_lite_resolve_cleanups<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    lite_cleanups: &mut LiteResolveCleanups,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<(), LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    for (txn_id, cleanup) in std::mem::take(&mut lite_cleanups.0) {
+        // Go `resolveLock` skips the sole primary key because CheckTxnStatus
+        // already performed that cleanup. A multi-key lite request includes
+        // the primary in its exact per-region key groups.
+        if cleanup.keys.len() == 1 && cleanup.keys[0] == cleanup.primary {
+            continue;
+        }
+        for group in group_keys_by_region(runtime, &cleanup.keys, base_context)? {
+            resolve_region_keys(
+                runtime,
+                txn_id,
+                group,
+                cleanup.status,
+                base_context,
+                call,
+                backoff,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+pub(super) struct LiteResolveCleanups(HashMap<u64, LiteResolveCleanup>);
+
+struct LiteResolveCleanup {
+    status: ResolvedTxnStatus,
+    primary: Vec<u8>,
+    keys: Vec<Vec<u8>>,
 }
 
 /// What one lock's recovery concluded.
@@ -563,7 +746,12 @@ pub(super) enum OneLockOutcome {
         min_commit_ts_pushed: bool,
     },
     /// The owner's fate is decided and this lock has been cleaned.
-    Resolved(ResolvedTxnStatus),
+    Resolved {
+        /// The transaction's determined fate.
+        status: ResolvedTxnStatus,
+        /// A small writer lock whose cleanup was deferred for region batching.
+        pending_lite_cleanup: bool,
+    },
 }
 
 fn resolve_one_optimistic_lock<C, L, T>(
@@ -574,6 +762,7 @@ fn resolve_one_optimistic_lock<C, L, T>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     force_sync_commit: bool,
+    defer_lite_cleanup: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<OneLockOutcome, LockRecoveryError>
 where
@@ -661,14 +850,17 @@ where
         // precisely to stop taking the async-commit path for this lock.
         if async_commit_primary && !force_sync_commit && ttl.is_zero() {
             let primary_lock = primary_lock.expect("an async-commit primary was observed");
-            return Ok(OneLockOutcome::Resolved(resolve_async_commit_lock(
-                runtime,
-                lock,
-                &primary_lock,
-                base_context,
-                call,
-                backoff,
-            )?));
+            return Ok(OneLockOutcome::Resolved {
+                status: resolve_async_commit_lock(
+                    runtime,
+                    lock,
+                    &primary_lock,
+                    base_context,
+                    call,
+                    backoff,
+                )?,
+                pending_lite_cleanup: false,
+            });
         }
         return Ok(OneLockOutcome::Alive {
             wait: ttl,
@@ -678,11 +870,14 @@ where
         });
     }
     let status = classify_determined_status(&check_response)?;
-    if lock.key != lock.primary {
+    if lock.key != lock.primary && !defer_lite_cleanup {
         check_cancelled(call)?;
         resolve_secondary(runtime, lock, status, base_context, call, backoff)?;
     }
-    Ok(OneLockOutcome::Resolved(status))
+    Ok(OneLockOutcome::Resolved {
+        status,
+        pending_lite_cleanup: defer_lite_cleanup,
+    })
 }
 
 /// The identity one CheckTxnStatus query needs from the lock it is about.

@@ -14,8 +14,10 @@ reply must consume the existing TxnLockFast retry budget before resolution;
 repeated ignored hints must terminate with the registered storage error instead
 of spinning. Clean reads must incur no additional hint allocation or wait.
 
-The working branch is hparser-integration, pulled before work. Current master is
-8a37ef2b44f5adef5a5cf57c263d9da8db76faa0. The complete root and dependency
+The working branch is hparser-integration. On 2026-09-22, fetching with
+`git fetch origin --prune` and running `git pull --ff-only origin hparser-integration`
+confirmed the branch was current at 38dc925c092448e1e618a7bb3d5eab405d90eb71.
+Current master is bb80c86a127b579a93c2070a7f3464ef1b609e38. The complete root and dependency
 artifact inventory is rust/docs/parity/copr-package-inventory.md (20 root
 artifacts plus five artifacts in separate copr_test/metrics packages).
 Master pins client-go/v2 v2.0.8-0.20260921040125-5f38569c8cc0. Its complete
@@ -41,6 +43,7 @@ directory; inventory every artifact and module build input before editing.
 - [x] Preserve point-response execution details at the wire boundary and integrate optional runtime response statistics with live Get/BatchGet.
 - [x] Integrate native point-read RPC counts/durations and ClientHelper ResolveLock accounting at the physical completion boundary; verify the terminal delivery/cancellation race.
 - [x] Integrate Get/BatchGet selected backoff histories, completed/cancelled wait accounting, and separate resolve-lock detail timing.
+- [x] Match Go's synchronous small-transaction writer cleanup batching by transaction and region; keep read-side async cleanup explicitly open.
 - [ ] Reconcile nested lock resolver and PD/routing backoffers with the full caller-owned history and clone/fork semantics.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
@@ -1298,3 +1301,36 @@ across unrelated workspace files; no workspace-wide formatting was applied.
 The txnlock/retry/txnsnapshot package units remain open, as do the coprocessor
 package's full Go source/test inventory, live TiKV and matched sysbench,
 TPC-C, TPC-H and YCSB gates.
+
+### Small writer lite-cleanup batching receipt (2026-09-22)
+
+The pinned Go `LockResolver.resolveLocks` collects determined small optimistic
+writer locks before cleanup. `batchLiteResolveLocks` groups their exact keys by
+region and synchronously sends one ResolveLock request for each region. Rust
+previously called the single-lock resolver once per blocker. The synchronous
+writer path now collects those outcomes by transaction and groups their keys
+through the existing region router; read-side async scheduling and pessimistic
+rollback stay on their distinct paths. The deferred cleanup also spans
+optimistic blockers separated by a pessimistic lock from another transaction.
+Source regressions use three locks from one transaction across two regions and
+verify the two requests contain exactly `[b]` and `[secondary, secondary-2]`
+for their respective regions; a mixed-protocol case verifies the interleaved
+optimistic keys still share one cleanup request.
+
+The regression first passed red against the prior implementation: two keys in
+one region generated two requests instead of one. Final targeted validation:
+
+    cd rust
+    cargo test --offline --locked -j12 -p tidb-txnkv --test lock_resolver_source
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+    cd ..
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+The resolver source suite passed all 26 cases, dependent crates compiled, lint
+passed, and the scoped formatter checked the three changed Rust source files.
+The complete txnlock package remains unaccepted: asynchronous read cleanup,
+resolver cache/options/metrics, original Go test/support reconciliation and
+build/platform gates are still open. No sysbench, TPC-C, TPC-H or YCSB
+performance claim follows from reducing these mock-RPC counts.
