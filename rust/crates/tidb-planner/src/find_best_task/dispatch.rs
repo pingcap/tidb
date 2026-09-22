@@ -170,6 +170,8 @@ pub struct DispatchContext<'a> {
     pub enable_3_stage_multi_distinct_agg: bool,
     /// Go `SessionVars.TiFlashPreAggMode`.
     pub tiflash_pre_agg_mode: String,
+    /// Go `SessionVars.IsPartialOrderedIndexForTopNEnabled`.
+    pub partial_ordered_index_for_topn: bool,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
     pub mpp_warning_sink: Option<&'a dyn MppWarningSink>,
     /// Go `SessionVars.GetAllowPreferRangeScan()` (`tidb_opt_prefer_range_scan`,
@@ -231,6 +233,7 @@ impl<'a> DispatchContext<'a> {
             enable_3_stage_distinct_agg: true,
             enable_3_stage_multi_distinct_agg: false,
             tiflash_pre_agg_mode: tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned(),
+            partial_ordered_index_for_topn: false,
             mpp_warning_sink: None,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
@@ -422,6 +425,13 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// Carries the session's prefix-index partial-order TopN switch.
+    #[must_use]
+    pub const fn with_partial_ordered_index_for_topn(mut self, enabled: bool) -> Self {
+        self.partial_ordered_index_for_topn = enabled;
+        self
+    }
+
     /// Attach the session statement-context sink used by physical refusal
     /// warnings. The planner remains usable without a session in unit tests.
     #[must_use]
@@ -559,6 +569,7 @@ fn exhaust_physical_plans(
                 ctx.mpp_allowed,
                 ctx.allow_projection_push_down,
                 ctx.heavy_function_optimize,
+                ctx.partial_ordered_index_for_topn,
             );
             if !topns.is_empty() {
                 slices.push(topns);
@@ -1521,6 +1532,49 @@ fn index_path_matches_order(
     true
 }
 
+/// Go `matchPartialOrderProperty` (`find_best_task.go:1260`). A prefix index
+/// can provide the requested TopN prefix only when all index-definition
+/// columns line up with the ORDER BY columns, the final definition column is
+/// a prefix column, and no earlier definition column is truncated.
+fn match_partial_order_property(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    partial: &crate::physical_property::PartialOrderInfo,
+) -> Option<crate::physical_property::PartialOrderMatchResult> {
+    if partial.sort_items.is_empty() || !partial.all_same_order().0 {
+        return None;
+    }
+    let index_columns = &index.columns;
+    if index_columns.is_empty() || index_columns.len() > partial.sort_items.len() {
+        return None;
+    }
+    if index_columns.last()?.length == tidb_datatype::UNSPECIFIED_LENGTH {
+        return None;
+    }
+    let mut prefix = None;
+    for (position, index_column) in index_columns.iter().enumerate() {
+        let column = ds.schema_column_for_index_column(index_column)?;
+        let order = partial.sort_items.get(position)?;
+        if column.unique_id != order.col.unique_id {
+            return None;
+        }
+        if index_column.length != tidb_datatype::UNSPECIFIED_LENGTH {
+            if position + 1 != index_columns.len() {
+                return None;
+            }
+            prefix = Some((column.clone(), index_column.length));
+        }
+    }
+    let Some((prefix_col, prefix_len)) = prefix else {
+        return None;
+    };
+    Some(crate::physical_property::PartialOrderMatchResult {
+        matched: true,
+        prefix_col: Some(prefix_col),
+        prefix_len: usize::try_from(prefix_len).ok()?,
+    })
+}
+
 fn equality_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
     use tidb_expr::expression::Expression;
     let mut ids = Vec::new();
@@ -2311,7 +2365,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     // (`matchProperty:1095`) — and the admitted scan carries
     // `KeepOrder`/`Desc` (`convertToTableScan:2834`).
     let ordered = !prop.is_sort_item_empty();
-    let desc = ordered && prop.sort_items[0].desc;
+    let partial_order = prop.partial_order_info.as_ref();
+    let desc = if ordered {
+        prop.sort_items[0].desc
+    } else {
+        partial_order.map_or(false, |info| info.all_same_order().1)
+    };
     let mut best = Task::invalid_task();
     let mut best_index_join_skyline_count = None;
     // Go `skylinePruning`'s `preferRange` override
@@ -2357,6 +2416,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         let mut heuristic = None;
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
+                if partial_order.is_some() {
+                    // Go's skyline pruning deliberately omits table paths for
+                    // partial-order TopN; a full table scan cannot provide the
+                    // prefix order required by the executor.
+                    continue 'paths;
+                }
                 if (!ordered && ds.force_keep_order_table_path)
                     || (ordered && ds.force_no_keep_order_table_path)
                 {
@@ -2945,7 +3010,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 })
             }
             crate::access_path::PossiblePath::TiFlashTable => {
-                if cop_multi_read || prop.index_join_prop.is_some() {
+                if partial_order.is_some() || cop_multi_read || prop.index_join_prop.is_some() {
                     continue 'paths;
                 }
                 let keep_order = ordered;
@@ -3017,13 +3082,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 let Some(source_index) = ds.indexes.get(*index) else {
                     continue 'paths;
                 };
+                let partial_order_match = partial_order
+                    .and_then(|info| match_partial_order_property(ds, source_index, info));
+                if partial_order.is_some() && partial_order_match.is_none() {
+                    continue 'paths;
+                }
                 if (!ordered && ds.force_keep_order_index_ids.contains(&source_index.id))
                     || (ordered && ds.force_no_keep_order_index_ids.contains(&source_index.id))
                 {
                     continue 'paths;
                 }
-                let keep_order = ordered;
-                if keep_order && !index_path_matches_order(ds, source_index, prop) {
+                let keep_order = ordered || partial_order_match.is_some();
+                if ordered && !index_path_matches_order(ds, source_index, prop) {
                     continue 'paths;
                 }
                 // `convertToIndexScan`: a path that is NOT a single scan
@@ -3698,6 +3768,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         }),
                         None => None,
                     },
+                    partial_order_match_result: partial_order_match,
                     ..crate::task::CopTask::default()
                 })
             }
@@ -5052,6 +5123,69 @@ mod tests {
         assert!(index_path_is_single_scan(&common, &common.indexes[0]));
         common.common_handle_lens = vec![1];
         assert!(!index_path_is_single_scan(&common, &common.indexes[0]));
+    }
+
+    #[test]
+    fn a_prefix_index_matches_partial_order_and_carries_the_match_result() {
+        use crate::access_path::PossiblePath;
+        use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_datatype::{FieldType, FieldTypeCode};
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let column = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        let mut base = BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0);
+        base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+        base.base.set_schema(Some(Schema::new(vec![column.clone()])));
+        let source = DataSource {
+            base,
+            physical_table_id: 7,
+            columns: vec![DataSourceColumn {
+                id: 1,
+                name: "a".to_owned(),
+                ..DataSourceColumn::default()
+            }],
+            enumerated_paths: vec![PossiblePath::Index { index: 0 }],
+            indexes: vec![SourceIndex {
+                id: 3,
+                name: "ia_prefix".to_owned(),
+                columns: vec![SourceIndexColumn {
+                    name: "a".to_owned(),
+                    offset: 0,
+                    length: 4,
+                }],
+                ..SourceIndex::default()
+            }],
+            ..DataSource::default()
+        };
+        let partial = PhysicalProperty {
+            task_tp: TaskType::CopMultiRead,
+            partial_order_info: Some(crate::physical_property::PartialOrderInfo {
+                sort_items: vec![SortItem::from_column(column, false)],
+            }),
+            ..PhysicalProperty::default()
+        };
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let task = find_best_task_4_logical_data_source_without_enforcer(
+            &source, &partial, &mut ctx,
+        )
+        .expect("partial-order index path plans");
+        let Task::Cop(cop) = task else {
+            panic!("the partial-order child remains a cop task");
+        };
+        assert!(cop.keep_order);
+        let result = cop
+            .partial_order_match_result
+            .expect("the prefix match is carried to attach2Task");
+        assert!(result.matched);
+        assert_eq!(result.prefix_col.expect("prefix column").unique_id, 11);
+        assert_eq!(result.prefix_len, 4);
+        assert!(matches!(
+            cop.index_plan.as_deref(),
+            Some(PhysicalPlan::IndexScan(scan)) if scan.keep_order && !scan.desc
+        ));
     }
 
     #[test]

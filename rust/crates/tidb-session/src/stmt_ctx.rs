@@ -72,6 +72,7 @@ pub(crate) struct StatementVarSnapshot {
     enable_3_stage_distinct_agg: bool,
     enable_3_stage_multi_distinct_agg: bool,
     tiflash_pre_agg_mode: String,
+    partial_ordered_index_for_topn: bool,
     enable_unsafe_substitute: bool,
     enable_semi_join_rewrite: bool,
     allow_in_subq_to_join_and_agg: bool,
@@ -794,6 +795,10 @@ impl Session {
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIFLASH_HASH_AGG_PRE_AGG_MODE)
                 .unwrap_or_else(|_| tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned()),
+            partial_ordered_index_for_topn: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_PARTIAL_ORDERED_INDEX_FOR_TOP_N)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("COST")),
             enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
             allow_in_subq_to_join_and_agg: on(
@@ -1007,6 +1012,7 @@ impl Session {
         let enable_3_stage_distinct_agg = snapshot.enable_3_stage_distinct_agg;
         let enable_3_stage_multi_distinct_agg = snapshot.enable_3_stage_multi_distinct_agg;
         let tiflash_pre_agg_mode = snapshot.tiflash_pre_agg_mode.clone();
+        let partial_ordered_index_for_topn = snapshot.partial_ordered_index_for_topn;
         let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
         let allow_in_subq_to_join_and_agg =
@@ -1132,6 +1138,7 @@ impl Session {
                     .with_enable_3_stage_distinct_agg(enable_3_stage_distinct_agg)
                     .with_enable_3_stage_multi_distinct_agg(enable_3_stage_multi_distinct_agg)
                     .with_tiflash_pre_agg_mode(tiflash_pre_agg_mode.clone())
+                    .with_partial_ordered_index_for_topn(partial_ordered_index_for_topn)
                     .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                     .with_projection_push_down(allow_projection_push_down)
                     .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
@@ -1343,6 +1350,7 @@ impl Session {
                 .with_enable_3_stage_distinct_agg(enable_3_stage_distinct_agg)
                 .with_enable_3_stage_multi_distinct_agg(enable_3_stage_multi_distinct_agg)
                 .with_tiflash_pre_agg_mode(tiflash_pre_agg_mode.clone())
+                .with_partial_ordered_index_for_topn(partial_ordered_index_for_topn)
                 .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                 .with_projection_push_down(allow_projection_push_down)
                 .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)

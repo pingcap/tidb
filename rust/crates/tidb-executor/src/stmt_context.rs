@@ -670,6 +670,9 @@ pub struct StmtContextData {
     enable_3_stage_multi_distinct_agg: bool,
     /// Go `SessionVars.TiFlashPreAggMode`.
     tiflash_pre_agg_mode: String,
+    /// Go `SessionVars.IsPartialOrderedIndexForTopNEnabled`, resolved from
+    /// `tidb_opt_partial_ordered_index_for_topn = COST` at statement start.
+    partial_ordered_index_for_topn: bool,
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`
     /// (`@@tidb_opt_enable_advanced_join_reorder`, default `ON`): whether
     /// join reorder uses the advanced framework. Its greedy solver compares
@@ -1370,6 +1373,13 @@ context_configuration! {
         self
     }
 
+    /// Sets Go's `tidb_opt_partial_ordered_index_for_topn` planning gate.
+    #[must_use]
+    pub const fn with_partial_ordered_index_for_topn(mut self, enabled: bool) -> Self {
+        self.partial_ordered_index_for_topn = enabled;
+        self
+    }
+
     /// Sets `@@tidb_opt_enable_advanced_join_reorder` for this statement.
     #[must_use]
     pub fn with_advanced_join_reorder(mut self, enabled: bool) -> Self {
@@ -1848,6 +1858,7 @@ impl StmtContext {
             enable_3_stage_multi_distinct_agg:
                 tidb_vardef::defaults::DEF_TIDB3_STAGE_MULTI_DISTINCT_AGG,
             tiflash_pre_agg_mode: tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned(),
+            partial_ordered_index_for_topn: false,
             advanced_join_reorder: tidb_vardef::defaults::DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             cartesian_join_order_threshold:
                 tidb_vardef::defaults::DEF_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD,
@@ -2606,6 +2617,12 @@ impl StmtContext {
     #[must_use]
     pub fn allow_projection_push_down(&self) -> bool {
         self.allow_projection_push_down
+    }
+
+    /// Go `SessionVars.IsPartialOrderedIndexForTopNEnabled`.
+    #[must_use]
+    pub fn partial_ordered_index_for_topn(&self) -> bool {
+        self.partial_ordered_index_for_topn
     }
 
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.

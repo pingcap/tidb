@@ -8172,3 +8172,29 @@ controls regular index double-read workers and direct index-merge partial
 readers; the statement override/fallback regression passes. This closes the
 worker-width selection gap without claiming whole executor-package or
 workload acceptance.
+
+
+## Continuing prefix-index partial-order TopN parity
+
+Go enables the prefix-index TopN candidate when
+`tidb_opt_partial_ordered_index_for_topn = COST`, admits only the supported
+DataSource/Selection/Projection child shapes, and asks the DataSource for a
+`CopMultiRead` child with `PartialOrderInfo`. Rust now captures the same
+statement switch, emits that candidate before ordinary TopN candidates, and
+matches only indexes whose definition columns line up with the ORDER BY prefix
+and whose final definition column is truncated. Table and TiFlash paths are
+excluded for this property, and the match result travels on `CopTask`.
+
+`Attach2Task` now follows Go's `handlePartialOrderTopN`: it resolves the
+matched prefix column in the TopN schema, pushes a prefix-aware Limit with
+`Offset + Count` onto the unfinished index plan when the CopTask permits it,
+and retains the root TopN (skipping that root only for partitioned TopN).
+Focused planner receipts pass:
+
+    cargo check --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner --message-format=short
+    cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner partial_order_topn_pushes_prefix_limit_and_keeps_root_topn -- --nocapture
+    cargo test --manifest-path rust/Cargo.toml --offline --locked -j12 -p tidb-planner prefix_index_matches_partial_order_and_carries_the_match_result -- --nocapture
+
+The remaining TopN branches, complete physicalop package acceptance, and the
+sysbench/TPC-C/TPC-H/YCSB performance gates remain open; these tests do not
+claim whole-package or workload parity.

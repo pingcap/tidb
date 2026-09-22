@@ -403,12 +403,13 @@ pub struct CopTask {
     /// Go `CopTask.IndexJoinInfo`, produced only while this data source is an
     /// index-join inner child.
     pub index_join_info: Option<IndexJoinInfo>,
+    /// Go `PartialOrderMatchResult`, set when a prefix index supplies the
+    /// partial order requested by a TopN child property.
+    pub partial_order_match_result: Option<crate::physical_property::PartialOrderMatchResult>,
     // boundary: `ExtraHandleCol`,
     // `TblColHists`, `TblCols`,
     // `IdxMergeMatchWithAdvisorySortItems`, `IdxMergePartPlansMatchResults`,
     // `PhysPlanPartInfo`,
-    // `PartialOrderMatchResult` — task integration remains absent rather than
-    // stubbed; the property type itself is complete.
     /// Go `Warnings`.
     pub warnings: SimpleWarnings,
 }
@@ -1549,6 +1550,69 @@ mod tests {
             };
             assert_eq!(bound(reader.table_plan.as_deref().unwrap()), (0, 7));
         }
+    }
+
+    #[test]
+    fn partial_order_topn_pushes_prefix_limit_and_keeps_root_topn() {
+        let allocator = PlanIdAllocator::new();
+        let schema = tidb_expr::schema::Schema::new(vec![column_with_id(1)]);
+        let cop = Task::Cop(CopTask {
+            index_plan: Some(Box::new(scan_with_schema(
+                &allocator,
+                "IndexScan",
+                schema.clone(),
+                100.0,
+            ))),
+            table_plan: Some(Box::new(scan_with_schema(
+                &allocator,
+                "TableScan",
+                schema.clone(),
+                100.0,
+            ))),
+            partial_order_match_result: Some(
+                crate::physical_property::PartialOrderMatchResult {
+                    matched: true,
+                    prefix_col: Some(column_with_id(1)),
+                    prefix_len: 4,
+                },
+            ),
+            ..CopTask::default()
+        });
+        let mut topn_base = crate::physical::BasePhysicalPlan::new(&allocator, "TopN", 0);
+        topn_base.base.set_schema(Some(schema));
+        topn_base.base.set_stats(Some(StatsInfo::new(5.0, [])));
+        let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+            base: topn_base,
+            by_items: vec![tidb_expr::aggregation::ByItems::new(
+                Expression::Column(column_with_id(1)),
+                false,
+            )],
+            offset: 2,
+            count: 3,
+            ..Default::default()
+        });
+
+        let task = attach2_task(topn, vec![cop], None, &allocator).expect("attaches");
+        let Some(PhysicalPlan::TopN(root_topn)) = task.plan() else {
+            panic!("partial-order TopN stays at the root: {:?}", task.plan());
+        };
+        assert_eq!((root_topn.offset, root_topn.count), (2, 3));
+        assert_eq!(root_topn.prefix_col, Some(1));
+        assert_eq!(root_topn.prefix_len, 4);
+        let Some(PhysicalPlan::IndexLookUpReader(reader)) = root_topn.base.children().first()
+        else {
+            panic!("the cop task converts to an index lookup reader");
+        };
+        let Some(PhysicalPlan::Limit(limit)) = reader.index_plan.as_deref() else {
+            panic!("the prefix limit is pushed to the index plan");
+        };
+        assert_eq!((limit.offset, limit.count), (0, 5));
+        assert_eq!(limit.prefix_col, Some(1));
+        assert_eq!(limit.prefix_len, 4);
+        assert!(matches!(
+            limit.base.children().first(),
+            Some(PhysicalPlan::IndexScan(_))
+        ));
     }
 
     #[test]
@@ -2856,7 +2920,7 @@ pub fn attach2_task(
     // The caller hands over owned candidate tasks. Go copies task headers
     // while sharing plan pointers; moving these tasks avoids cloning Rust's
     // owned plan trees again. A caller retaining a candidate uses Task::copy.
-    let first = tasks
+    let mut first = tasks
         .drain(..1)
         .next()
         .ok_or_else(|| PlanError::internal("attach2_task with no child task"))?;
@@ -3234,6 +3298,77 @@ pub fn attach2_task(
             let PhysicalPlan::TopN(topn) = &plan else {
                 unreachable!("the arm matched TopN");
             };
+            // Go `handlePartialOrderTopN`: a prefix-index match is carried
+            // by the CopTask so the root TopN can retain the partial-order
+            // metadata while a special Limit short-circuits the index scan.
+            if let Task::Cop(mut cop) = first {
+                if let Some(match_result) = cop
+                    .partial_order_match_result
+                    .take()
+                    .filter(|result| result.matched)
+                {
+                    let Some(prefix_col) = match_result.prefix_col.as_ref() else {
+                        return Ok(Task::invalid_task());
+                    };
+                    let Some(topn_schema) = topn.base.base.schema() else {
+                        return Ok(Task::invalid_task());
+                    };
+                    let Some(prefix_col) = topn_schema
+                        .columns
+                        .iter()
+                        .find(|column| column.unique_id == prefix_col.unique_id)
+                        .cloned()
+                    else {
+                        return Ok(Task::invalid_task());
+                    };
+                    let mut partial_topn = topn.clone();
+                    partial_topn.prefix_col = Some(prefix_col.unique_id);
+                    partial_topn.prefix_len = match_result.prefix_len;
+
+                    let can_push_limit = cop.idx_merge_part_plans.is_empty()
+                        && !cop.index_plan_finished
+                        && cop.root_task_conds.is_empty()
+                        && cop.index_plan.is_some();
+                    if can_push_limit {
+                        let new_count = partial_topn.offset.wrapping_add(partial_topn.count);
+                        let child = cop
+                            .index_plan
+                            .take()
+                            .expect("partial-order CopTask has an index plan");
+                        let stats = child
+                            .stats_info()
+                            .map(|profile| profile.derive_limit_stats(new_count as f64));
+                        let mut base = crate::physical::BasePhysicalPlan::new(
+                            allocator,
+                            "Limit",
+                            plan.query_block_offset(),
+                        );
+                        base.base.set_stats(stats);
+                        base.base.set_schema(child.schema().cloned());
+                        base.set_children(vec![*child]);
+                        cop.index_plan = Some(Box::new(PhysicalPlan::Limit(
+                            crate::physical::PhysicalLimit {
+                                base,
+                                partition_by: partial_topn.partition_by.clone(),
+                                offset: 0,
+                                count: new_count,
+                                prefix_col: Some(prefix_col.unique_id),
+                                prefix_len: match_result.prefix_len,
+                            },
+                        )));
+                    }
+
+                    let converted = Task::Cop(cop).into_root_task(allocator)?;
+                    if !partial_topn.partition_by.is_empty() {
+                        return Ok(converted);
+                    }
+                    return Ok(attach_plan_to_task(
+                        PhysicalPlan::TopN(partial_topn),
+                        converted,
+                    ));
+                }
+                first = Task::Cop(cop);
+            }
             let t = match first {
                 Task::Root(_) => first.into_root_task(allocator)?,
                 Task::Cop(_) => {

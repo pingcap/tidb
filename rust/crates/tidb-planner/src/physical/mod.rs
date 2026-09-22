@@ -2740,6 +2740,7 @@ pub fn get_phys_topn(
     mpp_allowed: bool,
     allow_projection_push_down: bool,
     heavy_function_optimize: bool,
+    partial_ordered_index_for_topn: bool,
 ) -> Vec<PhysicalPlan> {
     let mut all_task_types = vec![
         TaskType::CopSingleRead,
@@ -2766,7 +2767,53 @@ pub fn get_phys_topn(
     })
     .flatten()
     .filter(|items| !items.is_empty());
-    let mut ret = Vec::with_capacity(all_task_types.len() + 1);
+    let mut ret = Vec::with_capacity(all_task_types.len() + 2);
+    if partial_ordered_index_for_topn
+        && can_use_partial_order_topn(topn)
+        && !topn.by_items.is_empty()
+    {
+        let sort_items = topn
+            .by_items
+            .iter()
+            .map(|item| match &item.expr {
+                tidb_expr::expression::Expression::Column(column) => Some(
+                    crate::physical_property::SortItem::from_column(column.clone(), item.desc),
+                ),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>();
+        if let Some(sort_items) = sort_items {
+            let result_prop = PhysicalProperty {
+                task_tp: TaskType::CopMultiRead,
+                expected_cnt: f64::MAX,
+                cte_producer_status: prop.cte_producer_status,
+                no_cop_push_down: prop.no_cop_push_down,
+                partial_order_info: Some(crate::physical_property::PartialOrderInfo {
+                    sort_items,
+                }),
+                ..PhysicalProperty::default()
+            };
+            let mut base = BasePhysicalPlan::new(
+                allocator,
+                crate::logical::LogicalTopN::TYPE,
+                topn.base.base.query_block_offset(),
+            );
+            base.base.set_stats(topn.base.base.stats_info().cloned());
+            base.base.set_schema(topn.base.base.schema().cloned());
+            base.set_children_req_props(vec![Some(result_prop)]);
+            ret.push(PhysicalPlan::TopN(PhysicalTopN {
+                base,
+                by_items: topn.by_items.clone(),
+                partition_by: topn.partition_by.clone(),
+                offset: topn.offset,
+                count: topn.count,
+                prefix_col: None,
+                prefix_len: 0,
+                allow_projection_push_down,
+                heavy_function_optimize,
+            }));
+        }
+    }
     for tp in all_task_types {
         let result_prop = PhysicalProperty {
             task_tp: tp,
@@ -2821,6 +2868,28 @@ pub fn get_phys_topn(
         }
     }
     ret
+}
+
+/// Go `canUsePartialOrder4TopN`/`checkPartialOrderPattern`: prefix-index
+/// ordering is only admitted through Selection/Projection wrappers directly
+/// above one DataSource. The projection itself transforms the partial-order
+/// columns when the child property is requested.
+fn can_use_partial_order_topn(topn: &crate::logical::LogicalTopN) -> bool {
+    fn supported(plan: Option<&crate::logical::LogicalPlan>) -> bool {
+        match plan {
+            Some(crate::logical::LogicalPlan::DataSource(_)) => true,
+            Some(crate::logical::LogicalPlan::Selection(selection))
+                if selection.base.children().len() == 1 => {
+                supported(selection.base.children().first())
+            }
+            Some(crate::logical::LogicalPlan::Projection(projection))
+                if projection.base.children().len() == 1 => {
+                supported(projection.base.children().first())
+            }
+            _ => false,
+        }
+    }
+    supported(topn.base.children().first())
 }
 
 /// Go `AggMppRunMode` (`base_physical_agg.go:40`).

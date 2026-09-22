@@ -1596,6 +1596,7 @@ pub(crate) fn physical_plan_for_logical(
         .with_enable_3_stage_distinct_agg(ctx.enable_3_stage_distinct_agg())
         .with_enable_3_stage_multi_distinct_agg(ctx.enable_3_stage_multi_distinct_agg())
         .with_tiflash_pre_agg_mode(ctx.tiflash_pre_agg_mode())
+        .with_partial_ordered_index_for_topn(ctx.partial_ordered_index_for_topn())
         .with_mpp_warning_sink(ctx)
         .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
         .with_selectivity_factor(ctx.selectivity_factor())
