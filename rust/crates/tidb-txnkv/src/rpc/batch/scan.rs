@@ -32,5 +32,6 @@ pub(in crate::rpc) fn entry(
         BatchCommandTag::Scan,
         request.encode_to_vec(),
         forwarded_host,
+        context,
     )
 }

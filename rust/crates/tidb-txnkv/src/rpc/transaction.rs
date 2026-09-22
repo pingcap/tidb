@@ -117,7 +117,32 @@ pub struct TransactionBatchPending<R> {
     publication: Option<TransactionBatchPublication>,
     progress: Arc<BatchRequestProgress>,
     barrier: Option<crate::rpc::transport_runtime::PublicationBarrier>,
+    send_metrics: Option<SendRequestObservation>,
     response: PhantomData<fn() -> R>,
+}
+
+/// Go `sendReq`'s deferred `storeMetrics.updateRPCMetrics`
+/// (`client.go:346-351`): the identity one RPC attempt reports its wall time
+/// under. The store label is the peer store id from the request context, the
+/// same source client-go reads (`req.Context.GetPeer().GetStoreId()`).
+#[derive(Clone, Debug)]
+struct SendRequestObservation {
+    started_at: std::time::Instant,
+    store_id: u64,
+    stale_read: bool,
+    request_source: String,
+}
+
+impl SendRequestObservation {
+    fn report(&self, cmd_type: &str) {
+        crate::client_go_metrics::observe_send_request_seconds(
+            cmd_type,
+            self.store_id,
+            self.stale_read,
+            &self.request_source,
+            self.started_at.elapsed().as_secs_f64(),
+        );
+    }
 }
 
 impl<R> TransactionBatchPending<R>
@@ -128,6 +153,7 @@ where
         tag: BatchCommandTag,
         encoded_request: Vec<u8>,
         forwarded_host: Option<&str>,
+        context: &tidb_proto::KvrpcContext,
     ) -> (BatchCommandEntry, Self) {
         let (completion, pull) = reply_pair();
         let mut entry =
@@ -136,6 +162,15 @@ where
             entry = entry.with_forwarded_host(forwarded_host);
         }
         let progress = entry.progress();
+        let send_metrics = SendRequestObservation {
+            started_at: std::time::Instant::now(),
+            store_id: context
+                .peer
+                .as_ref()
+                .map_or(0, |peer| peer.store_id),
+            stale_read: context.stale_read,
+            request_source: context.request_source.clone(),
+        };
         (
             entry,
             Self {
@@ -144,6 +179,7 @@ where
                 publication: None,
                 progress,
                 barrier: None,
+                send_metrics: Some(send_metrics),
                 response: PhantomData,
             },
         )
@@ -228,6 +264,16 @@ where
         }
     }
 
+    /// Reports this attempt's wall time once, at the terminal edge — Go's
+    /// deferred `updateRPCMetrics` fires on success and error alike
+    /// (`client.go:349`, `client_async.go:118`).
+    fn report_send_metrics(&mut self) {
+        if let Some(send_metrics) = &self.send_metrics {
+            send_metrics.report(self.tag.cmd_type_label());
+            self.send_metrics = None;
+        }
+    }
+
     /// Polls without blocking; `None` means the exact request remains pending.
     pub fn try_complete(
         &mut self,
@@ -238,6 +284,7 @@ where
         };
         // A completed response already has identity in its original entry.
         self.capture_publication();
+        self.report_send_metrics();
         Ok(Some(self.map_result(result)))
     }
 
@@ -249,6 +296,7 @@ where
         let result = self.completion.complete(call)?;
         // No second acknowledgement follows the response on the success path.
         self.capture_publication();
+        self.report_send_metrics();
         Ok(self.map_result(result))
     }
 
@@ -260,11 +308,13 @@ where
     > {
         let result = std::task::ready!(self.completion.poll_complete(cx))?;
         self.capture_publication();
+        self.report_send_metrics();
         std::task::Poll::Ready(Ok(self.map_result(result)))
     }
 
     /// Cancels this exact completion without creating a response.
     pub fn cancel(&mut self) {
+        self.report_send_metrics();
         self.completion.cancel();
     }
 }
@@ -462,6 +512,7 @@ mod tests {
                 BatchCommandTag::Get,
                 vec![],
                 Some("logical:20160"),
+                &tidb_proto::KvrpcContext::default(),
             );
             // There is no separate publication ACK: the original entry is enough.
             let mut scheduler = BatchScheduler::new();
@@ -517,6 +568,7 @@ mod tests {
             BatchCommandTag::Get,
             Vec::new(),
             None,
+            &tidb_proto::KvrpcContext::default(),
         );
         pending.publication = Some(TransactionBatchPublication {
             tag: BatchCommandTag::Get,

@@ -2443,6 +2443,10 @@ impl PreparedDmlPlan {
                     Some(generation) => (plan, generation, true),
                     None => {
                         cached_plans.remove(index);
+                        // Go `plan_cache_lru.go` delete arm decrements the
+                        // session plan-num gauge for every dropped plan.
+                        tidb_planner::metrics::plan_cache_instance_num_counter(false)
+                            .sub(1.0);
                         return None;
                     }
                 }
@@ -2470,11 +2474,19 @@ impl PreparedDmlPlan {
                 // A rejected candidate executes once without a cache rebuild or insertion.
                 let generation = if cacheable { plan.bind(params)? } else { 0 };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
+                let stale_before_retain = cached_plans.len();
                 cached_plans.retain(|entry| {
                     entry.schema_version == schema_version
                         && entry.stats_version_hash == stats_version_hash
                         && entry.environment == *environment
                 });
+                // Go environment invalidation drops every stale-environment
+                // plan and decrements the gauge by that count.
+                let stale_removed = stale_before_retain - cached_plans.len();
+                if stale_removed > 0 {
+                    tidb_planner::metrics::plan_cache_instance_num_counter(false)
+                        .sub(stale_removed as f64);
+                }
                 if cacheable {
                     cached_plans.push(CachedDmlPlanEntry {
                         schema_version,
@@ -2484,6 +2496,8 @@ impl PreparedDmlPlan {
                         limit_values,
                         plan: Arc::clone(&plan),
                     });
+                    // Go `updateInstancePlanNum` put arm.
+                    tidb_planner::metrics::plan_cache_instance_num_counter(false).add(1.0);
                 }
                 (plan, generation, false)
             }

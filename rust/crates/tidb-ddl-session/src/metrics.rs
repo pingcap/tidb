@@ -101,6 +101,42 @@ pub static DDL_WORKER_OPERATION_DURATION: LazyLock<HistogramVec> = LazyLock::new
     ))
 });
 
+/// Go `DeploySyncerHistogram` (`pkg/metrics/ddl.go`): 1ms ~ 524s buckets.
+pub static DDL_DEPLOY_SYNCER_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_ddl_deploy_syncer_duration_seconds",
+            "Bucketed histogram of processing time (s) of deploy syncer",
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
+        &["type", "result"],
+    ))
+});
+
+/// Go `UpdateSelfVersionHistogram` (`pkg/metrics/ddl.go`).
+pub static DDL_UPDATE_SELF_VER_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_ddl_update_self_ver_duration_seconds",
+            "Bucketed histogram of processing time (s) of update self version",
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
+        &["result"],
+    ))
+});
+
+/// Go `OwnerHandleSyncerHistogram` (`pkg/metrics/ddl.go`).
+pub static DDL_OWNER_HANDLE_SYNCER_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_ddl_owner_handle_syncer_duration_seconds",
+            "Bucketed histogram of processing time (s) of handle syncer",
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).expect("valid buckets")),
+        &["type", "result"],
+    ))
+});
+
 /// The (fq name, help, kind) of every histogram family in this module,
 /// for the exposition header shim that mirrors Go's registered-family output.
 pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
@@ -108,5 +144,8 @@ pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
             ("tidb_ddl_handle_job_duration_seconds", "Bucketed histogram of processing time (s) of handle jobs"),
             ("tidb_ddl_job_table_duration_seconds", "Bucketed histogram of processing time (s) of the 3 DDL job tables"),
             ("tidb_ddl_worker_operation_duration_seconds", "Bucketed histogram of processing time (s) of ddl worker operations"),
+            ("tidb_ddl_deploy_syncer_duration_seconds", "Bucketed histogram of processing time (s) of deploy syncer"),
+            ("tidb_ddl_update_self_ver_duration_seconds", "Bucketed histogram of processing time (s) of update self version"),
+            ("tidb_ddl_owner_handle_syncer_duration_seconds", "Bucketed histogram of processing time (s) of handle syncer"),
     ]
 }

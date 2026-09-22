@@ -29,5 +29,6 @@ pub(in crate::rpc) fn entry(
         BatchCommandTag::Get,
         request.encode_to_vec(),
         forwarded_host,
+        context,
     )
 }

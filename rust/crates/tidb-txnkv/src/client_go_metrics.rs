@@ -29,11 +29,45 @@
 use std::sync::LazyLock;
 
 use prometheus::TextEncoder;
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, Registry};
+use prometheus::{
+    Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry,
+};
 use tikv_client::metrics::ClientGoMetrics;
 
 // GC-worker families from Go `pkg/metrics/gc_worker.go`, subsystem
 // `tikvclient` like the client-go set.
+
+/// Go `GCHistogram` (`pkg/metrics/gc_worker.go:44-51`): GC duration by
+/// stage, 1s ~ 6days exponential buckets.
+pub static GC_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    let metric = HistogramVec::new(
+        HistogramOpts::new("gc_seconds", "Bucketed histogram of gc duration.")
+            .namespace("tidb")
+            .subsystem("tikvclient")
+            .buckets(prometheus::exponential_buckets(1.0, 2.0, 20).expect("20 positive buckets")),
+        &["stage"],
+    )
+    .expect("valid gc seconds histogram");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("gc seconds histogram is registered once");
+    metric
+});
+
+/// Go `GCActionRegionResultCounter` (`pkg/metrics/gc_worker.go:68-73`).
+pub static GC_ACTION_REGION_RESULT: LazyLock<CounterVec> = LazyLock::new(|| {
+    let metric = CounterVec::new(
+        Opts::new("gc_action_result", "Counter of gc action result on region level.")
+            .namespace("tidb")
+            .subsystem("tikvclient"),
+        &["type"],
+    )
+    .expect("valid gc action result counter");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("gc action result counter is registered once");
+    metric
+});
 
 /// Go `GCConfigGauge`.
 pub static GC_CONFIG: LazyLock<GaugeVec> = LazyLock::new(|| {
@@ -174,9 +208,17 @@ pub fn observe_pessimistic_lock_keys_duration(seconds: f64) {
 /// Store-scoped gauge series (`store` label) materialize on first real
 /// client activity, matching Go's per-store behavior.
 fn materialize_dashboard_series() {
-    // gc_worker.go families.
-
+    // gc_worker.go families. Go's gc worker materializes the config gauge's
+    // two children at boot (`gc_worker.go:307-308` Set(0)) and binds the
+    // rest as the worker starts; the dashboard reads every family.
+    LazyLock::force(&GC_CONFIG);
+    LazyLock::force(&GC_FAILURE);
+    LazyLock::force(&GC_SECONDS);
+    LazyLock::force(&GC_ACTION_REGION_RESULT);
+    LazyLock::force(&GC_WORKER_ACTIONS_TOTAL);
     LazyLock::force(&GC_REGION_TOO_MANY_LOCKS);
+    let _ = GC_CONFIG.with_label_values(&["tikv_gc_run_interval"]).set(0.0);
+    let _ = GC_CONFIG.with_label_values(&["tikv_gc_life_time"]).set(0.0);
     if let Some(counter_vec) = collector_counter_vec("TiKVLoadTxnSafePointCounter") {
         let _ = counter_vec.with_label_values(&["ok_compatible"]);
     }
@@ -327,6 +369,78 @@ pub fn init_embedded_store_series(store_id: u64) {
     }
     if let Some(counter_vec) = collector_counter_vec("TiKVRegionErrorCounter") {
         let _ = counter_vec.with_label_values(&["epoch_not_match", &store]);
+    }
+}
+
+/// Go `util.IsInternalRequest` (`request_source.go:167`): a request source
+/// prefixed with `internal` marks an internal ("scope=true") RPC.
+#[must_use]
+pub fn is_internal_request(request_source: &str) -> bool {
+    request_source.starts_with("internal")
+}
+
+/// Go `metrics.TwoPCTxnCounter*` commit-protocol counter shortcuts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TxnCommitProtocol {
+    /// Classic two-phase commit.
+    TwoPc,
+    /// Async-commit protocol.
+    AsyncCommit,
+    /// One-phase commit inside prewrite.
+    OnePc,
+}
+
+/// Go `twoPhaseCommitter.execute`'s deferred counters
+/// (`2pc.go:1755-1795`): exactly one ok/err shortcut fires per commit
+/// attempt, chosen by protocol and terminal classification. The 2PC arm
+/// counts `committed || undetermined` as ok; the 1PC and async-commit arms
+/// count any error as err.
+pub fn record_txn_commit(protocol: TxnCommitProtocol, succeeded: bool) {
+    let source_name = match (protocol, succeeded) {
+        (TxnCommitProtocol::TwoPc, true) => "TwoPCTxnCounterOk",
+        (TxnCommitProtocol::TwoPc, false) => "TwoPCTxnCounterError",
+        (TxnCommitProtocol::AsyncCommit, true) => "AsyncCommitTxnCounterOk",
+        (TxnCommitProtocol::AsyncCommit, false) => "AsyncCommitTxnCounterError",
+        (TxnCommitProtocol::OnePc, true) => "OnePCTxnCounterOk",
+        (TxnCommitProtocol::OnePc, false) => "OnePCTxnCounterError",
+    };
+    if let Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) =
+        tikv_client::metrics::global_metrics().shortcut(source_name)
+    {
+        counter.inc();
+    }
+}
+
+/// Go `storeMetrics.updateRPCMetrics` (`client.go:894-928`): charges one RPC
+/// attempt's wall time to `tidb_tikvclient_request_seconds` (histogram) and
+/// `tidb_tikvclient_source_request_seconds` (summary). The store label is the
+/// peer store id; `scope` is `FormatBool(internal)`; the summary's `source`
+/// label carries the raw request source ("" for user traffic).
+pub fn observe_send_request_seconds(
+    cmd_type: &str,
+    store_id: u64,
+    stale_read: bool,
+    request_source: &str,
+    seconds: f64,
+) {
+    let store = store_id.to_string();
+    let stale = if stale_read { "true" } else { "false" };
+    let scope = if is_internal_request(request_source) {
+        "true"
+    } else {
+        "false"
+    };
+    let metrics = tikv_client::metrics::global_metrics();
+    if let Some(hist) = metrics.histogram_vec("TiKVSendReqHistogram") {
+        hist.with_label_values(&[cmd_type, &store, stale, scope])
+            .observe(seconds);
+    }
+    if let Some(summary) = metrics.summary_vec("TiKVSendReqBySourceSummary") {
+        if let Ok(observer) =
+            summary.with_label_values(&[cmd_type, &store, stale, scope, request_source])
+        {
+            observer.observe(seconds);
+        }
     }
 }
 

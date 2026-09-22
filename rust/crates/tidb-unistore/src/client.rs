@@ -290,11 +290,29 @@ impl tidb_txnkv::rpc::PendingRequest for ImmediatePending {
 /// identity.
 macro_rules! publish_in_process {
     ($self:ident, $request:expr, $tag:ident, $method:ident) => {{
+        // Go's unistore still rides client-go's `sendReq`, whose deferred
+        // `storeMetrics.updateRPCMetrics` charges every in-process attempt to
+        // `tidb_tikvclient_request_seconds` (`client.go:346-351`); the
+        // embedded transport mirrors that observability at its own boundary.
+        let send_started = std::time::Instant::now();
         let response = $self
             .handler
             .lock()
             .expect("the store lock")
             .$method($request);
+        tidb_txnkv::client_go_metrics::observe_send_request_seconds(
+            BatchCommandTag::$tag.cmd_type_label(),
+            0,
+            $request
+                .context
+                .as_ref()
+                .map_or(false, |context| context.stale_read),
+            $request
+                .context
+                .as_ref()
+                .map_or("", |context| context.request_source.as_str()),
+            send_started.elapsed().as_secs_f64(),
+        );
         let request_id = $self.request_ids.fetch_add(1, Ordering::Relaxed);
         PublishedCommand::Response(TransactionBatchResponse {
             response,
@@ -427,6 +445,30 @@ impl tidb_txnkv::rpc::AsyncRequestDispatcher for InProcessClient {
 mod tests {
     use super::*;
     use tidb_proto::tipb;
+
+    #[test]
+    fn in_process_publish_observes_send_request_seconds() {
+        tidb_txnkv::client_go_metrics::init_dashboard_series();
+        let mut client = InProcessClient::new();
+        let context = tidb_proto::KvrpcContext {
+            region_id: 1,
+            ..Default::default()
+        };
+        let request = tidb_proto::KvrpcGetRequest::default();
+        let pending = client.publish_transaction_get(
+            "127.0.0.1:20160",
+            &request,
+            &context,
+            &tidb_txnkv::rpc::UnaryCallContext::with_timeout(std::time::Duration::from_secs(1)),
+        );
+        let _ = pending;
+        let families = tidb_txnkv::client_go_metrics::gather_text();
+        assert!(
+            families.contains("tidb_tikvclient_request_seconds_count{scope=\"false\",stale_read=\"false\",store=\"0\",type=\"Get\"}"),
+            "the in-process publish must observe request_seconds: {}",
+            &families[families.len().saturating_sub(4000)..]
+        );
+    }
 
     // WRITTEN: rpc.go's coverage is the store integration suites.
 

@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 etcd-client.workspace = true
+prometheus = { version = "0.13", default-features = false }
 tidb-proto = { path = "../tidb-proto" }
 tikv-client.workspace = true
 tokio.workspace = true

@@ -39,82 +39,109 @@ const LBL_CLONE: &str = " instance-plan-cache-clone";
 
 /// Go `metrics.PlanCacheCounter`.
 pub static PLAN_CACHE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
-    CounterVec::new(
-        Opts::new("plan_cache_total", "Counter of query using plan cache.")
-            .namespace("tidb")
-            .subsystem("server"),
-        &[LBL_TYPE],
+    register(
+        CounterVec::new(
+            Opts::new("plan_cache_total", "Counter of query using plan cache.")
+                .namespace("tidb")
+                .subsystem("server"),
+            &[LBL_TYPE],
+        ),
+        "plan cache counter",
     )
-    .expect("valid plan cache counter")
 });
 
 /// Go `metrics.PlanCacheMissCounter`.
 pub static PLAN_CACHE_MISS_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
-    CounterVec::new(
-        Opts::new("plan_cache_miss_total", "Counter of plan cache miss.")
-            .namespace("tidb")
-            .subsystem("server"),
-        &[LBL_TYPE],
+    register(
+        CounterVec::new(
+            Opts::new("plan_cache_miss_total", "Counter of plan cache miss.")
+                .namespace("tidb")
+                .subsystem("server"),
+            &[LBL_TYPE],
+        ),
+        "plan cache miss counter",
     )
-    .expect("valid plan cache miss counter")
 });
 
 /// Go `metrics.PlanCacheInstanceMemoryUsage`.
 pub static PLAN_CACHE_INSTANCE_MEMORY_USAGE: LazyLock<GaugeVec> = LazyLock::new(|| {
-    GaugeVec::new(
-        Opts::new(
-            "plan_cache_instance_memory_usage",
-            "Total plan cache memory usage of all sessions in a instance",
-        )
-        .namespace("tidb")
-        .subsystem("server"),
-        &[LBL_TYPE],
+    register(
+        GaugeVec::new(
+            Opts::new(
+                "plan_cache_instance_memory_usage",
+                "Total plan cache memory usage of all sessions in a instance",
+            )
+            .namespace("tidb")
+            .subsystem("server"),
+            &[LBL_TYPE],
+        ),
+        "plan cache memory gauge",
     )
-    .expect("valid plan cache memory gauge")
 });
+
+/// Registers one collector with the process default registry. Go's
+/// `pkg/metrics.RegisterMetrics` makes every family visible to `/metrics`;
+/// without this the dashboard families below stay invisible even once their
+/// children are materialized.
+fn register<C>(collector: prometheus::Result<C>, what: &'static str) -> C
+where
+    C: prometheus::core::Collector + Clone + 'static,
+{
+    let metric = collector.unwrap_or_else(|error| panic!("{what} is constructible: {error}"));
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .unwrap_or_else(|error| panic!("{what} is registered once: {error}"));
+    metric
+}
 
 /// Go `metrics.PlanCacheInstancePlanNumCounter`.
 pub static PLAN_CACHE_INSTANCE_PLAN_NUM_COUNTER: LazyLock<GaugeVec> = LazyLock::new(|| {
-    GaugeVec::new(
-        Opts::new(
-            "plan_cache_instance_plan_num_total",
-            "Counter of plan of all prepared plan cache in a instance",
-        )
-        .namespace("tidb")
-        .subsystem("server"),
-        &[LBL_TYPE],
+    register(
+        GaugeVec::new(
+            Opts::new(
+                "plan_cache_instance_plan_num_total",
+                "Counter of plan of all prepared plan cache in a instance",
+            )
+            .namespace("tidb")
+            .subsystem("server"),
+            &[LBL_TYPE],
+        ),
+        "plan cache plan num gauge",
     )
-    .expect("valid plan cache plan num gauge")
 });
 
 /// Go `metrics.PseudoEstimation` (the statistics family this package binds
 /// its two pseudo-estimation children from).
 pub static PSEUDO_ESTIMATION: LazyLock<CounterVec> = LazyLock::new(|| {
-    CounterVec::new(
-        Opts::new(
-            "pseudo_estimation_total",
-            "Counter of pseudo estimation caused by outdated stats.",
-        )
-        .namespace("tidb")
-        .subsystem("statistics"),
-        &[LBL_TYPE],
+    register(
+        CounterVec::new(
+            Opts::new(
+                "pseudo_estimation_total",
+                "Counter of pseudo estimation caused by outdated stats.",
+            )
+            .namespace("tidb")
+            .subsystem("statistics"),
+            &[LBL_TYPE],
+        ),
+        "pseudo estimation counter",
     )
-    .expect("valid pseudo estimation counter")
 });
 
 /// Go `metrics.PlanCacheProcessDuration` (1ms ~ 1.5days exponential buckets).
 pub static PLAN_CACHE_PROCESS_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    HistogramVec::new(
-        HistogramOpts::new(
-            "plan_cache_process_duration_seconds",
-            "Bucketed histogram of processing time (s) of plan cache operations.",
-        )
-        .namespace("tidb")
-        .subsystem("server")
-        .buckets(exponential_buckets(0.001, 2.0, 28).expect("28 positive buckets")),
-        &[LBL_TYPE],
+    register(
+        HistogramVec::new(
+            HistogramOpts::new(
+                "plan_cache_process_duration_seconds",
+                "Bucketed histogram of processing time (s) of plan cache operations.",
+            )
+            .namespace("tidb")
+            .subsystem("server")
+            .buckets(exponential_buckets(0.001, 2.0, 28).expect("28 positive buckets")),
+            &[LBL_TYPE],
+        ),
+        "plan cache duration histogram",
     )
-    .expect("valid plan cache duration histogram")
 });
 
 struct Children {

@@ -10,6 +10,7 @@ mod client;
 mod engine;
 mod error;
 mod etcd;
+mod metrics;
 mod model;
 mod security;
 mod tso;

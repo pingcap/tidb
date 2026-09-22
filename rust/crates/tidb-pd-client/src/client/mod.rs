@@ -173,8 +173,13 @@ impl PdTimestampFuture {
     /// Waits for the timestamp request that was dispatched when this future was
     /// created.
     pub fn wait(self) -> Result<u64, PdClientError> {
+        let started = std::time::Instant::now();
         let remaining = self.deadline.saturating_duration_since(Instant::now());
-        match self.response.recv_timeout(remaining) {
+        // Go `CmdDurationTSOWait`: every timestamp waiter reports its
+        // end-to-end wait under the `wait` type.
+        let result = self.response.recv_timeout(remaining);
+        crate::metrics::observe_tso_wait(started.elapsed().as_secs_f64());
+        match result {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(PdClientError::Closed),
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -239,6 +244,9 @@ impl PdClient {
             .first()
             .cloned()
             .ok_or_else(|| invalid_topology("missing_pd_seed", "no PD seed was configured"))?;
+        // Go's PD client package `init()` registers its dashboard families and
+        // pre-materializes every `initLabelValues` series before traffic.
+        crate::metrics::init_dashboard_series();
         let seeds = normalize_endpoints(raw_seeds, false)?;
         let (commands, receiver) = mpsc::channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
@@ -681,16 +689,19 @@ fn block_on_rpc<F, T>(
     runtime: &tokio::runtime::Runtime,
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
+    op: crate::error::PdOperation,
     future: F,
 ) -> RpcCompletion<T>
 where
     F: Future<Output = Result<tonic::Response<T>, tonic::Status>>,
 {
     if *shutdown.borrow() {
+        crate::metrics::observe_cmd(op, 0.0, false);
         return RpcCompletion::Shutdown;
     }
+    let started = std::time::Instant::now();
     let mut cancellation = shutdown.clone();
-    runtime.block_on(async move {
+    let completion = runtime.block_on(async move {
         tokio::select! {
             biased;
             () = shutdown_requested(&mut cancellation) => RpcCompletion::Shutdown,
@@ -699,7 +710,13 @@ where
                 Err(_) => RpcCompletion::Timeout,
             },
         }
-    })
+    });
+    // Go `client.callRPC`'s defer records every command's duration on the
+    // success or the failure histogram (`pd client metrics.go`).
+    let seconds = started.elapsed().as_secs_f64();
+    let succeeded = matches!(&completion, RpcCompletion::Completed(Ok(_)));
+    crate::metrics::observe_cmd(op, seconds, succeeded);
+    completion
 }
 
 fn wait_for_shutdown(

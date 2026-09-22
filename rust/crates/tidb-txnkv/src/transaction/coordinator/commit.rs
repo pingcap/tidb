@@ -54,7 +54,53 @@ where
     T: TimestampSource,
 {
     /// Consumes this snapshot into one normal optimistic two-phase commit.
+    ///
+    /// Go `twoPhaseCommitter.execute`'s deferred block (`2pc.go:1755-1795`)
+    /// counts exactly one `tidb_tikvclient_{commit,async_commit_txn,one_pc}
+    /// _txn_counter{ok,err}` series per commit attempt; every terminal edge
+    /// of this coordinator funnels through that same recording.
     pub fn commit(
+        mut self,
+        mutations: Vec<OptimisticMutation>,
+        call: &UnaryCallContext,
+    ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
+        let result = self.commit_inner(mutations, call);
+        let (protocol, succeeded) = match &result {
+            Ok(outcome) => {
+                let protocol = match &outcome.receipt().commit_protocol {
+                    CommittedProtocol::TwoPhase => {
+                        crate::client_go_metrics::TxnCommitProtocol::TwoPc
+                    }
+                    CommittedProtocol::AsyncCommit => {
+                        crate::client_go_metrics::TxnCommitProtocol::AsyncCommit
+                    }
+                    CommittedProtocol::OnePc => {
+                        crate::client_go_metrics::TxnCommitProtocol::OnePc
+                    }
+                };
+                // Go's 2PC arm counts `committed || undetermined` as ok;
+                // the 1PC and async-commit arms count any error as err.
+                let succeeded = match outcome {
+                    OptimisticCommitOutcome::Committed(_) => true,
+                    OptimisticCommitOutcome::Undetermined(_) => {
+                        protocol == crate::client_go_metrics::TxnCommitProtocol::TwoPc
+                    }
+                    OptimisticCommitOutcome::RolledBack(_)
+                    | OptimisticCommitOutcome::CleanupFailed(_) => false,
+                };
+                (protocol, succeeded)
+            }
+            // A pre-commit validation error: nothing committed and nothing
+            // undetermined, so Go's defer records the protocol's err counter.
+            Err(_) => (crate::client_go_metrics::TxnCommitProtocol::TwoPc, false),
+        };
+        crate::client_go_metrics::record_txn_commit(protocol, succeeded);
+        result
+    }
+
+    /// The commit state machine proper, split from [`Self::commit`] so the
+    /// wrapper can record the attempt's terminal client-go counters.
+    fn commit_inner(
         mut self,
         mutations: Vec<OptimisticMutation>,
         call: &UnaryCallContext,

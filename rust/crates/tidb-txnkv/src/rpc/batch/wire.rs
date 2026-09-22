@@ -121,6 +121,54 @@ define_command_tags! {
     Empty = 255,
 }
 
+impl BatchCommandTag {
+    /// Returns the Go `tikvrpc.CmdType.String()` name that the
+    /// `request_seconds`/`source_request_seconds` families put in the
+    /// `type` label (`tikvrpc.go:130` `CmdType.String`). Tags without a Go
+    /// `CmdType` counterpart fall back to `"Unknown"`, exactly as Go's
+    /// switch-default does.
+    #[must_use]
+    pub const fn cmd_type_label(self) -> &'static str {
+        match self {
+            Self::Get => "Get",
+            Self::Scan => "Scan",
+            Self::Prewrite => "Prewrite",
+            Self::Commit => "Commit",
+            Self::Import => "Unknown",
+            Self::Cleanup => "Cleanup",
+            Self::BatchGet => "BatchGet",
+            Self::BatchRollback => "BatchRollback",
+            Self::ScanLock => "ScanLock",
+            Self::ResolveLock => "ResolveLock",
+            Self::Gc => "GC",
+            Self::DeleteRange => "DeleteRange",
+            Self::RawGet => "RawGet",
+            Self::RawBatchGet => "RawBatchGet",
+            Self::RawPut => "RawPut",
+            Self::RawBatchPut => "RawBatchPut",
+            Self::RawDelete => "RawDelete",
+            Self::RawBatchDelete => "RawBatchDelete",
+            Self::RawScan => "RawScan",
+            Self::RawDeleteRange => "RawDeleteRange",
+            Self::RawBatchScan => "Unknown",
+            Self::Coprocessor => "Cop",
+            Self::PessimisticLock => "PessimisticLock",
+            Self::PessimisticRollback => "PessimisticRollback",
+            Self::CheckTxnStatus => "CheckTxnStatus",
+            Self::TxnHeartBeat => "TxnHeartBeat",
+            Self::CheckSecondaryLocks => "CheckSecondaryLocks",
+            Self::RawCoprocessor => "RawCoprocessor",
+            Self::FlashbackToVersion => "FlashbackToVersion",
+            Self::PrepareFlashbackToVersion => "PrepareFlashbackToVersion",
+            Self::Flush => "Flush",
+            Self::BufferBatchGet => "BufferBatchGet",
+            Self::GetHealthFeedback => "GetHealthFeedback",
+            Self::BroadcastTxnStatus => "BroadcastTxnStatus",
+            Self::Empty => "Unknown",
+        }
+    }
+}
+
 /// Immutable pre-encoded body paired with its exact BatchCommands field.
 ///
 /// The body is shared bytes: a response body stays a slice of the stream

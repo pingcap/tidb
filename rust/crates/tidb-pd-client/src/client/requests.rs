@@ -49,6 +49,7 @@ pub(super) fn get_members(
         runtime,
         timeout,
         shutdown,
+        PdOperation::GetMembers,
         client.get_members(pdpb::GetMembersRequest { header: None }),
     );
     let response = map_rpc_result(response, PdOperation::GetMembers, endpoint, timeout)?;
@@ -91,6 +92,7 @@ pub(super) fn get_region(
         runtime,
         control.timeout,
         control.shutdown,
+        PdOperation::GetRegion,
         client.get_region(pdpb::GetRegionRequest {
             header: Some(request_header(cluster_id)),
             region_key: encoded_key.to_vec(),
@@ -117,6 +119,7 @@ pub(super) fn get_prev_region(
         runtime,
         control.timeout,
         control.shutdown,
+        PdOperation::GetPrevRegion,
         client.get_prev_region(pdpb::GetRegionRequest {
             header: Some(request_header(cluster_id)),
             region_key: encoded_key.to_vec(),
@@ -152,6 +155,7 @@ pub(super) fn get_region_by_id(
         runtime,
         control.timeout,
         control.shutdown,
+        PdOperation::GetRegionById,
         client.get_region_by_id(pdpb::GetRegionByIdRequest {
             header: Some(request_header(cluster_id)),
             region_id,
@@ -185,7 +189,13 @@ pub(super) fn scan_regions(
     let client = tonic_client(runtime, clients, endpoint)?;
     let mut request = request.clone();
     request.header = Some(request_header(cluster_id));
-    let response = block_on_rpc(runtime, timeout, shutdown, client.scan_regions(request));
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        PdOperation::ScanRegions,
+        client.scan_regions(request),
+    );
     let response =
         map_rpc_result(response, PdOperation::ScanRegions, endpoint, timeout)?.into_inner();
     validate_response_header(
@@ -213,6 +223,7 @@ pub(super) fn batch_scan_regions(
         runtime,
         timeout,
         shutdown,
+        PdOperation::BatchScanRegions,
         client.batch_scan_regions(request),
     );
     let response =
@@ -243,6 +254,7 @@ pub(super) fn get_store(
         runtime,
         timeout,
         shutdown,
+        PdOperation::GetStore,
         client.get_store(pdpb::GetStoreRequest {
             header: Some(request_header(cluster_id)),
             store_id,
@@ -271,6 +283,7 @@ pub(super) fn get_all_stores(
         runtime,
         timeout,
         shutdown,
+        PdOperation::GetAllStores,
         client.get_all_stores(pdpb::GetAllStoresRequest {
             header: Some(request_header(cluster_id)),
             exclude_tombstone_stores: false,
@@ -300,6 +313,7 @@ pub(super) fn get_gc_state(
         runtime,
         timeout,
         shutdown,
+        PdOperation::GetGcState,
         client.get_gc_state(pdpb::GetGcStateRequest {
             header: Some(request_header(cluster_id)),
             keyspace_scope: keyspace_id.map(|keyspace_id| pdpb::KeyspaceScope { keyspace_id }),

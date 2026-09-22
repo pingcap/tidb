@@ -2111,6 +2111,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // `Arc` keeps the registry borrow short without cloning the
                     // parser-owned AST on every execute.
                     command_metrics.sql_type = statement.metrics_label;
+                    let statement_label = statement.metrics_label;
                     let prepared_statement = Arc::clone(&statement.statement);
                     let previous_types = statement.parameter_types.clone();
                     // The marker count is per statement: a point read owns one, a
@@ -2182,6 +2183,19 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                     };
                     let values = execute.values;
+                    // Go `executor.Compile` (`pkg/executor/compiler.go:125`)
+                    // counts every optimized statement through CountStmtNode,
+                    // including `EXECUTE` -- the prepared object supplies the
+                    // inner statement for the label -- so the binary protocol
+                    // feeds `tidb_executor_statement_total` exactly like the
+                    // text protocol does.
+                    tidb_executor::metrics::STATEMENT_TOTAL
+                        .with_label_values(&[
+                            "",
+                            engine.metrics_resource_group(),
+                            statement_label,
+                        ])
+                        .inc();
                     match prepared_statement.as_ref() {
                         // The same two lines the text arm runs, so the transaction
                         // a prepared BEGIN opens, and the status flag the client

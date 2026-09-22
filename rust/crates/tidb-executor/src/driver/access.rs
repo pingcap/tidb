@@ -743,6 +743,11 @@ impl PreparedSelectPlan {
                         // fails and generates a fresh plan. Do not leave a
                         // partially rebuilt tree available to the next execute.
                         cached_plans.remove(index);
+                        // Go `plan_cache_lru.go` delete arm (`2pc`-style book):
+                        // every dropped plan decrements the session plan-num
+                        // gauge.
+                        tidb_planner::metrics::plan_cache_instance_num_counter(false)
+                            .sub(1.0);
                         return None;
                     }
                 }
@@ -754,11 +759,19 @@ impl PreparedSelectPlan {
                     return None;
                 };
                 let query = query.into_inner();
+                let stale_before_retain = cached_plans.len();
                 cached_plans.retain(|entry| {
                     entry.schema_version == schema_version
                         && entry.stats_version_hash == stats_version_hash
                         && entry.environment == *environment
                 });
+                // Go `LRUPlanCache.DeleteAll`/environment invalidation decrements
+                // the plan-num gauge by every evicted entry.
+                let stale_removed = stale_before_retain - cached_plans.len();
+                if stale_removed > 0 {
+                    tidb_planner::metrics::plan_cache_instance_num_counter(false)
+                        .sub(stale_removed as f64);
+                }
                 let (mut plan, cacheable) = super::planner_bridge::cached_query_plan(
                     &query,
                     catalog,
@@ -778,6 +791,10 @@ impl PreparedSelectPlan {
                         limit_values,
                         plan: Arc::clone(&plan),
                     });
+                    // Go `updateInstancePlanNum` put arm
+                    // (`plan_cache_lru.go:276`): one cached plan increments
+                    // the session plan-num gauge.
+                    tidb_planner::metrics::plan_cache_instance_num_counter(false).add(1.0);
                 }
                 (plan, generation, false)
             }
