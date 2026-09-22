@@ -681,6 +681,14 @@ pub const fn get_default_charset_and_collate() -> (&'static str, &'static str) {
 }
 
 /// Looks up supported charset information and distinguishes unsupported names.
+/// Whether `name` names a charset MySQL/go knows at all (supported or merely
+/// catalogued), case-insensitively. `SET NAMES` validation answers 1115 only
+/// for names outside this set.
+#[must_use]
+pub fn charset_known(name: &str) -> bool {
+    get_charset_info(name).is_ok()
+}
+
 pub fn get_charset_info(charset: &str) -> Result<CharsetInfo, CharsetError> {
     let canonical = if charset.eq_ignore_ascii_case("utf8mb3") {
         "utf8".to_owned()

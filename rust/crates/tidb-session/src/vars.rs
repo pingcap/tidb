@@ -3311,6 +3311,17 @@ impl SessionVars {
     /// Go `SET NAMES <charset>`: sets the three client character-set
     /// variables together, plus the connection collation.
     pub fn set_names(&mut self, charset: &str, collation: Option<&str>) -> Result<(), VarError> {
+        // go `SetNamesVar` validation: an unknown charset name answers
+        // 1115 `Unknown character set: '...'` (the parser defers the check
+        // here, which is what makes `SET NAMES anyword` a runtime error).
+        if !tidb_datatype::charset_known(charset) {
+            return Err(VarError::SqlError(
+                tidb_error::mysql::SqlError::new(
+                    tidb_error::mysql::errcode::ErrUnknownCharacterSet,
+                    &[tidb_error::mysql::FormatArg::from(charset)],
+                ),
+            ));
+        }
         for name in [
             "character_set_client",
             "character_set_connection",
@@ -4230,14 +4241,14 @@ mod tests {
         let error = vars
             .set_system("sql_mode", "strict_trans_tabLES,nonsense_option".to_owned())
             .unwrap_err();
-        let VarError::SqlError(error) = error else {
-            panic!("expected catalogued SQL error");
+        // go's sql_mode Validation wraps the catalogued 1231 rendering in an
+        // uncatalogued error, so the SET surfaces 1105 with the client text.
+        let VarError::ValidationRefused(message) = error else {
+            panic!("expected the uncatalogued validation refusal");
         };
-        assert_eq!(error.code, 1231);
-        assert_eq!(error.state, "42000");
         assert_eq!(
-            error.message,
-            "Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'"
+            message,
+            "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'"
         );
         assert!(vars.sql_mode().has_strict_mode());
 

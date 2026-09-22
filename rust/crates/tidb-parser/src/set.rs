@@ -406,9 +406,13 @@ impl Parser {
         } else {
             self.parse_charset_name()?
         };
-        canonical_charset(&name)
-            .map(str::to_owned)
-            .ok_or_else(|| self.err_here("unknown character set"))
+        // go's parser accepts ANY identifier/string as the charset spelling
+        // here and defers the failure to execution, where an unknown name
+        // answers 1115 `Unknown character set: '...'` (and a known alias is
+        // canonicalized). Refusing at parse time turned
+        // `SET NAMES bogus_charset` into a 1064 the go server never gives.
+        Ok(canonical_charset(&name)
+            .map_or_else(|| name.clone(), |canonical| canonical.to_owned()))
     }
 
     fn parse_set_collation_name(&mut self) -> PResult<String> {

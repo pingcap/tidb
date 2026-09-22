@@ -65,11 +65,12 @@ fn create_drop_database() {
     session
         .run("CREATE DATABASE IF NOT EXISTS drop_test")
         .unwrap();
-    // Dropping one that does not exist is ErrDBDropExists unless IF EXISTS.
+    // Dropping one that does not exist is ErrDBDropExists (1008) unless IF
+    // EXISTS.
     session.run("DROP DATABASE drop_test").unwrap();
     assert!(matches!(
         session.run("DROP DATABASE drop_test"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(_)))
+        Err(DriverError::DdlCoded { errno: 1008, .. })
     ));
     session.run("DROP DATABASE IF EXISTS drop_test").unwrap();
 

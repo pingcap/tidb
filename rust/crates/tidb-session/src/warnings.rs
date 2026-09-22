@@ -164,11 +164,10 @@ impl Session {
             .filter(|warning| !errors_only || warning.level == WarningLevel::Error);
         if count_only {
             let count = reported.count() as i64;
-            let name = if errors_only {
-                "@@session.error_count"
-            } else {
-                "@@session.warning_count"
-            };
+            // go names this one column `Count` for both SHOW COUNT(*) WARNINGS
+            // and SHOW COUNT(*) ERRORS (pkg/executor/simple.go), NOT the
+            // internal @@session variable text.
+            let name = "Count";
             return StmtOutput::Rows {
                 columns: vec![(
                     name.to_owned(),

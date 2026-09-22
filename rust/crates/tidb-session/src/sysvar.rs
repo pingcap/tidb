@@ -1426,6 +1426,18 @@ impl SysVarDef {
             if validated.value.is_empty() {
                 return Err(ValidationError::WrongValue);
             }
+            // go's `character_set_results` Validation alone answers the plain
+            // uncatalogued text `Unknown charset %s` (1105); the other
+            // charset variables answer 1115 with the catalogued message.
+            if self.name == "character_set_results" {
+                let charset = tidb_datatype::get_charset_info(&validated.value).map_err(|_| {
+                    ValidationError::Refused(format!("Unknown charset {}", validated.value))
+                })?;
+                return Ok(Validated {
+                    value: charset.name,
+                    truncated: validated.truncated,
+                });
+            }
             let charset = tidb_datatype::get_charset_info(&validated.value).map_err(|_| {
                 ValidationError::SqlError(SqlError::new(
                     tidb_error::mysql::errcode::ErrUnknownCharacterSet,
@@ -1753,7 +1765,13 @@ impl SysVarDef {
                 value: formatted,
                 truncated: validated.truncated,
             }),
-            Err(invalid) => Err(ValidationError::SqlError(invalid.sql_error)),
+            Err(invalid) => {
+                // go's sql_mode Validation embeds the client-rendered 1231 in
+                // an uncatalogued error, so the SET surfaces 1105 with the
+                // text `ERROR 1231 (42000): Variable 'sql_mode' can't be set
+                // to the value of '...'` (the SqlError's own rendering).
+                Err(ValidationError::Refused(invalid.sql_error.to_string()))
+            }
         }
     }
 

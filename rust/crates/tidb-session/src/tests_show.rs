@@ -1484,7 +1484,7 @@ fn show_warnings() {
     // Captured: the count form reports a single count column.
     match session.run_with_columns("SHOW COUNT(*) WARNINGS").unwrap() {
         StmtOutput::Rows { columns, rows } => {
-            assert_eq!(columns[0].0, "@@session.warning_count");
+            assert_eq!(columns[0].0, "Count");
             assert_eq!(rows, vec![vec![Datum::Int(1)]]);
         }
         other => panic!("expected rows, got {other:?}"),

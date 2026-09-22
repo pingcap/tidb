@@ -2312,7 +2312,7 @@ fn a_sysvar_name_is_case_insensitive_but_the_column_header_keeps_its_case() {
         ),
         (
             "set @@SQL_MODE='NO_SUCH_MODE'",
-            "Variable 'sql_mode' can't be set to the value of 'NO_SUCH_MODE'",
+            "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NO_SUCH_MODE'",
         ),
     ] {
         assert_eq!(
