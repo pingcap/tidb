@@ -6289,6 +6289,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 	p = np
+	b.appendSelectPrivForDMLReadSources(update.TableRefs.TableRefs, mysql.UpdatePriv)
 
 	updt := Update{
 		OrderedList:               orderedList,
@@ -6767,6 +6768,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
+	b.appendSelectPrivForDMLReadSources(ds.TableRefs.TableRefs, mysql.DeletePriv)
 	handleColsMap := b.handleHelper.tailMap()
 	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, p.Schema())
 	if err != nil {
@@ -7810,6 +7812,53 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 
 func (*tableListExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
+}
+
+// appendSelectPrivForDMLReadSources adds the fallback SELECT requirement for
+// direct DML sources that are not write targets. Subqueries are built
+// separately and are covered by buildSelect.
+func (b *PlanBuilder) appendSelectPrivForDMLReadSources(node ast.ResultSetNode, writePriv mysql.PrivilegeType) {
+	writeTargets := make(map[[2]string]struct{})
+	for _, v := range b.visitInfo {
+		if v.privilege == writePriv {
+			writeTargets[[2]string{v.db, v.table}] = struct{}{}
+		}
+	}
+
+	var tableNames []*ast.TableName
+	var collect func(ast.ResultSetNode)
+	collect = func(n ast.ResultSetNode) {
+		switch x := n.(type) {
+		case *ast.Join:
+			collect(x.Left)
+			collect(x.Right)
+		case *ast.TableSource:
+			switch source := x.Source.(type) {
+			case *ast.TableName:
+				tableNames = append(tableNames, source)
+			case *ast.Join:
+				collect(source)
+			}
+		}
+	}
+	collect(node)
+
+	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
+	for _, tn := range tableNames {
+		tnW := b.resolveCtx.GetTableName(tn)
+		if tnW == nil || tnW.TableInfo.IsSequence() {
+			continue
+		}
+		if tbl, ok := b.is.TableByID(context.Background(), tnW.TableInfo.ID); ok && tbl.Type().IsVirtualTable() {
+			continue
+		}
+		key := [2]string{tnW.DBInfo.Name.L, tnW.TableInfo.Name.L}
+		if _, isWriteTarget := writeTargets[key]; isWriteTarget {
+			continue
+		}
+		err := plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, tnW.TableInfo.Name.L)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, key[0], key[1], "*", err)
+	}
 }
 
 func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {
