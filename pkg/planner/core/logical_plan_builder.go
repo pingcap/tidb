@@ -7826,26 +7826,14 @@ func (b *PlanBuilder) appendSelectPrivForDMLReadSources(node ast.ResultSetNode, 
 		}
 	}
 
-	var tableNames []*ast.TableName
-	var collect func(ast.ResultSetNode)
-	collect = func(n ast.ResultSetNode) {
-		switch x := n.(type) {
-		case *ast.Join:
-			collect(x.Left)
-			collect(x.Right)
-		case *ast.TableSource:
-			switch source := x.Source.(type) {
-			case *ast.TableName:
-				tableNames = append(tableNames, source)
-			case *ast.Join:
-				collect(source)
-			}
-		}
-	}
-	collect(node)
+	// Reuse the direct-source traversal used by multi-table DELETE target
+	// resolution. The updatable map is not needed for this privilege check.
+	sources := make(map[string]*ast.TableName)
+	updatable := make(map[string]bool)
+	collectTableName(node, &updatable, &sources)
 
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
-	for _, tn := range tableNames {
+	for _, tn := range sources {
 		tnW := b.resolveCtx.GetTableName(tn)
 		if tnW == nil || tnW.TableInfo.IsSequence() {
 			continue
