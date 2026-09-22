@@ -1510,6 +1510,10 @@ type IndexArg struct {
 	// Note: 1. when you want to read it, always calling `GetColumnarIndexType`` rather than using it directly.
 	//       2. when you set it, make sure IsColumnar = ColumnarIndexType != ColumnarIndexTypeNA.
 	ColumnarIndexType ColumnarIndexType `json:"columnar_index_type,omitempty"`
+	// TiKVFullText carries the analyzer snapshot of a FULLTEXT index built in
+	// TiKV. It is captured from the session that ran the statement, because the
+	// owner that builds the index metadata has no session to read it from.
+	TiKVFullText *TiKVFullTextIndexInfo `json:"tikv_fulltext,omitempty"`
 
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`

@@ -2176,6 +2176,9 @@ func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = e.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+			case ast.ConstraintFulltext:
+				err = e.createIndex(sctx, ident, ast.IndexKeyTypeFulltext, ast.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
@@ -5404,7 +5407,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5598,7 +5601,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5685,12 +5688,28 @@ func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableNa
 
 func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
-	// not support Spatial and FullText index
+	// not support Spatial index
+	tikvFullText := false
 	switch keyType {
 	case ast.IndexKeyTypeSpatial:
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
 		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
+	case ast.IndexKeyTypeFulltext:
+		// On the classic kernel a FULLTEXT index is an ordinary KV index whose
+		// entries are analyzed terms; it continues down this path with the
+		// option marked. The next-gen kernel rewrites FULLTEXT into a
+		// columnar index before reaching here.
+		if !kerneltype.IsClassic() {
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index is not supported")
+		}
+		if model.GetJobVerInUse() < model.JobVersion2 {
+			// The analyzer snapshot travels in typed job arguments, which the
+			// untyped v1 layout cannot carry.
+			return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index requires DDL job version 2, which the cluster does not use yet")
+		}
+		indexOption = NormalizeTiKVFullTextIndexOption(indexOption)
+		tikvFullText = true
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -5735,9 +5754,15 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA, tikvFullText)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	var tikvFullTextInfo *model.TiKVFullTextIndexInfo
+	if tikvFullText {
+		if tikvFullTextInfo, err = buildTiKVFullTextInfoWithCheck(metaBuildCtx, indexPartSpecifications, indexOption, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	if err = checkCreateGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {
@@ -5803,6 +5828,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 			ConditionString:         conditionString,
+			TiKVFullText:            tikvFullTextInfo,
 		}},
 		OpType: model.OpAddIndex,
 	}

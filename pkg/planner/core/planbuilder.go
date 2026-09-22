@@ -1392,6 +1392,12 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				invertedIndexes[index.Name.L] = struct{}{}
 				continue
 			}
+			if index.IsTiKVFullTextIndex() {
+				// Its keys are analyzed terms, not column values, so it cannot
+				// serve a column-value range. MATCH ... AGAINST reaches it
+				// through its own access path.
+				continue
+			}
 			if index.IsColumnarIndex() {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
 				// So the current way to use the columnar indexes is to require the TiFlash Replica to be available.
@@ -1964,6 +1970,12 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			// Skip checking clustered index.
 			continue
 		}
+		if idxInfo.IsTiKVFullTextIndex() {
+			// Its entries are analyzed terms, which an index lookup would
+			// decode as column values; the index is checked from the record
+			// side instead.
+			continue
+		}
 		if idxInfo.State != model.StatePublic {
 			logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public",
 				zap.String("index", idxInfo.Name.O),
@@ -2050,6 +2062,9 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 		}
 		if idx.Meta().State != model.StatePublic {
 			return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.Meta().State)
+		}
+		if idx.Meta().IsTiKVFullTextIndex() {
+			return nil, errors.Errorf("admin check index is not supported for fulltext index %s", as.Index)
 		}
 		p.CheckIndex = true
 		readerPlans, indexInfos, err = b.buildPhysicalIndexLookUpReaders(ctx, tblName.Schema, tbl, []table.Index{idx})
@@ -2272,7 +2287,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
 				// for mv index and ci index fail it first, then analyze those analyzable indexes.
-				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
+				if idx.MVIndex || idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
@@ -2555,6 +2570,12 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		if originIdx.IsColumnarIndex() {
 			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", originIdx.Name.L))
+			continue
+		}
+		if originIdx.IsTiKVFullTextIndex() {
+			// Its entries are analyzed terms, which say nothing about the
+			// distribution of the column they came from.
+			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {

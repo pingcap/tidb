@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -1528,6 +1529,14 @@ func BuildTableInfo(
 				columnarIndexType = model.ColumnarIndexTypeFulltext
 			default:
 				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
+			}
+		case ast.ConstraintFulltext:
+			// On the classic kernel a FULLTEXT index is an ordinary KV index
+			// whose entries are analyzed terms. The preprocessor marks the
+			// option; callers that build metadata without it, such as
+			// Lightning, reach here with the bare constraint.
+			if kerneltype.IsClassic() {
+				constr.Option = NormalizeTiKVFullTextIndexOption(constr.Option)
 			}
 		}
 
