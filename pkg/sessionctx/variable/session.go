@@ -1472,6 +1472,9 @@ type SessionVars struct {
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
 
+	// EnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+	EnableAdaptiveLimitScan bool
+
 	// EnableAsyncCommit indicates whether to enable the async commit feature.
 	EnableAsyncCommit bool
 
@@ -2464,6 +2467,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                         kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAdaptiveLimitScan:          vardef.DefTiDBEnableAdaptiveLimitScan,
 		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
