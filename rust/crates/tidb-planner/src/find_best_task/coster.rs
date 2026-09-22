@@ -44,9 +44,10 @@ use crate::cost_usage::{CostVer2, PlanCostOption};
 use crate::physical::PhysicalPlan;
 use crate::plan_base::PlanError;
 use crate::plan_cost_ver2::{
-    filter_cost, hash_agg_cost, hash_join_cost, index_join_cost, merge_join_cost, net_cost,
-    projection_cost, sort_cost, stream_agg_cost, top_n_cost, CostFactorVars, CostSessionOpts,
-    HashAggInput, HashJoinInput, IndexJoinInput, Ver2Factors,
+    exchange_receiver_cost, filter_cost, hash_agg_cost, hash_join_cost, index_join_cost,
+    merge_join_cost, net_cost, projection_cost, sort_cost, stream_agg_cost, top_n_cost,
+    CostFactorVars, CostSessionOpts, HashAggInput, HashJoinInput, IndexJoinInput, NetOwner,
+    Ver2Factors,
 };
 use crate::task::Task;
 use crate::task_type::TaskType;
@@ -378,6 +379,27 @@ impl Ver2Coster {
                     );
                 }
                 crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.table_reader)
+            }
+            PhysicalPlan::ExchangeReceiver(_receiver) => {
+                let child = plan.children().first();
+                let child_cost = child.map_or(crate::cost_usage::ZERO_COST_VER2, |child| {
+                    self.price(child, TaskType::Mpp)
+                });
+                let is_broadcast = child.is_some_and(|child| {
+                    matches!(
+                        child,
+                        PhysicalPlan::ExchangeSender(sender)
+                            if sender.exchange_type == crate::physical::ExchangeType::Broadcast
+                    )
+                });
+                exchange_receiver_cost(
+                    self.cost_option(),
+                    rows,
+                    Self::row_size(plan),
+                    self.factors.task_net(false, NetOwner::TiFlashMpp),
+                    is_broadcast,
+                    &child_cost,
+                )
             }
             // `getPlanCostVer24PhysicalIndexLookUpReader`
             // (`plan_cost_ver2.go:359`): index side + (table side +
@@ -1039,5 +1061,38 @@ mod tests {
             .get_plan_cost_ver2(TaskType::Root, option, false)
             .expect("detached plan cost");
         assert!(traced.trace().is_some());
+    }
+
+    #[test]
+    fn exchange_receiver_cost_includes_child_and_broadcast_network_work() {
+        let allocator = PlanIdAllocator::new();
+        let child = point(6, true);
+        let mut sender_base = BasePhysicalPlan::new(&allocator, "ExchangeSender", 0);
+        sender_base.set_children(vec![child]);
+        let sender = PhysicalPlan::ExchangeSender(crate::physical::PhysicalExchangeSender {
+            base: sender_base,
+            exchange_type: crate::physical::ExchangeType::Broadcast,
+            hash_cols: Vec::new(),
+        });
+        let mut receiver_base = BasePhysicalPlan::new(&allocator, "ExchangeReceiver", 0);
+        receiver_base.base.set_stats(Some(StatsInfo::new(5.0, [])));
+        receiver_base.set_children(vec![sender]);
+        let receiver = PhysicalPlan::ExchangeReceiver(crate::physical::PhysicalExchangeReceiver {
+            base: receiver_base,
+            tasks: Vec::new(),
+        });
+
+        let coster = Ver2Coster::default();
+        let actual = coster.price(&receiver, TaskType::Mpp);
+        let child_cost = coster.price(&receiver.children()[0], TaskType::Mpp);
+        let expected_network = crate::plan_cost_ver2::exchange_receiver_cost(
+            None,
+            5.0,
+            Ver2Coster::row_size(&receiver),
+            &coster.factors.tiflash_mpp_net,
+            true,
+            &child_cost,
+        );
+        assert_eq!(actual, expected_network);
     }
 }

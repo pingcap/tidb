@@ -4608,6 +4608,13 @@ fn build_with_state(
         // the fragment still executes in place. M2 replaces this with real
         // DispatchMPPTask routing to the TiFlash store.
         PhysicalPlan::ExchangeSender(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
+        // The planner-side MPP receiver is likewise a transport boundary. Until
+        // the native fragment scheduler owns task metadata, execute its sender
+        // child in the local plan so enforcing a partition property does not
+        // make an otherwise valid statement unbuildable.
+        PhysicalPlan::ExchangeReceiver(_) => {
+            build_with_state(only_child(plan)?, catalog, ctx, state)
+        }
         PhysicalPlan::CTE(cte) => build_cte(plan, cte, catalog, ctx, state),
         PhysicalPlan::CTETable(table) => build_cte_table(plan, table, state, ctx),
         _ => Err(DriverError::unsupported(format!(

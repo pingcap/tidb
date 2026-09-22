@@ -17,23 +17,12 @@
 //! Go source: `pkg/planner/core/operator/physicalop/enforce.go` (99 lines),
 //! whole. Its three functions are `EnforceProperty` (here as
 //! [`enforce_property`]) and `MppTask.EnforceExchanger` /
-//! `EnforceExchangerImpl` (here as [`crate::task::MppTask::enforce_exchanger`],
-//! a refusal — below).
+//! `EnforceExchangerImpl` (here as [`crate::task::MppTask::enforce_exchanger`]).
 //!
 //! This is the production body behind
 //! [`crate::find_best_task::dispatch::find_best_task`]: `findBestTask`'s
 //! enforcer branch prices `EnforceProperty(prop, task, ...)` against the
 //! un-enforced candidates, and until this file the crate had only the seam.
-//!
-//! # Refusals, each naming its Go symbol
-//!
-//! * `MppTask.EnforceExchanger` (`enforce.go:63`) needs the task's current
-//!   `HashCols`, which this task type does not yet carry, and
-//!   `EnforceExchangerImpl` builds a
-//!   `PhysicalExchangeSender`/`PhysicalExchangeReceiver` pair — both
-//!   operators unported. Every MPP-property path through `EnforceProperty`
-//!   runs through it (Go calls it even for an empty sort property), so the
-//!   arm refuses rather than skipping an exchange Go would insert.
 //!
 //! # Narrowings
 //!
@@ -51,19 +40,66 @@ use crate::task_type::TaskType;
 impl MppTask {
     /// Go `MppTask.EnforceExchanger(prop, fd)` (`enforce.go:63`): insert an
     /// exchange pair above the task when the partition property demands one.
-    ///
-    /// REFUSED: the guard needs `t.HashCols`, which this task type does not
-    /// carry, and `EnforceExchangerImpl` builds a `PhysicalExchangeSender` /
-    /// `PhysicalExchangeReceiver` pair, operators that are not ported.
-    /// Skipping the exchange instead would emit an MPP plan Go would never
-    /// run; refusing is the loud version of the same gap.
-    pub fn enforce_exchanger(&self) -> Result<MppTask, PlanError> {
-        Err(PlanError::internal(
-            "MppTask.EnforceExchanger (enforce.go) is not ported: \
-             MppTask.HashCols and the \
-             PhysicalExchangeSender/PhysicalExchangeReceiver pair of \
-             EnforceExchangerImpl are missing",
-        ))
+    pub fn enforce_exchanger(
+        &self,
+        required: &PhysicalProperty,
+        allocator: &PlanIdAllocator,
+    ) -> Result<MppTask, PlanError> {
+        if !crate::physical_property::need_enforce_exchanger(
+            self.partition_type(),
+            self.hash_cols(),
+            required,
+            None,
+        ) {
+            return Ok(self.copy());
+        }
+        let child = self
+            .plan()
+            .ok_or_else(|| PlanError::internal("MppTask.EnforceExchanger: empty plan"))?
+            .deep_clone();
+        let exchange_type = match required.mpp_partition_tp.exchange_kind() {
+            crate::physical_property::ExchangeKind::Broadcast => {
+                crate::physical::ExchangeType::Broadcast
+            }
+            crate::physical_property::ExchangeKind::Hash => crate::physical::ExchangeType::Hash,
+            crate::physical_property::ExchangeKind::PassThrough => {
+                crate::physical::ExchangeType::PassThrough
+            }
+        };
+        let mut sender_base = crate::physical::BasePhysicalPlan::new(
+            allocator,
+            "ExchangeSender",
+            child.query_block_offset(),
+        );
+        sender_base.base.set_stats(child.stats_info().cloned());
+        sender_base.base.set_schema(child.schema().cloned());
+        sender_base.set_children(vec![child]);
+        let sender = PhysicalPlan::ExchangeSender(crate::physical::PhysicalExchangeSender {
+            base: sender_base,
+            exchange_type,
+            hash_cols: required.mpp_partition_cols.clone(),
+        });
+        let mut receiver_base = crate::physical::BasePhysicalPlan::new(
+            allocator,
+            "ExchangeReceiver",
+            sender.query_block_offset(),
+        );
+        receiver_base.base.set_stats(sender.stats_info().cloned());
+        receiver_base.base.set_schema(sender.schema().cloned());
+        receiver_base.set_children(vec![sender]);
+        let receiver = PhysicalPlan::ExchangeReceiver(crate::physical::PhysicalExchangeReceiver {
+            base: receiver_base,
+            tasks: Vec::new(),
+        });
+        let mut enforced = MppTask::new_with_hash_cols(
+            receiver,
+            required.mpp_partition_tp,
+            required.mpp_partition_cols.clone(),
+            [],
+        );
+        enforced.root_task_conds = self.root_task_conds.clone();
+        enforced.warnings.copy_of(&self.warnings);
+        Ok(enforced)
     }
 }
 
@@ -75,8 +111,7 @@ impl MppTask {
 /// 1. an MPP property first checks the task IS a valid MPP task (else the
 ///    invalid task), then that the sort is partition-local (else Go warns —
 ///    narrowed, module header — and returns the invalid task), then runs
-///    `EnforceExchanger` — refused here, see
-///    [`MppTask::enforce_exchanger`];
+///    `EnforceExchanger`;
 /// 2. an empty sort property or an invalid task returns the task unchanged;
 /// 3. a non-MPP task converts to a root task ([`Task::convert_to_root_task`],
 ///    whose cop/MPP reader-building refusals apply);
@@ -102,7 +137,7 @@ pub fn enforce_property(
             // because operator `Sort` is not supported now.") — narrowed.
             return Ok(Task::invalid_task());
         }
-        task = Task::Mpp(mpp.enforce_exchanger()?);
+        task = Task::Mpp(mpp.enforce_exchanger(prop, allocator)?);
     }
     if prop.is_sort_item_empty() || task.invalid() {
         return Ok(task);
@@ -158,4 +193,69 @@ pub fn enforce_property(
         is_partial_sort: prop.is_sort_item_all_for_partition(),
     });
     attach2_task(sort, vec![task], None, allocator)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physical::{BasePhysicalPlan, ExchangeType, PhysicalPlan, PhysicalTableDual};
+    use crate::physical_property::{MppPartitionColumn, MppPartitionType};
+    use crate::stats_info::StatsInfo;
+
+    fn mpp_task(allocator: &PlanIdAllocator) -> MppTask {
+        let mut base = BasePhysicalPlan::new(allocator, "Dual", 0);
+        base.base.set_stats(Some(StatsInfo::new(8.0, [])));
+        MppTask::new(
+            PhysicalPlan::TableDual(PhysicalTableDual { base, row_count: 8 }),
+            MppPartitionType::Any,
+            [],
+        )
+    }
+
+    #[test]
+    fn mpp_enforcer_builds_the_source_exchange_pair() {
+        let allocator = PlanIdAllocator::new();
+        let task = mpp_task(&allocator);
+        let mut required = PhysicalProperty::default();
+        required.task_tp = TaskType::Mpp;
+        required.mpp_partition_tp = MppPartitionType::Hash;
+        required.mpp_partition_cols = vec![MppPartitionColumn::new(1, 0)];
+
+        let enforced = task
+            .enforce_exchanger(&required, &allocator)
+            .expect("hash partitioning inserts an exchange");
+        assert_eq!(enforced.partition_type(), MppPartitionType::Hash);
+        assert_eq!(enforced.hash_cols(), required.mpp_partition_cols.as_slice());
+        let Some(PhysicalPlan::ExchangeReceiver(receiver)) = enforced.plan() else {
+            panic!("the enforced MPP plan is an ExchangeReceiver");
+        };
+        let Some(PhysicalPlan::ExchangeSender(sender)) = receiver.base.children().first() else {
+            panic!("the receiver owns one ExchangeSender child");
+        };
+        assert_eq!(sender.exchange_type, ExchangeType::Hash);
+        assert_eq!(sender.hash_cols, required.mpp_partition_cols);
+    }
+
+    #[test]
+    fn mpp_enforcer_reuses_a_matching_partition_without_an_exchange() {
+        let allocator = PlanIdAllocator::new();
+        let hash_cols = vec![MppPartitionColumn::new(1, 0)];
+        let task = MppTask::new_with_hash_cols(
+            PhysicalPlan::TableDual(PhysicalTableDual {
+                base: BasePhysicalPlan::new(&allocator, "Dual", 0),
+                row_count: 1,
+            }),
+            MppPartitionType::Hash,
+            hash_cols.clone(),
+            [],
+        );
+        let mut required = PhysicalProperty::default();
+        required.task_tp = TaskType::Mpp;
+        required.mpp_partition_tp = MppPartitionType::Hash;
+        required.mpp_partition_cols = hash_cols;
+        let enforced = task
+            .enforce_exchanger(&required, &allocator)
+            .expect("matching hash partitioning needs no exchange");
+        assert!(matches!(enforced.plan(), Some(PhysicalPlan::TableDual(_))));
+    }
 }

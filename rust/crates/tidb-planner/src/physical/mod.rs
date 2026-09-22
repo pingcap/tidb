@@ -2037,6 +2037,41 @@ impl PhysicalExchangeSender {
     }
 }
 
+/// Runtime task metadata attached to a Go `PhysicalExchangeReceiver` after
+/// MPP fragment scheduling. The planner keeps the identity fields available
+/// without coupling the physical plan to the executor's transport type.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MppTaskMeta {
+    /// TiFlash task identifier, when scheduling has assigned one.
+    pub id: i64,
+    /// TiFlash address, when scheduling has assigned one.
+    pub address: String,
+}
+
+/// Go `physicalop.PhysicalExchangeReceiver` (`physical_exchange_receiver.go`):
+/// the passive side of an MPP exchange. Its sender is the sole physical child;
+/// runtime task metadata is filled by the fragment scheduler.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalExchangeReceiver {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `Tasks`, represented by planner-owned metadata until scheduling.
+    pub tasks: Vec<MppTaskMeta>,
+}
+
+impl PhysicalExchangeReceiver {
+    /// Go `PhysicalExchangeReceiver.ExplainInfo`.
+    #[must_use]
+    pub fn explain_info(&self) -> String {
+        let count = self.base.tiflash_fine_grained_shuffle_stream_count;
+        if count > 0 {
+            format!("stream_count: {count}")
+        } else {
+            String::new()
+        }
+    }
+}
+
 /// Go `physicalop.PhysicalTableReader` (the reader half of
 /// `convertToRootTaskImpl`'s table branch, `task_base.go:571`): the
 /// TiDB-side operator that reads a pushed-down table plan's results. The
@@ -3117,6 +3152,8 @@ pub enum PhysicalPlan {
     TableReader(PhysicalTableReader),
     /// Go `physicalop.PhysicalExchangeSender`.
     ExchangeSender(PhysicalExchangeSender),
+    /// Go `physicalop.PhysicalExchangeReceiver`.
+    ExchangeReceiver(PhysicalExchangeReceiver),
     /// Go `physicalop.PhysicalIndexScan` (planning slice).
     IndexScan(PhysicalIndexScan),
     /// Go `physicalop.PhysicalIndexReader`.
@@ -3174,6 +3211,7 @@ impl PhysicalPlan {
             Self::Apply(op) => &op.hash_join.base,
             Self::TableReader(op) => &op.base,
             Self::ExchangeSender(op) => &op.base,
+            Self::ExchangeReceiver(op) => &op.base,
             Self::IndexScan(op) => &op.base,
             Self::IndexReader(op) => &op.base,
             Self::IndexLookUpReader(op) => &op.base,
@@ -3218,6 +3256,7 @@ impl PhysicalPlan {
             Self::Apply(op) => &mut op.hash_join.base,
             Self::TableReader(op) => &mut op.base,
             Self::ExchangeSender(op) => &mut op.base,
+            Self::ExchangeReceiver(op) => &mut op.base,
             Self::IndexScan(op) => &mut op.base,
             Self::IndexReader(op) => &mut op.base,
             Self::IndexLookUpReader(op) => &mut op.base,
@@ -3566,6 +3605,16 @@ impl PhysicalPlan {
             total += match node {
                 Self::ShuffleReceiver(receiver) => receiver.base.base.memory_usage()
                     + std::mem::size_of::<Box<Self>>() as i64 + receiver.data_source.memory_usage(),
+                Self::ExchangeReceiver(receiver) => {
+                    receiver.base.base.memory_usage()
+                        + std::mem::size_of::<Vec<MppTaskMeta>>() as i64
+                        + (receiver.tasks.capacity() * std::mem::size_of::<MppTaskMeta>()) as i64
+                        + receiver
+                            .tasks
+                            .iter()
+                            .map(|task| task.address.capacity() as i64)
+                            .sum::<i64>()
+                }
                 Self::Shuffle(shuffle) => shuffle.memory_usage(),
                 Self::Sort(sort) => sort.memory_usage(),
                 Self::TableSample(sample) => sample.memory_usage(),
@@ -3851,6 +3900,10 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 exchange_type: op.exchange_type,
                 hash_cols: op.hash_cols.clone(),
+            }),
+            Self::ExchangeReceiver(op) => Self::ExchangeReceiver(PhysicalExchangeReceiver {
+                base: base_of(&op.base),
+                tasks: op.tasks.clone(),
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
                 data_source_schema: op.data_source_schema.clone(),

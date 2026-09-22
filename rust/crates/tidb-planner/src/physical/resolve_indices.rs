@@ -375,6 +375,7 @@ impl PhysicalPlan {
                         .map_err(PlanError::internal)?;
                 }
             }
+            Self::ExchangeReceiver(_) => {}
             Self::Expand(op) => {
                 let input = child_schema(&op.base, 0)?;
                 for level in &mut op.level_exprs {

@@ -528,6 +528,7 @@ fn bind_plan_expressions(
 ) -> Result<(), PlanCacheRebuildError> {
     match plan {
         PhysicalPlan::ShuffleReceiver(_) => {}
+        PhysicalPlan::ExchangeReceiver(_) => {}
         PhysicalPlan::Shuffle(shuffle) => {
             for items in &mut shuffle.by_item_arrays {
                 bind_conditions(items, context)?;

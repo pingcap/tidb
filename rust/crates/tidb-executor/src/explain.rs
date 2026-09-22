@@ -1184,6 +1184,7 @@ fn physical_operator_info(
             format!("index handle offsets:{:?}", lookup.index_handle_offsets)
         }
         PhysicalPlan::ExchangeSender(sender) => sender.explain_info(ignore_explain_id_suffix),
+        PhysicalPlan::ExchangeReceiver(receiver) => receiver.explain_info(),
         PhysicalPlan::PointGet(point) => {
             let common_handle = catalog
                 .kv_table_by_id(point.table_id)

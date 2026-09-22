@@ -223,9 +223,9 @@ pub struct MppTask {
     plan: Option<Box<PhysicalPlan>>,
     /// Go's private `partTp`.
     part_tp: MppPartitionType,
-    // boundary: `HashCols []*property.MPPPartitionColumn` — the property
-    // column type is ported, but the task does not yet retain its current
-    // hash-key list.
+    /// Go `HashCols`, retained so exchange enforcement can compare and carry
+    /// the current partitioning contract.
+    pub hash_cols: Vec<crate::physical_property::MppPartitionColumn>,
     /// Go `RootTaskConds`: TableScan filters TiFlash cannot take, executed
     /// in a TiDB-side Selection when the task converts to root.
     pub root_task_conds: Vec<Expression>,
@@ -243,9 +243,21 @@ impl MppTask {
         part_tp: MppPartitionType,
         warnings: impl IntoIterator<Item = SimpleWarnings>,
     ) -> MppTask {
+        Self::new_with_hash_cols(plan, part_tp, Vec::new(), warnings)
+    }
+
+    /// `NewMppTask` with the source partition columns retained.
+    #[must_use]
+    pub fn new_with_hash_cols(
+        plan: PhysicalPlan,
+        part_tp: MppPartitionType,
+        hash_cols: Vec<crate::physical_property::MppPartitionColumn>,
+        warnings: impl IntoIterator<Item = SimpleWarnings>,
+    ) -> MppTask {
         let mut task = MppTask {
             plan: Some(Box::new(plan)),
             part_tp,
+            hash_cols,
             root_task_conds: Vec::new(),
             warnings: SimpleWarnings::default(),
         };
@@ -258,6 +270,18 @@ impl MppTask {
     #[must_use]
     pub fn partition_type(&self) -> MppPartitionType {
         self.part_tp
+    }
+
+    /// Go `GetHashCols`.
+    #[must_use]
+    pub fn hash_cols(&self) -> &[crate::physical_property::MppPartitionColumn] {
+        &self.hash_cols
+    }
+
+    /// Go `MppTask.Plan`.
+    #[must_use]
+    pub fn plan(&self) -> Option<&PhysicalPlan> {
+        self.plan.as_deref()
     }
 
     /// Go `Copy`: struct copy plus a fresh warnings slice.
@@ -2589,6 +2613,7 @@ pub fn attach2_task(
         PhysicalPlan::ExchangeSender(_) => Err(PlanError::internal(
             "attach2_task: an ExchangeSender is never an attach parent",
         )),
+        PhysicalPlan::ExchangeReceiver(_) => Ok(attach_plan_to_task(plan, first)),
         // `PhysicalLock` has no override: the default convert-then-attach
         // body, exactly as `PhysicalMaxOneRow`'s arm above.
         PhysicalPlan::Lock(_) => {
@@ -2705,8 +2730,8 @@ pub fn attach2_task(
         // Go's own body ("if !isMpp { return tasks[len(tasks)-1] }"), a
         // quirk reproduced rather than fixed: on a root-tier plan the CTE
         // producers are wired elsewhere, not through this attach. The
-        // all-MPP arm builds an MppTask over the last child's partition type;
-        // the current task representation has no hash-column list.
+        // all-MPP arm builds an MppTask over the last child's partition type
+        // and carries its hash-column contract into the composed fragment.
         PhysicalPlan::Sequence(_) => {
             let mut all = vec![first];
             all.append(&mut tasks);
@@ -2717,6 +2742,7 @@ pub fn attach2_task(
                 unreachable!("the all-MPP branch proved every task is MPP");
             };
             let partition_type = last.partition_type();
+            let hash_cols = last.hash_cols.clone();
             let mut child_plans = Vec::with_capacity(all.len());
             let mut warnings = Vec::with_capacity(all.len());
             for task in all {
@@ -2731,7 +2757,12 @@ pub fn attach2_task(
             }
             let mut sequence = plan;
             sequence.base_mut().set_children(child_plans);
-            Ok(Task::Mpp(MppTask::new(sequence, partition_type, warnings)))
+            Ok(Task::Mpp(MppTask::new_with_hash_cols(
+                sequence,
+                partition_type,
+                hash_cols,
+                warnings,
+            )))
         }
         // `attach2Task4PhysicalTopN` (`task.go:1249`), the SIMPLE path:
         // when the by-items carry columns, pass the TiKV gate, and the cop

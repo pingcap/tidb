@@ -57,9 +57,19 @@ their recorded stage. The latest verified state is summarized first.
   `offset=0, count=offset+count` operator into the MPP fragment before the
   root boundary; UnionAll and all-MPP Sequence rebuild one MPP task over their
   child fragments; StreamAgg converts to root. Focused physical and task-shape
-  tests pass. ExchangeReceiver/EnforceExchanger and HashAgg MPP phases, the
-  heavy-function TopN global/projection rewrite, and full package/workload
-  acceptance remain open.
+  tests pass. The next exchange-enforcement checkpoint below adds the
+  receiver/source pair and task hash-column contract; fragment scheduling,
+  HashAgg MPP phases, the heavy-function TopN global/projection rewrite, and
+  full package/workload acceptance remain open.
+
+- [x] (2026-09-21, MPP exchange-enforcement boundary) Rust now represents
+  `PhysicalExchangeReceiver`, carries `MppTask.HashCols`, and implements
+  `MppTask::enforce_exchanger` through the source `NeedEnforceExchanger` guard.
+  The source pair is included in clone, index resolution, plan-cache binding,
+  cost, EXPLAIN, and local executor construction; focused enforcement and
+  cost tests pass. Native fragment scheduling, task metadata transport,
+  function-dependency-aware hash equivalence, HashAgg MPP phases, heavy TopN,
+  and whole-package/workload acceptance remain open.
 
 - [x] (2026-09-21, MaxOneRow enforced-MPP warning routing) The Go
   `CanSelfBeingPushedToCopImpl` refusal is now preserved before Rust's generic
@@ -619,8 +629,8 @@ their recorded stage. The latest verified state is summarized first.
   dispatcher: the production coster now dispatches the available pinned
   Apply, UnionAll, IndexMergeReader, CTE, PointGet, and BatchPointGet formulas,
   with reader/scan factors and option tracing wired in the latest receipt.
-  ExchangeReceiver still lacks a corresponding Rust physical-plan variant;
-  selectable Ver1 and remaining session/cache semantics remain open.
+  ExchangeReceiver cost dispatch is now present; selectable Ver1 and remaining
+  session/cache semantics remain open.
 - [ ] Read and map every remaining pinned production and generated file to its
   owning Rust implementation and consumer.
 - [ ] Reconcile both pinned test files (`fragment_test.go` and
@@ -7982,6 +7992,38 @@ The added tests cover TiFlash candidate emission, supported and unsupported
 MPP unary expressions, partial Limit/TopN placement below the pass-through
 sender, UnionAll/Sequence fragment rebuilding, and StreamAgg root conversion.
 The Go heavy-function `getPushedDownTopN` projection/global rewrite,
-partial-order and TiDB-cop TopN branches, ExchangeReceiver construction,
-EnforceExchanger, and HashAgg MPP phases remain explicit follow-up work; this
-checkpoint makes no whole-package or workload performance claim.
+partial-order and TiDB-cop TopN branches, fragment scheduling, and HashAgg MPP
+phases remain explicit follow-up work; this checkpoint makes no whole-package
+or workload performance claim.
+
+
+## Continuing MPP exchange-enforcement parity
+
+The pinned Go `EnforceExchanger` path compares the task's current partition
+type and hash columns with the required MPP property, then builds
+`PhysicalExchangeReceiver <- PhysicalExchangeSender <- fragment` when the
+property is not already satisfied. Rust now retains `MppTask::hash_cols`, uses
+the existing `NeedEnforceExchanger` comparison, and builds the same typed
+source pair with the required exchange kind and hash columns. Matching
+partition contracts still return a copied task without adding a boundary.
+
+`PhysicalExchangeReceiver` now participates in the closed physical tree's
+base accessors, shallow/deep cloning, source index traversal, cached-plan
+expression walk, cost dispatch, EXPLAIN operator info, and local executor
+construction. Its runtime task metadata is represented by planner-owned ID and
+address fields; the local builder preserves the current pass-through seam
+until a native fragment scheduler can route TiFlash tasks.
+
+Focused validation from `rust/`:
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib enforce::tests -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib find_best_task::coster::tests -- --test-threads=1
+    cargo check --offline --locked -j12 -p tidb-planner --message-format=short
+    cargo check --offline --locked -j12 -p tidb-executor --message-format=short
+
+The exchange tests cover insertion/reuse and child-plus-broadcast network
+cost. This checkpoint does not claim Go's multi-fragment scheduler, protobuf
+task encoding, runtime fragment metadata, FD-aware hash equivalence, MPP
+HashAgg partial/final phases, or full physicalop/workload acceptance. No
+sysbench, TPC-C, TPC-H, or YCSB performance improvement is inferred from the
+transport-boundary representation.
