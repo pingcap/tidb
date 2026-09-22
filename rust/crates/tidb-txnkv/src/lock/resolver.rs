@@ -983,6 +983,7 @@ where
                     runtime,
                     lock,
                     &primary_lock,
+                    &check_response,
                     base_context,
                     call,
                     backoff,
@@ -1083,6 +1084,9 @@ where
             .current_ts()
             .map_err(LockRecoveryError::Timestamp)?
     };
+    if let Some(response) = runtime.cached_lock_status(query.txn_id) {
+        return Ok(LockStatus::Answered(response));
+    }
     let mut rollback_if_not_exist = false;
     loop {
         check_lock_call(call)?;
@@ -1117,6 +1121,9 @@ where
             continue;
         }
         let Some(key_error) = response.error.as_ref() else {
+            if let Some(status) = cacheable_status(&response) {
+                runtime.cache_lock_status(query.txn_id, status, response.clone());
+            }
             return Ok(LockStatus::Answered(response));
         };
         if key_error.txn_not_found.is_some() {
@@ -1225,6 +1232,25 @@ pub(super) fn classify_determined_status(
     })
 }
 
+/// Matches Go `TxnStatus.StatusCacheable`: a commit is determined regardless
+/// of lock TTL; rollback is cacheable only after the lock TTL reached zero.
+fn cacheable_status(response: &KvrpcCheckTxnStatusResponse) -> Option<ResolvedTxnStatus> {
+    if response.commit_version > 0 {
+        return Some(ResolvedTxnStatus::Committed(response.commit_version));
+    }
+    if response.lock_ttl == 0
+        && matches!(
+            response.action,
+            action if action == KvrpcTxnAction::NoAction as i32
+                || action == KvrpcTxnAction::TtlExpireRollback as i32
+                || action == KvrpcTxnAction::LockNotExistRollback as i32
+        )
+    {
+        return Some(ResolvedTxnStatus::RolledBack);
+    }
+    None
+}
+
 /// Commit-timestamp evidence assembled from an async-commit transaction's
 /// secondary locks.
 ///
@@ -1298,6 +1324,7 @@ fn resolve_async_commit_lock<C, L>(
     runtime: &SharedReadRuntime<C, L>,
     lock: &OptimisticLock,
     primary_lock: &OptimisticLock,
+    check_response: &KvrpcCheckTxnStatusResponse,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
     backoff: &mut RegionBackoffBudget,
@@ -1345,6 +1372,14 @@ where
     } else {
         ResolvedTxnStatus::Committed(data.commit_ts)
     };
+    let mut determined_response = check_response.clone();
+    determined_response.commit_version = match status {
+        ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
+        ResolvedTxnStatus::RolledBack => 0,
+    };
+    if let Some(cache_status) = cacheable_status(&determined_response) {
+        runtime.cache_lock_status(lock.txn_id, cache_status, determined_response);
+    }
     let groups = group_keys_by_region(runtime, &data.keys, base_context)?;
     let mut last = None;
     let mut errors = Vec::new();
@@ -1739,9 +1774,65 @@ where
 mod tests {
     use std::time::Duration;
 
-    use super::{wait_status_backoff, LockRecoveryError, LockRecoveryResult, SnapshotLockSet};
+    use super::{
+        cacheable_status, wait_status_backoff, LockRecoveryError, LockRecoveryResult,
+        ResolvedTxnStatus, SnapshotLockSet,
+    };
     use crate::region::RegionBackoffBudget;
     use crate::{UnaryCallContext, UnaryCancellation};
+    use tidb_proto::{KvrpcCheckTxnStatusResponse, KvrpcTxnAction};
+
+    #[test]
+    fn txn_status_cacheability_matches_go() {
+        let rollback_actions = [
+            KvrpcTxnAction::NoAction,
+            KvrpcTxnAction::TtlExpireRollback,
+            KvrpcTxnAction::LockNotExistRollback,
+        ];
+        for action in rollback_actions {
+            assert_eq!(
+                cacheable_status(&KvrpcCheckTxnStatusResponse {
+                    action: action as i32,
+                    ..KvrpcCheckTxnStatusResponse::default()
+                }),
+                Some(ResolvedTxnStatus::RolledBack),
+                "TTL-zero rollback action {action:?} is cacheable"
+            );
+            assert_eq!(
+                cacheable_status(&KvrpcCheckTxnStatusResponse {
+                    lock_ttl: 1,
+                    action: action as i32,
+                    ..KvrpcCheckTxnStatusResponse::default()
+                }),
+                None,
+                "live lock with action {action:?} is not cacheable"
+            );
+        }
+
+        assert_eq!(
+            cacheable_status(&KvrpcCheckTxnStatusResponse {
+                commit_version: 123,
+                lock_ttl: 1,
+                ..KvrpcCheckTxnStatusResponse::default()
+            }),
+            Some(ResolvedTxnStatus::Committed(123)),
+            "a commit is determined even if the response reports a TTL"
+        );
+        for action in [
+            KvrpcTxnAction::MinCommitTsPushed,
+            KvrpcTxnAction::TtlExpirePessimisticRollback,
+            KvrpcTxnAction::LockNotExistDoNothing,
+        ] {
+            assert_eq!(
+                cacheable_status(&KvrpcCheckTxnStatusResponse {
+                    action: action as i32,
+                    ..KvrpcCheckTxnStatusResponse::default()
+                }),
+                None,
+                "non-final action {action:?} is not cacheable"
+            );
+        }
+    }
 
     /// A reader that moves BACKWARDS in time drops what it learned at the
     /// later version.

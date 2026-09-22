@@ -14,11 +14,13 @@
 
 //! Shared ownership boundary for the retained TiKV read path.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::lock::async_resolve::{AsyncLockResolveTask, AsyncResolvePool};
+use crate::lock::ResolvedTxnStatus;
 use crate::region::{
     BackgroundRegionCache, BackgroundRegionCacheError, BackgroundRegionCacheOwner, KeyRange,
     LeaderRequest, RegionCache, RegionLoader, RegionLocation, RegionQueryLoader,
@@ -26,6 +28,7 @@ use crate::region::{
     StoreLiveness, StoreLivenessProbe,
 };
 use crate::{DirectUnaryClient, DEFAULT_STORE_LIVENESS_TIMEOUT};
+use tidb_proto::KvrpcCheckTxnStatusResponse;
 
 const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_GC_LIMIT: usize = 50;
@@ -51,6 +54,45 @@ pub struct ResolvingLock {
 struct ResolvingLocks {
     next_token: u64,
     entries: std::collections::HashMap<u64, Vec<ResolvingLock>>,
+}
+
+const RESOLVED_TXN_STATUS_CACHE_SIZE: usize = 2048;
+
+#[derive(Default)]
+struct ResolvedTxnStatusCache {
+    entries: HashMap<u64, (ResolvedTxnStatus, KvrpcCheckTxnStatusResponse)>,
+    insertion_order: VecDeque<u64>,
+}
+
+impl ResolvedTxnStatusCache {
+    fn get(&self, txn_id: u64) -> Option<KvrpcCheckTxnStatusResponse> {
+        self.entries
+            .get(&txn_id)
+            .map(|(_, response)| response.clone())
+    }
+
+    fn insert(
+        &mut self,
+        txn_id: u64,
+        status: ResolvedTxnStatus,
+        response: KvrpcCheckTxnStatusResponse,
+    ) {
+        if let Some((saved_status, _)) = self.entries.get(&txn_id) {
+            assert_eq!(
+                *saved_status, status,
+                "a transaction's determined lock status changed"
+            );
+            return;
+        }
+
+        self.entries.insert(txn_id, (status, response));
+        self.insertion_order.push_back(txn_id);
+        if self.entries.len() > RESOLVED_TXN_STATUS_CACHE_SIZE {
+            if let Some(oldest_txn_id) = self.insertion_order.pop_front() {
+                self.entries.remove(&oldest_txn_id);
+            }
+        }
+    }
 }
 
 /// Scope guard for client-go's `RecordResolvingLocks` / `ResolveLocksDone`.
@@ -119,6 +161,7 @@ pub struct SharedReadOpener<C, L> {
     region_cache: BackgroundRegionCache<L>,
     resolving_locks: Arc<Mutex<ResolvingLocks>>,
     async_resolve_pool: Option<Arc<AsyncResolvePool>>,
+    resolved_txn_statuses: Arc<Mutex<ResolvedTxnStatusCache>>,
     authority_id: u64,
 }
 
@@ -129,6 +172,7 @@ impl<C: Clone, L> Clone for SharedReadOpener<C, L> {
             region_cache: self.region_cache.clone_opener(),
             resolving_locks: Arc::clone(&self.resolving_locks),
             async_resolve_pool: self.async_resolve_pool.clone(),
+            resolved_txn_statuses: Arc::clone(&self.resolved_txn_statuses),
             authority_id: self.authority_id,
         }
     }
@@ -164,6 +208,7 @@ where
             region_cache: region_cache.opener_handle(),
             resolving_locks: Arc::new(Mutex::new(ResolvingLocks::default())),
             async_resolve_pool: None,
+            resolved_txn_statuses: Arc::new(Mutex::new(ResolvedTxnStatusCache::default())),
             authority_id,
         };
         Self {
@@ -278,6 +323,7 @@ where
             self.region_cache.open_lease()?,
             Arc::clone(&self.resolving_locks),
             self.async_resolve_pool.clone(),
+            Arc::clone(&self.resolved_txn_statuses),
             self.authority_id,
         )
     }
@@ -298,6 +344,7 @@ pub struct SharedReadRuntime<C, L> {
     region_cache: BackgroundRegionCache<L>,
     resolving_locks: Arc<Mutex<ResolvingLocks>>,
     async_resolve_pool: Option<Arc<AsyncResolvePool>>,
+    resolved_txn_statuses: Arc<Mutex<ResolvedTxnStatusCache>>,
     cluster_id: u64,
     authority_id: u64,
 }
@@ -309,6 +356,7 @@ impl<C, L> Clone for SharedReadRuntime<C, L> {
             region_cache: self.region_cache.clone(),
             resolving_locks: Arc::clone(&self.resolving_locks),
             async_resolve_pool: self.async_resolve_pool.clone(),
+            resolved_txn_statuses: Arc::clone(&self.resolved_txn_statuses),
             cluster_id: self.cluster_id,
             authority_id: self.authority_id,
         }
@@ -325,6 +373,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             region_cache: BackgroundRegionCache::without_worker(region_cache),
             resolving_locks: Arc::new(Mutex::new(ResolvingLocks::default())),
             async_resolve_pool: None,
+            resolved_txn_statuses: Arc::new(Mutex::new(ResolvedTxnStatusCache::default())),
             cluster_id,
             authority_id: next_read_authority_id(),
         }
@@ -336,6 +385,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         region_cache: BackgroundRegionCache<L>,
         resolving_locks: Arc<Mutex<ResolvingLocks>>,
         async_resolve_pool: Option<Arc<AsyncResolvePool>>,
+        resolved_txn_statuses: Arc<Mutex<ResolvedTxnStatusCache>>,
         authority_id: u64,
     ) -> Result<Self, BackgroundRegionCacheError> {
         let cluster_id = region_cache.with_cache_read(|cache| cache.cluster_id())?;
@@ -344,6 +394,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             region_cache,
             resolving_locks,
             async_resolve_pool,
+            resolved_txn_statuses,
             cluster_id,
             authority_id,
         })
@@ -378,6 +429,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             region_cache: self.region_cache.clone(),
             resolving_locks: Arc::clone(&self.resolving_locks),
             async_resolve_pool: self.async_resolve_pool.clone(),
+            resolved_txn_statuses: Arc::clone(&self.resolved_txn_statuses),
             cluster_id: self.cluster_id,
             authority_id: self.authority_id,
         }
@@ -389,6 +441,27 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         self.async_resolve_pool
             .as_ref()
             .is_some_and(|pool| pool.try_spawn(task))
+    }
+
+    /// Returns a cached determined CheckTxnStatus response for this resolver.
+    pub(crate) fn cached_lock_status(&self, txn_id: u64) -> Option<KvrpcCheckTxnStatusResponse> {
+        self.resolved_txn_statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(txn_id)
+    }
+
+    /// Saves one determined transaction status using client-go's FIFO cache.
+    pub(crate) fn cache_lock_status(
+        &self,
+        txn_id: u64,
+        status: ResolvedTxnStatus,
+        response: KvrpcCheckTxnStatusResponse,
+    ) {
+        self.resolved_txn_statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(txn_id, status, response);
     }
 
     /// Records one resolve attempt until the returned guard is dropped.
@@ -588,6 +661,7 @@ mod async_resolve_tests {
 
     #[derive(Clone)]
     struct Client {
+        check_calls: Arc<AtomicUsize>,
         resolve_calls: Arc<AtomicUsize>,
         resolve_requests: Arc<Mutex<Vec<(u64, Vec<Vec<u8>>)>>>,
     }
@@ -600,6 +674,7 @@ mod async_resolve_tests {
             _context: &KvrpcContext,
             _call: &UnaryCallContext,
         ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+            self.check_calls.fetch_add(1, Ordering::Relaxed);
             Ok(KvrpcCheckTxnStatusResponse {
                 commit_version: 150,
                 ..KvrpcCheckTxnStatusResponse::default()
@@ -643,6 +718,70 @@ mod async_resolve_tests {
     }
 
     #[test]
+    fn resolved_txn_status_cache_reuses_check_status_results() {
+        let check_calls = Arc::new(AtomicUsize::new(0));
+        let runtime = SharedReadRuntime::new_injected(
+            Client {
+                check_calls: Arc::clone(&check_calls),
+                resolve_calls: Arc::new(AtomicUsize::new(0)),
+                resolve_requests: Arc::new(Mutex::new(Vec::new())),
+            },
+            RegionCache::new(Loader),
+        );
+        let lock = OptimisticLock {
+            key: b"secondary".to_vec(),
+            primary: b"primary".to_vec(),
+            txn_id: 100,
+            ttl_ms: 0,
+            txn_size: 1,
+            lock_type: 2,
+            min_commit_ts: 0,
+            use_async_commit: false,
+            secondaries: Vec::new(),
+        };
+
+        for _ in 0..2 {
+            let result = resolve_optimistic_locks(
+                &runtime,
+                std::slice::from_ref(&lock),
+                200,
+                &KvrpcContext::default(),
+                &UnaryCallContext::with_timeout(Duration::from_secs(1)),
+                &FixedTimestampSource::new(1),
+                true,
+            )
+            .expect("both reads resolve using the same determined transaction status");
+            assert_eq!(result.statuses, vec![ResolvedTxnStatus::Committed(150)]);
+        }
+
+        assert_eq!(check_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn resolved_txn_status_cache_evicts_the_oldest_entry_at_capacity() {
+        let mut cache = ResolvedTxnStatusCache::default();
+        for txn_id in 0..=(RESOLVED_TXN_STATUS_CACHE_SIZE as u64) {
+            cache.insert(
+                txn_id,
+                ResolvedTxnStatus::Committed(txn_id + 1),
+                KvrpcCheckTxnStatusResponse {
+                    commit_version: txn_id + 1,
+                    ..KvrpcCheckTxnStatusResponse::default()
+                },
+            );
+        }
+
+        assert!(cache.get(0).is_none());
+        assert_eq!(
+            cache.get(RESOLVED_TXN_STATUS_CACHE_SIZE as u64),
+            Some(KvrpcCheckTxnStatusResponse {
+                commit_version: RESOLVED_TXN_STATUS_CACHE_SIZE as u64 + 1,
+                ..KvrpcCheckTxnStatusResponse::default()
+            })
+        );
+    }
+
+    #[test]
     fn small_read_cleanup_is_detached_and_keeps_request_source() {
         let (task_tx, task_rx) = mpsc::channel();
         let pool = AsyncResolvePool::new(move |task, cancellation| {
@@ -657,6 +796,7 @@ mod async_resolve_tests {
         let resolve_requests = Arc::new(Mutex::new(Vec::new()));
         let mut runtime = SharedReadRuntime::new_injected(
             Client {
+                check_calls: Arc::new(AtomicUsize::new(0)),
                 resolve_calls: Arc::clone(&resolve_calls),
                 resolve_requests,
             },
@@ -713,17 +853,20 @@ mod async_resolve_tests {
         let resolve_calls = Arc::new(AtomicUsize::new(0));
         let resolve_requests = Arc::new(Mutex::new(Vec::new()));
         let client = Client {
+            check_calls: Arc::new(AtomicUsize::new(0)),
             resolve_calls: Arc::clone(&resolve_calls),
             resolve_requests: Arc::clone(&resolve_requests),
         };
         let cache = BackgroundRegionCache::without_worker(RegionCache::new(Loader));
         let resolving_locks = Arc::new(Mutex::new(ResolvingLocks::default()));
+        let resolved_txn_statuses = Arc::new(Mutex::new(ResolvedTxnStatusCache::default()));
         let authority_id = next_read_authority_id();
         let opener = SharedReadOpener {
             client: client.clone(),
             region_cache: cache.clone_opener(),
             resolving_locks: Arc::clone(&resolving_locks),
             async_resolve_pool: None,
+            resolved_txn_statuses: Arc::clone(&resolved_txn_statuses),
             authority_id,
         };
         let pool = crate::lock::async_resolve_pool(opener.clone());
@@ -732,6 +875,7 @@ mod async_resolve_tests {
             cache.open_lease().expect("the test opens a cache lease"),
             resolving_locks,
             Some(Arc::clone(&pool)),
+            resolved_txn_statuses,
             authority_id,
         )
         .expect("the test runtime shares the resolver opener");
@@ -776,6 +920,7 @@ mod async_resolve_tests {
         let resolve_requests = Arc::new(Mutex::new(Vec::new()));
         let runtime = SharedReadRuntime::new_injected(
             Client {
+                check_calls: Arc::new(AtomicUsize::new(0)),
                 resolve_calls: Arc::clone(&resolve_calls),
                 resolve_requests: Arc::clone(&resolve_requests),
             },
@@ -812,17 +957,20 @@ mod async_resolve_tests {
         let resolve_calls = Arc::new(AtomicUsize::new(0));
         let resolve_requests = Arc::new(Mutex::new(Vec::new()));
         let client = Client {
+            check_calls: Arc::new(AtomicUsize::new(0)),
             resolve_calls: Arc::clone(&resolve_calls),
             resolve_requests: Arc::clone(&resolve_requests),
         };
         let cache = BackgroundRegionCache::without_worker(RegionCache::new(Loader));
         let resolving_locks = Arc::new(Mutex::new(ResolvingLocks::default()));
+        let resolved_txn_statuses = Arc::new(Mutex::new(ResolvedTxnStatusCache::default()));
         let authority_id = next_read_authority_id();
         let opener = SharedReadOpener {
             client: client.clone(),
             region_cache: cache.clone_opener(),
             resolving_locks: Arc::clone(&resolving_locks),
             async_resolve_pool: None,
+            resolved_txn_statuses: Arc::clone(&resolved_txn_statuses),
             authority_id,
         };
         let pool = crate::lock::async_resolve_pool(opener.clone());
@@ -831,6 +979,7 @@ mod async_resolve_tests {
             cache.open_lease().expect("the test opens a cache lease"),
             resolving_locks,
             Some(Arc::clone(&pool)),
+            resolved_txn_statuses,
             authority_id,
         )
         .expect("the test runtime shares the resolver opener");

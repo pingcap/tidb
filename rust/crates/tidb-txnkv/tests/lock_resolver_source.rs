@@ -569,7 +569,7 @@ fn small_write_locks_are_batched_by_transaction_and_region() {
         ]
     );
     let recorded = recorded.borrow();
-    assert_eq!(recorded.checks.len(), 3);
+    assert_eq!(recorded.checks.len(), 1);
     assert_eq!(recorded.resolves.len(), 2);
     assert_eq!(
         recorded
@@ -1330,10 +1330,9 @@ fn a_mixed_blocker_set_uses_each_locks_own_cleanup_protocol() {
         }
     );
     let recorded = recorded.borrow();
-    assert_eq!(recorded.checks.len(), 3);
+    assert_eq!(recorded.checks.len(), 2);
     assert!(!recorded.checks[0].1.resolving_pessimistic_lock);
     assert!(recorded.checks[1].1.resolving_pessimistic_lock);
-    assert!(!recorded.checks[2].1.resolving_pessimistic_lock);
     // Small optimistic locks batch together even with a pessimistic lock
     // between them. Each lock still uses its own cleanup command.
     assert_eq!(recorded.resolves.len(), 1);

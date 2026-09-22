@@ -1212,8 +1212,9 @@ Async recovery must preserve the source's initial-region fork boundaries.
 Regroup only a failed group's keys, retain successful sibling answers, and
 batch ResolveLock keys by region. The existing native synchronous path can
 follow Go's synchronous pool fallback, including returning the last worker's
-history. The asynchronous pool, full resolver options/cache, PD/routing budget
-ownership and SQL attachment remain separate open acceptance gates.
+history. The asynchronous worker modes, resolver options, status-cache metrics
+and original cache tests, PD/routing budget ownership and SQL attachment remain
+separate open acceptance gates.
 
 Add red regressions for nested snapshot histories, repeated expired
 TxnNotFound responses and per-region cleanup batching before implementation.
@@ -1264,13 +1265,13 @@ this does not validate or contradict the Rust recovery change. Rust lint passed
 before the last upstream fast-forward and must be rerun for the final revision.
 
 All changes are seed evidence in open package audits. The async pool itself,
-status cache, all resolver options, PD/routing retry budgets, Scanner and replica
-paths, SQL runtime-stat attachment, original Go support/test inventory, and
-whole-package platform/build gates remain open. No TiKV cluster or matched
-sysbench, TPC-C, TPC-H or YCSB benchmark has been run; no workload speedup is
-claimed. The new batching reduces native ResolveLock request count for keys in
-the same region, but requires matched workload measurement before its practical
-impact is established.
+cache metrics and original status-cache tests, all resolver options, PD/routing
+retry budgets, Scanner and replica paths, SQL runtime-stat attachment, original
+Go support/test inventory, and whole-package platform/build gates remain open.
+No TiKV cluster or matched sysbench, TPC-C, TPC-H or YCSB benchmark has been
+run; no workload speedup is claimed. The new batching reduces native ResolveLock
+request count for keys in the same region, but requires matched workload
+measurement before its practical impact is established.
 
 ### Cop response backoffer follow-up (2026-09-22)
 
@@ -1332,9 +1333,10 @@ one region generated two requests instead of one. Final targeted validation:
 
 The resolver source suite passed all 26 cases, dependent crates compiled, lint
 passed, and the scoped formatter checked the three changed Rust source files.
-The complete txnlock package remains unaccepted: asynchronous read cleanup,
-resolver cache/options/metrics, original Go test/support reconciliation and
-build/platform gates are still open. No sysbench, TPC-C, TPC-H or YCSB
+The complete txnlock package remains unaccepted: resolver options/metrics,
+async-commit and secondary-check worker parity, original Go test/support
+reconciliation, and build/platform gates are still open. No sysbench, TPC-C,
+TPC-H or YCSB
 performance claim follows from reducing these mock-RPC counts.
 
 ### Read-side lite-cleanup receipt (2026-09-22)
@@ -1372,12 +1374,13 @@ checks, unistore test compilation/execution, lint and scoped formatting passed.
 The `rust/target` build cache was 42 GiB before cleanup. `cargo clean` removed
 201,625 files and reported 65.5 GiB reclaimed; filesystem free space increased
 by about 42 GiB. No sysbench, TPC-C, TPC-H or YCSB benchmark was run. The
-txnlock package's full Go test/support, ordinary non-lite read async path,
-resolver option/cache/metrics, failpoint, platform/build and caller integration
-gates remain open. Upstream's `gp.New(10000, 10*time.Second)` can run up to
-10,000 goroutines; this Rust runtime currently caps blocking worker threads at
-512 while admitting up to 10,000 tasks. That Rust resource bound changes peak
-cleanup concurrency and remains unbenchmarked before package acceptance.
+txnlock package's full Go test/support, resolver options/metrics, async-commit
+and secondary-check worker paths, failpoint, platform/build, and caller
+integration gates remain open. Upstream's `gp.New(10000, 10*time.Second)` can
+run up to 10,000 goroutines; this Rust runtime currently caps blocking worker
+threads at 512 while admitting up to 10,000 tasks. That Rust resource bound
+changes peak cleanup concurrency and remains unbenchmarked before package
+acceptance.
 
 ### Ordinary read-cleanup receipt (2026-09-22)
 
@@ -1403,5 +1406,27 @@ Validation after this addition passed:
 
 The async-cleanup unit tests passed all 4 cases and the resolver source suite
 passed all 26 cases. Full package parity remains open for resolver options,
-cache behavior, metrics, async-commit/secondary workers, failpoints, source test
+cache metrics/tests, async-commit/secondary workers, failpoints, source test
 reconciliation, all caller wiring, and the 512-worker concurrency gap above.
+
+### Transaction-status cache receipt (2026-09-22)
+
+The pinned resolver keeps up to 2,048 determined statuses in FIFO order. Rust
+now checks this cache after fetching the per-lock TSO, preserves the cached
+CheckTxnStatus response so expired async-commit primary metadata remains
+available, and caches only determined commit or TTL-zero rollback results.
+Contradictory status saves fail with the same invariant violation as Go.
+
+Validation after this addition passed:
+
+    cd rust
+    cargo test --offline --locked -p tidb-txnkv --lib resolved_txn_status_cache
+    cargo test --offline --locked -p tidb-txnkv --lib txn_status_cacheability_matches_go
+    cargo test --offline --locked -p tidb-txnkv --test lock_resolver_source
+    cargo check --offline --locked -p tidb-server --message-format=short
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+Both cache tests and the Go cacheability case passed, and the resolver source
+suite passed all 26 cases. Cache metrics and original Go cache test
+reconciliation remain open.
