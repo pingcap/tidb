@@ -5,16 +5,19 @@ go_library(
     srcs = [
         "analyzer.go",
         "document.go",
+        "posting.go",
         "query.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression/fulltext",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression/matchagainst",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
@@ -23,12 +26,14 @@ go_test(
     timeout = "short",
     srcs = [
         "analyzer_test.go",
+        "posting_test.go",
         "query_test.go",
     ],
     embed = [":fulltext"],
     flaky = False,
-    shard_count = 18,
+    shard_count = 23,
     deps = [
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
