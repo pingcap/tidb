@@ -39,6 +39,12 @@ pub enum TransactionCause {
     AssertionFailed {
         /// Exact encoded assertion key.
         key: Vec<u8>,
+        /// Whether the failed assertion demanded the key NOT exist. Go turns
+        /// exactly this direction into the duplicate-entry report: the write
+        /// presumed absence and the key is there (`ErrDupEntry` via the
+        /// insert's presume-not-exist bookkeeping). The `Exist` direction
+        /// stays go's own 8141 assertion diagnostic.
+        not_exist: bool,
         /// TiKV diagnostic detail.
         detail: String,
     },
@@ -91,6 +97,18 @@ pub enum TransactionCause {
         /// Exact bounded-contract violation.
         detail: String,
     },
+}
+
+impl TransactionCause {
+    /// The key this cause names, when the cause carries one: the duplicate
+    /// consumers match retained per-key hints against it.
+    #[must_use]
+    pub fn key(&self) -> &[u8] {
+        match self {
+            Self::AlreadyExists { key, .. } | Self::AssertionFailed { key, .. } => key,
+            _ => &[],
+        }
+    }
 }
 
 impl std::fmt::Display for TransactionCause {

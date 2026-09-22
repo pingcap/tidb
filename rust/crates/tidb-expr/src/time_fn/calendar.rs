@@ -17,6 +17,7 @@
 use crate::cast::to_i64_signed;
 use crate::coerce::coerce_str;
 use crate::{Columns, Datum, ErrorLevel, EvalError};
+use tidb_datatype::{CoreTime, Time, TimeType};
 
 /// The calendar `(year, month, day)` a *component* date-part function
 /// (`YEAR`/`MONTH`/`DAYOFMONTH`/`QUARTER`) reads, which in Go is the whole of
@@ -461,7 +462,13 @@ pub(crate) fn from_days(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     }
     if !(366..=3_652_424).contains(&n) {
-        return Ok(Datum::new_string("0000-00-00".to_string()));
+        // Go `builtinFromDaysSig.evalTime` answers a zero `types.Time`, which
+        // the wire renders as `0000-00-00` -- NOT NULL. Carrying a real Time
+        // datum also keeps the result-typed coercion from re-parsing the
+        // zero date into NULL.
+        let zero = Time::new(CoreTime::default(), TimeType::Date, 0)
+            .expect("the zero date is a valid Time");
+        return Ok(Datum::new_time(zero));
     }
     let (y, m, d) = civil_from_days(n - 719_528);
     Ok(Datum::new_string(format!("{y:04}-{m:02}-{d:02}")))

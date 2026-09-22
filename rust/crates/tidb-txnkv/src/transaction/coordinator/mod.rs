@@ -41,7 +41,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tidb_proto::{KvrpcContext, KvrpcKeyError};
+use tidb_proto::{KvrpcAssertion, KvrpcContext, KvrpcKeyError};
 
 use crate::gc_state::{GcStateCache, VisibilityError};
 use crate::lock::{LockRecoveryClient, TimestampSource};
@@ -684,6 +684,7 @@ pub(super) fn classify_key_error(error: &KvrpcKeyError) -> TransactionCause {
     if let Some(assertion) = error.assertion_failed.as_ref() {
         return TransactionCause::AssertionFailed {
             key: assertion.key.clone(),
+            not_exist: assertion.assertion == KvrpcAssertion::NotExist as i32,
             detail: format!("mutation assertion failed: {assertion:?}"),
         };
     }

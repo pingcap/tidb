@@ -426,15 +426,33 @@ pub fn build_table_info_with_context(
     for column in &columns {
         let lowercase = column.name.lowercase().to_owned();
         if seen.contains(&lowercase) {
+            // Go `ErrDupFieldName` (1060): `Duplicate column name '%-.192s'`
+            // -- the lowercased collision is reported by its original name.
             return Err(DdlAdmissionError::with_code(
-                GENERIC_ERROR_CODE,
-                format!(
-                    "CREATE TABLE declares column `{}` twice",
-                    column.name.original()
-                ),
+                1060,
+                format!("Duplicate column name '{}'", column.name.original()),
             ));
         }
         seen.push(lowercase);
+    }
+
+    // Go `checkConstraintNames` (pkg/ddl/create_table.go:812, run right
+    // after buildColumnsAndConstraints): every non-empty index-constraint
+    // name must be unique case-insensitively across the whole statement —
+    // table-level and inline alike — or the create fails with 1061
+    // `Duplicate key name '%-.192s'` (ErrDupKeyName) and no table is built.
+    let mut constraint_names: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(constraints.len());
+    for constraint in &constraints {
+        if constraint.name.is_empty() {
+            continue;
+        }
+        if !constraint_names.insert(constraint.name.to_lowercase()) {
+            return Err(DdlAdmissionError::with_code(
+                1061,
+                format!("Duplicate key name '{}'", constraint.name),
+            ));
+        }
     }
 
     // Go `setColumnFlagWithConstraint`, run over every constraint once every
@@ -1041,15 +1059,15 @@ fn build_column(
     // `build_field_type` is what actually stamps `binary`/`binary` on a type
     // that carries no charset, so the resolved pair above is only an input.
     let mut field_type = build_field_type(name, &column.ty, &charset, &collate)?;
-    // Go `checkColumnAttributes` -- see the shared helper. This tier reports
-    // it as an admission refusal rather than a coded client error, which is
-    // the same reduction every other refusal here takes.
+    // Go `checkColumnAttributes` -- each refusal carries go's own errno and
+    // text (1426/1427/1291/3505); flattening them to a generic 1105 turned
+    // `ENUM('x','x')` into a Rust Debug leak on the wire.
     if let Err(error) =
         tidb_executor::ddl::column_field_type::check_column_attributes(&field_type, true)
     {
         return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            format!("column `{name}` is refused by checkColumnAttributes: {error:?}"),
+            error.go_code(),
+            error.go_message(name),
         ));
     }
 
@@ -1504,10 +1522,8 @@ fn build_table(
         .count()
         > 1
     {
-        return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            "CREATE TABLE declares more than one PRIMARY KEY",
-        ));
+        // Go `ErrMultiplePriKey` (1068).
+        return Err(DdlAdmissionError::with_code(1068, "Multiple primary key defined"));
     }
 
     for constraint in &constraints {

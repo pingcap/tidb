@@ -389,7 +389,7 @@ tidb_enable_1pc	OFF
 tidb_enable_analyze_snapshot	OFF
 tidb_enable_async_commit	OFF
 tidb_enable_async_merge_global_stats	ON
-tidb_enable_auto_analyze	OFF
+tidb_enable_auto_analyze	ON
 tidb_enable_auto_analyze_priority_queue	ON
 tidb_enable_auto_increment_in_generated	OFF
 tidb_enable_batch_dml	OFF
@@ -519,7 +519,7 @@ tidb_max_paging_size	50000
 tidb_max_tiflash_threads	-1
 tidb_mem_arbitrator_mode	disable
 tidb_mem_arbitrator_soft_limit	0
-tidb_mem_oom_action	LOG
+tidb_mem_oom_action	CANCEL
 tidb_mem_quota_analyze	-1
 tidb_mem_quota_apply_cache	33554432
 tidb_mem_quota_binding_cache	67108864

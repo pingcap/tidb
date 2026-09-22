@@ -268,7 +268,6 @@ fn quarter_source_vectors() {
 #[test]
 fn zero_datetime_column_matches_recorded_tidb() {
     use tidb_datatype::{CoreTime, Time, TimeType};
-
     let zero = Datum::Time(Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap());
     // Stored-component extractors return the stored 0 for a typed zero
     // datetime (Go: `date.Year()`/`Month()`/`Day()`, `(Month()+2)/3`).
@@ -939,6 +938,16 @@ fn str_to_date_day_of_month_follows_allow_invalid_dates() {
 /// warning/SQL-mode state remain outside the value-only boundary.
 #[test]
 fn from_days_source_vectors() {
+    use tidb_datatype::{CoreTime, Time, TimeType};
+    // Go `builtinFromDaysSig.evalTime` answers a zero `types.Time` for
+    // every out-of-band day number; the wire renders that as `0000-00-00`
+    // (never NULL), so the zero band carries a real zero-Time datum.
+    let zero_date = || {
+        Datum::new_time(
+            Time::new(CoreTime::default(), TimeType::Date, 0)
+                .expect("the zero date is a valid Time"),
+        )
+    };
     for (day, want) in [
         (-140, "0000-00-00"),
         (140, "0000-00-00"),
@@ -955,11 +964,16 @@ fn from_days_source_vectors() {
         (734_513, "2011-01-11"),
         (3_652_424, "9999-12-31"),
     ] {
-        assert_eq!(
-            calendar::from_days(&[Datum::Int(day)]).unwrap(),
-            Datum::new_string(want.to_string()),
-            "FROM_DAYS({day})"
-        );
+        let result = calendar::from_days(&[Datum::Int(day)]).unwrap();
+        if want == "0000-00-00" {
+            assert_eq!(result, zero_date(), "FROM_DAYS({day})");
+        } else {
+            assert_eq!(
+                result,
+                Datum::new_string(want.to_string()),
+                "FROM_DAYS({day})"
+            );
+        }
     }
     assert_eq!(
         calendar::from_days(&[Datum::Int(3_652_425)]).unwrap(),
@@ -970,11 +984,16 @@ fn from_days_source_vectors() {
         ("6500z", "0017-10-18"),
         ("440", "0001-03-16"),
     ] {
-        assert_eq!(
-            calendar::from_days(&[string_datum(input)]).unwrap(),
-            Datum::new_string(want.to_string()),
-            "FROM_DAYS({input:?})"
-        );
+        let result = calendar::from_days(&[string_datum(input)]).unwrap();
+        if want == "0000-00-00" {
+            assert_eq!(result, zero_date(), "FROM_DAYS({input:?})");
+        } else {
+            assert_eq!(
+                result,
+                Datum::new_string(want.to_string()),
+                "FROM_DAYS({input:?})"
+            );
+        }
     }
     assert_eq!(calendar::from_days(&[Datum::Null]).unwrap(), Datum::Null);
 }

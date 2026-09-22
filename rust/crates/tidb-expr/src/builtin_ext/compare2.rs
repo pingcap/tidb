@@ -753,7 +753,7 @@ fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     if text.is_empty() || text.ends_with('.') {
-        return Err(EvalError::Unsupported("invalid INET_ATON address"));
+        return Ok(Datum::Null);
     }
     let mut result = 0_u64;
     let mut byte_result = 0_u64;
@@ -763,18 +763,18 @@ fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
             b'0'..=b'9' => {
                 byte_result = byte_result * 10 + u64::from(byte - b'0');
                 if byte_result > 255 {
-                    return Err(EvalError::Unsupported("invalid INET_ATON address"));
+                    return Ok(Datum::Null);
                 }
             }
             b'.' => {
                 dots += 1;
                 if dots > 3 {
-                    return Err(EvalError::Unsupported("invalid INET_ATON address"));
+                    return Ok(Datum::Null);
                 }
                 result = (result << 8) + byte_result;
                 byte_result = 0;
             }
-            _ => return Err(EvalError::Unsupported("invalid INET_ATON address")),
+            _ => return Ok(Datum::Null),
         }
     }
     if dots == 1 {
@@ -796,7 +796,9 @@ fn inet_ntoa(value: &Datum) -> Result<Datum, EvalError> {
         Datum::Null => return Ok(Datum::Null),
         Datum::Int(value) => *value as u64,
         Datum::UInt(value) => *value,
-        _ => return Err(EvalError::Unsupported("INET_NTOA non-integer argument")),
+        // go's ETInt argument casts any non-NULL value first; a non-numeric
+        // string truncates to 0, which answers "0.0.0.0".
+        other => crate::cast::to_i64_signed(other) as u64,
     };
     let Ok(value) = u32::try_from(value) else {
         return Ok(Datum::Null);
@@ -818,22 +820,30 @@ fn inet_ntoa(value: &Datum) -> Result<Datum, EvalError> {
 /// input.  Port of `builtinInet6AtonSig.evalString` in
 /// `pkg/expression/builtin_miscellaneous.go`.
 fn inet6_aton(value: &Datum) -> Result<Datum, EvalError> {
-    let text = match value {
+    let text: Option<std::borrow::Cow<'_, str>> = match value {
         Datum::Null => return Ok(Datum::Null),
         // `EvalString` in the Go signature preserves raw bytes.  IP syntax is
         // ASCII, so invalid UTF-8 is simply the same parse failure rather than
         // a lossy replacement conversion.
-        Datum::String(value) => std::str::from_utf8(value.bytes()),
-        Datum::Bytes(value) => std::str::from_utf8(value),
-        _ => return inet6_aton_text(&coerce_str(value)?.expect("non-NULL scalar")),
-    }
-    .map_err(|_| EvalError::Unsupported("invalid INET6_ATON address"))?;
+        Datum::String(value) => std::str::from_utf8(value.bytes())
+            .ok()
+            .map(std::borrow::Cow::Borrowed),
+        Datum::Bytes(value) => std::str::from_utf8(value)
+            .ok()
+            .map(std::borrow::Cow::Borrowed),
+        _ => coerce_str(value)?.map(std::borrow::Cow::Owned),
+    };
+    // go `net.ParseIP` failure answers SQL NULL, not an error.
+    let Some(text) = text.as_deref() else {
+        return Ok(Datum::Null);
+    };
     inet6_aton_text(text)
 }
 
 fn inet6_aton_text(text: &str) -> Result<Datum, EvalError> {
     if text.is_empty() {
-        return Err(EvalError::Unsupported("invalid INET6_ATON address"));
+        // go `net.ParseIP("")` is nil -> NULL.
+        return Ok(Datum::Null);
     }
     // Keep the source's four-byte result only when the original spelling is
     // plain IPv4.  `Ipv6Addr::from_str` handles all colon-containing forms,
@@ -844,9 +854,9 @@ fn inet6_aton_text(text: &str) -> Result<Datum, EvalError> {
             return Ok(Datum::new_bytes(ip.octets()));
         }
     }
-    Ipv6Addr::from_str(text)
+    Ok(Ipv6Addr::from_str(text)
         .map(|ip| Datum::new_bytes(ip.octets()))
-        .map_err(|_| EvalError::Unsupported("invalid INET6_ATON address"))
+        .unwrap_or(Datum::Null))
 }
 
 /// `INET6_NTOA(expr)`: render a four- or sixteen-byte binary string as the
@@ -1105,10 +1115,14 @@ mod tests {
         for (arg, want) in cases {
             assert_eq!(call("INET_ATON", &[arg]), want);
         }
+        // go's TestInetAton marks every malformed input `expectNil`: the sig
+        // answers NULL, not a strict-context error.
         for invalid in ["", "0.0.0.256", "127,256", "123.2.1.", "127.0.0.1.1"] {
-            assert!(dispatch("INET_ATON", &[s(invalid)], &crate::NoColumns)
-                .unwrap()
-                .is_err());
+            assert_eq!(
+                dispatch("INET_ATON", &[s(invalid)], &crate::NoColumns).unwrap(),
+                Ok(Datum::Null),
+                "INET_ATON({invalid:?})"
+            );
         }
     }
 
@@ -1169,9 +1183,11 @@ mod tests {
         ];
         for (text, want) in cases {
             match want {
-                Datum::Null => assert!(dispatch("INET6_ATON", &[s(text)], &crate::NoColumns)
-                    .unwrap()
-                    .is_err()),
+                // go `net.ParseIP` failure answers NULL, not an error.
+                Datum::Null => assert_eq!(
+                    dispatch("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
+                    Ok(Datum::Null)
+                ),
                 want => assert_eq!(call("INET6_ATON", &[s(text)]), want),
             }
         }

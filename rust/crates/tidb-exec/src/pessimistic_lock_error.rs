@@ -152,7 +152,7 @@ pub fn commit_outcome_to_sql_error_with_hint(
     match outcome {
         OptimisticCommitOutcome::Committed(_) => Ok(()),
         OptimisticCommitOutcome::RolledBack(rolled_back) => {
-            if let TransactionCause::AlreadyExists { .. } = &rolled_back.cause {
+            if duplicate_cause(&rolled_back.cause) {
                 if let Some(hint) = duplicate_hint {
                     return Err(duplicate_key_sql_error(hint));
                 }
@@ -160,7 +160,7 @@ pub fn commit_outcome_to_sql_error_with_hint(
             Err(transaction_cause_to_sql_error(&rolled_back.cause))
         }
         OptimisticCommitOutcome::CleanupFailed(failed) => {
-            if let TransactionCause::AlreadyExists { .. } = &failed.cause {
+            if duplicate_cause(&failed.cause) {
                 if let Some(hint) = duplicate_hint {
                     return Err(duplicate_key_sql_error(hint));
                 }
@@ -213,11 +213,44 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             state: DEFAULT_SQL_STATE,
             message: message.clone(),
         },
+        TransactionCause::AssertionFailed {
+            key,
+            not_exist,
+            ..
+        } => {
+            // Go's own assertion diagnostic (errno 8141,
+            // `pkg/errno/errname.go`): `assertion failed: key: %s, assertion:
+            // %s, start_ts: %v, existing start ts: %v, existing commit ts:
+            // %v`. The duplicate-direction failures carry the decoded
+            // entry/key hint instead (the 1062 report), so this arm keeps the
+            // raw diagnostic for the Exist direction and hintless cases.
+            let direction = if *not_exist { "NotExist" } else { "Exist" };
+            LockSqlError {
+                code: 8141,
+                state: DEFAULT_SQL_STATE,
+                message: format!(
+                    "[tikv:8141]assertion failed: key: {}, assertion: {direction}",
+                    tikv_client::redact::key(key)
+                ),
+            }
+        }
         other => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
             message: format!("[kv:1105]transaction failed: {other}"),
         },
+    }
+}
+
+/// Whether one terminal transaction cause is the duplicate-entry report: the
+/// key already existed, or the write asserted its absence and the store
+/// refuted it — go renders both as `ErrDupEntry` (1062) when the insert's
+/// presume-not-exist bookkeeping supplies the entry text.
+pub(crate) fn duplicate_cause(cause: &TransactionCause) -> bool {
+    match cause {
+        TransactionCause::AlreadyExists { .. } => true,
+        TransactionCause::AssertionFailed { not_exist, .. } => *not_exist,
+        _ => false,
     }
 }
 

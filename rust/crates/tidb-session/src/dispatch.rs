@@ -430,11 +430,17 @@ impl Session {
                     }
                     let dropped =
                         self.with_catalog_mut(|catalog| Ok(catalog.drop_database(name)))?;
-                    // Go raises ErrDBDropExists unless IF EXISTS.
+                    // Go raises ErrDatabaseDropExists (1008, HY000,
+                    // `Can't drop database '%-.192s'; database doesn't
+                    // exist`) unless IF EXISTS — NOT the 1049 a missing
+                    // database reports elsewhere.
                     if !dropped && !*if_exists {
-                        return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
-                            name.clone(),
-                        )));
+                        return Err(DriverError::DdlCoded {
+                            errno: 1008,
+                            message: format!(
+                                "Can't drop database '{name}'; database doesn't exist"
+                            ),
+                        });
                     }
                     // Dropping the current database leaves the session with
                     // none selected, which is Go's ErrNoDB state for the next

@@ -83,8 +83,9 @@ use tidb_txnkv::Key;
 use tidb_txnkv::PdRegionLoader;
 
 use crate::pessimistic_lock_error::{
-    commit_outcome_to_sql_error_with_hint, duplicate_key_sql_error, is_retryable_statement_failure,
-    lock_failure_to_sql_error, transaction_cause_to_sql_error, LockSqlError,
+    commit_outcome_to_sql_error_with_hint, duplicate_cause, duplicate_key_sql_error,
+    is_retryable_statement_failure, lock_failure_to_sql_error, transaction_cause_to_sql_error,
+    LockSqlError,
 };
 
 /// What one statement's lock acquisition came to -- the session layer's
@@ -374,16 +375,18 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                         &cause,
                     ));
                 }
-                if let PessimisticLockFailure::Transaction(TransactionCause::AlreadyExists {
-                    key,
-                    ..
-                }) = &failure
-                {
-                    if let Some(hint) = duplicate_hints.get(key) {
-                        // Go reports this assertion as a statement error: the
-                        // INSERT is rolled back, while the explicit
-                        // pessimistic transaction stays usable.
-                        return LockKeysOutcome::StatementError(duplicate_key_sql_error(hint));
+                if let PessimisticLockFailure::Transaction(cause) = &failure {
+                    // The duplicate report covers both the lock's own
+                    // AlreadyExist verdict and the NotExist-direction
+                    // assertion the write carried: go reports each as
+                    // `ErrDupEntry` (1062) when the insert retained the entry
+                    // text, and rolls back only the INSERT statement.
+                    if duplicate_cause(cause) {
+                        if let Some(hint) = duplicate_hints.get(cause.key()) {
+                            return LockKeysOutcome::StatementError(duplicate_key_sql_error(
+                                hint,
+                            ));
+                        }
                     }
                 }
                 if !is_retryable_statement_failure(&failure) {

@@ -1151,6 +1151,60 @@ fn abs_return_type(args: &[Expression]) -> Option<FieldType> {
 }
 
 fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<FieldType> {
+    // Go's internal operator names are ordinary `funcs` entries
+    // (`pkg/expression/builtin.go`): `and`/`or`/`eq`/`in`/`bitand`/... are
+    // callable as functions and build their sigs like any builtin. Their
+    // return types are the sigs' own: the logic/comparison/bit families fix
+    // `Longlong`; `minus`/`mod` follow go's arithmetic builder
+    // (Int when every argument is Int, Decimal when any is Decimal, Real
+    // otherwise); `intdiv`/`div` fix `Longlong`.
+    // The logic/comparison/IN/IS-TRUE families are in go's
+    // `booleanFunctions` map (`pkg/expression/builtin.go`): a one-digit
+    // Longlong flagged `IsBooleanFlag`, exactly like ISNULL/LIKE above.
+    if matches!(
+        name,
+        "and" | "or" | "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "in" | "istrue" | "isfalse"
+    ) {
+        let mut ft = FieldType::new(FieldTypeCode::LongLong);
+        ft.set_flen(1);
+        ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
+        return Some(ft);
+    }
+    // The bit families and integer division return a plain Longlong.
+    if matches!(
+        name,
+        "bitand"
+            | "bitor"
+            | "bitxor"
+            | "bitneg"
+            | "leftshift"
+            | "rightshift"
+            | "intdiv"
+            | "div"
+    ) {
+        return Some(FieldType::new(FieldTypeCode::LongLong));
+    }
+    if matches!(name, "minus" | "mod") {
+        let any_decimal = args
+            .iter()
+            .any(|arg| crate::builtin_arithmetic::numeric_context_result_type(arg) == tidb_datatype::EvalType::Decimal);
+        let any_real = args.iter().any(|arg| {
+            crate::builtin_arithmetic::numeric_context_result_type(arg) == tidb_datatype::EvalType::Real
+        });
+        return Some(if any_decimal {
+            let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
+            ft.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            ft
+        } else if any_real {
+            FieldType::new(FieldTypeCode::Double)
+        } else {
+            FieldType::new(FieldTypeCode::LongLong)
+        });
+    }
+    arithmetic_signature_guarded(name, args)
+}
+
+fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<FieldType> {
     let text = || {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
         ft.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);

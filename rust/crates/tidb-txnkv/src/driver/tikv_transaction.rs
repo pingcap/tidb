@@ -505,6 +505,8 @@ fn classify_cause(error: &TikvTransactionError) -> crate::transaction::Transacti
         },
         ClientError::AssertionFailed(failed) => TransactionCause::AssertionFailed {
             key: failed.assertion_failed.key.clone(),
+            not_exist: failed.assertion_failed.assertion
+                == tidb_proto::KvrpcAssertion::NotExist as i32,
             detail: client_error.to_string(),
         },
         ClientError::WriteConflict(_) | ClientError::WriteConflictInLatch(_) => {

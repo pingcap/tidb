@@ -721,6 +721,40 @@ pub enum ColumnAttributeError {
     InvalidVectorDimension(String),
 }
 
+impl ColumnAttributeError {
+    /// The MySQL/TiDB errno go raises for each refused attribute.
+    #[must_use]
+    pub fn go_code(&self) -> u16 {
+        match self {
+            Self::MBiggerThanD => 1427,
+            Self::TooBigPrecision { .. } => 1426,
+            Self::DuplicatedValueInType { .. } => 1291,
+            Self::TooLongEnumSetValue => 3505,
+            // Go `types.CheckVectorDimValid`'s plain HY000 error.
+            Self::InvalidVectorDimension(_) => 1105,
+        }
+    }
+
+    /// The client-visible message go raises, formatted with the declaring
+    /// column's name exactly as the `%-.192s` verbs render it.
+    #[must_use]
+    pub fn go_message(&self, column: &str) -> String {
+        match self {
+            Self::MBiggerThanD => format!(
+                "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '{column}')."
+            ),
+            Self::TooBigPrecision { precision, maximum } => format!(
+                "Too big precision {precision} specified for column '{column}'. Maximum is {maximum}."
+            ),
+            Self::DuplicatedValueInType { value, type_name } => format!(
+                "Column '{column}' has duplicated value '{value}' in {type_name}"
+            ),
+            Self::TooLongEnumSetValue => "Too long enumeration/set value for type. Please check Configuration [enable-enum-length-limit].".to_owned(),
+            Self::InvalidVectorDimension(message) => message.clone(),
+        }
+    }
+}
+
 /// Go `checkColumnAttributes` plus the ENUM/SET member check: what a built
 /// `FieldType` still has to satisfy before the column can be created.
 ///
@@ -751,6 +785,20 @@ pub fn check_column_attributes(
         FieldTypeCode::NewDecimal | FieldTypeCode::Double | FieldTypeCode::Float => {
             if field_type.flen() < field_type.decimal() {
                 return Err(ColumnAttributeError::MBiggerThanD);
+            }
+            // Go's parser refuses a DECIMAL precision above
+            // `mysql.MaxDecimalWidth` (65) at declaration time with 1426
+            // (`Too big precision %d specified for column '%-.192s'. Maximum
+            // is %d.`) -- the same ErrTooBigPrecision template the datetime
+            // family answers. Without this, `DECIMAL(66,2)` is accepted and
+            // materialized, which go never does.
+            if field_type.code() == FieldTypeCode::NewDecimal
+                && field_type.flen() > 65
+            {
+                return Err(ColumnAttributeError::TooBigPrecision {
+                    precision: field_type.flen(),
+                    maximum: 65,
+                });
             }
         }
         FieldTypeCode::Datetime | FieldTypeCode::Duration | FieldTypeCode::Timestamp => {

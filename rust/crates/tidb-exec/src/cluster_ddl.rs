@@ -6802,7 +6802,14 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 if *if_exists {
                     return Ok(already(format!("database `{name}` does not exist")));
                 }
-                return Err(DdlPlanError::UnknownDatabase(name.clone()));
+                // Go `executor.DropSchema` (pkg/ddl/executor.go:804): a
+                // missing database under DROP DATABASE answers
+                // `ErrDatabaseDropExists` (1008, HY000), not the 1049 other
+                // missing-database paths answer.
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    1008,
+                    format!("Can't drop database '{name}'; database doesn't exist"),
+                )));
             };
             let db_id = database.info.id;
             // Go `Mutator.DropDatabase` is `HClear(DB:<id>)` then
