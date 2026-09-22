@@ -1252,6 +1252,18 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	require.Equal(t, err.Error(), "unsupported admin alter ddl jobs config: aaa")
 }
 
+func TestBuildGrantProxyUnsupported(t *testing.T) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("GRANT PROXY ON 'proxy_base'@'%' TO 'proxy_target'@'%'", "", "")
+	require.NoError(t, err)
+
+	sctx := coretestsdk.MockContext()
+	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+	_, err = builder.Build(context.Background(), resolve.NewNodeW(stmt))
+	require.True(t, plannererrors.ErrNotSupportedYet.Equal(err))
+	require.EqualError(t, err, "[planner:1235]This version of TiDB doesn't yet support 'GRANT PROXY'")
+}
+
 func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	parser := parser.New()
 	sctx := coretestsdk.MockContext()

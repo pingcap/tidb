@@ -652,6 +652,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildPurgeMaterializedViewLog(ctx, x)
 	case *ast.CancelMaterializedViewJobStmt:
 		return b.buildSimple(ctx, x)
+	case *ast.GrantProxyStmt:
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("GRANT PROXY")
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
