@@ -4344,9 +4344,10 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	b.selectDepth++
+	oldInSelect := b.inSelect
+	b.inSelect = true
 	defer func() {
-		b.selectDepth--
+		b.inSelect = oldInSelect
 	}()
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -5128,9 +5129,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// existence. `"*"` requires a table-level SELECT privilege or a column-level
 	// SELECT privilege on any column, matching MySQL.
 	//
-	// This is deliberately limited to SELECT (b.selectDepth > 0) so that the
-	// target tables of UPDATE/DELETE do not gain a spurious SELECT requirement.
-	if b.selectDepth > 0 && !tableInfo.IsSequence() {
+	// This is deliberately limited to SELECT so that the target tables of
+	// UPDATE/DELETE do not gain a spurious SELECT requirement.
+	if b.inSelect && !tableInfo.IsSequence() {
 		user, host := auth.GetUserAndHostName(sessionVars.User)
 		selectErr := plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, tableInfo.Name.L)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "*", selectErr)
