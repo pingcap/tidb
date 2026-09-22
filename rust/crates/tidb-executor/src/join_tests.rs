@@ -217,6 +217,7 @@ fn index_join_resumes_one_outer_rows_matches_across_requested_chunks() {
             batch_size: CHUNK,
             pending: VecDeque::new(),
             prefetch_disabled: true,
+            max_batch_size: INDEX_JOIN_BATCH_SIZE,
         });
         if let Some(prepared) = prepared {
             prepared.install(join.index_state.as_mut().unwrap());
@@ -292,6 +293,7 @@ fn index_hash_join_builds_outer_and_probes_inner_rows() {
             batch_size: CHUNK,
             pending: VecDeque::new(),
             prefetch_disabled: true,
+            max_batch_size: INDEX_JOIN_BATCH_SIZE,
         });
         let mut output = join.new_chunk();
         join.drain_index_batch(&mut output).unwrap();
@@ -554,6 +556,7 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
                 batch_size: CHUNK,
                 pending: VecDeque::new(),
                 prefetch_disabled: false,
+                max_batch_size: INDEX_JOIN_BATCH_SIZE,
             });
             let mut rows = Vec::new();
             loop {
@@ -769,6 +772,7 @@ fn index_worker_preparation_does_not_evaluate_join_residuals() {
         batch_size: CHUNK,
         pending: VecDeque::new(),
         prefetch_disabled: false,
+        max_batch_size: INDEX_JOIN_BATCH_SIZE,
     });
     prepared.install(join.index_state.as_mut().unwrap());
     let mut output = join.new_chunk();

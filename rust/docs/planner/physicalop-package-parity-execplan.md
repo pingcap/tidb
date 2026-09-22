@@ -8152,3 +8152,8 @@ Go's default five workers. The focused statement-resolution test and all ten
 index-join executor tests pass. This closes the per-statement concurrency
 selection gap; it does not claim whole join-package acceptance or the complete
 sysbench/TPC-C/TPC-H/YCSB performance gates.
+
+The same statement snapshot now supplies Go's `tidb_index_join_batch_size` to
+the live executor. Batch growth retains the source doubling rule while using
+the configured cap, and a focused context regression covers both the explicit
+value and the invalid-value clamp used by native standalone callers.

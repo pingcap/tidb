@@ -598,14 +598,8 @@ impl MergeInnerGroup {
     }
 }
 
-/// Go `DefIndexJoinBatchSize` / `tidb_index_join_batch_size`: the largest
-/// number of outer rows one index-join probe batch may hold.
-///
-/// RESIDUE: the session variable is not read here yet, so a `SET
-/// tidb_index_join_batch_size` changes nothing. The batch size is a
-/// PERFORMANCE decision -- every batch boundary produces the same rows in the
-/// same order, which `index_join_batch_boundary_does_not_change_the_result`
-/// pins -- so reading the default is a smaller claim, not a wrong answer.
+/// Go `DefIndexJoinBatchSize` / `tidb_index_join_batch_size`: the default
+/// largest number of outer rows one index-join probe batch may hold.
 pub(crate) const INDEX_JOIN_BATCH_SIZE: usize = 25000;
 
 /// Go resolves the unset `tidb_index_lookup_join_concurrency` through
@@ -805,7 +799,7 @@ struct IndexLookupState {
     outer_row: usize,
     /// Whether the outer child has returned its final (empty) chunk.
     outer_done: bool,
-    /// The next batch's size, doubling to [`INDEX_JOIN_BATCH_SIZE`] as Go's
+    /// The next batch's size, doubling to the configured batch cap as Go's
     /// `increaseBatchSize` does.
     batch_size: usize,
     /// Inner tasks whose remote readers have already been opened. They remain
@@ -814,6 +808,9 @@ struct IndexLookupState {
     /// Once a lookup shape refuses remote prefetch, retain the synchronous
     /// path for the rest of this executor.
     prefetch_disabled: bool,
+    /// Go `SessionVars.IndexJoinBatchSize`, copied from the executor's
+    /// statement snapshot so batch growth uses the session cap.
+    max_batch_size: usize,
 }
 
 struct IndexRowProbe {
@@ -1356,6 +1353,8 @@ pub struct JoinExec<C: Columns> {
     /// construction. Standalone executor tests retain the source default;
     /// the physical builder replaces it with the session value.
     index_lookup_concurrency: usize,
+    /// Go `SessionVars.IndexJoinBatchSize`, resolved at statement construction.
+    index_join_batch_size: usize,
     outer_filter: Vec<Expression>,
     filter_is_left: bool,
     /// The complete logical `ON` clause. The nested-loop reference path must
@@ -1538,6 +1537,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             na_keys: Vec::new(),
             concurrency: 1,
             index_lookup_concurrency: INDEX_LOOKUP_JOIN_CONCURRENCY,
+            index_join_batch_size: INDEX_JOIN_BATCH_SIZE,
             outer_filter: Vec::new(),
             filter_is_left: true,
             conditions,
@@ -1614,6 +1614,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// setter is called.
     pub(crate) fn set_index_lookup_concurrency(&mut self, concurrency: usize) {
         self.index_lookup_concurrency = concurrency.max(1);
+    }
+
+    /// Sets Go's per-statement `IndexJoinBatchSize` after the executor has
+    /// been built. A zero or negative session value is not valid in Go; the
+    /// clamp keeps standalone callers from constructing an empty batch loop.
+    pub(crate) fn set_index_join_batch_size(&mut self, batch_size: usize) {
+        self.index_join_batch_size = batch_size.max(1);
     }
 
     fn left_exec(&self) -> &dyn Executor {
@@ -2199,9 +2206,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 outer_done: false,
                 // Go's `startWorkers(ctx, req.RequiredRows())`: the first
                 // batch is what the caller asked for, capped by the maximum.
-                batch_size: required_rows.min(INDEX_JOIN_BATCH_SIZE),
+                batch_size: required_rows.min(self.index_join_batch_size),
                 pending: std::collections::VecDeque::new(),
                 prefetch_disabled: false,
+                max_batch_size: self.index_join_batch_size,
             });
             let plan = self
                 .index_lookup
@@ -2595,10 +2603,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             }
             outer.push(row);
         }
-        state.batch_size = state
-            .batch_size
-            .saturating_mul(2)
-            .min(INDEX_JOIN_BATCH_SIZE);
+        state.batch_size = state.batch_size.saturating_mul(2).min(state.max_batch_size);
         let bytes = outer.settle_bytes();
         Ok((outer, bytes))
     }

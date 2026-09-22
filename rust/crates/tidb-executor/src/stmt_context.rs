@@ -2680,6 +2680,16 @@ impl StmtContext {
         }
     }
 
+    /// Go `SessionVars.IndexJoinBatchSize`, the maximum outer batch size used
+    /// by an index-lookup join.
+    #[must_use]
+    pub fn index_join_batch_size(&self) -> usize {
+        self.optimizer_cost_env()
+            .session
+            .index_join_batch_size
+            .max(1.0) as usize
+    }
+
     /// Go `SessionVars.ProjectionConcurrency()`: `tidb_projection_concurrency`
     /// when set, else `tidb_executor_concurrency` (the session resolves that
     /// fallback into the cost environment).
@@ -4247,15 +4257,19 @@ mod tests {
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
         env.session.union_concurrency = 9.0;
         env.session.index_lookup_join_concurrency = 2.0;
+        env.session.index_join_batch_size = 17.0;
         let overridden = super::StmtContext::for_query().with_optimizer_cost_env(env);
         assert_eq!(overridden.executor_concurrency(), 9);
         assert_eq!(overridden.index_lookup_join_concurrency(), 2);
+        assert_eq!(overridden.index_join_batch_size(), 17);
 
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
         env.session.union_concurrency = 7.0;
         env.session.index_lookup_join_concurrency = -1.0;
+        env.session.index_join_batch_size = 0.0;
         let fallback = super::StmtContext::for_query().with_optimizer_cost_env(env);
         assert_eq!(fallback.index_lookup_join_concurrency(), 7);
+        assert_eq!(fallback.index_join_batch_size(), 1);
     }
 
     #[test]
