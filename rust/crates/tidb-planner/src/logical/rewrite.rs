@@ -340,7 +340,20 @@ pub(crate) fn analyzed_filter_selectivity(
                     .iter()
                     .all(|argument| matches!(argument, Expression::Constant(_))) =>
             {
+                // Go prices a prefix-convertible LIKE through the ranger's
+                // range path first; a pattern the ranges cannot answer
+                // (`%dim%`, a contains shape) falls to TopN-assisted
+                // evaluation and only then the 0.1 default.
                 let selectivity = histogram_prefix_selectivity(table_stats, column, &pattern.value)
+                    .or_else(|| {
+                        stats_negate_like_selectivity(
+                            table_stats,
+                            column,
+                            &pattern.value,
+                            escape_from_constant(rest.first()),
+                            false,
+                        )
+                    })
                     .unwrap_or(DEFAULT_STRING_MATCH_SELECTIVITY);
                 selectivity_total *= selectivity;
                 recognized = true;
@@ -374,6 +387,7 @@ pub(crate) fn analyzed_filter_selectivity(
                                     column,
                                     &pattern.value,
                                     escape_from_constant(rest.first()),
+                                    true,
                                 )
                             } else {
                                 None
@@ -468,18 +482,20 @@ fn histogram_prefix_selectivity(
     Some((matched / realtime as f64).max(1.0 / realtime as f64))
 }
 
-/// Go `GetSelectivityByFilter`'s negate string-match arm: a single-column
-/// `not(like(col, pattern, escape))` evaluated against the stats-ver-2
-/// TopN values (weighted by their counts) and the histogram's bucket
-/// bounds (upper bounds weighted by `Repeat`, lower bounds as uniform
-/// samples of the non-TopN remainder), plus the NULL partition. Returns
-/// `None` when the collection carries no stats-ver-2 histogram so the
-/// caller keeps the 0.9 default.
+/// Go `GetSelectivityByFilter`'s string-match arm: a single-column
+/// (NOT) LIKE evaluated against the stats-ver-2 TopN values (weighted by
+/// their counts) and the histogram's bucket bounds (upper bounds weighted
+/// by `Repeat`, lower bounds as uniform samples of the non-TopN
+/// remainder), plus the NULL partition. `negated` selects whether a value
+/// is selected by matching (`false`, plain LIKE) or by not matching
+/// (`true`, NOT LIKE). Returns `None` when the collection carries no
+/// stats-ver-2 histogram so the caller keeps the string-match default.
 fn stats_negate_like_selectivity(
     table_stats: &StatsInfo,
     column: &tidb_expr::column::Column,
     pattern: &tidb_datatype::Datum,
     escape: Option<u8>,
+    negated: bool,
 ) -> Option<f64> {
     let pattern_bytes = match pattern {
         tidb_datatype::Datum::Bytes(bytes) => bytes.clone(),
@@ -506,20 +522,23 @@ fn stats_negate_like_selectivity(
         return None;
     }
 
-    // The filter is `not(like(...))`: a value is selected when it does NOT
-    // match the pattern. Non-string values cannot match a LIKE pattern.
+    // A value is selected when its match outcome equals the filter's
+    // polarity: plain LIKE selects matching values, NOT LIKE selects
+    // non-matching ones. Non-string values can never match a LIKE pattern,
+    // so NOT LIKE always keeps them.
     let filter_keeps = |value: &tidb_datatype::Datum| -> Option<bool> {
         let text = match value {
             tidb_datatype::Datum::Bytes(bytes) => bytes.as_slice(),
             tidb_datatype::Datum::String(string) => string.bytes(),
-            _ => return Some(true),
+            _ => return Some(negated),
         };
-        Some(!tidb_expr::like_match_with_collation(
+        let matches = tidb_expr::like_match_with_collation(
             text,
             &pattern_bytes,
             escape,
             tidb_datatype::Collation::Utf8Mb4Bin,
-        ))
+        );
+        Some(matches != negated)
     };
 
     // TopN arm: each entry is one encoded value; decode then evaluate.
@@ -568,8 +587,8 @@ fn stats_negate_like_selectivity(
         0.0
     };
 
-    // `not(like(NULL, ...))` evaluates to NULL, which a filter drops, so
-    // the NULL partition is never selected under a negate string match.
+    // `like(NULL, ...)` and its negation both evaluate to NULL, which a
+    // filter drops, so the NULL partition is never selected.
     let null_sel = 0.0;
 
     Some(topn_sel + hist_sel + null_sel)
