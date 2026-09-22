@@ -80,6 +80,6 @@ func TestSelectConstantRequiresTablePrivilege(t *testing.T) {
 	rootTk.MustExec("GRANT UPDATE(a), DELETE ON leakdb.mt1 TO 'nopriv'@'%'")
 	userTk.MustExec("UPDATE leakdb.mt1 SET a = 2")
 	userTk.MustGetErrCode("UPDATE leakdb.mt1, leakdb.mt2 SET mt1.a = 1", errno.ErrTableaccessDenied)
-	userTk.MustGetErrCode("DELETE mt1 FROM leakdb.mt1, leakdb.mt2", errno.ErrTableaccessDenied)
-	userTk.MustGetErrCode("DELETE FROM mt1 USING leakdb.mt1, leakdb.mt2", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("DELETE mt1 FROM leakdb.mt1 AS mt1, leakdb.mt2 AS mt2", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("DELETE FROM mt1 USING leakdb.mt1 AS mt1, leakdb.mt2 AS mt2", errno.ErrTableaccessDenied)
 }
