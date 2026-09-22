@@ -1419,6 +1419,80 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
+	if tableInfo.TTLInfo != nil {
+		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
+		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
+			timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
+			restoreCtx.WriteKeyWord("TTL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteName(columnName.String())
+			restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
+			return timeUnit.Restore(restoreCtx)
+		})
+
+		if err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_ENABLE")
+			restoreCtx.WritePlain("=")
+			if tableInfo.TTLInfo.Enable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			if len(tableInfo.TTLInfo.JobInterval) == 0 {
+				// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
+				// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the
+				// upgrades: v6.5 -> v8.5(or previous version) -> newer version than v8.5.
+				restoreCtx.WriteString(model.OldDefaultTTLJobInterval)
+			} else {
+				restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+	}
+
+	if tableInfo.Affinity != nil {
+		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
+	}
+
+	// add partition info here.
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+
+	// Region split policies follow the partition clause in the CREATE TABLE
+	// grammar: `CreateTableStmt: ... PartitionOpt SplitIndexListOpt ...`.
+	// Emitting them before `PARTITION BY` produces DDL that cannot be parsed
+	// again, so they are appended after the partition info
+	// (https://github.com/pingcap/tidb/issues/71468).
+	return appendRegionSplitPolicies(buf, tableInfo, sqlMode)
+}
+
+// appendRegionSplitPolicies writes the table-level and index-level region split
+// policies of a table using the `SPLIT ...` clause form accepted by the CREATE
+// TABLE grammar.
+func appendRegionSplitPolicies(buf *bytes.Buffer, tableInfo *model.TableInfo, sqlMode mysql.SQLMode) error {
 	var parse *parser.Parser
 	// Show table region split policy
 	if tableInfo.TableSplitPolicy != nil {
@@ -1495,67 +1569,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		buf.WriteString(" */")
 	}
 
-	if tableInfo.TTLInfo != nil {
-		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
-		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
-
-		restoreCtx.WritePlain(" ")
-		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
-			columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
-			timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
-			restoreCtx.WriteKeyWord("TTL")
-			restoreCtx.WritePlain("=")
-			restoreCtx.WriteName(columnName.String())
-			restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
-			return timeUnit.Restore(restoreCtx)
-		})
-
-		if err != nil {
-			return err
-		}
-
-		restoreCtx.WritePlain(" ")
-		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
-			restoreCtx.WriteKeyWord("TTL_ENABLE")
-			restoreCtx.WritePlain("=")
-			if tableInfo.TTLInfo.Enable {
-				restoreCtx.WriteString("ON")
-			} else {
-				restoreCtx.WriteString("OFF")
-			}
-			return nil
-		})
-
-		if err != nil {
-			return err
-		}
-
-		restoreCtx.WritePlain(" ")
-		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
-			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
-			restoreCtx.WritePlain("=")
-			if len(tableInfo.TTLInfo.JobInterval) == 0 {
-				// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
-				// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the
-				// upgrades: v6.5 -> v8.5(or previous version) -> newer version than v8.5.
-				restoreCtx.WriteString(model.OldDefaultTTLJobInterval)
-			} else {
-				restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
-			}
-			return nil
-		})
-
-		if err != nil {
-			return err
-		}
-	}
-
-	if tableInfo.Affinity != nil {
-		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
-	}
-
-	// add partition info here.
-	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 

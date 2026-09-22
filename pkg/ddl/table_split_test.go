@@ -457,6 +457,53 @@ func TestTableSplitPolicyShowCreateRoundTrip(t *testing.T) {
 		require.NotNil(t, idxInfo.RegionSplitPolicy)
 		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
 	})
+
+	// The CREATE TABLE grammar places the split clauses after the partition
+	// clause, so a partitioned table with any split policy must emit them after
+	// `PARTITION BY`, otherwise the output is not parseable
+	// (https://github.com/pingcap/tidb/issues/71468).
+	t.Run("partitioned-table-policy", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_p_src, t_p_dst")
+		tk.MustExec(`create table t_p_src (
+			id bigint not null,
+			val bigint,
+			primary key (id) nonclustered,
+			index idx_val (val)
+		) partition by range (id) (
+			partition p0 values less than (1000),
+			partition p1 values less than (2000),
+			partition pmax values less than (maxvalue)
+		)
+		split between (0) and (10000) regions 5
+		split index idx_val between (0) and (10000) regions 3`)
+		tk.MustExec("alter table t_p_src split primary key between (0) and (1000000) regions 4")
+
+		createSQL := tk.MustQuery("show create table t_p_src").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "PARTITION BY RANGE (`id`)")
+		require.Contains(t, createSQL, "SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4")
+		require.NotContains(t, createSQL, "SPLIT PRIMARY KEY `PRIMARY`")
+		// The split clauses must follow the partition definition.
+		require.Less(t, strings.Index(createSQL, "PARTITION BY"), strings.Index(createSQL, "/*T![region_split]"))
+
+		roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_p_src`", "CREATE TABLE `t_p_dst`", 1)
+		tk.MustExec(roundTripSQL)
+
+		tbl := external.GetTableByName(t, tk, "test", "t_p_dst")
+		require.NotNil(t, tbl.Meta().TableSplitPolicy)
+		require.Equal(t, int64(5), tbl.Meta().TableSplitPolicy.Regions)
+
+		pkInfo := tbl.Meta().FindIndexByName("primary")
+		require.NotNil(t, pkInfo)
+		require.NotNil(t, pkInfo.RegionSplitPolicy)
+		require.Equal(t, int64(4), pkInfo.RegionSplitPolicy.Regions)
+
+		idxInfo := tbl.Meta().FindIndexByName("idx_val")
+		require.NotNil(t, idxInfo)
+		require.NotNil(t, idxInfo.RegionSplitPolicy)
+		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+	})
 }
 
 func TestTableSplitPolicyRejectSplitIndexPrimaryOnClustered(t *testing.T) {
