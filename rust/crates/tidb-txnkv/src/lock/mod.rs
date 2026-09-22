@@ -14,9 +14,12 @@
 
 //! Bounded optimistic read-lock recovery.
 
+pub(crate) mod async_resolve;
 mod model;
 mod pessimistic;
 mod resolver;
+
+pub(crate) use resolver::async_resolve_pool;
 
 pub use model::{
     decode_blocking_lock_observation, decode_lock_observation, BlockingLock, LockAdmissionError,

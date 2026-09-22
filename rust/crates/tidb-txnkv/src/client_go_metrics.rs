@@ -181,6 +181,26 @@ fn collector_counter(source: &str) -> Option<prometheus::Counter> {
         })
 }
 
+/// Go `LockResolverCountWithReadAsyncResolveFallback`.
+pub(crate) fn inc_lock_resolver_read_async_fallback() {
+    if let Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) =
+        tikv_client::metrics::global_metrics()
+            .shortcut("LockResolverCountWithReadAsyncResolveFallback")
+    {
+        counter.inc();
+    }
+}
+
+/// Go `LockResolverAsyncRunningTasksForReadResolve`.
+pub(crate) fn lock_resolver_read_async_gauge() -> Option<prometheus::Gauge> {
+    tikv_client::metrics::global_metrics()
+        .shortcut("LockResolverAsyncRunningTasksForReadResolve")
+        .and_then(|shortcut| match shortcut {
+            tikv_client::metrics::ClientGoShortcut::Gauge(gauge) => Some(gauge.clone()),
+            _ => None,
+        })
+}
+
 /// Renders the `tidb_tikvclient_*` exposition block for the status server.
 #[must_use]
 pub fn gather_text() -> String {
@@ -471,4 +491,3 @@ pub fn definitions() -> Vec<(String, String, &'static str)> {
         })
         .collect()
 }
-

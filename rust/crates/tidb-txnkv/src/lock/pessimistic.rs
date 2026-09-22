@@ -36,8 +36,7 @@ use super::resolver::{
     check_cancelled, check_lock_call, classify_determined_status, flush_lite_resolve_cleanups,
     map_rpc_error, query_txn_status, recover_lock_region_error, remaining_lock_ttl,
     resolve_optimistic_lock_refs_collecting, resolve_optimistic_lock_refs_with_backoff,
-    resolve_optimistic_locks_with_backoff, route_key_attempt, LiteResolveCleanups, LockStatus,
-    LockStatusQuery,
+    route_key_attempt, LiteResolveCleanups, LockStatus, LockStatusQuery,
 };
 use super::{
     LockRecoveryClient, LockRecoveryError, LockRecoveryResult, ResolvedTxnStatus, TimestampSource,
@@ -160,14 +159,12 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
-    // Go's synchronous writer path collects small optimistic locks before
-    // issuing lite ResolveLock requests, batching exact keys by transaction
-    // and region. The read path schedules independent asynchronous cleanup,
-    // while pessimistic locks require their own rollback protocol.
-    if !for_read
-        && locks
-            .iter()
-            .all(|lock| matches!(lock, BlockingLock::Optimistic(_)))
+    // Go collects small optimistic locks before issuing lite ResolveLock
+    // requests. Reads schedule the transaction batches asynchronously; writers
+    // resolve them synchronously. Pessimistic locks keep their rollback path.
+    if locks
+        .iter()
+        .all(|lock| matches!(lock, BlockingLock::Optimistic(_)))
     {
         let optimistic_locks = locks
             .iter()
@@ -207,7 +204,7 @@ where
             continue;
         }
         let outcome = match lock {
-            BlockingLock::Optimistic(lock) if !for_read => resolve_optimistic_lock_refs_collecting(
+            BlockingLock::Optimistic(lock) => resolve_optimistic_lock_refs_collecting(
                 runtime,
                 std::slice::from_ref(&lock),
                 caller_start_ts,
@@ -217,19 +214,6 @@ where
                 for_read,
                 backoff,
                 &mut lite_cleanups,
-            )?,
-            BlockingLock::Optimistic(lock) => resolve_optimistic_locks_with_backoff(
-                runtime,
-                std::slice::from_ref(lock),
-                caller_start_ts,
-                base_context,
-                call,
-                timestamp_source,
-                // Go picks `ResolveLocksForRead` or `ResolveLocks` by the
-                // CALLER, not by the lock: a reader may step over a lock it
-                // has classified, a writer must wait it out.
-                for_read,
-                backoff,
             )?,
             BlockingLock::Pessimistic(lock) => resolve_one_pessimistic_lock(
                 runtime,
@@ -249,7 +233,14 @@ where
         result.ignore_locks.extend(outcome.ignore_locks);
         result.access_locks.extend(outcome.access_locks);
     }
-    flush_lite_resolve_cleanups(runtime, &mut lite_cleanups, base_context, call, backoff)?;
+    flush_lite_resolve_cleanups(
+        runtime,
+        &mut lite_cleanups,
+        base_context,
+        call,
+        for_read,
+        backoff,
+    )?;
     result.ttl = minimum_wait.unwrap_or_default();
     Ok(result)
 }

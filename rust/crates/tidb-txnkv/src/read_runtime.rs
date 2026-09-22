@@ -18,11 +18,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::lock::async_resolve::{AsyncLockResolveTask, AsyncResolvePool};
 use crate::region::{
     BackgroundRegionCache, BackgroundRegionCacheError, BackgroundRegionCacheOwner, KeyRange,
     LeaderRequest, RegionCache, RegionLoader, RegionLocation, RegionQueryLoader,
-    RegionRecoveryError, RegionRouteError, RequestSelection, RequestSelector, StoreLiveness,
-    StoreLivenessProbe,
+    RegionRecoveryError, RegionRecoveryLoader, RegionRouteError, RequestSelection, RequestSelector,
+    StoreLiveness, StoreLivenessProbe,
 };
 use crate::{DirectUnaryClient, DEFAULT_STORE_LIVENESS_TIMEOUT};
 
@@ -107,6 +108,7 @@ fn next_read_authority_id() -> u64 {
 pub struct SharedReadAuthority<C, L> {
     opener: SharedReadOpener<C, L>,
     region_cache: BackgroundRegionCacheOwner<L>,
+    async_resolve_pool: Option<Arc<AsyncResolvePool>>,
     cluster_id: u64,
     authority_id: u64,
 }
@@ -116,6 +118,7 @@ pub struct SharedReadOpener<C, L> {
     client: C,
     region_cache: BackgroundRegionCache<L>,
     resolving_locks: Arc<Mutex<ResolvingLocks>>,
+    async_resolve_pool: Option<Arc<AsyncResolvePool>>,
     authority_id: u64,
 }
 
@@ -125,6 +128,7 @@ impl<C: Clone, L> Clone for SharedReadOpener<C, L> {
             client: self.client.clone(),
             region_cache: self.region_cache.clone_opener(),
             resolving_locks: Arc::clone(&self.resolving_locks),
+            async_resolve_pool: self.async_resolve_pool.clone(),
             authority_id: self.authority_id,
         }
     }
@@ -159,11 +163,13 @@ where
             client,
             region_cache: region_cache.opener_handle(),
             resolving_locks: Arc::new(Mutex::new(ResolvingLocks::default())),
+            async_resolve_pool: None,
             authority_id,
         };
         Self {
             opener,
             region_cache,
+            async_resolve_pool: None,
             cluster_id,
             authority_id,
         }
@@ -194,14 +200,50 @@ where
 
     /// Stops and joins the maintenance worker after every session is drained.
     pub fn shutdown(&self) -> Result<(), BackgroundRegionCacheError> {
+        if let Some(pool) = &self.async_resolve_pool {
+            pool.close_and_wait();
+        }
         self.region_cache.shutdown()
+    }
+
+    /// Starts the shared resolver with detached read-side cleanup enabled.
+    pub fn start_with_lock_resolver(
+        client: C,
+        region_cache: RegionCache<L>,
+    ) -> Result<Self, BackgroundRegionCacheError>
+    where
+        C: crate::lock::LockRecoveryClient + Send + 'static,
+        L: crate::region::RegionRecoveryLoader,
+    {
+        let mut authority = Self::start(client, region_cache)?;
+        authority.enable_async_lock_resolver()?;
+        Ok(authority)
+    }
+
+    fn enable_async_lock_resolver(&mut self) -> Result<(), BackgroundRegionCacheError>
+    where
+        C: crate::lock::LockRecoveryClient + Send + 'static,
+        L: crate::region::RegionRecoveryLoader,
+    {
+        let pool = crate::lock::async_resolve_pool(self.opener.clone());
+        self.opener.async_resolve_pool = Some(Arc::clone(&pool));
+        self.async_resolve_pool = Some(pool);
+        Ok(())
+    }
+}
+
+impl<C, L> Drop for SharedReadAuthority<C, L> {
+    fn drop(&mut self) {
+        if let Some(pool) = &self.async_resolve_pool {
+            pool.close_and_wait();
+        }
     }
 }
 
 impl<C, L> SharedReadAuthority<C, L>
 where
-    C: Clone + DirectUnaryClient + Send + 'static,
-    L: RegionQueryLoader + Send + 'static,
+    C: Clone + DirectUnaryClient + crate::lock::LockRecoveryClient + Send + 'static,
+    L: RegionQueryLoader + RegionRecoveryLoader + Send + 'static,
 {
     /// Starts production maintenance with the same retained TiKV transport as
     /// the foreground sessions, including stale-safe recovery of stores that
@@ -218,7 +260,9 @@ where
             DEFAULT_GC_LIMIT,
             DEFAULT_STORE_LIVENESS_TIMEOUT,
         )?;
-        Ok(Self::from_started(client, region_cache, cluster_id))
+        let mut authority = Self::from_started(client, region_cache, cluster_id);
+        authority.enable_async_lock_resolver()?;
+        Ok(authority)
     }
 }
 
@@ -233,6 +277,7 @@ where
             self.client.clone(),
             self.region_cache.open_lease()?,
             Arc::clone(&self.resolving_locks),
+            self.async_resolve_pool.clone(),
             self.authority_id,
         )
     }
@@ -252,6 +297,7 @@ pub struct SharedReadRuntime<C, L> {
     client: Arc<Mutex<C>>,
     region_cache: BackgroundRegionCache<L>,
     resolving_locks: Arc<Mutex<ResolvingLocks>>,
+    async_resolve_pool: Option<Arc<AsyncResolvePool>>,
     cluster_id: u64,
     authority_id: u64,
 }
@@ -262,6 +308,7 @@ impl<C, L> Clone for SharedReadRuntime<C, L> {
             client: Arc::clone(&self.client),
             region_cache: self.region_cache.clone(),
             resolving_locks: Arc::clone(&self.resolving_locks),
+            async_resolve_pool: self.async_resolve_pool.clone(),
             cluster_id: self.cluster_id,
             authority_id: self.authority_id,
         }
@@ -277,6 +324,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             client: Arc::new(Mutex::new(client)),
             region_cache: BackgroundRegionCache::without_worker(region_cache),
             resolving_locks: Arc::new(Mutex::new(ResolvingLocks::default())),
+            async_resolve_pool: None,
             cluster_id,
             authority_id: next_read_authority_id(),
         }
@@ -287,6 +335,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         client: C,
         region_cache: BackgroundRegionCache<L>,
         resolving_locks: Arc<Mutex<ResolvingLocks>>,
+        async_resolve_pool: Option<Arc<AsyncResolvePool>>,
         authority_id: u64,
     ) -> Result<Self, BackgroundRegionCacheError> {
         let cluster_id = region_cache.with_cache_read(|cache| cache.cluster_id())?;
@@ -294,6 +343,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             client: Arc::new(Mutex::new(client)),
             region_cache,
             resolving_locks,
+            async_resolve_pool,
             cluster_id,
             authority_id,
         })
@@ -327,9 +377,18 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             )),
             region_cache: self.region_cache.clone(),
             resolving_locks: Arc::clone(&self.resolving_locks),
+            async_resolve_pool: self.async_resolve_pool.clone(),
             cluster_id: self.cluster_id,
             authority_id: self.authority_id,
         }
+    }
+
+    /// Schedules detached read cleanup when this runtime belongs to a
+    /// production lock-resolver authority.
+    pub(crate) fn try_schedule_async_resolve(&self, task: AsyncLockResolveTask) -> bool {
+        self.async_resolve_pool
+            .as_ref()
+            .is_some_and(|pool| pool.try_spawn(task))
     }
 
     /// Records one resolve attempt until the returned guard is dropped.
@@ -444,5 +503,276 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     #[must_use]
     pub const fn authority_id(&self) -> u64 {
         self.authority_id
+    }
+}
+
+#[cfg(test)]
+mod async_resolve_tests {
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::lock::{
+        resolve_optimistic_locks, FixedTimestampSource, LockRecoveryClient, OptimisticLock,
+        ResolvedTxnStatus,
+    };
+    use crate::region::{
+        Peer, PeerRole, RegionEpoch, RegionLoadError, RegionMetadata, RegionRecoveryLoader,
+        RegionVerId, Store, StoreMetadata,
+    };
+    use crate::rpc::{DirectUnaryClientError, UnaryCallContext, UnaryCancellation};
+    use tidb_proto::{
+        KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse,
+        KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext,
+        KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcResolveLockRequest,
+        KvrpcResolveLockResponse,
+    };
+
+    #[derive(Clone)]
+    struct Loader;
+
+    impl RegionLoader for Loader {
+        fn cluster_id(&self) -> u64 {
+            7
+        }
+
+        fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+            let (id, start_key, end_key) = if key < b"n".as_slice() {
+                (1, Vec::new(), b"n".to_vec())
+            } else {
+                (2, b"n".to_vec(), Vec::new())
+            };
+            Ok(RegionLocation {
+                region: RegionVerId {
+                    id,
+                    epoch: RegionEpoch {
+                        conf_ver: 1,
+                        version: 1,
+                    },
+                },
+                start_key,
+                end_key,
+                peers: vec![Peer {
+                    id: id + 10,
+                    store_id: id + 20,
+                    role: PeerRole::Voter,
+                    is_witness: false,
+                    store_epoch: 1,
+                }],
+                leader_peer_id: Some(id + 10),
+                stores: vec![Store {
+                    id: id + 20,
+                    address: format!("store-{id}"),
+                    epoch: 1,
+                }],
+                ..RegionLocation::default()
+            })
+        }
+    }
+
+    impl RegionRecoveryLoader for Loader {
+        fn hydrate_region(
+            &mut self,
+            _metadata: &RegionMetadata,
+            _leader_store_id: u64,
+            _resolved_stores: &mut BTreeMap<u64, Option<StoreMetadata>>,
+        ) -> Result<RegionLocation, RegionLoadError> {
+            Err(RegionLoadError::new(
+                "test",
+                "unexpected metadata hydration",
+            ))
+        }
+    }
+
+    #[derive(Clone)]
+    struct Client {
+        resolve_calls: Arc<AtomicUsize>,
+        resolve_requests: Arc<Mutex<Vec<(u64, Vec<Vec<u8>>)>>>,
+    }
+
+    impl LockRecoveryClient for Client {
+        fn check_txn_status_for_lock(
+            &mut self,
+            _address: &str,
+            _request: &KvrpcCheckTxnStatusRequest,
+            _context: &KvrpcContext,
+            _call: &UnaryCallContext,
+        ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+            Ok(KvrpcCheckTxnStatusResponse {
+                commit_version: 150,
+                ..KvrpcCheckTxnStatusResponse::default()
+            })
+        }
+
+        fn check_secondary_locks_for_lock(
+            &mut self,
+            _address: &str,
+            _request: &KvrpcCheckSecondaryLocksRequest,
+            _context: &KvrpcContext,
+            _call: &UnaryCallContext,
+        ) -> Result<KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+            Ok(KvrpcCheckSecondaryLocksResponse::default())
+        }
+
+        fn resolve_lock_for_read(
+            &mut self,
+            _address: &str,
+            request: &KvrpcResolveLockRequest,
+            context: &KvrpcContext,
+            _call: &UnaryCallContext,
+        ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
+            self.resolve_requests
+                .lock()
+                .unwrap()
+                .push((context.region_id, request.keys.clone()));
+            self.resolve_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(KvrpcResolveLockResponse::default())
+        }
+
+        fn pessimistic_rollback_for_lock(
+            &mut self,
+            _address: &str,
+            _request: &KvrpcPessimisticRollbackRequest,
+            _context: &KvrpcContext,
+            _call: &UnaryCallContext,
+        ) -> Result<KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+            Ok(KvrpcPessimisticRollbackResponse::default())
+        }
+    }
+
+    #[test]
+    fn small_read_cleanup_is_detached_and_keeps_request_source() {
+        let (task_tx, task_rx) = mpsc::channel();
+        let pool = AsyncResolvePool::new(move |task, cancellation| {
+            task_tx
+                .send((task, cancellation.clone()))
+                .expect("the test receives the scheduled cleanup");
+            while !cancellation.is_cancelled() {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+        let resolve_calls = Arc::new(AtomicUsize::new(0));
+        let resolve_requests = Arc::new(Mutex::new(Vec::new()));
+        let mut runtime = SharedReadRuntime::new_injected(
+            Client {
+                resolve_calls: Arc::clone(&resolve_calls),
+                resolve_requests,
+            },
+            RegionCache::new(Loader),
+        );
+        runtime.async_resolve_pool = Some(Arc::clone(&pool));
+        let caller_cancellation = UnaryCancellation::new();
+        let result = resolve_optimistic_locks(
+            &runtime,
+            &[OptimisticLock {
+                key: b"secondary".to_vec(),
+                primary: b"primary".to_vec(),
+                txn_id: 100,
+                ttl_ms: 0,
+                txn_size: 1,
+                lock_type: 2,
+                min_commit_ts: 0,
+                use_async_commit: false,
+                secondaries: Vec::new(),
+            }],
+            200,
+            &KvrpcContext {
+                request_source: "foreground-read".to_owned(),
+                ..KvrpcContext::default()
+            },
+            &UnaryCallContext::new(Duration::from_secs(1), caller_cancellation.clone()),
+            &FixedTimestampSource::new(1),
+            true,
+        )
+        .expect("the read returns its resolved status without waiting for cleanup");
+        assert_eq!(result.statuses, vec![ResolvedTxnStatus::Committed(150)]);
+        assert_eq!(result.access_locks, vec![100]);
+
+        let (task, background_cancellation) = task_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the small-lock cleanup is scheduled");
+        assert_eq!(task.txn_id, 100);
+        assert_eq!(task.commit_version, 150);
+        assert_eq!(task.keys, vec![b"secondary".to_vec()]);
+        assert_eq!(task.request_source, "foreground-read");
+        assert!(task.schedule_regions);
+        assert!(!background_cancellation.is_cancelled());
+        caller_cancellation.cancel();
+        assert!(!background_cancellation.is_cancelled());
+        assert_eq!(resolve_calls.load(Ordering::Relaxed), 0);
+
+        pool.close_and_wait();
+        assert!(background_cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn small_read_cleanup_schedules_one_task_per_region() {
+        let resolve_calls = Arc::new(AtomicUsize::new(0));
+        let resolve_requests = Arc::new(Mutex::new(Vec::new()));
+        let client = Client {
+            resolve_calls: Arc::clone(&resolve_calls),
+            resolve_requests: Arc::clone(&resolve_requests),
+        };
+        let cache = BackgroundRegionCache::without_worker(RegionCache::new(Loader));
+        let resolving_locks = Arc::new(Mutex::new(ResolvingLocks::default()));
+        let authority_id = next_read_authority_id();
+        let opener = SharedReadOpener {
+            client: client.clone(),
+            region_cache: cache.clone_opener(),
+            resolving_locks: Arc::clone(&resolving_locks),
+            async_resolve_pool: None,
+            authority_id,
+        };
+        let pool = crate::lock::async_resolve_pool(opener.clone());
+        let runtime = SharedReadRuntime::from_shared_authorities(
+            client,
+            cache.open_lease().expect("the test opens a cache lease"),
+            resolving_locks,
+            Some(Arc::clone(&pool)),
+            authority_id,
+        )
+        .expect("the test runtime shares the resolver opener");
+
+        let locks = [b"a".as_slice(), b"z".as_slice()].map(|key| OptimisticLock {
+            key: key.to_vec(),
+            primary: b"primary".to_vec(),
+            txn_id: 100,
+            ttl_ms: 0,
+            txn_size: 1,
+            lock_type: 2,
+            min_commit_ts: 0,
+            use_async_commit: false,
+            secondaries: Vec::new(),
+        });
+        let result = resolve_optimistic_locks(
+            &runtime,
+            &locks,
+            200,
+            &KvrpcContext {
+                request_source: "foreground-read".to_owned(),
+                ..KvrpcContext::default()
+            },
+            &UnaryCallContext::with_timeout(Duration::from_secs(1)),
+            &FixedTimestampSource::new(1),
+            true,
+        )
+        .expect("the read returns before the grouped cleanup finishes");
+        assert_eq!(result.statuses.len(), 2);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while resolve_calls.load(Ordering::Relaxed) < 2 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(resolve_calls.load(Ordering::Relaxed), 2);
+        let mut requests = resolve_requests.lock().unwrap().clone();
+        requests.sort_by_key(|(region_id, _)| *region_id);
+        assert_eq!(
+            requests,
+            vec![(1, vec![b"a".to_vec()]), (2, vec![b"z".to_vec()]),]
+        );
+
+        pool.close_and_wait();
     }
 }

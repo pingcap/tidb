@@ -487,8 +487,9 @@ mod tests {
 
         let client = InProcessClient::new();
         let cache = RegionCache::new(crate::region_loader::InProcessRegionLoader);
-        let authority = tidb_txnkv::SharedReadAuthority::start(client.clone(), cache)
-            .expect("the read authority starts over the in-process plane");
+        let authority =
+            tidb_txnkv::SharedReadAuthority::start_with_lock_resolver(client.clone(), cache)
+                .expect("the read authority starts over the in-process plane");
         let gc_state = TxnSafePointRefresher::start_with_source(|| Ok(0))
             .expect("the static-zero safe point seeds");
         let opener = tidb_txnkv::transaction::RealOptimisticTransactionOpener::from_capabilities(

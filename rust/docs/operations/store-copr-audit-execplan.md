@@ -45,10 +45,10 @@ directory; inventory every artifact and module build input before editing.
 - [x] Preserve point-response execution details at the wire boundary and integrate optional runtime response statistics with live Get/BatchGet.
 - [x] Integrate native point-read RPC counts/durations and ClientHelper ResolveLock accounting at the physical completion boundary; verify the terminal delivery/cancellation race.
 - [x] Integrate Get/BatchGet selected backoff histories, completed/cancelled wait accounting, and separate resolve-lock detail timing.
-- [x] Match Go's synchronous small-transaction writer cleanup batching by transaction and region; keep read-side async cleanup explicitly open.
+- [x] Match small optimistic-lock cleanup by transaction and region, with synchronous writer resolution, detached read cleanup, bounded admission, fallback semantics and shared-authority cancellation.
 - [ ] Reconcile nested lock resolver and PD/routing backoffers with the full caller-owned history and clone/fork semantics.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
-- [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
+- [x] Run scoped Rust tests, dependent compilation, lint and self-review for the lite-cleanup slice.
 - [ ] Audit master 8a37ef2b44 memory arbitration changes as complete pkg/util/memory, pkg/session and pkg/executor/join units.
 - [ ] Satisfy the remaining whole-package build/platform/generated/live-store and workload gates.
 
@@ -1336,3 +1336,43 @@ The complete txnlock package remains unaccepted: asynchronous read cleanup,
 resolver cache/options/metrics, original Go test/support reconciliation and
 build/platform gates are still open. No sysbench, TPC-C, TPC-H or YCSB
 performance claim follows from reducing these mock-RPC counts.
+
+### Read-side lite-cleanup receipt (2026-09-22)
+
+The pinned `batchLiteResolveLocks` schedules small read cleanup without
+inheriting caller cancellation, preserves only `RequestSource`, and falls back
+to inline cleanup when its bounded pool rejects work. Rust now creates the
+read resolver pool with a process-wide 10,000-task admission limit, uses a
+40-second retry budget, routes multi-key transaction cleanup in the background
+and schedules each region group independently. Pool close cancels and drains
+these tasks before the shared region cache stops. Inline cleanup errors do not
+replace a determined read status. The regular non-lite read resolver remains a
+separate open async path.
+
+The new runtime tests verify caller/background cancellation isolation,
+request-source propagation, cache-backed child sessions, and exact key grouping
+across two independently scheduled regions. The lock-resolver source suite
+also verifies Go's best-effort read-cleanup error behavior. Validation passed:
+
+    cd rust
+    cargo test --offline --locked -p tidb-txnkv --lib small_read_cleanup_
+    cargo test --offline --locked -p tidb-txnkv --test lock_resolver_source
+    cargo check --offline --locked -p tidb-txnkv -p tidb-exec --message-format=short
+    cargo test --offline --locked -p tidb-unistore --lib --no-run
+    cargo test --offline --locked -p tidb-unistore --lib the_generic_opener_commits_through_the_in_process_store
+    cd ..
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+The two async tests and all 26 resolver source tests passed; dependent crate
+checks, unistore test compilation/execution, lint and scoped formatting passed.
+The `rust/target` build cache was 42 GiB before cleanup. `cargo clean` removed
+201,625 files and reported 65.5 GiB reclaimed; filesystem free space increased
+by about 42 GiB. No sysbench, TPC-C, TPC-H or YCSB benchmark was run. The
+txnlock package's full Go test/support, ordinary non-lite read async path,
+resolver option/cache/metrics, failpoint, platform/build and caller integration
+gates remain open. Upstream's `gp.New(10000, 10*time.Second)` can run up to
+10,000 goroutines; this Rust runtime currently caps blocking worker threads at
+512 while admitting up to 10,000 tasks. That Rust resource bound changes peak
+cleanup concurrency and remains unbenchmarked before package acceptance.

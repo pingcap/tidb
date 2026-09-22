@@ -29,12 +29,102 @@ use crate::region::{
     RegionRecoveryError, RegionRecoveryLoader, RegionTerminalError, RequestSelection,
 };
 use crate::rpc::TonicCoprocessorClient;
-use crate::{DirectUnaryClientError, SharedReadRuntime, UnaryCallContext};
+use crate::{DirectUnaryClientError, SharedReadOpener, SharedReadRuntime, UnaryCallContext};
 
+use super::async_resolve::{AsyncLockResolveTask, AsyncResolvePool};
 use super::{LockAdmissionError, OptimisticLock};
 
 /// Go `getTxnStatusMaxBackoff` (`txnkv/txnlock/lock_resolver.go:51`).
 const GET_TXN_STATUS_MAX_BACKOFF: Duration = Duration::from_millis(20_000);
+const ASYNC_RESOLVE_LOCK_MAX_BACKOFF: Duration = Duration::from_millis(40_000);
+
+/// Creates the detached cleanup handler owned by one read authority.
+pub(crate) fn async_resolve_pool<C, L>(
+    opener: SharedReadOpener<C, L>,
+) -> std::sync::Arc<AsyncResolvePool>
+where
+    C: LockRecoveryClient + Clone + Send + 'static,
+    L: RegionRecoveryLoader + Send + 'static,
+{
+    let opener = std::sync::Arc::new(Mutex::new(opener));
+    let pool_ref: std::sync::Arc<Mutex<std::sync::Weak<AsyncResolvePool>>> =
+        std::sync::Arc::new(Mutex::new(std::sync::Weak::new()));
+    let handler_pool_ref = std::sync::Arc::clone(&pool_ref);
+    let pool = AsyncResolvePool::new(move |task, cancellation| {
+        let runtime = opener
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .open_session();
+        let Ok(runtime) = runtime else {
+            return;
+        };
+        let call = UnaryCallContext::new(ASYNC_RESOLVE_LOCK_MAX_BACKOFF, cancellation.clone());
+        let context = KvrpcContext {
+            request_source: task.request_source.clone(),
+            ..KvrpcContext::default()
+        };
+        let status = if task.commit_version == 0 {
+            ResolvedTxnStatus::RolledBack
+        } else {
+            ResolvedTxnStatus::Committed(task.commit_version)
+        };
+        let Ok(groups) = group_keys_by_region(&runtime, &task.keys, &context) else {
+            return;
+        };
+
+        if task.schedule_regions && task.keys.len() > 1 {
+            let pool = handler_pool_ref
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .upgrade();
+            for group in groups {
+                let child = AsyncLockResolveTask {
+                    txn_id: task.txn_id,
+                    commit_version: task.commit_version,
+                    keys: group.keys.clone(),
+                    request_source: task.request_source.clone(),
+                    schedule_regions: false,
+                };
+                if pool.as_ref().is_some_and(|pool| pool.try_spawn(child)) {
+                    continue;
+                }
+                let call =
+                    UnaryCallContext::new(ASYNC_RESOLVE_LOCK_MAX_BACKOFF, cancellation.clone());
+                let mut backoff = RegionBackoffBudget::new(ASYNC_RESOLVE_LOCK_MAX_BACKOFF);
+                let _ = resolve_region_keys(
+                    &runtime,
+                    task.txn_id,
+                    group,
+                    status,
+                    &context,
+                    &call,
+                    &mut backoff,
+                );
+            }
+        } else {
+            let mut backoff = RegionBackoffBudget::new(ASYNC_RESOLVE_LOCK_MAX_BACKOFF);
+            for group in groups {
+                if resolve_region_keys(
+                    &runtime,
+                    task.txn_id,
+                    group,
+                    status,
+                    &context,
+                    &call,
+                    &mut backoff,
+                )
+                .is_err()
+                {
+                    break;
+                }
+            }
+        }
+    });
+    *pool_ref
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = std::sync::Arc::downgrade(&pool);
+    pool
+}
 
 /// Exact timestamp authority injected by the caller.
 pub trait TimestampSource: fmt::Debug {
@@ -551,7 +641,14 @@ where
         backoff,
         &mut lite_cleanups,
     )?;
-    flush_lite_resolve_cleanups(runtime, &mut lite_cleanups, base_context, call, backoff)?;
+    flush_lite_resolve_cleanups(
+        runtime,
+        &mut lite_cleanups,
+        base_context,
+        call,
+        for_read,
+        backoff,
+    )?;
     Ok(result)
 }
 
@@ -611,7 +708,7 @@ where
         .tikv_client
         .resolve_lock_lite_threshold;
     for lock in locks {
-        let defer_lite_cleanup = !for_read && lock.txn_size < lite_threshold;
+        let defer_lite_cleanup = lock.txn_size < lite_threshold;
         // Go `resolve(l, forceSyncCommit)` (`lock_resolver.go:577-621`) is a
         // closure that calls itself exactly once more, with forceSyncCommit
         // set, when the async-commit recovery reports a secondary that is not
@@ -693,6 +790,7 @@ pub(super) fn flush_lite_resolve_cleanups<C, L>(
     lite_cleanups: &mut LiteResolveCleanups,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
+    for_read: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<(), LockRecoveryError>
 where
@@ -706,16 +804,38 @@ where
         if cleanup.keys.len() == 1 && cleanup.keys[0] == cleanup.primary {
             continue;
         }
-        for group in group_keys_by_region(runtime, &cleanup.keys, base_context)? {
-            resolve_region_keys(
-                runtime,
+        if for_read {
+            let commit_version = match cleanup.status {
+                ResolvedTxnStatus::Committed(commit_version) => commit_version,
+                ResolvedTxnStatus::RolledBack => 0,
+            };
+            if runtime.try_schedule_async_resolve(AsyncLockResolveTask {
                 txn_id,
-                group,
-                cleanup.status,
-                base_context,
-                call,
-                backoff,
-            )?;
+                commit_version,
+                keys: cleanup.keys.clone(),
+                request_source: base_context.request_source.clone(),
+                schedule_regions: true,
+            }) {
+                continue;
+            }
+            crate::client_go_metrics::inc_lock_resolver_read_async_fallback();
+        }
+        let resolved = (|| {
+            for group in group_keys_by_region(runtime, &cleanup.keys, base_context)? {
+                resolve_region_keys(
+                    runtime,
+                    txn_id,
+                    group,
+                    cleanup.status,
+                    base_context,
+                    call,
+                    backoff,
+                )?;
+            }
+            Ok::<(), LockRecoveryError>(())
+        })();
+        if !for_read {
+            resolved?;
         }
     }
     Ok(())
@@ -1577,7 +1697,7 @@ where
             ));
         }
         Ok(RegionErrorDisposition::ReturnRegionError) | Ok(RegionErrorDisposition::Terminal(_)) => {
-            return Err(LockRecoveryError::RegionError(format!("{error:?}")))
+            return Err(LockRecoveryError::RegionError(format!("{error:?}")));
         }
     };
     wait_lock_backoff(backoff, call, delay)

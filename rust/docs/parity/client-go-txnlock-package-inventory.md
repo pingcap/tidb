@@ -31,21 +31,33 @@ The current Go ignored-hint contract is lock_resolver.go's
 backoffOnLockHintsInRequest before resolveLocks: only ForRead checks the exact
 request hints, any matching transaction charges one BoTxnLockFast backoff, and
 resolution runs afterward. Repeated ignored responses exhaust the caller's
-existing backoffer. The complete package's status cache, asynchronous cleanup,
-metrics, failpoints, original tests and all caller integrations remain open.
+existing backoffer. The status cache, ordinary non-lite read cleanup,
+async-commit and secondary-check worker paths, failpoints, original tests and
+all caller integrations remain open.
 
 The direct-unary cop response delegate now borrows the current per-region
 budget through blocking-lock status/cleanup recovery, matching
 coprocessor.go:2674-2728's shared Backoffer path. This is focused caller seed
 evidence; complete caller and package reconciliation remains open.
 
-The synchronous writer path now defers cleanup of small optimistic locks until
-all statuses are known, then sends one exact-key ResolveLock request per
-transaction and region. `lock_resolver_source.rs` verifies three locks from
-one transaction split across two regions produce two requests with the exact
-region-specific keys, and verifies interleaved optimistic locks still batch
-around a distinct pessimistic transaction. This matches
-`LockResolver.resolveLocks` and
-`batchLiteResolveLocks` in the pinned `lock_resolver.go`. Read-side asynchronous
-cleanup, resolver options/cache/metrics, original Go support/test reconciliation,
-and every whole-package acceptance gate remain open.
+The lock path now defers cleanup of small optimistic locks until all statuses
+are known, then groups exact keys by transaction and region. Writers resolve
+these groups synchronously. Reads schedule a detached transaction task, which
+routes the keys and schedules region groups independently through a
+process-wide 10,000-task admission limit. Each region task uses a 40-second
+retry budget and retains only the request source. Saturated scheduling falls
+back to in-place cleanup; cleanup errors do not replace a determined read
+status. The shared authority cancels and drains its cleanup tasks before cache
+shutdown. Source tests cover exact writer batching, read cancellation and
+request-source behavior. This matches the small-lock branch of
+`LockResolver.resolveLocks` and `batchLiteResolveLocks` in the pinned
+`lock_resolver.go`. The remaining resolver options/cache paths, complete
+metrics, ordinary non-lite read cleanup, async-commit/secondary-check worker
+paths, failpoints, original Go support/test reconciliation and every
+whole-package acceptance gate remain open.
+
+The async pool currently admits up to 10,000 tasks but Tokio's blocking runtime
+caps worker threads at 512. Upstream's `gp.New(10000, 10*time.Second)` can run
+up to 10,000 goroutines, so peak cleanup concurrency differs. This Rust-native
+resource bound is not yet validated against sysbench, TPC-C, TPC-H or YCSB and
+must be resolved before txnlock package acceptance.

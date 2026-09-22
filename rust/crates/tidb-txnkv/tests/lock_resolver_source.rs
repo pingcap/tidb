@@ -711,7 +711,7 @@ fn alive_status_uses_post_check_timestamp_and_rechecks_cancellation() {
 }
 
 #[test]
-fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
+fn read_lite_cleanup_errors_do_not_replace_a_determined_status() {
     for cancel_after_resolve in [false, true] {
         let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
             commit_version: 1_200 << 18,
@@ -732,7 +732,15 @@ fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
             &FixedTimestampSource::new(1_100 << 18),
             true,
         );
-        assert_eq!(result, Err(LockRecoveryError::CallerCancelled));
+        if cancel_after_resolve {
+            assert!(result.is_ok());
+            assert_eq!(
+                result.unwrap().statuses,
+                vec![ResolvedTxnStatus::Committed(1_200 << 18)]
+            );
+        } else {
+            assert_eq!(result, Err(LockRecoveryError::CallerCancelled));
+        }
         assert_eq!(
             recorded.borrow().resolves.len(),
             usize::from(cancel_after_resolve)
@@ -741,7 +749,7 @@ fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
 }
 
 #[test]
-fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
+fn caller_cancelled_status_rpc_is_typed_and_lite_cleanup_is_best_effort() {
     let (check_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse::default()]);
     check_runtime.client().lock().unwrap().check_error =
         Some(DirectUnaryClientError::CallerCancelled);
@@ -764,18 +772,16 @@ fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
     }]);
     resolve_runtime.client().lock().unwrap().resolve_error =
         Some(DirectUnaryClientError::CallerCancelled);
-    assert_eq!(
-        resolve_optimistic_locks(
-            &resolve_runtime,
-            &[secondary()],
-            1_300 << 18,
-            &KvrpcContext::default(),
-            &call(),
-            &FixedTimestampSource::new(1_100 << 18),
-            true,
-        ),
-        Err(LockRecoveryError::CallerCancelled)
+    let result = resolve_optimistic_locks(
+        &resolve_runtime,
+        &[secondary()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &FixedTimestampSource::new(1_100 << 18),
+        true,
     );
+    assert!(result.is_ok());
     assert_eq!(recorded.borrow().resolves.len(), 1);
 
     let (remote_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse::default()]);
