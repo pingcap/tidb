@@ -259,6 +259,20 @@ func checkIndexKeys(
 			value = append(value, m.value...)
 		}
 
+		if indexInfo.IsTiKVFullTextIndex() {
+			// The key holds one analyzed term of the document rather than the
+			// column value, so the check is membership: the term must be one
+			// the row analyzes to.
+			row := rowToInsert
+			if len(value) == 0 || isTmpIdxValAndDeleted {
+				row = rowToRemove
+			}
+			if err := checkFullTextIndexKey(t, indexInfo, m.key, row, extraIndexesLayout.GetIndexLayout(idxID)); err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
 		// when we cannot decode the key to get the original value
 		if len(value) == 0 && NeedRestoredData(useNewCollate, indexInfo.Columns, t.Meta().Columns) {
 			continue
@@ -497,6 +511,41 @@ func sortedJSONArrayElems(bj types.BinaryJSON) []types.BinaryJSON {
 	}
 	slices.SortFunc(elems, types.CompareBinaryJSON)
 	return elems
+}
+
+// checkFullTextIndexKey checks that the term an entry of a FULLTEXT index built
+// in TiKV was written under is one of the terms the row's document analyzes to.
+func checkFullTextIndexKey(t *TableCommon, indexInfo *model.IndexInfo, key []byte, row []types.Datum, extraIndexLayout table.IndexRowLayoutOption) error {
+	var idx *index
+	for _, candidate := range t.Indices() {
+		if candidate.Meta().ID == indexInfo.ID {
+			idx = asIndex(candidate)
+			break
+		}
+	}
+	if idx == nil || idx.fullText == nil {
+		return errors.Errorf("fulltext index %s not found on table %s", indexInfo.Name.O, t.Meta().Name.O)
+	}
+	term, err := DecodeTiKVFullTextIndexKey(key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	offsetInRow := indexInfo.Columns[0].Offset
+	if len(extraIndexLayout) > 0 {
+		offsetInRow = extraIndexLayout[0]
+	}
+	terms, err := idx.fullTextTerms(row[offsetInRow])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if _, ok := terms[string(term)]; !ok {
+		col := t.Columns[indexInfo.Columns[0].Offset].ColumnInfo
+		err = ErrInconsistentIndexedValue.GenWithStackByArgs(
+			t.Meta().Name.O, indexInfo.Name.O, col.Name.O, string(term), row[offsetInRow].String())
+		logutil.BgLogger().Error("inconsistent indexed term in fulltext index mutation", zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 // CompareIndexAndVal compare index valued and row value.

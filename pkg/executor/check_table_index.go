@@ -140,20 +140,32 @@ func (e *CheckTableExec) handlePanic(r any) {
 
 // Next implements the Executor Next interface.
 func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	if e.done || len(e.srcs) == 0 {
+	if e.done {
 		return nil
 	}
 	defer func() { e.done = true }()
 
 	idxNames := make([]string, 0, len(e.indexInfos))
-	for _, idx := range e.indexInfos {
+	for offset, idx := range e.indexInfos {
 		if idx.HasCondition() {
 			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
+		}
+		if idx.IsTiKVFullTextIndex() {
+			// Its entries are analyzed terms, so neither an entry count nor
+			// an index lookup compares to the rows. Each row is instead
+			// checked to have an entry for every term it analyzes to.
+			if err := e.checkTableRecord(ctx, offset); err != nil {
+				return errors.Trace(err)
+			}
+			continue
 		}
 		if idx.MVIndex || idx.IsColumnarIndex() {
 			continue
 		}
 		idxNames = append(idxNames, idx.Name.O)
+	}
+	if len(e.srcs) == 0 {
+		return nil
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
