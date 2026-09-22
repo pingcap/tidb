@@ -116,12 +116,15 @@ where
         .filter(|_| !locks.is_empty())
         .map(|_| std::time::Instant::now());
     let recovery = resolve_blocking_locks_recorded(
-        runtime, locks, read_ts, context, call, timestamps, for_read,
+        runtime, locks, read_ts, context, call, timestamps, for_read, backoff,
     );
     if let (Some(stats), Some(started)) = (stats, started) {
         stats.record_resolve_lock(started.elapsed());
     }
-    recovery.map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))
+    recovery.map_err(|error| match error {
+        crate::lock::LockRecoveryError::BackoffExhausted(error) => snapshot_backoff_error(error),
+        other => OptimisticCoordinatorError::SnapshotGet(other.to_string()),
+    })
 }
 
 pub(super) fn wait_snapshot_lock_ttl(

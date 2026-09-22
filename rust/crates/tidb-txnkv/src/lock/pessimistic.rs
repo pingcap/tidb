@@ -20,7 +20,7 @@
 //! commit record: an expired one is dropped with PessimisticRollback at its
 //! own `for_update_ts` rather than replayed with ResolveLock. Both protocols
 //! still start from the same CheckTxnStatus on the owner's primary, so this
-//! module reuses that decision and only forks at cleanup.
+//! module reuses that decision and branches only at cleanup.
 
 use std::time::Duration;
 
@@ -28,13 +28,14 @@ use tidb_proto::{
     KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcPessimisticRollbackRequest, KvrpcTxnAction,
 };
 
-use crate::region::RegionRecoveryLoader;
+use crate::region::{RegionBackoffBudget, RegionRecoveryLoader};
 use crate::{ResolvingLock, SharedReadRuntime, UnaryCallContext};
 
 use super::model::{BlockingLock, PessimisticLock};
 use super::resolver::{
-    check_cancelled, classify_determined_status, map_rpc_error, query_txn_status,
-    remaining_lock_ttl, route_key, LockStatus, LockStatusQuery,
+    check_cancelled, check_lock_call, classify_determined_status, map_rpc_error, query_txn_status,
+    recover_lock_region_error, remaining_lock_ttl, resolve_optimistic_locks_with_backoff,
+    route_key_attempt, LockStatus, LockStatusQuery,
 };
 use super::{
     LockRecoveryClient, LockRecoveryError, LockRecoveryResult, ResolvedTxnStatus, TimestampSource,
@@ -66,6 +67,38 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
+    resolve_blocking_locks_with_backoff(
+        runtime,
+        locks,
+        caller_start_ts,
+        base_context,
+        call,
+        timestamp_source,
+        for_read,
+        &mut RegionBackoffBudget::new(Duration::from_secs(20)),
+    )
+}
+
+/// Resolves blocking locks using the caller's existing region retry history.
+///
+/// TiDB passes one `Backoffer` from the cop task or snapshot into nested lock
+/// resolution. Callers that own such a budget must use this entry point so
+/// status retries and the subsequent lock wait share one effective limit.
+pub fn resolve_blocking_locks_with_backoff<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: &[BlockingLock],
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    for_read: bool,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<LockRecoveryResult, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource + ?Sized,
+{
     let mut record = None;
     record_blocking_locks(runtime, locks, caller_start_ts, &mut record);
     resolve_blocking_locks_recorded(
@@ -76,6 +109,7 @@ where
         call,
         timestamp_source,
         for_read,
+        backoff,
     )
 }
 
@@ -117,6 +151,7 @@ pub(crate) fn resolve_blocking_locks_recorded<C, L, T>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     for_read: bool,
+    backoff: &mut RegionBackoffBudget,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -141,7 +176,7 @@ where
             continue;
         }
         let outcome = match lock {
-            BlockingLock::Optimistic(lock) => super::resolve_optimistic_locks(
+            BlockingLock::Optimistic(lock) => resolve_optimistic_locks_with_backoff(
                 runtime,
                 std::slice::from_ref(lock),
                 caller_start_ts,
@@ -152,6 +187,7 @@ where
                 // CALLER, not by the lock: a reader may step over a lock it
                 // has classified, a writer must wait it out.
                 for_read,
+                backoff,
             )?,
             BlockingLock::Pessimistic(lock) => resolve_one_pessimistic_lock(
                 runtime,
@@ -160,6 +196,7 @@ where
                 base_context,
                 call,
                 timestamp_source,
+                backoff,
             )?,
         };
         if outcome.is_alive() {
@@ -181,6 +218,7 @@ fn resolve_one_pessimistic_lock<C, L, T>(
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
     timestamp_source: &T,
+    backoff: &mut RegionBackoffBudget,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -200,6 +238,7 @@ where
         call,
         timestamp_source,
         false,
+        backoff,
     )? {
         LockStatus::Answered(response) => response,
         // Go `lock_resolver.go:966-968`: the owner is alive and merely rolled
@@ -214,7 +253,7 @@ where
         // uses — the mismatch is the proof that this key is not a primary.
         LockStatus::PrimaryMismatch => {
             check_cancelled(call)?;
-            pessimistic_rollback_lock(runtime, lock, base_context, call)?;
+            pessimistic_rollback_lock(runtime, lock, base_context, call, backoff)?;
             return Ok(LockRecoveryResult::resolved(
                 lock.txn_id,
                 ResolvedTxnStatus::RolledBack,
@@ -239,7 +278,7 @@ where
     // non-primary key still needs its lock entry removed.
     if lock.key != lock.primary {
         check_cancelled(call)?;
-        pessimistic_rollback_lock(runtime, lock, base_context, call)?;
+        pessimistic_rollback_lock(runtime, lock, base_context, call, backoff)?;
     }
     Ok(LockRecoveryResult::resolved(
         lock.txn_id,
@@ -284,39 +323,43 @@ fn pessimistic_rollback_lock<C, L>(
     lock: &PessimisticLock,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
     L: RegionRecoveryLoader,
 {
-    let (address, context) = route_key(runtime, &lock.key, base_context)?;
-    check_cancelled(call)?;
-    let request = KvrpcPessimisticRollbackRequest {
-        start_version: lock.txn_id,
-        // A lock whose owner never reported a statement timestamp must still be
-        // matched by the cleanup, and TiKV drops locks up to `for_update_ts`.
-        for_update_ts: if lock.for_update_ts == 0 {
-            u64::MAX
-        } else {
-            lock.for_update_ts
-        },
-        keys: vec![lock.key.clone()],
-        ..KvrpcPessimisticRollbackRequest::default()
-    };
-    let response = runtime
-        .client()
-        .try_lock()
-        .map_err(|_| LockRecoveryError::ClientLifecycle)?
-        .pessimistic_rollback_for_lock(&address, &request, &context, call)
-        .map_err(map_rpc_error)?;
-    check_cancelled(call)?;
-    if let Some(error) = response.region_error.as_ref() {
-        return Err(LockRecoveryError::RegionError(format!("{error:?}")));
+    loop {
+        let (address, context, attempt) = route_key_attempt(runtime, &lock.key, base_context)?;
+        check_lock_call(call)?;
+        let request = KvrpcPessimisticRollbackRequest {
+            start_version: lock.txn_id,
+            // A lock whose owner never reported a statement timestamp must still be
+            // matched by the cleanup, and TiKV drops locks up to `for_update_ts`.
+            for_update_ts: if lock.for_update_ts == 0 {
+                u64::MAX
+            } else {
+                lock.for_update_ts
+            },
+            keys: vec![lock.key.clone()],
+            ..KvrpcPessimisticRollbackRequest::default()
+        };
+        let response = runtime
+            .client()
+            .try_lock()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?
+            .pessimistic_rollback_for_lock(&address, &request, &context, call)
+            .map_err(map_rpc_error)?;
+        check_lock_call(call)?;
+        if let Some(error) = response.region_error.as_ref() {
+            recover_lock_region_error(runtime, error, &attempt, backoff, call)?;
+            continue;
+        }
+        if let Some(error) = response.errors.first() {
+            return Err(LockRecoveryError::KeyError(format!("{error:?}")));
+        }
+        return Ok(());
     }
-    if let Some(error) = response.errors.first() {
-        return Err(LockRecoveryError::KeyError(format!("{error:?}")));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -135,10 +135,10 @@ impl Default for DirectUnaryRuntimeConfig {
     }
 }
 
-/// Immutable locked-response fact passed after route success and before the
-/// task can mutate paging, EMA, cache admission, or response publication.
-#[derive(Clone, Debug)]
-pub struct LockedResponseObservation {
+/// Locked-response facts and the caller-owned retry budget passed after route
+/// success and before paging, EMA, cache admission, or response publication.
+#[derive(Debug)]
+pub struct LockedResponseObservation<'a> {
     /// Address that returned the valid locked response.
     pub address: String,
     /// Exact request context attached at the send boundary.
@@ -150,6 +150,9 @@ pub struct LockedResponseObservation {
     /// Exact call context used by the Cop request. Lock-status, resolve, and
     /// TTL waiting must reuse its deadline and cancellation carrier.
     pub call: UnaryCallContext,
+    /// The Cop task's existing region budget. Client-go passes this same
+    /// Backoffer through lock-status recovery and its following lock wait.
+    pub backoff: &'a mut RegionBackoffBudget,
 }
 
 /// Immutable selection, cache-observation, and transport facts for one failed
@@ -204,7 +207,7 @@ pub trait LockedResponseDelegate<C, L>: std::fmt::Debug + Send + Sync {
     fn handle_locked_response(
         &self,
         runtime: &SharedReadRuntime<C, L>,
-        observation: LockedResponseObservation,
+        observation: LockedResponseObservation<'_>,
     ) -> Result<LockedResponseAction, String>;
 }
 
@@ -1842,8 +1845,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 lock.shared_lock_infos.as_slice()
             };
             if locks.iter().any(|lock| {
-                client_request.context.resolved_locks.contains(&lock.lock_version)
-                    || client_request.context.committed_locks.contains(&lock.lock_version)
+                client_request
+                    .context
+                    .resolved_locks
+                    .contains(&lock.lock_version)
+                    || client_request
+                        .context
+                        .committed_locks
+                        .contains(&lock.lock_version)
             }) {
                 let delay = self
                     .region_backoffs
@@ -1853,6 +1862,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     .map_err(DirectUnaryTransportError::Backoff)?;
                 self.sleep_retry(delay)?;
             }
+            let call = self.rpc_call();
+            let region_retry_max_sleep = self.config.region_retry_max_sleep;
+            let backoff = self
+                .region_backoffs
+                .entry(selected.attempt.region.id)
+                .or_insert_with(|| RegionBackoffBudget::new(region_retry_max_sleep));
             let action = blocking(|| {
                 self.locked_response_delegate.handle_locked_response(
                     &self.shared_runtime,
@@ -1861,7 +1876,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         request_context: client_request.context.clone(),
                         lock,
                         caller_start_ts: self.metadata.start_ts,
-                        call: self.rpc_call(),
+                        call,
+                        backoff,
                     },
                 )
             })

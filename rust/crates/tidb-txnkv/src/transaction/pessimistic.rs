@@ -49,10 +49,10 @@ use tidb_proto::{
 };
 
 use crate::lock::{
-    decode_blocking_lock_observation, resolve_blocking_locks, BlockingLock, LockRecoveryClient,
-    TimestampSource,
+    decode_blocking_lock_observation, resolve_blocking_locks_with_backoff, BlockingLock,
+    LockRecoveryClient, TimestampSource,
 };
-use crate::region::{RegionLoader, RegionRecoveryLoader};
+use crate::region::{RegionBackoffBudget, RegionLoader, RegionRecoveryLoader};
 use crate::rpc::UnaryCallContext;
 
 use super::command_client::{
@@ -842,6 +842,9 @@ where
         // concurrent first round stands in for this batch's first publish;
         // every later round publishes fresh.
         let mut pre_response = pre_response;
+        // client-go `txn.go:1467` creates one 20-second Backoffer per region
+        // lock group and passes it through lock resolution before retrying.
+        let mut resolver_backoff = RegionBackoffBudget::new(Duration::from_secs(20));
         let mutations = batch
             .keys()
             .iter()
@@ -922,6 +925,7 @@ where
                             wait,
                             wait_started_at,
                             call,
+                            &mut resolver_backoff,
                         )?;
                         continue;
                     }
@@ -965,6 +969,7 @@ where
                 wait,
                 wait_started_at,
                 call,
+                &mut resolver_backoff,
             )?;
         }
     }
@@ -1090,6 +1095,7 @@ where
         wait: LockWaitTime,
         wait_started_at: Instant,
         call: &UnaryCallContext,
+        backoff: &mut RegionBackoffBudget,
     ) -> Result<(), PessimisticLockFailure> {
         let blockers = collect_blocking_locks(errors, statement_keys)?;
         if blockers.is_empty() {
@@ -1098,7 +1104,7 @@ where
             return self.check_wait_budget(wait, wait_started_at, batch.keys().first());
         }
         let blocked_key = blockers[0].key().to_vec();
-        let recovery = resolve_blocking_locks(
+        let recovery = resolve_blocking_locks_with_backoff(
             self.two_pc.runtime(),
             &blockers,
             self.start_ts(),
@@ -1107,6 +1113,7 @@ where
             self.two_pc.timestamps(),
             // A lock blocking a WRITE is waited out, never stepped over.
             false,
+            backoff,
         )
         .map_err(|error| {
             PessimisticLockFailure::Transaction(TransactionCause::Lock {

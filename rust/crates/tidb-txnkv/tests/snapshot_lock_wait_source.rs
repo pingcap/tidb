@@ -174,6 +174,7 @@ struct LockingClient {
     get_responses: std::collections::VecDeque<KvrpcGetResponse>,
     scan_responses: std::collections::VecDeque<KvrpcScanResponse>,
     status_response: Option<KvrpcCheckTxnStatusResponse>,
+    status_responses: std::collections::VecDeque<KvrpcCheckTxnStatusResponse>,
     recovery_barrier: Option<Arc<(Mutex<usize>, std::sync::Condvar)>>,
     status_hold: Option<Arc<(Mutex<(bool, bool)>, std::sync::Condvar)>>,
     retry_hold: Option<Arc<(Mutex<(bool, bool)>, std::sync::Condvar)>>,
@@ -195,6 +196,7 @@ impl LockingClient {
             get_responses: Default::default(),
             scan_responses: Default::default(),
             status_response: None,
+            status_responses: Default::default(),
             recovery_barrier: None,
             status_hold: None,
             retry_hold: None,
@@ -549,6 +551,9 @@ impl LockRecoveryClient for LockingClient {
         }
         if let Some(hold) = &self.status_hold {
             wait_for_worker_release(hold)?;
+        }
+        if let Some(response) = self.status_responses.pop_front() {
+            return Ok(response);
         }
         if let Some(response) = &self.status_response {
             return Ok(response.clone());
@@ -2199,5 +2204,91 @@ fn snapshot_batch_backoff_keeps_one_completed_workers_history() {
             .snapshot_batch_get(&keys, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
             .unwrap();
         assert_eq!(stats.backoff_count("txnLockFast"), 1);
+    }
+}
+
+#[test]
+fn snapshot_nested_status_retries_share_history_across_lock_encounters() {
+    let _config = snapshot_test_config();
+    for batch in [false, true] {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut client = LockingClient::new(Arc::clone(&recorded));
+        client.remaining_locked = 0;
+        for txn_id in [90, 91] {
+            let error = KvrpcKeyError {
+                locked: Some(KvrpcLockInfo {
+                    lock_version: txn_id,
+                    ..LockingClient::live_lock()
+                }),
+                ..Default::default()
+            };
+            client.get_responses.push_back(KvrpcGetResponse {
+                error: Some(error.clone()),
+                ..Default::default()
+            });
+            client.batch_responses.push_back(KvrpcBatchGetResponse {
+                error: Some(error),
+                ..Default::default()
+            });
+            client.status_responses.extend([
+                KvrpcCheckTxnStatusResponse {
+                    error: Some(KvrpcKeyError {
+                        txn_not_found: Some(Default::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                KvrpcCheckTxnStatusResponse {
+                    commit_version: 95,
+                    ..Default::default()
+                },
+            ]);
+        }
+        client.get_responses.push_back(KvrpcGetResponse {
+            value: b"value".to_vec(),
+            ..Default::default()
+        });
+        client.batch_responses.push_back(KvrpcBatchGetResponse {
+            pairs: vec![tidb_proto::KvrpcKvPair {
+                key: ROW_KEY.to_vec(),
+                value: b"value".to_vec(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+        let mut transaction = RealOptimisticTransaction::new_injected(
+            runtime,
+            TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+            CALL_TIMEOUT,
+            START_TS,
+            Instant::now(),
+            4,
+            4096,
+        )
+        .unwrap();
+        let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
+        transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
+        let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+        if batch {
+            assert_eq!(
+                transaction
+                    .snapshot_batch_get(&[ROW_KEY.to_vec()], &call)
+                    .unwrap(),
+                vec![(ROW_KEY.to_vec(), b"value".to_vec())]
+            );
+        } else {
+            assert_eq!(
+                transaction.snapshot_get(ROW_KEY, &call).unwrap().value,
+                Some(b"value".to_vec())
+            );
+        }
+        assert_eq!(recorded.lock().unwrap().status_checks.len(), 4);
+        assert_eq!(stats.backoff_count("txnNotFound"), 2);
+        assert_eq!(
+            stats.backoff_duration("txnNotFound"),
+            Duration::from_millis(6),
+            "both lock encounters share the 2ms then 4ms schedule"
+        );
     }
 }

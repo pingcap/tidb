@@ -25,7 +25,7 @@ use tidb_proto::{
 
 use crate::region::{
     ReadPolicy, RegionAttempt, RegionBackoffBudget, RegionBackoffKind, RegionErrorDisposition,
-    RegionRecoveryError, RegionRecoveryLoader, RequestSelection,
+    RegionRecoveryError, RegionRecoveryLoader, RegionTerminalError, RequestSelection,
 };
 use crate::rpc::TonicCoprocessorClient;
 use crate::{DirectUnaryClientError, SharedReadRuntime, UnaryCallContext};
@@ -381,16 +381,10 @@ pub enum LockRecoveryError {
     NonAsyncCommitLock,
     /// An async-commit recovery observed a self-contradictory commit timestamp.
     AsyncCommitConflict(String),
-    /// The resolver's local TxnNotFound retry loop spent its whole budget.
-    ///
-    /// Go's public `GetTxnStatus` owns the same 20-second local bound, but
-    /// prewrite passes a shared 40-second backoffer. Callers must therefore not
-    /// infer `BoTxnNotFound`'s SQL identity from this local boundary alone.
-    StatusBackoffExhausted,
-    /// The next TxnNotFound delay would outlive this RPC caller's deadline.
-    ///
-    /// This is not Go's `BoTxnNotFound` max-sleep exhaustion and therefore
-    /// must not acquire its registered resolve-lock-timeout identity.
+    /// The borrowed retry budget was exhausted; preserve its longest-sleep
+    /// category so the caller can retain Go's registered error identity.
+    BackoffExhausted(crate::region::RegionBackoffExhausted),
+    /// The caller's deadline expired during lock recovery.
     StatusRetryDeadlineExceeded,
 }
 
@@ -422,11 +416,11 @@ impl fmt::Display for LockRecoveryError {
             Self::AsyncCommitConflict(error) => {
                 write!(formatter, "async commit recovery is inconsistent: {error}")
             }
-            Self::StatusBackoffExhausted => formatter.write_str(
-                "CheckTxnStatus kept reporting TxnNotFound until the backoff budget ran out",
-            ),
+            Self::BackoffExhausted(error) => {
+                write!(formatter, "lock backoff budget ran out: {error:?}")
+            }
             Self::StatusRetryDeadlineExceeded => {
-                formatter.write_str("CheckTxnStatus retry delay would outlive the caller deadline")
+                formatter.write_str("lock recovery caller deadline exceeded")
             }
         }
     }
@@ -460,6 +454,34 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
+    resolve_optimistic_locks_with_backoff(
+        runtime,
+        locks,
+        caller_start_ts,
+        base_context,
+        call,
+        timestamp_source,
+        for_read,
+        &mut RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn resolve_optimistic_locks_with_backoff<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: &[OptimisticLock],
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    for_read: bool,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<LockRecoveryResult, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource + ?Sized,
+{
     let mut result = LockRecoveryResult {
         statuses: Vec::with_capacity(locks.len()),
         ..LockRecoveryResult::default()
@@ -479,6 +501,7 @@ where
             call,
             timestamp_source,
             false,
+            backoff,
         ) {
             Err(LockRecoveryError::NonAsyncCommitLock) => resolve_one_optimistic_lock(
                 runtime,
@@ -488,6 +511,7 @@ where
                 call,
                 timestamp_source,
                 true,
+                backoff,
             )?,
             other => other?,
         };
@@ -550,6 +574,7 @@ fn resolve_one_optimistic_lock<C, L, T>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     force_sync_commit: bool,
+    backoff: &mut RegionBackoffBudget,
 ) -> Result<OneLockOutcome, LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -569,6 +594,7 @@ where
         call,
         timestamp_source,
         force_sync_commit,
+        backoff,
     )? {
         LockStatus::Answered(response) => response,
         // Both of these are gated on `resolving_pessimistic_lock` inside the
@@ -641,6 +667,7 @@ where
                 &primary_lock,
                 base_context,
                 call,
+                backoff,
             )?));
         }
         return Ok(OneLockOutcome::Alive {
@@ -653,7 +680,7 @@ where
     let status = classify_determined_status(&check_response)?;
     if lock.key != lock.primary {
         check_cancelled(call)?;
-        resolve_secondary(runtime, lock, status, base_context, call)?;
+        resolve_secondary(runtime, lock, status, base_context, call, backoff)?;
     }
     Ok(OneLockOutcome::Resolved(status))
 }
@@ -714,6 +741,7 @@ pub(super) fn query_txn_status<C, L, T>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     force_sync_commit: bool,
+    backoff: &mut RegionBackoffBudget,
 ) -> Result<LockStatus, LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -734,9 +762,8 @@ where
             .map_err(LockRecoveryError::Timestamp)?
     };
     let mut rollback_if_not_exist = false;
-    let mut backoff = RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF);
     loop {
-        check_cancelled(call)?;
+        check_lock_call(call)?;
         let (primary_address, primary_context, primary_attempt) =
             route_key_attempt(runtime, query.primary, base_context)?;
         check_cancelled(call)?;
@@ -758,27 +785,19 @@ where
             .map_err(|_| LockRecoveryError::ClientLifecycle)?
             .check_txn_status_for_lock(&primary_address, &request, &primary_context, call)
             .map_err(map_rpc_error)?;
-        // Match client-go's post-RPC ctx.Err precedence before interpreting or
-        // acting on a simultaneous CheckTxnStatus result.
-        check_cancelled(call)?;
+        // Match client-go's post-RPC context precedence before interpreting a
+        // simultaneous CheckTxnStatus result.
+        check_lock_call(call)?;
         if let Some(error) = response.region_error.as_ref() {
             // Go `getTxnStatus`: BoRegionMiss and go round again against the
             // refreshed route, rather than failing the caller's statement.
-            recover_lock_region_error(runtime, error, &primary_attempt, &mut backoff, call)?;
+            recover_lock_region_error(runtime, error, &primary_attempt, backoff, call)?;
             continue;
         }
         let Some(key_error) = response.error.as_ref() else {
             return Ok(LockStatus::Answered(response));
         };
         if key_error.txn_not_found.is_some() {
-            // Asking again with the same escalation would repeat forever: TiKV
-            // cannot both be told to write the rollback record and keep
-            // reporting that there is nothing to write. Go has no such guard
-            // and spins here without backing off; one terminal answer is the
-            // honest end of the loop.
-            if rollback_if_not_exist {
-                return Err(LockRecoveryError::KeyError(format!("{key_error:?}")));
-            }
             // Go re-reads the oracle on every iteration, so a lock that expires
             // mid-loop is noticed. `TTL == 0` is already "expired" by protocol.
             let expired = if current_ts == u64::MAX {
@@ -797,7 +816,7 @@ where
             if query.resolving_pessimistic_lock {
                 return Ok(LockStatus::AlivePessimistic(query.ttl_ms));
             }
-            wait_status_backoff(&mut backoff, call)?;
+            wait_status_backoff(backoff, call)?;
             continue;
         }
         // Go `lock_resolver.go:1069-1073`: only a pessimistic lock may act on
@@ -814,31 +833,44 @@ fn wait_status_backoff(
     backoff: &mut RegionBackoffBudget,
     call: &UnaryCallContext,
 ) -> Result<(), LockRecoveryError> {
+    check_lock_call(call)?;
+    let delay = backoff
+        .next_delay(RegionBackoffKind::TxnNotFound)
+        .map_err(|error| {
+            check_lock_call(call)
+                .err()
+                .unwrap_or(LockRecoveryError::BackoffExhausted(error))
+        })?;
+    wait_lock_backoff(backoff, call, delay)
+}
+
+pub(super) fn check_lock_call(call: &UnaryCallContext) -> Result<(), LockRecoveryError> {
     check_cancelled(call)?;
     if call.timeout().is_zero() {
         return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
     }
-    let delay = match backoff.next_delay(RegionBackoffKind::TxnNotFound) {
-        Ok(delay) => delay,
-        Err(_) => {
-            // client-go checks `ctx.Done()` before selecting the backoff
-            // config's max-sleep error. Repeat the caller check at the error
-            // boundary so an already expired/cancelled call cannot acquire
-            // BoTxnNotFound's registered resolve-lock-timeout identity.
-            check_cancelled(call)?;
-            if call.timeout().is_zero() {
-                return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
-            }
-            return Err(LockRecoveryError::StatusBackoffExhausted);
+    Ok(())
+}
+
+fn wait_lock_backoff(
+    backoff: &mut RegionBackoffBudget,
+    call: &UnaryCallContext,
+    delay: Duration,
+) -> Result<(), LockRecoveryError> {
+    let result = (|| {
+        check_lock_call(call)?;
+        let remaining = call.timeout();
+        if call.cancellation().wait_timeout(delay.min(remaining)) {
+            return Err(LockRecoveryError::CallerCancelled);
         }
-    };
-    if delay > call.timeout() {
-        return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
-    }
-    if call.cancellation().wait_timeout(delay) {
-        return Err(LockRecoveryError::CallerCancelled);
-    }
-    check_cancelled(call)
+        check_lock_call(call)?;
+        if delay > remaining {
+            return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
+        }
+        Ok(())
+    })();
+    backoff.finish_wait(result.is_ok());
+    result
 }
 
 pub(super) fn remaining_lock_ttl(txn_id: u64, lock_ttl_ms: u64, current_ts: u64) -> Duration {
@@ -946,6 +978,7 @@ fn resolve_async_commit_lock<C, L>(
     primary_lock: &OptimisticLock,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
 ) -> Result<ResolvedTxnStatus, LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -956,61 +989,120 @@ where
         keys: Vec::new(),
         missing_lock: false,
     };
-    // Go `checkAllSecondaries`: a region error backs off `BoRegionMiss` and
-    // re-runs the whole grouping, because a split has changed WHICH region
-    // each secondary belongs to -- regrouping is the point, not just
-    // re-sending. `data` is rebuilt with it so no batch is counted twice.
-    let mut backoff = RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF);
-    'regroup: loop {
-        data = AsyncResolveData {
-            commit_ts: primary_lock.min_commit_ts,
-            keys: Vec::new(),
-            missing_lock: false,
-        };
-        for group in group_keys_by_region(runtime, &primary_lock.secondaries, base_context)? {
-            check_cancelled(call)?;
-            let request = KvrpcCheckSecondaryLocksRequest {
-                keys: group.keys.clone(),
-                start_version: lock.txn_id,
-                ..KvrpcCheckSecondaryLocksRequest::default()
-            };
-            let response = runtime
-                .client()
-                .try_lock()
-                .map_err(|_| LockRecoveryError::ClientLifecycle)?
-                .check_secondary_locks_for_lock(&group.address, &request, &group.context, call)
-                .map_err(map_rpc_error)?;
-            check_cancelled(call)?;
-            if let Some(error) = response.region_error.as_ref() {
-                recover_lock_region_error(runtime, error, &group.attempt, &mut backoff, call)?;
-                continue 'regroup;
-            }
-            if let Some(error) = response.error.as_ref() {
-                return Err(LockRecoveryError::KeyError(format!("{error:?}")));
-            }
-            data.add_keys(
-                &response.locks,
-                group.keys.len(),
-                lock.txn_id,
-                response.commit_ts,
-            )?;
+    // Go's pool fallback runs each initial region synchronously, but still
+    // forks from the unchanged parent. Only the last completed worker history
+    // is returned; successful sibling regions are never queried again.
+    let groups = group_keys_by_region(runtime, &primary_lock.secondaries, base_context)?;
+    let mut last = None;
+    let mut first_error = None;
+    for group in groups {
+        let mut worker = backoff.fork();
+        let result = check_secondary_group(
+            runtime,
+            lock.txn_id,
+            group,
+            base_context,
+            call,
+            &mut worker,
+            &mut data,
+        );
+        last = Some(worker);
+        if first_error.is_none() {
+            first_error = result.err();
         }
-        // Every group answered without a split moving the keys.
-        break;
     }
-    // The primary is resolved with the same fate as every secondary; it is
-    // deliberately last, so a failure cannot leave secondaries resolved against
-    // a primary that still claims a different outcome.
+    if let Some(last) = last {
+        backoff.update_from_forked(&last);
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
     data.keys.push(lock.primary.clone());
     let status = if data.commit_ts == 0 {
         ResolvedTxnStatus::RolledBack
     } else {
         ResolvedTxnStatus::Committed(data.commit_ts)
     };
-    for key in &data.keys {
-        resolve_key(runtime, lock.txn_id, key, status, base_context, call)?;
+    let groups = group_keys_by_region(runtime, &data.keys, base_context)?;
+    let mut last = None;
+    let mut errors = Vec::new();
+    for group in groups {
+        let mut worker = backoff.fork();
+        if let Err(error) = resolve_region_keys(
+            runtime,
+            lock.txn_id,
+            group,
+            status,
+            base_context,
+            call,
+            &mut worker,
+        ) {
+            errors.push(error.to_string());
+        }
+        last = Some(worker);
+    }
+    if let Some(last) = last {
+        backoff.update_from_forked(&last);
+    }
+    if !errors.is_empty() {
+        return Err(LockRecoveryError::Rpc(format!(
+            "async commit recovery (sending ResolveLock) finished with errors: {errors:?}"
+        )));
     }
     Ok(status)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_secondary_group<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    txn_id: u64,
+    group: RegionKeyGroup,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+    data: &mut AsyncResolveData,
+) -> Result<(), LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    // Iterative depth-first regrouping is Go's sequential recursion without
+    // growing the native call stack on repeated region changes.
+    let mut pending = vec![group];
+    while let Some(group) = pending.pop() {
+        check_lock_call(call)?;
+        let request = KvrpcCheckSecondaryLocksRequest {
+            keys: group.keys.clone(),
+            start_version: txn_id,
+            ..Default::default()
+        };
+        let response = runtime
+            .client()
+            .try_lock()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?
+            .check_secondary_locks_for_lock(&group.address, &request, &group.context, call)
+            .map_err(map_rpc_error)?;
+        check_lock_call(call)?;
+        if let Some(error) = response.region_error.as_ref() {
+            recover_lock_region_error(runtime, error, &group.attempt, backoff, call)?;
+            pending.extend(
+                group_keys_by_region(runtime, &group.keys, base_context)?
+                    .into_iter()
+                    .rev(),
+            );
+            continue;
+        }
+        if let Some(error) = response.error.as_ref() {
+            return Err(LockRecoveryError::KeyError(format!("{error:?}")));
+        }
+        data.add_keys(
+            &response.locks,
+            group.keys.len(),
+            txn_id,
+            response.commit_ts,
+        )?;
+    }
+    Ok(())
 }
 
 /// One region's share of a keyed recovery command.
@@ -1058,12 +1150,21 @@ fn resolve_secondary<C, L>(
     status: ResolvedTxnStatus,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
     L: RegionRecoveryLoader,
 {
-    resolve_key(runtime, lock.txn_id, &lock.key, status, base_context, call)
+    resolve_key(
+        runtime,
+        lock.txn_id,
+        &lock.key,
+        status,
+        base_context,
+        call,
+        backoff,
+    )
 }
 
 fn resolve_key<C, L>(
@@ -1073,6 +1174,7 @@ fn resolve_key<C, L>(
     status: ResolvedTxnStatus,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -1081,9 +1183,8 @@ where
     // Go `resolveLock` wraps exactly this send in `for { ... }`, retrying a
     // region error after `BoRegionMiss`; the budget is the same
     // resolve-lock budget its backoffer carries.
-    let mut backoff = RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF);
     loop {
-        check_cancelled(call)?;
+        check_lock_call(call)?;
         let (address, context, attempt) = route_key_attempt(runtime, key, base_context)?;
         check_cancelled(call)?;
         let request = KvrpcResolveLockRequest {
@@ -1103,10 +1204,10 @@ where
             .map_err(|_| LockRecoveryError::ClientLifecycle)?
             .resolve_lock_for_read(&address, &request, &context, call)
             .map_err(map_rpc_error)?;
-        // Do not inspect or publish a ResolveLock result after caller cancellation.
-        check_cancelled(call)?;
+        // Do not inspect or publish a ResolveLock result after caller expiry.
+        check_lock_call(call)?;
         if let Some(error) = response.region_error.as_ref() {
-            recover_lock_region_error(runtime, error, &attempt, &mut backoff, call)?;
+            recover_lock_region_error(runtime, error, &attempt, backoff, call)?;
             continue;
         }
         if let Some(error) = response.error.as_ref() {
@@ -1114,6 +1215,58 @@ where
         }
         return Ok(());
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_region_keys<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    txn_id: u64,
+    group: RegionKeyGroup,
+    status: ResolvedTxnStatus,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<(), LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    let mut pending = vec![group];
+    while let Some(group) = pending.pop() {
+        check_lock_call(call)?;
+        let request = KvrpcResolveLockRequest {
+            start_version: txn_id,
+            commit_version: match status {
+                ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
+                ResolvedTxnStatus::RolledBack => 0,
+            },
+            keys: group.keys.clone(),
+            is_async: false,
+            is_txn_file: false,
+            ..KvrpcResolveLockRequest::default()
+        };
+        let response = runtime
+            .client()
+            .try_lock()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?
+            .resolve_lock_for_read(&group.address, &request, &group.context, call)
+            .map_err(map_rpc_error)?;
+        // Do not inspect or publish a ResolveLock result after caller expiry.
+        check_lock_call(call)?;
+        if let Some(error) = response.region_error.as_ref() {
+            recover_lock_region_error(runtime, error, &group.attempt, backoff, call)?;
+            pending.extend(
+                group_keys_by_region(runtime, &group.keys, base_context)?
+                    .into_iter()
+                    .rev(),
+            );
+            continue;
+        }
+        if let Some(error) = response.error.as_ref() {
+            return Err(LockRecoveryError::KeyError(format!("{error:?}")));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn map_rpc_error(error: DirectUnaryClientError) -> LockRecoveryError {
@@ -1130,18 +1283,6 @@ pub(super) fn check_cancelled(call: &UnaryCallContext) -> Result<(), LockRecover
     } else {
         Ok(())
     }
-}
-
-pub(super) fn route_key<C, L>(
-    runtime: &SharedReadRuntime<C, L>,
-    key: &[u8],
-    base_context: &KvrpcContext,
-) -> Result<(String, KvrpcContext), LockRecoveryError>
-where
-    L: RegionRecoveryLoader,
-{
-    let (address, context, _) = route_key_attempt(runtime, key, base_context)?;
-    Ok((address, context))
 }
 
 /// [`route_key`] keeping the attempt, which is what the region cache needs to
@@ -1212,6 +1353,7 @@ pub(super) fn recover_lock_region_error<C, L>(
 where
     L: RegionRecoveryLoader,
 {
+    check_lock_call(call)?;
     // EpochNotMatch may load store metadata. Use the shared recovery owner
     // so that I/O runs outside the cache mutex, as on the transaction path.
     let recovered = runtime
@@ -1224,24 +1366,26 @@ where
         // `disposition_for_recovery_outcome` for the same rule.
         Err(RegionRecoveryError::StaleObservation(_)) => backoff
             .next_delay(RegionBackoffKind::RegionMiss)
-            .map_err(|_| LockRecoveryError::RegionError(format!("{error:?}")))?,
+            .map_err(LockRecoveryError::BackoffExhausted)?,
         Err(other) => return Err(LockRecoveryError::RegionError(other.to_string())),
         Ok(RegionErrorDisposition::RetryRoute { delay, .. })
         | Ok(RegionErrorDisposition::RetrySelector { delay, .. })
         | Ok(RegionErrorDisposition::RebuildRanges { delay, .. }) => delay,
         // Non-retryable and terminal answers keep their identity: Go returns
         // these to the lock caller rather than spinning on them.
+        Ok(RegionErrorDisposition::Terminal(RegionTerminalError::BackoffExhausted {
+            kind,
+            max_sleep,
+        })) => {
+            return Err(LockRecoveryError::BackoffExhausted(
+                crate::region::RegionBackoffExhausted { kind, max_sleep },
+            ));
+        }
         Ok(RegionErrorDisposition::ReturnRegionError) | Ok(RegionErrorDisposition::Terminal(_)) => {
             return Err(LockRecoveryError::RegionError(format!("{error:?}")))
         }
     };
-    if delay > call.timeout() {
-        return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
-    }
-    if call.cancellation().wait_timeout(delay) {
-        return Err(LockRecoveryError::CallerCancelled);
-    }
-    check_cancelled(call)
+    wait_lock_backoff(backoff, call, delay)
 }
 
 #[cfg(test)]
@@ -1309,7 +1453,12 @@ mod tests {
         assert_eq!(wait_status_backoff(&mut exhausted, &live_call), Ok(()));
         assert_eq!(
             wait_status_backoff(&mut exhausted, &live_call),
-            Err(LockRecoveryError::StatusBackoffExhausted)
+            Err(LockRecoveryError::BackoffExhausted(
+                crate::region::RegionBackoffExhausted {
+                    kind: crate::region::RegionBackoffKind::TxnNotFound,
+                    max_sleep: Duration::from_millis(1)
+                }
+            ))
         );
 
         let mut available = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);

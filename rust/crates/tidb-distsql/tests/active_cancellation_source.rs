@@ -54,7 +54,7 @@ impl<C, L> LockedResponseDelegate<C, L> for RejectUnexpectedLock {
     fn handle_locked_response(
         &self,
         _runtime: &SharedReadRuntime<C, L>,
-        _observation: LockedResponseObservation,
+        _observation: LockedResponseObservation<'_>,
     ) -> Result<LockedResponseAction, String> {
         Err("unexpected lock in cancellation test".to_owned())
     }

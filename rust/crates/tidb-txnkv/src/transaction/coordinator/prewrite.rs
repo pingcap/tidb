@@ -25,7 +25,7 @@ use tidb_proto::{
 };
 
 use crate::lock::{
-    decode_blocking_lock_observation, resolve_blocking_locks, LockRecoveryClient,
+    decode_blocking_lock_observation, resolve_blocking_locks_with_backoff, LockRecoveryClient,
     LockRecoveryError, TimestampSource,
 };
 use crate::region::RegionRecoveryLoader;
@@ -224,7 +224,7 @@ where
         // protocol and is identical to `resolve_optimistic_locks` for an
         // all-optimistic set: the live-owner short circuit it adds keys off
         // `duration_to_last_update_ms`, which only a pessimistic lock reports.
-        match resolve_blocking_locks(
+        match resolve_blocking_locks_with_backoff(
             &self.runtime,
             &eligible_locks,
             self.start_ts,
@@ -233,6 +233,7 @@ where
             &self.timestamps,
             // Prewrite is a write: it waits locks out.
             false,
+            &mut self.forward_backoff,
         )
         .map_err(|error| prewrite_lock_recovery_cause(eligible_locks[0].key(), error))?
         {
@@ -398,7 +399,13 @@ mod tests {
 
     #[test]
     fn local_status_backoff_does_not_invent_a_prewrite_resolve_lock_timeout() {
-        let cause = prewrite_lock_recovery_cause(b"k", LockRecoveryError::StatusBackoffExhausted);
+        let cause = prewrite_lock_recovery_cause(
+            b"k",
+            LockRecoveryError::BackoffExhausted(crate::region::RegionBackoffExhausted {
+                kind: crate::region::RegionBackoffKind::TxnNotFound,
+                max_sleep: std::time::Duration::from_secs(20),
+            }),
+        );
         assert!(matches!(
             cause,
             TransactionCause::Lock { key, detail }

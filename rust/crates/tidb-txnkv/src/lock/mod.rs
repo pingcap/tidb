@@ -23,7 +23,9 @@ pub use model::{
     OptimisticLock, PessimisticLock,
 };
 pub(crate) use pessimistic::{record_blocking_locks, resolve_blocking_locks_recorded};
-pub use pessimistic::{resolve_blocking_locks, SKIP_RESOLVE_THRESHOLD_MS};
+pub use pessimistic::{
+    resolve_blocking_locks, resolve_blocking_locks_with_backoff, SKIP_RESOLVE_THRESHOLD_MS,
+};
 pub use resolver::{
     resolve_optimistic_locks, FixedTimestampSource, LockRecoveryClient, LockRecoveryError,
     LockRecoveryResult, ResolvedTxnStatus, SnapshotLockSet, TimestampSource,

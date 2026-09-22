@@ -28,9 +28,7 @@ pub use tidb_txnkv::{
     ResolvingLocksGuard, SharedReadRuntime, UnaryCallContext, UnaryCancellation,
 };
 
-#[allow(unused_imports)]
-#[path = "../src/lock/mod.rs"]
-mod lock;
+use tidb_txnkv::lock;
 
 use lock::{
     resolve_blocking_locks, resolve_optimistic_locks, BlockingLock, FixedTimestampSource,
@@ -771,6 +769,7 @@ fn txn_not_found_status() -> KvrpcCheckTxnStatusResponse {
 fn an_expired_txn_not_found_lock_escalates_to_rollback_if_not_exist() {
     let (runtime, recorded) = runtime(vec![
         txn_not_found_status(),
+        txn_not_found_status(),
         KvrpcCheckTxnStatusResponse {
             action: KvrpcTxnAction::LockNotExistRollback as i32,
             ..KvrpcCheckTxnStatusResponse::default()
@@ -785,7 +784,7 @@ fn an_expired_txn_not_found_lock_escalates_to_rollback_if_not_exist() {
         &call(),
         // The lock started at physical 1_000 with a 500ms TTL; the expiry read
         // at 2_000 is well past it.
-        &AdvancingTimestampSource::new([1_100 << 18, 2_000 << 18]),
+        &AdvancingTimestampSource::new([1_100 << 18, 2_000 << 18, 2_000 << 18]),
         true,
     )
     .expect("an expired orphan lock is recoverable, not a permanent error");
@@ -795,13 +794,15 @@ fn an_expired_txn_not_found_lock_escalates_to_rollback_if_not_exist() {
         ignoring(vec![ResolvedTxnStatus::RolledBack], vec![1_000 << 18])
     );
     let recorded = recorded.borrow();
-    assert_eq!(recorded.checks.len(), 2);
+    assert_eq!(recorded.checks.len(), 3);
     assert!(
         !recorded.checks[0].1.rollback_if_not_exist,
         "the first query must not ask TiKV to invent a rollback record"
     );
     assert!(
-        recorded.checks[1].1.rollback_if_not_exist,
+        recorded.checks[1..]
+            .iter()
+            .all(|(_, request, _)| request.rollback_if_not_exist),
         "only the escalation may, and without it the lock is uncleanable"
     );
     assert_eq!(recorded.resolves.len(), 1);
@@ -1408,8 +1409,8 @@ fn an_expired_async_commit_txn_commits_at_the_largest_min_commit_ts() {
         .iter()
         .all(|(_, request)| request.start_version == ASYNC_TXN_ID));
 
-    // Every secondary plus the primary is resolved, and the primary is last so
-    // it can never contradict an already-resolved secondary.
+    // Go resolveAsyncResolveData groups every secondary plus the primary by
+    // region; the primary shares one request with alpha.
     let resolved_keys = recorded
         .resolves
         .iter()
@@ -1418,9 +1419,8 @@ fn an_expired_async_commit_txn_commits_at_the_largest_min_commit_ts() {
     assert_eq!(
         resolved_keys,
         vec![
-            vec![b"alpha".to_vec()],
+            vec![b"alpha".to_vec(), b"primary".to_vec()],
             vec![b"secondary".to_vec()],
-            vec![b"primary".to_vec()],
         ]
     );
     assert!(recorded.resolves.iter().all(|(_, request, _)| {
@@ -1524,13 +1524,19 @@ fn a_non_async_commit_secondary_retries_with_force_sync_commit() {
                 ..KvrpcCheckTxnStatusResponse::default()
             },
         ],
-        vec![KvrpcCheckSecondaryLocksResponse {
-            locks: vec![KvrpcLockInfo {
-                use_async_commit: false,
-                ..present_secondary_lock(b"alpha", 1_450 << 18)
-            }],
-            ..KvrpcCheckSecondaryLocksResponse::default()
-        }],
+        vec![
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![KvrpcLockInfo {
+                    use_async_commit: false,
+                    ..present_secondary_lock(b"alpha", 1_450 << 18)
+                }],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"secondary", 1_450 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+        ],
     );
 
     let result = resolve_optimistic_locks(

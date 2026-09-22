@@ -3,7 +3,7 @@
 Open whole-package dependency unit for the coprocessor/snapshot audit in
 rust/docs/operations/store-copr-audit-execplan.md. Pin:
 client-go/v2 v2.0.8-0.20260921040125-5f38569c8cc0, selected by TiDB master
-0b505ecc58b659655345b7bb85a619db02f94300. This is an inventory and bounded
+bb80c86a127b579a93c2070a7f3464ef1b609e38. This is an inventory and bounded
 seed evidence; the package is not transcreated.
 
 | Artifact | Lines | SHA-256 | Rust owner / disposition |
@@ -33,3 +33,8 @@ request hints, any matching transaction charges one BoTxnLockFast backoff, and
 resolution runs afterward. Repeated ignored responses exhaust the caller's
 existing backoffer. The complete package's status cache, asynchronous cleanup,
 metrics, failpoints, original tests and all caller integrations remain open.
+
+The direct-unary cop response delegate now borrows the current per-region
+budget through blocking-lock status/cleanup recovery, matching
+coprocessor.go:2674-2728's shared Backoffer path. This is focused caller seed
+evidence; complete caller and package reconciliation remains open.

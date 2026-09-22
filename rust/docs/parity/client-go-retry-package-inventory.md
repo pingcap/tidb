@@ -1,7 +1,7 @@
 # Pinned client-go config/retry package inventory
 
 Open whole-package dependency of the snapshot/coprocessor audit. TiDB master
-8a37ef2b44f5adef5a5cf57c263d9da8db76faa0 pins client-go/v2
+bb80c86a127b579a93c2070a7f3464ef1b609e38 pins client-go/v2
 v2.0.8-0.20260921040125-5f38569c8cc0. This inventory is not package acceptance.
 
 | Artifact | Lines | SHA-256 | Rust owner / disposition |
@@ -32,3 +32,10 @@ Publication refresh advanced TiDB master to 8a37ef2b44 (#71346). go.mod, go.sum
 and DEPS.bzl are unchanged, so this pinned module and every package artifact
 remain the same. That commit's memory/session/join changes require separate
 whole-package review; they do not establish new acceptance for this package.
+
+TiDB master is now bb80c86a12; the client-go module pin and package hashes
+remain unchanged. Direct-unary cop lock recovery now borrows the dispatcher's
+per-region retry budget through nested status/cleanup calls, then continues the
+TTL-capped lock wait on that same budget. This caller regression is seed
+evidence; complete retry callers, options, metrics, cancellation and original
+test/build gates remain open.

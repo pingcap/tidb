@@ -258,7 +258,7 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
         fn handle_locked_response(
             &self,
             _: &SharedReadRuntime<ScriptedClient, ScriptedLoader>,
-            observation: LockedResponseObservation,
+            observation: LockedResponseObservation<'_>,
         ) -> Result<LockedResponseAction, String> {
             Ok(LockedResponseAction::RetrySameTask {
                 recovered: LockRecoveryResult {
@@ -323,6 +323,91 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
 }
 
 #[test]
+fn nested_lock_recovery_and_lock_wait_share_the_cop_region_budget() {
+    use tidb_distsql::cop_paging::{
+        LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
+    };
+    use tidb_txnkv::{lock::LockRecoveryResult, region::RegionBackoffKind, SharedReadRuntime};
+
+    #[derive(Debug)]
+    struct NestedRetry;
+    impl LockedResponseDelegate<ScriptedClient, ScriptedLoader> for NestedRetry {
+        fn handle_locked_response(
+            &self,
+            _: &SharedReadRuntime<ScriptedClient, ScriptedLoader>,
+            observation: LockedResponseObservation<'_>,
+        ) -> Result<LockedResponseAction, String> {
+            observation
+                .backoff
+                .next_delay(RegionBackoffKind::TxnNotFound)
+                .map_err(|error| format!("nested status retry: {error:?}"))?;
+            Ok(LockedResponseAction::RetrySameTask {
+                recovered: LockRecoveryResult {
+                    ttl: Duration::from_millis(1),
+                    ..LockRecoveryResult::default()
+                },
+            })
+        }
+    }
+
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let client = ScriptedClient {
+        calls: Rc::clone(&calls),
+        responses: [
+            Ok(locked_response(KvrpcLockInfo {
+                key: b"locked-key".to_vec(),
+                primary_lock: b"primary-key".to_vec(),
+                lock_version: 42,
+                lock_ttl: 100,
+                ..KvrpcLockInfo::default()
+            })),
+            Ok(response(b"unblocked")),
+        ]
+        .into_iter()
+        .collect(),
+        events: Rc::new(RefCell::new(Vec::new())),
+        liveness: RefCell::new(VecDeque::new()),
+        batch_errors: RefCell::new(VecDeque::new()),
+        batch_ready_immediately: RefCell::new(VecDeque::new()),
+        batch_begin_count: None,
+    };
+    let shared = SharedReadRuntime::new_injected(
+        client,
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::new(RefCell::new(Vec::new())),
+            regions: [location(1, "a", "z", "tikv-1:20160")]
+                .into_iter()
+                .collect(),
+        }),
+    );
+    let waiter = Arc::new(RecordingRetryControl::default());
+    let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
+        shared,
+        DirectUnaryRuntimeConfig {
+            region_retry_max_sleep: Duration::from_millis(2),
+            region_retry_waiter: waiter.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+        Arc::new(NestedRetry),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+
+    assert!(
+        result.next_raw().is_err(),
+        "nested retry consumes this region's budget"
+    );
+    assert_eq!(
+        calls.borrow().len(),
+        1,
+        "no retry is sent after budget exhaustion"
+    );
+    assert!(waiter.sleeps.lock().unwrap().is_empty());
+}
+
+#[test]
 fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
     use tidb_distsql::cop_paging::{
         LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
@@ -339,7 +424,7 @@ fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
         fn handle_locked_response(
             &self,
             _: &SharedReadRuntime<ScriptedClient, ScriptedLoader>,
-            observation: LockedResponseObservation,
+            observation: LockedResponseObservation<'_>,
         ) -> Result<LockedResponseAction, String> {
             self.observations.lock().unwrap().push((
                 self.waits.sleeps.lock().unwrap().len(),

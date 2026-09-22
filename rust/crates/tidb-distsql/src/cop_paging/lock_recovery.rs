@@ -15,7 +15,8 @@
 //! DistSQL continuation for bounded optimistic lock recovery.
 
 use tidb_txnkv::lock::{
-    decode_blocking_lock_observation, resolve_blocking_locks, LockRecoveryClient, TimestampSource,
+    decode_blocking_lock_observation, resolve_blocking_locks_with_backoff, LockRecoveryClient,
+    TimestampSource,
 };
 use tidb_txnkv::region::RegionRecoveryLoader;
 use tidb_txnkv::SharedReadRuntime;
@@ -51,14 +52,14 @@ where
     fn handle_locked_response(
         &self,
         runtime: &SharedReadRuntime<C, L>,
-        observation: LockedResponseObservation,
+        observation: LockedResponseObservation<'_>,
     ) -> Result<LockedResponseAction, String> {
         // A coprocessor read meets pessimistic locks as readily as a point
         // read does, and Go's `resolveLocks` is shared between them --
         // dispatching on the lock's type, not on the caller's kind.
         let locks = decode_blocking_lock_observation(&observation.lock)
             .map_err(|error| error.to_string())?;
-        let result = resolve_blocking_locks(
+        let result = resolve_blocking_locks_with_backoff(
             runtime,
             &locks,
             observation.caller_start_ts,
@@ -68,6 +69,7 @@ where
             // Go `ClientHelper` is read-only by construction
             // (`client_helper.go:57-58`), and a Cop request is a read.
             true,
+            observation.backoff,
         )
         .map_err(|error| error.to_string())?;
         // The response owner applies TxnLockFast using its existing per-region

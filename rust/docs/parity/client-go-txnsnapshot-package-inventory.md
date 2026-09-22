@@ -1,7 +1,7 @@
 # Pinned client-go txnkv/txnsnapshot package inventory
 
 The whole pinned package is an open dependency acceptance unit. TiDB master
-8a37ef2b44f5adef5a5cf57c263d9da8db76faa0 selects client-go/v2
+bb80c86a127b579a93c2070a7f3464ef1b609e38 selects client-go/v2
 v2.0.8-0.20260921040125-5f38569c8cc0. Individual fixes are seed evidence,
 not a transcreated-package claim. Related plan:
 rust/docs/operations/store-copr-audit-execplan.md.

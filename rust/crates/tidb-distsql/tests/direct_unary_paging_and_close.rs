@@ -104,7 +104,7 @@ mod concurrent {
         fn handle_locked_response(
             &self,
             _: &tidb_txnkv::SharedReadRuntime<Client, Loader>,
-            _: tidb_distsql::LockedResponseObservation,
+            _: tidb_distsql::LockedResponseObservation<'_>,
         ) -> Result<tidb_distsql::LockedResponseAction, String> {
             Err("unexpected lock in cop progress fixture".to_owned())
         }

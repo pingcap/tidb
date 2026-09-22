@@ -1193,3 +1193,108 @@ before claiming current-master acceptance there. The final backoff-counter
 storage is lazy, avoiding an always-present 14-counter array on clean reads;
 scoped budget/snapshot regressions and dependent compilation were rerun for
 that ownership change. No workload speedup is inferred from the storage choice.
+
+## Nested lock backoffer ownership (2026-09-22)
+
+Keep the complete txnlock/txnsnapshot/retry package audits open at the pulled
+TiDB master revision bb80c86a127b579a93c2070a7f3464ef1b609e38 and its unchanged client-go pin.
+Status queries and keyed cleanup must borrow the caller's backoffer rather
+than resetting a 20-second budget at every nested operation. Public legacy
+resolver entrypoints can own one root budget; native snapshots pass their
+existing request budget. Reconcile completed versus interrupted waits.
+
+Async recovery must preserve the source's initial-region fork boundaries.
+Regroup only a failed group's keys, retain successful sibling answers, and
+batch ResolveLock keys by region. The existing native synchronous path can
+follow Go's synchronous pool fallback, including returning the last worker's
+history. The asynchronous pool, full resolver options/cache, PD/routing budget
+ownership and SQL attachment remain separate open acceptance gates.
+
+Add red regressions for nested snapshot histories, repeated expired
+TxnNotFound responses and per-region cleanup batching before implementation.
+Validate caller cancellation, deadline and small-budget exhaustion, the
+existing resolver/snapshot suites, dependent compilation and make lint.
+Do not infer workload throughput from RPC-count reductions; matched sysbench,
+TPC-C, TPC-H and YCSB measurements remain required.
+
+
+### Nested lock retry receipt (2026-09-22)
+
+The behavioral red checks recorded two concrete failures before the fix:
+
+- `snapshot_nested_status_retries_share_history_across_lock_encounters`
+  recorded zero `txnNotFound` attempts instead of two.
+- `an_expired_txn_not_found_lock_escalates_to_rollback_if_not_exist` failed
+  when TiKV repeated TxnNotFound after rollback escalation; Go continues until
+  resolution, cancellation or its backoff budget ends.
+
+The native resolver now borrows the owning retry budget through CheckTxnStatus,
+ResolveLock and PessimisticRollback. Snapshot reads, Prewrite and each
+pessimistic lock region group retain their respective root budget. Async
+secondary checks fork per initial region, regroup only failed keys, and preserve
+successful sibling results. Async ResolveLock groups all keys by region,
+including the primary, then sends one request per region. Error exhaustion
+retains the selected Go backoff category. The source-included resolver tests
+now import the compiled tidb-txnkv library so internal budget methods remain
+private.
+
+Validated after pulling `hparser-integration` at d3bf9db588 and refreshing the
+clean Go oracle to TiDB master bb80c86a12:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test lock_resolver_source --test snapshot_lock_wait_source --test region_error_recovery_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib lock:: --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib local_status_backoff_does_not_invent_a_prewrite_resolve_lock_timeout --message-format=short
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+The Rust commands passed: 25 resolver, 26 region, 15 snapshot and 5 lock unit
+tests, plus the prewrite regression and dependent crate compilation. Go master
+oracle commands passed for the selected retry, snapshot and region cases, and
+`txnlock.TestLockResolverCache`. `txnlock.TestTryAsyncResolve` was also tried
+and failed its upstream gauge assertion (observed 2 where 3 was expected after
+the semaphore reached 3); its source orders those observations separately, so
+this does not validate or contradict the Rust recovery change. Rust lint passed
+before the last upstream fast-forward and must be rerun for the final revision.
+
+All changes are seed evidence in open package audits. The async pool itself,
+status cache, all resolver options, PD/routing retry budgets, Scanner and replica
+paths, SQL runtime-stat attachment, original Go support/test inventory, and
+whole-package platform/build gates remain open. No TiKV cluster or matched
+sysbench, TPC-C, TPC-H or YCSB benchmark has been run; no workload speedup is
+claimed. The new batching reduces native ResolveLock request count for keys in
+the same region, but requires matched workload measurement before its practical
+impact is established.
+
+### Cop response backoffer follow-up (2026-09-22)
+
+The Go `copIteratorWorker.handleLockErr` receives the current per-region
+Backoffer, passes it into `ResolveLocksWithOpts`, and then uses it for the live
+lock's TTL-capped wait. Direct unary paging now borrows its existing region
+budget into the lock-recovery delegate and the blocking-lock resolver uses that
+same budget for nested status and cleanup retries. A focused transport test
+consumes the nested `TxnNotFound` budget and verifies the outer lock wait
+exhausts before a redispatch.
+
+After pulling hparser-integration at d3bf9db588 and verifying TiDB master at
+bb80c86a12, these focused Rust checks passed:
+
+    cargo test --offline --locked -j12 -p tidb-distsql --test all --no-run --message-format=short
+    cargo test --offline --locked -j12 -p tidb-distsql --test all nested_lock_recovery_and_lock_wait_share_the_cop_region_budget --message-format=short
+    cargo test --offline --locked -j12 -p tidb-distsql --test all direct_unary_dispatch_contract:: --message-format=short
+    cargo test --offline --locked -j12 -p tidb-distsql --test all active_cancellation_source::
+    cargo test --offline --locked -j12 -p tidb-distsql --test all direct_unary_paging_and_close::
+    cargo test --offline --locked -j12 -p tidb-distsql --test all direct_unary_retry_budget::
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+The results were 12 direct-dispatch tests (including the new budget-sharing
+regression), 3 cancellation tests, 16 paging/close tests and 11 region retry
+budget tests, all passing. The scoped formatter checked all 13 modified Rust
+files. `cargo fmt --all --check` remains red on pre-existing formatting drift
+across unrelated workspace files; no workspace-wide formatting was applied.
+The txnlock/retry/txnsnapshot package units remain open, as do the coprocessor
+package's full Go source/test inventory, live TiKV and matched sysbench,
+TPC-C, TPC-H and YCSB gates.
