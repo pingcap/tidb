@@ -46,7 +46,7 @@ The default external images in `docker-compose.yml`:
 - TiKV and TiKV worker: `cloud-engine-nextgen` (moving tag, not pinned by digest)
 - MinIO: `sha256:d5c7b30d2e49f3886d7da679ffddd8fc327508b4ee564053da619c86b71ac0ba`
 - MinIO client: `sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727`
-- Go build image: `golang:1.25.12@sha256:fe5d57d3b718e7a4986bae156c2d73f44973bfd313073aed08a4de6692bb6161`
+- Go build image: `golang:1.25.14@sha256:54b6b88db6fe375c6676625d87d668273f85c6d09153635d0cbba89cba7a207a`
 
 The fixed `minioadmin` credentials are local fixture credentials only. Do not
 replace them with real credentials or publish this network.

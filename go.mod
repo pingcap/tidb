@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.12
+go 1.25.14
 
 require (
 	cloud.google.com/go/kms v1.21.0
