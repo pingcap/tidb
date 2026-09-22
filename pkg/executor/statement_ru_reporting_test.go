@@ -95,7 +95,8 @@ func TestStatementRUReportingModes(t *testing.T) {
 			before, err := diagnostics.Gather()
 			require.NoError(t, err)
 			reporter := &statementRUReporterForTest{}
-			fixture.stmt.Ctx = &statementRUReportingContextForTest{Context: fixture.stmt.Ctx.(*mock.Context), reporter: reporter}
+			reportingCtx := &statementRUReportingContextForTest{Context: fixture.stmt.Ctx.(*mock.Context), reporter: reporter}
+			fixture.stmt.Ctx = reportingCtx
 			sc.ResourceGroupName = "ru-test"
 			observed := 0
 			observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) { observed++ })
@@ -110,6 +111,7 @@ func TestStatementRUReportingModes(t *testing.T) {
 			require.Equal(t, "ru-test", reporter.group)
 			require.Equal(t, [3]float64{finalized.engineRU.TiKV, finalized.engineRU.TiDB, 0}, reporter.ru)
 			require.Equal(t, 1, reporter.calls)
+			require.Zero(t, reportingCtx.distSQLCtxCalls, "reporting RU must not initialize DistSQL for point reads")
 			if mode == config.RUReportModeFull {
 				require.Equal(t, 1, observed)
 				require.Equal(t, successBefore+1, testutil.ToFloat64(success))
@@ -274,14 +276,23 @@ func (r *statementRUReporterForTest) ReportRUV2Consumption(group string, tikv, t
 
 type statementRUReportingContextForTest struct {
 	*mock.Context
-	reporter *statementRUReporterForTest
+	reporter        *statementRUReporterForTest
+	distSQLCtxCalls int
 }
 
 func (c *statementRUReportingContextForTest) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	c.distSQLCtxCalls++
 	ctx := c.Context.GetDistSQLCtx()
 	ctx.RUConsumptionReporter = c.reporter
 	ctx.ResourceGroupName = c.GetSessionVars().StmtCtx.ResourceGroupName
 	return ctx
+}
+
+func (c *statementRUReportingContextForTest) GetRUConsumptionReporter() (resourcegroup.ConsumptionReporter, string) {
+	if c.reporter == nil {
+		return nil, c.GetSessionVars().StmtCtx.ResourceGroupName
+	}
+	return c.reporter, c.GetSessionVars().StmtCtx.ResourceGroupName
 }
 
 func (calculator *statementRUCalculator) recordOperatorUnits(engine statementRUEngine, units ruv2.StmtUnits) {

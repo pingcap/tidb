@@ -3559,6 +3559,22 @@ func (s *session) GetTableCtx() tblctx.MutateContext {
 	return s.tblctx
 }
 
+// GetRUConsumptionReporter returns the statement's reporter and resource group without initializing DistSQL.
+func (s *session) GetRUConsumptionReporter() (resourcegroup.ConsumptionReporter, string) {
+	sc := s.GetSessionVars().StmtCtx
+	if dctx := sc.GetDistSQLFromCache(); dctx != nil {
+		// Preserve the binding used by the original DistSQL-based reporting path.
+		return dctx.RUConsumptionReporter, dctx.ResourceGroupName
+	}
+	// Cross-keyspace sessions have no domain. Avoid converting a nil controller to an interface.
+	if dom := s.GetDomain().(*domain.Domain); dom != nil {
+		if rgCtl := dom.ResourceGroupsController(); rgCtl != nil {
+			return rgCtl, sc.ResourceGroupName
+		}
+	}
+	return nil, sc.ResourceGroupName
+}
+
 // GetDistSQLCtx returns the context used in DistSQL
 func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := s.GetSessionVars()
@@ -3571,12 +3587,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		}
 		// cross ks session does not have domain.
 		dom := s.GetDomain().(*domain.Domain)
-		var ruConsumptionReporter resourcegroup.ConsumptionReporter
-		if dom != nil {
-			if rgCtl := dom.ResourceGroupsController(); rgCtl != nil {
-				ruConsumptionReporter = rgCtl
-			}
-		}
+		ruConsumptionReporter, resourceGroupName := s.GetRUConsumptionReporter()
 		// Capture the latest global budget for this context; existing requests keep their budget.
 		pagingSizeBytes := int(vardef.PagingSizeBytes.Load())
 		if pagingSizeBytes > 0 && (!vardef.EnableResourceControl.Load() || !resourceGroupAllowsPagingSizeBytes(dom, sc.ResourceGroupName)) {
@@ -3625,7 +3636,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			RequestSourceType:             vars.RequestSourceType,
 			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
 			StoreBatchSize:                vars.StoreBatchSize,
-			ResourceGroupName:             sc.ResourceGroupName,
+			ResourceGroupName:             resourceGroupName,
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
 			RUConsumptionReporter:         ruConsumptionReporter,
