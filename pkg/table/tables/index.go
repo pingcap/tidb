@@ -210,6 +210,12 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 // 3. (i1, null, i2, ...) ==> [(i1, null, i2, ...)]
 // 4. (i1, [], i2, ...) ==> nothing.
 func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
+	if c.idxInfo.IsTiKVFullTextIndex() {
+		// The entries of a FULLTEXT index are the analyzed terms of the
+		// column, not its value. The tokenizing generator is not wired in
+		// yet, so the index holds no entries and no query reads it.
+		return nil
+	}
 	if !c.idxInfo.MVIndex {
 		return [][]types.Datum{indexedValues}
 	}
@@ -680,7 +686,7 @@ func (c *index) mayDDLMergingTempIndex() bool {
 func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum,
 	h kv.Handle, handleRestoreData []types.Datum) table.IndexKVGenerator {
 	var mvIndexValues [][]types.Datum
-	if c.Meta().MVIndex {
+	if c.Meta().MVIndex || c.Meta().IsTiKVFullTextIndex() {
 		mvIndexValues = c.getIndexedValue(indexedValue)
 		return table.NewMultiValueIndexKVGenerator(c, ec, loc, h, handleRestoreData, mvIndexValues)
 	}

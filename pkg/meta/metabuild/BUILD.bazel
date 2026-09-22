@@ -9,6 +9,7 @@ go_library(
         "//pkg/expression/exprctx",
         "//pkg/expression/exprstatic",
         "//pkg/infoschema/context",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",
         "//pkg/util/intest",

@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -47,6 +48,37 @@ func WithExprCtx(exprCtx exprctx.ExprContext) Option {
 	return funcOpt(func(ctx *Context) {
 		ctx.exprCtx = exprCtx
 	})
+}
+
+// WithTiKVFullTextAnalyzer sets the analyzer settings a FULLTEXT index built in
+// TiKV is created with. The parser type is not part of the settings; it comes
+// from the index definition.
+func WithTiKVFullTextAnalyzer(analyzer model.TiKVFullTextIndexInfo) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.tikvFullTextAnalyzer = analyzer
+	})
+}
+
+// WithTiKVFullTextAnalyzerError records that the analyzer settings could not be
+// read from the session, so that building a FULLTEXT index reports the failure
+// instead of silently using defaults the session did not ask for.
+func WithTiKVFullTextAnalyzerError(err error) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.tikvFullTextAnalyzerErr = err
+	})
+}
+
+// DefaultTiKVFullTextAnalyzer returns the analyzer settings a default-configured
+// server resolves from its system variables. Callers that build table metadata
+// without a session, such as Lightning, use them so that a FULLTEXT index
+// emitted by SHOW CREATE TABLE can be imported.
+func DefaultTiKVFullTextAnalyzer() model.TiKVFullTextIndexInfo {
+	return model.TiKVFullTextIndexInfo{
+		MinTokenSize:   vardef.DefInnodbFtMinTokenSize,
+		MaxTokenSize:   vardef.DefInnodbFtMaxTokenSize,
+		EnableStopword: vardef.DefInnodbFtEnableStopword,
+		NgramTokenSize: vardef.DefNgramTokenSize,
+	}
 }
 
 // WithEnableAutoIncrementInGenerated sets whether enable auto increment in generated column.
@@ -108,6 +140,8 @@ type Context struct {
 	preSplitRegions                uint64
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
+	tikvFullTextAnalyzer           model.TiKVFullTextIndexInfo
+	tikvFullTextAnalyzerErr        error
 }
 
 // NewContext creates a new context for meta-building.
@@ -119,6 +153,7 @@ func NewContext(opts ...Option) *Context {
 		shardRowIDBits:                 vardef.DefShardRowIDBits,
 		preSplitRegions:                vardef.DefPreSplitRegions,
 		suppressTooLongIndexErr:        false,
+		tikvFullTextAnalyzer:           DefaultTiKVFullTextAnalyzer(),
 	}
 
 	for _, opt := range opts {
@@ -181,6 +216,15 @@ func (ctx *Context) PrimaryKeyRequired() bool {
 // GetClusteredIndexDefMode returns the clustered index mode.
 func (ctx *Context) GetClusteredIndexDefMode() vardef.ClusteredIndexDefMode {
 	return ctx.clusteredIndexDefMode
+}
+
+// GetTiKVFullTextAnalyzer returns the analyzer settings a FULLTEXT index built
+// in TiKV is created with; see WithTiKVFullTextAnalyzer.
+func (ctx *Context) GetTiKVFullTextAnalyzer() (model.TiKVFullTextIndexInfo, error) {
+	if ctx.tikvFullTextAnalyzerErr != nil {
+		return model.TiKVFullTextIndexInfo{}, ctx.tikvFullTextAnalyzerErr
+	}
+	return ctx.tikvFullTextAnalyzer, nil
 }
 
 // GetShardRowIDBits returns the shard row id bits.

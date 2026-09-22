@@ -245,6 +245,34 @@ type FullTextIndexInfo struct {
 	// TODO: Add other options
 }
 
+// TiKVFullTextIndexInfo describes a FULLTEXT index materialised in TiKV as a
+// positional inverted index: one KV entry per distinct term per row, keyed by
+// the term and the row handle, whose value carries the term's positions in the
+// document. It exists only on the classic kernel; the next-gen kernel keeps
+// FULLTEXT indexes in the columnar engine, described by FullTextIndexInfo.
+// The two are never set together.
+//
+// The analyzer settings are a snapshot of the innodb_ft_* and ngram_token_size
+// variables taken when the index was created. Every write and every query
+// tokenizes with this snapshot rather than with the current variables, so the
+// entries in the index and the terms looked up in it always agree.
+type TiKVFullTextIndexInfo struct {
+	ParserType     FullTextParserType `json:"parser_type"`
+	MinTokenSize   int                `json:"min_token_size"`
+	MaxTokenSize   int                `json:"max_token_size"`
+	EnableStopword bool               `json:"enable_stopword"`
+	NgramTokenSize int                `json:"ngram_token_size,omitempty"`
+}
+
+// Clone clones TiKVFullTextIndexInfo.
+func (info *TiKVFullTextIndexInfo) Clone() *TiKVFullTextIndexInfo {
+	if info == nil {
+		return nil
+	}
+	ni := *info
+	return &ni
+}
+
 // ColumnarIndexType is the type of columnar index.
 type ColumnarIndexType uint8
 
@@ -277,24 +305,25 @@ func (c ColumnarIndexType) SQLName() string {
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID                  int64              `json:"id"`
-	Name                ast.CIStr          `json:"idx_name"` // Index name.
-	Table               ast.CIStr          `json:"tbl_name"` // Table name.
-	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
-	State               SchemaState        `json:"state"`
-	BackfillState       BackfillState      `json:"backfill_state"`
-	Comment             string             `json:"comment"`                 // Comment
-	Tp                  ast.IndexType      `json:"index_type"`              // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
-	Unique              bool               `json:"is_unique"`               // Whether the index is unique.
-	Primary             bool               `json:"is_primary"`              // Whether the index is primary key.
-	Invisible           bool               `json:"is_invisible"`            // Whether the index is invisible.
-	Global              bool               `json:"is_global"`               // Whether the index is global.
-	MVIndex             bool               `json:"mv_index"`                // Whether the index is multivalued index.
-	VectorInfo          *VectorIndexInfo   `json:"vector_index"`            // VectorInfo is the vector index information.
-	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`          // InvertedInfo is the inverted index information.
-	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
-	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
-	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
+	ID                  int64                  `json:"id"`
+	Name                ast.CIStr              `json:"idx_name"` // Index name.
+	Table               ast.CIStr              `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn         `json:"idx_cols"` // Index columns.
+	State               SchemaState            `json:"state"`
+	BackfillState       BackfillState          `json:"backfill_state"`
+	Comment             string                 `json:"comment"`                 // Comment
+	Tp                  ast.IndexType          `json:"index_type"`              // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
+	Unique              bool                   `json:"is_unique"`               // Whether the index is unique.
+	Primary             bool                   `json:"is_primary"`              // Whether the index is primary key.
+	Invisible           bool                   `json:"is_invisible"`            // Whether the index is invisible.
+	Global              bool                   `json:"is_global"`               // Whether the index is global.
+	MVIndex             bool                   `json:"mv_index"`                // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo       `json:"vector_index"`            // VectorInfo is the vector index information.
+	InvertedInfo        *InvertedIndexInfo     `json:"inverted_index"`          // InvertedInfo is the inverted index information.
+	FullTextInfo        *FullTextIndexInfo     `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
+	TiKVFullText        *TiKVFullTextIndexInfo `json:"tikv_fulltext,omitempty"` // TiKVFullText is set on a FULLTEXT index materialised in TiKV.
+	ConditionExprString string                 `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn         `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
 	// Set to V1 when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
@@ -345,7 +374,16 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	if index.RegionSplitPolicy != nil {
 		ni.RegionSplitPolicy = index.RegionSplitPolicy.Clone()
 	}
+	ni.TiKVFullText = index.TiKVFullText.Clone()
 	return &ni
+}
+
+// IsTiKVFullTextIndex reports whether the index is a FULLTEXT index
+// materialised in TiKV. Such an index is an ordinary KV index to the storage
+// layer, but its keys hold analyzed terms rather than column values, so it can
+// neither be read by column-value ranges nor analyzed as a column index.
+func (index *IndexInfo) IsTiKVFullTextIndex() bool {
+	return index.TiKVFullText != nil
 }
 
 // IsChanging checks if the index is a new index added in modify column.
