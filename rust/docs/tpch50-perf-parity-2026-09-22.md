@@ -7,6 +7,15 @@ all eight tables analyzed. Go master binary from origin/master, Rust
 release binary from this branch's hparser-integration head. One client,
 `go-tpc tpch run --use-explain` (EXPLAIN ANALYZE), sequential laps.
 
+## Wall-clock gate -- head 49af8e07061e + FIFO limiter + encode cache (2026-09-22 later)
+
+With the FIFO limiter waiters, the encode-once cache, and the ExpectedCnt
+scaling all landed, the back-to-back gate improves: TOTAL 1.74x (from
+1.82x). q10 drops from 8.00x to 3.21x (58.15s vs 139.92s); q21 from
+1.75x to 1.31x. The remaining concentration: q17 3.22x (inner-fetch
+bound), q13 2.34x (group-map spill), q10 3.21x (first-encodes + probe
+dispatch), q2 1.81x.
+
 ## Wall-clock gate -- back-to-back final (2026-09-22, head 9cb4d25ca2)
 
 Both gates ran sequentially on the same machine state (go-tpc, one client,
