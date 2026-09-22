@@ -248,13 +248,14 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 	// remains available for global index policies below.
 	if policy := tbInfo.TableSplitPolicy; policy != nil &&
 		(tbInfo.GetPartitionInfo() == nil || physicalTableID != tbInfo.ID) {
-		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
+		boundCols := splitPolicyHandleColumns(tbInfo)
+		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower, boundCols)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse lower bound for table policy",
 				zap.String("table", tbInfo.Name.O), zap.Error(err))
 			goto index
 		}
-		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper)
+		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper, boundCols)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse upper bound for table policy",
 				zap.String("table", tbInfo.Name.O), zap.Error(err))
@@ -295,7 +296,8 @@ index:
 		}
 
 		policy := idx.RegionSplitPolicy
-		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
+		boundCols := splitPolicyIndexColumns(tbInfo, idx)
+		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower, boundCols)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse lower bound for index policy",
 				zap.String("table", tbInfo.Name.O),
@@ -303,7 +305,7 @@ index:
 				zap.Error(err))
 			continue
 		}
-		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper)
+		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper, boundCols)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to parse upper bound for index policy",
 				zap.String("table", tbInfo.Name.O),
@@ -332,19 +334,87 @@ index:
 	return regionIDs
 }
 
-func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string) ([]types.Datum, error) {
+// parseValuesToDatums evaluates the persisted split-policy bound expressions and
+// converts the results to the target column types. The conversion mirrors the
+// one-shot `SPLIT TABLE`/`SPLIT INDEX` statements so that a persisted policy
+// produces the same split keys, e.g. a string literal bound for an integer
+// handle column is converted to an integer value instead of retaining its
+// untyped string form. See https://github.com/pingcap/tidb/issues/71395.
+func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string, cols []*model.ColumnInfo) ([]types.Datum, error) {
 	datums := make([]types.Datum, len(values))
+	// Only convert when the bound count matches the target columns. A mismatch
+	// means the persisted policy is malformed, keep the previous best-effort
+	// behavior instead of failing the whole split.
+	convert := len(cols) == len(values)
 	for i, val := range values {
 		d, err := expression.ParseSimpleExpr(exprCtx, val)
 		if err != nil {
 			return nil, err
 		}
-		datums[i], err = d.Eval(exprCtx.GetEvalCtx(), chunk.Row{})
+		datum, err := d.Eval(exprCtx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
+		if convert {
+			datum, err = convertSplitPolicyValue(datum, cols[i], exprCtx.GetEvalCtx().TypeCtx())
+			if err != nil {
+				return nil, err
+			}
+		}
+		datums[i] = datum
 	}
 	return datums, nil
+}
+
+// splitPolicyHandleColumns returns the columns a table-level split policy bound
+// is compared against, following the same rules as the handle columns used by
+// the one-shot `SPLIT TABLE ... BETWEEN` statement.
+func splitPolicyHandleColumns(tbInfo *model.TableInfo) []*model.ColumnInfo {
+	switch {
+	case tbInfo.PKIsHandle:
+		if col := tbInfo.GetPkColInfo(); col != nil {
+			return []*model.ColumnInfo{col}
+		}
+	case tbInfo.IsCommonHandle:
+		if pkIdx := tables.FindPrimaryIndex(tbInfo); pkIdx != nil {
+			cols := make([]*model.ColumnInfo, 0, len(pkIdx.Columns))
+			for _, idxCol := range pkIdx.Columns {
+				cols = append(cols, tbInfo.Columns[idxCol.Offset])
+			}
+			return cols
+		}
+	default:
+		return []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+	}
+	return nil
+}
+
+// splitPolicyIndexColumns returns the columns an index split policy bound is
+// compared against.
+func splitPolicyIndexColumns(tbInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+	cols := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		cols = append(cols, tbInfo.Columns[idxCol.Offset])
+	}
+	return cols
+}
+
+// convertSplitPolicyValue converts a split-policy bound value to the target
+// column type, mirroring the conversion performed for the one-shot
+// `SPLIT TABLE`/`SPLIT INDEX` statements in PlanBuilder.convertValue.
+func convertSplitPolicyValue(value types.Datum, col *model.ColumnInfo, typeCtx types.Context) (types.Datum, error) {
+	d, err := value.ConvertTo(typeCtx, &col.FieldType)
+	if err != nil {
+		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
+			return d, err
+		}
+		valStr, err1 := value.ToString()
+		if err1 != nil {
+			return d, err1
+		}
+		return d, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
+	}
+	return d, nil
 }
 
 func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexOption, tbInfo *model.TableInfo) (*model.RegionSplitPolicy, string, error) {
@@ -373,19 +443,20 @@ func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexO
 		return nil, "", dbterror.ErrForbiddenDDL.FastGenByArgs("SPLIT REGION number must not be zero or negative")
 	}
 
-	// default int, it is 1
-	colen := 1
-	if tbInfo.IsCommonHandle && splitOpt.PrimaryKey {
-		pk := tables.FindPrimaryIndex(tbInfo)
-		colen = len(pk.Columns)
-	} else if indexName != "" {
+	// Resolve the columns the bound values are compared against so they can be
+	// converted to the same types as the one-shot `SPLIT TABLE`/`SPLIT INDEX`
+	// statements. See https://github.com/pingcap/tidb/issues/71395.
+	var boundCols []*model.ColumnInfo
+	if splitOpt.TableLevel {
+		boundCols = splitPolicyHandleColumns(tbInfo)
+	} else {
 		idx := tbInfo.FindIndexByName(indexName)
 		if idx == nil {
 			return nil, "", dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 		}
-		colen = len(idx.Columns)
+		boundCols = splitPolicyIndexColumns(tbInfo, idx)
 	}
-	if colen != len(splitOpt.SplitOpt.Upper) || colen != len(splitOpt.SplitOpt.Lower) {
+	if len(boundCols) != len(splitOpt.SplitOpt.Upper) || len(boundCols) != len(splitOpt.SplitOpt.Lower) {
 		return nil, "", dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("length of index columns and split values differ")
 	}
 
@@ -404,7 +475,14 @@ func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexO
 		if err != nil {
 			return nil, "", errors.Trace(err)
 		}
-		if _, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+		value, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		// Convert the value to the target column type so an unconvertible bound
+		// is rejected by the DDL instead of being silently skipped when the
+		// policy is applied later.
+		if _, err := convertSplitPolicyValue(value, boundCols[i], ctx.GetEvalCtx().TypeCtx()); err != nil {
 			return nil, "", errors.Trace(err)
 		}
 		if err := expr.Restore(restoreCtx); err != nil {
@@ -421,7 +499,11 @@ func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexO
 		if err != nil {
 			return nil, "", errors.Trace(err)
 		}
-		if _, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+		value, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return nil, "", errors.Trace(err)
+		}
+		if _, err := convertSplitPolicyValue(value, boundCols[i], ctx.GetEvalCtx().TypeCtx()); err != nil {
 			return nil, "", errors.Trace(err)
 		}
 		if err := expr.Restore(restoreCtx); err != nil {

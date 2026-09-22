@@ -15,12 +15,17 @@
 package ddl
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -223,5 +228,93 @@ func TestSplitRegionScatterConfig(t *testing.T) {
 				}
 			})
 		}
+	})
+}
+
+// buildSplitPolicyTestTableInfo parses createSQL and builds the table info for
+// its persisted split policy test.
+func buildSplitPolicyTestTableInfo(t *testing.T, createSQL string) (*model.TableInfo, *ast.CreateTableStmt) {
+	t.Helper()
+	stmt, err := parser.New().ParseOneStmt(createSQL, "", "")
+	require.NoError(t, err)
+	createStmt, ok := stmt.(*ast.CreateTableStmt)
+	require.True(t, ok, "unexpected statement type %T", stmt)
+	tblInfo, err := BuildTableInfoFromAST(metabuild.NewContext(), createStmt)
+	require.NoError(t, err)
+	tblInfo.ID = 100
+	return tblInfo, createStmt
+}
+
+// splitKeysForPersistedPolicy normalizes the split policies declared in
+// createSQL and returns the keys produced when they are applied, emulating what
+// a later table operation (for example truncate) does with the stored policy.
+func splitKeysForPersistedPolicy(t *testing.T, createSQL string) [][]byte {
+	t.Helper()
+	tblInfo, createStmt := buildSplitPolicyTestTableInfo(t, createSQL)
+	require.NotEmpty(t, createStmt.SplitIndex, "expected a split policy in %q", createSQL)
+
+	sctx := mock.NewContext()
+	for _, splitOpt := range createStmt.SplitIndex {
+		policy, indexName, err := normalizeSplitPolicy(sctx.GetExprCtx(), splitOpt, tblInfo)
+		require.NoError(t, err)
+		if indexName == "" {
+			tblInfo.TableSplitPolicy = policy
+			continue
+		}
+		idxInfo := tblInfo.FindIndexByName(indexName)
+		require.NotNil(t, idxInfo)
+		idxInfo.RegionSplitPolicy = policy
+	}
+
+	store := &fakeAutoPreSplitStore{}
+	splitTableRegion(sctx, store, tblInfo, vardef.ScatterOff)
+	require.Len(t, store.calls, 1)
+	return store.calls[0].keys
+}
+
+func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
+	// A string literal bound for an integer handle column must be converted to
+	// the handle type, otherwise both bounds collapse to zero and no region is
+	// split. See https://github.com/pingcap/tidb/issues/71395.
+	t.Run("string literal bound on integer handle", func(t *testing.T) {
+		keys := splitKeysForPersistedPolicy(t,
+			"create table t (id bigint primary key) split between ('0') and ('10000') regions 4")
+		recordPrefix := tablecodec.GenTableRecordPrefix(100)
+		require.Equal(t, [][]byte{
+			tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(2500)),
+			tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(5000)),
+			tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(7500)),
+		}, keys)
+	})
+
+	// Bounds of an index policy must be converted to the indexed column type,
+	// so integer literals and the equivalent string literals produce the same
+	// index split keys.
+	t.Run("integer literal bound on string index column", func(t *testing.T) {
+		const tableSQL = "create table t (id bigint primary key, name varchar(100), index idx_name(name)) split index idx_name between (%s) and (%s) regions 3"
+		fromIntLiterals := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "0", "100"))
+		fromStringLiterals := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "'0'", "'100'"))
+		require.NotEmpty(t, fromIntLiterals)
+		require.Equal(t, fromStringLiterals, fromIntLiterals)
+	})
+
+	// A table-level policy on a clustered common-handle table must convert its
+	// string bounds to the primary key column types.
+	t.Run("string bound on common handle columns", func(t *testing.T) {
+		const tableSQL = "create table t (a int, b varchar(20), primary key (a, b) clustered) split between (%s) and (%s) regions 4"
+		converted := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "'0', 'x'", "'100', 'z'"))
+		typed := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "0, 'x'", "100, 'z'"))
+		require.NotEmpty(t, converted)
+		require.Equal(t, typed, converted)
+	})
+
+	// A bound that cannot be converted to the target column type must fail the
+	// DDL instead of persisting a policy that is silently skipped later.
+	t.Run("unconvertible bound is rejected", func(t *testing.T) {
+		tblInfo, createStmt := buildSplitPolicyTestTableInfo(t,
+			"create table t (id bigint primary key) split between ('abc') and ('10000') regions 4")
+		_, _, err := normalizeSplitPolicy(mock.NewContext().GetExprCtx(), createStmt.SplitIndex[0], tblInfo)
+		require.Error(t, err)
+		require.True(t, types.ErrTruncated.Equal(err), "unexpected error: %v", err)
 	})
 }
