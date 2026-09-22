@@ -449,6 +449,17 @@ impl SpillWriter {
         Self(vec![SPILL_FORMAT_VERSION])
     }
 
+    /// Resets the writer for the next entry, retaining its capacity.
+    fn reset(&mut self) {
+        self.0.clear();
+        self.0.push(SPILL_FORMAT_VERSION);
+    }
+
+    /// The encoded entry's bytes.
+    fn encoded(&self) -> &[u8] {
+        &self.0
+    }
+
     fn u8(&mut self, value: u8) {
         self.0.push(value);
     }
@@ -1041,11 +1052,12 @@ fn read_state(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<AggState, 
 }
 
 fn encode_spill_entry(
+    mut writer: &mut SpillWriter,
     key: &PipelineMapKey,
     group: &PipelineGroup,
     funcs: &[AggFunc],
-) -> Result<Vec<u8>, ExecError> {
-    let mut writer = SpillWriter::new();
+) -> Result<(), ExecError> {
+    writer.reset();
     match key {
         PipelineMapKey::Int(value) => {
             writer.u8(0);
@@ -1066,7 +1078,7 @@ fn encode_spill_entry(
     for (state, func) in group.states.iter().zip(funcs) {
         write_state(&mut writer, state, func)?;
     }
-    Ok(writer.0)
+    Ok(())
 }
 
 fn decode_spill_entry(
@@ -1171,11 +1183,15 @@ impl ParallelSpillPartitions {
         funcs: &[AggFunc],
     ) -> Result<(), ExecError> {
         self.prepare();
+        // One reusable writer for the whole spill: a fresh Vec per entry cost
+        // an allocation plus growth for every one of the millions of groups.
+        let mut writer = SpillWriter::new();
         for map in maps {
             for (key, group) in map.into_entries() {
                 let partition = Self::bucket(&key);
-                let encoded = encode_spill_entry(&key, &group, funcs)?;
-                self.chunks[partition].append_bytes(0, &encoded);
+                encode_spill_entry(&mut writer, &key, &group, funcs)?;
+                self.chunks[partition]
+                    .append_bytes(0, writer.encoded());
                 if self.chunks[partition].num_rows() >= SPILL_CHUNK_SIZE {
                     self.flush(partition)?;
                 }
