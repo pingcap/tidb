@@ -209,8 +209,9 @@ pub struct DataSource {
     /// Go `ContainExprPrefixUk`: a `tidb_shard()` prefix unique key exists, so
     /// its generated column must never be pruned.
     pub contain_expr_prefix_uk: bool,
-    /// Go `ColsRequiringFullLen`, rebuilt by [`Self::prune_columns_local`].
-    pub cols_requiring_full_len: Vec<Column>,
+    /// Go `ColsRequiringFullLen`; None means column pruning has not run.
+    /// Some(empty) means no parent requires a full column value.
+    pub cols_requiring_full_len: Option<Vec<Column>>,
     /// Go `AccessPathMinSelectivity`.
     pub access_path_min_selectivity: f64,
     /// Go `AskedColumnGroup`.
@@ -518,15 +519,17 @@ impl DataSource {
         let expr_cols = extract_columns_from_expressions(&self.all_conds, None);
         let expr_used = schema_producer::get_used_list(&expr_cols, schema);
 
-        self.cols_requiring_full_len = schema
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(i, column)| {
-                used[*i] || (self.contain_expr_prefix_uk && is_shard_column(column))
-            })
-            .map(|(_, column)| column.clone())
-            .collect();
+        self.cols_requiring_full_len = Some(
+            schema
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(i, column)| {
+                    used[*i] || (self.contain_expr_prefix_uk && is_shard_column(column))
+                })
+                .map(|(_, column)| column.clone())
+                .collect(),
+        );
 
         for i in (0..used.len()).rev() {
             if used[i] || expr_used[i] {

@@ -8555,7 +8555,7 @@ checkpoint made authoritative progress and remains pushed.
 - [x] Add failing coverage for covered-index predicates and schema remapping.
 - [x] Admit complete covered predicates, preserve native fallback, and retain Go's handle projection.
 - [x] Validate native/remote filter, projection and limit interactions and commit the checkpoint.
-- [ ] Push the rebased checkpoint after the final receipt update.
+- [x] Push the rebased checkpoint after the final receipt update (`25248e21a3`, verified at origin).
 
 ### Decision Log
 
@@ -8705,3 +8705,191 @@ post-rebase executions are not added to that count. No unrelated source changes
 or user-owned untracked files were included. The reviewed checkpoint is committed;
 only publishing the commit remains in this milestone. Whole-package acceptance
 and workload measurements remain outstanding.
+
+
+## Continue prefix-index condition and single-scan parity (2026-09-22)
+
+
+### Purpose and context
+
+
+The previous turn made authoritative progress: checkpoint `25248e21a3` is pushed
+and its regressions are green. A fresh fetch/pull leaves the working branch
+current and master pinned at `2339f8171265558ab30b6e564b2e3a854e53e8ea`.
+Keep the physicalop and dependent logicalop/core/executor packages as whole
+acceptance units; this continuation adds integrated seed evidence to their open
+claims. It is not an independently accepted feature port.
+
+Master `logical_datasource.go::IsSingleScan` distinguishes columns required by
+parents at full length from columns retained only for conditions. When
+`OptPrefixIndexSingleScan` is enabled, `IsIndexCoveringCondition` permits a direct
+IS NULL column argument to use a prefix, and recursively checks other scalar
+arguments. Arbitrary functions of a prefix still require the full value. With
+the setting disabled, ordinary full-column coverage is used. Rust retains
+`cols_requiring_full_len` during pruning but physical dispatch ignores it and
+cannot distinguish Go's nil (unpruned) list from an empty pruned list.
+
+### Progress
+
+
+- [x] Revalidate the pushed checkpoint, pull latest code and read master coverage rules.
+- [x] Add failing SQL, planner and predicate-mapping regressions.
+- [x] Connect pruning state and the session switch to whole-condition coverage and single-scan selection.
+- [x] Carry prefix-safe null predicates through remote and native covering execution without exposing truncated output values.
+- [x] Run scoped regressions, compilation and lint; review the implementation.
+- [x] Commit the reviewed checkpoint and rebase onto the refreshed working branch.
+- [ ] Publish the validated rebased commit (the final operation of this milestone).
+
+### Decision Log
+
+
+Use Rust Option for the unpruned-versus-pruned full-column list. Coverage must
+honor the current session switch and every original condition, including nested
+scalar null tests. Reuse the existing expression tree and predicate descriptor
+remappers, with separate full-value and null-only column mappings. TopN and
+ordinary value predicates continue to require full columns.
+
+A covering IndexReader may retain a prefix column internally to evaluate a null
+condition, but a parent requesting that column's full value must force a lookup.
+Trace that distinction through physical construction and both native and remote
+scan output before changing admission. Native covering execution currently falls
+back to table lookups when there is no remote backend; use the existing index-KV
+row decoder and preserve dirty/partition fallback where required, rather than
+calling a plan change alone a performance result.
+
+### Validation and remaining scope
+
+
+Extend the existing prefix-index SQL suite with nullable prefix columns, nested
+IS NULL predicates, mixed conditions, full-value outputs and the session switch
+on/off. Assert rows, selected reader family and storage operations. Add direct
+coverage/remapping tests for nil/empty pruning state, old common-handle strings,
+nullable truncated keys and functions that need full bytes. Run relevant planner,
+executor and transport tests, dependent compilation, make lint and scoped rustfmt.
+Master runtime comparison, real TiKV and workload measurements, plus every
+remaining whole-package gate, remain required for final acceptance.
+
+
+### Implementation and red/green evidence
+
+
+`DataSource.cols_requiring_full_len` now preserves nil versus an empty pruned
+list with Option. Physical dispatch receives the session switch and applies
+master's recursive condition coverage both to single-scan admission and to the
+index/table Selection split. It checks every original condition, not only the
+conditions remaining after range detachment. Full parent outputs still require
+complete bytes.
+
+Remote predicate remapping uses separate full-value and null-only layouts.
+Only a direct IS NULL column argument may use the second layout, including when
+nested under other scalar or boolean expressions. TopN and other value consumers
+keep the full-value layout. The physical IndexReader proof permits prefix values
+in its internal output schema; the planner already checked parent outputs. Raw
+request callers without that proof continue to refuse truncated projections.
+
+Native covering reads decode the existing index KV directly instead of fetching
+the table row. Index-side conditions run before prefix-group limits, and later
+accepted filters run before the output limit counts rows. Dirty, partitioned and
+partial-aggregate paths retain their existing fallbacks. A review regression
+caught a duplicate-column hazard in the shared decoder: a truncated common-handle
+copy replaced a full declared index column. It now preserves the full declared
+copy, while a prefix declared column can still use the full handle copy.
+
+The scalar pushdown catalog previously lacked IS NULL, so nested null predicates
+could not reach the wire. It now uses the Go `isNullFunctionClass.getFunction`
+families, result width 1, JSON-to-string cast, and Timestamp-to-Time evaluation.
+The implicit cast helper follows `WrapWithCastAsTime` by leaving a Timestamp
+argument unchanged for Time evaluation. Vector identity is similarly preserved.
+Direct ScanPredicate::IsNull lowering now shares that catalog instead of sending
+an uncast JSON child under StringIsNull.
+
+The SQL regression first failed with IndexLookUp instead of IndexReader
+(`/private/tmp/tidb-prefix-null-red.log`). After planner changes, it still failed
+because native execution fetched a table row; the final path returns the expected
+rows with zero gets for the null-only covering cases. The fixture checks the
+session switch on/off, nested null expressions, OR/AND, functions requiring full
+bytes, and selected full strings. All 16 prefix-index SQL tests pass.
+
+The new native duplicate-copy regression failed before its decoder fix with
+`ab` instead of `abcdef` (`/private/tmp/tidb-prefix-null-duplicate-red.log`). The
+33-test remote-cursor suite passes afterward, including all old full-value
+refusal cases and the new null-only remapping cases. The existing ordered
+covering scan test now expects zero table gets rather than one; its five correct
+rows and five walked index entries remain unchanged. The 35 access-path tests
+pass. Intermediate catalog failures exposed missing IS NULL signatures; two
+planner test imports and an expected protobuf leaf signature were also corrected
+before the successful runs.
+
+### Validation commands and limits
+
+
+Commands run from `rust/` (red/green reruns are not additional coverage):
+
+    cargo test --offline --locked -j12 -p tidb-planner --lib find_best_task::dispatch::tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib data_source --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_prefix_reads --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib remote_cursor_tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib access_path::tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib predicate_pushdown::tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-executor --lib index_selection_native_rows_preserve_the_full_duplicate_value --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-expr --lib pushdown_catalog::tests --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-exec --test wide_scan_selection_source --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-exec --test all cop_scan_narrowed_output_source --message-format=short -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-exec --test cop_scan_partial_predicate_limit_source --message-format=short -- --test-threads=1
+    cargo check --offline --locked -j12 -p tidb-executor -p tidb-exec -p tidb-session --message-format=short
+
+The suites passed respectively 32, 15, 16, 33, 35, 5, 1, 21, 15, 3 and 8 tests.
+The one-test duplicate-copy command was run both red and green and is also
+covered by the 33-test suite; it is not an extra distinct passing test.
+Dependent compilation passed with existing warnings. From the repository root:
+
+    make lint
+    python3 /private/tmp/tidb-prefix-null-format.py --check
+    git diff --check
+
+Lint and scoped nightly rustfmt passed. No Go source/imports, Bazel metadata,
+dependencies or generated artifacts changed, so bazel_prepare is not required.
+Scoped formatting leaves unrelated preexisting Rust formatting drift alone.
+
+Changed implementation files are planner `logical/data_source.rs`,
+`logical/operator_tests.rs`, `find_best_task/dispatch.rs`; executor
+`driver/planner_bridge.rs`, `driver/tests/index_prefix_reads.rs`, `access_path.rs`,
+`predicate_pushdown.rs`, `kv_table/table_scan.rs`; expression `pushdown_catalog.rs`;
+and exec `wide_scan_selection.rs` plus its existing source regression. This
+ExecPlan records the work. The two preexisting untracked Rust files are untouched.
+
+Correctness risks are incomplete-value admission and source/wire/output column
+positions. The scoped cases verify those boundaries, duplicate copies and filter
+ordering. The transport fixtures are not a real TiKV validation. Native covering
+has zero table gets in the covered fixtures, but no sysbench/TPC-C/TPC-H/YCSB
+throughput improvement is claimed. Fresh master Go runtime comparison, real TiKV,
+every original whole-package artifact/gate and all four workload measurements
+remain open. This checkpoint is integrated seed evidence within the open package
+claims; no package or the overall goal is complete.
+
+The earlier cleanup reclaimed about 318 GB. Scoped rebuilds now occupy 16 GB in
+`rust/target`; the filesystem reports about 294 GiB available. No user data or
+user-owned source was removed.
+
+
+### Final source refresh and branch integration
+
+
+The final fetch advanced master to `cc83514fa9cd093be05b6531003480ba819877fd`. The only upstream change
+since the starting pin adjusts `executor/internal/exec/indexusage_test.go`; the
+physicalop inventory's 58 artifacts and five direct inputs were rehashed and are
+unchanged. The source inventory now records the new pin. The logical datasource
+coverage and expression null/cast rules used in this milestone are unchanged.
+
+The working branch also advanced to `49af8e0706`, which scales cop-level
+Selection statistics by ExpectedCnt. Preserve that change by rebasing this
+checkpoint before publishing, then repeat the planner dispatch and prefix-index
+SQL suites. This source refresh does not discharge any whole-package gate.
+
+
+The rebase onto `49af8e0706` succeeded without conflict. `git range-diff`
+confirmed that the implementation patch is unchanged. Both post-rebase commands
+passed: the 32-test planner dispatch suite and 16-test prefix-index SQL suite,
+using the commands listed above. The checkpoint is committed and ready to push;
+publication is the final operation. All remaining package/workload obligations
+stay open.

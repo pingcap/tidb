@@ -1100,6 +1100,33 @@ fn the_composed_integer_predicates_lower_to_gos_own_signatures() {
         Some(ScalarFuncSig::DecimalIsNull as i32)
     );
 
+    // Go casts JSON to String before IS NULL, while Timestamp is already
+    // accepted by the Time evaluator without a cast.
+    for (code, signature, child_signature) in [
+        (
+            FieldTypeCode::Json,
+            ScalarFuncSig::StringIsNull,
+            Some(ScalarFuncSig::CastJsonAsString),
+        ),
+        (FieldTypeCode::Timestamp, ScalarFuncSig::TimeIsNull, None),
+    ] {
+        let conditions = wide_scan_selection_conditions(
+            &[ScanPredicate::IsNull {
+                column_offset: 0,
+                column_type: FieldType::new(code),
+                negated: false,
+            }],
+            &[column_of(code.mysql_type().into(), 0)],
+        )
+        .unwrap();
+        assert_eq!(conditions[0].sig, Some(signature as i32));
+        assert_eq!(conditions[0].field_type.as_ref().unwrap().flen, Some(1));
+        assert_eq!(
+            conditions[0].children[0].sig,
+            Some(child_signature.map_or(0, |signature| signature as i32))
+        );
+    }
+
     let membership = |negated, literals: Vec<i64>| ScanPredicate::In {
         collation: tidb_datatype::Collation::Binary,
         column_offset: 0,

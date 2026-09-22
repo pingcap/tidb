@@ -262,7 +262,11 @@ impl BuiltinSignature {
             EvalType::Int => int_field_type(
                 FieldTypeCode::LongLong.mysql_type().into(),
                 flag,
-                MAX_INT_WIDTH,
+                if self.name == "isnull" {
+                    1
+                } else {
+                    MAX_INT_WIDTH
+                },
                 0,
             ),
             EvalType::Real => int_field_type(
@@ -890,6 +894,79 @@ fn resolve_unix_timestamp(args: &[PbScalar]) -> Option<&'static BuiltinSignature
 /// MySQL's special rounding behaviour), is absent rather than flagged, so
 /// "not in the catalog" and "TiKV refuses it" are one answer.
 pub const CATALOG: &[BuiltinSignature] = &[
+    // Go isNullFunctionClass: Timestamp uses Time, JSON is cast to String.
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::Int)],
+        &[EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::IntIsNull,
+        false,
+    ),
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal],
+        EvalType::Int,
+        ScalarFuncSig::DecimalIsNull,
+        false,
+    ),
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::Real)],
+        &[EvalType::Real],
+        EvalType::Int,
+        ScalarFuncSig::RealIsNull,
+        false,
+    ),
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::Datetime)],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::TimeIsNull,
+        false,
+    ),
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::Timestamp)],
+        &[EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::TimeIsNull,
+        false,
+    ),
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::Duration)],
+        &[EvalType::Duration],
+        EvalType::Int,
+        ScalarFuncSig::DurationIsNull,
+        false,
+    ),
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::String)],
+        &[EvalType::String],
+        EvalType::Int,
+        ScalarFuncSig::StringIsNull,
+        false,
+    ),
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::Json)],
+        &[EvalType::String],
+        EvalType::Int,
+        ScalarFuncSig::StringIsNull,
+        false,
+    ),
+    signature(
+        "isnull",
+        &[ArgPattern::eval(EvalType::VectorFloat32)],
+        &[EvalType::VectorFloat32],
+        EvalType::Int,
+        ScalarFuncSig::VectorFloat32IsNull,
+        false,
+    ),
     // `arithmeticPlusFunctionClass.getFunction` and
     // `arithmeticMinusFunctionClass.getFunction`: a Decimal operand selects
     // the Decimal family and the other argument is wrapped as Decimal.
@@ -1651,6 +1728,8 @@ const fn cast_signature(from: EvalType, to: EvalType) -> Option<Option<ScalarFun
             | (EvalType::String, EvalType::String)
             | (EvalType::Datetime, EvalType::Datetime)
             | (EvalType::Timestamp, EvalType::Timestamp)
+            | (EvalType::Timestamp, EvalType::Datetime)
+            | (EvalType::VectorFloat32, EvalType::VectorFloat32)
             | (EvalType::Duration, EvalType::Duration)
             | (EvalType::Json, EvalType::Json)
     ) {
@@ -2627,6 +2706,55 @@ mod tests {
             offset: 0,
             field_type: FieldType::new(code),
         }
+    }
+
+    #[test]
+    fn is_null_catalog_preserves_go_families_casts_and_boolean_width() {
+        for (code, signature, cast) in [
+            (FieldTypeCode::LongLong, ScalarFuncSig::IntIsNull, None),
+            (FieldTypeCode::Bit, ScalarFuncSig::IntIsNull, None),
+            (
+                FieldTypeCode::NewDecimal,
+                ScalarFuncSig::DecimalIsNull,
+                None,
+            ),
+            (FieldTypeCode::Double, ScalarFuncSig::RealIsNull, None),
+            (FieldTypeCode::Date, ScalarFuncSig::TimeIsNull, None),
+            (FieldTypeCode::Datetime, ScalarFuncSig::TimeIsNull, None),
+            (FieldTypeCode::Timestamp, ScalarFuncSig::TimeIsNull, None),
+            (FieldTypeCode::Duration, ScalarFuncSig::DurationIsNull, None),
+            (FieldTypeCode::Varchar, ScalarFuncSig::StringIsNull, None),
+            (
+                FieldTypeCode::Json,
+                ScalarFuncSig::StringIsNull,
+                Some(ScalarFuncSig::CastJsonAsString),
+            ),
+            (
+                FieldTypeCode::VectorFloat32,
+                ScalarFuncSig::VectorFloat32IsNull,
+                None,
+            ),
+        ] {
+            let described =
+                build_call("isnull", vec![column(code)]).expect("Go IS NULL evaluation family");
+            let encoded = to_pb(&described, &descriptors(&described)).unwrap();
+            assert_eq!(encoded.sig, Some(signature as i32), "{code:?}");
+            assert_eq!(
+                encoded.children[0].sig,
+                Some(cast.map_or(0, |cast| cast as i32)),
+                "{code:?}"
+            );
+            assert_eq!(encoded.field_type.as_ref().unwrap().tp, Some(8));
+            assert_eq!(encoded.field_type.as_ref().unwrap().flen, Some(1));
+            assert_eq!(encoded.field_type.as_ref().unwrap().decimal, Some(0));
+            assert_eq!(encoded.field_type.as_ref().unwrap().flag, Some(BINARY_FLAG));
+        }
+        assert!(build_call("isnull", Vec::new()).is_none());
+        assert!(build_call(
+            "isnull",
+            vec![PbScalar::IntLiteral(1), PbScalar::IntLiteral(2)]
+        )
+        .is_none());
     }
 
     fn unsigned_column(code: FieldTypeCode) -> PbScalar {

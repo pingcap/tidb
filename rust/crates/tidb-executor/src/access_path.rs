@@ -1574,6 +1574,9 @@ pub struct IndexRangeSourceExec {
     /// Whether the selected columns are served by Go's single-read
     /// `PhysicalIndexReader`, which cannot accept an IndexLookUp-only limit.
     covering: bool,
+    /// Clean native IndexReader rows decoded directly from index KVs.
+    native_covering: bool,
+    covering_row: Option<Vec<Datum>>,
     /// The output slot carrying `_tidb_rowid`, Go's extra handle column.
     ///
     /// An index entry carries the row's HANDLE, which is precisely what this
@@ -1946,6 +1949,8 @@ impl IndexRangeSourceExec {
             keep_order: false,
             descending: false,
             covering: false,
+            native_covering: false,
+            covering_row: None,
             extra_handle_slot: None,
             lookup_handles: Vec::new(),
             batch: Vec::new(),
@@ -2093,8 +2098,8 @@ impl IndexRangeSourceExec {
         self.can_reorder_handles = false;
     }
 
-    /// Declares that this source represents a covering index reader rather
-    /// than a table double read.
+    /// Declares the planner's IndexReader coverage proof. Parent outputs
+    /// have full values; internal null-only columns may retain prefixes.
     pub(crate) fn mark_covering(&mut self) {
         self.covering = true;
     }
@@ -3010,9 +3015,12 @@ impl IndexRangeSourceExec {
                 return Ok(None);
             }
             if let Some(cursor) = self.cursor.as_mut() {
-                let entry = if self.prefix_limit.is_some() || self.index_probe.is_some() {
+                let entry = if self.prefix_limit.is_some()
+                    || self.index_probe.is_some()
+                    || self.native_covering
+                {
                     cursor.next_handle_in_partition_if(|handle, key, value| {
-                        if let Some(filter) = &mut self.index_probe {
+                        if self.index_probe.is_some() || self.native_covering {
                             let row = self
                                 .table
                                 .index_filter_row(
@@ -3033,8 +3041,13 @@ impl IndexRangeSourceExec {
                             {
                                 projected.insert(slot, Datum::Int(*handle));
                             }
-                            if !filter.admits(&projected)? {
-                                return Ok(std::ops::ControlFlow::Continue(false));
+                            if let Some(filter) = &mut self.index_probe {
+                                if !filter.admits(&projected)? {
+                                    return Ok(std::ops::ControlFlow::Continue(false));
+                                }
+                            }
+                            if self.native_covering {
+                                self.covering_row = Some(projected);
                             }
                         }
                         match &mut self.prefix_limit {
@@ -3049,7 +3062,11 @@ impl IndexRangeSourceExec {
                     return Ok(Some(entry));
                 }
                 self.cursor = None;
-                if self.prefix_limit.as_ref().is_some_and(|limit| limit.exhausted) {
+                if self
+                    .prefix_limit
+                    .as_ref()
+                    .is_some_and(|limit| limit.exhausted)
+                {
                     return Ok(None);
                 }
             }
@@ -3852,6 +3869,7 @@ impl Executor for IndexRangeSourceExec {
                     !self.covering,
                     (self.covering && self.extra_handle_slot.is_none())
                         .then_some(self.keep.as_slice()),
+                    self.covering,
                 )
                 .map_err(|error| {
                     ExecError::unsupported(format!("remote index scan failed to open: {error:?}"))
@@ -3859,6 +3877,13 @@ impl Executor for IndexRangeSourceExec {
             self.remote_covering_selected =
                 self.covering && self.extra_handle_slot.is_none() && self.remote_index.is_some();
         }
+        self.covering_row = None;
+        self.native_covering = self.covering
+            && self.remote_index.is_none()
+            && self.partial_aggregate.is_none()
+            && !self.dirty_merge
+            && !self.table.has_dirty_content(&self.statement.staged_writes)
+            && self.table.partition().is_none();
         self.lookup_pipeline = Some(LookupPipeline {
             inflight: VecDeque::new(),
             width: self.lookup_concurrency,
@@ -3933,8 +3958,8 @@ impl Executor for IndexRangeSourceExec {
         // Go's covering `PhysicalIndexReader` emits index columns directly;
         // it does not collect handles or issue the table-side double read.
         // When the coprocessor stream is available, keep that fast path
-        // explicit. A refused remote shape falls through to the existing
-        // byte-level lookup path below, preserving the fail-closed answer.
+        // explicit. A refused remote shape uses native index decoding when
+        // eligible, or the existing table lookup fallback below.
         if self.covering && self.remote_covering_selected {
             if self.remote_index.is_none() {
                 return Ok(());
@@ -3980,6 +4005,36 @@ impl Executor for IndexRangeSourceExec {
                         if !filter.admits(&row)? {
                             continue;
                         }
+                    }
+                }
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+                self.produced.set(self.produced.get() + 1);
+                if req.num_cols() == 0 {
+                    req.set_num_virtual_rows(req.num_rows() + 1);
+                }
+            }
+            return Ok(());
+        }
+        if self.native_covering {
+            while req.num_rows() < cap {
+                if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
+                    self.cursor = None;
+                    self.covering_row = None;
+                    return Ok(());
+                }
+                self.covering_row = None;
+                if self.next_window_handle()?.is_none() {
+                    return Ok(());
+                }
+                let row = self.covering_row.take().ok_or_else(|| {
+                    ExecError::internal("a native IndexReader entry has no decoded row")
+                })?;
+                self.scanned.set(self.scanned.get() + 1);
+                if let Some(filter) = self.filter.as_mut() {
+                    if !filter.admits(&row)? {
+                        continue;
                     }
                 }
                 for (column, value) in row.iter().enumerate() {
@@ -4044,6 +4099,8 @@ impl Executor for IndexRangeSourceExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
+        self.native_covering = false;
+        self.covering_row = None;
         if let Some(limit) = &mut self.prefix_limit {
             limit.reset();
         }
@@ -4913,6 +4970,7 @@ impl IndexJoinLookupExec {
             !self.keep_order,
             !self.covering,
             self.covering.then_some(keep.as_slice()),
+            self.covering,
         ) {
             Ok(Some(stream)) => self.remote_handles = Some(stream),
             // Refused or failed: reopen the probes over the local cursor, the
@@ -6908,9 +6966,8 @@ mod tests {
     /// sorting it.
     ///
     /// The projection is covering on purpose. A non-covering one adds a
-    /// double read, and this tier's local test storage still exercises that
-    /// lookup path; the cluster path now emits covering rows directly from
-    /// the index stream, like Go's `PhysicalIndexReader`. On a table this
+    /// double read. Both local and cluster storage emit covering rows directly
+    /// from the index stream, like Go's `PhysicalIndexReader`. On a table this
     /// small the chooser otherwise prefers the scan, so the cap would be
     /// tested through the wrong path. See
     /// `a_double_read_costs_more_than_the_scan_it_replaces` below.
@@ -6930,13 +6987,12 @@ mod tests {
             5,
             "only five index entries were walked"
         );
-        // The in-memory test storage has no remote covering stream, so this
-        // fallback performs one table lookup batch; the TiKV path emits the
-        // same five rows directly from the index reader.
+        // A covering IndexReader returns these values from the index stream,
+        // including when the storage executes the scan locally.
         assert_eq!(
             gets.load(Ordering::Relaxed),
-            1,
-            "the five rows share one table lookup batch"
+            0,
+            "the covering index reader needs no table lookup"
         );
     }
 

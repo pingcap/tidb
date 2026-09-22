@@ -172,6 +172,8 @@ pub struct DispatchContext<'a> {
     pub tiflash_pre_agg_mode: String,
     /// Go `SessionVars.IsPartialOrderedIndexForTopNEnabled`.
     pub partial_ordered_index_for_topn: bool,
+    /// Go SessionVars.OptPrefixIndexSingleScan.
+    pub opt_prefix_index_single_scan: bool,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
     pub mpp_warning_sink: Option<&'a dyn MppWarningSink>,
     /// Go `SessionVars.GetAllowPreferRangeScan()` (`tidb_opt_prefer_range_scan`,
@@ -237,6 +239,7 @@ impl<'a> DispatchContext<'a> {
             enable_3_stage_multi_distinct_agg: false,
             tiflash_pre_agg_mode: tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned(),
             partial_ordered_index_for_topn: false,
+            opt_prefix_index_single_scan: true,
             mpp_warning_sink: None,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
@@ -433,6 +436,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_partial_ordered_index_for_topn(mut self, enabled: bool) -> Self {
         self.partial_ordered_index_for_topn = enabled;
+        self
+    }
+
+    /// Carries the session's prefix-index single-scan switch.
+    #[must_use]
+    pub const fn with_opt_prefix_index_single_scan(mut self, enabled: bool) -> Self {
+        self.opt_prefix_index_single_scan = enabled;
         self
     }
 
@@ -1452,23 +1462,73 @@ fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProp
     true
 }
 
-/// Go `DataSource.IsIndexCoveringColumns`: every output column must be
-/// covered by the index or the row handle.
-///
-/// Go `indexCoveringColumn`: full-length index parts and row-handle columns
-/// cover the output. V0 common handles cannot restore nonbinary strings under
-/// new collations unless a plain index part also covers the column.
+/// Go `DataSource.IsSingleScan`: parent outputs require complete values;
+/// a direct IS NULL argument can use a prefix when the session allows it.
 fn index_path_is_single_scan(
     ds: &crate::logical::DataSource,
     source_index: &crate::plan_builder::catalog::SourceIndex,
+    opt_prefix_index_single_scan: bool,
 ) -> bool {
-    (0..ds.columns.len()).all(|position| index_covers_column(ds, source_index, position))
+    if opt_prefix_index_single_scan {
+        if let Some(required) = &ds.cols_requiring_full_len {
+            return required
+                .iter()
+                .all(|column| index_covers_expression_column(ds, source_index, column, false))
+                && ds
+                    .all_conds
+                    .iter()
+                    .all(|condition| index_covers_condition(ds, source_index, condition, true));
+        }
+    }
+    (0..ds.columns.len()).all(|position| index_covers_column(ds, source_index, position, false))
+}
+
+fn index_covers_expression_column(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    column: &tidb_expr::column::Column,
+    ignore_len: bool,
+) -> bool {
+    ds.base
+        .base
+        .schema()
+        .and_then(|schema| {
+            schema
+                .columns
+                .iter()
+                .position(|candidate| candidate.unique_id == column.unique_id)
+        })
+        .is_some_and(|position| index_covers_column(ds, index, position, ignore_len))
+}
+
+fn index_covers_condition(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    condition: &tidb_expr::expression::Expression,
+    opt_prefix_index_single_scan: bool,
+) -> bool {
+    use tidb_expr::expression::Expression;
+    match condition {
+        Expression::Column(column) => index_covers_expression_column(ds, index, column, false),
+        Expression::ScalarFunction(function) => {
+            if opt_prefix_index_single_scan && function.func_name.lowercase() == "isnull" {
+                if let [Expression::Column(column)] = function.args.as_slice() {
+                    return index_covers_expression_column(ds, index, column, true);
+                }
+            }
+            function.args.iter().all(|argument| {
+                index_covers_condition(ds, index, argument, opt_prefix_index_single_scan)
+            })
+        }
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) => true,
+    }
 }
 
 fn index_covers_column(
     ds: &crate::logical::DataSource,
     source_index: &crate::plan_builder::catalog::SourceIndex,
     position: usize,
+    ignore_len: bool,
 ) -> bool {
     let Some(column) = ds.columns.get(position) else {
         return false;
@@ -1486,7 +1546,8 @@ fn index_covers_column(
         .and_then(|schema| schema.columns.get(position));
     let field_type = schema_column.and_then(|column| column.ret_type.as_ref());
     let full_length = |length: i64| {
-        length == tidb_datatype::UNSPECIFIED_LENGTH
+        ignore_len
+            || length == tidb_datatype::UNSPECIFIED_LENGTH
             || field_type.is_some_and(|field_type| length == field_type.flen())
     };
     if source_index.columns.iter().any(|index_column| {
@@ -3240,7 +3301,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // reads the table rows back through an IndexLookUp double
                 // read (`BuildIndexLookUpTask` at conversion) — the cop task
                 // carries BOTH halves, exactly Go's shape.
-                let single_scan = index_path_is_single_scan(ds, source_index);
+                let single_scan =
+                    index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan);
                 // The two COP property kinds are disjoint: a covering index
                 // is single-read, while a lookup is multi-read.
                 if (prop.task_tp == TaskType::CopSingleRead && !single_scan)
@@ -3305,15 +3367,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             index_lengths.clone(),
                         )
                     });
-                let covered = ds
-                    .base
-                    .base
-                    .schema()
-                    .into_iter()
-                    .flat_map(|schema| schema.columns.iter().enumerate())
-                    .filter(|(position, _)| index_covers_column(ds, source_index, *position))
-                    .map(|(_, column)| column.unique_id)
-                    .collect::<std::collections::BTreeSet<_>>();
+                let covered = |condition: &tidb_expr::expression::Expression| {
+                    index_covers_condition(
+                        ds,
+                        source_index,
+                        condition,
+                        ctx.opt_prefix_index_single_scan,
+                    )
+                };
                 heuristic = detach.as_ref().map(|detached| {
                     crate::find_best_task::candidate::HeuristicPath {
                         range_count: ranges.len(),
@@ -3327,11 +3388,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         single_scan,
                         table_filter_count: remained_conds
                             .iter()
-                            .filter(|condition| {
-                                tidb_expr::simple_expr::extract_columns(condition)
-                                    .iter()
-                                    .any(|column| !covered.contains(&column.unique_id))
-                            })
+                            .filter(|condition| !covered(condition))
                             .count(),
                         access_columns: crate::column_length::Col2Len::from_pairs(
                             detached.access_conds.iter().flat_map(|condition| {
@@ -3566,11 +3623,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // Go splitIndexFilterConditions uses the same handle/full-column
                 // coverage as IsSingleScan, including appended primary-key columns.
                 let (index_filters, table_filters): (Vec<_>, Vec<_>) =
-                    remained_conds.into_iter().partition(|condition| {
-                        tidb_expr::simple_expr::extract_columns(condition)
-                            .iter()
-                            .all(|column| covered.contains(&column.unique_id))
-                    });
+                    remained_conds.into_iter().partition(covered);
                 // Retain candidates whose skyline facts are unavailable. In
                 // particular, do not invent CountAfterIndex for residual filters.
                 if prop.index_join_prop.is_none() && index_filters.is_empty() {
@@ -5051,6 +5104,96 @@ mod tests {
     }
 
     #[test]
+    fn prefix_single_scan_distinguishes_unpruned_full_values_and_null_arguments() {
+        use crate::logical::data_source::{DataSource, DataSourceColumn};
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_expr::expression::{Expression, ScalarFunction};
+        let allocator = PlanIdAllocator::new();
+        let a = Column::new(11, FieldType::new(FieldTypeCode::Varchar).with_flen(20));
+        let b = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
+        let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+        base.base
+            .set_schema(Some(Schema::new(vec![a.clone(), b.clone()])));
+        let mut ds = DataSource {
+            base,
+            columns: vec![
+                DataSourceColumn {
+                    id: 1,
+                    name: "a".into(),
+                    ..DataSourceColumn::default()
+                },
+                DataSourceColumn {
+                    id: 2,
+                    name: "b".into(),
+                    ..DataSourceColumn::default()
+                },
+            ],
+            ..DataSource::default()
+        };
+        let index = SourceIndex {
+            columns: vec![
+                SourceIndexColumn {
+                    name: "a".into(),
+                    offset: 0,
+                    length: 2,
+                },
+                SourceIndexColumn {
+                    name: "b".into(),
+                    offset: 1,
+                    length: -1,
+                },
+            ],
+            ..SourceIndex::default()
+        };
+        let call = |name: &str, args| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                FieldType::new(FieldTypeCode::LongLong),
+                args,
+            ))
+        };
+        let null = call("isnull", vec![Expression::Column(a.clone())]);
+        assert!(
+            !index_path_is_single_scan(&ds, &index, true),
+            "an unpruned nil list requires full schema coverage"
+        );
+        ds.cols_requiring_full_len = Some(Vec::new());
+        assert!(index_path_is_single_scan(&ds, &index, true));
+        assert!(!index_path_is_single_scan(&ds, &index, false));
+        ds.cols_requiring_full_len = Some(vec![b.clone()]);
+        for (condition, covered) in [
+            (null.clone(), true),
+            (call("not", vec![null.clone()]), true),
+            (call("or", vec![null.clone(), Expression::Column(b)]), true),
+            (
+                call("or", vec![null.clone(), Expression::Column(a.clone())]),
+                false,
+            ),
+            (
+                call(
+                    "isnull",
+                    vec![call("length", vec![Expression::Column(a.clone())])],
+                ),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                index_covers_condition(&ds, &index, &condition, true),
+                covered
+            );
+            assert!(!index_covers_condition(&ds, &index, &condition, false));
+            ds.all_conds = vec![condition];
+            assert_eq!(index_path_is_single_scan(&ds, &index, true), covered);
+        }
+        ds.all_conds = vec![null];
+        ds.cols_requiring_full_len = Some(vec![a]);
+        assert!(
+            !index_path_is_single_scan(&ds, &index, true),
+            "full parent output cannot use a prefix"
+        );
+    }
+
+    #[test]
     fn a_non_covering_index_plans_the_lookup_double_read() {
         // `IsSingleScan` end to end: with the catalog's column list filled,
         // an index that lacks a schema column is NOT a single scan, so its
@@ -5184,9 +5327,13 @@ mod tests {
         common.is_common_handle = true;
         common.common_handle_cols = vec![common.base.base.schema().unwrap().columns[0].clone()];
         common.common_handle_lens = vec![-1];
-        assert!(index_path_is_single_scan(&common, &common.indexes[0]));
+        assert!(index_path_is_single_scan(&common, &common.indexes[0], true));
         common.common_handle_lens = vec![1];
-        assert!(!index_path_is_single_scan(&common, &common.indexes[0]));
+        assert!(!index_path_is_single_scan(
+            &common,
+            &common.indexes[0],
+            true
+        ));
     }
 
     #[test]

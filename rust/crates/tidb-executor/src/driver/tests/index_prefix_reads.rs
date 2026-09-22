@@ -660,3 +660,72 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
         }
     }
 }
+
+#[test]
+fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE pn (a VARCHAR(20), b INT, KEY idx(a(2), b))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO pn VALUES (NULL, 1), ('abz', 2), ('aba', 3), ('zz', 4)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    for enabled in [true, false] {
+        let ctx = crate::StmtContext::for_query().with_opt_prefix_index_single_scan(enabled);
+        for (projection, condition, expected, null_only) in [
+            ("b", "a IS NULL", vec!["1"], true),
+            ("b", "a IS NOT NULL", vec!["2", "3", "4"], true),
+            ("b", "(a IS NULL) = 0", vec!["2", "3", "4"], true),
+            ("b", "a IS NULL OR b = 3", vec!["1", "3"], true),
+            ("b", "a IS NULL AND b > 0", vec!["1"], true),
+            ("b", "CHAR_LENGTH(a) IS NULL", vec!["1"], false),
+            ("b", "a IS NULL OR a = 'aba'", vec!["1", "3"], false),
+            ("a", "a IS NOT NULL", vec!["aba", "abz", "zz"], false),
+        ] {
+            let sql = format!("SELECT {projection} FROM pn USE INDEX(idx) WHERE {condition}");
+            let (rows, ops) =
+                crate::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
+            let mut rows: Vec<_> = rows
+                .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+                .iter()
+                .map(|row| match &row[0] {
+                    Datum::Int(value) => value.to_string(),
+                    value => datum_text_for_test(value),
+                })
+                .collect();
+            rows.sort();
+            assert_eq!(rows, expected, "{sql}, enabled={enabled}");
+            let Stmt::Query(query) = tidb_parser::parse(&sql).unwrap() else {
+                panic!("query")
+            };
+            let QueryStmt::Select(select) = &*query else {
+                panic!("select")
+            };
+            let (_, plan) =
+                explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+            let text = plan
+                .iter()
+                .map(|row| datum_text_for_test(&row[0]))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let covering = enabled && null_only;
+            assert_eq!(
+                text.contains("IndexReader"),
+                covering,
+                "{sql}, enabled={enabled}: {text}"
+            );
+            if covering {
+                assert_eq!(
+                    ops.gets, 0,
+                    "a covering null predicate must not fetch table rows: {sql}, {ops:?}"
+                );
+            }
+        }
+    }
+}

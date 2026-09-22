@@ -1684,7 +1684,25 @@ impl KvTable {
         )
         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
         let mut row = vec![Datum::Null; self.columns.len()];
-        for ((offset, column), value) in offsets.iter().zip(&columns).zip(encoded) {
+        for (position, ((offset, column), value)) in
+            offsets.iter().zip(&columns).zip(encoded).enumerate()
+        {
+            // Go resolves a fully indexed column to its plain-index slot.
+            // A duplicate common-handle part may be truncated or unrestored;
+            // it must not replace that complete value.
+            if position >= index.column_offsets.len()
+                && index
+                    .column_offsets
+                    .iter()
+                    .enumerate()
+                    .any(|(part, indexed)| {
+                        indexed == offset
+                            && (index.prefix_length(part) == tidb_datatype::UNSPECIFIED_LENGTH
+                                || index.prefix_length(part) == column.field_type.flen())
+                    })
+            {
+                continue;
+            }
             row[*offset] =
                 tidb_tablecodec::decode_column_value(&value, &column.field_type, Some(zone))
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
@@ -1706,6 +1724,9 @@ impl KvTable {
     /// Opens a coprocessor index scan whose rows carry only the indexed
     /// columns and the table handle. The access source consumes those rows as
     /// an ordered handle stream before issuing its table lookup batch.
+    /// `allow_prefix_projection` is the selected IndexReader's coverage proof:
+    /// prefix columns may remain in its internal schema for null conditions,
+    /// while the planner has checked every parent requiring their full values.
     #[allow(clippy::too_many_arguments)]
     pub fn pushdown_index_handle_cursor(
         &mut self,
@@ -1724,6 +1745,7 @@ impl KvTable {
         unordered: bool,
         handle_only: bool,
         projected_keep: Option<&[usize]>,
+        allow_prefix_projection: bool,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
         // The wire contract this request once broke -- reordered and
         // truncated columns on real TiKV -- came from the executor schema
@@ -1782,69 +1804,82 @@ impl KvTable {
             table_offsets.push(None);
         }
         let common_primary = crate::handle_range::clustered_primary_metadata(self);
-        let complete_columns = table_offsets
+        let column_covered = |position: usize, offset: &Option<usize>, ignore_len: bool| {
+            let Some(offset) = offset else {
+                return true;
+            };
+            let Some(column) = self.columns.get(*offset) else {
+                return false;
+            };
+            let full_length = |length| {
+                ignore_len
+                    || length == tidb_datatype::UNSPECIFIED_LENGTH
+                    || length == column.field_type.flen()
+            };
+            if position < index.column_offsets.len() {
+                return full_length(index.prefix_length(position));
+            }
+            if self.pk_handle_offset == Some(*offset) {
+                return true;
+            }
+            // Go's indexCoveringColumn requires a complete value; a
+            // prefix or old unrestored common-handle string cannot supply it.
+            common_primary.as_ref().is_some_and(|primary| {
+                primary
+                    .column_offsets
+                    .iter()
+                    .position(|part| part == offset)
+                    .is_some_and(|part| full_length(primary.prefix_length(part)))
+            }) && !(self.common_handle_version == 0
+                && self.use_new_collation
+                && column.field_type.eval_type() == tidb_datatype::EvalType::String
+                && !column
+                    .field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::BINARY))
+        };
+        let complete_columns: Vec<_> = table_offsets
             .iter()
             .enumerate()
-            .map(|(position, offset)| {
-                let Some(offset) = offset else {
-                    return true;
-                };
-                let Some(column) = self.columns.get(*offset) else {
-                    return false;
-                };
-                let full_length = |length| {
-                    length == tidb_datatype::UNSPECIFIED_LENGTH
-                        || length == column.field_type.flen()
-                };
-                if position < index.column_offsets.len() {
-                    return full_length(index.prefix_length(position));
-                }
-                if self.pk_handle_offset == Some(*offset) {
-                    return true;
-                }
-                // Go's indexCoveringColumn requires a complete value; a
-                // prefix or old unrestored common-handle string cannot supply it.
-                common_primary.as_ref().is_some_and(|primary| {
-                    primary
-                        .column_offsets
-                        .iter()
-                        .position(|part| part == offset)
-                        .is_some_and(|part| full_length(primary.prefix_length(part)))
-                }) && !(self.common_handle_version == 0
-                    && self.use_new_collation
-                    && column.field_type.eval_type() == tidb_datatype::EvalType::String
-                    && !column
-                        .field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::BINARY))
-            })
-            .collect::<Vec<_>>();
+            .map(|(position, offset)| column_covered(position, offset, false))
+            .collect();
+        let null_columns: Vec<_> = table_offsets
+            .iter()
+            .enumerate()
+            .map(|(position, offset)| column_covered(position, offset, true))
+            .collect();
         // Predicates name the source's pruned schema, including a possible
         // hidden handle between stored columns. Mask truncated index copies
         // so a duplicate full common-handle copy supplies the value instead.
-        let layout = table_offsets
-            .iter()
-            .zip(&complete_columns)
-            .map(|(offset, complete)| {
-                if !complete {
-                    return usize::MAX;
-                }
-                match offset {
-                    Some(offset) => scan_keep
-                        .iter()
-                        .position(|kept| kept == offset)
-                        .map(|slot| {
-                            slot + usize::from(
-                                scan_extra_handle_slot.is_some_and(|extra| slot >= extra),
-                            )
-                        }),
-                    None => scan_extra_handle_slot,
-                }
-                .unwrap_or(usize::MAX)
-            })
-            .collect::<Vec<_>>();
+        let source_layout = |covered: &[bool]| {
+            table_offsets
+                .iter()
+                .zip(covered)
+                .map(|(offset, complete)| {
+                    if !complete {
+                        return usize::MAX;
+                    }
+                    match offset {
+                        Some(offset) => {
+                            scan_keep
+                                .iter()
+                                .position(|kept| kept == offset)
+                                .map(|slot| {
+                                    slot + usize::from(
+                                        scan_extra_handle_slot.is_some_and(|extra| slot >= extra),
+                                    )
+                                })
+                        }
+                        None => scan_extra_handle_slot,
+                    }
+                    .unwrap_or(usize::MAX)
+                })
+                .collect::<Vec<_>>()
+        };
+        let layout = source_layout(&complete_columns);
+        let null_layout = source_layout(&null_columns);
         let Some(predicates) = predicates
             .iter()
-            .map(|predicate| predicate.remapped_columns(&layout))
+            .map(|predicate| predicate.remapped_index_columns(&layout, &null_layout))
             .collect::<Option<Vec<_>>>()
         else {
             return Ok(None);
@@ -2017,14 +2052,21 @@ impl KvTable {
         // key column uses the trailing handle copy, not an indexed sort-key
         // copy (prefix/collation encodings may differ).
         let projected_indices = if let Some(keep) = projected_keep {
-            let Some(indices) =
-                keep.iter()
-                    .map(|offset| {
-                        table_offsets.iter().zip(&complete_columns).rposition(
-                            |(candidate, complete)| *complete && *candidate == Some(*offset),
-                        )
-                    })
-                    .collect::<Option<Vec<_>>>()
+            let Some(indices) = keep
+                .iter()
+                .map(|offset| {
+                    table_offsets
+                        .iter()
+                        .zip(&complete_columns)
+                        .enumerate()
+                        .rposition(|(position, (candidate, complete))| {
+                            (*complete
+                                || (allow_prefix_projection
+                                    && position < index.column_offsets.len()))
+                                && *candidate == Some(*offset)
+                        })
+                })
+                .collect::<Option<Vec<_>>>()
             else {
                 return Ok(None);
             };
@@ -5625,6 +5667,7 @@ mod remote_cursor_tests {
                 false,
                 true,
                 None,
+                false,
             )
             .unwrap()
             .is_none());
@@ -5739,6 +5782,7 @@ mod remote_cursor_tests {
                     false,
                     true,
                     None,
+                    false,
                 )
                 .unwrap();
             assert_eq!(cursor.is_some(), expected.is_some(), "prefix={prefix}, common={common}, version={version}, new_collation={new_collation}, slot={slot}");
@@ -5818,6 +5862,7 @@ mod remote_cursor_tests {
                         false,
                         true,
                         None,
+                        false,
                     )
                     .unwrap();
                 assert_eq!(cursor.is_some(), applied);
@@ -5882,6 +5927,7 @@ mod remote_cursor_tests {
                     false,
                     false,
                     Some(&[projected]),
+                    false,
                 )
                 .unwrap()
                 .unwrap();
@@ -5945,6 +5991,7 @@ mod remote_cursor_tests {
                         false,
                         false,
                         Some(&[1]),
+                        false,
                     )
                     .unwrap();
                 assert_eq!(cursor.is_some(), index_prefix == -1);
@@ -5955,6 +6002,145 @@ mod remote_cursor_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn index_selection_native_rows_preserve_the_full_duplicate_value() {
+        for (index_length, index_value, handle_value) in [
+            (-1, "abcdef", "ab"),
+            (20, "abcdef", "ab"),
+            (2, "ab", "abcdef"),
+        ] {
+            let mut table = index_selection_table(RequestCapture::default(), index_length)
+                .with_new_collation_mode(false);
+            table.pk_handle_offset = None;
+            table.set_common_handle_offsets(vec![1]);
+            let mut primary = table.indexes()[0].clone();
+            primary.id = 0;
+            primary.name = "PRIMARY".to_owned();
+            primary.prefix_lengths = vec![if handle_value.len() == 2 { 2 } else { -1 }];
+            table.add_index(primary, true);
+            let encoded = |value: &str| {
+                tidb_codec::encode_key(&[Datum::Bytes(value.as_bytes().to_vec())]).unwrap()
+            };
+            let handle = encoded(handle_value);
+            let mut key = encode_index_seek_key(91, 7, &encoded(index_value));
+            key.extend_from_slice(&handle);
+            let row = table
+                .index_filter_row(
+                    7,
+                    &TableHandle::Common(handle),
+                    &key,
+                    &[0],
+                    &SessionTimeZone::utc(),
+                )
+                .unwrap();
+            assert_eq!(
+                row[1].as_raw_bytes().unwrap(),
+                b"abcdef",
+                "index length {index_length} must select the complete duplicate"
+            );
+        }
+    }
+
+    #[test]
+    fn index_selection_allows_null_tests_on_prefixes_but_not_value_consumers() {
+        use tidb_expr::pushdown_catalog::{resolve, PbScalar};
+        let capture = RequestCapture {
+            response_predicates_applied: Some(true),
+            ..RequestCapture::default()
+        };
+        let mut table = index_selection_table(capture.clone(), 2);
+        let column = PbScalar::Column {
+            offset: 1,
+            field_type: table.columns[1].field_type.clone(),
+        };
+        let call = |name: &str, args: Vec<PbScalar>| PbScalar::Call {
+            signature: resolve(name, &args).unwrap(),
+            args,
+        };
+        let null = call("isnull", vec![column.clone()]);
+        let nested = ScanPredicate::Builtin(call("not", vec![null]));
+        let predicates = vec![ScanPredicate::Or(vec![
+            nested.clone(),
+            index_selection_predicate(0, table.columns[0].field_type.clone()),
+        ])];
+        let mut cursor = table
+            .pushdown_index_handle_cursor(
+                7,
+                &[IndexRange::full()],
+                &[0, 1],
+                None,
+                &predicates,
+                None,
+                &SessionTimeZone::utc(),
+                &PushdownStatementContext::default(),
+                false,
+                None,
+                None,
+                None,
+                false,
+                false,
+                Some(&[1]),
+                true,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(cursor.projected_indices, Some(vec![0]));
+        assert!(cursor.next_projected_row().unwrap().is_none());
+        let request = capture.captured.lock().unwrap().clone().unwrap();
+        let expected = ScanPredicate::Or(vec![
+            ScanPredicate::Builtin(call(
+                "not",
+                vec![call(
+                    "isnull",
+                    vec![PbScalar::Column {
+                        offset: 0,
+                        field_type: table.columns[1].field_type.clone(),
+                    }],
+                )],
+            )),
+            index_selection_predicate(1, table.columns[0].field_type.clone()),
+        ]);
+        assert_eq!(request.predicates, vec![expected]);
+        // Null tests can ignore a direct prefix's length, but cannot observe
+        // a function of truncated bytes, or sort those bytes as full values.
+        let wrong = ScanPredicate::Builtin(call("isnull", vec![call("char_length", vec![column])]));
+        assert!(wrong
+            .remapped_index_columns(&[usize::MAX, 0], &[1, 0])
+            .is_none());
+        assert!(
+            nested.remapped_columns(&[usize::MAX, 0]).is_none(),
+            "ordinary column pruning does not relax coverage"
+        );
+        let topn = PushdownTopN {
+            order_by: vec![crate::remote_scan::PushdownTopNOrder {
+                offset: 1,
+                desc: false,
+            }],
+            limit: 1,
+        };
+        assert!(table
+            .pushdown_index_handle_cursor(
+                7,
+                &[IndexRange::full()],
+                &[0, 1],
+                None,
+                &predicates,
+                Some(&topn),
+                &SessionTimeZone::utc(),
+                &PushdownStatementContext::default(),
+                false,
+                None,
+                None,
+                None,
+                false,
+                false,
+                Some(&[1]),
+                true,
+            )
+            .unwrap()
+            .is_none());
     }
 
     /// Go's TableReader requests the pruned schema and nothing else: the

@@ -169,6 +169,18 @@ impl ScanPredicate {
         remap_scan_predicate(&mut predicate, keep)?;
         Some(predicate)
     }
+
+    /// Remaps an index predicate; only direct IS NULL column arguments may
+    /// use the prefix-only layout, matching IsIndexCoveringCondition.
+    pub(crate) fn remapped_index_columns(
+        &self,
+        full: &[usize],
+        null_only: &[usize],
+    ) -> Option<Self> {
+        let mut predicate = self.clone();
+        remap_index_predicate(&mut predicate, full, null_only)?;
+        Some(predicate)
+    }
 }
 
 /// A column-versus-constant comparison.
@@ -487,12 +499,15 @@ fn describe_condition(
             })
         }
         ("isnull", [argument]) => {
-            let (column_offset, column_type) = column(argument).ok_or_else(unsupported)?;
-            Ok(ScanPredicate::IsNull {
-                column_offset,
-                column_type,
-                negated: false,
-            })
+            if let Some((column_offset, column_type)) = column(argument) {
+                Ok(ScanPredicate::IsNull {
+                    column_offset,
+                    column_type,
+                    negated: false,
+                })
+            } else {
+                Ok(ScanPredicate::Builtin(scalar(expression, context)?))
+            }
         }
         ("like", [tested, pattern, escape]) => {
             let (column_offset, column_type) = column(tested).ok_or_else(unsupported)?;
@@ -712,6 +727,14 @@ fn remapped_offset(offset: u32, keep: &[usize]) -> Option<u32> {
 }
 
 pub(crate) fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]) -> Option<()> {
+    remap_index_predicate(predicate, keep, keep)
+}
+
+fn remap_index_predicate(
+    predicate: &mut ScanPredicate,
+    keep: &[usize],
+    null_only: &[usize],
+) -> Option<()> {
     match predicate {
         ScanPredicate::Compare(comparison) => {
             comparison.column_offset = remapped_offset(comparison.column_offset, keep)?;
@@ -720,20 +743,23 @@ pub(crate) fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]
             comparison.left_offset = remapped_offset(comparison.left_offset, keep)?;
             comparison.right_offset = remapped_offset(comparison.right_offset, keep)?;
         }
-        ScanPredicate::IsNull { column_offset, .. } | ScanPredicate::In { column_offset, .. } => {
+        ScanPredicate::IsNull { column_offset, .. } => {
+            *column_offset = remapped_offset(*column_offset, null_only)?;
+        }
+        ScanPredicate::In { column_offset, .. } => {
             *column_offset = remapped_offset(*column_offset, keep)?;
         }
-        ScanPredicate::ScalarIn { tested, .. } => remap_pb_scalar(tested, keep)?,
+        ScanPredicate::ScalarIn { tested, .. } => remap_pb_scalar(tested, keep, null_only)?,
         ScanPredicate::Like { column_offset, .. } => {
             *column_offset = remapped_offset(*column_offset, keep)?;
         }
-        ScanPredicate::Builtin(scalar) => remap_pb_scalar(scalar, keep)?,
+        ScanPredicate::Builtin(scalar) => remap_pb_scalar(scalar, keep, null_only)?,
         ScanPredicate::And(branches) | ScanPredicate::Or(branches) => {
             for branch in branches {
-                remap_scan_predicate(branch, keep)?;
+                remap_index_predicate(branch, keep, null_only)?;
             }
         }
-        ScanPredicate::Not(inner) => remap_scan_predicate(inner, keep)?,
+        ScanPredicate::Not(inner) => remap_index_predicate(inner, keep, null_only)?,
     }
     Some(())
 }
@@ -741,14 +767,23 @@ pub(crate) fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]
 fn remap_pb_scalar(
     scalar: &mut tidb_expr::pushdown_catalog::PbScalar,
     keep: &[usize],
+    null_only: &[usize],
 ) -> Option<()> {
     match scalar {
         tidb_expr::pushdown_catalog::PbScalar::Column { offset, .. } => {
             *offset = remapped_offset(*offset, keep)?;
         }
-        tidb_expr::pushdown_catalog::PbScalar::Call { args, .. } => {
+        tidb_expr::pushdown_catalog::PbScalar::Call { signature, args } => {
+            if signature.name == "isnull" {
+                if let [tidb_expr::pushdown_catalog::PbScalar::Column { offset, .. }] =
+                    args.as_mut_slice()
+                {
+                    *offset = remapped_offset(*offset, null_only)?;
+                    return Some(());
+                }
+            }
             for argument in args {
-                remap_pb_scalar(argument, keep)?;
+                remap_pb_scalar(argument, keep, null_only)?;
             }
         }
         tidb_expr::pushdown_catalog::PbScalar::IntLiteral(_)

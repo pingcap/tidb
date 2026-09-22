@@ -1138,6 +1138,8 @@ fn data_source_prune_columns_separates_conds_from_output() {
     assert_eq!(
         source
             .cols_requiring_full_len
+            .as_ref()
+            .unwrap()
             .iter()
             .map(|c| c.unique_id)
             .collect::<Vec<_>>(),
