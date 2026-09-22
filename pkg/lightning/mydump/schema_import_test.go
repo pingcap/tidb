@@ -181,10 +181,32 @@ func TestSchemaImporter(t *testing.T) {
 		}
 		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").
 			WillReturnError(errors.New("non retryable create table error"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
+			WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
 		require.ErrorContains(t, importer2.Run(ctx, dbMetas), "non retryable create table error")
 		require.NoError(t, mock.ExpectationsWereMet())
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameT1)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameT2)))
+	})
+
+	t.Run("table: ignore execution error if table exists", func(t *testing.T) {
+		importer2 := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 1)
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		fileName := "test01.t3-schema.sql"
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte("CREATE table t3(a int);"), 0o644))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test01", Tables: []*MDTableMeta{
+				{DB: "test01", Name: "t3", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
+			}},
+		}
+		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t3`").
+			WillReturnError(errors.New("unsupported collation"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t3`").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t3", "CREATE TABLE `t3` (a int);"))
+		require.NoError(t, importer2.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
 	})
 
 	t.Run("table: ignore drop table in schema file", func(t *testing.T) {
