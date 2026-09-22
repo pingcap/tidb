@@ -125,8 +125,6 @@ const (
 	ActionAlterMaskingPolicy                    ActionType = 82
 	ActionDropMaskingPolicy                     ActionType = 83
 	ActionAlterTableSetRegionSplitPolicy        ActionType = 84
-	ActionCreateMaterializedViewLog             ActionType = 85
-	ActionCreateMaterializedView                ActionType = 86
 
 	// range [200, 256) is reserved for a downstream fork
 )
@@ -212,8 +210,6 @@ var ActionMap = map[ActionType]string{
 	ActionAlterMaskingPolicy:                    "alter masking policy",
 	ActionDropMaskingPolicy:                     "drop masking policy",
 	ActionAlterTableSetRegionSplitPolicy:        "alter table set region split policy",
-	ActionCreateMaterializedViewLog:             "create materialized view log",
-	ActionCreateMaterializedView:                "create materialized view",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -854,7 +850,7 @@ func (job *Job) GetSystemVars(name string) (string, bool) {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey, ActionCreateMaterializedView, ActionReorganizePartition,
+	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition,
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
@@ -891,8 +887,6 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StatePublic {
 			return false
 		}
-	case ActionCreateMaterializedView:
-		return job.SchemaState == StateNone || job.SchemaState == StateWriteReorganization
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
@@ -1003,23 +997,22 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type                ActionType `json:"type"`
-	JobArgs             JobArgs    `json:"-"`
-	args                []any
-	RawArgs             json.RawMessage       `json:"raw_args"`
-	SchemaState         SchemaState           `json:"schema_state"`
-	SnapshotVer         uint64                `json:"snapshot_ver"`
-	RealStartTS         uint64                `json:"real_start_ts"`
-	Revertible          bool                  `json:"revertible"`
-	State               JobState              `json:"state"`
-	RowCount            int64                 `json:"row_count"`
-	Warning             *terror.Error         `json:"warning"`
-	NeedReorg           bool                  `json:"-"`
-	SchemaVer           int64                 `json:"schema_version"`
-	ReorgTp             ReorgType             `json:"reorg_tp"`
-	ReorgStage          ReorgStage            `json:"reorg_stage"`
-	AnalyzeState        int8                  `json:"analyze_state"`
-	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info,omitempty"`
+	Type         ActionType `json:"type"`
+	JobArgs      JobArgs    `json:"-"`
+	args         []any
+	RawArgs      json.RawMessage `json:"raw_args"`
+	SchemaState  SchemaState     `json:"schema_state"`
+	SnapshotVer  uint64          `json:"snapshot_ver"`
+	RealStartTS  uint64          `json:"real_start_ts"`
+	Revertible   bool            `json:"revertible"`
+	State        JobState        `json:"state"`
+	RowCount     int64           `json:"row_count"`
+	Warning      *terror.Error   `json:"warning"`
+	NeedReorg    bool            `json:"-"`
+	SchemaVer    int64           `json:"schema_version"`
+	ReorgTp      ReorgType       `json:"reorg_tp"`
+	ReorgStage   ReorgStage      `json:"reorg_stage"`
+	AnalyzeState int8            `json:"analyze_state"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -1084,7 +1077,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		TraceInfo:           parentJob.TraceInfo,
 		SQLMode:             parentJob.SQLMode,
 		SessionVars:         parentJob.SessionVars,
-		InvolvingSchemaInfo: sub.InvolvingSchemaInfo,
 	}
 }
 
@@ -1099,7 +1091,6 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
-	sub.InvolvingSchemaInfo = proxyJob.InvolvingSchemaInfo
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 		sub.ReorgStage = proxyJob.ReorgMeta.Stage
@@ -1145,8 +1136,6 @@ type MultiSchemaInfo struct {
 
 	RelativeColumns []ast.CIStr `json:"-"`
 	PositionColumns []ast.CIStr `json:"-"`
-
-	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"-"`
 }
 
 // AddForeignKeyInfo contains foreign key information.
@@ -1430,20 +1419,6 @@ type TimeZoneLocation struct {
 	// indexIngestBaseWorker might access the location concurrently
 	location *time.Location
 	mu       sync.RWMutex
-}
-
-// Clone returns a copy of the time zone location without copying its mutex.
-func (tz *TimeZoneLocation) Clone() TimeZoneLocation {
-	if tz == nil {
-		return TimeZoneLocation{}
-	}
-	tz.mu.RLock()
-	defer tz.mu.RUnlock()
-	return TimeZoneLocation{
-		Name:     tz.Name,
-		Offset:   tz.Offset,
-		location: tz.location,
-	}
 }
 
 // GetLocation gets the timezone location.

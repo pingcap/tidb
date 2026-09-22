@@ -2278,12 +2278,6 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 
 	preSkipStats := s.sessionVars.SkipMissingPartitionStats
 	se.sessionVars.SkipMissingPartitionStats = s.sessionVars.SkipMissingPartitionStats
-	restoreSessionVars := func() {}
-	if execOption.SessionVarsSetup != nil {
-		if restore := execOption.SessionVarsSetup(se.sessionVars); restore != nil {
-			restoreSessionVars = restore
-		}
-	}
 
 	if execOption.SnapshotTS != 0 {
 		if err := se.sessionVars.SetSystemVar(vardef.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
@@ -2329,7 +2323,6 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.SkipMissingPartitionStats = preSkipStats
 		se.sessionVars.InspectionTableCache = nil
 		se.sessionVars.MemTracker.Detach()
-		restoreSessionVars()
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }

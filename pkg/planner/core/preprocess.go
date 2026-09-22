@@ -295,11 +295,6 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
-	case *ast.CreateMaterializedViewStmt:
-		p.stmtTp = TypeCreate
-		p.flag |= inCreateOrDropTable
-	case *ast.CreateMaterializedViewLogStmt:
-		p.stmtTp = TypeCreate
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeDrop
@@ -648,8 +643,6 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
-		p.flag &= ^inCreateOrDropTable
-	case *ast.CreateMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable

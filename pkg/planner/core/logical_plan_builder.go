@@ -5011,9 +5011,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	if err := CheckMViewReadable(sessionVars, tableInfo, tblName.O); err != nil {
-		return nil, err
-	}
 
 	var samplePartitions []table.PartitionedTable
 	if tableInfo.GetPartitionInfo() != nil {
@@ -6365,7 +6362,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		cacheColumnsIdx = true
 		columnsIdx = make(map[*ast.ColumnName]int, len(list))
 	}
-	sessionVars := b.ctx.GetSessionVars()
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
 		if err != nil {
@@ -6384,9 +6380,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if (tl.Schema.L == "" || tl.Schema.L == name.DBName.L) && (tl.Name.L == name.TblName.L) {
 				if isCTE(tlW) || tlW.TableInfo.IsView() || tlW.TableInfo.IsSequence() {
 					return nil, nil, false, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
-				}
-				if err := CheckMViewUpdatable(sessionVars, tlW.TableInfo, name.TblName.O, "UPDATE"); err != nil {
-					return nil, nil, false, err
 				}
 				foundListItem = true
 			}
@@ -6661,9 +6654,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				DBInfo:    tnW.DBInfo,
 			})
 			tableInfo := tnW.TableInfo
-			if err := CheckMViewUpdatable(sessionVars, tableInfo, tn.Name.O, "DELETE"); err != nil {
-				return nil, err
-			}
 			if tableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now", tn.Name.O)
 			}
@@ -6689,9 +6679,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			}
 			if tblW.TableInfo.IsSequence() {
 				return nil, errors.Errorf("delete sequence %s is not supported now", v.Name.O)
-			}
-			if err := CheckMViewUpdatable(sessionVars, tblW.TableInfo, v.Name.O, "DELETE"); err != nil {
-				return nil, err
 			}
 			dbName := v.Schema.L
 			if dbName == "" {
