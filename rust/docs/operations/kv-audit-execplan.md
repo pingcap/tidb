@@ -82,7 +82,7 @@ to another waiter. No throughput improvement is claimed before measurement.
 - [x] Own dispatcher registrations through acquire, route/waker changes, close, error and Drop.
 - [x] Preserve FIFO wake-one; transfer a free-slot notification when a selected waiter leaves.
 - [x] Refresh complete inventories; run scoped source/lifecycle suites, dependent compilation and required lint.
-- [ ] Publish the reviewed limiter checkpoint.
+- [x] Publish the reviewed limiter checkpoint (`1f9c5d4eb9`); remote divergence is `0 0`.
 
 ### Plan of work and decisions
 
@@ -213,3 +213,13 @@ No new protocol or SQL feature is introduced. Full original package/build/
 platform/generated gates, real TiKV, async limiter-wait metric parity and matched
 sysbench/TPC-C/TPC-H/YCSB measurements remain open. No throughput improvement is
 claimed from the wake-count regressions. Both package claims remain open.
+
+Publication: `1f9c5d4eb9368b4f57a1761bd9d810a56de723fe`
+(`distsql: retire coprocessor limiter waiters safely`) is pushed to
+origin/hparser-integration. The branch was pulled before publication and was
+already up to date; afterward HEAD and origin/hparser-integration matched, with
+`git rev-list --left-right --count HEAD...origin/hparser-integration` returning
+`0 0`. Only the user's preexisting untracked `tidb-expr/src/vs_helper.rs` and
+`tidb-planner/src/fragment.rs` remained. Approximately 242 GiB is available after
+the earlier disk cleanup and subsequent validation builds. This docs-only
+publication receipt does not change the validated code or close package gates.
