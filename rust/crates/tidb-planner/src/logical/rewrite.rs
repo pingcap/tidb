@@ -304,6 +304,21 @@ pub(crate) fn analyzed_filter_selectivity(
                     continue;
                 }
             }
+            // Go `Selectivity`'s notCoveredDNF arm (`selectivity.go:331-380`):
+            // a multi-column DNF the ranger cannot merge prices under the
+            // independence assumption, `sel(A ∪ B) = sel(A) + sel(B) −
+            // sel(A)·sel(B)`, each disjunct recursively estimated over its
+            // CNF items. TPC-H Q19's part selection (`or(and(eq(p_brand),
+            // in(p_container), le(p_size)), ...)` behind `ge(p_size, 1)`)
+            // estimated at the 0.8 default (8M rows) where Go prices
+            // 23,965 through this path.
+            if function.func_name.lowercase() == "or" && columns.len() > 1 {
+                if let Some(selectivity) = dnf_independence_selectivity(table_stats, condition) {
+                    selectivity_total *= selectivity;
+                    recognized = true;
+                    continue;
+                }
+            }
         }
         let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
             ("eq" | "nulleq", [Expression::Column(column), Expression::Constant(value)]) => {
@@ -433,6 +448,54 @@ pub(crate) fn analyzed_filter_selectivity(
 /// Go `GetStrMatchDefaultSelectivity`: the fallback used when a LIKE has no
 /// usable histogram sample.
 const DEFAULT_STRING_MATCH_SELECTIVITY: f64 = 0.1;
+
+/// Go `Selectivity`'s notCoveredDNF arm (`selectivity.go:331-380`): a
+/// multi-column DNF prices under the independence assumption,
+/// `sel(A ∪ B) = sel(A) + sel(B) − sel(A)·sel(B)`, each disjunct
+/// recursively estimated over its CNF items. `None` when any referenced
+/// column lacks statistics or the DNF flattens to a single item — Go
+/// skips those to the ranger/default paths.
+fn dnf_independence_selectivity(
+    table_stats: &StatsInfo,
+    condition: &Expression,
+) -> Option<f64> {
+    let items = flatten_boolean_conditions(condition, "or");
+    if items.len() <= 1 {
+        return None;
+    }
+    // Go skips the whole DNF when any referenced column has no stats
+    // (`continue OUTER`), leaving the condition to the string-match/
+    // generic defaults.
+    for column in tidb_expr::simple_expr::extract_columns(condition) {
+        if table_stats.col_ndv(column.unique_id) <= 0.0 {
+            return None;
+        }
+    }
+    let mut selectivity = 0.0_f64;
+    for item in items {
+        let cnf = flatten_boolean_conditions(&item, "and");
+        let cur = analyzed_filter_selectivity(table_stats, &cnf)
+            .unwrap_or(crate::cost_factors::SELECTION_FACTOR);
+        selectivity = selectivity + cur - selectivity * cur;
+    }
+    (selectivity != 0.0).then_some(selectivity)
+}
+
+/// Go `FlattenDNFConditions`/`FlattenCNFConditions`: flattens the nested
+/// `or` (resp. `and`) scalar functions into their connected leaves; any
+/// other expression is its own single leaf.
+fn flatten_boolean_conditions(condition: &Expression, connector: &str) -> Vec<Expression> {
+    if let Expression::ScalarFunction(function) = condition {
+        if function.func_name.lowercase() == connector {
+            let mut items = Vec::new();
+            for argument in &function.args {
+                items.extend(flatten_boolean_conditions(argument, connector));
+            }
+            return items;
+        }
+    }
+    vec![condition.clone()]
+}
 
 /// A `prefix%` LIKE estimated from the column histogram's bucket bounds: sum
 /// the rows of every bucket whose lower or upper bound starts with the
