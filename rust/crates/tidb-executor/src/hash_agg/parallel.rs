@@ -95,6 +95,7 @@ use super::spill::parallel_new_group_bytes;
 use super::*;
 use hashbrown::hash_map::{Entry, EntryRef};
 use hashbrown::HashMap as SwissMap;
+use smallvec::{smallvec, SmallVec};
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -410,9 +411,14 @@ impl Iterator for PipelineGroups {
 }
 
 /// One group inside a worker's map: its aggregate partial states.
+///
+/// Most pipeline shapes carry a single aggregate function (COUNT/SUM over
+/// one column), so the state is stored inline: a 30M-group pipeline (q13/q17
+/// at SF50) otherwise pays one heap allocation plus one indirection per
+/// group where Go's `partialResult` embeds its state in the map bucket.
 #[derive(Default)]
 struct PipelineGroup {
-    states: Vec<AggState>,
+    states: SmallVec<[AggState; 1]>,
 }
 
 impl PipelineGroup {
@@ -1113,7 +1119,7 @@ fn decode_spill_entry(
         states.push(read_state(&mut reader, func)?);
     }
     reader.finish()?;
-    Ok((key, PipelineGroup { states }))
+    Ok((key, PipelineGroup { states: states.into() }))
 }
 
 type SpillFile = Arc<Mutex<DataInDiskByChunks>>;
