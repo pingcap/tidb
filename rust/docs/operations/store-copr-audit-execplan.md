@@ -33,7 +33,9 @@ directory; inventory every artifact and module build input before editing.
 - [x] Add the 64-case master-backed resolved/committed/shared hint, ordering, cancellation and retry-exhaustion regression.
 - [x] Implement the coprocessor retry and typed error propagation through the existing response/SQL owners; verify red/green behavior.
 - [x] Audit the four snapshot read callers and remaining store-batch requirements; record the unresolved integration below.
-- [ ] Reconcile the complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
+- [x] Inventory the complete pinned txnsnapshot and config/retry dependency packages.
+- [x] Reconcile the live snapshot lock-hint, scan lock, per-batch retry and registered exhaustion boundaries; preserve the whole-package claim as open.
+- [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust and original master tests, dependent compilation, lint and self-review.
 - [ ] Satisfy the remaining whole-package build/platform/generated/live-store and workload gates.
 
@@ -227,3 +229,174 @@ live-store gates remain open. This receipt changes no package acceptance status.
 Revision note: recorded exact source ownership, the tested coprocessor outcome,
 red/green evidence, required gates and concrete snapshot/store-batch gaps so the
 whole-package audit can continue without treating this milestone as completion.
+
+
+## Snapshot integration milestone, 2026-09-22
+
+
+The previous turn published a2685738f1 and remote equality was verified. The
+next turn refreshed master and pulled the branch before editing; neither moved.
+Inventory all seven pinned txnkv/txnsnapshot artifacts before changing its Rust
+owners (client-go-txnsnapshot-package-inventory.md).
+
+Correction to the earlier four-site audit: raw Scan does not use read lock hints
+in master. scan.go retries response-level errors using ResolveLocks (ForRead
+false), but Scanner.Next resolves each pair error by snapshot.get and keeps the
+other pairs. Rust currently retries the whole scan under read permission for
+both. Fix this along with exact-RPC hint backoff in Get and BatchGet. Use one
+read-call budget for region errors and lock waits; preserve typed exhausted
+categories through OptimisticCoordinatorError and the executor storage boundary.
+BatchGet must resolve per physical response, preserving its context and clean
+values. Cover shared locks, cached hints, cancellation/exhaustion, bounded page
+reads, missing values and clean-prefix retention. No write-lock policy changes.
+
+Add regressions first, run the affected snapshot/lock/scan tests and compiler
+checks, then make lint and scoped formatting. Re-run source-oracle tests where
+available; live-store, complete package and workload acceptance remain open.
+Do not treat the previous statement that all four sites need identical hint
+checks as authoritative: scanner source above disproves that assumption.
+
+
+## Snapshot integration receipt, 2026-09-22
+
+
+The seven txnsnapshot artifacts and four config/retry artifacts now have complete
+SHA-256/line/owner inventories in rust/docs/parity. Each remains an open atomic
+package claim; the Rust changes below are integrated seed evidence.
+
+In tidb-txnkv/src/transaction/coordinator/snapshot_read.rs, the transaction-free
+point reader and ordinary Get now check the exact RPC's hint sets before lock
+resolution. A single call's region errors, ignored hints and live-lock waits
+share one budget. BatchGet retains each physical response's context, pending
+keys and budget; successful values survive retries. It no longer merges the
+remaining keys of independently running batches into one retry. A region split
+forks charged time/category history but resets delay schedules, as client-go
+Backoffer.Clone/Fork does; an unsplit retry retains its existing schedule.
+The native implementation is RegionBackoffBudget::fork in tidb-txnkv/src/retry.rs.
+
+Scanner pair errors now use snapshot_get_with for the locked key and retain the
+other page rows; missing values are skipped. The final physical key still moves
+the scan cursor even if that key no longer exists. Response-level lock errors
+retry the original page through resolution with ForRead false and no read hints
+on Scan requests. Visibility is checked before consuming response-level errors,
+as in scan.go. Each returned row ends Scanner.Next's budget scope; clean rows
+reuse an untouched budget instead of generating a random seed per row, and only
+the page's final key is copied for its continuation. These choices avoid adding
+per-row allocation or atomic seed updates on clean scans.
+
+Resolved/committed classifications are recorded before the ordinary TTL wait,
+including before a cancelled/exhausted wait, matching ClientHelper's ordering.
+The TTL cap is the actual returned duration. The previous helper imposed an
+unsupported 10ms minimum and could exhaust the budget prematurely. Shared-lock
+hint checks still charge once per physical response, not once per child.
+
+OptimisticCoordinatorError::SnapshotBackoff preserves the existing category and
+diagnostic. The executor's cluster_table_storage.rs converts it to the existing
+SQL error carrier before the legacy text-based retry heuristic. Its storage
+conversion also preserves an existing StorageError::Sql. Configured writes and
+multi-statement transactions retain that code through their existing error
+carriers. Tests prove both 9004 Resolve lock timeout and 9005 Region unavailable;
+unregistered categories keep the existing driver mapping. These changes do not
+change the write-side lock resolver or add a new retry cap.
+
+### Regression evidence
+
+
+The original implementation failed scan_pair_locks_use_point_get_without_replaying_clean_rows
+because it attempted another whole Scan instead of the two required point Gets.
+The ignored-hints test failed because seven locked replies returned without the
+six source-shaped waits (minimum 1+2+4+8+16+32ms). Both resolved and committed
+hints now reach subsequent Get/BatchGet RPCs. The BatchGet boundary regression
+failed with physical request sizes [5120, 1, 2] instead of [5120, 1, 1, 1],
+showing that two independent response retries had been merged.
+
+The response-level Scan regression failed because the old path stamped a read
+hint after MinCommitTSPushed rather than using non-read lock cleanup. The SQL
+regression observed Retryable("[tikv:9004]Resolve lock timeout") instead of the
+registered SQL error. The fork regression observed a 4ms child delay where Go
+starts a new 2ms delay schedule while retaining charged time. An isolated
+restoration of the old 10ms TTL floor made the new 1ms-TTL regression exhaust its
+budget prematurely. Each failing behavior passed after its fix. Temporary
+try/finally probes restored the working source before final green runs.
+
+### Exact validation
+
+
+From rust/, all of these passed:
+
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all snapshot_ --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test all region_error_recovery_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --test lock_resolver_source --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib transaction::coordinator --message-format=short
+    cargo test --offline --locked -j12 -p tidb-exec --lib snapshot_backoff --message-format=short
+    cargo test --offline --locked -j12 -p tidb-exec --lib cluster_table_storage --message-format=short
+    cargo test --offline --locked -j12 -p tidb-exec --lib commit_error_tests --message-format=short
+    cargo test --offline --locked -j12 -p tidb-server --lib configured_write_backoff_error_is_coded_on_the_wire --message-format=short
+    cargo test --offline --locked -j12 -p tidb-txnkv --lib snapshot_lock_wait_charges --message-format=short
+    cargo check --offline --locked -j12 -p tidb-txnkv -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --message-format=short
+
+Test counts in order are 17, 26, 30, 24, 3, 6, 2, 1 and 1; suites overlap.
+The wire test exercises the existing configured-error carrier, not a live TiKV
+snapshot timeout. An earlier aggregate filter for lock_resolver_source selected
+zero tests; it was rejected as evidence and replaced by the standalone command
+above. Existing warnings remain. Logs use /private/tmp/tidb-snapshot- with
+suffixes all.log, region.log, lock.log, coordinator.log, sql-green.log,
+storage.log, configured.log, wire.log, ttl-green.log and check.log. Red proofs
+are scan-red.log, hints-red.log, batch-red.log, scan-response-red.log,
+sql-red.log, fork-red.log and ttl-red.log.
+
+From the root, make lint, scoped formatting and whitespace checks passed:
+
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+From /private/tmp/tidb-master-cc83514 at master
+64e8c4c05ecbe7dfe3eca211c4fb44f97bd75c59:
+
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/txnkv/txnsnapshot -run '^(TestSnapshotRuntimeStats.*|TestCollectBatchGetResponseDataPointResponseStats|TestAsyncBatchGetCancellationWaitsForRetryWorker)$' -count=1 -v
+    GOTOOLCHAIN=go1.26.0 GOCACHE=/private/tmp/tidb-gocache go test github.com/tikv/client-go/v2/config/retry -run '^(TestBackoffDeepCopy|TestBackoffUpdateUsingFork|TestBackoffErrorType)$' -count=1 -v
+
+All seven snapshot originals and three retry originals passed (0.122s and
+3.943s package runtimes). The retry TestMain ran its goleak check. Neither
+package imports/injects failpoints; no source transformation was needed. Go
+results are supplementary oracle evidence and do not establish Rust ownership
+of the complete original async worker/statistics matrix. Logs are go.log and
+go-retry.log with the same prefix. The Go worktree remains unchanged.
+
+### Remaining scope and publication
+
+
+Self-review corrected Scan's source boundary, lock-set publication ordering and
+Backoffer fork semantics rather than carrying the earlier incorrect assumptions
+forward. No Go/Bazel/generated/module files changed, so this diff does not trigger
+change-based bazel_prepare. The fresh-master-worktree gate is still unsatisfied
+because bazel is missing. Full txnsnapshot options, MaxTS first-lock rules,
+reverse scans, worker cancellation/join behavior, metrics and original-test
+reconciliation remain open, as do txnlock/config/retry package gates. The live
+post-publication BatchGet recovery is still sequential; original Go async tests
+passing is not evidence of complete Rust worker parity. Store-batched coprocessor
+envelopes remain unsupported in the live coordinator.
+
+The main compatibility risk is concurrent read/lock behavior outside the
+scripted tests. Real TiKV and matched sysbench/TPC-C/TPC-H/YCSB workloads were
+not run, so no throughput or latency gain is claimed. The regression does prove
+that clean scan rows survive one locked row without another whole-page RPC.
+The goal and all incomplete package claims remain active.
+
+Publish the reviewed files as `txnkv: align snapshot lock retries with master`,
+then push hparser-integration and verify remote equality. Preserve the existing
+untracked vs_helper.rs and fragment.rs. Approximately 235 GiB remained available
+after validation; no additional user data was removed.
+
+Revision note: added complete dependency inventories, integrated snapshot read
+behavior, typed error propagation, source-backed fork/TTL fixes, red/green
+receipts and explicit remaining whole-package boundaries.
+
+
+Pre-publication refresh: the branch fast-forwarded from a2685738f1 to
+3802c14928, adding only an upstream TPC-H performance receipt in
+rust/docs/tpch50-perf-parity-2026-09-22.md. TiDB master stayed at 64e8c4c05e.
+That historical benchmark receipt is preserved and is not a measurement of
+this snapshot change. No implementation or validation inputs changed in the
+fast-forward. Final scoped formatting and whitespace checks passed afterward.

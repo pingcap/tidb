@@ -159,6 +159,17 @@ impl RegionBackoffBudget {
         }
     }
 
+    /// Forks a worker's budget like client-go Backoffer.Clone/Fork: preserve
+    /// charged sleep and its error category while restarting delay schedules.
+    #[must_use]
+    pub fn fork(&self) -> Self {
+        Self {
+            attempts: [0; RegionBackoffKind::COUNT],
+            jitter_state: entropy_seed(),
+            ..self.clone()
+        }
+    }
+
     /// Reserves the next source-shaped delay without sleeping.
     pub fn next_delay(
         &mut self,

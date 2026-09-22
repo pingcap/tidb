@@ -115,7 +115,7 @@ pub enum ConfiguredWriteError {
     Plan(PreparedWritePlanError),
     /// The prepared statement text did not parse.
     Parse(String),
-    /// A determinate commit failure with its driver error code and SQLSTATE.
+    /// A determinate storage failure with its driver error code and SQLSTATE.
     Commit(LockSqlError),
     /// The transaction was published and then lost its answer, so whether it
     /// committed is unknown. This is deliberately distinct from a determinate
@@ -331,7 +331,11 @@ impl From<MutationSetError> for ConfiguredWriteError {
 
 impl From<OptimisticCoordinatorError> for ConfiguredWriteError {
     fn from(error: OptimisticCoordinatorError) -> Self {
-        Self::Transaction(error)
+        if matches!(error, OptimisticCoordinatorError::SnapshotBackoff { .. }) {
+            Self::Commit(crate::cluster_table_storage::coordinator_sql_error(error))
+        } else {
+            Self::Transaction(error)
+        }
     }
 }
 
@@ -2163,6 +2167,18 @@ mod commit_error_tests {
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
         TransactionCause,
     };
+
+    #[test]
+    fn configured_write_snapshot_backoff_keeps_its_driver_error_identity() {
+        let error = ConfiguredWriteError::from(
+            tidb_txnkv::transaction::OptimisticCoordinatorError::SnapshotBackoff {
+                kind: RegionBackoffKind::TxnLockFast,
+                detail: "exhausted".to_owned(),
+            },
+        );
+        assert!(matches!(error, ConfiguredWriteError::Commit(error)
+            if error.code == 9004 && error.message == "[tikv:9004]Resolve lock timeout"));
+    }
 
     #[test]
     fn configured_write_backoff_exhaustion_keeps_its_driver_error_identity() {

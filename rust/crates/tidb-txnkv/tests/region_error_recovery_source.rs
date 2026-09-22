@@ -1434,3 +1434,32 @@ fn disk_full_without_a_cached_route_reserves_its_budget_then_rebuilds() {
     );
     assert_eq!(budget.total_sleep(), Duration::from_millis(500));
 }
+
+#[test]
+fn forked_retry_workers_keep_charged_time_but_restart_delay_schedules() {
+    use std::time::Duration;
+    use tidb_txnkv::region::{RegionBackoffBudget, RegionBackoffKind};
+    let mut parent = RegionBackoffBudget::new(Duration::from_millis(10));
+    assert_eq!(
+        parent.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+        Duration::from_millis(2)
+    );
+    let mut child = parent.fork();
+    assert_eq!(child.total_sleep(), parent.total_sleep());
+    assert_eq!(
+        child.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+        Duration::from_millis(2)
+    );
+    assert_eq!(
+        parent.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+        Duration::from_millis(4)
+    );
+    assert_eq!(child.total_sleep(), Duration::from_millis(4));
+    assert_eq!(parent.total_sleep(), Duration::from_millis(6));
+    parent.next_delay(RegionBackoffKind::RegionMiss).unwrap();
+    let error = parent
+        .fork()
+        .next_delay(RegionBackoffKind::TxnLockFast)
+        .unwrap_err();
+    assert_eq!(error.kind, RegionBackoffKind::RegionMiss);
+}

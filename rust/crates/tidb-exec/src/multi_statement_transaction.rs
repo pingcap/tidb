@@ -129,6 +129,9 @@ impl TransactionStatementError {
     /// admit, an overflow, an encoding refusal). It aborts the statement and
     /// nothing else: no mutation was staged and no lock state changed.
     fn write(error: &ConfiguredWriteError) -> Self {
+        if let ConfiguredWriteError::Commit(error) = error {
+            return Self::Statement(error.clone());
+        }
         Self::Statement(LockSqlError {
             code: 1105,
             state: *b"HY000",
@@ -1215,11 +1218,9 @@ fn classify_commit_outcome(
 }
 
 fn coordinator_error(error: OptimisticCoordinatorError) -> TransactionStatementError {
-    TransactionStatementError::Transaction(LockSqlError {
-        code: 1105,
-        state: *b"HY000",
-        message: format!("[kv:1105]transaction failed: {error}"),
-    })
+    TransactionStatementError::Transaction(crate::cluster_table_storage::coordinator_sql_error(
+        error,
+    ))
 }
 
 #[cfg(test)]
@@ -1275,6 +1276,22 @@ mod tests {
             receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
             cause,
         })
+    }
+
+    #[test]
+    fn snapshot_backoff_keeps_its_sql_identity_in_explicit_transactions() {
+        let error = tidb_txnkv::transaction::OptimisticCoordinatorError::SnapshotBackoff {
+            kind: tidb_txnkv::region::RegionBackoffKind::TxnLockFast,
+            detail: "exhausted".to_owned(),
+        };
+        let write = super::ConfiguredWriteError::from(error.clone());
+        for error in [
+            super::coordinator_error(error),
+            TransactionStatementError::write(&write),
+        ] {
+            assert_eq!(error.sql_error().code, 9004);
+            assert_eq!(error.sql_error().message, "[tikv:9004]Resolve lock timeout");
+        }
     }
 
     #[test]

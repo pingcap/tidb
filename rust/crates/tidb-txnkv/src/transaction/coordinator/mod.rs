@@ -132,6 +132,13 @@ pub enum OptimisticCoordinatorError {
     Mutations(MutationSetError),
     /// A real snapshot Get could not produce a determinate result.
     SnapshotGet(String),
+    /// A snapshot exhausted a client-go retry category; retain its SQL identity.
+    SnapshotBackoff {
+        /// Longest effective backoff category.
+        kind: crate::region::RegionBackoffKind,
+        /// Source backoff diagnostic for unregistered categories.
+        detail: String,
+    },
     /// The data this transaction read may already have been garbage-collected.
     ///
     /// This is deliberately its own variant rather than a `SnapshotGet` string:
@@ -156,6 +163,10 @@ impl fmt::Display for OptimisticCoordinatorError {
             Self::Timestamp(error) => write!(formatter, "PD timestamp allocation failed: {error}"),
             Self::Mutations(error) => error.fmt(formatter),
             Self::SnapshotGet(error) => write!(formatter, "snapshot Get failed: {error}"),
+            Self::SnapshotBackoff { kind, detail } => {
+                crate::to_tidb_driver_error(&crate::StorageDriverError::from_backoff(*kind, detail))
+                    .fmt(formatter)
+            }
             Self::Visibility(error) => error.fmt(formatter),
             Self::GcState(error) => write!(formatter, "txn safe point unavailable: {error}"),
         }
@@ -706,10 +717,6 @@ pub(super) fn wait_with_call(
     Ok(())
 }
 
-pub(super) fn alive_retry_delay(remaining_ttl: Duration) -> Duration {
-    remaining_ttl.max(Duration::from_millis(10))
-}
-
 trait AttemptRoute {
     fn evidence_region(&self) -> crate::region::RegionVerId;
     fn evidence_address(&self) -> &str;
@@ -854,7 +861,6 @@ mod tests {
 
     #[test]
     fn waits_use_the_absolute_call_deadline_and_cancellation() {
-        assert_eq!(alive_retry_delay(Duration::ZERO), Duration::from_millis(10));
         let expired = UnaryCallContext::with_timeout(Duration::ZERO);
         assert!(matches!(
             wait_with_call(&expired, Duration::from_millis(1)),

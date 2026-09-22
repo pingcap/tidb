@@ -1909,12 +1909,14 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 
 /// Maps a coordinator failure onto the seam's error kinds.
 ///
-/// The coordinator already retries region errors and resolvable locks
-/// internally; what reaches here outlived that budget. A topology or lock cause
-/// is still worth a *statement* retry at a fresh timestamp, which is the slot
-/// [`StorageError::Retryable`] was reserved for; everything else is terminal
-/// for the statement.
+/// Registered exhausted retry budgets keep their terminal SQL identity. The
+/// remaining untyped diagnostics retain the existing statement-retry heuristic;
+/// their text must not override a registered storage error.
 fn classify(error: OptimisticCoordinatorError) -> StorageError {
+    if matches!(error, OptimisticCoordinatorError::SnapshotBackoff { .. }) {
+        let sql = coordinator_sql_error(error);
+        return StorageError::Sql(tidb_executor::MysqlError::new(sql.code, sql.message));
+    }
     let message = error.to_string();
     let lowered = message.go_to_lower();
     let retryable = [
@@ -2093,14 +2095,26 @@ fn schema_lease_for(
     })
 }
 
-/// The generic client-visible failure of a commit that never reached TiKV's
-/// verdict. Only an outcome TiKV returned can carry a code of its own.
-fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSqlError {
-    engine_sql_error(error.to_string())
+/// Preserve registered snapshot failures; other failures before a commit
+/// verdict retain the existing generic transaction diagnostic.
+pub(crate) fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSqlError {
+    match error {
+        OptimisticCoordinatorError::SnapshotBackoff { kind, detail } => {
+            transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted { kind, detail })
+        }
+        other => engine_sql_error(other.to_string()),
+    }
 }
 
 fn storage_sql_error(error: StorageError) -> LockSqlError {
-    engine_sql_error(error.to_string())
+    match error {
+        StorageError::Sql(error) => LockSqlError {
+            code: error.code,
+            state: error.state,
+            message: error.message,
+        },
+        other => engine_sql_error(other.to_string()),
+    }
 }
 
 fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
@@ -2216,6 +2230,37 @@ mod tests {
                 if message.contains("already finished")),
             "a read after finish must be refused: {refused:?}"
         );
+    }
+
+    #[test]
+    fn snapshot_backoff_errors_keep_their_registered_sql_identity() {
+        for (kind, code, message) in [
+            (
+                tidb_txnkv::region::RegionBackoffKind::TxnLockFast,
+                9004,
+                "[tikv:9004]Resolve lock timeout",
+            ),
+            (
+                tidb_txnkv::region::RegionBackoffKind::RegionMiss,
+                9005,
+                "[tikv:9005]Region is unavailable",
+            ),
+        ] {
+            let error = OptimisticCoordinatorError::SnapshotBackoff {
+                kind,
+                detail: "exhausted".to_owned(),
+            };
+            let storage = classify(error.clone());
+            assert!(
+                matches!(&storage, StorageError::Sql(e) if e.code == code),
+                "{storage:?}"
+            );
+            for sql in [coordinator_sql_error(error), storage_sql_error(storage)] {
+                assert_eq!(sql.code, code);
+                assert_eq!(sql.state, *b"HY000");
+                assert_eq!(sql.message, message);
+            }
+        }
     }
 
     #[test]

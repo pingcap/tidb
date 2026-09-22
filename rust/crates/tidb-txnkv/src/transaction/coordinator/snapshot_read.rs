@@ -15,9 +15,9 @@
 //! Reads pinned to one transaction timestamp: point Get and ranged Scan,
 //! including the lock resolution and GC-visibility check each one owes.
 //!
-//! Go boundary: client-go's `snapshot.go` — `KVSnapshot.get` / `KVSnapshot.scan`,
-//! whose lock-retry budget and post-read `CheckVisibility` placement this
-//! mirrors exactly.
+//! Go boundaries: client-go `snapshot.go` (`KVSnapshot.get` / BatchGet) and
+//! `scan.go` (`Scanner.Next` / getData). Request hints and retry budgets belong
+//! to each read; locked scan pairs are reread through Get.
 
 use std::collections::HashMap;
 use tidb_proto::{
@@ -37,11 +37,89 @@ use super::super::command_client::{
     PublishedCommand, TransactionBatchGetRequest, TransactionCommandClient,
 };
 use super::super::region_batches::{group_snapshot_keys, point_route, RegionKeyBatch};
-use super::super::state::CoordinatorState;
+use super::super::state::{CoordinatorState, TransactionCause};
 use super::{
-    alive_retry_delay, recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
-    RealOptimisticTransaction, RecoveryPhase, RPC_READ_TIMEOUT_MEDIUM,
+    recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
+    RealOptimisticTransaction, RPC_READ_TIMEOUT_MEDIUM,
 };
+
+/// Retains the registered category instead of making exhaustion look retryable
+/// merely because its formatted text contains "lock" or "region".
+fn snapshot_recovery_error(cause: TransactionCause) -> OptimisticCoordinatorError {
+    match cause {
+        TransactionCause::BackoffExhausted { kind, detail } => {
+            OptimisticCoordinatorError::SnapshotBackoff { kind, detail }
+        }
+        other => OptimisticCoordinatorError::SnapshotGet(other.to_string()),
+    }
+}
+
+fn snapshot_backoff_error(
+    error: crate::region::RegionBackoffExhausted,
+) -> OptimisticCoordinatorError {
+    OptimisticCoordinatorError::SnapshotBackoff {
+        kind: error.kind,
+        detail: format!("{error:?}"),
+    }
+}
+
+fn backoff_ignored_snapshot_hints(
+    locks: &[crate::lock::BlockingLock],
+    context: &tidb_proto::KvrpcContext,
+    backoff: &mut RegionBackoffBudget,
+    call: &UnaryCallContext,
+) -> Result<(), OptimisticCoordinatorError> {
+    if locks.iter().any(|lock| {
+        context.resolved_locks.contains(&lock.txn_id())
+            || context.committed_locks.contains(&lock.txn_id())
+    }) {
+        let delay = backoff
+            .next_delay(crate::region::RegionBackoffKind::TxnLockFast)
+            .map_err(snapshot_backoff_error)?;
+        wait_with_call(call, delay).map_err(snapshot_recovery_error)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_snapshot_locks<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    locks: &[crate::lock::BlockingLock],
+    read_ts: u64,
+    context: &tidb_proto::KvrpcContext,
+    call: &UnaryCallContext,
+    timestamps: &T,
+    backoff: &mut RegionBackoffBudget,
+    for_read: bool,
+) -> Result<crate::lock::LockRecoveryResult, OptimisticCoordinatorError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    // Only the hints sent by this physical read can have been ignored.
+    if for_read {
+        backoff_ignored_snapshot_hints(locks, context, backoff, call)?;
+    }
+    let recovery =
+        resolve_blocking_locks(runtime, locks, read_ts, context, call, timestamps, for_read)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+    Ok(recovery)
+}
+
+fn wait_snapshot_lock_ttl(
+    recovery: &crate::lock::LockRecoveryResult,
+    backoff: &mut RegionBackoffBudget,
+    call: &UnaryCallContext,
+) -> Result<(), OptimisticCoordinatorError> {
+    if recovery.is_alive() {
+        let delay = backoff
+            .next_delay_capped(crate::region::RegionBackoffKind::TxnLockFast, recovery.ttl)
+            .map_err(snapshot_backoff_error)?;
+        wait_with_call(call, delay).map_err(snapshot_recovery_error)?;
+    }
+    Ok(())
+}
 
 /// Pairs one Scan page may return. client-go's `scanBatchSize`.
 const SCAN_PAGE_LIMIT: u32 = 256;
@@ -260,47 +338,25 @@ where
                 route.attempt(),
                 call,
             )
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            .map_err(snapshot_recovery_error)?;
             continue;
         }
         if let Some(key_error) = response.response.error.as_ref() {
             if let Some(lock_info) = key_error.locked.as_ref() {
                 let locks = decode_blocking_lock_observation(lock_info)
                     .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-                let recovery = resolve_blocking_locks(
-                    runtime, &locks, start_ts, &context, call, timestamps, true,
-                )
-                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                let recovery = resolve_snapshot_locks(
+                    runtime,
+                    &locks,
+                    start_ts,
+                    &context,
+                    call,
+                    timestamps,
+                    forward_backoff,
+                    true,
+                )?;
                 resolved_locks.absorb(&recovery);
-                // Go `KVSnapshot.get` (client-go `txnkv/txnsnapshot/
-                // snapshot.go`): a still-alive lock's wait is a `BoTxnLockFast`
-                // draw against the SAME backoffer that absorbs the call's
-                // region errors -- `bo.BackoffWithCfgAndMaxSleep(retry.
-                // BoTxnLockFast, int(msBeforeExpired), ...)` -- so the budget
-                // is TIME (20s effective), the per-wait sleep starts at 2ms and
-                // grows exponentially capped by the lock's own remaining TTL,
-                // and there is NO attempt cap. A fixed four-attempt cap here
-                // exhausted in milliseconds under sysbench's hot-row
-                // contention, failing statements Go simply waits out; a lock
-                // already resolved retries immediately with no draw, which is
-                // Go's `msBeforeExpired == 0` arm.
-                if recovery.is_alive() {
-                    // client-go's `BackoffWithCfgAndMaxSleep`: the TTL cap
-                    // bounds the CHARGED sleep too; see the sibling arms.
-                    let delay = forward_backoff
-                        .next_delay_capped(
-                            crate::retry::RegionBackoffKind::TxnLockFast,
-                            alive_retry_delay(recovery.ttl),
-                        )
-                        .map_err(|exhausted| {
-                            OptimisticCoordinatorError::SnapshotGet(format!(
-                                "snapshot lock retry budget exhausted: {exhausted:?}"
-                            ))
-                        })?;
-                    wait_with_call(call, delay).map_err(|error| {
-                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                    })?;
-                }
+                wait_snapshot_lock_ttl(&recovery, forward_backoff, call)?;
                 continue;
             }
             return Err(OptimisticCoordinatorError::SnapshotGet(format!(
@@ -432,12 +488,10 @@ where
     let mut pending: Option<PendingScanRegion> = None;
     let mut pair_count = 0_usize;
     let mut cursor = start_key.to_vec();
-    let mut lock_backoff = RegionBackoffBudget::campaign_default();
     while cursor.as_slice() < end_key {
         let route = point_route(runtime, &cursor)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        let mut context = context_with_resource_group(route.context(), resource_group_name);
-        resolved_locks.stamp(&mut context);
+        let context = context_with_resource_group(route.context(), resource_group_name);
         let region_end = route.region_end_key().to_vec();
         let page_end = if region_end.is_empty() || region_end.as_slice() > end_key {
             end_key.to_vec()
@@ -501,58 +555,71 @@ where
                 route.attempt(),
                 &page_call,
             )
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-            continue;
-        }
-        let mut locked = Vec::new();
-        if let Some(key_error) = response.response.error.as_ref() {
-            collect_scan_lock(key_error, &mut locked)?;
-        }
-        for pair in &response.response.pairs {
-            if let Some(key_error) = pair.error.as_ref() {
-                collect_scan_lock(key_error, &mut locked)?;
-            }
-        }
-        if !locked.is_empty() {
-            // `collect_scan_lock` now yields BlockingLocks, so a scan that
-            // meets a pessimistic lock resolves it through that lock's own
-            // protocol instead of refusing it. `true` is the reader's
-            // step-over permission, as at every other read site.
-            let recovery = resolve_blocking_locks(
-                runtime, &locked, read_ts, &context, &page_call, timestamps, true,
-            )
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-            resolved_locks.absorb(&recovery);
-            if recovery.is_alive() {
-                let delay = lock_backoff
-                    .next_delay_capped(
-                        crate::retry::RegionBackoffKind::TxnLockFast,
-                        alive_retry_delay(recovery.ttl),
-                    )
-                    .map_err(|exhausted| {
-                        OptimisticCoordinatorError::SnapshotGet(format!(
-                            "scan lock retry budget exhausted: {exhausted:?}"
-                        ))
-                    })?;
-                wait_with_call(&page_call, delay)
-                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-            }
+            .map_err(snapshot_recovery_error)?;
             continue;
         }
         gc_state
             .check_visibility(read_ts)
             .map_err(OptimisticCoordinatorError::Visibility)?;
+        if let Some(key_error) = response.response.error.as_ref() {
+            let mut locked = Vec::new();
+            collect_scan_lock(key_error, &mut locked)?;
+            let recovery = resolve_snapshot_locks(
+                runtime,
+                &locked,
+                read_ts,
+                &context,
+                &page_call,
+                timestamps,
+                forward_backoff,
+                false,
+            )?;
+            wait_snapshot_lock_ttl(&recovery, forward_backoff, &page_call)?;
+            continue;
+        }
         let page_len = response.response.pairs.len();
-        let last_key = response
-            .response
-            .pairs
-            .last()
-            .map(|pair| pair.key.clone())
-            .unwrap_or_default();
+        let mut last_key = Vec::new();
         let pending_region = pending.as_mut().expect("the serving region is pending");
-        for pair in response.response.pairs {
+        for (index, mut pair) in response.response.pairs.into_iter().enumerate() {
+            if let Some(error) = pair.error.as_ref() {
+                if pair.key.is_empty() {
+                    let lock = error.locked.as_ref().ok_or_else(|| {
+                        OptimisticCoordinatorError::SnapshotGet(format!(
+                            "TiKV scan key error: {error:?}"
+                        ))
+                    })?;
+                    pair.key.clone_from(&lock.key);
+                }
+            }
+            if index + 1 == page_len {
+                last_key.clone_from(&pair.key);
+            }
+            if pair.error.is_some() {
+                // Go Scanner.Next keeps clean page rows and rereads only this
+                // key through snapshot.get, including its exact-request hints.
+                let read = snapshot_get_with(
+                    runtime,
+                    timestamps,
+                    read_ts,
+                    gc_state,
+                    forward_backoff,
+                    resolved_locks,
+                    resource_group_name,
+                    &pair.key,
+                    &page_call,
+                )?;
+                let Some(value) = read.value else {
+                    continue;
+                };
+                pair.value = value;
+            }
             pending_region.pairs.push((pair.key, pair.value));
             pair_count += 1;
+            // A returned row ends Go Scanner.Next's backoff scope. Clean
+            // rows can reuse the untouched budget without drawing a new seed.
+            if !forward_backoff.total_sleep().is_zero() {
+                *forward_backoff = RegionBackoffBudget::campaign_default();
+            }
         }
         if limit.is_some_and(|limit| pair_count >= limit) {
             break;
@@ -673,13 +740,8 @@ where
                 rpc_count: 0,
             });
         }
-        // Go gives each `KVSnapshot.get` ONE backoffer (`getMaxBackoff`,
-        // 20s) shared by its region errors and lock waits. Region recovery
-        // here draws on `self`'s own budget seam, so the lock half carries
-        // its own 20s TIME budget: the accounting is split where Go's is
-        // shared, but the per-call ceiling and the `BoTxnLockFast` growth
-        // are Go's.
-        let mut lock_backoff = RegionBackoffBudget::campaign_default();
+        // One call owns both its region-error and lock-wait budget.
+        let mut read_backoff = RegionBackoffBudget::campaign_default();
         let mut rpc_count = 0_u64;
         loop {
             let route = point_route(&self.runtime, key)
@@ -698,13 +760,14 @@ where
             rpc_count = rpc_count.wrapping_add(1);
             let response = begin_get(&self.runtime, &route, &context, &request, call)?;
             if let Some(region_error) = response.response.region_error.as_ref() {
-                self.recover_region_error(
-                    RecoveryPhase::Forward,
+                recover_region_error_with(
+                    &self.runtime,
+                    &mut read_backoff,
                     region_error,
                     route.attempt(),
                     call,
                 )
-                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                .map_err(snapshot_recovery_error)?;
                 continue;
             }
             if let Some(key_error) = response.response.error.as_ref() {
@@ -712,39 +775,18 @@ where
                     let locks = decode_blocking_lock_observation(lock_info).map_err(|error| {
                         OptimisticCoordinatorError::SnapshotGet(error.to_string())
                     })?;
-                    let recovery = resolve_blocking_locks(
+                    let recovery = resolve_snapshot_locks(
                         &self.runtime,
                         &locks,
                         read_ts,
                         &context,
                         call,
                         &self.timestamps,
+                        &mut read_backoff,
                         true,
-                    )
-                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-                    // Go `ClientHelper.ResolveLocks`: record before retrying,
-                    // or the retry meets the same lock and never terminates.
+                    )?;
                     self.resolved_locks.absorb(&recovery);
-                    // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast`
-                    // time budget, no attempt cap.
-                    if recovery.is_alive() {
-                        // client-go's `BackoffWithCfgAndMaxSleep`: the TTL
-                        // cap bounds the CHARGED sleep too; see the sibling
-                        // arms.
-                        let delay = lock_backoff
-                            .next_delay_capped(
-                                crate::retry::RegionBackoffKind::TxnLockFast,
-                                alive_retry_delay(recovery.ttl),
-                            )
-                            .map_err(|exhausted| {
-                                OptimisticCoordinatorError::SnapshotGet(format!(
-                                    "snapshot lock retry budget exhausted: {exhausted:?}"
-                                ))
-                            })?;
-                        wait_with_call(call, delay).map_err(|error| {
-                            OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                        })?;
-                    }
+                    wait_snapshot_lock_ttl(&recovery, &mut read_backoff, call)?;
                     continue;
                 }
                 return Err(OptimisticCoordinatorError::SnapshotGet(format!(
@@ -824,17 +866,14 @@ where
         if keys.is_empty() {
             return Ok(cached.into_iter().collect());
         }
-        // Go `KVSnapshot.BatchGet` (`batchGetMaxBackoff`, 20s): the same
-        // time-budgeted `BoTxnLockFast` wait as `snapshot_get`'s lock arm.
-        let mut lock_backoff = RegionBackoffBudget::campaign_default();
-        let mut pending = std::borrow::Cow::Borrowed(keys);
+        let mut groups = group_snapshot_keys(&self.runtime, keys)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let mut budgets: Vec<_> = (0..groups.len())
+            .map(|_| RegionBackoffBudget::campaign_default())
+            .collect();
         let mut values = HashMap::new();
         loop {
-            let mut groups = group_snapshot_keys(&self.runtime, &pending)
-                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-            let mut locked = Vec::new();
-            let mut lock_context = None;
-            let mut retry_keys = Vec::new();
+            let mut retries = Vec::new();
             // Move routed keys into the wire requests; the route/attempt
             // metadata stays available for each response's own recovery.
             let request_keys: Vec<_> = groups.iter_mut().map(RegionKeyBatch::take_keys).collect();
@@ -867,7 +906,11 @@ where
             self.snapshot_batch_get_rpc_count = self
                 .snapshot_batch_get_rpc_count
                 .wrapping_add(requests.len() as u64);
-            for ((batch, request), published) in groups.iter().zip(requests).zip(published) {
+            for (((batch, request), published), mut backoff) in
+                groups.iter().zip(requests).zip(published).zip(budgets)
+            {
+                let mut locked = Vec::new();
+                let mut retry_keys = Vec::new();
                 let response = match published {
                     PublishedCommand::Response(response) => response,
                     PublishedCommand::BeforePublication(error)
@@ -876,14 +919,15 @@ where
                     }
                 };
                 if let Some(region_error) = response.response.region_error.as_ref() {
-                    self.recover_region_error(
-                        RecoveryPhase::Forward,
+                    recover_region_error_with(
+                        &self.runtime,
+                        &mut backoff,
                         region_error,
                         batch.attempt(),
                         call,
                     )
-                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-                    retry_keys.extend(request.request.keys);
+                    .map_err(snapshot_recovery_error)?;
+                    retries.push((request.request.keys, backoff));
                     continue;
                 }
                 if let Some(key_error) = response.response.error.as_ref() {
@@ -891,77 +935,73 @@ where
                         locked.extend(decode_blocking_lock_observation(lock_info).map_err(
                             |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
                         )?);
-                        lock_context = Some(request.context.clone());
                         // Go cannot trust any pairs when the response itself
                         // reports an error: retry this entire physical batch.
                         retry_keys.extend(request.request.keys);
-                        continue;
-                    }
-                    return Err(OptimisticCoordinatorError::SnapshotGet(format!(
-                        "TiKV key error: {key_error:?}"
-                    )));
-                }
-                for pair in response.response.pairs {
-                    if let Some(key_error) = pair.error.as_ref() {
-                        if let Some(lock_info) = key_error.locked.as_ref() {
-                            let observations = decode_blocking_lock_observation(lock_info)
-                                .map_err(|error| {
-                                    OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                                })?;
-                            // The lock owns the key; a pair's outer key may
-                            // be empty. Keep clean values and absent keys done.
-                            retry_keys.extend(observations.iter().map(|lock| lock.key().to_vec()));
-                            locked.extend(observations);
-                            lock_context = Some(request.context.clone());
-                            continue;
-                        }
+                    } else {
                         return Err(OptimisticCoordinatorError::SnapshotGet(format!(
                             "TiKV key error: {key_error:?}"
                         )));
                     }
-                    if !pair.value.is_empty() {
-                        values.insert(pair.key, pair.value);
+                } else {
+                    for pair in response.response.pairs {
+                        if let Some(key_error) = pair.error.as_ref() {
+                            if let Some(lock_info) = key_error.locked.as_ref() {
+                                let observations = decode_blocking_lock_observation(lock_info)
+                                    .map_err(|error| {
+                                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                                    })?;
+                                // The lock owns the key; a pair's outer key may
+                                // be empty. Keep clean values and absent keys done.
+                                retry_keys
+                                    .extend(observations.iter().map(|lock| lock.key().to_vec()));
+                                locked.extend(observations);
+                                continue;
+                            }
+                            return Err(OptimisticCoordinatorError::SnapshotGet(format!(
+                                "TiKV key error: {key_error:?}"
+                            )));
+                        }
+                        if !pair.value.is_empty() {
+                            values.insert(pair.key, pair.value);
+                        }
                     }
                 }
-            }
-            if !locked.is_empty() {
-                let context = lock_context.unwrap_or_default();
-                let recovery = resolve_blocking_locks(
-                    &self.runtime,
-                    &locked,
-                    read_ts,
-                    &context,
-                    call,
-                    &self.timestamps,
-                    true,
-                )
-                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-                self.resolved_locks.absorb(&recovery);
-                // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast` time
-                // budget, no attempt cap.
-                if recovery.is_alive() {
-                    // client-go's `BackoffWithCfgAndMaxSleep`: the TTL cap
-                    // bounds the CHARGED sleep too, so the 20s budget measures
-                    // real waiting -- charging the unclamped exponential
-                    // exhausted it after under a second against short-TTL
-                    // locks.
-                    let delay = lock_backoff
-                        .next_delay_capped(
-                            crate::retry::RegionBackoffKind::TxnLockFast,
-                            alive_retry_delay(recovery.ttl),
-                        )
-                        .map_err(|exhausted| {
-                            OptimisticCoordinatorError::SnapshotGet(format!(
-                                "snapshot lock retry budget exhausted: {exhausted:?}"
-                            ))
-                        })?;
-                    wait_with_call(call, delay).map_err(|error| {
-                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                    })?;
+                if !locked.is_empty() {
+                    let recovery = resolve_snapshot_locks(
+                        &self.runtime,
+                        &locked,
+                        read_ts,
+                        &request.context,
+                        call,
+                        &self.timestamps,
+                        &mut backoff,
+                        true,
+                    )?;
+                    self.resolved_locks.absorb(&recovery);
+                    wait_snapshot_lock_ttl(&recovery, &mut backoff, call)?;
+                }
+                if !retry_keys.is_empty() {
+                    retries.push((retry_keys, backoff));
                 }
             }
-            if !retry_keys.is_empty() {
-                pending = std::borrow::Cow::Owned(retry_keys);
+            if !retries.is_empty() {
+                groups = Vec::new();
+                budgets = Vec::new();
+                for (keys, backoff) in retries {
+                    let split = group_snapshot_keys(&self.runtime, &keys).map_err(|error| {
+                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                    })?;
+                    if split.len() == 1 {
+                        groups.extend(split);
+                        budgets.push(backoff);
+                    } else {
+                        for batch in split {
+                            groups.push(batch);
+                            budgets.push(backoff.fork());
+                        }
+                    }
+                }
                 continue;
             }
             self.check_visibility_at(read_ts)?;
@@ -1016,7 +1056,7 @@ where
             &self.runtime,
             &self.timestamps,
             &self.gc_state,
-            &mut self.forward_backoff,
+            &mut RegionBackoffBudget::campaign_default(),
             &mut self.resolved_locks,
             self.resource_group_name.as_deref(),
             start_key,
@@ -1046,7 +1086,7 @@ where
             &self.runtime,
             &self.timestamps,
             &self.gc_state,
-            &mut self.forward_backoff,
+            &mut RegionBackoffBudget::campaign_default(),
             &mut self.resolved_locks,
             self.resource_group_name.as_deref(),
             start_key,
@@ -1083,6 +1123,96 @@ fn collect_scan_lock(
 mod tests {
     use super::SnapshotCache;
     use std::collections::HashMap;
+
+    #[test]
+    fn snapshot_lock_wait_charges_the_actual_remaining_ttl() {
+        use super::*;
+        use std::time::Duration;
+        let recovery = crate::lock::LockRecoveryResult {
+            ttl: Duration::from_millis(1),
+            ..Default::default()
+        };
+        let mut budget = RegionBackoffBudget::new(Duration::from_millis(4));
+        let call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+        for _ in 0..4 {
+            wait_snapshot_lock_ttl(&recovery, &mut budget, &call).unwrap();
+        }
+        assert_eq!(budget.total_sleep(), Duration::from_millis(4));
+        assert!(matches!(
+            wait_snapshot_lock_ttl(&recovery, &mut budget, &call),
+            Err(OptimisticCoordinatorError::SnapshotBackoff {
+                kind: crate::region::RegionBackoffKind::TxnLockFast,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn ignored_snapshot_hints_share_the_existing_budget_and_cancel_waits() {
+        use super::*;
+        use crate::region::RegionBackoffKind;
+        use std::time::Duration;
+        for committed in [false, true] {
+            for shared in [false, true] {
+                let lock = tidb_proto::KvrpcLockInfo {
+                    key: b"row".to_vec(),
+                    primary_lock: b"row".to_vec(),
+                    lock_version: 42,
+                    ..Default::default()
+                };
+                let lock = if shared {
+                    tidb_proto::KvrpcLockInfo {
+                        shared_lock_infos: vec![lock.clone(), lock],
+                        ..Default::default()
+                    }
+                } else {
+                    lock
+                };
+                let locks = decode_blocking_lock_observation(&lock).unwrap();
+                let mut context = tidb_proto::KvrpcContext::default();
+                let mut budget = RegionBackoffBudget::new(Duration::from_millis(1));
+                let call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+                backoff_ignored_snapshot_hints(&locks, &context, &mut budget, &call).unwrap();
+                assert_eq!(budget.total_sleep(), Duration::ZERO);
+                if committed {
+                    context.committed_locks.push(42);
+                } else {
+                    context.resolved_locks.push(42);
+                }
+                backoff_ignored_snapshot_hints(&locks, &context, &mut budget, &call).unwrap();
+                assert_eq!(
+                    budget.total_sleep(),
+                    Duration::from_millis(1),
+                    "once per physical response"
+                );
+                assert!(matches!(
+                    backoff_ignored_snapshot_hints(&locks, &context, &mut budget, &call),
+                    Err(OptimisticCoordinatorError::SnapshotBackoff {
+                        kind: RegionBackoffKind::TxnLockFast,
+                        ..
+                    })
+                ));
+                let mut mixed = RegionBackoffBudget::new(Duration::from_millis(1));
+                mixed.next_delay(RegionBackoffKind::RegionMiss).unwrap();
+                assert!(matches!(
+                    backoff_ignored_snapshot_hints(&locks, &context, &mut mixed, &call),
+                    Err(OptimisticCoordinatorError::SnapshotBackoff {
+                        kind: RegionBackoffKind::RegionMiss,
+                        ..
+                    })
+                ));
+                let cancelled = UnaryCallContext::with_timeout(Duration::from_secs(1));
+                cancelled.cancellation().cancel();
+                assert!(backoff_ignored_snapshot_hints(
+                    &locks,
+                    &context,
+                    &mut RegionBackoffBudget::campaign_default(),
+                    &cancelled
+                )
+                .is_err());
+            }
+        }
+    }
 
     #[test]
     fn snapshot_cache_update_and_timestamp_reset() {

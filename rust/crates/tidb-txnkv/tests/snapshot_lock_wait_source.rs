@@ -138,7 +138,10 @@ impl TimestampSource for TickingTimestamps {
 #[derive(Debug, Default)]
 struct Recorded {
     get_versions: Vec<u64>,
+    get_contexts: Vec<KvrpcContext>,
+    scans: Vec<(KvrpcScanRequest, KvrpcContext)>,
     batch_requests: Vec<KvrpcBatchGetRequest>,
+    batch_contexts: Vec<KvrpcContext>,
     status_checks: Vec<KvrpcCheckTxnStatusRequest>,
 }
 
@@ -150,6 +153,9 @@ struct LockingClient {
     request_ids: u64,
     recorded: Arc<Mutex<Recorded>>,
     batch_responses: std::collections::VecDeque<KvrpcBatchGetResponse>,
+    get_responses: std::collections::VecDeque<KvrpcGetResponse>,
+    scan_responses: std::collections::VecDeque<KvrpcScanResponse>,
+    status_response: Option<KvrpcCheckTxnStatusResponse>,
 }
 
 impl LockingClient {
@@ -159,6 +165,9 @@ impl LockingClient {
             request_ids: 0,
             recorded,
             batch_responses: Default::default(),
+            get_responses: Default::default(),
+            scan_responses: Default::default(),
+            status_response: None,
         }
     }
 
@@ -199,7 +208,7 @@ impl TransactionCommandClient for LockingClient {
         &mut self,
         _address: &str,
         request: &KvrpcGetRequest,
-        _context: &KvrpcContext,
+        context: &KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcGetResponse> {
         self.recorded
@@ -207,6 +216,14 @@ impl TransactionCommandClient for LockingClient {
             .unwrap()
             .get_versions
             .push(request.version);
+        self.recorded
+            .lock()
+            .unwrap()
+            .get_contexts
+            .push(context.clone());
+        if let Some(response) = self.get_responses.pop_front() {
+            return self.respond(BatchCommandTag::Get, response);
+        }
         let response = if self.remaining_locked > 0 {
             self.remaining_locked -= 1;
             KvrpcGetResponse {
@@ -239,7 +256,7 @@ impl TransactionCommandClient for LockingClient {
         &mut self,
         _address: &str,
         request: &KvrpcBatchGetRequest,
-        _context: &KvrpcContext,
+        context: &KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcBatchGetResponse> {
         self.recorded
@@ -247,6 +264,11 @@ impl TransactionCommandClient for LockingClient {
             .unwrap()
             .batch_requests
             .push(request.clone());
+        self.recorded
+            .lock()
+            .unwrap()
+            .batch_contexts
+            .push(context.clone());
         if let Some(response) = self.batch_responses.pop_front() {
             return self.respond(BatchCommandTag::BatchGet, response);
         }
@@ -287,11 +309,19 @@ impl TransactionCommandClient for LockingClient {
     fn publish_transaction_scan(
         &mut self,
         _address: &str,
-        _request: &KvrpcScanRequest,
-        _context: &KvrpcContext,
+        request: &KvrpcScanRequest,
+        context: &KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcScanResponse> {
-        never_published!(self, "Scan")
+        self.recorded
+            .lock()
+            .unwrap()
+            .scans
+            .push((request.clone(), context.clone()));
+        match self.scan_responses.pop_front() {
+            Some(response) => self.respond(BatchCommandTag::Scan, response),
+            None => never_published!(self, "Scan"),
+        }
     }
 
     fn publish_prewrite(
@@ -368,6 +398,9 @@ impl LockRecoveryClient for LockingClient {
             .unwrap()
             .status_checks
             .push(request.clone());
+        if let Some(response) = &self.status_response {
+            return Ok(response.clone());
+        }
         // The blocking transaction is alive: a positive `lock_ttl` and no
         // commit version, which is what makes the reader WAIT rather than
         // resolve.
@@ -394,7 +427,11 @@ impl LockRecoveryClient for LockingClient {
         _context: &KvrpcContext,
         _call: &UnaryCallContext,
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
-        panic!("an alive lock is waited out, never resolved");
+        assert!(
+            self.status_response.is_some(),
+            "an alive lock is waited out, never resolved"
+        );
+        Ok(KvrpcResolveLockResponse::default())
     }
 
     fn pessimistic_rollback_for_lock(
@@ -758,5 +795,295 @@ fn assert_batch_read_limits_and_pending_retries() {
             .unwrap()
             .rpc_count,
         1
+    );
+}
+
+#[test]
+fn scan_pair_locks_use_point_get_without_replaying_clean_rows() {
+    for shared in [false, true] {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut client = LockingClient::new(Arc::clone(&recorded));
+        client.remaining_locked = 0;
+        client.status_response = Some(KvrpcCheckTxnStatusResponse {
+            commit_version: START_TS,
+            ..Default::default()
+        });
+        let lock = LockingClient::live_lock();
+        let lock = if shared {
+            KvrpcLockInfo {
+                key: ROW_KEY.to_vec(),
+                shared_lock_infos: vec![lock],
+                ..Default::default()
+            }
+        } else {
+            lock
+        };
+        client.scan_responses.push_back(KvrpcScanResponse {
+            pairs: vec![
+                tidb_proto::KvrpcKvPair {
+                    key: b"a".to_vec(),
+                    value: b"clean-prefix".to_vec(),
+                    ..Default::default()
+                },
+                tidb_proto::KvrpcKvPair {
+                    error: Some(KvrpcKeyError {
+                        locked: Some(KvrpcLockInfo {
+                            key: b"missing".to_vec(),
+                            ..lock.clone()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                tidb_proto::KvrpcKvPair {
+                    error: Some(KvrpcKeyError {
+                        locked: Some(lock),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                tidb_proto::KvrpcKvPair {
+                    key: b"z".to_vec(),
+                    value: b"clean-suffix".to_vec(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        let mut transaction = RealOptimisticTransaction::new_injected(
+            SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
+            TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+            CALL_TIMEOUT,
+            START_TS,
+            Instant::now(),
+            4,
+            4096,
+        )
+        .unwrap();
+        assert_eq!(
+            transaction
+                .snapshot_scan(
+                    b"a",
+                    b"zz",
+                    None,
+                    &UnaryCallContext::with_timeout(CALL_TIMEOUT)
+                )
+                .unwrap(),
+            vec![
+                (b"a".to_vec(), b"clean-prefix".to_vec()),
+                (ROW_KEY.to_vec(), b"waited-out-value".to_vec()),
+                (b"z".to_vec(), b"clean-suffix".to_vec()),
+            ]
+        );
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(recorded.scans.len(), 1, "keep the original clean rows");
+        assert_eq!(recorded.get_versions, vec![START_TS; 2]);
+        assert!(
+            recorded.status_checks.is_empty(),
+            "pair errors are reread through Get before resolving"
+        );
+    }
+}
+
+#[test]
+fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
+    for batch in [false, true] {
+        for committed in [false, true] {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut client = LockingClient::new(Arc::clone(&recorded));
+            client.remaining_locked = 0;
+            client.status_response = Some(KvrpcCheckTxnStatusResponse {
+                commit_version: if committed { START_TS } else { START_TS + 1 },
+                ..Default::default()
+            });
+            let error = KvrpcKeyError {
+                locked: Some(LockingClient::live_lock()),
+                ..Default::default()
+            };
+            for _ in 0..7 {
+                client.get_responses.push_back(KvrpcGetResponse {
+                    error: Some(error.clone()),
+                    ..Default::default()
+                });
+                client.batch_responses.push_back(KvrpcBatchGetResponse {
+                    error: Some(error.clone()),
+                    ..Default::default()
+                });
+            }
+            let mut transaction = RealOptimisticTransaction::new_injected(
+                SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
+                TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+                CALL_TIMEOUT,
+                START_TS,
+                Instant::now(),
+                4,
+                4096,
+            )
+            .unwrap();
+            let started = Instant::now();
+            if batch {
+                assert_eq!(
+                    transaction
+                        .snapshot_batch_get(
+                            &[ROW_KEY.to_vec()],
+                            &UnaryCallContext::with_timeout(CALL_TIMEOUT)
+                        )
+                        .unwrap()
+                        .len(),
+                    1
+                );
+            } else {
+                assert!(transaction
+                    .snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+                    .unwrap()
+                    .value
+                    .is_some());
+            }
+            let recorded = recorded.lock().unwrap();
+            let contexts = if batch {
+                &recorded.batch_contexts
+            } else {
+                &recorded.get_contexts
+            };
+            assert_eq!(contexts.len(), 8);
+            assert!(
+                contexts[0].resolved_locks.is_empty() && contexts[0].committed_locks.is_empty()
+            );
+            assert!(contexts[1..].iter().all(|ctx| if committed {
+                ctx.committed_locks == [LOCK_TS]
+            } else {
+                ctx.resolved_locks == [LOCK_TS]
+            }));
+            // Six equal-jitter draws have lower bounds 1+2+4+8+16+32ms.
+            assert!(started.elapsed() >= Duration::from_millis(63), "ignored hints must consume the actual retry wait: batch={batch}, committed={committed}");
+        }
+    }
+}
+
+#[test]
+fn batch_get_retries_keep_physical_response_boundaries() {
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let mut client = LockingClient::new(Arc::clone(&recorded));
+    client.remaining_locked = 0;
+    client.status_response = Some(KvrpcCheckTxnStatusResponse {
+        commit_version: START_TS,
+        ..Default::default()
+    });
+    let keys: Vec<_> = (0..5121).map(|i| format!("{i:05}").into_bytes()).collect();
+    let locked_pair = |key: Vec<u8>| tidb_proto::KvrpcKvPair {
+        error: Some(KvrpcKeyError {
+            locked: Some(KvrpcLockInfo {
+                key,
+                ..LockingClient::live_lock()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let mut first: Vec<_> = keys[1..5120]
+        .iter()
+        .map(|key| tidb_proto::KvrpcKvPair {
+            key: key.clone(),
+            value: b"clean".to_vec(),
+            ..Default::default()
+        })
+        .collect();
+    first.push(locked_pair(keys[0].clone()));
+    client.batch_responses = [
+        KvrpcBatchGetResponse {
+            pairs: first,
+            ..Default::default()
+        },
+        KvrpcBatchGetResponse {
+            pairs: vec![locked_pair(keys[5120].clone())],
+            ..Default::default()
+        },
+    ]
+    .into();
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+    let values = transaction
+        .snapshot_batch_get(&keys, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+        .unwrap();
+    assert_eq!(values.len(), keys.len());
+    assert_eq!(
+        recorded
+            .lock()
+            .unwrap()
+            .batch_requests
+            .iter()
+            .map(|r| r.keys.len())
+            .collect::<Vec<_>>(),
+        vec![5120, 1, 1, 1]
+    );
+    assert_eq!(values.iter().filter(|(_, v)| v == b"clean").count(), 5119);
+}
+
+#[test]
+fn scan_response_locks_wait_without_stamping_read_hints() {
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let mut client = LockingClient::new(Arc::clone(&recorded));
+    client.remaining_locked = 0;
+    client.status_response = Some(KvrpcCheckTxnStatusResponse {
+        lock_ttl: 20,
+        action: tidb_proto::KvrpcTxnAction::MinCommitTsPushed as i32,
+        ..Default::default()
+    });
+    client.scan_responses = [
+        KvrpcScanResponse {
+            error: Some(KvrpcKeyError {
+                locked: Some(LockingClient::live_lock()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        KvrpcScanResponse {
+            pairs: vec![tidb_proto::KvrpcKvPair {
+                key: ROW_KEY.to_vec(),
+                value: b"resolved".to_vec(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+    ]
+    .into();
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+    assert_eq!(
+        transaction
+            .snapshot_scan(
+                b"a",
+                b"z",
+                None,
+                &UnaryCallContext::with_timeout(CALL_TIMEOUT)
+            )
+            .unwrap(),
+        vec![(ROW_KEY.to_vec(), b"resolved".to_vec())]
+    );
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.scans.len(), 2);
+    assert!(recorded
+        .scans
+        .iter()
+        .all(|(_, ctx)| ctx.resolved_locks.is_empty() && ctx.committed_locks.is_empty()));
+    assert!(
+        recorded.get_versions.is_empty(),
+        "a response-level error retries the full scan page"
     );
 }
