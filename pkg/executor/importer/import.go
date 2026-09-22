@@ -1330,6 +1330,14 @@ func checkDataSourceGlob(fileNameKey string) error {
 // CheckDataSourceAccess checks whether the data source can be accessed without
 // discovering all matching files. It is used before submitting a task whose
 // full file discovery runs asynchronously.
+//
+// It is only called by CheckRequirementsBeforeInitDataFiles, i.e. on the
+// NextGen async-prepare path, where the import uses global sort and the data
+// source is on cloud storage (import from server disk is rejected when SEM is
+// enabled). Credentials of such a data source normally grant access to the
+// whole directory rather than to individual files, so probing a single object
+// is a good enough access check: matching, empty-file validation and size
+// limits are still done by the asynchronous prepare.
 func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
 	u, fileNameKey, err := e.parseDataSourcePath()
 	if err != nil {
@@ -1375,7 +1383,9 @@ func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
 		}
 		terror.Log(reader.Close())
 		// Stop after the first object. File matching and complete discovery are
-		// intentionally deferred to asynchronous prepare.
+		// intentionally deferred to asynchronous prepare. The object opened here
+		// does not have to match the pattern: credentials of a cloud data source
+		// normally cover the whole directory, so any object in it is readable.
 		return io.EOF
 	})
 	if err != nil && errors.Cause(err) != io.EOF {
