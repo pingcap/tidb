@@ -81,8 +81,9 @@ func TestFTSAlternativeRoundRestore(t *testing.T) {
 		}
 	}
 	require.NotNil(t, round.setup)
-	first := &variable.SessionVars{StmtCtx: &stmtctx.StatementContext{}}
-	second := &variable.SessionVars{StmtCtx: &stmtctx.StatementContext{InFTSLikeFallbackRound: true}}
+	first := &variable.SessionVars{StmtCtx: stmtctx.NewStmtCtx()}
+	second := &variable.SessionVars{StmtCtx: stmtctx.NewStmtCtx()}
+	second.StmtCtx.InFTSLikeFallbackRound = true
 	cleanup1 := round.setup(first)
 	cleanup2 := round.setup(second)
 	cleanup1()

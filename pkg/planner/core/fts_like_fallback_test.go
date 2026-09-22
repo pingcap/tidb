@@ -352,7 +352,6 @@ func TestFTSLikeConcurrentSessions(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	for n := 0; n < 8; n++ {
-		n := n
 		s := testkit.NewTestKit(t, store)
 		wg.Add(1)
 		go func() {
