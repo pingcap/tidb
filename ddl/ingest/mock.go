@@ -188,3 +188,8 @@ func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
 func (*MockWriter) LockForWrite() func() {
 	return func() {}
 }
+
+// CleanupSortPath implements BackendCtxMgr.CleanupSortPath.
+func (*MockBackendCtxMgr) CleanupSortPath(_ context.Context, _ int64) error {
+	return nil
+}
