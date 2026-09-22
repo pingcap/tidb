@@ -66,6 +66,197 @@ pub struct FinalModeSplit {
     pub first_row_func_map: HashMap<usize, usize>,
 }
 
+/// The three physical aggregation stages Go builds for a scalar single
+/// `COUNT(DISTINCT column)` aggregate. The partial stage keeps the distinct
+/// key in its group-by, the middle stage evaluates the local distinct/count
+/// merge, and the final stage gathers the middle results into one worker.
+#[derive(Debug)]
+pub struct ThreeStageAggSplit {
+    /// The source-side partial aggregate.
+    pub partial: crate::physical::PhysicalPlan,
+    /// The hash-partitioned middle aggregate.
+    pub middle: crate::physical::PhysicalPlan,
+    /// The single-partition final aggregate.
+    pub final_agg: crate::physical::PhysicalPlan,
+    /// The columns used by the partial-to-middle hash exchange.
+    pub partition_cols: Vec<crate::physical_property::MppPartitionColumn>,
+}
+
+/// Go `BasePhysicalAgg.canUse3Stage4SingleDistinctAgg` (`base_physical_agg.go:403`).
+///
+/// The three-stage rewrite is deliberately narrow: one distinct COUNT, no
+/// grouping set, no aggregate-local ordering, complete input descriptors, and
+/// column arguments only. Unsupported shapes stay on Go's ordinary scalar
+/// two-stage path.
+#[must_use]
+pub fn can_use_three_stage_single_distinct(
+    agg_funcs: &[AggFuncDesc],
+    group_by_items: &[Expression],
+) -> bool {
+    if !group_by_items.is_empty() {
+        return false;
+    }
+    let mut distinct_count = 0;
+    for function in agg_funcs {
+        if function.has_distinct {
+            distinct_count += 1;
+            if distinct_count > 1 || function.name() != names::COUNT {
+                return false;
+            }
+            if function
+                .base
+                .args
+                .iter()
+                .any(|argument| !matches!(argument, Expression::Column(_)))
+            {
+                return false;
+            }
+        } else if function.base.args.len() > 1 {
+            return false;
+        }
+        if !function.order_by_items.is_empty()
+            || function.mode != AggFunctionMode::Complete
+        {
+            return false;
+        }
+        // Go's middle-stage construction reads the one ordinary argument as
+        // a column. Refuse a non-column here instead of producing an invalid
+        // remap for a descriptor that the source implementation cannot use.
+        if !function.has_distinct
+            && function
+                .base
+                .args
+                .first()
+                .is_some_and(|argument| !matches!(argument, Expression::Column(_)))
+        {
+            return false;
+        }
+    }
+    distinct_count == 1
+}
+
+/// Go `adjust3StagePhaseAgg`'s single-distinct branch (`task.go:1840`).
+///
+/// `new_partial_aggregate_mpp` has already produced the source partial and
+/// the ordinary final descriptor. This function clones that final descriptor
+/// into the middle phase, changes the distinct COUNT to a SUM in the final
+/// phase, and remaps ordinary aggregate arguments through the middle schema.
+pub fn adjust_three_stage_single_distinct(
+    partial: crate::physical::PhysicalPlan,
+    final_agg: crate::physical::PhysicalPlan,
+    column_ids: &ColumnIdAllocator,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+) -> Result<Option<ThreeStageAggSplit>, crate::plan_base::PlanError> {
+    use crate::physical::{PhysicalHashAgg, PhysicalPlan};
+
+    let PhysicalPlan::HashAgg(mut final_hash) = final_agg else {
+        return Ok(None);
+    };
+    let PhysicalPlan::HashAgg(partial_hash) = &partial else {
+        return Ok(None);
+    };
+    let Some(distinct_pos) = final_hash
+        .agg_funcs
+        .iter()
+        .position(|function| function.has_distinct)
+    else {
+        return Ok(None);
+    };
+    if final_hash
+        .agg_funcs
+        .iter()
+        .filter(|function| function.has_distinct)
+        .count()
+        != 1
+    {
+        return Ok(None);
+    }
+
+    let mut partition_cols = Vec::with_capacity(partial_hash.group_by_items.len());
+    for item in &partial_hash.group_by_items {
+        let Expression::Column(column) = item else {
+            return Ok(None);
+        };
+        let collate_id = column
+            .get_static_type()
+            .map(|field_type| {
+                crate::physical_property::collate_id_for_partition(field_type.collation_name())
+            })
+            .unwrap_or(-1);
+        partition_cols.push(crate::physical_property::MppPartitionColumn {
+            col: column.clone(),
+            collate_id,
+        });
+    }
+    if partition_cols.is_empty() {
+        return Ok(None);
+    }
+
+    // The source Clone allocates a fresh plan identity for the middle phase;
+    // its child is attached later by `attach_plan_to_task`.
+    let mut middle_hash = PhysicalHashAgg {
+        base: final_hash.base.clone(),
+        agg_funcs: final_hash.agg_funcs.clone(),
+        group_by_items: final_hash.group_by_items.clone(),
+        mpp_run_mode: final_hash.mpp_run_mode,
+        mpp_partition_cols: final_hash.mpp_partition_cols.clone(),
+    };
+    middle_hash.base.base.set_id(plan_ids.alloc());
+    middle_hash
+        .base
+        .set_children_req_props(vec![Some(crate::physical_property::PhysicalProperty::default())]);
+
+    let mut middle_schema = Schema::default();
+    let mut ordinary_arg_map = std::collections::HashMap::new();
+    for (index, function) in middle_hash.agg_funcs.iter_mut().enumerate() {
+        let output = Column::new(column_ids.alloc(), function.base.ret_type.clone());
+        if index != distinct_pos {
+            let Some(Expression::Column(argument)) = function.base.args.first() else {
+                return Ok(None);
+            };
+            ordinary_arg_map.insert(argument.unique_id, output.clone());
+            function.mode = AggFunctionMode::Partial2;
+        } else {
+            function.mode = AggFunctionMode::Partial1;
+        }
+        middle_schema.columns.push(output);
+    }
+    middle_hash.base.base.set_schema(Some(middle_schema.clone()));
+
+    for (index, function) in final_hash.agg_funcs.iter_mut().enumerate() {
+        if index == distinct_pos {
+            // Go's middle distinct result is merged by SUM at the final
+            // single-partition stage.
+            function.base.name = names::SUM.to_owned();
+            function.has_distinct = false;
+            function.base.args = vec![Expression::Column(middle_schema.columns[index].clone())];
+        } else {
+            let mut remapped = Vec::with_capacity(function.base.args.len());
+            for argument in &function.base.args {
+                let Expression::Column(column) = argument else {
+                    return Ok(None);
+                };
+                let Some(mapped) = ordinary_arg_map.get(&column.unique_id) else {
+                    return Ok(None);
+                };
+                remapped.push(Expression::Column(mapped.clone()));
+            }
+            function.base.args = remapped;
+        }
+        function.mode = AggFunctionMode::Final;
+    }
+    final_hash
+        .base
+        .set_children_req_props(vec![Some(crate::physical_property::PhysicalProperty::default())]);
+
+    Ok(Some(ThreeStageAggSplit {
+        partial,
+        middle: PhysicalPlan::HashAgg(middle_hash),
+        final_agg: PhysicalPlan::HashAgg(final_hash),
+        partition_cols,
+    }))
+}
+
 /// Go `BasePhysicalAgg.ConvertAvgForMPP` (`base_physical_agg.go:209`).
 ///
 /// TiFlash's MPP aggregation contract exposes AVG as a COUNT/SUM pair and
@@ -869,9 +1060,14 @@ fn new_partial_aggregate_for_store(
     crate::plan_base::PlanError,
 > {
     use crate::physical::PhysicalPlan;
-    let (agg_funcs, group_by_items, is_stream) = match &plan {
-        PhysicalPlan::HashAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, false),
-        PhysicalPlan::StreamAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, true),
+    let (agg_funcs, group_by_items, is_stream, mpp_run_mode) = match &plan {
+        PhysicalPlan::HashAgg(agg) => (
+            &agg.agg_funcs,
+            &agg.group_by_items,
+            false,
+            Some(agg.mpp_run_mode),
+        ),
+        PhysicalPlan::StreamAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, true, None),
         _ => {
             return Err(crate::plan_base::PlanError::internal(
                 "NewPartialAggregate over a non-aggregate plan",
@@ -933,6 +1129,7 @@ fn new_partial_aggregate_for_store(
             base: final_base,
             agg_funcs: Vec::new(),
             group_by_items: Vec::new(),
+            mpp_run_mode: mpp_run_mode.unwrap_or_default(),
             ..Default::default()
         }),
         PhysicalPlan::StreamAgg(_) => PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {

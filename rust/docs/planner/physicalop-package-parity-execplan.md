@@ -8002,9 +8002,10 @@ The added tests cover TiFlash candidate emission, supported and unsupported
 MPP unary expressions, partial Limit/TopN placement below the pass-through
 sender, UnionAll/Sequence fragment rebuilding, and StreamAgg root conversion.
 The Go heavy-function `getPushedDownTopN` projection/global rewrite,
-partial-order and TiDB-cop TopN branches, fragment scheduling, and scalar
-three-stage MPP aggregation remain explicit follow-up work; this checkpoint makes no whole-package
-or workload performance claim.
+partial-order and TiDB-cop TopN branches, fragment scheduling, scalar
+multi-distinct aggregation, and TiFlash pre-aggregation mode remain explicit
+follow-up work; this checkpoint makes no whole-package or workload performance
+claim.
 
 
 ## Continuing MPP exchange-enforcement parity
@@ -8051,15 +8052,17 @@ same source branch.
 
 `Attach2Task` now converts AVG to COUNT/SUM plus the source CASE/DIV projection,
 splits TiFlash partial/final phases, inserts the hash exchange for MPP2,
-preserves the TiDB-owned COUNT merge for MPP-TiDB, and retains the scalar
-single-partition path. The focused receipts from `rust/` pass:
+preserves the TiDB-owned COUNT merge for MPP-TiDB, and scales the supported
+scalar single-distinct form into partial, hash-partitioned middle, and
+single-partition final stages. The focused receipts from `rust/` pass:
 
     cargo check --offline --locked -j12 -p tidb-planner --message-format=short
     cargo test --offline --locked -j12 -p tidb-planner --lib final_mode_agg::tests -- --test-threads=1
     cargo test --offline --locked -j12 -p tidb-planner --lib physical::tests::mpp_hash_agg_enumeration_matches_go_run_modes -- --test-threads=1
     cargo test --offline --locked -j12 -p tidb-planner --lib task::attach_tests::mpp_two_phase_hash_agg_attaches_partial_exchange_and_final -- --test-threads=1
+    cargo test --offline --locked -j12 -p tidb-planner --lib task::attach_tests::mpp_scalar_single_distinct_builds_three_aggregation_stages -- --test-threads=1
 
-Three-stage scalar DISTINCT adjustment, TiFlash pre-aggregation mode,
-fragment scheduling/task metadata transport, heavy-function TopN, and complete
+Scalar multi-distinct adjustment, TiFlash pre-aggregation mode, fragment
+scheduling/task metadata transport, heavy-function TopN, and complete
 physicalop/workload acceptance remain open. No sysbench, TPC-C, TPC-H, or YCSB
 performance result is inferred from these planner unit tests.
