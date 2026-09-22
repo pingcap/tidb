@@ -26,6 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -585,6 +586,74 @@ func TestSchemaReadOnlyAffectAllUsers(t *testing.T) {
 		require.NoError(t, se.Auth(&auth.UserIdentity{Username: tc.user, Hostname: "%"}, nil, nil, nil))
 		tk.MustExec("insert into test.t values (1)")
 	}
+}
+
+func TestSchemaReadOnlyUsesWriteTargetSchema(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ro")
+	tk.MustExec("create table ro.t(id int primary key, v int)")
+	tk.MustExec("create table ro.heap(v int)")
+	tk.MustExec("create table ro.clustered(id int primary key clustered, v int)")
+	tk.MustExec("create sequence ro.s")
+	tk.MustExec("create database rw")
+	tk.MustExec("create table rw.a(id int primary key, v int)")
+	tk.MustExec("create table rw.t(id int primary key, w int)")
+	tk.MustExec("insert into ro.t values (1, 1)")
+	tk.MustExec("insert into ro.heap values (1)")
+	tk.MustExec("insert into rw.a values (1, 1)")
+	tk.MustExec("insert into rw.t values (1, 1)")
+	tk.MustExec("alter database ro read only = 1")
+
+	errMsg := "[schema:3989]Schema 'ro' is in read only mode."
+	// The session has no current database. The write target must be derived from
+	// the table source instead of the session's CurrentDB.
+	tk.MustGetErrMsg("update ro.t set v = 2 where id = 1", errMsg)
+	tk.MustGetErrMsg("update ro.t set t.v = 2 where id = 1", errMsg)
+	tk.MustGetErrMsg("delete a from ro.t a", errMsg)
+	tk.MustGetErrMsg("batch on id limit 100 update ro.t set v = 2", errMsg)
+	tk.MustGetErrMsg("create sequence ro.s2", errMsg)
+	tk.MustGetErrMsg("alter sequence ro.s increment by 2", errMsg)
+	tk.MustGetErrMsg("drop sequence ro.s", errMsg)
+	tk.MustExec("set tidb_opt_write_row_id = 1")
+	tk.MustGetErrMsg("update ro.heap set _tidb_rowid = 2", errMsg)
+	tk.MustGetErrMsg("update ro.heap set heap._tidb_rowid = 2", errMsg)
+
+	// The write target must still be resolved when qualified tables have the
+	// same name or a delete alias conflicts with an unaliased table name.
+	tk.MustExec("use rw")
+	tk.MustGetErrMsg("update ro.t, rw.t set t.v = 2", errMsg)
+	tk.MustGetErrMsg("delete t from ro.t t join rw.t", errMsg)
+	tk.MustExec("update ro.t, rw.t set t.w = 2")
+	tk.MustExec("delete t from rw.t t join ro.t")
+
+	// CurrentDB preserves the spelling used by USE, while schema comparisons
+	// are case-insensitive.
+	tk.MustExec("use Ro")
+	tk.MustGetErrMsg("update t set v = 2 where id = 1", errMsg)
+	tk.MustGetErrMsg("delete t from t", errMsg)
+	tk.MustGetErrMsg("delete t from Ro.t", errMsg)
+	currentDBErrMsg := "[schema:3989]Schema 'Ro' is in read only mode."
+	tk.MustGetErrMsg("create sequence s2", currentDBErrMsg)
+	tk.MustGetErrMsg("alter sequence s increment by 2", currentDBErrMsg)
+	tk.MustGetErrMsg("drop sequence s", currentDBErrMsg)
+
+	// Invalid assignments and delete targets must retain their planner errors
+	// instead of being rejected based on the read-only current database.
+	tk.MustGetErrCode("update rw.t set missing = 1", errno.ErrBadField)
+	tk.MustGetErrCode("update ro.clustered set _tidb_rowid = 2", errno.ErrBadField)
+	tk.MustGetErrCode("delete missing from ro.t", errno.ErrUnknownTable)
+
+	// An unqualified assignment that can target both schemas must fail closed.
+	tk.MustGetErrMsg("update ro.t, rw.a set v = 2", errMsg)
+
+	// The current database and read sources do not make a writable target read-only.
+	tk.MustExec("update rw.a set v = 2 where id = 1")
+	tk.MustGetErrMsg("update ro.t set v = 2 where id = 1", errMsg)
+	tk.MustGetErrMsg("update rw.a join ro.t on a.id = t.id set t.v = 2", errMsg)
+	tk.MustExec("update rw.a join ro.t on a.id = t.id set a.v = 3")
+	tk.MustExec("delete a from rw.a a join ro.t t on a.id = t.id")
 }
 
 func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
