@@ -1208,7 +1208,7 @@ func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
 	}
 }
 
-func TestUpgradeVersion286MaterializedViewBootstrap(t *testing.T) {
+func TestUpgradeVersion316MaterializedViewBootstrap(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -1231,15 +1231,15 @@ func TestUpgradeVersion286MaterializedViewBootstrap(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(286 - 1)
+	err = m.FinishBootstrap(316 - 1)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	revertVersionAndVariables(t, se, 286-1)
+	revertVersionAndVariables(t, se, 316-1)
 	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(se)
 	require.NoError(t, err)
-	require.Equal(t, int64(286-1), ver)
+	require.Equal(t, int64(316-1), ver)
 
 	dom.Close()
 	newDom, err := session.BootstrapSession(store)
@@ -1253,7 +1253,7 @@ func TestUpgradeVersion286MaterializedViewBootstrap(t *testing.T) {
 	checkMaterializedViewBootstrapSchema(t, tk)
 }
 
-func TestUpgradeVersion287OperateViewPrivilege(t *testing.T) {
+func TestUpgradeVersion317OperateViewPrivilege(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -1269,9 +1269,9 @@ func TestUpgradeVersion287OperateViewPrivilege(t *testing.T) {
 	se := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(287-1))
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(317-1))
 	require.NoError(t, txn.Commit(context.Background()))
-	revertVersionAndVariables(t, se, 287-1)
+	revertVersionAndVariables(t, se, 317-1)
 	store.SetOption(session.StoreBootstrappedKey, nil)
 
 	dom.Close()
