@@ -55,6 +55,42 @@ existing server histogram receives an approximately five-second sample labeled
 Adding statement histogram buckets cannot reconstruct a request-latency
 distribution.
 
+## Grafana dashboards
+
+The TiDB, TiDB-KeyspaceName, and TiDB-Worker dashboards include a separate collapsed
+**Statement** section. The existing Query Summary and Query Detail sections retain
+their command/executor metrics and remain available for older TiDB versions.
+
+The Statement section shows:
+
+- Overall P999/P99/P95/P80 latency.
+- Completed statement executions per second, by SQL type and in total.
+- Average statement latency by SQL type, weighted by execution count.
+- Accumulated statement wall time per second by SQL type (not CPU utilization;
+  overlapping executions can accumulate more than one second per second).
+- P999/P99/P95/P80 latency by SQL type and by instance.
+
+The panels honor the existing cluster and instance selectors, and the keyspace
+selector on TiDB-KeyspaceName. Resource groups are aggregated rather than creating
+an instance/type/group cross product. Rates use a one-minute window, consistent
+with the existing duration panels; low-volume percentiles, especially P999, can
+be noisy and require enough scrapes.
+
+There is deliberately no automatic fallback to the server query-duration metric.
+A command histogram is not a statement histogram: a multi-statement command has
+one request latency but several statement latencies, and non-SQL commands also
+contribute to the server metric. Silently switching would change the meaning of
+counts, averages, and percentiles. In a rolling upgrade, combining old command
+samples with new statement samples would mix incompatible populations.
+
+On old versions or instances that have not emitted this metric, the new panels
+show no data. During a mixed-version rollout they cover only instances reporting
+the new metric, not necessarily the whole selected cluster. Use the original
+Query sections for request-level monitoring throughout the rollout. If a separate
+compatibility view is added later, it must clearly identify its active timing
+semantics and handle metric availability per instance, not just use an `or` after
+cluster-level aggregation.
+
 ## PromQL examples
 
 Average statement latency in seconds, grouped by SQL type (add instance/cluster
