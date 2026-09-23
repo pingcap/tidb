@@ -43,9 +43,9 @@ const (
 
 // FullTextAccessInfo describes how a FULLTEXT index built in TiKV answers a
 // MATCH ... AGAINST predicate: the boolean search string compiled with the
-// index's analyzer selects the rows. The predicate itself stays among the
-// table filters and is re-evaluated on the rows returned, so the path can
-// only ever narrow the result, never widen it.
+// index's analyzer selects exactly the rows the predicate accepts, so the
+// predicate is consumed by the path rather than re-evaluated on the rows
+// returned.
 type FullTextAccessInfo struct {
 	// Match is the MATCH ... AGAINST predicate the path serves.
 	Match *expression.ScalarFunction
