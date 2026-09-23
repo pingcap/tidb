@@ -191,6 +191,29 @@ pub(crate) fn inc_lock_resolver_read_async_fallback() {
     }
 }
 
+fn inc_lock_resolver_counter(shortcut_name: &'static str) {
+    if let Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) =
+        tikv_client::metrics::global_metrics().shortcut(shortcut_name)
+    {
+        counter.inc();
+    }
+}
+
+/// Go `LockResolverCountWithQueryTxnStatus` (cache misses only).
+pub(crate) fn inc_lock_resolver_query_txn_status() {
+    inc_lock_resolver_counter("LockResolverCountWithQueryTxnStatus");
+}
+
+/// Go `LockResolverCountWithQueryTxnStatusCommitted`.
+pub(crate) fn inc_lock_resolver_query_txn_status_committed() {
+    inc_lock_resolver_counter("LockResolverCountWithQueryTxnStatusCommitted");
+}
+
+/// Go `LockResolverCountWithQueryTxnStatusRolledBack`.
+pub(crate) fn inc_lock_resolver_query_txn_status_rolled_back() {
+    inc_lock_resolver_counter("LockResolverCountWithQueryTxnStatusRolledBack");
+}
+
 /// Go `LockResolverAsyncRunningTasksForReadResolve`.
 pub(crate) fn lock_resolver_read_async_gauge() -> Option<prometheus::Gauge> {
     tikv_client::metrics::global_metrics()
@@ -220,6 +243,46 @@ pub fn observe_pessimistic_lock_keys_duration(seconds: f64) {
         tikv_client::metrics::global_metrics().collector("TiKVPessimisticLockKeysDuration")
     {
         histogram.observe(seconds);
+    }
+}
+
+#[cfg(test)]
+mod lock_resolver_metric_tests {
+    use super::{
+        inc_lock_resolver_query_txn_status, inc_lock_resolver_query_txn_status_committed,
+        inc_lock_resolver_query_txn_status_rolled_back, init_dashboard_series,
+    };
+
+    fn shortcut_count(shortcut_name: &'static str) -> f64 {
+        match tikv_client::metrics::global_metrics().shortcut(shortcut_name) {
+            Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) => counter.get(),
+            _ => panic!("client-go counter shortcut {shortcut_name} is registered"),
+        }
+    }
+
+    #[test]
+    fn lock_resolver_status_counters_use_the_client_go_shortcuts() {
+        init_dashboard_series();
+        let counters = [
+            (
+                "LockResolverCountWithQueryTxnStatus",
+                inc_lock_resolver_query_txn_status as fn(),
+            ),
+            (
+                "LockResolverCountWithQueryTxnStatusCommitted",
+                inc_lock_resolver_query_txn_status_committed,
+            ),
+            (
+                "LockResolverCountWithQueryTxnStatusRolledBack",
+                inc_lock_resolver_query_txn_status_rolled_back,
+            ),
+        ];
+
+        for (shortcut_name, increment) in counters {
+            let before = shortcut_count(shortcut_name);
+            increment();
+            assert!(shortcut_count(shortcut_name) > before);
+        }
     }
 }
 

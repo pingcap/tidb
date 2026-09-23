@@ -71,7 +71,9 @@ read and pessimistic lock recovery consume that cached fate. Direct status
 responses are cached only when LockTtl is zero; async-commit recovery can cache
 a determined commit with the original positive TTL. Contradictory status saves
 match Go's `saveResolved` invariant. Rust cache metrics and the original Go
-cache tests are still open.
+cache tests are still open. The three CheckTxnStatus counters now follow
+client-go's cache-miss and zero-TTL boundaries; the remaining resolver
+counters/gauges and original Go metric tests are open.
 
 The async pool currently admits up to 10,000 tasks but Tokio's blocking runtime
 caps worker threads at 512. Upstream's `gp.New(10000, 10*time.Second)` can run

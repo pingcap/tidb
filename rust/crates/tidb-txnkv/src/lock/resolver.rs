@@ -1123,6 +1123,7 @@ where
             cached_status: Some(status),
         });
     }
+    crate::client_go_metrics::inc_lock_resolver_query_txn_status();
     let mut rollback_if_not_exist = false;
     loop {
         check_lock_call(call)?;
@@ -1157,6 +1158,13 @@ where
             continue;
         }
         let Some(key_error) = response.error.as_ref() else {
+            if response.lock_ttl == 0 {
+                if response.commit_version == 0 {
+                    crate::client_go_metrics::inc_lock_resolver_query_txn_status_rolled_back();
+                } else {
+                    crate::client_go_metrics::inc_lock_resolver_query_txn_status_committed();
+                }
+            }
             if let Some(status) = cacheable_check_txn_status(&response) {
                 runtime.cache_lock_status(query.txn_id, status, response.clone());
             }

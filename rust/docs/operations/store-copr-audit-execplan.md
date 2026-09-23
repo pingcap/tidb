@@ -1436,3 +1436,23 @@ Both cache tests and the Go cacheability case passed. All 191 txnkv library
 tests passed (one ignored), and all 28 resolver source tests passed, including
 cached async-commit reuse from both optimistic reads and pessimistic lock
 recovery. Cache metrics and original Go cache test reconciliation remain open.
+
+### Resolver status counter receipt (2026-09-22)
+
+Rust now increments Go's `LockResolverCountWithQueryTxnStatus` only after a
+cache miss. It increments the committed or rolled-back status counter only for
+a successful CheckTxnStatus response with zero LockTtl, classifying by
+CommitVersion just as client-go does. The updates use the existing client-go
+shortcut counters and leave cache hits out of the query count.
+
+    cd rust
+    cargo test --offline --locked -p tidb-txnkv --lib lock_resolver_status_counters_use_the_client_go_shortcuts
+    cargo test --offline --locked -p tidb-txnkv --test lock_resolver_source
+    cd ..
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check
+
+The status-counter shortcut test and all 28 resolver source tests passed; lint
+and scoped formatting passed. The rest of the resolver's counters/gauges,
+cache-specific metrics, and original Go metrics tests remain open.
