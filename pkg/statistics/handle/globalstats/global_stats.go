@@ -16,6 +16,7 @@ package globalstats
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -205,6 +206,7 @@ func blockingMergePartitionStats2GlobalStats(
 	}
 
 	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
+	ndvRates := make([]float64, globalStats.Num)
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		partitionTable, ok := statsHandle.TableInfoByID(is, partitionID)
@@ -241,6 +243,12 @@ func blockingMergePartitionStats2GlobalStats(
 			// GetStatsInfo will return the copy of the statsInfo, so we don't need to worry about the data race.
 			// partitionStats will be released after the for loop.
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex, externalCache)
+			if rate := fms.NDVRate(); rate != 0 {
+				if ndvRates[i] != 0 && ndvRates[i] != rate {
+					return nil, ndvRateConflict(tableInfo, def.Name.O, isIndex, histIDs[i], rate, ndvRates[i])
+				}
+				ndvRates[i] = rate
+			}
 			skipPartition := false
 			if !analyzed {
 				var missingPart string
@@ -257,8 +265,9 @@ func blockingMergePartitionStats2GlobalStats(
 				skipPartition = true
 			}
 
-			// Partition stats is not empty but column stats(hist, topN) is missing.
-			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+			// A sampled sketch can have no values even when the partition has rows.
+			emptySampledNDV := hg != nil && fms != nil && fms.NDVRate() < 1 && fms.NDV() == 0
+			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) && !emptySampledNDV {
 				var missingPart string
 				if !isIndex {
 					missingPart = fmt.Sprintf("partition `%s` column `%s`", def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
@@ -291,6 +300,10 @@ func blockingMergePartitionStats2GlobalStats(
 	// After collect all the statistics from the partition-level stats,
 	// we should merge them together.
 	for i := range globalStats.Num {
+		// Unlike full input, a sampled sketch cannot skip a partition.
+		if ndvRates[i] > 0 && ndvRates[i] < 1 && (len(allFms[i]) != len(globalTableInfo.Partition.Definitions) || slices.Contains(allFms[i], nil)) {
+			return nil, missingSampledNDV(globalTableInfo, isIndex, histIDs[i])
+		}
 		if len(allHg[i]) == 0 {
 			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
 			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
@@ -377,6 +390,16 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 		}
 	}
 	return err
+}
+
+func ndvRateConflict(tbl *model.TableInfo, partition string, isIndex bool, id int64, rate, other float64) error {
+	return fmt.Errorf("table %s partition %s %s uses NDVRATE %g, but other partitions use %g; analyze all partitions with one NDVRATE: %w",
+		tbl.Name.O, partition, targetName(tbl, isIndex, id), rate, other, statistics.ErrIncompatibleNDV)
+}
+
+func missingSampledNDV(tbl *model.TableInfo, isIndex bool, id int64) error {
+	return fmt.Errorf("table %s %s: sampled NDV needs statistics from every partition; analyze all partitions: %w",
+		tbl.Name.O, targetName(tbl, isIndex, id), statistics.ErrIncompatibleNDV)
 }
 
 func targetName(tbl *model.TableInfo, isIndex bool, id int64) string {

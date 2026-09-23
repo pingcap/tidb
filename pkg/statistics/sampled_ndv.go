@@ -84,6 +84,18 @@ func (s *FMSketch) checkCompatibility(other *FMSketch) error {
 	return nil
 }
 
+// NDVRate returns zero for a missing sketch, one for full input, or the
+// configured sampling rate saved at collection time.
+func (s *FMSketch) NDVRate() float64 {
+	if s == nil {
+		return 0
+	}
+	if s.sample == nil {
+		return 1
+	}
+	return s.sample.rate
+}
+
 func (s *FMSketch) sampledNDV() int64 {
 	sample := s.sample
 	upper := sample.rows - sample.nulls

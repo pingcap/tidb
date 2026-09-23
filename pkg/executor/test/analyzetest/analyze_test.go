@@ -2338,7 +2338,22 @@ func TestSampledNDVCompatibility(t *testing.T) {
 		tk.MustExec("update mysql.stats_fm_sketch set value=x'08001001' where table_id=?", part1)
 		_, err = mergeColumnB(async)
 		require.ErrorIs(t, err, statistics.ErrIncompatibleNDV)
+		require.ErrorContains(t, err, "analyze all partitions")
 		tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=?", data, part1)
+	}
+	zero := int64(0)
+	emptyWire, err := (&tipb.RowSampleCollector{Count: 10, NdvSampleCount: &zero,
+		NullCounts: []int64{0}, FmSketch: []*tipb.FMSketch{{}}}).Marshal()
+	require.NoError(t, err)
+	emptyData := append(append([]byte(nil), data[:10]...), emptyWire...)
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=? and is_index=0 and hist_id=?", emptyData, part1, tbl.Columns[1].ID)
+	tk.MustExec("delete from mysql.stats_buckets where table_id=? and is_index=0 and hist_id=?", part1, tbl.Columns[1].ID)
+	tk.MustExec("delete from mysql.stats_top_n where table_id=? and is_index=0 and hist_id=?", part1, tbl.Columns[1].ID)
+	for _, async := range []bool{false, true} {
+		merged, err := mergeColumnB(async)
+		require.NoError(t, err)
+		// The empty partition adds rows but no hashes to the GEE estimate.
+		require.Equal(t, int64(5), merged.Hg[0].NDV)
 	}
 
 	// The legacy peer returns full input for p0, which cannot merge with the sampled p1.
