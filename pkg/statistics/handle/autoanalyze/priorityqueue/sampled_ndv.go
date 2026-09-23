@@ -15,11 +15,13 @@
 package priorityqueue
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
@@ -42,8 +44,18 @@ func sampledNDVOption(sctx sessionctx.Context, handle statstypes.StatsHandle, ta
 	if tbl.Partition == nil {
 		count = handle.GetPhysicalTableStats(tableID, tbl).RealtimeCount
 	} else {
+		ids := make([]int64, 0, len(tbl.Partition.Definitions))
 		for _, def := range tbl.Partition.Definitions {
 			count += handle.GetPhysicalTableStats(def.ID, tbl).RealtimeCount
+			ids = append(ids, def.ID)
+		}
+		locked, err := handle.GetLockedTables(ids...)
+		if err != nil {
+			return "", err
+		}
+		if len(locked) > 0 {
+			// A locked partition keeps its sketch, so the global merge needs its rate.
+			return lockedNDVRateOption(sctx, locked)
 		}
 	}
 	thresholds := [2]int64{}
@@ -76,4 +88,22 @@ func sampledNDVOption(sctx sessionctx.Context, handle statstypes.StatsHandle, ta
 		}
 	}
 	return "", nil
+}
+
+// lockedNDVRateOption reuses the NDVRATE saved in a column sketch of a locked
+// partition. A partition without a sketch accepts full input.
+func lockedNDVRateOption(sctx sessionctx.Context, locked map[int64]struct{}) (string, error) {
+	ids := make([]string, 0, len(locked))
+	for id := range locked {
+		ids = append(ids, strconv.FormatInt(id, 10))
+	}
+	rows, _, err := util.ExecRows(sctx, "SELECT SUBSTRING(value, 1, 10) FROM mysql.stats_fm_sketch WHERE table_id IN (%?) AND is_index = 0 LIMIT 1", ids)
+	if err != nil || len(rows) == 0 || len(rows[0].GetBytes(0)) == 0 {
+		return "", err
+	}
+	rate, err := statistics.SavedFMSketchNDVRate(rows[0].GetBytes(0))
+	if err != nil || rate == 1 {
+		return "", err
+	}
+	return fmt.Sprintf(" WITH %g NDVRATE", rate), nil
 }
