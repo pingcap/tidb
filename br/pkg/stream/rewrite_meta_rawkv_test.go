@@ -1082,7 +1082,16 @@ func TestDeleteRangeForMDDLJob2(t *testing.T) {
 		_, exist := mDDLJobALLNewTableKeySet[params.StartKey]
 		require.True(t, exist)
 	}
-	require.Equal(t, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),", qargs.Sql)
+	require.Equal(t, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?)", qargs.Sql)
+
+	// drop schema - all tables are filtered out
+	dbReplace.TableMap = map[int64]*TableReplace{}
+	schemaReplace = MockEmptySchemasReplace(midr, map[int64]*DBReplace{
+		mDDLJobDBOldID: dbReplace,
+	})
+	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropSchemaJob)
+	require.NoError(t, err)
+	require.Empty(t, midr.queryCh)
 }
 
 func TestCompatibleAlert(t *testing.T) {
