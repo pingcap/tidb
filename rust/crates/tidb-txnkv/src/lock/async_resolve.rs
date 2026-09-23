@@ -19,6 +19,32 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use crate::UnaryCancellation;
 
+/// The client-go resolver worker category used for its in-flight gauge.
+#[derive(Clone, Copy)]
+pub(crate) enum AsyncResolveTaskKind {
+    /// Detached ordinary read cleanup.
+    ReadResolve,
+    /// Detached cleanup of a fully checked async-commit transaction.
+    ResolveAsyncCommit,
+    /// A region's CheckSecondaryLocks request.
+    CheckSecondaries,
+    /// A region's ResolveLock request during async-commit recovery.
+    ResolveAsyncCommitRegion,
+}
+
+impl AsyncResolveTaskKind {
+    fn shortcut(self) -> &'static str {
+        match self {
+            Self::ReadResolve => "LockResolverAsyncRunningTasksForReadResolve",
+            Self::ResolveAsyncCommit => "LockResolverAsyncRunningTasksForResolveAsyncCommit",
+            Self::CheckSecondaries => "LockResolverAsyncRunningTasksForCheckSecondaries",
+            Self::ResolveAsyncCommitRegion => {
+                "LockResolverAsyncRunningTasksForResolveAsyncCommitRegion"
+            }
+        }
+    }
+}
+
 /// TiDB client-go's process-wide `AsyncResolveLockSemaphoreLimit`.
 const GLOBAL_ASYNC_RESOLVE_LIMIT: usize = 10_000;
 const ASYNC_RESOLVE_BLOCKING_WORKERS: usize = 512;
@@ -75,9 +101,72 @@ impl AsyncResolvePool {
         })
     }
 
-    /// Attempts detached scheduling. `false` means the caller must resolve in
-    /// place, as client-go does when the global semaphore or local pool is full.
-    pub(crate) fn try_spawn(self: &Arc<Self>, task: AsyncLockResolveTask) -> bool {
+    /// Attempts detached scheduling with a caller-selected client-go worker
+    /// gauge category.
+    pub(crate) fn try_spawn_with_kind(
+        self: &Arc<Self>,
+        kind: AsyncResolveTaskKind,
+        task: AsyncLockResolveTask,
+    ) -> bool {
+        let handler = Arc::clone(&self.handler);
+        self.try_spawn_detached(kind, move |cancellation| {
+            handler(task, cancellation);
+        })
+    }
+
+    /// Attempts to schedule one resolver worker that the caller will join.
+    /// The returned receiver closes after the task releases its admission
+    /// permit; `Err(task)` means the caller must execute the work inline.
+    pub(crate) fn try_spawn_joinable<F>(
+        self: &Arc<Self>,
+        kind: AsyncResolveTaskKind,
+        task: F,
+    ) -> Result<std::sync::mpsc::Receiver<()>, F>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let Some(runtime) = async_resolve_runtime() else {
+            return Err(task);
+        };
+        if !acquire_global_permit() {
+            return Err(task);
+        }
+        {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if state.closed {
+                release_global_permit();
+                return Err(task);
+            }
+            state.in_flight += 1;
+        }
+
+        let permit = InFlightPermit {
+            pool: Arc::clone(self),
+        };
+        let (completed, completion) = std::sync::mpsc::channel();
+        runtime.spawn_blocking(move || {
+            let _permit = permit;
+            let _gauge = AsyncResolveGaugeGuard::new(kind);
+            task();
+            drop(_gauge);
+            drop(_permit);
+            let _ = completed.send(());
+        });
+        Ok(completion)
+    }
+
+    /// Attempts detached scheduling with a caller-selected Go task gauge.
+    pub(crate) fn try_spawn_detached<F>(
+        self: &Arc<Self>,
+        kind: AsyncResolveTaskKind,
+        task: F,
+    ) -> bool
+    where
+        F: FnOnce(UnaryCancellation) + Send + 'static,
+    {
         let Some(runtime) = async_resolve_runtime() else {
             return false;
         };
@@ -99,12 +188,11 @@ impl AsyncResolvePool {
         let permit = InFlightPermit {
             pool: Arc::clone(self),
         };
-        let handler = Arc::clone(&self.handler);
         let cancellation = self.cancellation.clone();
         runtime.spawn_blocking(move || {
             let _permit = permit;
-            let _gauge = AsyncResolveGaugeGuard::new();
-            handler(task, cancellation);
+            let _gauge = AsyncResolveGaugeGuard::new(kind);
+            task(cancellation);
         });
         true
     }
@@ -136,8 +224,8 @@ impl AsyncResolvePool {
 struct AsyncResolveGaugeGuard(Option<prometheus::Gauge>);
 
 impl AsyncResolveGaugeGuard {
-    fn new() -> Self {
-        let gauge = crate::client_go_metrics::lock_resolver_read_async_gauge();
+    fn new(kind: AsyncResolveTaskKind) -> Self {
+        let gauge = crate::client_go_metrics::lock_resolver_async_gauge(kind.shortcut());
         if let Some(gauge) = &gauge {
             gauge.inc();
         }

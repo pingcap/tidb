@@ -14,12 +14,13 @@ reply must consume the existing TxnLockFast retry budget before resolution;
 repeated ignored hints must terminate with the registered storage error instead
 of spinning. Clean reads must incur no additional hint allocation or wait.
 
-The working branch is hparser-integration. On 2026-09-22, fetching with
-`git fetch origin --prune` and running `git pull --ff-only origin hparser-integration`
-confirmed the branch was current at 38dc925c092448e1e618a7bb3d5eab405d90eb71.
-Before push, origin advanced to effaa12d84; the lock cleanup change was rebased
-and pushed as 6cc445380d. Current master is
-bb80c86a127b579a93c2070a7f3464ef1b609e38. The complete root and dependency
+The working branch is hparser-integration. The latest fetch on 2026-09-22
+confirmed it matched `origin/hparser-integration` at
+cf056aded70111b5f45e5aec4342dac6edabb35b. TiDB master is
+bb80c86a127b579a93c2070a7f3464ef1b609e38. A direct master merge was attempted
+to refresh the working Go tree, but Git reported 80 conflicts across Go
+sources, parser files and build metadata; that incomplete merge was aborted.
+The fetched master ref remains the source oracle. The complete root and dependency
 artifact inventory is rust/docs/parity/copr-package-inventory.md (20 root
 artifacts plus five artifacts in separate copr_test/metrics packages).
 Master pins client-go/v2 v2.0.8-0.20260921040125-5f38569c8cc0. Its complete
@@ -46,6 +47,8 @@ directory; inventory every artifact and module build input before editing.
 - [x] Integrate native point-read RPC counts/durations and ClientHelper ResolveLock accounting at the physical completion boundary; verify the terminal delivery/cancellation race.
 - [x] Integrate Get/BatchGet selected backoff histories, completed/cancelled wait accounting, and separate resolve-lock detail timing.
 - [x] Match small optimistic-lock cleanup by transaction and region, with synchronous writer resolution, detached read cleanup, bounded admission, fallback semantics and shared-authority cancellation.
+- [x] Add bounded per-region CheckSecondaryLocks and async-commit ResolveLock workers with client-go task gauges/fallback counters; verify concurrent behavior with a two-region test.
+- [ ] Match all region-error retry ordering and nested worker backoff ownership in async-commit paths.
 - [ ] Reconcile nested lock resolver and PD/routing backoffers with the full caller-owned history and clone/fork semantics.
 - [ ] Reconcile the remaining complete snapshot package and store-batch admission/reconciliation/retry/deadline behavior, with their original tests.
 - [x] Run scoped Rust tests, dependent compilation, lint and self-review for the lite-cleanup slice.
@@ -1410,6 +1413,41 @@ passed all 26 cases. Full package parity remains open for resolver options,
 cache tests (the pinned Go package defines no cache-specific metric),
 async-commit/secondary workers, failpoints, source test reconciliation, all
 caller wiring, and the 512-worker concurrency gap above.
+
+### Async-commit worker slice against fetched TiDB master, 2026-09-22
+
+TiDB master's pinned client-go source runs one `CheckSecondaryLocks` worker per
+region, applies results in worker completion order, and resolves async-commit
+regions concurrently. Read cleanup first attempts a detached transaction worker;
+the synchronous fallback still runs region workers and reports the matching
+fallback counters. Rust now clones the production unary client capability for
+each bounded joinable region worker, retains synchronous operation for injected
+clients that cannot be cloned safely, and uses the matching client-go worker
+gauges and fallback counters. Read-side cleanup is detached with a distinct
+async-commit gauge, then schedules one resolve task per region.
+
+A new two-region test proves both `CheckSecondaryLocks` overlap and detached
+`ResolveLock` overlap. Validation passed:
+
+    cargo test --manifest-path rust/Cargo.toml --offline --locked -p tidb-txnkv --lib -- --test-threads=1
+    cargo test --manifest-path rust/Cargo.toml --offline --locked -p tidb-txnkv --test lock_resolver_source -- --test-threads=1
+    cargo test --manifest-path rust/Cargo.toml --offline --locked -p tidb-txnkv --features tidb-config/nextgen --lib -- --test-threads=1
+    cargo test --manifest-path rust/Cargo.toml --offline --locked -p tidb-txnkv --features tidb-config/nextgen --test lock_resolver_source large_writer_cleanup_does_not_use_tikv_side_async_resolve -- --test-threads=1
+    rustfmt --edition 2021 --check rust/crates/tidb-txnkv/src/lock/async_resolve.rs rust/crates/tidb-txnkv/src/lock/resolver.rs rust/crates/tidb-txnkv/src/read_runtime.rs
+
+The default library tests passed 192 with one ignored; all 30 resolver-source
+tests passed. NextGen library and writer cleanup checks passed. The whole
+workspace `cargo fmt --all -- --check` reports pre-existing formatting drift;
+the changed resolver files pass scoped formatting. The changed metric helper
+was kept local because its file also contains older formatter drift.
+
+The package is still open: region-error retries are applied after the initial
+parallel RPC result is joined, so their completion/backoff ordering needs a
+source-level audit. Rust caps Tokio blocking workers at 512 while client-go's
+pool admits up to 10,000 goroutines. Original Go test/support and failpoint
+reconciliation, other callers, build/platform gates, real TiKV, and matched
+Sysbench/TPC-C/TPC-H/YCSB benchmarks are still required. No whole-package or
+workload-performance claim is made.
 
 ### Transaction-status cache receipt (2026-09-22)
 

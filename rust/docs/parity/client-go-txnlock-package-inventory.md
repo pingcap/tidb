@@ -42,8 +42,10 @@ The current Go ignored-hint contract is lock_resolver.go's
 backoffOnLockHintsInRequest before resolveLocks: only ForRead checks the exact
 request hints, any matching transaction charges one BoTxnLockFast backoff, and
 resolution runs afterward. Repeated ignored responses exhaust the caller's
-existing backoffer. Async-commit and secondary-check worker paths, failpoints,
-original tests and all caller integrations remain open. The 2,048-entry
+existing backoffer. Async-commit and secondary-check worker paths now have a
+bounded Rust implementation; region-error retry ordering and worker capacity
+remain open below. Failpoints, original tests and all caller integrations
+remain open. The 2,048-entry
 determined-status FIFO cache is now shared by sessions under one read
 authority; original cache-test reconciliation remains open. The pinned Go
 package has no cache-specific metrics in `getResolved` or `saveResolved`, so
@@ -65,10 +67,9 @@ status. The shared authority cancels and drains its cleanup tasks before cache
 shutdown. Source tests cover exact writer batching, read cancellation and
 request-source behavior. This matches the small-lock branch of
 `LockResolver.resolveLocks` and `batchLiteResolveLocks` in the pinned
-`lock_resolver.go`. The remaining resolver options, complete metrics and
-async-commit/secondary-check worker
-paths, failpoints, original Go support/test reconciliation and every
-whole-package acceptance gate remain open. The default non-lite read cleanup
+`lock_resolver.go`. The remaining resolver options, failpoints, original Go
+support/test reconciliation and every whole-package acceptance gate remain
+open. The default non-lite read cleanup
 now schedules a detached region scan when the runtime has an async resolver;
 point Get, BatchGet and Scan now pass Go's explicit `Lite` options independently
 from `ForRead`; the NextGen `resultRequired=false` effect now sets `IsAsync` for
@@ -91,11 +92,46 @@ counters now follow client-go's cache-miss and zero-TTL boundaries. Resolver
 counters for nonempty
 resolve batches, expired/live/wait outcomes, async-commit recovery, secondary
 status checks, ResolveLock calls, and lite cleanup now follow the corresponding
-client-go event boundaries. The batch-resolve API/counter, async-commit worker
-fallback counters/gauges, and original Go metric tests remain open.
+client-go event boundaries. The batch-resolve API/counter and original Go
+metric tests remain open.
 
 The async pool currently admits up to 10,000 tasks but Tokio's blocking runtime
 caps worker threads at 512. Upstream's `gp.New(10000, 10*time.Second)` can run
 up to 10,000 goroutines, so peak cleanup concurrency differs. This Rust-native
 resource bound is not yet validated against sysbench, TPC-C, TPC-H or YCSB and
 must be resolved before txnlock package acceptance.
+
+## Current async-commit worker slice, 2026-09-22
+
+The fetched TiDB master ref is `bb80c86a127b579a93c2070a7f3464ef1b609e38`,
+whose `go.mod` pins client-go
+`v2.0.8-0.20260921040125-5f38569c8cc0`. The feature branch pins the earlier
+`v2.0.8-0.20260831103552-e4905600583b`; behavior comparisons for this slice
+use the exact master-pinned module. The feature branch already matched its
+`origin/hparser-integration` tip `cf056aded70111b5f45e5aec4342dac6edabb35b`.
+Merging master into that branch produced 80 conflicts across Go sources, parser
+files and build metadata, so the merge was aborted rather than resolving broad
+TiDB behavior changes as part of this Rust-only slice. The fetched master ref
+remains available for source comparisons.
+
+Rust now checks async-commit secondaries concurrently by region through the
+bounded resolver pool, using a client clone per worker. It preserves inline
+fallback when admission is rejected, collects responses in completion order,
+and returns the last completed worker's backoff history. Writer cleanup also
+sends per-region ResolveLock requests concurrently and waits for every result.
+For reads, Rust schedules async-commit cleanup as a detached transaction task;
+that task then schedules region work with the matching client-go gauge category.
+All three client-go fallback counters and the four running-task gauges are
+wired and covered by shortcut tests. Injectable clients without a worker clone
+retain the synchronous fallback.
+
+Validation passed for 192 txnkv library tests (one ignored), all 30
+`lock_resolver_source` tests, the new overlap test proving concurrent
+CheckSecondaryLocks and detached ResolveLock work across two regions, and the
+NextGen library and writer-cleanup checks. The full Rust workspace formatter
+still reports pre-existing drift; changed resolver files pass scoped rustfmt.
+Remaining package work includes region-error retry/backoff completion ordering,
+the 512 Tokio blocking-worker cap versus Go's 10,000-goroutine pool, Go support
+and failpoint/test reconciliation, all caller and build/platform gates, and
+real TiKV plus Sysbench/TPC-C/TPC-H/YCSB validation. No whole-package claim is
+made.

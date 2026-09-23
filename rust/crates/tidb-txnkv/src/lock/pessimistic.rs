@@ -345,6 +345,7 @@ where
             determined_status,
             base_context,
             call,
+            for_read,
             backoff,
         )?;
         return Ok(LockRecoveryResult::resolved(

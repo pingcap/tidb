@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -31,7 +32,7 @@ use crate::region::{
 use crate::rpc::TonicCoprocessorClient;
 use crate::{DirectUnaryClientError, SharedReadOpener, SharedReadRuntime, UnaryCallContext};
 
-use super::async_resolve::{AsyncLockResolveTask, AsyncResolvePool};
+use super::async_resolve::{AsyncLockResolveTask, AsyncResolvePool, AsyncResolveTaskKind};
 use super::{LockAdmissionError, OptimisticLock};
 
 /// Go `getTxnStatusMaxBackoff` (`txnkv/txnlock/lock_resolver.go:51`).
@@ -89,8 +90,21 @@ where
                     count_resolve_locks: false,
                     count_resolve_lock_lite: task.count_resolve_lock_lite,
                 };
-                if pool.as_ref().is_some_and(|pool| pool.try_spawn(child)) {
+                let worker_kind = if task.count_resolve_lock_lite {
+                    AsyncResolveTaskKind::ReadResolve
+                } else {
+                    AsyncResolveTaskKind::ResolveAsyncCommitRegion
+                };
+                if pool
+                    .as_ref()
+                    .is_some_and(|pool| pool.try_spawn_with_kind(worker_kind, child))
+                {
                     continue;
+                }
+                if task.count_resolve_lock_lite {
+                    crate::client_go_metrics::inc_lock_resolver_read_async_fallback();
+                } else {
+                    crate::client_go_metrics::inc_lock_resolver_async_resolve_async_commit_region_fallback();
                 }
                 let call =
                     UnaryCallContext::new(ASYNC_RESOLVE_LOCK_MAX_BACKOFF, cancellation.clone());
@@ -185,6 +199,13 @@ impl TimestampSource for FixedTimestampSource {
 
 /// Typed commands required from the sole shared TiKV client.
 pub trait LockRecoveryClient {
+    /// Clones this client capability for one concurrent resolver worker.
+    /// Test clients that are intentionally single-threaded keep the default
+    /// `None` and execute through the caller's inline fallback.
+    fn fork_for_async_worker(&self) -> Option<Box<dyn LockRecoveryClient + Send>> {
+        None
+    }
+
     /// Sends CheckTxnStatus through the client's existing unary core.
     fn check_txn_status_for_lock(
         &mut self,
@@ -227,6 +248,10 @@ pub trait LockRecoveryClient {
 }
 
 impl LockRecoveryClient for TonicCoprocessorClient {
+    fn fork_for_async_worker(&self) -> Option<Box<dyn LockRecoveryClient + Send>> {
+        Some(Box::new(self.clone()))
+    }
+
     fn check_txn_status_for_lock(
         &mut self,
         address: &str,
@@ -1040,6 +1065,7 @@ where
                 determined_status,
                 base_context,
                 call,
+                for_read,
                 backoff,
             )?,
             pending_lite_cleanup: false,
@@ -1440,6 +1466,7 @@ pub(super) fn resolve_async_commit_lock<C, L>(
     determined_status: Option<ResolvedTxnStatus>,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
+    for_read: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<ResolvedTxnStatus, LockRecoveryError>
 where
@@ -1459,34 +1486,19 @@ where
             keys: Vec::new(),
             missing_lock: false,
         };
-        // Go's pool fallback runs each initial region synchronously, but still
-        // forks from the unchanged parent. Only the last completed worker
-        // history is returned; successful sibling regions are not queried again.
+        // Go checks all initial regions concurrently. The bounded pool can
+        // reject individual workers, in which case that region is checked
+        // inline while admitted siblings continue independently.
         let groups = group_keys_by_region(runtime, &primary_lock.secondaries, base_context)?;
-        let mut last = None;
-        let mut first_error = None;
-        for group in groups {
-            let mut worker = backoff.fork();
-            let result = check_secondary_group(
-                runtime,
-                txn_id,
-                group,
-                base_context,
-                call,
-                &mut worker,
-                &mut data,
-            );
-            last = Some(worker);
-            if first_error.is_none() {
-                first_error = result.err();
-            }
-        }
-        if let Some(last) = last {
-            backoff.update_from_forked(&last);
-        }
-        if let Some(error) = first_error {
-            return Err(error);
-        }
+        check_secondary_groups_concurrently(
+            runtime,
+            txn_id,
+            groups,
+            base_context,
+            call,
+            backoff,
+            &mut data,
+        )?;
         data.keys.push(primary_key.to_vec());
         let status = if data.commit_ts == 0 {
             ResolvedTxnStatus::RolledBack
@@ -1503,7 +1515,212 @@ where
     if let Some(cache_status) = cacheable_status(&determined_response) {
         runtime.cache_lock_status(txn_id, cache_status, determined_response);
     }
+
+    if for_read && runtime.has_async_resolve_pool() {
+        let commit_version = match status {
+            ResolvedTxnStatus::Committed(commit_version) => commit_version,
+            ResolvedTxnStatus::RolledBack => 0,
+        };
+        if runtime.try_schedule_async_resolve_with_kind(
+            AsyncResolveTaskKind::ResolveAsyncCommit,
+            AsyncLockResolveTask {
+                txn_id,
+                commit_version,
+                keys: keys.clone(),
+                request_source: base_context.request_source.clone(),
+                include_keys: true,
+                server_side_async: false,
+                schedule_regions: true,
+                count_resolve_locks: false,
+                count_resolve_lock_lite: false,
+            },
+        ) {
+            return Ok(status);
+        }
+        crate::client_go_metrics::inc_lock_resolver_async_resolve_async_commit_fallback();
+    }
+
     let groups = group_keys_by_region(runtime, &keys, base_context)?;
+    resolve_async_commit_regions_concurrently(
+        runtime,
+        txn_id,
+        groups,
+        status,
+        base_context,
+        call,
+        backoff,
+    )?;
+    Ok(status)
+}
+
+fn resolve_async_commit_regions_concurrently<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    txn_id: u64,
+    groups: Vec<RegionKeyGroup>,
+    status: ResolvedTxnStatus,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<(), LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    if !runtime.has_async_resolve_pool() {
+        return resolve_async_commit_regions_sequentially(
+            runtime,
+            txn_id,
+            groups,
+            status,
+            base_context,
+            call,
+            backoff,
+        );
+    }
+
+    let worker_available = runtime
+        .client()
+        .try_lock()
+        .map_err(|_| LockRecoveryError::ClientLifecycle)?
+        .fork_for_async_worker()
+        .is_some();
+    if !worker_available {
+        let mut last_completed = None;
+        let mut errors = Vec::new();
+        for group in groups {
+            crate::client_go_metrics::inc_lock_resolver_async_resolve_async_commit_region_fallback(
+            );
+            let mut worker = backoff.fork();
+            let result = resolve_region_keys(
+                runtime,
+                txn_id,
+                group,
+                status,
+                base_context,
+                call,
+                &mut worker,
+                true,
+                false,
+            );
+            last_completed = Some(worker);
+            if let Err(error) = result {
+                errors.push(error.to_string());
+            }
+        }
+        if let Some(last_completed) = last_completed {
+            backoff.update_from_forked(&last_completed);
+        }
+        if !errors.is_empty() {
+            return Err(LockRecoveryError::Rpc(format!(
+                "async commit recovery (sending ResolveLock) finished with errors: {errors:?}"
+            )));
+        }
+        return Ok(());
+    }
+
+    let group_count = groups.len();
+    let (result_tx, result_rx) = mpsc::channel();
+    let mut completions = Vec::with_capacity(group_count);
+    for group in groups {
+        let worker_backoff = backoff.fork();
+        let mut client = runtime
+            .client()
+            .try_lock()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?
+            .fork_for_async_worker()
+            .expect("worker capability was checked above");
+        let sender = result_tx.clone();
+        let worker_call = call.clone();
+        let task = move || {
+            let result = resolve_lock_rpc(
+                client.as_mut(),
+                txn_id,
+                &group,
+                status,
+                &worker_call,
+                true,
+                false,
+            );
+            let _ = sender.send((group, worker_backoff, result));
+        };
+        match runtime.try_schedule_async_resolve_joinable(
+            AsyncResolveTaskKind::ResolveAsyncCommitRegion,
+            task,
+        ) {
+            Ok(completion) => completions.push(completion),
+            Err(task) => {
+                crate::client_go_metrics::inc_lock_resolver_async_resolve_async_commit_region_fallback();
+                task();
+            }
+        }
+    }
+    drop(result_tx);
+
+    let mut last_completed = None;
+    let mut errors = Vec::new();
+    for _ in 0..group_count {
+        let (group, mut worker_backoff, response) = result_rx
+            .recv()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?;
+        match response {
+            Ok(response) => match apply_resolve_lock_response(
+                runtime,
+                group,
+                response,
+                base_context,
+                call,
+                &mut worker_backoff,
+            ) {
+                Ok(retry_groups) => {
+                    for retry_group in retry_groups {
+                        if let Err(error) = resolve_region_keys(
+                            runtime,
+                            txn_id,
+                            retry_group,
+                            status,
+                            base_context,
+                            call,
+                            &mut worker_backoff,
+                            true,
+                            false,
+                        ) {
+                            errors.push(error.to_string());
+                        }
+                    }
+                }
+                Err(error) => errors.push(error.to_string()),
+            },
+            Err(error) => errors.push(error.to_string()),
+        }
+        last_completed = Some(worker_backoff);
+    }
+    for completion in completions {
+        let _ = completion.recv();
+    }
+    if let Some(last_completed) = last_completed {
+        backoff.update_from_forked(&last_completed);
+    }
+    if !errors.is_empty() {
+        return Err(LockRecoveryError::Rpc(format!(
+            "async commit recovery (sending ResolveLock) finished with errors: {errors:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn resolve_async_commit_regions_sequentially<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    txn_id: u64,
+    groups: Vec<RegionKeyGroup>,
+    status: ResolvedTxnStatus,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<(), LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
     let mut last = None;
     let mut errors = Vec::new();
     for group in groups {
@@ -1531,7 +1748,7 @@ where
             "async commit recovery (sending ResolveLock) finished with errors: {errors:?}"
         )));
     }
-    Ok(status)
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1552,40 +1769,80 @@ where
     // growing the native call stack on repeated region changes.
     let mut pending = vec![group];
     while let Some(group) = pending.pop() {
-        check_lock_call(call)?;
-        crate::client_go_metrics::inc_lock_resolver_query_check_secondary_locks();
-        let request = KvrpcCheckSecondaryLocksRequest {
-            keys: group.keys.clone(),
-            start_version: txn_id,
-            ..Default::default()
+        let response = {
+            let mut client = runtime
+                .client()
+                .try_lock()
+                .map_err(|_| LockRecoveryError::ClientLifecycle)?;
+            check_secondary_rpc(&mut *client, txn_id, &group, call)?
         };
-        let response = runtime
-            .client()
-            .try_lock()
-            .map_err(|_| LockRecoveryError::ClientLifecycle)?
-            .check_secondary_locks_for_lock(&group.address, &request, &group.context, call)
-            .map_err(map_rpc_error)?;
-        check_lock_call(call)?;
-        if let Some(error) = response.region_error.as_ref() {
-            recover_lock_region_error(runtime, error, &group.attempt, backoff, call)?;
-            pending.extend(
-                group_keys_by_region(runtime, &group.keys, base_context)?
-                    .into_iter()
-                    .rev(),
-            );
-            continue;
-        }
-        if let Some(error) = response.error.as_ref() {
-            return Err(LockRecoveryError::KeyError(format!("{error:?}")));
-        }
-        data.add_keys(
-            &response.locks,
-            group.keys.len(),
-            txn_id,
-            response.commit_ts,
-        )?;
+        pending.extend(
+            apply_check_secondary_response(
+                runtime,
+                txn_id,
+                group,
+                response,
+                base_context,
+                call,
+                backoff,
+                data,
+            )?
+            .into_iter()
+            .rev(),
+        );
     }
     Ok(())
+}
+
+fn check_secondary_rpc(
+    client: &mut dyn LockRecoveryClient,
+    txn_id: u64,
+    group: &RegionKeyGroup,
+    call: &UnaryCallContext,
+) -> Result<KvrpcCheckSecondaryLocksResponse, LockRecoveryError> {
+    check_lock_call(call)?;
+    crate::client_go_metrics::inc_lock_resolver_query_check_secondary_locks();
+    let request = KvrpcCheckSecondaryLocksRequest {
+        keys: group.keys.clone(),
+        start_version: txn_id,
+        ..Default::default()
+    };
+    let response = client
+        .check_secondary_locks_for_lock(&group.address, &request, &group.context, call)
+        .map_err(map_rpc_error)?;
+    check_lock_call(call)?;
+    Ok(response)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_check_secondary_response<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    txn_id: u64,
+    group: RegionKeyGroup,
+    response: KvrpcCheckSecondaryLocksResponse,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+    data: &mut AsyncResolveData,
+) -> Result<Vec<RegionKeyGroup>, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    if let Some(error) = response.region_error.as_ref() {
+        recover_lock_region_error(runtime, error, &group.attempt, backoff, call)?;
+        return group_keys_by_region(runtime, &group.keys, base_context);
+    }
+    if let Some(error) = response.error.as_ref() {
+        return Err(LockRecoveryError::KeyError(format!("{error:?}")));
+    }
+    data.add_keys(
+        &response.locks,
+        group.keys.len(),
+        txn_id,
+        response.commit_ts,
+    )?;
+    Ok(Vec::new())
 }
 
 /// One region's share of a keyed recovery command.
@@ -1596,6 +1853,192 @@ struct RegionKeyGroup {
     attempt: RegionAttempt,
     context: KvrpcContext,
     keys: Vec<Vec<u8>>,
+}
+
+fn check_secondary_groups_concurrently<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    txn_id: u64,
+    groups: Vec<RegionKeyGroup>,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+    data: &mut AsyncResolveData,
+) -> Result<(), LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    if !runtime.has_async_resolve_pool() {
+        return check_secondary_groups_sequentially(
+            runtime,
+            txn_id,
+            groups,
+            base_context,
+            call,
+            backoff,
+            data,
+        );
+    }
+
+    let worker_available = runtime
+        .client()
+        .try_lock()
+        .map_err(|_| LockRecoveryError::ClientLifecycle)?
+        .fork_for_async_worker()
+        .is_some();
+    if !worker_available {
+        let mut last_completed = None;
+        let mut first_error = None;
+        for group in groups {
+            crate::client_go_metrics::inc_lock_resolver_async_check_secondaries_fallback();
+            let mut worker = backoff.fork();
+            let result = check_secondary_group(
+                runtime,
+                txn_id,
+                group,
+                base_context,
+                call,
+                &mut worker,
+                data,
+            );
+            last_completed = Some(worker);
+            if first_error.is_none() {
+                first_error = result.err();
+            }
+        }
+        if let Some(last_completed) = last_completed {
+            backoff.update_from_forked(&last_completed);
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        return Ok(());
+    }
+
+    let group_count = groups.len();
+    let (result_tx, result_rx) = mpsc::channel();
+    let mut completions = Vec::with_capacity(group_count);
+    for group in groups {
+        let worker_backoff = backoff.fork();
+        let mut client = runtime
+            .client()
+            .try_lock()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?
+            .fork_for_async_worker()
+            .expect("worker capability was checked above");
+        let sender = result_tx.clone();
+        let worker_call = call.clone();
+        let task = move || {
+            let result = check_secondary_rpc(client.as_mut(), txn_id, &group, &worker_call);
+            let _ = sender.send((group, worker_backoff, result));
+        };
+        match runtime
+            .try_schedule_async_resolve_joinable(AsyncResolveTaskKind::CheckSecondaries, task)
+        {
+            Ok(completion) => completions.push(completion),
+            Err(task) => {
+                crate::client_go_metrics::inc_lock_resolver_async_check_secondaries_fallback();
+                task();
+            }
+        }
+    }
+    drop(result_tx);
+
+    let mut last_completed = None;
+    let mut first_error = None;
+    for _ in 0..group_count {
+        let (group, mut worker_backoff, response) = result_rx
+            .recv()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?;
+        match response {
+            Ok(response) => match apply_check_secondary_response(
+                runtime,
+                txn_id,
+                group,
+                response,
+                base_context,
+                call,
+                &mut worker_backoff,
+                data,
+            ) {
+                Ok(retry_groups) => {
+                    for retry_group in retry_groups {
+                        if let Err(error) = check_secondary_group(
+                            runtime,
+                            txn_id,
+                            retry_group,
+                            base_context,
+                            call,
+                            &mut worker_backoff,
+                            data,
+                        ) {
+                            if first_error.is_none() {
+                                first_error = Some(error);
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            },
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        last_completed = Some(worker_backoff);
+    }
+    for completion in completions {
+        let _ = completion.recv();
+    }
+    if let Some(last_completed) = last_completed {
+        backoff.update_from_forked(&last_completed);
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn check_secondary_groups_sequentially<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    txn_id: u64,
+    groups: Vec<RegionKeyGroup>,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+    data: &mut AsyncResolveData,
+) -> Result<(), LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    let mut last = None;
+    let mut first_error = None;
+    for group in groups {
+        let mut worker = backoff.fork();
+        let result = check_secondary_group(
+            runtime,
+            txn_id,
+            group,
+            base_context,
+            call,
+            &mut worker,
+            data,
+        );
+        last = Some(worker);
+        if first_error.is_none() {
+            first_error = result.err();
+        }
+    }
+    if let Some(last) = last {
+        backoff.update_from_forked(&last);
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 struct RegionGroupIndices {
@@ -1770,44 +2213,83 @@ where
 {
     let mut pending = vec![group];
     while let Some(group) = pending.pop() {
-        check_lock_call(call)?;
-        let request = KvrpcResolveLockRequest {
-            start_version: txn_id,
-            commit_version: match status {
-                ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
-                ResolvedTxnStatus::RolledBack => 0,
-            },
-            keys: if include_keys {
-                group.keys.clone()
-            } else {
-                Vec::new()
-            },
-            is_async: server_side_async,
-            is_txn_file: false,
-            ..KvrpcResolveLockRequest::default()
+        let response = {
+            let mut client = runtime
+                .client()
+                .try_lock()
+                .map_err(|_| LockRecoveryError::ClientLifecycle)?;
+            resolve_lock_rpc(
+                &mut *client,
+                txn_id,
+                &group,
+                status,
+                call,
+                include_keys,
+                server_side_async,
+            )?
         };
-        let response = runtime
-            .client()
-            .try_lock()
-            .map_err(|_| LockRecoveryError::ClientLifecycle)?
-            .resolve_lock_for_read(&group.address, &request, &group.context, call)
-            .map_err(map_rpc_error)?;
-        // Do not inspect or publish a ResolveLock result after caller expiry.
-        check_lock_call(call)?;
-        if let Some(error) = response.region_error.as_ref() {
-            recover_lock_region_error(runtime, error, &group.attempt, backoff, call)?;
-            pending.extend(
-                group_keys_by_region(runtime, &group.keys, base_context)?
-                    .into_iter()
-                    .rev(),
-            );
-            continue;
-        }
-        if let Some(error) = response.error.as_ref() {
-            return Err(LockRecoveryError::KeyError(format!("{error:?}")));
-        }
+        pending.extend(
+            apply_resolve_lock_response(runtime, group, response, base_context, call, backoff)?
+                .into_iter()
+                .rev(),
+        );
     }
     Ok(())
+}
+
+fn resolve_lock_rpc(
+    client: &mut dyn LockRecoveryClient,
+    txn_id: u64,
+    group: &RegionKeyGroup,
+    status: ResolvedTxnStatus,
+    call: &UnaryCallContext,
+    include_keys: bool,
+    server_side_async: bool,
+) -> Result<KvrpcResolveLockResponse, LockRecoveryError> {
+    check_lock_call(call)?;
+    let request = KvrpcResolveLockRequest {
+        start_version: txn_id,
+        commit_version: match status {
+            ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
+            ResolvedTxnStatus::RolledBack => 0,
+        },
+        keys: if include_keys {
+            group.keys.clone()
+        } else {
+            Vec::new()
+        },
+        is_async: server_side_async,
+        is_txn_file: false,
+        ..KvrpcResolveLockRequest::default()
+    };
+    let response = client
+        .resolve_lock_for_read(&group.address, &request, &group.context, call)
+        .map_err(map_rpc_error)?;
+    // Do not inspect or publish a ResolveLock result after caller expiry.
+    check_lock_call(call)?;
+    Ok(response)
+}
+
+fn apply_resolve_lock_response<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    group: RegionKeyGroup,
+    response: KvrpcResolveLockResponse,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<Vec<RegionKeyGroup>, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    if let Some(error) = response.region_error.as_ref() {
+        recover_lock_region_error(runtime, error, &group.attempt, backoff, call)?;
+        return group_keys_by_region(runtime, &group.keys, base_context);
+    }
+    if let Some(error) = response.error.as_ref() {
+        return Err(LockRecoveryError::KeyError(format!("{error:?}")));
+    }
+    Ok(Vec::new())
 }
 
 pub(super) fn map_rpc_error(error: DirectUnaryClientError) -> LockRecoveryError {

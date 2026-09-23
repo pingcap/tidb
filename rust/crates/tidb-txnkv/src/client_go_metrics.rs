@@ -254,10 +254,25 @@ pub(crate) fn inc_lock_resolver_resolve_lock_lite() {
     inc_lock_resolver_counter("LockResolverCountWithResolveLockLite");
 }
 
-/// Go `LockResolverAsyncRunningTasksForReadResolve`.
-pub(crate) fn lock_resolver_read_async_gauge() -> Option<prometheus::Gauge> {
+/// Go `LockResolverCountWithAsyncResolveAsyncCommitFallback`.
+pub(crate) fn inc_lock_resolver_async_resolve_async_commit_fallback() {
+    inc_lock_resolver_counter("LockResolverCountWithAsyncResolveAsyncCommitFallback");
+}
+
+/// Go `LockResolverCountWithAsyncCheckSecondariesFallback`.
+pub(crate) fn inc_lock_resolver_async_check_secondaries_fallback() {
+    inc_lock_resolver_counter("LockResolverCountWithAsyncCheckSecondariesFallback");
+}
+
+/// Go `LockResolverCountWithAsyncResolveAsyncCommitRegionFallback`.
+pub(crate) fn inc_lock_resolver_async_resolve_async_commit_region_fallback() {
+    inc_lock_resolver_counter("LockResolverCountWithAsyncResolveAsyncCommitRegionFallback");
+}
+
+/// Returns the client-go task gauge for one resolver worker category.
+pub(crate) fn lock_resolver_async_gauge(shortcut_name: &'static str) -> Option<prometheus::Gauge> {
     tikv_client::metrics::global_metrics()
-        .shortcut("LockResolverAsyncRunningTasksForReadResolve")
+        .shortcut(shortcut_name)
         .and_then(|shortcut| match shortcut {
             tikv_client::metrics::ClientGoShortcut::Gauge(gauge) => Some(gauge.clone()),
             _ => None,
@@ -294,7 +309,11 @@ mod lock_resolver_metric_tests {
         inc_lock_resolver_query_txn_status_committed,
         inc_lock_resolver_query_txn_status_rolled_back, inc_lock_resolver_resolve,
         inc_lock_resolver_resolve_async, inc_lock_resolver_resolve_lock_lite,
-        inc_lock_resolver_resolve_locks, inc_lock_resolver_wait_expired, init_dashboard_series,
+        inc_lock_resolver_resolve_locks,
+        inc_lock_resolver_async_check_secondaries_fallback,
+        inc_lock_resolver_async_resolve_async_commit_fallback,
+        inc_lock_resolver_async_resolve_async_commit_region_fallback,
+        inc_lock_resolver_wait_expired, init_dashboard_series, lock_resolver_async_gauge,
     };
 
     fn shortcut_count(shortcut_name: &'static str) -> f64 {
@@ -346,12 +365,33 @@ mod lock_resolver_metric_tests {
                 "LockResolverCountWithResolveLockLite",
                 inc_lock_resolver_resolve_lock_lite,
             ),
+            (
+                "LockResolverCountWithAsyncResolveAsyncCommitFallback",
+                inc_lock_resolver_async_resolve_async_commit_fallback,
+            ),
+            (
+                "LockResolverCountWithAsyncCheckSecondariesFallback",
+                inc_lock_resolver_async_check_secondaries_fallback,
+            ),
+            (
+                "LockResolverCountWithAsyncResolveAsyncCommitRegionFallback",
+                inc_lock_resolver_async_resolve_async_commit_region_fallback,
+            ),
         ];
 
         for (shortcut_name, increment) in counters {
             let before = shortcut_count(shortcut_name);
             increment();
             assert!(shortcut_count(shortcut_name) > before);
+        }
+
+        for shortcut_name in [
+            "LockResolverAsyncRunningTasksForReadResolve",
+            "LockResolverAsyncRunningTasksForResolveAsyncCommit",
+            "LockResolverAsyncRunningTasksForCheckSecondaries",
+            "LockResolverAsyncRunningTasksForResolveAsyncCommitRegion",
+        ] {
+            assert!(lock_resolver_async_gauge(shortcut_name).is_some());
         }
     }
 }

@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::lock::async_resolve::{AsyncLockResolveTask, AsyncResolvePool};
+use crate::lock::async_resolve::{AsyncLockResolveTask, AsyncResolvePool, AsyncResolveTaskKind};
 use crate::lock::ResolvedTxnStatus;
 use crate::region::{
     BackgroundRegionCache, BackgroundRegionCacheError, BackgroundRegionCacheOwner, KeyRange,
@@ -438,9 +438,40 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     /// Schedules detached read cleanup when this runtime belongs to a
     /// production lock-resolver authority.
     pub(crate) fn try_schedule_async_resolve(&self, task: AsyncLockResolveTask) -> bool {
+        self.try_schedule_async_resolve_with_kind(AsyncResolveTaskKind::ReadResolve, task)
+    }
+
+    /// Schedules detached resolver work with its client-go gauge category.
+    pub(crate) fn try_schedule_async_resolve_with_kind(
+        &self,
+        kind: AsyncResolveTaskKind,
+        task: AsyncLockResolveTask,
+    ) -> bool {
         self.async_resolve_pool
             .as_ref()
-            .is_some_and(|pool| pool.try_spawn(task))
+            .is_some_and(|pool| pool.try_spawn_with_kind(kind, task))
+    }
+
+    /// Whether this runtime belongs to a production resolver with bounded
+    /// asynchronous worker admission.
+    pub(crate) fn has_async_resolve_pool(&self) -> bool {
+        self.async_resolve_pool.is_some()
+    }
+
+    /// Attempts to schedule one joinable resolver worker. The returned task
+    /// must run inline when admission fails, matching client-go's pool fallback.
+    pub(crate) fn try_schedule_async_resolve_joinable<F>(
+        &self,
+        kind: AsyncResolveTaskKind,
+        task: F,
+    ) -> Result<std::sync::mpsc::Receiver<()>, F>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        match &self.async_resolve_pool {
+            Some(pool) => pool.try_spawn_joinable(kind, task),
+            None => Err(task),
+        }
     }
 
     /// Returns a cached determined CheckTxnStatus response for this resolver.
@@ -601,7 +632,7 @@ mod async_resolve_tests {
     use crate::rpc::{DirectUnaryClientError, UnaryCallContext, UnaryCancellation};
     use tidb_proto::{
         KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse,
-        KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext,
+        KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcLockInfo,
         KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcResolveLockRequest,
         KvrpcResolveLockResponse,
     };
@@ -719,6 +750,172 @@ mod async_resolve_tests {
         ) -> Result<KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
             Ok(KvrpcPessimisticRollbackResponse::default())
         }
+    }
+
+    #[derive(Clone)]
+    struct ParallelAsyncCommitClient {
+        max_secondary_active: Arc<AtomicUsize>,
+        secondary_active: Arc<AtomicUsize>,
+        max_resolve_active: Arc<AtomicUsize>,
+        resolve_active: Arc<AtomicUsize>,
+    }
+
+    struct ActiveRpc<'a>(&'a AtomicUsize);
+
+    impl Drop for ActiveRpc<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    fn enter_rpc<'a>(active: &'a AtomicUsize, maximum: &AtomicUsize) -> ActiveRpc<'a> {
+        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+        maximum.fetch_max(now, Ordering::SeqCst);
+        ActiveRpc(active)
+    }
+
+    impl LockRecoveryClient for ParallelAsyncCommitClient {
+        fn fork_for_async_worker(&self) -> Option<Box<dyn LockRecoveryClient + Send>> {
+            Some(Box::new(self.clone()))
+        }
+
+        fn check_txn_status_for_lock(
+            &mut self,
+            _address: &str,
+            request: &KvrpcCheckTxnStatusRequest,
+            _context: &KvrpcContext,
+            _call: &UnaryCallContext,
+        ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+            Ok(KvrpcCheckTxnStatusResponse {
+                lock_ttl: 1,
+                lock_info: Some(KvrpcLockInfo {
+                    lock_version: request.lock_ts,
+                    primary_lock: request.primary_key.clone(),
+                    secondaries: vec![b"a-secondary".to_vec(), b"z-secondary".to_vec()],
+                    use_async_commit: true,
+                    min_commit_ts: 100,
+                    ..KvrpcLockInfo::default()
+                }),
+                ..KvrpcCheckTxnStatusResponse::default()
+            })
+        }
+
+        fn check_secondary_locks_for_lock(
+            &mut self,
+            _address: &str,
+            request: &KvrpcCheckSecondaryLocksRequest,
+            _context: &KvrpcContext,
+            _call: &UnaryCallContext,
+        ) -> Result<KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+            let _active = enter_rpc(&self.secondary_active, &self.max_secondary_active);
+            std::thread::sleep(Duration::from_millis(30));
+            Ok(KvrpcCheckSecondaryLocksResponse {
+                locks: request
+                    .keys
+                    .iter()
+                    .map(|key| KvrpcLockInfo {
+                        key: key.clone(),
+                        lock_version: request.start_version,
+                        use_async_commit: true,
+                        min_commit_ts: 150,
+                        ..KvrpcLockInfo::default()
+                    })
+                    .collect(),
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            })
+        }
+
+        fn resolve_lock_for_read(
+            &mut self,
+            _address: &str,
+            _request: &KvrpcResolveLockRequest,
+            _context: &KvrpcContext,
+            _call: &UnaryCallContext,
+        ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
+            let _active = enter_rpc(&self.resolve_active, &self.max_resolve_active);
+            std::thread::sleep(Duration::from_millis(30));
+            Ok(KvrpcResolveLockResponse::default())
+        }
+
+        fn pessimistic_rollback_for_lock(
+            &mut self,
+            _address: &str,
+            _request: &KvrpcPessimisticRollbackRequest,
+            _context: &KvrpcContext,
+            _call: &UnaryCallContext,
+        ) -> Result<KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+            Ok(KvrpcPessimisticRollbackResponse::default())
+        }
+    }
+
+    #[test]
+    fn async_commit_secondary_checks_and_cleanup_run_per_region_concurrently() {
+        let client = ParallelAsyncCommitClient {
+            max_secondary_active: Arc::new(AtomicUsize::new(0)),
+            secondary_active: Arc::new(AtomicUsize::new(0)),
+            max_resolve_active: Arc::new(AtomicUsize::new(0)),
+            resolve_active: Arc::new(AtomicUsize::new(0)),
+        };
+        let cache = BackgroundRegionCache::without_worker(RegionCache::new(Loader));
+        let resolving_locks = Arc::new(Mutex::new(ResolvingLocks::default()));
+        let resolved_txn_statuses = Arc::new(Mutex::new(ResolvedTxnStatusCache::default()));
+        let authority_id = next_read_authority_id();
+        let opener = SharedReadOpener {
+            client: client.clone(),
+            region_cache: cache.clone_opener(),
+            resolving_locks: Arc::clone(&resolving_locks),
+            async_resolve_pool: None,
+            resolved_txn_statuses: Arc::clone(&resolved_txn_statuses),
+            authority_id,
+        };
+        let pool = crate::lock::async_resolve_pool(opener.clone());
+        let runtime = SharedReadRuntime::from_shared_authorities(
+            client.clone(),
+            cache.open_lease().expect("the test opens a cache lease"),
+            resolving_locks,
+            Some(Arc::clone(&pool)),
+            resolved_txn_statuses,
+            authority_id,
+        )
+        .expect("the test runtime shares the resolver opener");
+
+        let result = resolve_optimistic_locks(
+            &runtime,
+            &[OptimisticLock {
+                key: b"primary".to_vec(),
+                primary: b"primary".to_vec(),
+                txn_id: 100,
+                ttl_ms: 0,
+                txn_size: 3,
+                lock_type: 2,
+                min_commit_ts: 0,
+                use_async_commit: true,
+                secondaries: Vec::new(),
+            }],
+            200,
+            &KvrpcContext::default(),
+            &UnaryCallContext::with_timeout(Duration::from_secs(2)),
+            &FixedTimestampSource::new(1 << 18),
+            true,
+        )
+        .expect("the async-commit secondary checks determine the commit timestamp");
+        assert_eq!(result.statuses, vec![ResolvedTxnStatus::Committed(150)]);
+        assert!(
+            client.max_secondary_active.load(Ordering::SeqCst) > 1,
+            "CheckSecondaryLocks calls for different regions overlap"
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while client.resolve_active.load(Ordering::SeqCst) != 0
+            || client.max_resolve_active.load(Ordering::SeqCst) < 2
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "cleanup completes concurrently"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        pool.close_and_wait();
     }
 
     #[test]
