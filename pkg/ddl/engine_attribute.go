@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -31,6 +32,53 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+// checkIAAdmission gates new SQL requests, not metadata parsing or execution of
+// already accepted jobs. CREATE passes the built metadata to cover LIKE; ALTER
+// passes nil so existing IA data does not prevent a transition back to STANDARD.
+func checkIAAdmission(engineAttribute string, tbInfo *model.TableInfo) error {
+	requiresIA := false
+	if engineAttribute != "" {
+		attr, err := model.ParseEngineAttributeFromString(engineAttribute)
+		if err != nil {
+			return dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(fmt.Sprintf("'%v'", err))
+		}
+		if attr.StorageClass != nil {
+			settings, err := BuildStorageClassSettingsFromJSON(attr.StorageClass)
+			if err != nil {
+				return err
+			}
+			// Include policies for partitions that do not exist yet.
+			for _, def := range settings.Defs {
+				requiresIA = requiresIA || usesIAStorageClass(def.Tier, def.Transitions)
+			}
+		}
+	}
+	if tbInfo != nil {
+		requiresIA = requiresIA || usesIAStorageClass(tbInfo.StorageClassTier, tbInfo.StorageClassTransitions)
+		if tbInfo.Partition != nil {
+			for _, part := range tbInfo.Partition.Definitions {
+				requiresIA = requiresIA || usesIAStorageClass(part.StorageClassTier, part.StorageClassTransitions)
+			}
+		}
+	}
+	if !requiresIA || config.GetGlobalConfig().EnableIA {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("IA is disabled; set enable-ia = true in the TiDB configuration to use IA storage")
+}
+
+func usesIAStorageClass(tier string, transitions []model.StorageClassTransitRule) bool {
+	if tier == model.StorageClassTierIA {
+		return true
+	}
+	for _, transition := range transitions {
+		if transition.Tier == model.StorageClassTierIA {
+			return true
+		}
+	}
+	return false
+}
 
 func handleEngineAttributeForCreateTable(input string, tbInfo *model.TableInfo) error {
 	attr, err := model.ParseEngineAttributeFromString(input)

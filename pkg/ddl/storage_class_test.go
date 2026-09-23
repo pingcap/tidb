@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -939,6 +940,10 @@ func stringPtr(s string) *string {
 }
 
 func TestStorageClassTransitionHistoryInsertionRetry(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableIA = true
+	})
 	if !kerneltype.IsNextGen() {
 		t.Skip("storage class transition history is NextGen-only")
 	}
@@ -1014,6 +1019,10 @@ func TestStorageClassTransitionHistoryInsertionRetry(t *testing.T) {
 }
 
 func TestStorageClassTransitionHistorySecondInsertionRetry(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableIA = true
+	})
 	if !kerneltype.IsNextGen() {
 		t.Skip("storage class transition history is NextGen-only")
 	}
@@ -1044,6 +1053,10 @@ func TestStorageClassTransitionHistorySecondInsertionRetry(t *testing.T) {
 }
 
 func TestStorageClassTransitionHistoryInsertionCancellation(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableIA = true
+	})
 	if !kerneltype.IsNextGen() {
 		t.Skip("storage class transition history is NextGen-only")
 	}
@@ -1086,6 +1099,10 @@ func TestStorageClassTransitionHistoryInsertionCancellation(t *testing.T) {
 }
 
 func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableIA = true
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
