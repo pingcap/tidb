@@ -41,6 +41,26 @@ const (
 	IndexLookUpPushDownBySysVar
 )
 
+// FullTextAccessInfo describes how a FULLTEXT index built in TiKV answers a
+// MATCH ... AGAINST predicate: the boolean search string compiled with the
+// index's analyzer selects the rows. The predicate itself stays among the
+// table filters and is re-evaluated on the rows returned, so the path can
+// only ever narrow the result, never widen it.
+type FullTextAccessInfo struct {
+	// Match is the MATCH ... AGAINST predicate the path serves.
+	Match *expression.ScalarFunction
+	// Search is the constant boolean-mode search string.
+	Search string
+}
+
+// Clone clones FullTextAccessInfo.
+func (info *FullTextAccessInfo) Clone() *FullTextAccessInfo {
+	if info == nil {
+		return nil
+	}
+	return &FullTextAccessInfo{Match: info.Match.Clone().(*expression.ScalarFunction), Search: info.Search}
+}
+
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type AccessPath struct {
@@ -125,6 +145,11 @@ type AccessPath struct {
 	// returns satisfies them, so a parent Selection that holds them (because they can't be pushed down to
 	// TiKV) doesn't need to evaluate them again.
 	IndexMergeMVCoveredConds []expression.Expression
+	// FullText is set on the partial path of a FULLTEXT index built in TiKV.
+	// Such a path is answered by TiDB's posting-list engine rather than by a
+	// coprocessor range scan, so it has no ranges; it only ever appears as the
+	// single partial path of an IndexMerge path.
+	FullText *FullTextAccessInfo
 
 	StoreType kv.StoreType
 
@@ -212,6 +237,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 		NoncacheableReason:           path.NoncacheableReason,
+		FullText:                     path.FullText.Clone(),
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()

@@ -108,6 +108,20 @@ type PhysicalIndexScan struct {
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
+
+	// FullText is set when the scan reads a FULLTEXT index built in TiKV. The
+	// rows are then selected by TiDB's posting-list engine, evaluating the
+	// search string against the index's entries, rather than by a coprocessor
+	// range scan: Ranges is empty and no DAG request is built for the scan.
+	// Such a scan appears only as the partial plan of an IndexMerge reader.
+	FullText *FullTextScanInfo `plan-cache-clone:"must-nil"`
+}
+
+// FullTextScanInfo describes the search a full-text index scan evaluates.
+type FullTextScanInfo struct {
+	// Search is the constant boolean-mode search string, compiled at execution
+	// time with the analyzer frozen in the index.
+	Search string
 }
 
 // FullRange represent used all partitions.
@@ -137,6 +151,10 @@ func (p *PhysicalIndexScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.Columns = sliceutil.DeepClone(p.Columns)
 	if p.DataSourceSchema != nil {
 		cloned.DataSourceSchema = p.DataSourceSchema.Clone()
+	}
+	if p.FullText != nil {
+		fullText := *p.FullText
+		cloned.FullText = &fullText
 	}
 
 	return cloned, nil
@@ -240,6 +258,9 @@ func (p *PhysicalIndexScan) ExplainID(_ ...bool) fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalIndexScan) TP(_ ...bool) string {
+	if p.FullText != nil {
+		return plancodec.TypeFullTextIndexScan
+	}
 	if p.IsFullScan() {
 		return plancodec.TypeIndexFullScan
 	}
@@ -261,7 +282,16 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
-	if len(p.RangeInfo) > 0 {
+	if p.FullText != nil {
+		// The index is read by terms of the search string, not by ranges.
+		if normalized {
+			buffer.WriteString("fulltext:?, ")
+		} else {
+			buffer.WriteString("fulltext:")
+			buffer.WriteString(strconv.Quote(p.FullText.Search))
+			buffer.WriteString(", ")
+		}
+	} else if len(p.RangeInfo) > 0 {
 		if !normalized {
 			buffer.WriteString("range: decided by ")
 			buffer.WriteString(p.RangeInfo)
@@ -707,6 +737,19 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		is.Desc = prop.GetSortDescForKeepOrder()
 		is.KeepOrder = true
 	}
+	return is
+}
+
+// ConvertToFullTextIndexScan builds the partial plan of an IndexMerge that
+// reads a FULLTEXT index built in TiKV. The scan has no ranges and no
+// coprocessor request: TiDB's posting-list engine evaluates the search string
+// against the index and yields the matching handles.
+func ConvertToFullTextIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath) *PhysicalIndexScan {
+	is := GetOriginalPhysicalIndexScan(ds, prop, path, false, false)
+	is.FullText = &FullTextScanInfo{Search: path.FullText.Search}
+	// The search string is baked into the plan, so a cached plan would answer
+	// a different parameter with the wrong rows.
+	is.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("fulltext index scan")
 	return is
 }
 

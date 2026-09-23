@@ -4,14 +4,16 @@ go_test(
     name = "indexmergereadtest_test",
     timeout = "moderate",
     srcs = [
+        "fulltext_test.go",
         "index_merge_reader_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 21,
+    shard_count = 24,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/executor",
         "//pkg/meta/autoid",
         "//pkg/session",
