@@ -288,9 +288,15 @@ pub(crate) fn analyzed_filter_selectivity(
         // `GetRowCountByColumnRanges` answers from the histogram's null
         // count, while the 0.8 fallback scaled an ANALYZEd null-free side to
         // 80% of its rows and flipped Go's join-order choice.
+        // Go `Selectivity` prices `ne` through the ranger as well: the
+        // not-equal decomposes into the two open point ranges around the
+        // constant and answers `(NDV-1)/NDV` from the histogram. Without
+        // this arm a combined filter (TPC-H Q16's `ne(p_brand) AND
+        // not(like(p_type,...)) AND in(p_size,...)`) fell to the 0.8
+        // default for the ne while its isolated estimate was exact.
         if matches!(
             function.func_name.lowercase(),
-            "lt" | "le" | "gt" | "ge" | "or" | "isnull" | "not"
+            "lt" | "le" | "gt" | "ge" | "ne" | "or" | "isnull" | "not"
         ) {
             let columns = tidb_expr::simple_expr::extract_columns(condition);
             if columns.len() == 1 {
