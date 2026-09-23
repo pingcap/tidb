@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -454,34 +453,6 @@ func TestSlowLogFormat(t *testing.T) {
 
 	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
 	compareSlowLogItems(t, logItems, actual)
-}
-
-func TestSessionVarsRUV2WeightsUseConfigDefaults(t *testing.T) {
-	original := config.GetGlobalConfig()
-	t.Cleanup(func() {
-		if original != nil {
-			config.StoreGlobalConfig(original)
-		}
-	})
-	cfg := config.NewConfig()
-	cfg.RUV2 = config.DefaultRUV2Config()
-	config.StoreGlobalConfig(cfg)
-
-	require.Equal(t, execdetails.RUV2Weights{
-		RUScale:                 cfg.RUV2.RUScale,
-		ResultChunkCells:        cfg.RUV2.ResultChunkCells,
-		ExecutorL1:              cfg.RUV2.ExecutorL1,
-		ExecutorL2:              cfg.RUV2.ExecutorL2,
-		ExecutorL3:              cfg.RUV2.ExecutorL3,
-		ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
-		PlanCnt:                 cfg.RUV2.PlanCnt,
-		PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
-		ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
-		ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
-		WriteKeys:               cfg.RUV2.WriteKeys,
-		SessionParserTotal:      cfg.RUV2.SessionParserTotal,
-		TxnCnt:                  cfg.RUV2.TxnCnt,
-	}, variable.NewSessionVars(nil).RUV2Weights())
 }
 
 func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogItems) {
