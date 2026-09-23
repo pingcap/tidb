@@ -2838,6 +2838,10 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		return optionsMap, colsInfoMap, nil
 	}
 
+	ndvRate := fillAnalyzeOptions(astOpts)[ast.AnalyzeOptNDVRate]
+	astOpts = maps.Clone(astOpts)
+	delete(astOpts, ast.AnalyzeOptNDVRate)
+
 	// In dynamic mode, we collect statistics for all partitions of the table as a global statistics.
 	// In static mode, each partition generates its own execution plan, which is then combined with PartitionUnion.
 	// Because the plan is generated for each partition individually, each partition uses its own statistics;
@@ -2867,6 +2871,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	}
 
 	tblFilledOpts := fillAnalyzeOptions(tblOpts)
+	tblFilledOpts[ast.AnalyzeOptNDVRate] = ndvRate
 
 	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
@@ -2926,6 +2931,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			// then merge statement level options
 			mergedOpts := mergeAnalyzeOptions(astOpts, stmtResets, savedOpts)
 			filledMergedOpts := fillAnalyzeOptions(mergedOpts)
+			filledMergedOpts[ast.AnalyzeOptNDVRate] = ndvRate
 			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
@@ -3154,6 +3160,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
+	ast.AnalyzeOptNDVRate:       math.Float64bits(1),
 }
 
 // AnalyzeOptionDefault returns the default analyze options.
@@ -3167,6 +3174,7 @@ func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
 		ast.AnalyzeOptCMSketchDepth: 5,
 		ast.AnalyzeOptNumSamples:    0,
 		ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+		ast.AnalyzeOptNDVRate:       math.Float64bits(1),
 	}
 }
 
@@ -3209,7 +3217,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 				return nil, nil, errors.Errorf("Value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 			optMap[opt.Type] = v
-		case ast.AnalyzeOptSampleRate:
+		case ast.AnalyzeOptSampleRate, ast.AnalyzeOptNDVRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
 			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
 			if err != nil {
@@ -3219,7 +3227,9 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 			if fVal <= 0 || fVal > limit {
 				return nil, nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", ast.AnalyzeOptionString[opt.Type], limit)
 			}
-			sampleRate = fVal
+			if opt.Type == ast.AnalyzeOptSampleRate {
+				sampleRate = fVal
+			}
 			optMap[opt.Type] = math.Float64bits(fVal)
 		default:
 			v := datumValue.GetUint64()
@@ -3266,6 +3276,9 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	stmtOpts, stmtResets, err := handleAnalyzeOptions(as.AnalyzeOpts)
 	if err != nil {
 		return nil, err
+	}
+	if _, explicit := stmtOpts[ast.AnalyzeOptNDVRate]; explicit && statsVersion != statistics.Version2 {
+		return nil, errors.New("NDVRATE requires tidb_analyze_version = 2")
 	}
 	// These options are the fallback used when tidb_persist_analyze_options is
 	// off, so there is no saved value for an option given as DEFAULT to reset and

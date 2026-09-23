@@ -2294,5 +2294,14 @@ func TestSampledNDVCompatibility(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
 	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
-	require.ErrorContains(t, tk.ExecToErr("analyze table ndv with 0.1 NDVRATE"), "should be positive and not larger than 0")
+	for _, rate := range []string{"0", "1.01"} {
+		require.Error(t, tk.ExecToErr("analyze table ndv with "+rate+" NDVRATE"))
+	}
+	// The mock server is a legacy peer: a sampled request may get full-input results.
+	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
+	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
+	// NDVRATE is a statement option; the next statement returns to full input.
+	tk.MustExec("analyze table ndv")
+	tk.MustQuery("select job_info like '%ndvrate%' from mysql.analyze_jobs where table_name='ndv' and partition_name='p0' order by id desc limit 1").Check(testkit.Rows("0"))
 }

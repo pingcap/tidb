@@ -17,6 +17,7 @@ package statistics
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"math/rand"
 	"unsafe"
 
@@ -293,16 +294,37 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
-func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker, req *tipb.AnalyzeColumnsReq) error {
+	targetCount := len(req.ColumnsInfo) + len(req.ColumnGroups)
+	if pbCollector == nil || pbCollector.Count < 0 || len(pbCollector.FmSketch) != targetCount ||
+		len(pbCollector.NullCounts) != targetCount || len(pbCollector.TotalSize) != targetCount {
+		return errors.New("invalid analyze collector layout or row count")
+	}
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
-	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
-	for _, pbSketch := range pbCollector.FmSketch {
-		sketch := FMSketchFromProto(pbSketch)
-		sketch.maxSize = MaxSketchSize
-		s.FMSketches = append(s.FMSketches, sketch)
-	}
 	s.TotalSizes = pbCollector.TotalSize
+	s.FMSketches = make([]*FMSketch, targetCount)
+	for i, pbSketch := range pbCollector.FmSketch {
+		if pbSketch == nil || s.NullCount[i] < 0 || s.NullCount[i] > s.Count || s.TotalSizes[i] < 0 {
+			return errors.New("invalid analyze sketch or counters")
+		}
+		if pbCollector.NdvSampleCount != nil {
+			sketch, err := newSampledFMSketch(pbSketch, ndvSample{
+				rate: req.GetNdvRate(), rows: s.Count, samples: *pbCollector.NdvSampleCount,
+				nulls: s.NullCount[i],
+			})
+			if err != nil {
+				return err
+			}
+			s.FMSketches[i] = sketch
+		} else {
+			if len(pbSketch.MultiHashset) != 0 {
+				return errors.New("sampled hashes without NDV sample count")
+			}
+			s.FMSketches[i] = FMSketchFromProto(pbSketch)
+			s.FMSketches[i].maxSize = MaxSketchSize
+		}
+	}
 	sampleNum := len(pbCollector.Samples)
 	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
 	// consume mandatory memory at the beginning, including all empty ReservoirRowSampleItems and all empty Datums of all sample rows, if exceeds, fast fail
@@ -328,6 +350,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		s.MemSize += deltaSize
 	}
 	memTracker.Consume(bufferedMemSize)
+	return nil
 }
 
 // Base implements the RowSampleCollector interface.
@@ -469,7 +492,7 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 }
 
 func (s *baseCollector) mergeBase(other *baseCollector) error {
-	// A worker that received no responses has no sketches.
+	// A worker that received no responses has no mode. An empty response does.
 	if len(other.FMSketches) == 0 {
 		return nil
 	}
@@ -486,8 +509,9 @@ func (s *baseCollector) mergeBase(other *baseCollector) error {
 		return errors.New("analyze collector target mismatch")
 	}
 	for i, sketch := range s.FMSketches {
+		// Each request uses one rate, so only a mix of old and new TiKV fails here.
 		if err := sketch.MergeFMSketch(other.FMSketches[i]); err != nil {
-			return err
+			return fmt.Errorf("retry after upgrading every TiKV: %w", err)
 		}
 		s.NullCount[i] += other.NullCount[i]
 		s.TotalSizes[i] += other.TotalSizes[i]

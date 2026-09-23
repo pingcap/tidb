@@ -669,7 +669,12 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			e.memTracker.Consume(inflightRespSize)
 
 			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+			if err := subCollector.Base().FromProto(colResp.RowCollector, e.memTracker, e.analyzePB.ColReq); err != nil {
+				cancel(err)
+				cleanupCollector()
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
 			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 
 			oldRetCollectorSize := retCollector.Base().MemSize
