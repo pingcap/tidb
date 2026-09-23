@@ -667,10 +667,10 @@ type PurgeMaterializedViewLogStmt struct {
 type CancelMaterializedViewJobType uint8
 
 const (
-	// CancelMaterializedViewJobTypeRefresh targets materialized view refresh jobs.
-	CancelMaterializedViewJobTypeRefresh CancelMaterializedViewJobType = iota + 1
 	// CancelMaterializedViewJobTypeLogPurge targets materialized view log purge jobs.
-	CancelMaterializedViewJobTypeLogPurge
+	CancelMaterializedViewJobTypeLogPurge CancelMaterializedViewJobType = iota + 1
+	// CancelMaterializedViewJobTypeRefresh targets materialized view refresh jobs.
+	CancelMaterializedViewJobTypeRefresh
 )
 
 // CancelMaterializedViewJobStmt represents CANCEL MATERIALIZED VIEW LOG PURGE JOB.
