@@ -55,11 +55,15 @@ func getFunctionName(f func(sessionapi.Session, int64)) (string, error) {
 func TestUpgradeToVerFunctionsCheck(t *testing.T) {
 	var lastVer int64
 	var firstVersionAfterReleaseNextGen202603 int64
+	var firstVersionAfterReleaseNextGen202609 int64
 	for _, verFn := range upgradeToVerFunctions {
 		require.Greater(t, verFn.version, lastVer, "upgradeToVerFunctions should be in ascending order")
 		lastVer = verFn.version
 		if firstVersionAfterReleaseNextGen202603 == 0 && verFn.version > version256 {
 			firstVersionAfterReleaseNextGen202603 = verFn.version
+		}
+		if firstVersionAfterReleaseNextGen202609 == 0 && verFn.version > version285 {
+			firstVersionAfterReleaseNextGen202609 = verFn.version
 		}
 		require.NotNil(t, verFn.fn, "upgradeToVerFunctions should not have nil function")
 		name, err := getFunctionName(verFn.fn)
@@ -68,6 +72,8 @@ func TestUpgradeToVerFunctionsCheck(t *testing.T) {
 	}
 	require.Equal(t, int64(277), firstVersionAfterReleaseNextGen202603,
 		"versions 257 through 276 should be reserved for release-nextgen-202603")
+	require.Equal(t, int64(316), firstVersionAfterReleaseNextGen202609,
+		"versions 286 through 315 should be reserved for release-nextgen-202609")
 	require.Equal(t, currentBootstrapVersion, lastVer, "last version in upgradeToVerFunctions should match currentBootstrapVersion")
 }
 
