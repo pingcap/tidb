@@ -71,7 +71,7 @@ func TestUpgradeToVerFunctionsCheck(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, lastVer, "last version in upgradeToVerFunctions should match currentBootstrapVersion")
 }
 
-func TestUpgradeVersion287TTLTaskScanIndexID(t *testing.T) {
+func TestUpgradeVersion285TTLTaskScanIndexID(t *testing.T) {
 	defer memory.CleanupGlobalMemArbitratorForTest()
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -81,9 +81,9 @@ func TestUpgradeVersion287TTLTaskScanIndexID(t *testing.T) {
 	MustExec(t, se, "ALTER TABLE mysql.tidb_ttl_task DROP COLUMN scan_index_id")
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(version287-1))
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(version285-1))
 	require.NoError(t, txn.Commit(context.Background()))
-	RevertVersionAndVariables(t, se, version287-1)
+	RevertVersionAndVariables(t, se, version285-1)
 	store.SetOption(StoreBootstrappedKey, nil)
 
 	dom.Close()
