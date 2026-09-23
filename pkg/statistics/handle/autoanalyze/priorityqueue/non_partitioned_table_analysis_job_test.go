@@ -86,6 +86,9 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 	tblStats = handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
+	// Auto Analyze builds FM sketches from all rows.
+	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
+	tk.MustQuery("select job_info like '%ndvrate%' from mysql.analyze_jobs where table_name='t' order by id desc limit 1").Check(testkit.Rows("0"))
 }
 
 func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
