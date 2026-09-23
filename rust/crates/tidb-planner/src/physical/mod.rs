@@ -1500,9 +1500,12 @@ pub fn find_best_task_4_logical_cte(
         .seed_part_physical_plan
         .as_deref()
         .ok_or_else(|| PlanError::internal("findBestTask4LogicalCTE: seed physical plan is nil"))?;
+    // Go master `physical_cte.go:60` names the CTE scan node with
+    // `plancodec.TypeCTE`, which master defines as "CTEFullScan"
+    // (`plancodec/id.go:131`) — the `CTE` spelling is the CTEDefinition row.
     let mut base = BasePhysicalPlan::new(
         allocator,
-        crate::logical::LogicalCTE::TYPE,
+        tidb_util::plancodec::TYPE_CTE_FULL_SCAN,
         p.base.base.query_block_offset(),
     );
     base.base.set_stats(p.base.base.stats_info().cloned());

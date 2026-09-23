@@ -2215,3 +2215,51 @@ fn limit_candidates_wrap_uint64_row_bounds_like_go() {
         }
     }
 }
+
+#[test]
+fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
+    // Go master `physical_cte.go:60` constructs the CTE scan node with
+    // `plancodec.TypeCTE`, and master's `plancodec/id.go:131` defines
+    // `TypeCTE = "CTEFullScan"`: `EXPLAIN` shows `CTEFullScan_N` for the scan
+    // row while the definition row is `CTE_N` (`CTEDefinition.ExplainID`,
+    // `physical_cte.go:178`). Before this correction the Rust tree named the
+    // scan row with the logical type, printing `CTE_N` for both rows.
+    use crate::logical::cte::CteClass;
+    use crate::logical::{BaseLogicalPlan, LogicalCTE};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let allocator = PlanIdAllocator::new();
+    let seed = scan(5, &[1]);
+    let class = CteClass {
+        is_distinct: false,
+        seed_part_logical_plan: None,
+        recursive_part_logical_plan: None,
+        seed_part_physical_plan: Some(Box::new(seed)),
+        recursive_part_physical_plan: None,
+        id_for_storage: 5,
+        opt_flag: 0,
+        has_limit: false,
+        limit_beg: 0,
+        limit_end: 0,
+        is_in_apply: false,
+        push_down_predicates: Vec::new(),
+        column_map: std::collections::BTreeMap::new(),
+        is_outer_most_cte: false,
+    };
+    let lp = LogicalCTE::new(
+        BaseLogicalPlan::new(&allocator, LogicalCTE::TYPE, 0),
+        Rc::new(RefCell::new(class)),
+    );
+    let task = find_best_task_4_logical_cte(&lp, &PhysicalProperty::default(), &allocator)
+        .expect("a root CTE build");
+    let Some(PhysicalPlan::CTE(built)) = task.plan() else {
+        panic!("a PhysicalCTE, got {:?}", task.plan());
+    };
+    let scan_id = built.base.base.explain_id(false);
+    assert!(
+        scan_id.starts_with("CTEFullScan_"),
+        "the CTE scan row must explain as CTEFullScan_N, got {scan_id}"
+    );
+    assert_eq!(built.operator_info(), "data:CTE_5");
+}
