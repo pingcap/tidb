@@ -1582,6 +1582,11 @@ struct RegionKeyGroup {
     keys: Vec<Vec<u8>>,
 }
 
+struct RegionGroupIndices {
+    first: usize,
+    additional: Option<Vec<usize>>,
+}
+
 /// Routes `keys` and groups them by the region that serves each, preserving the
 /// caller's key order inside every group.
 fn group_keys_by_region<C, L>(
@@ -1593,19 +1598,41 @@ where
     L: RegionRecoveryLoader,
 {
     let mut groups: Vec<RegionKeyGroup> = Vec::new();
+    // Index by region ID so routing many secondary keys does not rescan every
+    // earlier group. Keep collisions because grouping also requires the same
+    // address, and retain first-seen order in `groups`.
+    let mut group_indices: HashMap<u64, RegionGroupIndices> = HashMap::new();
     for key in keys {
         let (address, context, attempt) = route_key_attempt(runtime, key, base_context)?;
-        match groups
-            .iter_mut()
-            .find(|group| group.address == address && group.context.region_id == context.region_id)
-        {
-            Some(group) => group.keys.push(key.clone()),
-            None => groups.push(RegionKeyGroup {
-                address,
-                attempt,
-                context,
-                keys: vec![key.clone()],
-            }),
+        let index = group_indices.get(&context.region_id).and_then(|indices| {
+            std::iter::once(indices.first)
+                .chain(indices.additional.iter().flatten().copied())
+                .find(|index| groups[*index].address == address)
+        });
+        if let Some(index) = index {
+            groups[index].keys.push(key.clone());
+            continue;
+        }
+
+        let index = groups.len();
+        groups.push(RegionKeyGroup {
+            address,
+            attempt,
+            context,
+            keys: vec![key.clone()],
+        });
+        match group_indices.entry(groups[index].context.region_id) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => entry
+                .get_mut()
+                .additional
+                .get_or_insert_with(Vec::new)
+                .push(index),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(RegionGroupIndices {
+                    first: index,
+                    additional: None,
+                });
+            }
         }
     }
     Ok(groups)
