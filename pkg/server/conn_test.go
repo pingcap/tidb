@@ -2856,14 +2856,17 @@ func TestStatementDurationMetrics(t *testing.T) {
 		// Bound by the measured whole command, not a fixed latency ceiling that flakes on slow CI.
 		require.LessOrEqual(t, update.GetSampleSum()-updateBefore.GetSampleSum(), elapsed)
 
-		// The existing server histogram still measures one whole command under its last statement type.
+		// The server histogram still measures one whole command, labeled as MultiStmt.
 		dbNames := session.GetDBNames(vars)
 		require.Len(t, dbNames, 1)
-		query := metrics.QueryDurationHistogram.WithLabelValues("Update", dbNames[0], vars.ResourceGroupName)
+		query := metrics.QueryDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
+		lastStmtQuery := metrics.QueryDurationHistogram.WithLabelValues("Update", dbNames[0], vars.ResourceGroupName)
+		lastStmtQueryBefore := readHistogram(lastStmtQuery).GetHistogram().GetSampleCount()
 		queryBefore := readHistogram(query).GetHistogram()
 		cc.addQueryMetrics(mysql.ComQuery, start, nil)
 		queryAfter := readHistogram(query).GetHistogram()
 		require.Equal(t, queryBefore.GetSampleCount()+1, queryAfter.GetSampleCount())
+		require.Equal(t, lastStmtQueryBefore, readHistogram(lastStmtQuery).GetHistogram().GetSampleCount())
 		require.GreaterOrEqual(t, queryAfter.GetSampleSum()-queryBefore.GetSampleSum(), elapsed)
 		require.LessOrEqual(t, queryAfter.GetSampleSum()-queryBefore.GetSampleSum(), time.Since(start).Seconds())
 		require.Equal(t, update.GetSampleCount(), statementMetric("Update").GetHistogram().GetSampleCount())
@@ -2874,6 +2877,64 @@ func TestStatementDurationMetrics(t *testing.T) {
 		}
 		require.Equal(t, map[string]string{"sql_type": "Insert", "resource_group": vars.ResourceGroupName}, labels)
 		require.Positive(t, promtestutils.CollectAndCount(metrics.StatementDurationHistogram, "tidb_session_statement_duration_seconds"))
+	})
+
+	t.Run("command label boundaries", func(t *testing.T) {
+		checkCommand := func(cmd byte, err error, label string) {
+			dbNames := session.GetDBNames(vars)
+			require.Len(t, dbNames, 1)
+			multi := metrics.QueryDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
+			single := metrics.QueryDurationHistogram.WithLabelValues("Select", dbNames[0], vars.ResourceGroupName)
+			multiBefore := readHistogram(multi).GetHistogram().GetSampleCount()
+			singleBefore := readHistogram(single).GetHistogram().GetSampleCount()
+			cc.addQueryMetrics(cmd, time.Now(), err)
+			if label == "MultiStmt" {
+				multiBefore++
+			} else {
+				singleBefore++
+			}
+			require.Equal(t, multiBefore, readHistogram(multi).GetHistogram().GetSampleCount())
+			require.Equal(t, singleBefore, readHistogram(single).GetHistogram().GetSampleCount())
+		}
+		for _, tt := range []struct {
+			sql     string
+			label   string
+			wantErr bool
+		}{
+			{"select 1; select 2", "MultiStmt", false},
+			{"select * from statement_duration_missing; select 2", "MultiStmt", true},
+			{"select 1", "Select", false},
+			{"select 'a;b';", "Select", false},
+			{"", "Select", false},
+			{"select from", "Select", true},
+		} {
+			// Every case follows a multi-statement request to catch stale session state.
+			require.NoError(t, cc.handleQuery(ctx, "select 1; select 2"))
+			err := cc.handleQuery(ctx, tt.sql)
+			require.Equal(t, tt.wantErr, err != nil, tt.sql)
+			checkCommand(mysql.ComQuery, err, tt.label)
+		}
+
+		require.NoError(t, cc.handleQuery(ctx, "select 1; select 2"))
+		checkCommand(mysql.ComPing, nil, "Select")
+		stmt, _, _, err := tc.Prepare("select 1")
+		require.NoError(t, err)
+		defer func() { require.NoError(t, stmt.Close()) }()
+		rs, err := stmt.Execute(ctx, nil)
+		require.NoError(t, err)
+		rs.Close()
+		checkCommand(mysql.ComStmtExecute, nil, "Select")
+
+		capability, mode := vars.ClientCapability, vars.MultiStatementMode
+		t.Cleanup(func() {
+			tc.SetClientCapability(capability)
+			vars.MultiStatementMode = mode
+		})
+		tc.SetClientCapability(capability &^ mysql.ClientMultiStatements)
+		vars.MultiStatementMode = variable.OffInt
+		err = cc.handleQuery(ctx, "select 1; select 2")
+		require.Error(t, err)
+		checkCommand(mysql.ComQuery, err, "MultiStmt")
 	})
 
 	t.Run("prepared execute and resultset close", func(t *testing.T) {

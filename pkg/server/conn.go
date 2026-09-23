@@ -1414,10 +1414,16 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 	if stmtType != "" {
 		sqlType = stmtType
 	}
+	querySQLType := sqlType
+	if cmd == mysql.ComQuery && vars.InMultiStmts {
+		// The duration covers the whole command, not just its last statement.
+		// Other commands must not inherit the previous COM_QUERY's multi-statement flag.
+		querySQLType = "MultiStmt"
+	}
 	execDetails := vars.StmtCtx.GetExecDetails()
 
 	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(querySQLType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.RequestCount))
 		if execDetails.ScanDetail != nil {
 			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.ScanDetail.ProcessedKeys))
@@ -1857,6 +1863,8 @@ func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) 
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sessVars := cc.ctx.GetSessionVars()
+	// Reset before parsing so empty queries and parse errors cannot reuse the last request's flag.
+	sessVars.InMultiStmts = false
 	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
@@ -1880,8 +1888,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	parserWarns := warns[len(prevWarns):]
 
 	var pointPlans []base.Plan
-	cc.ctx.GetSessionVars().InMultiStmts = false
-	if len(stmts) > 1 {
+	sessVars.InMultiStmts = len(stmts) > 1
+	if sessVars.InMultiStmts {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely
@@ -1902,7 +1910,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				parserWarns = append(parserWarns, warn)
 			}
 		}
-		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts, sql)
