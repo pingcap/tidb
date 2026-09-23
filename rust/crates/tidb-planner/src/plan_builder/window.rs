@@ -867,18 +867,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 continue;
             }
             let mut expr = fields[position].expr.clone();
-            self.resolve_window_expr_columns(&mut expr, fields, names)?;
+            self.resolve_window_expr_columns(&mut expr, fields, names, false)?;
             fields[position].expr = expr;
             position += 1;
         }
         // `:3069` `for _, spec := range sel.WindowSpecs`: a named spec is
         // resolved whether or not any function uses it.
         for (_, def) in windows.iter_mut() {
+            // Go master resolves spec partition/order columns in place (the
+            // `havingWindowAndOrderbyExprResolver` column arm maps them without
+            // appending a select field); a spec column that is already
+            // projected stays bound through this hidden duplicate, and the
+            // window-stage projection skips emitting it.
             for expr in &mut def.spec.partition_by {
-                self.resolve_window_expr_columns(expr, fields, names)?;
+                self.resolve_window_expr_columns(expr, fields, names, true)?;
             }
             for item in &mut def.spec.order_by {
-                self.resolve_window_expr_columns(&mut item.expr, fields, names)?;
+                self.resolve_window_expr_columns(&mut item.expr, fields, names, true)?;
             }
         }
         Ok(())
@@ -890,6 +895,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         expr: &mut Expr,
         fields: &mut Vec<ProjectionField>,
         names: &[FieldName],
+        spec_walk: bool,
     ) -> Result<(), PlanError> {
         let mut error = None;
         visit_exprs(expr, &mut |node| {
@@ -905,6 +911,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // Its arguments must stay in the pre-aggregation scope.
                 let index = fields.len();
                 fields.push(ProjectionField {
+                window_spec_column: false,
                     expr: node.clone(),
                     column_reference: false,
                     alias: Some(format!("sel_agg_{index}")),
@@ -920,6 +927,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if super::find_field_name(names, path).is_some() {
                 let index = fields.len();
                 fields.push(ProjectionField {
+                window_spec_column: spec_walk,
                     expr: node.clone(),
                     column_reference: true,
                     alias: None,

@@ -377,6 +377,14 @@ pub struct ProjectionField {
     /// select list does not project. Trimmed by `buildSelect`'s `:4640`
     /// trailing projection.
     pub hidden: bool,
+    /// A column a window SPEC (partition/order) references was already
+    /// projected by the select list, so this hidden duplicate exists only to
+    /// bind the spec's reference during resolution. Go resolves spec columns
+    /// in place (the `havingWindowAndOrderbyExprResolver` column arm maps them
+    /// without appending a field), so its window-stage projection never emits
+    /// such a row; `build_projection_consider_window` skips them for the same
+    /// result.
+    pub window_spec_column: bool,
 }
 
 /// Go `PlanBuilder.currentBlockExpand` / `outerBlockExpand`, narrowed to the
@@ -2920,6 +2928,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             path.push(name.names.column.original.clone());
             fields.push(ProjectionField {
+                window_spec_column: false,
                 expr: Expr::Column(path),
                 column_reference: true,
                 alias: None,
@@ -3052,6 +3061,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     expanded.extend(Self::unfold_wild_star(path, schema, names));
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
+                window_spec_column: false,
                     expr: expr.clone(),
                     column_reference: matches!(
                         inner_from_parentheses_and_unary_plus(expr),
@@ -3111,6 +3121,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     ));
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
+                window_spec_column: false,
                     expr: expr.clone(),
                     column_reference: matches!(
                         inner_from_parentheses_and_unary_plus(expr),
@@ -3192,6 +3203,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     Some(index) => index,
                     None => {
                         fields.push(ProjectionField {
+                window_spec_column: false,
                             expr: node.clone(),
                             column_reference: matches!(node, Expr::Column(_)),
                             alias: None,
@@ -3396,6 +3408,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut projection_columns = Vec::with_capacity(fields.len());
         let mut projection_names = Vec::with_capacity(fields.len());
         for (index, field) in fields.iter().enumerate() {
+            // A window SPEC (partition/order) column duplicate exists only to
+            // bind the spec's reference; the window reads it from its own
+            // child. Go master never appends such a field, so its
+            // window-stage projection does not emit one either.
+            if field.window_spec_column {
+                continue;
+            }
             // Go `ast.HasWindowFlag(field.Expr)`: the field CONTAINS a window
             // call, at any depth. After [`window::extract_window_funcs`] the
             // call is a marker, so the test is over markers.
@@ -4046,6 +4065,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             for (index, _) in having_aggs.iter().enumerate() {
                 let position = fields.len();
                 fields.push(ProjectionField {
+                window_spec_column: false,
                     expr: PlanMarker::new(MarkerKind::Agg, having_offset + index).as_expr(),
                     column_reference: false,
                     alias: Some(format!("sel_agg_{position}")),

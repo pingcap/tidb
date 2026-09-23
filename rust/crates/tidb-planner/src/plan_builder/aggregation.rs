@@ -382,6 +382,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for agg in lifted {
             let position = fields.len();
             fields.push(ProjectionField {
+                window_spec_column: false,
                 expr: agg.clone(),
                 column_reference: false,
                 alias: Some(format!("sel_subq_agg_{position}")),
@@ -819,6 +820,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         Some(position) => position,
                         None => {
                             fields.push(ProjectionField {
+                window_spec_column: false,
                                 expr: canonical,
                                 column_reference: true,
                                 alias: None,
