@@ -30,6 +30,7 @@ go_test(
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/globalstats",
+        "//pkg/statistics/util",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/testkit/testfailpoint",

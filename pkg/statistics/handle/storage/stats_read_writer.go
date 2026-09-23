@@ -557,6 +557,9 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 // LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
 	jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error {
+	if err := validateJSONFMSketches(jsonTbl); err != nil {
+		return err
+	}
 	table, err := is.TableByName(context.Background(), ast.NewCIStr(jsonTbl.DatabaseName), ast.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)

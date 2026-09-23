@@ -199,6 +199,11 @@ func TestLoadGlobalStats(t *testing.T) {
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0))
 	loadedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
+
+	// Historical dumps can contain null partitions when their metadata is missing.
+	globalStats.Partitions["p0"] = nil
+	require.NoError(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0))
+	require.Equal(t, loadedStats.Partitions["p0"], getStatsJSON(t, dom, "test", "t").Partitions["p0"])
 }
 
 func TestLastStatsHistUpdateVersionAfterLoadStats(t *testing.T) {

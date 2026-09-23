@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -2325,6 +2326,27 @@ func TestSampledNDVCompatibility(t *testing.T) {
 	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id in (?,?)", data, part0, part1)
 	tk.MustExec("update mysql.stats_meta set count=10 where table_id in (?,?)", part0, part1)
 	h := dom.StatsHandle()
+	jsonTable, err := h.DumpStatsToJSON("test", tbl, nil, true)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(jsonTable)
+	require.NoError(t, err)
+	var restored statsutil.JSONTable
+	require.NoError(t, json.Unmarshal(encoded, &restored))
+	wantSketch, err := statistics.DecodeFMSketch(data)
+	require.NoError(t, err)
+	for _, name := range []string{"p0", "p1"} {
+		for _, saved := range [][]byte{restored.Partitions[name].Columns["b"].FMSketchData, restored.Partitions[name].Indices["idx"].FMSketchData} {
+			sketch, err := statistics.DecodeFMSketch(saved)
+			require.NoError(t, err)
+			require.Equal(t, wantSketch, sketch)
+		}
+	}
+	var oldColumn struct {
+		FMSketch *tipb.FMSketch `json:"fm_sketch"`
+	}
+	columnJSON, err := json.Marshal(restored.Partitions["p0"].Columns["b"])
+	require.NoError(t, err)
+	require.Error(t, json.Unmarshal(columnJSON, &oldColumn))
 
 	opts := map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumBuckets: 10, ast.AnalyzeOptNumTopN: 0}
 	mergeColumnB := func(async bool) (*globalstats.GlobalStats, error) {
@@ -2355,6 +2377,17 @@ func TestSampledNDVCompatibility(t *testing.T) {
 		// The empty partition adds rows but no hashes to the GEE estimate.
 		require.Equal(t, int64(5), merged.Hg[0].NDV)
 	}
+
+	// Reject an unsupported format before writing any partition.
+	before := tk.MustQuery("select table_id, version from mysql.stats_meta order by table_id").Rows()
+	bad := restored.Partitions["p1"].Columns["b"].FMSketchData
+	bad[1] = 2
+	require.Error(t, h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), &restored, 0))
+	require.Equal(t, before, tk.MustQuery("select table_id, version from mysql.stats_meta order by table_id").Rows())
+	bad[1] = 1
+	tk.MustExec("delete from mysql.stats_fm_sketch where table_id in (?,?)", part0, part1)
+	require.NoError(t, h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), &restored, 0))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("6"))
 
 	// The legacy peer returns full input for p0, which cannot merge with the sampled p1.
 	err = tk.ExecToErr("analyze table ndv partition p0 with 0.1 NDVRATE")
