@@ -290,6 +290,13 @@ fn call() -> UnaryCallContext {
     UnaryCallContext::new(Duration::from_secs(2), UnaryCancellation::new())
 }
 
+fn lock_resolver_counter(shortcut_name: &'static str) -> f64 {
+    match tikv_client::metrics::global_metrics().shortcut(shortcut_name) {
+        Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) => counter.get(),
+        _ => panic!("client-go counter shortcut {shortcut_name} is registered"),
+    }
+}
+
 #[derive(Debug)]
 struct AdvancingTimestampSource {
     timestamps: RefCell<VecDeque<u64>>,
@@ -611,6 +618,85 @@ fn rolled_back_status_uses_zero_commit_version() {
         );
         assert_eq!(recorded.borrow().resolves[0].1.commit_version, 0);
     }
+}
+
+#[test]
+fn lock_resolver_counters_follow_go_event_boundaries() {
+    tidb_txnkv::client_go_metrics::init_dashboard_series();
+
+    let resolve_before = lock_resolver_counter("LockResolverCountWithResolve");
+    let expired_before = lock_resolver_counter("LockResolverCountWithExpired");
+    let resolve_locks_before = lock_resolver_counter("LockResolverCountWithResolveLocks");
+    let resolve_lite_before = lock_resolver_counter("LockResolverCountWithResolveLockLite");
+    let (resolved_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        commit_version: 1_200 << 18,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    resolve_optimistic_locks(
+        &resolved_runtime,
+        &[secondary()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &FixedTimestampSource::new(1_100 << 18),
+        false,
+    )
+    .unwrap();
+    assert!(lock_resolver_counter("LockResolverCountWithResolve") > resolve_before);
+    assert!(lock_resolver_counter("LockResolverCountWithExpired") > expired_before);
+    assert!(lock_resolver_counter("LockResolverCountWithResolveLocks") > resolve_locks_before);
+    assert!(lock_resolver_counter("LockResolverCountWithResolveLockLite") > resolve_lite_before);
+
+    let not_expired_before = lock_resolver_counter("LockResolverCountWithNotExpired");
+    let wait_expired_before = lock_resolver_counter("LockResolverCountWithWaitExpired");
+    let (alive_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        lock_ttl: 500,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    resolve_optimistic_locks(
+        &alive_runtime,
+        &[secondary()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &AdvancingTimestampSource::new([1_100 << 18, 1_300 << 18]),
+        true,
+    )
+    .unwrap();
+    assert!(lock_resolver_counter("LockResolverCountWithNotExpired") > not_expired_before);
+    assert!(lock_resolver_counter("LockResolverCountWithWaitExpired") > wait_expired_before);
+
+    let resolve_async_before = lock_resolver_counter("LockResolverCountWithResolveAsync");
+    let secondary_checks_before =
+        lock_resolver_counter("LockResolverCountWithQueryCheckSecondaryLocks");
+    let (async_runtime, _) = runtime_with_secondary_checks(
+        vec![async_primary_status(1_400 << 18)],
+        vec![
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"alpha", 1_500 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"secondary", 1_450 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+        ],
+    );
+    resolve_optimistic_locks(
+        &async_runtime,
+        &[async_blocker()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &expired_timestamps(),
+        true,
+    )
+    .unwrap();
+    assert!(lock_resolver_counter("LockResolverCountWithResolveAsync") > resolve_async_before);
+    assert!(
+        lock_resolver_counter("LockResolverCountWithQueryCheckSecondaryLocks")
+            >= secondary_checks_before + 2.0
+    );
 }
 
 #[test]

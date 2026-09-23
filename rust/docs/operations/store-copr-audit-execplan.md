@@ -1454,5 +1454,28 @@ shortcut counters and leave cache hits out of the query count.
     git diff --check
 
 The status-counter shortcut test and all 28 resolver source tests passed; lint
-and scoped formatting passed. The rest of the resolver's counters/gauges,
-cache-specific metrics, and original Go metrics tests remain open.
+and scoped formatting passed. Cache-specific metrics and original Go metrics
+tests remain open.
+
+### Resolver event counter receipt (2026-09-22)
+
+The pinned `lock_resolver.go` increments `Resolve` once per nonempty batch,
+classifies each lock as expired or live, records a positive wait once per
+batch, and counts secondary-check RPCs, async-commit recovery, region-scan
+ResolveLock calls, and lite ResolveLock region requests at their respective
+call sites. Rust now records these same events through client-go's existing
+shortcuts. Batch-level `Resolve` and wait counters are kept out of per-lock
+helpers, including mixed optimistic/pessimistic batches. The behavior-level
+counter test covers expired lite cleanup, live-lock waiting, and async-commit
+secondary checks. The unsupported BatchResolveLocks path and the async-commit
+worker fallback metrics/gauges remain open; this does not complete the package.
+
+    cd rust
+    cargo test --offline --locked -p tidb-txnkv --lib lock_resolver_status_counters_use_the_client_go_shortcuts
+    cargo test --offline --locked -p tidb-txnkv --test lock_resolver_source lock_resolver_counters_follow_go_event_boundaries -- --test-threads=1
+    cargo test --offline --locked -p tidb-txnkv --lib --test lock_resolver_source
+    cargo check --offline --locked -p tidb-server --message-format=short
+    cd ..
+    make lint
+    python3 /private/tmp/tidb-snapshot-format.py --check
+    git diff --check

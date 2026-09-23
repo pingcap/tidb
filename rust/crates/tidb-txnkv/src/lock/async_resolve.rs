@@ -38,6 +38,10 @@ pub(crate) struct AsyncLockResolveTask {
     /// Whether this transaction-level task should schedule its region groups
     /// independently, matching `batchLiteResolveLocks`' nested read tasks.
     pub(crate) schedule_regions: bool,
+    /// Whether Go's `resolveLock` counter belongs to this task.
+    pub(crate) count_resolve_locks: bool,
+    /// Whether each region request is Go's lite ResolveLock path.
+    pub(crate) count_resolve_lock_lite: bool,
 }
 
 type AsyncResolveHandler = dyn Fn(AsyncLockResolveTask, UnaryCancellation) + Send + Sync + 'static;

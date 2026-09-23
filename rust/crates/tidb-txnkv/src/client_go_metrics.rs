@@ -214,6 +214,46 @@ pub(crate) fn inc_lock_resolver_query_txn_status_rolled_back() {
     inc_lock_resolver_counter("LockResolverCountWithQueryTxnStatusRolledBack");
 }
 
+/// Go `LockResolverCountWithExpired`.
+pub(crate) fn inc_lock_resolver_expired() {
+    inc_lock_resolver_counter("LockResolverCountWithExpired");
+}
+
+/// Go `LockResolverCountWithNotExpired`.
+pub(crate) fn inc_lock_resolver_not_expired() {
+    inc_lock_resolver_counter("LockResolverCountWithNotExpired");
+}
+
+/// Go `LockResolverCountWithWaitExpired`.
+pub(crate) fn inc_lock_resolver_wait_expired() {
+    inc_lock_resolver_counter("LockResolverCountWithWaitExpired");
+}
+
+/// Go `LockResolverCountWithResolve`.
+pub(crate) fn inc_lock_resolver_resolve() {
+    inc_lock_resolver_counter("LockResolverCountWithResolve");
+}
+
+/// Go `LockResolverCountWithResolveAsync`.
+pub(crate) fn inc_lock_resolver_resolve_async() {
+    inc_lock_resolver_counter("LockResolverCountWithResolveAsync");
+}
+
+/// Go `LockResolverCountWithQueryCheckSecondaryLocks`.
+pub(crate) fn inc_lock_resolver_query_check_secondary_locks() {
+    inc_lock_resolver_counter("LockResolverCountWithQueryCheckSecondaryLocks");
+}
+
+/// Go `LockResolverCountWithResolveLocks`.
+pub(crate) fn inc_lock_resolver_resolve_locks() {
+    inc_lock_resolver_counter("LockResolverCountWithResolveLocks");
+}
+
+/// Go `LockResolverCountWithResolveLockLite`.
+pub(crate) fn inc_lock_resolver_resolve_lock_lite() {
+    inc_lock_resolver_counter("LockResolverCountWithResolveLockLite");
+}
+
 /// Go `LockResolverAsyncRunningTasksForReadResolve`.
 pub(crate) fn lock_resolver_read_async_gauge() -> Option<prometheus::Gauge> {
     tikv_client::metrics::global_metrics()
@@ -249,8 +289,12 @@ pub fn observe_pessimistic_lock_keys_duration(seconds: f64) {
 #[cfg(test)]
 mod lock_resolver_metric_tests {
     use super::{
-        inc_lock_resolver_query_txn_status, inc_lock_resolver_query_txn_status_committed,
-        inc_lock_resolver_query_txn_status_rolled_back, init_dashboard_series,
+        inc_lock_resolver_expired, inc_lock_resolver_not_expired,
+        inc_lock_resolver_query_check_secondary_locks, inc_lock_resolver_query_txn_status,
+        inc_lock_resolver_query_txn_status_committed,
+        inc_lock_resolver_query_txn_status_rolled_back, inc_lock_resolver_resolve,
+        inc_lock_resolver_resolve_async, inc_lock_resolver_resolve_lock_lite,
+        inc_lock_resolver_resolve_locks, inc_lock_resolver_wait_expired, init_dashboard_series,
     };
 
     fn shortcut_count(shortcut_name: &'static str) -> f64 {
@@ -275,6 +319,32 @@ mod lock_resolver_metric_tests {
             (
                 "LockResolverCountWithQueryTxnStatusRolledBack",
                 inc_lock_resolver_query_txn_status_rolled_back,
+            ),
+            ("LockResolverCountWithExpired", inc_lock_resolver_expired),
+            (
+                "LockResolverCountWithNotExpired",
+                inc_lock_resolver_not_expired,
+            ),
+            (
+                "LockResolverCountWithWaitExpired",
+                inc_lock_resolver_wait_expired,
+            ),
+            ("LockResolverCountWithResolve", inc_lock_resolver_resolve),
+            (
+                "LockResolverCountWithResolveAsync",
+                inc_lock_resolver_resolve_async,
+            ),
+            (
+                "LockResolverCountWithQueryCheckSecondaryLocks",
+                inc_lock_resolver_query_check_secondary_locks,
+            ),
+            (
+                "LockResolverCountWithResolveLocks",
+                inc_lock_resolver_resolve_locks,
+            ),
+            (
+                "LockResolverCountWithResolveLockLite",
+                inc_lock_resolver_resolve_lock_lite,
             ),
         ];
 

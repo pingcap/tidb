@@ -85,6 +85,8 @@ where
                     request_source: task.request_source.clone(),
                     include_keys: task.include_keys,
                     schedule_regions: false,
+                    count_resolve_locks: false,
+                    count_resolve_lock_lite: task.count_resolve_lock_lite,
                 };
                 if pool.as_ref().is_some_and(|pool| pool.try_spawn(child)) {
                     continue;
@@ -92,6 +94,9 @@ where
                 let call =
                     UnaryCallContext::new(ASYNC_RESOLVE_LOCK_MAX_BACKOFF, cancellation.clone());
                 let mut backoff = RegionBackoffBudget::new(ASYNC_RESOLVE_LOCK_MAX_BACKOFF);
+                if task.count_resolve_lock_lite {
+                    crate::client_go_metrics::inc_lock_resolver_resolve_lock_lite();
+                }
                 let _ = resolve_region_keys(
                     &runtime,
                     task.txn_id,
@@ -104,8 +109,14 @@ where
                 );
             }
         } else {
+            if task.count_resolve_locks {
+                crate::client_go_metrics::inc_lock_resolver_resolve_locks();
+            }
             let mut backoff = RegionBackoffBudget::new(ASYNC_RESOLVE_LOCK_MAX_BACKOFF);
             for group in groups {
+                if task.count_resolve_lock_lite {
+                    crate::client_go_metrics::inc_lock_resolver_resolve_lock_lite();
+                }
                 if resolve_region_keys(
                     &runtime,
                     task.txn_id,
@@ -585,6 +596,7 @@ where
         timestamp_source,
         for_read,
         backoff,
+        true,
     )
 }
 
@@ -612,6 +624,7 @@ where
         timestamp_source,
         for_read,
         backoff,
+        true,
     )
 }
 
@@ -625,6 +638,7 @@ fn resolve_optimistic_lock_iter_with_backoff<'a, C, L, T, I>(
     timestamp_source: &T,
     for_read: bool,
     backoff: &mut RegionBackoffBudget,
+    record_batch_metrics: bool,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -642,6 +656,7 @@ where
         timestamp_source,
         for_read,
         backoff,
+        record_batch_metrics,
         &mut lite_cleanups,
     )?;
     flush_lite_resolve_cleanups(
@@ -680,6 +695,7 @@ where
         timestamp_source,
         for_read,
         backoff,
+        false,
         lite_cleanups,
     )
 }
@@ -693,6 +709,7 @@ fn resolve_optimistic_lock_iter_collecting<'a, C, L, T, I>(
     timestamp_source: &T,
     for_read: bool,
     backoff: &mut RegionBackoffBudget,
+    record_batch_metrics: bool,
     lite_cleanups: &mut LiteResolveCleanups,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
@@ -707,10 +724,15 @@ where
         ..LockRecoveryResult::default()
     };
     let mut minimum_wait = None::<Duration>;
+    let mut counted_resolve = false;
     let lite_threshold = tikv_client::config::get_global_config()
         .tikv_client
         .resolve_lock_lite_threshold;
     for lock in locks {
+        if record_batch_metrics && !counted_resolve {
+            crate::client_go_metrics::inc_lock_resolver_resolve();
+            counted_resolve = true;
+        }
         let defer_lite_cleanup = lock.txn_size < lite_threshold;
         // Go `resolve(l, forceSyncCommit)` (`lock_resolver.go:577-621`) is a
         // closure that calls itself exactly once more, with forceSyncCommit
@@ -750,6 +772,7 @@ where
             // around a lock, so for it a live owner ends the classification
             // right here whatever `action` said.
             OneLockOutcome::Alive { wait, .. } if !for_read => {
+                crate::client_go_metrics::inc_lock_resolver_not_expired();
                 minimum_wait = Some(minimum_wait.map_or(wait, |current| current.min(wait)));
             }
             // Go: `status.action == kvrpcpb.Action_MinCommitTSPushed`. TiKV
@@ -782,11 +805,15 @@ where
             // Go's trailing `else`: the owner is alive and its min-commit-ts
             // was not pushed, so the reader owes it the rest of its TTL.
             OneLockOutcome::Alive { wait, .. } => {
+                crate::client_go_metrics::inc_lock_resolver_not_expired();
                 minimum_wait = Some(minimum_wait.map_or(wait, |current| current.min(wait)));
             }
         }
     }
     result.ttl = minimum_wait.unwrap_or_default();
+    if record_batch_metrics && !result.ttl.is_zero() {
+        crate::client_go_metrics::inc_lock_resolver_wait_expired();
+    }
     Ok(result)
 }
 
@@ -807,6 +834,7 @@ where
         // already performed that cleanup. A multi-key lite request includes
         // the primary in its exact per-region key groups.
         if cleanup.keys.len() == 1 && cleanup.keys[0] == cleanup.primary {
+            crate::client_go_metrics::inc_lock_resolver_resolve_locks();
             continue;
         }
         if for_read {
@@ -821,13 +849,19 @@ where
                 request_source: base_context.request_source.clone(),
                 include_keys: true,
                 schedule_regions: true,
+                count_resolve_locks: cleanup.keys.len() == 1,
+                count_resolve_lock_lite: true,
             }) {
                 continue;
             }
             crate::client_go_metrics::inc_lock_resolver_read_async_fallback();
         }
+        if cleanup.keys.len() == 1 {
+            crate::client_go_metrics::inc_lock_resolver_resolve_locks();
+        }
         let resolved = (|| {
             for group in group_keys_by_region(runtime, &cleanup.keys, base_context)? {
+                crate::client_go_metrics::inc_lock_resolver_resolve_lock_lite();
                 resolve_region_keys(
                     runtime,
                     txn_id,
@@ -963,6 +997,10 @@ where
     let async_commit_primary = primary_lock
         .as_ref()
         .is_some_and(|primary_lock| primary_lock.use_async_commit);
+    if check_response.lock_ttl == 0 || (async_commit_primary && !force_sync_commit && ttl.is_zero())
+    {
+        crate::client_go_metrics::inc_lock_resolver_expired();
+    }
     // Go `expiredAsyncCommitLocks`: an async-commit primary that is still
     // present but expired is not alive. A determined cached status bypasses
     // secondary checks and applies that status to the primary plus all keys
@@ -1393,6 +1431,7 @@ where
     C: LockRecoveryClient,
     L: RegionRecoveryLoader,
 {
+    crate::client_go_metrics::inc_lock_resolver_resolve_async();
     let (status, keys) = if let Some(status) = determined_status {
         // Go's cached status is already final. Its retained primary lock lists
         // every async-commit secondary, so cleanup can skip CheckSecondaryLocks.
@@ -1498,6 +1537,7 @@ where
     let mut pending = vec![group];
     while let Some(group) = pending.pop() {
         check_lock_call(call)?;
+        crate::client_go_metrics::inc_lock_resolver_query_check_secondary_locks();
         let request = KvrpcCheckSecondaryLocksRequest {
             keys: group.keys.clone(),
             start_version: txn_id,
@@ -1596,6 +1636,8 @@ where
             request_source: base_context.request_source.clone(),
             include_keys: false,
             schedule_regions: false,
+            count_resolve_locks: true,
+            count_resolve_lock_lite: false,
         }) {
             return Ok(());
         }
@@ -1625,6 +1667,7 @@ where
     C: LockRecoveryClient,
     L: RegionRecoveryLoader,
 {
+    crate::client_go_metrics::inc_lock_resolver_resolve_locks();
     // Go `resolveLock` wraps exactly this send in `for { ... }`, retrying a
     // region error after `BoRegionMiss`; the budget is the same
     // resolve-lock budget its backoffer carries.

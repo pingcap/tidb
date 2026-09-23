@@ -186,6 +186,10 @@ where
         );
     }
 
+    if !locks.is_empty() {
+        crate::client_go_metrics::inc_lock_resolver_resolve();
+    }
+
     let mut lite_cleanups = LiteResolveCleanups::default();
     let mut result = LockRecoveryResult {
         statuses: Vec::with_capacity(locks.len()),
@@ -244,6 +248,9 @@ where
         backoff,
     )?;
     result.ttl = minimum_wait.unwrap_or_default();
+    if !result.ttl.is_zero() {
+        crate::client_go_metrics::inc_lock_resolver_wait_expired();
+    }
     Ok(result)
 }
 
@@ -285,6 +292,7 @@ where
         // its own primary lock back, so waiting lets it retry instead of
         // aborting it.
         LockStatus::AlivePessimistic(ttl_ms) => {
+            crate::client_go_metrics::inc_lock_resolver_not_expired();
             return Ok(LockRecoveryResult::alive(Duration::from_millis(ttl_ms)));
         }
         // Go `lock_resolver.go:580-586`: this lock points at a key that is not
@@ -292,6 +300,8 @@ where
         // rolled back without the `key != primary` guard the determined path
         // uses — the mismatch is the proof that this key is not a primary.
         LockStatus::PrimaryMismatch => {
+            crate::client_go_metrics::inc_lock_resolver_expired();
+            crate::client_go_metrics::inc_lock_resolver_resolve_locks();
             check_cancelled(call)?;
             pessimistic_rollback_lock(runtime, lock, base_context, call, backoff)?;
             return Ok(LockRecoveryResult::resolved(
@@ -315,6 +325,7 @@ where
         .as_ref()
         .is_some_and(|primary_lock| primary_lock.use_async_commit);
     if async_commit_primary && ttl.is_zero() {
+        crate::client_go_metrics::inc_lock_resolver_expired();
         let primary_lock = primary_lock.expect("an async-commit primary was observed");
         let determined_status = cached_status.or_else(|| {
             (response.lock_ttl == 0)
@@ -348,8 +359,11 @@ where
                 ));
             }
         }
+        crate::client_go_metrics::inc_lock_resolver_not_expired();
         return Ok(LockRecoveryResult::alive(ttl));
     }
+    crate::client_go_metrics::inc_lock_resolver_expired();
+    crate::client_go_metrics::inc_lock_resolver_resolve_locks();
     let status = match cached_status {
         Some(status) => status,
         None => classify_determined_pessimistic_status(&response)?,
