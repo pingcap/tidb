@@ -157,7 +157,7 @@ func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {
 		},
 	}
 
-	applyNameRoutesToTableMapping(router, stream.NewTableHistoryManager(), mapping)
+	applyNameRoutesToTableMapping(router, stream.NewTableHistoryManager(), mapping, nil)
 
 	require.Equal(t, "schema_target", mapping.DBReplaceMap[1].Name)
 	require.Equal(t, "schema_target", mapping.DBReplaceMap[1].TableMap[11].TargetDBName)
@@ -221,6 +221,97 @@ func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {
 		// is not created because all of its tables are routed elsewhere.
 		require.Equal(t, []int64{101, 201}, dbIDs)
 	})
+}
+
+func TestApplyNameRoutesUsesSnapshotSourceNames(t *testing.T) {
+	router, err := nameroute.Parse([]string{"test.t:target.copy"})
+	require.NoError(t, err)
+
+	newMapping := func() *stream.TableMappingManager {
+		mapping := stream.NewTableMappingManager()
+		mapping.DBReplaceMap = map[stream.UpstreamID]*stream.DBReplace{
+			130: {
+				// The log scan saw only a table DDL, so the schema has no name.
+				Name: "",
+				DbID: -130,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					135: {Name: "t", TableID: -135},
+				},
+			},
+		}
+		return mapping
+	}
+
+	snapshotDB := &metautil.Database{Info: &model.DBInfo{ID: 130, Name: ast.NewCIStr("test")}}
+	snapshotTable := &metautil.Table{
+		DB:   snapshotDB.Info,
+		Info: &model.TableInfo{ID: 135, Name: ast.NewCIStr("t")},
+	}
+	history := stream.NewTableHistoryManager()
+	sources := buildPiTRRestoreNameSources(history, brutils.NewPiTRIdTracker(),
+		[]*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable})
+
+	t.Run("log-only resolution drops the route", func(t *testing.T) {
+		mapping := newMapping()
+		applyNameRoutesToTableMapping(router, history, mapping, nil)
+		tableReplace := mapping.DBReplaceMap[130].TableMap[135]
+		require.Equal(t, "t", tableReplace.Name)
+		require.Empty(t, tableReplace.TargetDBName)
+	})
+
+	t.Run("snapshot sources bind the route", func(t *testing.T) {
+		mapping := newMapping()
+		applyNameRoutesToTableMapping(router, history, mapping, sources)
+		tableReplace := mapping.DBReplaceMap[130].TableMap[135]
+		require.Equal(t, "copy", tableReplace.Name)
+		require.Equal(t, "target", tableReplace.TargetDBName)
+
+		// The snapshot phase resolves the target database ID afterwards;
+		// MergeBaseDBReplace must keep the bound target table name and attach it.
+		mapping.MergeBaseDBReplace(map[stream.UpstreamID]*stream.DBReplace{
+			130: {
+				Name: "target",
+				DbID: 142,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					135: {Name: "copy", TableID: 138, TargetDBName: "target", TargetDBID: 142},
+				},
+			},
+		})
+		merged := mapping.DBReplaceMap[130].TableMap[135]
+		require.Equal(t, "copy", merged.Name)
+		require.Equal(t, "target", merged.TargetDBName)
+		require.Equal(t, stream.DownstreamID(142), merged.TargetDBID)
+	})
+}
+
+func TestNameRouterCacheTracksRename(t *testing.T) {
+	cfg := DefaultRestoreConfig(DefaultConfig())
+	cfg.WithSysTable = false
+
+	// DefaultRestoreConfig parses (and validates) flags, caching an empty router.
+	router, err := cfg.getNameRouter()
+	require.NoError(t, err)
+	_, _, matched := router.Route(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.False(t, matched)
+
+	// A programmatic caller may assign Rename after parsing; routing must follow.
+	cfg.Rename = []string{"test.t:target.copy"}
+	router, err = cfg.getNameRouter()
+	require.NoError(t, err)
+	targetSchema, targetTable, matched := router.Route(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.True(t, matched)
+	require.Equal(t, "target", targetSchema.O)
+	require.Equal(t, "copy", targetTable.O)
+	require.True(t, cfg.hasNameRouting())
+
+	// Changing the rules again must invalidate the cached router.
+	cfg.Rename = []string{"test.t:other.other_copy"}
+	router, err = cfg.getNameRouter()
+	require.NoError(t, err)
+	targetSchema, targetTable, matched = router.Route(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.True(t, matched)
+	require.Equal(t, "other", targetSchema.O)
+	require.Equal(t, "other_copy", targetTable.O)
 }
 
 func TestBuildRestoreNamePlanMatchesLogOnlyTable(t *testing.T) {

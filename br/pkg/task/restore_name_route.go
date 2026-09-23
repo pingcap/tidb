@@ -16,6 +16,7 @@ package task
 
 import (
 	"encoding/hex"
+	"slices"
 	"sort"
 	"strings"
 
@@ -48,7 +49,10 @@ type restoreNameSources struct {
 }
 
 func (cfg *RestoreConfig) getNameRouter() (*nameroute.Router, error) {
-	if cfg.nameRouter != nil {
+	// The router is derived from cfg.Rename. Only reuse the cached value when it
+	// was built from the current rules: a programmatic caller may assign Rename
+	// after ParseFromFlags has already validated and cached an empty router.
+	if cfg.nameRouter != nil && slices.Equal(cfg.nameRouterRules, cfg.Rename) {
 		return cfg.nameRouter, nil
 	}
 	router, err := nameroute.Parse(cfg.Rename)
@@ -59,6 +63,7 @@ func (cfg *RestoreConfig) getNameRouter() (*nameroute.Router, error) {
 		return nil, err
 	}
 	cfg.nameRouter = router
+	cfg.nameRouterRules = slices.Clone(cfg.Rename)
 	return router, nil
 }
 
@@ -404,10 +409,17 @@ func routeLatestSourceTables(router *nameroute.Router, sources *restoreNameSourc
 // snapshot and log phases diverge. The table history's latest location is used
 // so an upstream rename or move cannot cause the same table ID to pick multiple
 // targets while replaying older metadata.
+//
+// sources, when non-nil, carries the authoritative source names resolved from
+// the selected snapshot objects plus the log history. It is required for a
+// schema whose only log entry is a table DDL: the log scan then has no database
+// name, but the snapshot metadata still names the schema. When nil, only the log
+// history and the scanned mapping are available, which is the log-only case.
 func applyNameRoutesToTableMapping(
 	router *nameroute.Router,
 	history *stream.LogBackupTableHistoryManager,
 	mapping *stream.TableMappingManager,
+	sources *restoreNameSources,
 ) {
 	type sourceDB struct {
 		name string
@@ -416,10 +428,17 @@ func applyNameRoutesToTableMapping(
 	for dbID, dbReplace := range mapping.DBReplaceMap {
 		sourceDBs[dbID] = sourceDB{name: dbReplace.Name}
 	}
+	sourceSchemaName := func(dbID int64) string {
+		if sources != nil {
+			if name, ok := sources.databases[dbID]; ok {
+				return name.O
+			}
+		}
+		return sourceDBs[dbID].name
+	}
 
 	for dbID, dbReplace := range mapping.DBReplaceMap {
-		sourceName := sourceDBs[dbID].name
-		targetSchema, _, schemaRouted := router.Route(ast.NewCIStr(sourceName), ast.CIStr{})
+		targetSchema, _, schemaRouted := router.Route(ast.NewCIStr(sourceSchemaName(dbID)), ast.CIStr{})
 		// DBReplace.Name is persisted in PitrDBMap and marks that a schema-level
 		// route owns the parent DB mapping. Exact table routes deliberately leave
 		// the source parent name unchanged.
@@ -440,6 +459,14 @@ func applyNameRoutesToTableMapping(
 					sourceDBName = dbName
 				}
 				sourceTableName = latest.TableName
+			}
+			if sources != nil {
+				if object, ok := sources.tables[tableID]; ok {
+					sourceDBName = object.Schema.O
+					sourceTableName = object.Table.O
+				} else if name, ok := sources.databases[parentDBID]; ok {
+					sourceDBName = name.O
+				}
 			}
 			targetDB, targetTable, matched := router.Route(ast.NewCIStr(sourceDBName), ast.NewCIStr(sourceTableName))
 			if !matched {

@@ -1490,7 +1490,7 @@ func RunStreamRestore(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		applyNameRoutesToTableMapping(nameRouter, metaInfoProcessor.GetTableHistoryManager(), metaInfoProcessor.GetTableMappingManager())
+		applyNameRoutesToTableMapping(nameRouter, metaInfoProcessor.GetTableHistoryManager(), metaInfoProcessor.GetTableMappingManager(), nil)
 	}
 
 	// Save PITR-related info to cfg for blocklist creation in defer function

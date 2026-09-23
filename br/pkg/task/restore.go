@@ -356,6 +356,11 @@ type RestoreConfig struct {
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
 
 	nameRouter *nameroute.Router `json:"-" toml:"-"`
+	// nameRouterRules records the Rename rules used to build nameRouter. The
+	// router is only a cache: RestoreConfig is a public struct whose Rename
+	// field may be assigned after ParseFromFlags (or DefaultRestoreConfig), so
+	// a stale cache must never be returned when the rules changed.
+	nameRouterRules []string `json:"-" toml:"-"`
 }
 
 func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
@@ -511,6 +516,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.nameRouter = nil
+	cfg.nameRouterRules = nil
 	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
 	if err != nil {
 		return errors.Trace(err)
@@ -1623,6 +1629,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	var nameSources *restoreNameSources
 	if isPiTR {
 		nameSources = buildPiTRRestoreNameSources(cfg.logTableHistoryManager, cfg.PiTRTableTracker, dbs, tables)
+		// The pre-snapshot binding only had the log history, which cannot name a
+		// schema whose only log entry is a table DDL (DBReplace.Name stays empty).
+		// Re-bind with the snapshot-backed source names so a table-level route is
+		// not silently dropped from the PiTR ID map.
+		if cfg.hasNameRouting() {
+			applyNameRoutesToTableMapping(nameRouter, cfg.logTableHistoryManager, cfg.tableMappingManager, nameSources)
+		}
 	}
 	// The optional target-existence check needs the effective target names before
 	// AllocTableIDs/PreCheck run. Without routing the target names are identical
