@@ -228,3 +228,89 @@ pub fn convert_range_from_expected_cnt(
         full_scan: false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{CountedRange, RangeEndpoint, ScanRange, convert_range_from_expected_cnt};
+
+    fn counted(
+        low: u64,
+        high: u64,
+        rows: f64,
+        low_exclude: bool,
+        high_exclude: bool,
+    ) -> CountedRange {
+        CountedRange::new(
+            ScanRange::new(
+                RangeEndpoint::Opaque(low),
+                RangeEndpoint::Opaque(high),
+                low_exclude,
+                high_exclude,
+                Some(7),
+            ),
+            rows,
+        )
+    }
+
+    #[test]
+    fn ascending_scan_uses_source_range_before_expected_count_is_reached() {
+        let ranges = [
+            counted(10, 20, 3.0, false, true),
+            counted(30, 40, 4.0, true, false),
+            counted(50, 60, 9.0, false, false),
+        ];
+
+        let converted = convert_range_from_expected_cnt(&ranges, 5.0, false);
+
+        assert_eq!(converted.skipped_rows(), 3.0);
+        assert!(!converted.is_full_scan());
+        assert_eq!(
+            converted.converted_range(),
+            Some(ScanRange::new(
+                RangeEndpoint::UnboundedLow,
+                RangeEndpoint::Opaque(30),
+                false,
+                false,
+                Some(7),
+            )),
+        );
+    }
+
+    #[test]
+    fn descending_scan_uses_source_range_before_expected_count_is_reached() {
+        let ranges = [
+            counted(10, 20, 3.0, false, true),
+            counted(30, 40, 4.0, true, false),
+            counted(50, 60, 9.0, false, true),
+        ];
+
+        let converted = convert_range_from_expected_cnt(&ranges, 12.0, true);
+
+        assert_eq!(converted.skipped_rows(), 9.0);
+        assert!(!converted.is_full_scan());
+        assert_eq!(
+            converted.converted_range(),
+            Some(ScanRange::new(
+                RangeEndpoint::Opaque(40),
+                RangeEndpoint::UnboundedHigh,
+                true,
+                false,
+                Some(7),
+            )),
+        );
+    }
+
+    #[test]
+    fn insufficient_range_rows_select_the_full_scan_and_clear_skipped_count() {
+        let ranges = [
+            counted(10, 20, 3.0, false, false),
+            counted(30, 40, 4.0, false, false),
+        ];
+
+        let converted = convert_range_from_expected_cnt(&ranges, 8.0, false);
+
+        assert!(converted.is_full_scan());
+        assert_eq!(converted.converted_range(), None);
+        assert_eq!(converted.skipped_rows(), 0.0);
+    }
+}
