@@ -3240,6 +3240,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 {
                     continue 'paths;
                 }
+                // Go `skylinePruning` keepIndex (`find_best_task.go:1812`):
+                // an index path with no access conditions, no sort
+                // requirement, no force hint, and no single-scan coverage is
+                // pruned before candidates are built. (The partial-order
+                // match term is unreachable for this tier's ds paths; the
+                // force-hint term is dropped — no force hints on this tier.)
+                let access_conds_empty = detach
+                    .as_ref()
+                    .is_none_or(|detached| detached.access_conds.is_empty());
+                if access_conds_empty && prop.is_sort_item_empty() && !single_scan {
+                    continue 'paths;
+                }
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
                     "IndexScan",
