@@ -48,3 +48,22 @@ func TestBRIECommand(t *testing.T) {
 		require.NotEqual(t, stmt.SEMCommand(), UnknownCommand, "SEMCommand should not be UnknownCommand for BRIEKind %s", i)
 	}
 }
+
+func TestRefreshMaterializedViewCommand(t *testing.T) {
+	require.Equal(t, RefreshMaterializedViewCommand, (&RefreshMaterializedViewStmt{}).SEMCommand())
+	require.Equal(t, RefreshMaterializedViewCommand, (&RefreshMaterializedViewImplementStmt{}).SEMCommand())
+	require.Equal(t, "CANCEL MATERIALIZED VIEW REFRESH JOB", (&CancelMaterializedViewJobStmt{Tp: CancelMaterializedViewJobTypeRefresh}).SEMCommand())
+}
+
+func TestRefreshMaterializedViewMode(t *testing.T) {
+	mode, err := (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeFast}).Mode()
+	require.NoError(t, err)
+	require.Equal(t, RefreshMaterializedViewModeFast, mode)
+
+	mode, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteTypeDeltaApply}).Mode()
+	require.NoError(t, err)
+	require.Equal(t, RefreshMaterializedViewModeCompleteDeltaApply, mode)
+
+	_, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete}).Mode()
+	require.ErrorContains(t, err, "COMPLETE refresh mode must be specified explicitly")
+}

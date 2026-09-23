@@ -700,11 +700,11 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 		}, fastPaths)
 	})
 
-	require.Equal(t, 223, acceptCount)
-	require.Equal(t, 223, acceptInPlaceCount)
+	require.Equal(t, 225, acceptCount)
+	require.Equal(t, 225, acceptInPlaceCount)
 	require.Equal(t, 6, legacyHelperCount)
-	require.Equal(t, 229, acceptCount+legacyHelperCount)
-	require.Equal(t, 149, functionsWithWritebacks)
+	require.Equal(t, 231, acceptCount+legacyHelperCount)
+	require.Equal(t, 151, functionsWithWritebacks)
 	require.Empty(t, cacheIssues, "replacement-mode cache issues: %s", formatCacheIssues(cacheIssues))
 	require.Empty(t, forbiddenSymbols, "removed in-place replacement symbols remain: %s", strings.Join(forbiddenSymbols, ", "))
 	require.Empty(t, acceptInPlaceContractViolations,
@@ -714,7 +714,7 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 	require.Empty(t, inPlaceStopContractViolations,
 		"in-place child traversal results must stop the current traversal when false: %s",
 		strings.Join(inPlaceStopContractViolations, ", "))
-	require.Len(t, candidates, 291, "writeback candidates: %s", formatWritebackCandidates(candidates))
+	require.Len(t, candidates, 294, "writeback candidates: %s", formatWritebackCandidates(candidates))
 
 	var guarded []writebackCandidate
 	for _, candidate := range candidates {
@@ -723,7 +723,7 @@ func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
 		}
 	}
 	require.Empty(t, guarded, "guarded writebacks: %s", formatWritebackCandidates(guarded))
-	require.Equal(t, 291, len(candidates)-len(guarded), "unguarded writebacks: %s", formatWritebackCandidates(candidates))
+	require.Equal(t, 294, len(candidates)-len(guarded), "unguarded writebacks: %s", formatWritebackCandidates(candidates))
 }
 
 func unpropagatedInPlaceTraversalCalls(function *goast.FuncDecl) (int, []*goast.CallExpr) {
