@@ -76,7 +76,24 @@ impl PlanIdAllocator {
 
     /// Go `PlanID.Add(1)`: the next plan id.
     pub fn alloc(&self) -> i32 {
-        self.next.fetch_add(1, Ordering::Relaxed) + 1
+        let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        if std::env::var_os("TIDB_RS_ALLOC_TRACE").is_some() {
+            let bt = std::backtrace::Backtrace::force_capture().to_string();
+            let interesting: Vec<&str> = bt
+                .lines()
+                .filter(|line| {
+                    (line.contains("tidb_planner") || line.contains("tidb_executor"))
+                        && !line.contains("PlanIdAllocator")
+                })
+                .take(3)
+                .collect();
+            eprintln!(
+                "ALLOC inst={:p} id={id}: {}",
+                self as *const Self,
+                interesting.join(" | ")
+            );
+        }
+        id
     }
 
     /// The last id handed out, without allocating one.

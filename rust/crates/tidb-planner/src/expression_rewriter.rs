@@ -252,7 +252,24 @@ impl ColumnIdAllocator {
 
     /// Go `PlanColumnID.Add(1)`.
     pub fn alloc(&self) -> i64 {
-        self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+        let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if std::env::var_os("TIDB_RS_COL_TRACE").is_some() {
+            let bt = std::backtrace::Backtrace::force_capture().to_string();
+            let interesting: Vec<&str> = bt
+                .lines()
+                .filter(|line| {
+                    (line.contains("tidb_planner") || line.contains("tidb_executor"))
+                        && !line.contains("ColumnIdAllocator")
+                })
+                .take(3)
+                .collect();
+            eprintln!(
+                "COLALLOC inst={:p} id={id}: {}",
+                self as *const Self,
+                interesting.join(" | ")
+            );
+        }
+        id
     }
 }
 
