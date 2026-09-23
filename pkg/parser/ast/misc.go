@@ -673,7 +673,7 @@ const (
 	CancelMaterializedViewJobTypeRefresh
 )
 
-// CancelMaterializedViewJobStmt represents CANCEL MATERIALIZED VIEW LOG PURGE JOB.
+// CancelMaterializedViewJobStmt represents CANCEL MATERIALIZED VIEW JOB, include materialized view log purge and materialized view refresh jobs.
 type CancelMaterializedViewJobStmt struct {
 	stmtNode
 
