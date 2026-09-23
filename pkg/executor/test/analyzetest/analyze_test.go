@@ -2287,3 +2287,12 @@ partition by range (a) (
 		p1ID,
 	)).Check(testkit.Rows("4"))
 }
+
+func TestSampledNDVCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	require.ErrorContains(t, tk.ExecToErr("analyze table ndv with 0.1 NDVRATE"), "should be positive and not larger than 0")
+}
