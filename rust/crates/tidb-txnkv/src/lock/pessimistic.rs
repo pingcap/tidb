@@ -111,6 +111,7 @@ where
         call,
         timestamp_source,
         for_read,
+        false,
         backoff,
     )
 }
@@ -153,6 +154,7 @@ pub(crate) fn resolve_blocking_locks_recorded<C, L, T>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     for_read: bool,
+    lite: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
@@ -160,9 +162,9 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
-    // Go collects small optimistic locks before issuing lite ResolveLock
-    // requests. Reads schedule the transaction batches asynchronously; writers
-    // resolve them synchronously. Pessimistic locks keep their rollback path.
+    // Go collects small or explicitly lite optimistic locks before issuing
+    // keyed ResolveLock requests. Reads schedule these batches asynchronously;
+    // writers resolve them synchronously. Pessimistic locks keep their rollback path.
     if locks
         .iter()
         .all(|lock| matches!(lock, BlockingLock::Optimistic(_)))
@@ -182,6 +184,7 @@ where
             call,
             timestamp_source,
             for_read,
+            lite,
             backoff,
         );
     }
@@ -217,6 +220,7 @@ where
                 call,
                 timestamp_source,
                 for_read,
+                lite,
                 backoff,
                 &mut lite_cleanups,
             )?,

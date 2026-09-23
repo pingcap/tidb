@@ -567,6 +567,7 @@ where
         call,
         timestamp_source,
         for_read,
+        false,
         &mut RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF),
     )
 }
@@ -580,6 +581,7 @@ pub(super) fn resolve_optimistic_locks_with_backoff<C, L, T>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     for_read: bool,
+    lite: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
@@ -595,6 +597,7 @@ where
         call,
         timestamp_source,
         for_read,
+        lite,
         backoff,
         true,
     )
@@ -608,6 +611,7 @@ pub(super) fn resolve_optimistic_lock_refs_with_backoff<C, L, T>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     for_read: bool,
+    lite: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
@@ -623,6 +627,7 @@ where
         call,
         timestamp_source,
         for_read,
+        lite,
         backoff,
         true,
     )
@@ -637,6 +642,7 @@ fn resolve_optimistic_lock_iter_with_backoff<'a, C, L, T, I>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     for_read: bool,
+    lite: bool,
     backoff: &mut RegionBackoffBudget,
     record_batch_metrics: bool,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
@@ -655,6 +661,7 @@ where
         call,
         timestamp_source,
         for_read,
+        lite,
         backoff,
         record_batch_metrics,
         &mut lite_cleanups,
@@ -678,6 +685,7 @@ pub(super) fn resolve_optimistic_lock_refs_collecting<C, L, T>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     for_read: bool,
+    lite: bool,
     backoff: &mut RegionBackoffBudget,
     lite_cleanups: &mut LiteResolveCleanups,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
@@ -694,6 +702,7 @@ where
         call,
         timestamp_source,
         for_read,
+        lite,
         backoff,
         false,
         lite_cleanups,
@@ -708,6 +717,7 @@ fn resolve_optimistic_lock_iter_collecting<'a, C, L, T, I>(
     call: &UnaryCallContext,
     timestamp_source: &T,
     for_read: bool,
+    lite: bool,
     backoff: &mut RegionBackoffBudget,
     record_batch_metrics: bool,
     lite_cleanups: &mut LiteResolveCleanups,
@@ -733,7 +743,7 @@ where
             crate::client_go_metrics::inc_lock_resolver_resolve();
             counted_resolve = true;
         }
-        let defer_lite_cleanup = lock.txn_size < lite_threshold;
+        let defer_lite_cleanup = lite || lock.txn_size < lite_threshold;
         // Go `resolve(l, forceSyncCommit)` (`lock_resolver.go:577-621`) is a
         // closure that calls itself exactly once more, with forceSyncCommit
         // set, when the async-commit recovery reports a secondary that is not

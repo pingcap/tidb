@@ -32,7 +32,7 @@
 
 #![allow(missing_docs)]
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_proto::{
@@ -156,6 +156,8 @@ struct Recorded {
     batch_contexts: Vec<KvrpcContext>,
     status_checks: Vec<KvrpcCheckTxnStatusRequest>,
     status_get_attempts: Vec<(u64, usize)>,
+    resolves: Vec<KvrpcResolveLockRequest>,
+    resolve_completed: Arc<Condvar>,
 }
 
 /// A store holding one value behind a lock that stays alive for the first
@@ -214,6 +216,19 @@ impl LockingClient {
             // Short, so the TTL-capped waits keep the whole test fast while
             // still exercising the `min(backoff, ttl)` arm.
             lock_ttl: 20,
+            ..KvrpcLockInfo::default()
+        }
+    }
+
+    fn large_secondary_lock(key: &[u8]) -> KvrpcLockInfo {
+        let threshold = tikv_client::config::get_global_config()
+            .tikv_client
+            .resolve_lock_lite_threshold;
+        KvrpcLockInfo {
+            primary_lock: b"primary".to_vec(),
+            lock_version: LOCK_TS,
+            key: key.to_vec(),
+            txn_size: threshold + 1,
             ..KvrpcLockInfo::default()
         }
     }
@@ -580,10 +595,13 @@ impl LockRecoveryClient for LockingClient {
     fn resolve_lock_for_read(
         &mut self,
         _address: &str,
-        _request: &KvrpcResolveLockRequest,
+        request: &KvrpcResolveLockRequest,
         _context: &KvrpcContext,
         _call: &UnaryCallContext,
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
+        let mut recorded = self.recorded.lock().unwrap();
+        recorded.resolves.push(request.clone());
+        recorded.resolve_completed.notify_all();
         assert!(
             self.status_response.is_some(),
             "an alive lock is waited out, never resolved"
@@ -600,6 +618,23 @@ impl LockRecoveryClient for LockingClient {
     ) -> Result<KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
         panic!("no pessimistic lock exists in this regression");
     }
+}
+
+fn wait_for_resolve(recorded: &Arc<Mutex<Recorded>>) -> KvrpcResolveLockRequest {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut recorded = recorded.lock().unwrap();
+    while recorded.resolves.is_empty() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "async lock cleanup did not finish");
+        let resolve_completed = Arc::clone(&recorded.resolve_completed);
+        let (next, timeout) = resolve_completed.wait_timeout(recorded, remaining).unwrap();
+        recorded = next;
+        assert!(
+            !timeout.timed_out() || !recorded.resolves.is_empty(),
+            "async lock cleanup did not finish"
+        );
+    }
+    recorded.resolves[0].clone()
 }
 
 /// A live lock that outlasts the removed four-attempt cap is WAITED OUT: the
@@ -953,6 +988,102 @@ fn assert_batch_read_limits_and_pending_retries() {
             .unwrap()
             .rpc_count,
         1
+    );
+}
+
+#[test]
+fn point_get_keeps_its_explicit_lite_resolve_for_large_transactions() {
+    let _config = snapshot_test_config();
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let mut client = LockingClient::new(Arc::clone(&recorded));
+    client.remaining_locked = 0;
+    client.status_response = Some(KvrpcCheckTxnStatusResponse {
+        commit_version: START_TS,
+        ..Default::default()
+    });
+    client.get_responses = [
+        KvrpcGetResponse {
+            error: Some(KvrpcKeyError {
+                locked: Some(LockingClient::large_secondary_lock(ROW_KEY)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        KvrpcGetResponse {
+            value: b"resolved-value".to_vec(),
+            ..Default::default()
+        },
+    ]
+    .into();
+    let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        runtime,
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+
+    let read = transaction
+        .snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+        .unwrap();
+    assert_eq!(read.value.as_deref(), Some(b"resolved-value".as_slice()));
+    let resolve = wait_for_resolve(&recorded);
+    assert_eq!(
+        resolve.keys,
+        vec![ROW_KEY.to_vec()],
+        "Go KVSnapshot.Get passes Lite=true even above the lite threshold"
+    );
+}
+
+#[test]
+fn batch_get_does_not_force_lite_resolve_for_large_transactions() {
+    let _config = snapshot_test_config();
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let mut client = LockingClient::new(Arc::clone(&recorded));
+    client.remaining_locked = 0;
+    client.status_response = Some(KvrpcCheckTxnStatusResponse {
+        commit_version: START_TS,
+        ..Default::default()
+    });
+    client.keyed_batch_responses = Some(Arc::new(Mutex::new(
+        [(
+            ROW_KEY.to_vec(),
+            KvrpcBatchGetResponse {
+                error: Some(KvrpcKeyError {
+                    locked: Some(LockingClient::large_secondary_lock(ROW_KEY)),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )]
+        .into(),
+    )));
+    let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        runtime,
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+        4,
+        4096,
+    )
+    .unwrap();
+
+    transaction
+        .snapshot_batch_get(
+            &[ROW_KEY.to_vec()],
+            &UnaryCallContext::with_timeout(CALL_TIMEOUT),
+        )
+        .unwrap();
+    let resolve = wait_for_resolve(&recorded);
+    assert!(
+        resolve.keys.is_empty(),
+        "Go KVSnapshot.BatchGet leaves Lite=false for large transactions"
     );
 }
 

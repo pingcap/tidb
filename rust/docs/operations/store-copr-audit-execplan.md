@@ -1481,3 +1481,33 @@ worker fallback metrics/gauges remain open; this does not complete the package.
     make lint
     python3 /private/tmp/tidb-snapshot-format.py --check
     git diff --check
+
+### Snapshot ResolveLocks Lite option parity receipt (2026-09-22)
+
+The pinned `txnsnapshot` callers pass different resolver options by operation:
+point `Get` requests `ForRead=true, Lite=true`, `BatchGet` requests
+`ForRead=true, Lite=false`, and `Scan` uses the legacy non-read, non-lite
+resolver. Rust previously inferred lite cleanup only from transaction size, so a
+large lock returned by point `Get` used a region scan instead of the requested
+exact-key cleanup. The snapshot coordinator now carries the explicit lite bit
+separately from `ForRead`; the small-transaction threshold continues to select
+lite cleanup independently.
+
+Source regressions use transactions above the configured lite threshold and
+check that point `Get` resolves its exact key while `BatchGet` does not force a
+keyed ResolveLock request. The point-Get regression was verified red when the
+explicit bit was temporarily dropped: the request contained no keys instead of
+the row key. Final targeted validation:
+
+    cd rust
+    cargo test --offline --locked -p tidb-txnkv --lib --test snapshot_lock_wait_source --test lock_resolver_source --quiet
+    rustfmt --edition 2021 --check crates/tidb-txnkv/src/lock/pessimistic.rs crates/tidb-txnkv/src/lock/resolver.rs crates/tidb-txnkv/src/transaction/coordinator/snapshot_batch_get.rs crates/tidb-txnkv/src/transaction/coordinator/snapshot_read.rs crates/tidb-txnkv/tests/snapshot_lock_wait_source.rs
+    cd ..
+    make lint
+    git diff --check
+
+The library suite passed 191 tests with one ignored; all 29 lock-resolver source
+tests and 17 snapshot lock-wait source tests passed. The explicit
+`resultRequired` behavior, remaining resolver options and complete package
+acceptance gates remain open. This RPC-source regression makes no sysbench,
+TPC-C, TPC-H or YCSB performance claim.

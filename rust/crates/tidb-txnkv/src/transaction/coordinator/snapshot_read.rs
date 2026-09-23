@@ -93,6 +93,7 @@ pub(super) fn resolve_snapshot_locks<C, L, T>(
     timestamps: &T,
     backoff: &mut RegionBackoffBudget,
     for_read: bool,
+    lite: bool,
     record: &mut Option<crate::ResolvingLocksGuard>,
     stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Result<crate::lock::LockRecoveryResult, OptimisticCoordinatorError>
@@ -116,7 +117,7 @@ where
         .filter(|_| !locks.is_empty())
         .map(|_| std::time::Instant::now());
     let recovery = resolve_blocking_locks_recorded(
-        runtime, locks, read_ts, context, call, timestamps, for_read, backoff,
+        runtime, locks, read_ts, context, call, timestamps, for_read, lite, backoff,
     );
     if let (Some(stats), Some(started)) = (stats, started) {
         stats.record_resolve_lock(started.elapsed());
@@ -425,6 +426,7 @@ where
                     timestamps,
                     forward_backoff,
                     true,
+                    true,
                     &mut resolving_record,
                     stats,
                 )?;
@@ -660,6 +662,7 @@ where
                 timestamps,
                 forward_backoff,
                 false,
+                false,
                 &mut None,
                 None,
             )?;
@@ -891,6 +894,7 @@ where
                         call,
                         &self.timestamps,
                         &mut read_backoff,
+                        true,
                         true,
                         &mut resolving_record,
                         self.snapshot_runtime_stats.as_ref(),

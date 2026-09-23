@@ -27,11 +27,21 @@ TiDB go.mod/go.sum and DEPS.bzl govern the consuming build.
 | `go.sum` | `4037ceea026bbaccdc199f3e70c3c641f91b35247de34ecb28e50880bef0565e` |
 | `LICENSE` | `c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4` |
 
+The pinned snapshot call sites use three distinct resolver option combinations:
+point `Get` passes `ForRead=true, Lite=true`; `BatchGet` passes
+`ForRead=true, Lite=false`; and `Scan` uses the legacy resolver, equivalent to
+`ForRead=false, Lite=false`. Rust now carries the explicit lite bit separately
+from `ForRead` through blocking-lock recovery. Small transactions can still
+select lite cleanup through the independent size threshold. A source regression
+checks that a large point-Get lock retains exact-key ResolveLock cleanup while a
+large BatchGet lock does not force it. The `resultRequired` option and remaining
+resolver call-site reconciliation stay open.
+
 The current Go ignored-hint contract is lock_resolver.go's
 backoffOnLockHintsInRequest before resolveLocks: only ForRead checks the exact
 request hints, any matching transaction charges one BoTxnLockFast backoff, and
 resolution runs afterward. Repeated ignored responses exhaust the caller's
-existing backoffer. The explicit lite/result-required modes, TiKV-side
+existing backoffer. The `resultRequired` option, TiKV-side
 async-resolve option, async-commit and secondary-check worker paths, failpoints,
 original tests and all caller integrations remain open. The 2,048-entry
 determined-status FIFO cache is now shared by sessions under one read
@@ -60,7 +70,8 @@ TiKV-side async-resolve option, async-commit/secondary-check worker
 paths, failpoints, original Go support/test reconciliation and every
 whole-package acceptance gate remain open. The default non-lite read cleanup
 now schedules a detached region scan when the runtime has an async resolver;
-the explicit Go `Lite` and `resultRequired` option combinations remain open.
+point Get, BatchGet and Scan now pass Go's explicit `Lite` options independently
+from `ForRead`; `resultRequired` and remaining caller combinations stay open.
 The current real-TiKV and embedded unistore server openers both install the
 pool; unistore authority and server compile checks cover that wiring.
 

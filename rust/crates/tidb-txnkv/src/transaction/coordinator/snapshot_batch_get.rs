@@ -491,6 +491,7 @@ where
             state.timestamps,
             backoff,
             true,
+            false,
             record,
             state.stats,
         )?;
