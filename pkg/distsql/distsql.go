@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
@@ -77,7 +78,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		if copMeetLock := event.GetCopMeetLock(); copMeetLock != nil {
 			logutil.Logger(ctx).Debug("coprocessor encounters lock",
 				zap.Uint64("startTS", kvReq.StartTs),
-				zap.Stringer("lock", copMeetLock.LockInfo),
+				zap.Stringer("lock", redact.LockInfo(copMeetLock.LockInfo)),
 				zap.String("stmt", originalSQL))
 		}
 	}
