@@ -1161,11 +1161,10 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	snap.SetOption(kv.ResourceGroupName, ctx.resourceGroupName)
 
 	it, err := snap.Iter(firstKey, upperBound)
-	failpoint.Inject("mockSnapshotIterError", func() {
-		if err == nil {
-			err = errors.New("mock snapshot iter error")
-		}
-	})
+	// Tests use this to fail the first snapshot iteration. getTableRange then
+	// returns (nil, nil, err), which distributed add-index planning must
+	// propagate instead of treating the table as empty.
+	failpoint.InjectCall("mockSnapshotIterError", &err)
 	if err != nil {
 		return errors.Trace(err)
 	}

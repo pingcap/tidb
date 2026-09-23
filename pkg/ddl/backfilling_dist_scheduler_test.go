@@ -17,7 +17,11 @@ package ddl_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"runtime/debug"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,11 +29,13 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	disttestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -199,34 +205,47 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 }
 
 func TestBackfillingSchedulerTableRangeScanError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
-	require.NoError(t, err)
-	sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
-		Param: backfillingSchedulerParamForTest(ctrl, store, dom.SysSessionPool()),
-	}
+	disttestutil.ReduceCheckInterval(t)
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_dist_task = on")
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg = on")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_enable_dist_task = off")
+		})
+	}
 
-	// A non-empty table is required, otherwise an empty plan is the expected result.
-	tk.MustExec("create table t1(id int primary key, v int, key idx(v))")
+	// A non-empty table is required. An empty table legitimately produces an empty plan.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int primary key, v int)")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
-	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
-	require.Nil(t, server)
-	task.Step = sch.GetNextStep(&task.TaskBase)
-	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 
-	// Simulate the very first snapshot range scan failing with a transient KV error.
-	// The error must be propagated instead of being reported as an empty table,
-	// otherwise the index would be published without any entry.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockSnapshotIterError", "1*return()")
-	ctx := util.WithInternalSourceType(context.Background(), "backfill")
-	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, []string{":4000"}, task.Step)
-	require.Error(t, err)
-	require.Nil(t, metas)
+	// Fail only the snapshot iteration used by distributed add-index planning.
+	// Earlier scans (empty-table check, reorg handle init) also call
+	// iterateSnapshotKeys and must keep working. The error is transient: planning
+	// retries, then the index is built. If the error were treated as an empty
+	// table, ADD INDEX would publish idx with no entries and admin check would fail.
+	var injected atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockSnapshotIterError", func(errP *error) {
+		if errP == nil || *errP != nil || injected.Load() {
+			return
+		}
+		if !strings.Contains(string(debug.Stack()), "generatePlanForPhysicalTable") {
+			return
+		}
+		if injected.CompareAndSwap(false, true) {
+			*errP = errors.New("mock snapshot iter error")
+		}
+	})
+
+	tk.MustExec("alter table t1 add index idx(v)")
+	require.True(t, injected.Load())
+	tk.MustExec("admin check table t1")
+	tk.MustQuery("select id from t1 use index(idx) where v = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t1 use index(idx) where v = 2").Check(testkit.Rows("2"))
 }
 
 func TestCalculateRegionBatch(t *testing.T) {
