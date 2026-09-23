@@ -126,6 +126,11 @@ pub(crate) fn physical_expression_text_with_columns(
                 "cast_date" => {
                     (arguments.len() == 1).then(|| format!("cast({}, date BINARY)", arguments[0]))
                 }
+                // Master renders the integer casts through the same
+                // FieldType-string path: SIGNED → "bigint BINARY".
+                "cast_signed" => {
+                    (arguments.len() == 1).then(|| format!("cast({}, bigint BINARY)", arguments[0]))
+                }
                 name => Some(format!("{name}({})", arguments.join(", "))),
             }
         }
