@@ -925,6 +925,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return false;
             };
             if super::find_field_name(names, path).is_some() {
+                // Go master maps an already-projected column in place without
+                // appending a select field. Rebind to the existing field when
+                // one carries this column: appending a duplicate leaked an
+                // extra projected column above the window (TPC-DS q12's
+                // `partition by i_class`). Only a column that no field
+                // carries yet (wildcard expansion edges) is appended.
+                for (existing_index, field) in fields.iter().enumerate() {
+                    if matches!(&field.expr, Expr::Column(existing) if existing == path)
+                    {
+                        marker::substitute(
+                            node,
+                            PlanMarker::new(MarkerKind::Column, existing_index),
+                        );
+                        return true;
+                    }
+                }
                 let index = fields.len();
                 fields.push(ProjectionField {
                 window_spec_column: spec_walk,
