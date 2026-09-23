@@ -58,8 +58,9 @@ distribution.
 ## Grafana dashboards
 
 The TiDB, TiDB-KeyspaceName, and TiDB-Worker dashboards include a separate collapsed
-**Statement** section. The existing Query Summary and Query Detail sections retain
-their command/executor metrics and remain available for older TiDB versions.
+**Statement** section immediately after Query Detail. The existing Query Summary
+and Query Detail sections retain their command/executor metrics and remain
+available for older TiDB versions.
 
 The Statement section shows:
 
