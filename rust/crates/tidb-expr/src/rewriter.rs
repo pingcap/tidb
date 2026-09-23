@@ -1345,6 +1345,38 @@ fn rewrite_leaf_compound(
                     Ok(call)
                 };
             }
+            // Master's predicate simplification folds repeated constant IN
+            // entries into one (the q16 template's county list repeats
+            // counties and master renders the deduplicated list); keep the
+            // first occurrence of each constant value.
+            // args[0] is the tested expression — only the LIST entries
+            // (args[1..]) participate in the duplicate fold.
+            // Prepared `?` markers and deferred subqueries evaluate per
+            // execution — never fold them, and never seed the seen set from
+            // them (their values change between executions).
+            let mut deduplicated = Vec::with_capacity(args.len());
+            let mut seen_values: Vec<tidb_datatype::Datum> = Vec::new();
+            for (position, argument) in args.into_iter().enumerate() {
+                let fixed_constant = matches!(&argument, Expression::Constant(constant)
+                    if constant.param_marker.is_none() && constant.deferred_expr.is_none());
+                let duplicate = position > 0
+                    && matches!(&argument, Expression::Constant(constant)
+                        if constant.param_marker.is_none() && constant.deferred_expr.is_none()
+                        && seen_values.iter().any(|seen| seen == &constant.value));
+                if !duplicate {
+                    if position > 0 {
+                        if let Expression::Constant(constant) = &argument {
+                            if constant.param_marker.is_none()
+                                && constant.deferred_expr.is_none()
+                            {
+                                seen_values.push(constant.value.clone());
+                            }
+                        }
+                    }
+                    deduplicated.push(argument);
+                }
+            }
+            let args = deduplicated;
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
             // `ast.In` is in Go's `booleanFunctions` map, so the result carries

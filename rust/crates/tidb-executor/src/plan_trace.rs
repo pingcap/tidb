@@ -123,6 +123,9 @@ pub(crate) fn physical_expression_text_with_columns(
                 "cast_double" => {
                     (arguments.len() == 1).then(|| format!("cast({}, double BINARY)", arguments[0]))
                 }
+                "cast_date" => {
+                    (arguments.len() == 1).then(|| format!("cast({}, date BINARY)", arguments[0]))
+                }
                 name => Some(format!("{name}({})", arguments.join(", "))),
             }
         }
@@ -164,6 +167,11 @@ fn string_with_ctx_constant(
     } else {
         &constant.value
     };
+    // Go `Constant.StringWithCtx`: a NULL constant prints `<nil>`
+    // (`constant.go:188`), never the empty stringify output.
+    if value.is_null() {
+        return Some("<nil>".to_owned());
+    }
     let value = value
         .truncated_stringify()
         .ok()
@@ -194,6 +202,10 @@ fn explain_constant(
     } else {
         &constant.value
     };
+    // Go `Constant.Format`/`StringWithCtx`: a NULL constant prints `<nil>`.
+    if datum.is_null() {
+        return Some("<nil>".to_owned());
+    }
     let value = datum
         .truncated_stringify()
         .ok()
