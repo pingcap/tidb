@@ -1083,7 +1083,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
-	if err = checkIAAdmission(tbInfo.EngineAttribute, tbInfo); err != nil {
+	if err = checkStorageClassAdmission(tbInfo.EngineAttribute, tbInfo); err != nil {
 		return err
 	}
 
@@ -2256,7 +2256,7 @@ func (e *executor) alterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			}
 			// Check before other options in this statement can submit a job.
 			if hasEngineAttribute {
-				if err = checkIAAdmission(engineAttribute, nil); err != nil {
+				if err = checkStorageClassAdmission(engineAttribute, nil); err != nil {
 					return err
 				}
 			}

@@ -69,10 +69,10 @@ max-index-length = 3072
 # index-limit is used to deal with compatibility issues. It can only be in [64, 64*8].
 index-limit = 64
 
-# Allow DDL to introduce IA storage or IA transition policies. Existing IA data and policies remain usable when false.
-# Transition status queries are hidden when false.
+# Allow storage-class DDL, including STANDARD and IA declarations, and transition status queries.
+# Disabled by default. Existing data and transition policies are unaffected when false.
 # This startup setting must be the same on all TiDB servers in the cluster.
-enable-ia = false
+enable-storage-class = false
 
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false

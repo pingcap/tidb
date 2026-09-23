@@ -1124,7 +1124,7 @@ func (b *Builder) initVirtualTables(schemaVersion int64) error {
 	// Initialize virtual tables.
 	for _, driver := range drivers {
 		dbInfo := driver.DBInfo
-		if dbInfo.ID == autoid.InformationSchemaDBID && !config.GetGlobalConfig().EnableIA {
+		if dbInfo.ID == autoid.InformationSchemaDBID && !config.GetGlobalConfig().EnableStorageClass {
 			// Filter after startup configuration is loaded, without changing the shared driver.
 			dbInfo = dbInfo.Copy()
 			dbInfo.Deprecated.Tables = slices.DeleteFunc(dbInfo.Deprecated.Tables, func(tbl *model.TableInfo) bool {

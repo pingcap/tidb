@@ -960,8 +960,8 @@ engines = ["tikv", "tiflash", "tidb"]
 	require.NoError(t, err)
 }
 
-func TestEnableIAConfig(t *testing.T) {
-	require.False(t, NewConfig().EnableIA)
+func TestEnableStorageClassConfig(t *testing.T) {
+	require.False(t, NewConfig().EnableStorageClass)
 	for _, tt := range []struct {
 		name    string
 		content string
@@ -969,22 +969,22 @@ func TestEnableIAConfig(t *testing.T) {
 		want    bool
 	}{
 		{name: "missing"},
-		{name: "enabled", content: "enable-ia = true", want: true},
-		{name: "disabled", content: "enable-ia = false", initial: true},
+		{name: "enabled", content: "enable-storage-class = true", want: true},
+		{name: "disabled", content: "enable-storage-class = false", initial: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			configFile := filepath.Join(t.TempDir(), "config.toml")
 			require.NoError(t, os.WriteFile(configFile, []byte(tt.content), 0600))
 			conf := NewConfig()
-			conf.EnableIA = tt.initial
+			conf.EnableStorageClass = tt.initial
 			require.NoError(t, conf.Load(configFile))
-			require.Equal(t, tt.want, conf.EnableIA)
+			require.Equal(t, tt.want, conf.EnableStorageClass)
 
 			data, err := json.Marshal(conf)
 			require.NoError(t, err)
 			var settings map[string]any
 			require.NoError(t, json.Unmarshal(data, &settings))
-			require.Equal(t, tt.want, settings["enable-ia"])
+			require.Equal(t, tt.want, settings["enable-storage-class"])
 		})
 	}
 }

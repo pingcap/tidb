@@ -397,7 +397,7 @@ func TestStorageClassTransitionsVisibility(t *testing.T) {
 			// Rebuilding after a disabled instance must not lose the global table metadata.
 			for step, enabled := range []bool{true, false, true, false} {
 				t.Run(fmt.Sprintf("%d/enabled=%t", step, enabled), func(t *testing.T) {
-					config.UpdateGlobal(func(conf *config.Config) { conf.EnableIA = enabled })
+					config.UpdateGlobal(func(conf *config.Config) { conf.EnableStorageClass = enabled })
 					builder := infoschema.NewBuilder(re, vardef.SchemaCacheSize.Load(), nil, infoschema.NewData(), useV2)
 					require.NoError(t, builder.InitWithDBInfos(nil, nil, nil, nil, 0))
 					is := builder.Build(math.MaxUint64)

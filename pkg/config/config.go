@@ -261,9 +261,9 @@ type Config struct {
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
-	// EnableIA permits DDL to introduce IA storage or IA transition policies and exposes transition status queries.
-	// Disabling it does not affect existing IA data or policies.
-	EnableIA bool `toml:"enable-ia" json:"enable-ia"`
+	// EnableStorageClass permits storage-class DDL and exposes transition status queries.
+	// It defaults to false. Existing data and transition policies are unaffected when disabled.
+	EnableStorageClass bool `toml:"enable-storage-class" json:"enable-storage-class"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
@@ -1292,7 +1292,7 @@ var defaultConf = Config{
 	HostedEmbedding:            HostedEmbedding{Enabled: false},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
-	EnableIA:                   false,
+	EnableStorageClass:         false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
