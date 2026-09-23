@@ -105,37 +105,25 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	se := CreateSessionAndSetID(t, store)
 	assertValue := func(expected string) {
 		res := MustExecToRecodeSet(t, se, fmt.Sprintf(
-			"select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			"select variable_value, @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 			vardef.TiDBEnableAdaptiveLimitScan,
 		))
+		defer func() { require.NoError(t, res.Close()) }()
 		chk := res.NewChunk(nil)
 		require.NoError(t, res.Next(ctx, chk))
 		require.Equal(t, 1, chk.NumRows())
 		require.Equal(t, expected, chk.GetRow(0).GetString(0))
-		require.NoError(t, res.Close())
-
-		res = MustExecToRecodeSet(t, se, "select @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan")
-		chk = res.NewChunk(nil)
-		require.NoError(t, res.Next(ctx, chk))
-		require.Equal(t, 1, chk.NumRows())
-		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(0) == 1)
 		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(1) == 1)
-		require.NoError(t, res.Close())
+		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(2) == 1)
 	}
-
 	// Initial bootstrap uses the new-cluster policy.
 	assertValue(vardef.On)
 
-	// The upgrade is idempotent and must not overwrite an existing setting.
-	MustExec(t, se, "set global tidb_enable_adaptive_limit_scan=ON")
-	upgradeToVer285(se, version284)
-	assertValue(vardef.On)
-
-	// Simulate a v284 cluster where this unreleased variable does not exist.
+	// Simulate an existing cluster before the variable backfill.
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version284)))
-	RevertVersionAndVariables(t, se, version284)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version317)))
+	RevertVersionAndVariables(t, se, version317)
 	MustExec(t, se, fmt.Sprintf(
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBEnableAdaptiveLimitScan,

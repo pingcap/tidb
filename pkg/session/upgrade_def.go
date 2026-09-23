@@ -525,7 +525,6 @@ const (
 	// version284 migrate tidb_disable_txn_file (from TiDB-CSE) to tidb_enable_txn_file and inverts its value.
 	version284 = 284
 
-	// version285 materializes adaptive LIMIT scan as OFF for upgraded clusters when no persisted value exists.
 	// version285 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
 	version285 = 285
 
@@ -538,6 +537,9 @@ const (
 
 	// version317 adds the OPERATE VIEW static privilege.
 	version317 = 317
+
+	// version318 materializes adaptive LIMIT scan as OFF for upgraded clusters when no persisted value exists.
+	version318 = 318
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -551,7 +553,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version317
+var currentBootstrapVersion int64 = version318
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -743,6 +745,7 @@ var (
 		{version: version285, fn: upgradeToVer285},
 		{version: version316, fn: upgradeToVer316},
 		{version: version317, fn: upgradeToVer317},
+		{version: version318, fn: upgradeToVer318},
 	}
 )
 
@@ -2342,6 +2345,9 @@ func upgradeToVer284(s sessionapi.Session, _ int64) {
 
 func upgradeToVer285(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
+}
+
+func upgradeToVer318(s sessionapi.Session, _ int64) {
 	// Fresh clusters persist ON during initial bootstrap. Preserve old executor
 	// behavior for upgraded clusters without overwriting an explicit value.
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)
