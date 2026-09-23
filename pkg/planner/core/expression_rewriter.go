@@ -2417,10 +2417,9 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 //   - the originating table has an available TiFlash replica;
 //   - the column is covered by a public FULLTEXT index on that table.
 //
-// In addition, BOOLEAN MODE requires the STANDARD parser and TiDB's default
-// analyzer settings because those are the only settings represented by the
-// current TiFlash protocol. Natural-language mode retains its existing native
-// viability rules; query expansion is not part of this feature.
+// In addition, BOOLEAN MODE requires a parser and analyzer configuration that
+// are represented by the TiFlash protocol. Natural-language mode retains its
+// existing native viability rules; query expansion is not part of this feature.
 func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
 	if numCols <= 0 {
 		return false
@@ -2433,9 +2432,6 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 	}
 	builder := er.planCtx.builder
 	sessVars := builder.ctx.GetSessionVars()
-	if modifier.IsBooleanMode() && !ftsNativeAnalyzerConfigSupported(sessVars) {
-		return false
-	}
 	nameStart := stackLen - numCols - 1
 	if nameStart < 0 || stackLen > len(er.ctxNameStk) || stackLen > len(er.ctxStack) {
 		return false
@@ -2475,6 +2471,11 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 		against := er.ctxStack[stackLen-1]
 		if constant, ok := against.(*expression.Constant); ok && !constant.Value.IsNull() {
 			if _, err := expression.BuildFTSBooleanQuery(constant.Value.GetString(), model.FullTextParserTypeStandardV1); err != nil {
+				if _, ngramErr := expression.BuildFTSBooleanQuery(constant.Value.GetString(), model.FullTextParserTypeNgramV1); ngramErr != nil {
+					return false
+				}
+			}
+			if !ftsNativeAnalyzerConfigSupportedForTables(builder, er.ctxNameStk[nameStart:nameStart+numCols], sessVars) {
 				return false
 			}
 		}
@@ -2503,7 +2504,7 @@ func tableHasPublicFTSIndexOnColumnWithParser(tblInfo *model.TableInfo, columnNa
 		if idx.FullTextInfo == nil || !idx.IsPublic() {
 			continue
 		}
-		if standardParserOnly && idx.FullTextInfo.ParserType != model.FullTextParserTypeStandardV1 {
+		if standardParserOnly && !isNativeFTSParser(idx.FullTextInfo.ParserType) {
 			continue
 		}
 		if idx.FindColumnByName(columnNameL) != nil {
@@ -2511,6 +2512,65 @@ func tableHasPublicFTSIndexOnColumnWithParser(tblInfo *model.TableInfo, columnNa
 		}
 	}
 	return false
+}
+
+func ftsNativeAnalyzerConfigSupportedForTables(
+	builder *PlanBuilder,
+	names []*types.FieldName,
+	sessVars *variable.SessionVars,
+) bool {
+	for _, name := range names {
+		if name == nil {
+			return false
+		}
+		tblName := name.OrigTblName
+		if tblName.L == "" {
+			tblName = name.TblName
+		}
+		dbName := name.DBName
+		if dbName.L == "" {
+			dbName = pmodel.NewCIStr(sessVars.CurrentDB)
+		}
+		tblInfo, err := builder.is.TableInfoByName(dbName, tblName)
+		if err != nil {
+			return false
+		}
+		colName := name.OrigColName
+		if colName.L == "" {
+			colName = name.ColName
+		}
+		parserType, ok := publicFTSParserForColumn(tblInfo, colName.L)
+		if !ok {
+			return false
+		}
+		switch parserType {
+		case model.FullTextParserTypeStandardV1:
+			if !ftsNativeAnalyzerConfigSupported(sessVars) {
+				return false
+			}
+		case model.FullTextParserTypeNgramV1:
+			config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, parserType)
+			if err != nil || config.NgramTokenSize <= 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func publicFTSParserForColumn(tblInfo *model.TableInfo, columnNameL string) (model.FullTextParserType, bool) {
+	for _, idx := range tblInfo.Indices {
+		if idx.FullTextInfo == nil || !idx.IsPublic() || idx.FindColumnByName(columnNameL) == nil {
+			continue
+		}
+		if !isNativeFTSParser(idx.FullTextInfo.ParserType) {
+			continue
+		}
+		return idx.FullTextInfo.ParserType, true
+	}
+	return model.FullTextParserTypeInvalid, false
 }
 
 func ftsNativeAnalyzerConfigSupported(sessVars *variable.SessionVars) bool {

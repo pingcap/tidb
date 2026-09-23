@@ -43,9 +43,16 @@ func TestBuildFTSBooleanQuery(t *testing.T) {
 	require.Equal(t, "dog", query.GetNodes()[3].GetTerm().GetText())
 }
 
-func TestBuildFTSBooleanQueryRejectsUnsupportedParserAndSyntax(t *testing.T) {
-	_, err := BuildFTSBooleanQuery("cat", model.FullTextParserTypeNgramV1)
-	require.Error(t, err)
+func TestBuildFTSBooleanQuerySupportsNgramAndRejectsUnsupportedSyntax(t *testing.T) {
+	query, err := BuildFTSBooleanQueryWithNgramTokenSize("+数据库 -mysql", model.FullTextParserTypeNgramV1, 2)
+	require.NoError(t, err)
+	require.Equal(t, "NGRAM_V1", query.GetQueryTokenizer())
+	require.Equal(t, uint32(2), query.GetNgramTokenSize())
+	require.Len(t, query.GetNodes(), 2)
+	require.Equal(t, tipb.FTSBooleanOccur_FTSBooleanOccurMust, query.GetNodes()[0].GetOccur())
+	require.Equal(t, "数据库", query.GetNodes()[0].GetTerm().GetText())
+	require.Equal(t, tipb.FTSBooleanOccur_FTSBooleanOccurMustNot, query.GetNodes()[1].GetOccur())
+	require.Equal(t, "mysql", query.GetNodes()[1].GetTerm().GetText())
 
 	_, err = BuildFTSBooleanQuery("(cat)", model.FullTextParserTypeStandardV1)
 	require.Error(t, err)

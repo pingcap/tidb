@@ -27,14 +27,55 @@ import (
 // the index metadata; callers must not use this helper to claim support for a
 // parser which TiFlash cannot interpret.
 func BuildFTSBooleanQuery(search string, parserType model.FullTextParserType) (*tipb.FTSBooleanQuery, error) {
-	if parserType != model.FullTextParserTypeStandardV1 {
+	return BuildFTSBooleanQueryWithNgramTokenSize(search, parserType, 0)
+}
+
+// BuildFTSBooleanQueryWithNgramTokenSize parses a BOOLEAN MODE search string
+// and attaches the analyzer configuration required by TiFlash. A zero ngram
+// token size is kept for callers that only need the legacy STANDARD_V1
+// protocol representation.
+func BuildFTSBooleanQueryWithNgramTokenSize(search string, parserType model.FullTextParserType, ngramTokenSize int) (*tipb.FTSBooleanQuery, error) {
+	var (
+		group *matchagainst.BooleanGroup
+		err   error
+	)
+	switch parserType {
+	case model.FullTextParserTypeStandardV1:
+		group, err = matchagainst.ParseStandardBooleanMode(search)
+	case model.FullTextParserTypeNgramV1:
+		group, err = matchagainst.ParseNgramBooleanMode(search)
+	default:
 		return nil, fmt.Errorf("unsupported fulltext parser type for TiFlash BOOLEAN MODE pushdown: %s", parserType)
 	}
-	group, err := matchagainst.ParseStandardBooleanMode(search)
 	if err != nil {
 		return nil, err
 	}
-	return buildFTSBooleanGroup(group)
+	if containsFTSBooleanSubExpression(group) {
+		return nil, fmt.Errorf("nested BOOLEAN MODE groups are not supported by TiFlash FTS pushdown")
+	}
+	query, err := buildFTSBooleanGroup(group)
+	if err != nil {
+		return nil, err
+	}
+	query.QueryTokenizer = string(parserType)
+	if parserType == model.FullTextParserTypeNgramV1 && ngramTokenSize > 0 {
+		query.NgramTokenSize = uint32(ngramTokenSize)
+	}
+	return query, nil
+}
+
+func containsFTSBooleanSubExpression(group *matchagainst.BooleanGroup) bool {
+	if group == nil {
+		return false
+	}
+	for _, clauses := range [][]matchagainst.BooleanClause{group.Must, group.Should, group.MustNot} {
+		for _, clause := range clauses {
+			if _, ok := clause.Expr.(*matchagainst.BooleanGroup); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func buildFTSBooleanGroup(group *matchagainst.BooleanGroup) (*tipb.FTSBooleanQuery, error) {

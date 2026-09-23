@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -150,7 +151,18 @@ func (*FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor
 		queryInfo.ColumnNames = append(queryInfo.ColumnNames, column.OrigName)
 	}
 	if ftsInfo.IsMatchAgainst {
-		booleanQuery, err := expression.BuildFTSBooleanQuery(ftsInfo.Query, matchingIndex.FullTextInfo.ParserType)
+		analyzerConfig, err := fulltext.AnalyzerConfigFromSessionVars(
+			ds.SCtx().GetSessionVars(),
+			matchingIndex.FullTextInfo.ParserType,
+		)
+		if err != nil {
+			return false, plannererrors.ErrWrongUsage.FastGen("cannot configure BOOLEAN MODE full-text analyzer: %s", err)
+		}
+		booleanQuery, err := expression.BuildFTSBooleanQueryWithNgramTokenSize(
+			ftsInfo.Query,
+			matchingIndex.FullTextInfo.ParserType,
+			analyzerConfig.NgramTokenSize,
+		)
 		if err != nil {
 			return false, plannererrors.ErrWrongUsage.FastGen("unsupported BOOLEAN MODE full-text query: %s", err)
 		}
@@ -200,14 +212,18 @@ func findMatchingFullTextIndex(ds *logicalop.DataSource, ftsInfo *expression.FTS
 		}
 		for _, column := range ftsInfo.Columns {
 			if ds.TableInfo.Columns[idx.Columns[0].Offset].ID == column.ID {
-				if ftsInfo.IsMatchAgainst && idx.FullTextInfo.ParserType != model.FullTextParserTypeStandardV1 {
-					return nil
+				if ftsInfo.IsMatchAgainst && !isNativeFTSParser(idx.FullTextInfo.ParserType) {
+					continue
 				}
 				return idx
 			}
 		}
 	}
 	return nil
+}
+
+func isNativeFTSParser(parserType model.FullTextParserType) bool {
+	return parserType == model.FullTextParserTypeStandardV1 || parserType == model.FullTextParserTypeNgramV1
 }
 
 func removeSelectionNode(v *FullTextIndexPlanVisitor, planSelection *logicalop.LogicalSelection) {
