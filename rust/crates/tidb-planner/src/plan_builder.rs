@@ -4208,6 +4208,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Some(limit) = &select.limit {
             plan = self.build_limit(plan, limit)?;
         }
+        // Go `:4531`/`:4620`: aggregate queries with ORDER BY allocate the
+        // freezing/trim projection after the LIMIT (the second
+        // LogicalProjection in the R34 receipt, id 6); its plan id is
+        // consumed even when optimize eliminates the node. This tier folds
+        // the order-by into the main projection; burn the id.
+        if has_agg && !select.order_by.is_empty() {
+            let _ = self.base(crate::logical::LogicalProjection::TYPE);
+        }
         // `:4620` trim the hidden ORDER BY / HAVING columns back off. A HAVING
         // scalar subquery is lowered into an Apply by `build_selection`, which
         // widens the plan schema WITHOUT appending a select field, so the

@@ -85,7 +85,7 @@ impl PlanIdAllocator {
                     (line.contains("tidb_planner") || line.contains("tidb_executor"))
                         && !line.contains("PlanIdAllocator")
                 })
-                .take(3)
+                .take(6)
                 .collect();
             eprintln!(
                 "ALLOC inst={:p} id={id}: {}",
