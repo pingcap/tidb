@@ -3766,13 +3766,35 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         // the selection's stats scale by the required
                         // property's ExpectedCnt, so a Limit above the scan
                         // caps the selection's estimate instead of leaving
-                        // the raw filtered row count.
+                        // the raw filtered row count. Master's
+                        // `LogicalSelection.DeriveStats` then scales the child
+                        // profile by `cardinality.Selectivity` over the
+                        // conditions: not(isnull(col)) counts the column's
+                        // not-null histogram range, i.e.
+                        // (total - null_count) / total. Other filter shapes
+                        // keep the expected-count scaling this port used
+                        // before.
                         selection_base.base.set_stats(
                             ds.base.base.stats_info().cloned().map(|stats| {
-                                stats.scale_by_expect_cnt(
+                                let scaled = stats.scale_by_expect_cnt(
                                     prop.expected_cnt,
                                     ctx.skew_ratio,
-                                )
+                                );
+                                let mut ratio = 1.0;
+                                for condition in &table_filters {
+                                    if let Some(selectivity) = crate::logical::
+                                        data_source::is_null_condition_selectivity(
+                                            condition, &scaled,
+                                        )
+                                    {
+                                        ratio *= selectivity;
+                                    }
+                                }
+                                if ratio < 1.0 {
+                                    scaled.scale(ratio, 1.0)
+                                } else {
+                                    scaled
+                                }
                             }),
                         );
                         selection_base.set_children(vec![table_scan]);
