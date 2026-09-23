@@ -220,6 +220,9 @@ func checkIndexKeys(
 ) error {
 	useNewCollate := t.encoder.UseNewCollate()
 	var indexData []types.Datum
+	// A row's document is tokenized once per full-text index and reused for
+	// each of its entries; see checkFullTextIndexKey.
+	fullTextTerms := make(map[fullTextTermsKey]map[string]struct{})
 	for _, m := range indexMutations {
 		var value []byte
 		// Generate correct index id for check.
@@ -259,7 +262,7 @@ func checkIndexKeys(
 			if len(value) == 0 || isTmpIdxValAndDeleted {
 				row = rowToRemove
 			}
-			if err := checkFullTextIndexKey(t, indexInfo, m.key, row, extraIndexesLayout.GetIndexLayout(idxID)); err != nil {
+			if err := checkFullTextIndexKey(t, indexInfo, m.key, row, extraIndexesLayout.GetIndexLayout(idxID), fullTextTerms); err != nil {
 				return errors.Trace(err)
 			}
 			continue
@@ -424,9 +427,18 @@ func compareIndexData(
 	return nil
 }
 
+// fullTextTermsKey identifies a row's document under one full-text index:
+// the insertion and the removal of a row are checked against different rows.
+type fullTextTermsKey struct {
+	indexID int64
+	row     *types.Datum
+}
+
 // checkFullTextIndexKey checks that the term an entry of a FULLTEXT index built
-// in TiKV was written under is one of the terms the row's document analyzes to.
-func checkFullTextIndexKey(t *TableCommon, indexInfo *model.IndexInfo, key []byte, row []types.Datum, extraIndexLayout table.IndexRowLayoutOption) error {
+// in TiKV was written under is one of the terms the row's document analyzes
+// to. A row writes one entry per distinct term, so its document is tokenized
+// once and the terms are kept in cache for the row's other entries.
+func checkFullTextIndexKey(t *TableCommon, indexInfo *model.IndexInfo, key []byte, row []types.Datum, extraIndexLayout table.IndexRowLayoutOption, cache map[fullTextTermsKey]map[string]struct{}) error {
 	var idx *index
 	for _, candidate := range t.Indices() {
 		if candidate.Meta().ID == indexInfo.ID {
@@ -445,9 +457,13 @@ func checkFullTextIndexKey(t *TableCommon, indexInfo *model.IndexInfo, key []byt
 	if len(extraIndexLayout) > 0 {
 		offsetInRow = extraIndexLayout[0]
 	}
-	terms, err := idx.fullTextTerms(row[offsetInRow])
-	if err != nil {
-		return errors.Trace(err)
+	cacheKey := fullTextTermsKey{indexID: indexInfo.ID, row: &row[offsetInRow]}
+	terms, ok := cache[cacheKey]
+	if !ok {
+		if terms, err = idx.fullTextTerms(row[offsetInRow]); err != nil {
+			return errors.Trace(err)
+		}
+		cache[cacheKey] = terms
 	}
 	if _, ok := terms[string(term)]; !ok {
 		col := t.Columns[indexInfo.Columns[0].Offset].ColumnInfo
