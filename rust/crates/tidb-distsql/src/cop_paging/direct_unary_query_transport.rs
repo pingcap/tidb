@@ -747,6 +747,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             pending_batches: BTreeMap::new(),
             completion_notifier: CompletionNotifier::new(),
             limiter_waiter: None,
+            store_limiter_cache: std::collections::HashMap::new(),
             independent_driver: false,
             task_worker: false,
             unordered_inflight: BTreeSet::new(),
@@ -901,6 +902,10 @@ pub struct DirectUnaryQueryResponse<C, L> {
     completion_notifier: CompletionNotifier,
     /// A parked driver's queue entry, distinct from its acquired RPC tokens.
     limiter_waiter: Option<RequestAttemptWaiter>,
+    /// Per-driver store-limiter cache: one RwLock read per store instead of
+    /// one per request (the profile showed the global-map read lock
+    /// contending across every tikv-query worker on multi-store scans).
+    store_limiter_cache: std::collections::HashMap<u64, Option<std::sync::Arc<tidb_txnkv::CoprRequestLimiter>>>,
     independent_driver: bool,
     // The lite and concurrent Go workers both process split descendants
     // sequentially. Ordering across initial tasks belongs to CopIterator.
@@ -1329,7 +1334,13 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     ) -> Result<RequestAttemptPermit, DirectUnaryTransportError> {
         let store_id = selected.target().store_id;
         let limiter = if let Some(query) = &self.metadata.query_cop_store_limiter {
-            query.get_store_limiter(store_id)
+            if let Some(cached) = self.store_limiter_cache.get(&store_id) {
+                cached.clone()
+            } else {
+                let limiter = query.get_store_limiter(store_id);
+                self.store_limiter_cache.insert(store_id, limiter.clone());
+                limiter
+            }
         } else {
             self.metadata.copr_request_limiter.clone()
         };
@@ -2468,6 +2479,7 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
                     pending_batches,
                     completion_notifier: CompletionNotifier::new(),
                     limiter_waiter: None,
+                    store_limiter_cache: std::collections::HashMap::new(),
                     independent_driver: false,
                     task_worker: true,
                     unordered_inflight: BTreeSet::new(),
