@@ -666,7 +666,7 @@ mod async_resolve_tests {
     struct Client {
         check_calls: Arc<AtomicUsize>,
         resolve_calls: Arc<AtomicUsize>,
-        resolve_requests: Arc<Mutex<Vec<(u64, Vec<Vec<u8>>)>>>,
+        resolve_requests: Arc<Mutex<Vec<(u64, Vec<Vec<u8>>, bool)>>>,
     }
 
     impl LockRecoveryClient for Client {
@@ -701,10 +701,11 @@ mod async_resolve_tests {
             context: &KvrpcContext,
             _call: &UnaryCallContext,
         ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
-            self.resolve_requests
-                .lock()
-                .unwrap()
-                .push((context.region_id, request.keys.clone()));
+            self.resolve_requests.lock().unwrap().push((
+                context.region_id,
+                request.keys.clone(),
+                request.is_async,
+            ));
             self.resolve_calls.fetch_add(1, Ordering::Relaxed);
             Ok(KvrpcResolveLockResponse::default())
         }
@@ -844,6 +845,7 @@ mod async_resolve_tests {
         assert_eq!(task.keys, vec![b"secondary".to_vec()]);
         assert_eq!(task.request_source, "foreground-read");
         assert!(task.include_keys);
+        assert!(!task.server_side_async);
         assert!(task.schedule_regions);
         assert!(!background_cancellation.is_cancelled());
         caller_cancellation.cancel();
@@ -916,7 +918,10 @@ mod async_resolve_tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         assert_eq!(resolve_calls.load(Ordering::Relaxed), 1);
-        assert_eq!(*resolve_requests.lock().unwrap(), vec![(1, Vec::new())]);
+        assert_eq!(
+            *resolve_requests.lock().unwrap(),
+            vec![(1, Vec::new(), tidb_config::kerneltype::is_next_gen())]
+        );
         pool.close_and_wait();
     }
 
@@ -955,7 +960,10 @@ mod async_resolve_tests {
         .expect("a runtime without the async pool resolves the lock inline");
         assert_eq!(result.statuses, vec![ResolvedTxnStatus::Committed(150)]);
         assert_eq!(resolve_calls.load(Ordering::Relaxed), 1);
-        assert_eq!(*resolve_requests.lock().unwrap(), vec![(1, Vec::new())]);
+        assert_eq!(
+            *resolve_requests.lock().unwrap(),
+            vec![(1, Vec::new(), tidb_config::kerneltype::is_next_gen())]
+        );
     }
 
     #[test]
@@ -1022,10 +1030,13 @@ mod async_resolve_tests {
         }
         assert_eq!(resolve_calls.load(Ordering::Relaxed), 2);
         let mut requests = resolve_requests.lock().unwrap().clone();
-        requests.sort_by_key(|(region_id, _)| *region_id);
+        requests.sort_by_key(|(region_id, _, _)| *region_id);
         assert_eq!(
             requests,
-            vec![(1, vec![b"a".to_vec()]), (2, vec![b"z".to_vec()]),]
+            vec![
+                (1, vec![b"a".to_vec()], false),
+                (2, vec![b"z".to_vec()], false),
+            ]
         );
 
         pool.close_and_wait();

@@ -533,6 +533,44 @@ fn committed_primary_resolves_exact_secondary_through_same_authorities() {
     assert_eq!(resolve_context.region_id, 2);
 }
 
+#[test]
+fn large_writer_cleanup_does_not_use_tikv_side_async_resolve() {
+    let commit_ts = 1_200 << 18;
+    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        commit_version: commit_ts,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    let mut lock = secondary();
+    lock.txn_size = tikv_client::config::get_global_config()
+        .tikv_client
+        .resolve_lock_lite_threshold
+        + 1;
+
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[lock],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &FixedTimestampSource::new(1_100 << 18),
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        accessing(
+            vec![ResolvedTxnStatus::Committed(commit_ts)],
+            vec![1_000 << 18]
+        )
+    );
+
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.resolves.len(), 1);
+    let (_, resolve, _) = &recorded.resolves[0];
+    assert!(resolve.keys.is_empty());
+    assert!(!resolve.is_async);
+}
+
 /// Go `LockResolver.resolveLocks` defers small-transaction lite cleanup until
 /// all statuses are known, then sends one exact key list per region. A writer
 /// resolves synchronously, so this checks the source's non-async fallback.

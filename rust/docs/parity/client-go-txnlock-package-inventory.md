@@ -32,17 +32,17 @@ point `Get` passes `ForRead=true, Lite=true`; `BatchGet` passes
 `ForRead=true, Lite=false`; and `Scan` uses the legacy resolver, equivalent to
 `ForRead=false, Lite=false`. Rust now carries the explicit lite bit separately
 from `ForRead` through blocking-lock recovery. Small transactions can still
-select lite cleanup through the independent size threshold. A source regression
-checks that a large point-Get lock retains exact-key ResolveLock cleanup while a
-large BatchGet lock does not force it. The `resultRequired` option and remaining
-resolver call-site reconciliation stay open.
+select lite cleanup through the independent size threshold. Source regressions
+check that a large point-Get lock retains exact-key ResolveLock cleanup while a
+large BatchGet lock does not force it. For non-lite read cleanup, Rust maps
+`resultRequired=false` to `IsAsync=true` only in NextGen builds; writers and lite
+cleanup keep it false. Remaining resolver call-site reconciliation stays open.
 
 The current Go ignored-hint contract is lock_resolver.go's
 backoffOnLockHintsInRequest before resolveLocks: only ForRead checks the exact
 request hints, any matching transaction charges one BoTxnLockFast backoff, and
 resolution runs afterward. Repeated ignored responses exhaust the caller's
-existing backoffer. The `resultRequired` option, TiKV-side
-async-resolve option, async-commit and secondary-check worker paths, failpoints,
+existing backoffer. Async-commit and secondary-check worker paths, failpoints,
 original tests and all caller integrations remain open. The 2,048-entry
 determined-status FIFO cache is now shared by sessions under one read
 authority; original cache-test reconciliation remains open. The pinned Go
@@ -66,12 +66,14 @@ shutdown. Source tests cover exact writer batching, read cancellation and
 request-source behavior. This matches the small-lock branch of
 `LockResolver.resolveLocks` and `batchLiteResolveLocks` in the pinned
 `lock_resolver.go`. The remaining resolver options, complete metrics and
-TiKV-side async-resolve option, async-commit/secondary-check worker
+async-commit/secondary-check worker
 paths, failpoints, original Go support/test reconciliation and every
 whole-package acceptance gate remain open. The default non-lite read cleanup
 now schedules a detached region scan when the runtime has an async resolver;
 point Get, BatchGet and Scan now pass Go's explicit `Lite` options independently
-from `ForRead`; `resultRequired` and remaining caller combinations stay open.
+from `ForRead`; the NextGen `resultRequired=false` effect now sets `IsAsync` for
+large read cleanup while Classic and writer requests keep it false. Remaining
+caller combinations stay open.
 The current real-TiKV and embedded unistore server openers both install the
 pool; unistore authority and server compile checks cover that wiring.
 

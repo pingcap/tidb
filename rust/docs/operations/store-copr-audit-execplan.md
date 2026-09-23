@@ -1352,7 +1352,7 @@ these tasks before the shared region cache stops. Inline cleanup errors do not
 replace a determined read status. The ordinary non-lite read path now
 schedules detached region-scan cleanup when the shared async resolver is
 installed. All current production openers that can resolve locks now install
-the pool; the optional TiKV-side async-resolve mode remains open.
+the pool; NextGen server-side async behavior is covered by a later receipt.
 
 The new runtime tests verify caller/background cancellation isolation,
 request-source propagation, cache-backed child sessions, and exact key grouping
@@ -1507,7 +1507,38 @@ the row key. Final targeted validation:
     git diff --check
 
 The library suite passed 191 tests with one ignored; all 29 lock-resolver source
-tests and 17 snapshot lock-wait source tests passed. The explicit
-`resultRequired` behavior, remaining resolver options and complete package
+tests and 17 snapshot lock-wait source tests passed. Remaining resolver options
+and complete package
 acceptance gates remain open. This RPC-source regression makes no sysbench,
 TPC-C, TPC-H or YCSB performance claim.
+
+### NextGen server-side async ResolveLock receipt (2026-09-22)
+
+In the pinned Go resolver, non-lite read cleanup sets `resultRequired=false`;
+`resolveLock` then sends `IsAsync=true` only when the TiDB binary is NextGen.
+Writers retain `resultRequired=true`, and lite requests take the keyed branch
+before this option is considered. Rust now carries that decision through both
+the detached read resolver and its inline fallback, while keeping async-commit
+and lite requests at `IsAsync=false`.
+
+The resolver runtime tests verify the actual background ResolveLock request in
+both Classic and NextGen modes. Snapshot request tests verify large BatchGet
+cleanup selects `IsAsync` by the kernel build and point Get's explicit Lite
+request never sets it. A large-writer regression verifies writers stay
+synchronous even in NextGen. Validation passed:
+
+    cd rust
+    cargo test --offline --locked -p tidb-txnkv --lib --test snapshot_lock_wait_source --test lock_resolver_source --quiet
+    cargo test --offline --locked -p tidb-txnkv --features tidb-config/nextgen --lib large_read_cleanup --quiet
+    cargo test --offline --locked -p tidb-txnkv --features tidb-config/nextgen --test snapshot_lock_wait_source large_transactions -- --test-threads=1
+    cargo test --offline --locked -p tidb-txnkv --features tidb-config/nextgen --test lock_resolver_source large_writer_cleanup_does_not_use_tikv_side_async_resolve -- --test-threads=1
+    rustfmt --edition 2021 --check crates/tidb-txnkv/src/lock/async_resolve.rs crates/tidb-txnkv/src/lock/resolver.rs crates/tidb-txnkv/src/read_runtime.rs crates/tidb-txnkv/tests/lock_resolver_source.rs crates/tidb-txnkv/tests/snapshot_lock_wait_source.rs
+    cd ..
+    make lint
+    git diff --check
+
+The default targeted suites passed 191 library tests with one ignored, 30
+resolver tests and 17 snapshot lock-wait tests. The NextGen-specific tests above
+passed. Other txnlock package options and full Go test/support, platform/build,
+caller-integration and workload performance gates remain open; no sysbench,
+TPC-C, TPC-H or YCSB benchmark was run.

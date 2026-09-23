@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Bounded detached cleanup for read-side small transactions.
+//! Bounded detached cleanup for read-side locks.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -35,6 +35,8 @@ pub(crate) struct AsyncLockResolveTask {
     pub(crate) request_source: String,
     /// Whether ResolveLock should carry `keys` or scan the routed region.
     pub(crate) include_keys: bool,
+    /// Whether Go's `resultRequired=false` enables TiKV-side async resolve.
+    pub(crate) server_side_async: bool,
     /// Whether this transaction-level task should schedule its region groups
     /// independently, matching `batchLiteResolveLocks`' nested read tasks.
     pub(crate) schedule_regions: bool,

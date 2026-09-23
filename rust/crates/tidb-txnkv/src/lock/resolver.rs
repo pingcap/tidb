@@ -84,6 +84,7 @@ where
                     keys: group.keys.clone(),
                     request_source: task.request_source.clone(),
                     include_keys: task.include_keys,
+                    server_side_async: task.server_side_async,
                     schedule_regions: false,
                     count_resolve_locks: false,
                     count_resolve_lock_lite: task.count_resolve_lock_lite,
@@ -106,6 +107,7 @@ where
                     &call,
                     &mut backoff,
                     task.include_keys,
+                    task.server_side_async,
                 );
             }
         } else {
@@ -126,6 +128,7 @@ where
                     &call,
                     &mut backoff,
                     task.include_keys,
+                    task.server_side_async,
                 )
                 .is_err()
                 {
@@ -858,6 +861,7 @@ where
                 keys: cleanup.keys.clone(),
                 request_source: base_context.request_source.clone(),
                 include_keys: true,
+                server_side_async: false,
                 schedule_regions: true,
                 count_resolve_locks: cleanup.keys.len() == 1,
                 count_resolve_lock_lite: true,
@@ -881,6 +885,7 @@ where
                     call,
                     backoff,
                     true,
+                    false,
                 )?;
             }
             Ok::<(), LockRecoveryError>(())
@@ -1512,6 +1517,7 @@ where
             call,
             &mut worker,
             true,
+            false,
         ) {
             errors.push(error.to_string());
         }
@@ -1672,6 +1678,7 @@ where
             keys: vec![lock.key.clone()],
             request_source: base_context.request_source.clone(),
             include_keys: false,
+            server_side_async: tidb_config::kerneltype::is_next_gen(),
             schedule_regions: false,
             count_resolve_locks: true,
             count_resolve_lock_lite: false,
@@ -1688,6 +1695,7 @@ where
         base_context,
         call,
         backoff,
+        for_read && tidb_config::kerneltype::is_next_gen(),
     )
 }
 
@@ -1699,6 +1707,7 @@ fn resolve_key<C, L>(
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
     backoff: &mut RegionBackoffBudget,
+    server_side_async: bool,
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -1720,7 +1729,7 @@ where
             },
             // Go's non-lite ResolveLock omits Keys so TiKV scans this region.
             keys: Vec::new(),
-            is_async: false,
+            is_async: server_side_async,
             is_txn_file: false,
             ..KvrpcResolveLockRequest::default()
         };
@@ -1753,6 +1762,7 @@ fn resolve_region_keys<C, L>(
     call: &UnaryCallContext,
     backoff: &mut RegionBackoffBudget,
     include_keys: bool,
+    server_side_async: bool,
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
@@ -1772,7 +1782,7 @@ where
             } else {
                 Vec::new()
             },
-            is_async: false,
+            is_async: server_side_async,
             is_txn_file: false,
             ..KvrpcResolveLockRequest::default()
         };

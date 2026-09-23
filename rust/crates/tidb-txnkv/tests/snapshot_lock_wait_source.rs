@@ -1037,6 +1037,10 @@ fn point_get_keeps_its_explicit_lite_resolve_for_large_transactions() {
         vec![ROW_KEY.to_vec()],
         "Go KVSnapshot.Get passes Lite=true even above the lite threshold"
     );
+    assert!(
+        !resolve.is_async,
+        "Go's lite ResolveLock path does not use TiKV-side async resolve"
+    );
 }
 
 #[test]
@@ -1084,6 +1088,11 @@ fn batch_get_does_not_force_lite_resolve_for_large_transactions() {
     assert!(
         resolve.keys.is_empty(),
         "Go KVSnapshot.BatchGet leaves Lite=false for large transactions"
+    );
+    assert_eq!(
+        resolve.is_async,
+        tidb_config::kerneltype::is_next_gen(),
+        "Go's resultRequired=false sets IsAsync only for NextGen read cleanup"
     );
 }
 
