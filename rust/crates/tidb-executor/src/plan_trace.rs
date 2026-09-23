@@ -135,7 +135,15 @@ pub(crate) fn physical_expression_text_with_columns(
                 string_with_ctx_constant(constant, ctx, column_names)
             }
         },
-        Expression::CorrelatedColumn(_) => None,
+        Expression::CorrelatedColumn(correlated) => {
+            // Go `CorrelatedColumn.StringWithCtx` renders through the embedded
+            // `Column` (expression/column.go): a correlated reference prints
+            // like its outer column, keeping the whole condition text visible.
+            let column = &correlated.column;
+            (!column.orig_name.is_empty())
+                .then(|| column.orig_name.clone())
+                .or_else(|| Some(format!("Column#{}", column.unique_id)))
+        }
     }
 }
 
