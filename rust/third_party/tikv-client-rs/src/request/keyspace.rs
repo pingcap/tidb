@@ -12,6 +12,7 @@ use crate::{BoundRange, KvPair};
 pub const RAW_KEY_PREFIX: u8 = b'r';
 pub const TXN_KEY_PREFIX: u8 = b'x';
 pub const KEYSPACE_PREFIX_LEN: usize = 4;
+
 /// The numeric API V2 keyspace namespace occupies the final three prefix bytes.
 pub const MAX_KEYSPACE_ID: u32 = 0x00ff_ffff;
 /// Numeric identifier of client-go's default API V2 keyspace.
@@ -703,6 +704,11 @@ impl ApiV2Codec {
             epoch_not_match.current_regions = decoded_regions;
         }
 
+        if let Some(bucket_version_not_match) = &mut error.bucket_version_not_match {
+            bucket_version_not_match.keys =
+                self.decode_bucket_keys(&bucket_version_not_match.keys)?;
+        }
+
         Ok(())
     }
 
@@ -761,6 +767,12 @@ impl ApiV2Codec {
         }
         if let Some(assertion_failed) = &mut error.assertion_failed {
             assertion_failed.key = self.decode_key(&assertion_failed.key)?;
+        }
+        if let Some(shared_lock_lost) = &mut error.shared_lock_lost {
+            shared_lock_lost.key = self.decode_key(&shared_lock_lost.key)?;
+        }
+        if let Some(lock_upgrade_conflict) = &mut error.lock_upgrade_conflict {
+            lock_upgrade_conflict.key = self.decode_key(&lock_upgrade_conflict.key)?;
         }
         if let Some(primary_mismatch) = &mut error.primary_mismatch {
             if let Some(lock_info) = &mut primary_mismatch.lock_info {
@@ -824,7 +836,11 @@ impl ApiV2Codec {
         lock: &mut crate::proto::kvrpcpb::LockInfo,
     ) -> crate::Result<()> {
         lock.key = self.decode_key(&lock.key)?;
-        lock.primary_lock = self.decode_key(&lock.primary_lock)?;
+        if lock.lock_type != crate::proto::kvrpcpb::Op::SharedLock as i32
+            || !lock.primary_lock.is_empty()
+        {
+            lock.primary_lock = self.decode_key(&lock.primary_lock)?;
+        }
         for secondary in &mut lock.secondaries {
             *secondary = self.decode_key(secondary)?;
         }
@@ -1439,8 +1455,8 @@ mod tests {
             [Vec::new(), b"middle".to_vec(), Vec::new()]
         );
 
-        // Bucket mismatch keys are consumed by RegionCache as region keys.
-        // The source response switch does not run DecodeBucketKeys on them.
+        // Bucket mismatch keys are consumed by RegionCache as region keys, so
+        // the API-v2 response codec must decode them before they are cached.
         let mut region_error = crate::proto::errorpb::Error {
             bucket_version_not_match: Some(crate::proto::errorpb::BucketVersionNotMatch {
                 keys: physical_bucket_keys.clone(),
@@ -1451,8 +1467,18 @@ mod tests {
         v2.decode_region_error(&mut region_error).unwrap();
         assert_eq!(
             region_error.bucket_version_not_match.unwrap().keys,
-            physical_bucket_keys
+            [Vec::new(), b"middle".to_vec(), Vec::new()]
         );
+
+        let mut malformed = crate::proto::errorpb::Error {
+            bucket_version_not_match: Some(crate::proto::errorpb::BucketVersionNotMatch {
+                keys: vec![v2.encode_region_key(b"valid"), vec![0x01]],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let error = v2.decode_region_error(&mut malformed).unwrap_err();
+        assert!(is_decode_error(&error));
     }
 
     #[test]
@@ -1535,6 +1561,16 @@ mod tests {
                 }],
                 ..Default::default()
             }),
+            shared_lock_lost: Some(kvrpcpb::SharedLockLost {
+                key: codec.encode_key(b"lost"),
+                start_ts: 11,
+            }),
+            lock_upgrade_conflict: Some(kvrpcpb::LockUpgradeConflict {
+                key: codec.encode_key(b"upgrade"),
+                start_ts: 12,
+                owner_start_ts: 22,
+                reason: kvrpcpb::lock_upgrade_conflict::Reason::DuplicateInFlight as i32,
+            }),
             txn_not_found: Some(kvrpcpb::TxnNotFound {
                 primary_key: codec.encode_key(b"missing-primary"),
                 ..Default::default()
@@ -1552,7 +1588,32 @@ mod tests {
         let deadlock = error.deadlock.unwrap();
         assert_eq!(deadlock.lock_key, b"deadlock-lock");
         assert_eq!(deadlock.wait_chain[0].key, b"wait");
+        assert_eq!(error.shared_lock_lost.unwrap().key, b"lost");
+        assert_eq!(error.lock_upgrade_conflict.unwrap().key, b"upgrade");
         assert_eq!(error.txn_not_found.unwrap().primary_key, b"missing-primary");
+    }
+
+    #[test]
+    fn api_v2_codec_preserves_empty_primary_for_shared_lock_wrappers() {
+        use crate::proto::kvrpcpb;
+
+        let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
+        let mut lock = kvrpcpb::LockInfo {
+            key: codec.encode_key(b"shared"),
+            lock_type: kvrpcpb::Op::SharedLock as i32,
+            shared_lock_infos: vec![kvrpcpb::LockInfo {
+                key: codec.encode_key(b"shared"),
+                primary_lock: codec.encode_key(b"primary"),
+                lock_type: kvrpcpb::Op::Lock as i32,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        codec.decode_lock_info(&mut lock).unwrap();
+        assert_eq!(lock.key, b"shared");
+        assert!(lock.primary_lock.is_empty());
+        assert_eq!(lock.shared_lock_infos[0].primary_lock, b"primary");
     }
 
     #[test]

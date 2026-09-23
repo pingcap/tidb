@@ -84,6 +84,10 @@ pub struct GroupTagRecordItem {
     pub logical_read_bytes: u64,
     #[prost(uint64, tag = "8")]
     pub logical_write_bytes: u64,
+    /// RocksDB block reads used for downstream read_iops relative attribution.
+    /// This is not a device-level IOPS measurement.
+    #[prost(uint64, tag = "9")]
+    pub rocksdb_block_read_count: u64,
 }
 impl ::prost::Name for GroupTagRecordItem {
     const NAME: &'static str = "GroupTagRecordItem";

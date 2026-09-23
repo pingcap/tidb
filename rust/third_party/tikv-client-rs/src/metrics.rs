@@ -243,7 +243,7 @@ pub const CLIENT_GO_METRIC_SPECS: &[MetricSpec] = &[
     metric_spec!("TiKVTokenWaitDuration", MetricKind::Histogram, "batch_executor_token_wait_duration", "tidb txn token wait duration to process batches", &[], BucketSpec::Exponential { start: 1.0, factor: 2.0, count: 34 }, MetricSubsystem::Configured, false),
     metric_spec!("TiKVTxnHeartBeatHistogram", MetricKind::HistogramVec, "txn_heart_beat", "Bucketed histogram of the txn_heartbeat request duration.", &["type"], BucketSpec::Exponential { start: 0.001, factor: 2.0, count: 20 }, MetricSubsystem::Configured, false),
     metric_spec!("TiKVTTLManagerHistogram", MetricKind::Histogram, "txn_ttl_manager", "Bucketed histogram of the txn ttl manager lifetime duration.", &[], BucketSpec::Exponential { start: 1.0, factor: 2.0, count: 20 }, MetricSubsystem::Configured, false),
-    metric_spec!("TiKVPessimisticLockKeysDuration", MetricKind::Histogram, "pessimistic_lock_keys_duration", "tidb txn pessimistic lock keys duration", &[], BucketSpec::None, MetricSubsystem::Configured, false),
+    uninitialized_metric_spec!("TiKVPessimisticLockKeysDuration", MetricKind::Histogram),
     metric_spec!("TiKVTTLLifeTimeReachCounter", MetricKind::Counter, "ttl_lifetime_reach_total", "Counter of ttlManager live too long.", &[], BucketSpec::None, MetricSubsystem::Configured, false),
     metric_spec!("TiKVNoAvailableConnectionCounter", MetricKind::Counter, "batch_client_no_available_connection_total", "Counter of no available batch client.", &[], BucketSpec::None, MetricSubsystem::Configured, false),
     metric_spec!("TiKVTwoPCTxnCounter", MetricKind::CounterVec, "commit_txn_counter", "Counter of 2PC transactions.", &["type"], BucketSpec::None, MetricSubsystem::Configured, false),

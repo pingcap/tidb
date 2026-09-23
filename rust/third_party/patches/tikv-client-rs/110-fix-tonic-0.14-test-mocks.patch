@@ -1,0 +1,85 @@
+diff --git a/src/store/batch.rs b/src/store/batch.rs
+index 1e99822..63e9730 100644
+--- a/src/store/batch.rs
++++ b/src/store/batch.rs
+@@ -2401,6 +2401,7 @@ mod tests {
+     use std::task::{Context, Poll};
+     use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
+     use tonic::transport::{Channel, Endpoint, Server};
++    use tonic_prost::ProstCodec;
+ 
+     type BatchResponseStream = Pin<
+         Box<
+@@ -2578,7 +2579,7 @@ mod tests {
+         B: Body + Send + 'static,
+         B::Error: Into<StdError> + Send + 'static,
+     {
+-        type Response = http::Response<tonic::body::BoxBody>;
++        type Response = http::Response<tonic::body::Body>;
+         type Error = Infallible;
+         type Future = BoxFuture<Self::Response, Self::Error>;
+ 
+@@ -2594,8 +2595,7 @@ mod tests {
+                 "/tikvpb.Tikv/BatchCommands" => {
+                     let service = self.service.clone();
+                     Box::pin(async move {
+-                        let mut grpc =
+-                            tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
++                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
+                         Ok(grpc.streaming(service, request).await)
+                     })
+                 }
+@@ -2604,7 +2604,7 @@ mod tests {
+                         .status(200)
+                         .header("grpc-status", "12")
+                         .header("content-type", "application/grpc")
+-                        .body(tonic::body::empty_body())
++                        .body(tonic::body::Body::empty())
+                         .unwrap())
+                 }),
+             }
+diff --git a/src/store/client.rs b/src/store/client.rs
+index 620f443..c8949fa 100644
+--- a/src/store/client.rs
++++ b/src/store/client.rs
+@@ -289,6 +289,7 @@ mod tests {
+     use std::task::{Context, Poll};
+     use tokio_stream::wrappers::TcpListenerStream;
+     use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
++    use tonic_prost::ProstCodec;
+ 
+     #[derive(Clone)]
+     struct LargeDebugServer {
+@@ -304,7 +305,7 @@ mod tests {
+         B: Body + Send + 'static,
+         B::Error: Into<StdError> + Send + 'static,
+     {
+-        type Response = http::Response<tonic::body::BoxBody>;
++        type Response = http::Response<tonic::body::Body>;
+         type Error = Infallible;
+         type Future = BoxFuture<Self::Response, Self::Error>;
+ 
+@@ -321,11 +322,9 @@ mod tests {
+                     payload_len: self.payload_len,
+                 };
+                 return Box::pin(async move {
+-                    Ok(
+-                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+-                            .unary(service, request)
+-                            .await,
+-                    )
++                    Ok(tonic::server::Grpc::new(ProstCodec::default())
++                        .unary(service, request)
++                        .await)
+                 });
+             }
+             Box::pin(async move {
+@@ -333,7 +332,7 @@ mod tests {
+                     .status(200)
+                     .header("grpc-status", "12")
+                     .header("content-type", "application/grpc")
+-                    .body(tonic::body::empty_body())
++                    .body(tonic::body::Body::empty())
+                     .unwrap())
+             })
+         }

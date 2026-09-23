@@ -585,6 +585,16 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `PdClient`/`KvClient` over it, as `unistore.New` does in Go.
       So the realistic deletion is ~25K, not ~98K, and it is all gated on
       the same consumer chain plus the unistore backend.
+- [x] (2026-09-22, user-requested resync) Refreshed the vendored client from
+      `ngaut/client-rust` master at `32dec1837ee9686f1a32861a0b40f2ed880be3c7`.
+      The sync applies nine maintained patches and regenerates kvproto. Removed
+      patches 060/070 because upstream now defines and redacts the shared-lock
+      lost-key error itself; added patch 110 for tonic 0.14 test-mock APIs and
+      patch 120 to retain snapshot-stat hooks TiDB's existing consumers use.
+      Updated TiDB's point-response type paths to upstream's root exports.
+      Verified the standalone vendor format/check, its point-response tests,
+      all direct downstream crates, and the 17 lock-wait source tests. This is
+      dependency maintenance, not completion of the package-parity phases.
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),
@@ -594,6 +604,16 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
 
 ## Surprises & Discoveries
 
+- Observation (2026-09-22, dependency resync): upstream absorbed the shared
+  lock-lost error field and redaction previously carried by patches 060/070,
+  so those patches were removed. The same update moved `PointResponseStats`
+  and `PointReadScanDetail` from `tikv_client::util` to root exports and made
+  snapshot-stat recording methods private. TiDB's existing coordinator and
+  lock-wait tests consume those types/hooks, so the resync updates the type
+  paths and carries a narrow API patch (120) restoring the existing hooks;
+  it does not change their behavior. Tonic 0.14 also exposed test-mock API
+  incompatibilities, fixed in patch 110. All nine patches reapplied and
+  generated protos rebuilt from the fetched upstream revision.
 - Observation (2026-08-25, integration session): **divergence ledger vs
   client-go, from running the code rather than reading status words.** Every
   item below was found by the differential gates; upstream (same-day
@@ -1241,6 +1261,16 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   Date/Author: 2026-08-24, this plan (technical finding, not a re-ask of the
   user — same category of decision as the already-settled 2PC/coprocessor
   one, but with concrete disqualifying evidence rather than general risk).
+- Decision: resync the in-repo vendored client to the latest fetched upstream
+  master and resolve API drift with the smallest compatibility surface needed
+  by existing TiDB consumers. Remove patches when upstream has absorbed their
+  behavior; preserve TiDB's existing snapshot-stat behavior through a focused
+  adapter patch when upstream narrows or relocates an API. Do not pin the old
+  vendor revision or add transaction behavior as part of a dependency refresh.
+  Rationale: this satisfies the user's newest-client request while retaining
+  the existing TiDB contract, and the consumer build plus focused source tests
+  verify that the update does not alter those semantics.
+  Date/Author: 2026-09-22, this plan.
 
 ## Outcomes & Retrospective
 
@@ -1289,6 +1319,13 @@ effort with live TiKV/PD access to properly verify a 2PC-engine swap against
 `rust/docs/two-phase-commit-vs-client-go.md`'s findings rather than assuming
 `tikv_client::transaction::{Client, Transaction}` (technically callable,
 never assessed) reproduces them.
+
+**Dependency refresh checkpoint (2026-09-22):** the TiDB vendor now tracks
+`ngaut/client-rust` master commit `32dec1837ee9686f1a32861a0b40f2ed880be3c7`.
+All nine local patches apply cleanly, the generated proto tree is current,
+downstream workspace consumers compile, and the focused vendor and TiDB
+snapshot-lock tests pass. This closes the requested dependency refresh only;
+the package-by-package Go parity and benchmark objectives remain active.
 
 ## Context and Orientation
 

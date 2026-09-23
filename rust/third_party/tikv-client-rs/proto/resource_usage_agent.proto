@@ -54,6 +54,9 @@ message GroupTagRecordItem {
   uint64 network_out_bytes = 6;
   uint64 logical_read_bytes = 7;
   uint64 logical_write_bytes = 8;
+  // RocksDB block reads used for downstream read_iops relative attribution.
+  // This is not a device-level IOPS measurement.
+  uint64 rocksdb_block_read_count = 9;
 }
 
 // RegionRecord is a set of resource usage data grouped by region.

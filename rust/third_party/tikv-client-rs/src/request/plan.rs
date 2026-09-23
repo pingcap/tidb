@@ -44,7 +44,7 @@ use crate::retry::{
     RetryBackoffer, RetryConfig, BO_IS_WITNESS, BO_MAX_REGION_NOT_INITIALIZED,
     BO_MAX_TS_NOT_SYNCED, BO_REGION_MISS, BO_REGION_RECOVERY_IN_PROGRESS, BO_REGION_SCHEDULING,
     BO_STALE_CMD, BO_TIFLASH_RPC, BO_TIFLASH_SERVER_BUSY, BO_TIKV_DISK_FULL, BO_TIKV_RPC,
-    BO_TIKV_SERVER_BUSY,
+    BO_TIKV_SERVER_BUSY, BO_TXN_LOCK_FAST,
 };
 use crate::stats::tikv_stats;
 use crate::store::CommandType;
@@ -58,6 +58,7 @@ use crate::transaction::resolve_locks_for_read_with_context_result;
 use crate::transaction::resolve_locks_with_context_result;
 use crate::transaction::HasLocks;
 use crate::transaction::ReadLockContext;
+use crate::transaction::ReadLockHintsInRequest;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
 use crate::transaction::ResolvingLocksGuard;
@@ -959,6 +960,40 @@ impl SnapshotLockBackoff {
             if let Some(stats) = &self.stats {
                 stats.record_backoff(
                     "txnLockFast",
+                    Duration::from_millis(after_sleep.saturating_sub(before_sleep)),
+                );
+            }
+        }
+        result.map_err(|error| Error::StringError(error.to_string()))
+    }
+
+    async fn backoff_on_reported_lock_hint(&mut self, reason: String) -> Result<()> {
+        let mut backoff = self.backoff.lock().await;
+        let before_count = backoff
+            .times_by_type()
+            .get(BO_TXN_LOCK_FAST.name)
+            .copied()
+            .unwrap_or_default();
+        let before_sleep = backoff
+            .sleep_by_type()
+            .get(BO_TXN_LOCK_FAST.name)
+            .copied()
+            .unwrap_or_default();
+        let result = backoff.backoff(BO_TXN_LOCK_FAST, reason).await;
+        let after_count = backoff
+            .times_by_type()
+            .get(BO_TXN_LOCK_FAST.name)
+            .copied()
+            .unwrap_or_default();
+        let after_sleep = backoff
+            .sleep_by_type()
+            .get(BO_TXN_LOCK_FAST.name)
+            .copied()
+            .unwrap_or_default();
+        if after_count > before_count {
+            if let Some(stats) = &self.stats {
+                stats.record_backoff(
+                    BO_TXN_LOCK_FAST.name,
                     Duration::from_millis(after_sleep.saturating_sub(before_sleep)),
                 );
             }
@@ -2693,6 +2728,17 @@ fn record_async_batch_get_result(response: &dyn std::any::Any) {
     }
 }
 
+fn max_timestamp_point_get_ignores_lock(
+    first_lock_txn_id: u64,
+    lock_txn_id: u64,
+    request_hints: Option<&ReadLockHintsInRequest>,
+) -> bool {
+    lock_txn_id != first_lock_txn_id
+        && request_hints
+            .and_then(|hints| hints.reported_lock_type(lock_txn_id))
+            .is_none()
+}
+
 #[async_trait]
 impl<P: Plan + Shardable, PdC: PdClient> Plan for ResolveLock<P, PdC>
 where
@@ -2705,7 +2751,7 @@ where
         let mut resolving_locks_guard: Option<ResolvingLocksGuard> = None;
         let mut first_lock_txn_id = None;
         let mut clean_lock_retry_result = None;
-        let mut result = match clone.execute_inner().await {
+        let (mut result, mut request_lock_hints) = match clone.execute_inner().await {
             Ok(result) => result,
             Err(error) => {
                 if clone.record_async_batch_get_metric {
@@ -2751,17 +2797,22 @@ where
             if clone.max_timestamp_point_get {
                 if let Some(first_lock_txn_id) = first_lock_txn_id {
                     if let Some(read_lock_context) = &clone.read_lock_context {
+                        let request_lock_hints = request_lock_hints.as_ref();
                         locks.retain(|lock| {
-                            if lock.lock_version == first_lock_txn_id {
-                                true
-                            } else {
+                            if max_timestamp_point_get_ignores_lock(
+                                first_lock_txn_id,
+                                lock.lock_version,
+                                request_lock_hints,
+                            ) {
                                 read_lock_context.add_resolved(lock.lock_version);
                                 false
+                            } else {
+                                true
                             }
                         });
                     }
                     if locks.is_empty() {
-                        result = clone.execute_inner_retry().await?;
+                        (result, request_lock_hints) = clone.execute_inner_retry().await?;
                         continue;
                     }
                 } else {
@@ -2823,6 +2874,22 @@ where
             // plan that shares the original immutable `ResolveLock` wrapper.
             clone.disable_stale_read_after_lock();
 
+            if let Some((lock, hint_type)) = locks.iter().find_map(|lock| {
+                request_lock_hints
+                    .as_ref()
+                    .and_then(|hints| hints.reported_lock_type(lock.lock_version))
+                    .map(|hint_type| (lock, hint_type))
+            }) {
+                if let Some(backoff) = &mut clone.snapshot_lock_backoff {
+                    backoff
+                        .backoff_on_reported_lock_hint(format!(
+                            "lock {} was reported despite being included in the request's {} locks",
+                            lock.lock_version, hint_type
+                        ))
+                        .await?;
+                }
+            }
+
             let pd_client = self.pd_client.clone();
             let started = self.snapshot_runtime_stats.as_ref().map(|_| Instant::now());
             let lock_result = match &self.read_lock_context {
@@ -2856,7 +2923,7 @@ where
             let lock_result = lock_result?;
             let live_locks = lock_result.live_locks;
             if live_locks.is_empty() {
-                result = clone.execute_inner_retry().await?;
+                (result, request_lock_hints) = clone.execute_inner_retry().await?;
             } else if let Some(snapshot_lock_backoff) = clone.snapshot_lock_backoff.as_mut() {
                 // client-go only waits when the resolver reports a positive
                 // remaining TTL. A zero TTL is retried immediately.
@@ -2869,7 +2936,7 @@ where
                         )
                         .await?;
                 }
-                result = clone.execute_inner_retry().await?;
+                (result, request_lock_hints) = clone.execute_inner_retry().await?;
             } else {
                 match clone.backoff.next_delay_duration() {
                     None => return Err(Error::ResolveLockError(live_locks)),
@@ -2885,7 +2952,7 @@ where
                         if let Some(stats) = &self.snapshot_runtime_stats {
                             stats.record_backoff("txnLockFast", delay_duration);
                         }
-                        result = clone.execute_inner_retry().await?;
+                        (result, request_lock_hints) = clone.execute_inner_retry().await?;
                     }
                 }
             }
@@ -2894,18 +2961,24 @@ where
 }
 
 impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
-    async fn execute_inner(&self) -> Result<P::Result> {
+    async fn execute_inner(&self) -> Result<(P::Result, Option<ReadLockHintsInRequest>)> {
         let mut inner = self.inner.clone();
-        if let Some(read_lock_context) = &self.read_lock_context {
-            let (resolved_locks, committed_locks) = read_lock_context.snapshot();
+        let request_lock_hints = if let Some(read_lock_context) = &self.read_lock_context {
+            let (resolved_locks, committed_locks, hints) = read_lock_context.snapshot_for_request();
             inner.set_read_lock_context(resolved_locks, committed_locks);
-        }
-        inner.execute().await
+            Some(hints)
+        } else {
+            None
+        };
+        inner
+            .execute()
+            .await
+            .map(|result| (result, request_lock_hints))
     }
 }
 
 impl<P: Plan + Shardable, PdC: PdClient> ResolveLock<P, PdC> {
-    async fn execute_inner_retry(&mut self) -> Result<P::Result> {
+    async fn execute_inner_retry(&mut self) -> Result<(P::Result, Option<ReadLockHintsInRequest>)> {
         self.inner.mark_retry_request();
         if let Some(region) = self.inner.lock_retry_region() {
             let store = self
@@ -5604,6 +5677,35 @@ mod test {
         );
         lock.set_owner(region.owner());
         assert!(Arc::ptr_eq(&region.backoff, &lock.backoff));
+    }
+
+    #[test]
+    fn max_timestamp_point_get_only_ignores_unhinted_later_lock_owners() {
+        let context = ReadLockContext::default();
+        context.add_resolved(42);
+        context.add_committed(43);
+        let (_, _, hints) = context.snapshot_for_request();
+        assert!(!max_timestamp_point_get_ignores_lock(42, 42, Some(&hints)));
+        assert!(!max_timestamp_point_get_ignores_lock(42, 42, None));
+        assert!(!max_timestamp_point_get_ignores_lock(42, 42, Some(&hints)));
+        assert!(!max_timestamp_point_get_ignores_lock(42, 43, Some(&hints)));
+        assert!(max_timestamp_point_get_ignores_lock(42, 44, Some(&hints)));
+        assert!(max_timestamp_point_get_ignores_lock(42, 44, None));
+    }
+
+    #[tokio::test]
+    async fn repeated_snapshot_lock_hint_charges_one_txn_lock_fast_backoff() {
+        let stats = Arc::new(SnapshotRuntimeStats::new());
+        let mut lock =
+            SnapshotLockBackoff::new(Some(Arc::clone(&stats)), Arc::new(Variables::default()));
+        lock.backoff_on_reported_lock_hint(
+            "lock 42 was reported despite being included in the request's resolved locks"
+                .to_owned(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(stats.backoff_count(BO_TXN_LOCK_FAST.name), 1);
+        assert!(stats.backoff_duration(BO_TXN_LOCK_FAST.name) > Duration::ZERO);
     }
 
     #[test]

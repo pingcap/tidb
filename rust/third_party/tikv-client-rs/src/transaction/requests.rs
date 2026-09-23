@@ -2256,6 +2256,14 @@ impl KvRequest for crate::proto::coprocessor::Request {
         if let Some(lock) = &mut response.locked {
             codec.decode_lock_info(lock)?;
         }
+        for batch_response in &mut response.batch_responses {
+            if let Some(region_error) = &mut batch_response.region_error {
+                codec.decode_region_error(region_error)?;
+            }
+            if let Some(lock) = &mut batch_response.locked {
+                codec.decode_lock_info(lock)?;
+            }
+        }
         if let Some(range) = &mut response.range {
             codec.decode_cop_range(range)?;
         }
@@ -3138,7 +3146,7 @@ mod tests {
 
     #[test]
     #[allow(deprecated)]
-    fn api_v2_decoder_covers_split_region_response_regions_only() {
+    fn api_v2_decoder_covers_split_region_response_regions_and_key_errors() {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
         let split_request = super::new_split_region_request(
             vec![codec.encode_key(b"split-a"), codec.encode_key(b"split-b")],
@@ -3163,6 +3171,15 @@ mod tests {
                 end_key: codec.encode_region_key(b"legacy-end"),
                 ..Default::default()
             }),
+            errors: vec![kvrpcpb::KeyError {
+                locked: Some(kvrpcpb::LockInfo {
+                    key: codec.encode_key(b"split-lock-key"),
+                    primary_lock: codec.encode_key(b"split-primary"),
+                    secondaries: vec![codec.encode_key(b"split-secondary")],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
             ..Default::default()
         };
         split_request
@@ -3174,6 +3191,10 @@ mod tests {
             split_response.left.unwrap().start_key,
             codec.encode_region_key(b"legacy-start")
         );
+        let lock = split_response.errors[0].locked.as_ref().unwrap();
+        assert_eq!(lock.key, b"split-lock-key");
+        assert_eq!(lock.primary_lock, b"split-primary");
+        assert_eq!(lock.secondaries, [b"split-secondary"]);
     }
 
     #[test]
@@ -3369,6 +3390,36 @@ mod tests {
         );
 
         let mut response = crate::proto::coprocessor::Response {
+            batch_responses: vec![
+                crate::proto::coprocessor::StoreBatchTaskResponse {
+                    locked: Some(kvrpcpb::LockInfo {
+                        key: codec.encode_key(b"batch-lock"),
+                        primary_lock: codec.encode_key(b"batch-primary"),
+                        secondaries: vec![codec.encode_key(b"batch-secondary")],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                crate::proto::coprocessor::StoreBatchTaskResponse {
+                    region_error: Some(errorpb::Error {
+                        key_not_in_region: Some(errorpb::KeyNotInRegion {
+                            key: codec.encode_key(b"batch-region-key"),
+                            start_key: codec.encode_region_key(b"batch-start"),
+                            end_key: codec.encode_region_key(b"batch-end"),
+                            ..Default::default()
+                        }),
+                        bucket_version_not_match: Some(errorpb::BucketVersionNotMatch {
+                            keys: vec![
+                                codec.encode_region_key(b"batch-bucket-a"),
+                                codec.encode_region_key(b"batch-bucket-b"),
+                            ],
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
             locked: Some(kvrpcpb::LockInfo {
                 key: codec.encode_key(b"locked"),
                 primary_lock: codec.encode_key(b"primary"),
@@ -3390,6 +3441,41 @@ mod tests {
         let range = response.range.unwrap();
         assert_eq!(range.start, b"resume-start");
         assert_eq!(range.end, b"resume-end");
+        let batch_lock = response.batch_responses[0].locked.as_ref().unwrap();
+        assert_eq!(batch_lock.key, b"batch-lock");
+        assert_eq!(batch_lock.primary_lock, b"batch-primary");
+        assert_eq!(batch_lock.secondaries, [b"batch-secondary"]);
+        let batch_region_error = response.batch_responses[1].region_error.as_ref().unwrap();
+        let key_not_in_region = batch_region_error.key_not_in_region.as_ref().unwrap();
+        assert_eq!(key_not_in_region.key, b"batch-region-key");
+        assert_eq!(key_not_in_region.start_key, b"batch-start");
+        assert_eq!(key_not_in_region.end_key, b"batch-end");
+        assert_eq!(
+            batch_region_error
+                .bucket_version_not_match
+                .as_ref()
+                .unwrap()
+                .keys,
+            [b"batch-bucket-a".to_vec(), b"batch-bucket-b".to_vec()]
+        );
+
+        let mut malformed_response = crate::proto::coprocessor::Response {
+            batch_responses: vec![crate::proto::coprocessor::StoreBatchTaskResponse {
+                region_error: Some(errorpb::Error {
+                    bucket_version_not_match: Some(errorpb::BucketVersionNotMatch {
+                        keys: vec![codec.encode_region_key(b"valid"), vec![0x01]],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let malformed_error = crate::proto::coprocessor::Request::default()
+            .decode_response(&mut malformed_response, Some(&codec))
+            .unwrap_err();
+        assert!(crate::request::is_decode_error(&malformed_error));
     }
 
     #[test]

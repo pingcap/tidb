@@ -1789,6 +1789,37 @@ impl ReadLockContext {
             state.committed.iter().copied().collect(),
         )
     }
+
+    pub(crate) fn snapshot_for_request(&self) -> (Vec<u64>, Vec<u64>, ReadLockHintsInRequest) {
+        let state = self.state.read().unwrap();
+        (
+            state.resolved.iter().copied().collect(),
+            state.committed.iter().copied().collect(),
+            ReadLockHintsInRequest {
+                resolved: state.resolved.clone(),
+                committed: state.committed.clone(),
+            },
+        )
+    }
+}
+
+/// Exact lock-hint membership encoded on one read request.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ReadLockHintsInRequest {
+    resolved: HashSet<u64>,
+    committed: HashSet<u64>,
+}
+
+impl ReadLockHintsInRequest {
+    pub(crate) fn reported_lock_type(&self, txn_id: u64) -> Option<&'static str> {
+        if self.resolved.contains(&txn_id) {
+            Some("resolved")
+        } else if self.committed.contains(&txn_id) {
+            Some("committed")
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2753,6 +2784,23 @@ mod tests {
                 wait_duration: Duration::from_millis(3),
             })
         }
+    }
+
+    #[test]
+    fn read_lock_request_hints_are_immutable_snapshots() {
+        let context = ReadLockContext::default();
+        context.add_resolved(42);
+        context.add_committed(43);
+        let (_, _, request_hints) = context.snapshot_for_request();
+
+        context.add_resolved(44);
+        assert_eq!(request_hints.reported_lock_type(42), Some("resolved"));
+        assert_eq!(request_hints.reported_lock_type(43), Some("committed"));
+        assert_eq!(request_hints.reported_lock_type(44), None);
+
+        context.add_committed(42);
+        let (_, _, overlapping_hints) = context.snapshot_for_request();
+        assert_eq!(overlapping_hints.reported_lock_type(42), Some("resolved"));
     }
 
     #[test]

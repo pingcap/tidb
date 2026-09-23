@@ -2626,6 +2626,14 @@ pub struct GetGcStateRequest {
     pub keyspace_scope: ::core::option::Option<KeyspaceScope>,
     #[prost(bool, tag = "3")]
     pub exclude_gc_barriers: bool,
+    /// Include all stored global GC barriers in the response.
+    ///
+    /// This uses an include flag, unlike exclude_gc_barriers, because proto3 bool
+    /// fields default to false. GetGCState historically omitted global GC
+    /// barriers, so false preserves both the existing response and the
+    /// no-extra-read path.
+    #[prost(bool, tag = "4")]
+    pub include_global_gc_barriers: bool,
 }
 impl ::prost::Name for GetGcStateRequest {
     const NAME: &'static str = "GetGCStateRequest";
@@ -2660,12 +2668,33 @@ impl ::prost::Name for GcState {
         "/pdpb.GCState".into()
     }
 }
+/// GlobalGCBarriersInfo carries presence independently from the barrier list.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GlobalGcBarriersInfo {
+    #[prost(message, repeated, tag = "1")]
+    pub barriers: ::prost::alloc::vec::Vec<GlobalGcBarrierInfo>,
+}
+impl ::prost::Name for GlobalGcBarriersInfo {
+    const NAME: &'static str = "GlobalGCBarriersInfo";
+    const PACKAGE: &'static str = "pdpb";
+    fn full_name() -> ::prost::alloc::string::String {
+        "pdpb.GlobalGCBarriersInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/pdpb.GlobalGCBarriersInfo".into()
+    }
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetGcStateResponse {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub gc_state: ::core::option::Option<GcState>,
+    /// Absent when globals were not requested or the server does not support
+    /// this extension. Present-empty when the request was fulfilled but no
+    /// global GC barriers are stored.
+    #[prost(message, optional, tag = "3")]
+    pub global_gc_barriers: ::core::option::Option<GlobalGcBarriersInfo>,
 }
 impl ::prost::Name for GetGcStateResponse {
     const NAME: &'static str = "GetGCStateResponse";

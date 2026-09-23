@@ -98,6 +98,35 @@ pub struct Request {
     /// independently.
     #[prost(uint64, tag = "17")]
     pub paging_size_bytes: u64,
+    /// Signals that the client can handle results of the batched tasks in `tasks`
+    /// being merged into `Response.data` instead of each task returning its result
+    /// in its own `StoreBatchTaskResponse.data`. Merging lets the store combine
+    /// mergeable payloads, such as per-region ANALYZE sampling statistics, into
+    /// one result, reducing the response size and the client's decode and merge
+    /// work. See the batched ANALYZE design for the motivating use case:
+    /// <https://github.com/pingcap/tidb/pull/70355.>
+    ///
+    /// For every merged task, the store still adds a `StoreBatchTaskResponse`
+    /// with `data_merged_into_response` set. The store may return some or all task
+    /// results separately even when this field is set, for example when a task
+    /// fails, when its result is not mergeable, or when the store predates this
+    /// field, so the client must handle both merged and per-task results.
+    ///
+    /// This field only negotiates the response shape. It does not affect task
+    /// scheduling and may be set independently of `execute_batch_tasks_serially`.
+    #[prost(bool, tag = "18")]
+    pub allow_batch_task_data_merge: bool,
+    /// When true, the store executes the primary task and all tasks in `tasks` one
+    /// at a time, so at most one task of this request is running at any moment.
+    /// Task execution order is not guaranteed.
+    ///
+    /// Clients that already bound their per-store concurrency by the number of
+    /// in-flight requests, such as batched ANALYZE, set this so that batching more
+    /// tasks into one request does not multiply that concurrency. The trade-off is
+    /// a longer-lived request. This field only affects task scheduling and may be
+    /// set independently of `allow_batch_task_data_merge`.
+    #[prost(bool, tag = "19")]
+    pub execute_batch_tasks_serially: bool,
 }
 impl ::prost::Name for Request {
     const NAME: &'static str = "Request";
@@ -380,6 +409,20 @@ pub struct StoreBatchTaskResponse {
     pub task_id: u64,
     #[prost(message, optional, tag = "6")]
     pub exec_details_v2: ::core::option::Option<super::kvrpcpb::ExecDetailsV2>,
+    /// Indicates that this task's result was merged into the enclosing
+    /// `Response.data`, so this message's `data` is empty. The store sets this
+    /// field only when the client enables `Request.allow_batch_task_data_merge`,
+    /// and only for a task that succeeded: a failed or non-mergeable task is
+    /// returned as a normal per-task response with this field unset.
+    ///
+    /// Merging is atomic. If the store fails while merging, it returns no partial
+    /// merged data and no response with this field set, so the client can safely
+    /// retry the entire batch without losing or double-counting any task's result.
+    ///
+    /// This message still identifies the merged task by `task_id` and carries its
+    /// execution details.
+    #[prost(bool, tag = "7")]
+    pub data_merged_into_response: bool,
 }
 impl ::prost::Name for StoreBatchTaskResponse {
     const NAME: &'static str = "StoreBatchTaskResponse";

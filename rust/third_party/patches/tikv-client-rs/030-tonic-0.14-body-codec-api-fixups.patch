@@ -1,5 +1,5 @@
 diff --git a/src/pd/client.rs b/src/pd/client.rs
-index 993de0a..275ce57 100644
+index 06240ad..206737c 100644
 --- a/src/pd/client.rs
 +++ b/src/pd/client.rs
 @@ -11,6 +11,7 @@ use futures::stream::BoxStream;
@@ -10,7 +10,7 @@ index 993de0a..275ce57 100644
  
  use crate::compat::stream_fn;
  use crate::kv::{ReplicaReadConfig, ReplicaReadType};
-@@ -551,7 +552,7 @@ async fn send_store_health_check(
+@@ -566,7 +567,7 @@ async fn send_store_health_check(
                  service: String::new(),
              }),
              PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
@@ -20,7 +20,7 @@ index 993de0a..275ce57 100644
          .await
          .map_err(crate::Error::from)
 diff --git a/src/store/mockserver.rs b/src/store/mockserver.rs
-index 69bdef8..5d32622 100644
+index 6986fbc..e4092fc 100644
 --- a/src/store/mockserver.rs
 +++ b/src/store/mockserver.rs
 @@ -21,6 +21,7 @@ use tokio_stream::StreamExt;
@@ -31,7 +31,7 @@ index 69bdef8..5d32622 100644
  
  use crate::proto::{coprocessor, kvrpcpb, tikvpb};
  
-@@ -301,7 +302,7 @@ where
+@@ -300,7 +301,7 @@ where
      B: Body + Send + 'static,
      B::Error: Into<StdError> + Send + 'static,
  {
@@ -40,43 +40,67 @@ index 69bdef8..5d32622 100644
      type Error = Infallible;
      type Future = BoxFuture<Self::Response, Self::Error>;
  
-@@ -317,7 +318,7 @@ where
+@@ -315,11 +316,9 @@ where
+                     core: self.core.clone(),
                  };
                  Box::pin(async move {
-                     Ok(
+-                    Ok(
 -                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-+                        tonic::server::Grpc::new(ProstCodec::default())
-                             .unary(service, request)
-                             .await,
-                     )
-@@ -329,7 +330,7 @@ where
+-                            .unary(service, request)
+-                            .await,
+-                    )
++                    Ok(tonic::server::Grpc::new(ProstCodec::default())
++                        .unary(service, request)
++                        .await)
+                 })
+             }
+             "/tikvpb.Tikv/KvPrewrite" => {
+@@ -327,11 +326,9 @@ where
+                     core: self.core.clone(),
                  };
                  Box::pin(async move {
-                     Ok(
+-                    Ok(
 -                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-+                        tonic::server::Grpc::new(ProstCodec::default())
-                             .unary(service, request)
-                             .await,
-                     )
-@@ -341,7 +342,7 @@ where
+-                            .unary(service, request)
+-                            .await,
+-                    )
++                    Ok(tonic::server::Grpc::new(ProstCodec::default())
++                        .unary(service, request)
++                        .await)
+                 })
+             }
+             "/tikvpb.Tikv/CoprocessorStream" => {
+@@ -339,11 +336,9 @@ where
+                     core: self.core.clone(),
                  };
                  Box::pin(async move {
-                     Ok(
+-                    Ok(
 -                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-+                        tonic::server::Grpc::new(ProstCodec::default())
-                             .server_streaming(service, request)
-                             .await,
-                     )
-@@ -353,7 +354,7 @@ where
+-                            .server_streaming(service, request)
+-                            .await,
+-                    )
++                    Ok(tonic::server::Grpc::new(ProstCodec::default())
++                        .server_streaming(service, request)
++                        .await)
+                 })
+             }
+             "/tikvpb.Tikv/BatchCommands" => {
+@@ -351,11 +346,9 @@ where
+                     core: self.core.clone(),
                  };
                  Box::pin(async move {
-                     Ok(
+-                    Ok(
 -                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-+                        tonic::server::Grpc::new(ProstCodec::default())
-                             .streaming(service, request)
-                             .await,
-                     )
-@@ -364,7 +365,7 @@ where
+-                            .streaming(service, request)
+-                            .await,
+-                    )
++                    Ok(tonic::server::Grpc::new(ProstCodec::default())
++                        .streaming(service, request)
++                        .await)
+                 })
+             }
+             _ => Box::pin(async move {
+@@ -363,7 +356,7 @@ where
                      .status(200)
                      .header("grpc-status", "12")
                      .header("content-type", "application/grpc")

@@ -33,6 +33,7 @@ pub use crate::transaction::Transaction as KvTxn;
 pub use crate::transaction::TransactionStatus as TxnStatus;
 pub use crate::transaction::TransactionStatusKind as TxnStatusKind;
 pub use crate::transaction::MAX_TXN_TIME_USE;
+pub use crate::transaction::{PointReadScanDetail, PointResponseStats};
 
 pub const SI: IsoLevel = IsoLevel::Si;
 pub const RC: IsoLevel = IsoLevel::Rc;

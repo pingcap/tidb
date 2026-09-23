@@ -289,6 +289,7 @@ mod tests {
     use std::task::{Context, Poll};
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
+    use tonic_prost::ProstCodec;
 
     #[derive(Clone)]
     struct LargeDebugServer {
@@ -321,7 +322,7 @@ mod tests {
                     payload_len: self.payload_len,
                 };
                 return Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                    Ok(tonic::server::Grpc::new(ProstCodec::default())
                         .unary(service, request)
                         .await)
                 });

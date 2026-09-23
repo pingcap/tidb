@@ -344,5 +344,7 @@ pub use crate::transaction::{
     MutationOptions, PipelinedTxnOptions, PrewriteEncounterLockPolicy, RelatedSchemaChange,
     SchemaLeaseChecker, SchemaVersion,
 };
+#[doc(inline)]
+pub use crate::transaction::{PointReadScanDetail, PointResponseStats};
 pub use crate::transaction::{DEFAULT_SCAN_BATCH_SIZE, GET_MAX_BACKOFF_MS};
 pub use crate::util::RequestSource;

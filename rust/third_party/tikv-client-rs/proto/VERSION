@@ -1,6 +1,7 @@
-pingcap/kvproto 059694ae4472 (client-go go.mod: kvproto v0.0.0-20260724054804-059694ae4472)
-All 38 top-level kvproto inputs match this revision byte for byte. The extra
-grpc_channelz schema and vendored include tree are independent generator
-dependencies recorded by the repository-level parity artifact receipt.
-Re-vendor from this revision, then run
-`cargo +nightly-2026-08-22 run -p tikv-client-proto-build`.
+pingcap/kvproto 623e58e60fa9 (TiDB master resolved module: v0.0.0-20260820070758-623e58e60fa9)
+All 38 upstream top-level kvproto inputs match this revision byte for byte.
+Rust also retains an independent grpc_channelz schema and vendored include
+tree for code generation. The resolved module version is selected by TiDB
+master's client-go dependency graph.
+
+Regenerate bindings with `cargo +nightly-2026-08-22 run -p tikv-client-proto-build`.

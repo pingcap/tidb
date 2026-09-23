@@ -73,10 +73,10 @@ index a3a5a7a..91a927a 100644
  # Keep this compatible with rust-toolchain 1.84.1.
  tempfile = "=3.14.0"
 diff --git a/proto-build/src/main.rs b/proto-build/src/main.rs
-index cf347df..03c3b85 100644
+index cf347df..d773078 100644
 --- a/proto-build/src/main.rs
 +++ b/proto-build/src/main.rs
-@@ -23,14 +23,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+@@ -23,14 +23,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
      let mut prost = prost_build::Config::new();
      prost.enable_type_names();
  
@@ -89,11 +89,7 @@ index cf347df..03c3b85 100644
          .out_dir(staging.path())
          .file_descriptor_set_path(staging.path().join(DESCRIPTOR_FILE))
 -        .compile_with_config(prost, &protos, &["proto/include", "proto"])?;
-+        .compile_with_config(
-+            prost,
-+            &protos,
-+            &["proto/include".into(), "proto".into()],
-+        )?;
++        .compile_with_config(prost, &protos, &["proto/include".into(), "proto".into()])?;
  
      install_generated_output(staging.path(), Path::new(GENERATED_DIR))?;
      Ok(())

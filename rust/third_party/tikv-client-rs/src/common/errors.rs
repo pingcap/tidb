@@ -73,6 +73,12 @@ pub enum Error {
     /// TiKV or the transaction client detected a transactional write conflict.
     #[error(transparent)]
     WriteConflict(#[from] crate::error::WriteConflictError),
+    /// TiKV rejected a shared-lock upgrade because another upgrade conflicts.
+    #[error(transparent)]
+    LockUpgradeConflict(#[from] crate::error::LockUpgradeConflictError),
+    /// TiKV confirmed that this transaction lost a shared lock.
+    #[error(transparent)]
+    SharedLockLost(#[from] crate::error::SharedLockLostError),
     /// TiKV rejected an insert because the key already exists.
     #[error(transparent)]
     KeyExists(#[from] crate::error::KeyExistsError),
@@ -240,6 +246,9 @@ impl From<ProtoRegionError> for Error {
 impl From<ProtoKeyError> for Error {
     fn from(mut error: ProtoKeyError) -> Error {
         crate::redact::redact_key_error_if_necessary(&mut error);
+        if let Some(shared_lock_lost) = error.shared_lock_lost.take() {
+            return crate::error::SharedLockLostError { shared_lock_lost }.into();
+        }
         if let Some(already_exist) = error.already_exist.take() {
             return crate::error::KeyExistsError {
                 already_exist,
@@ -249,6 +258,9 @@ impl From<ProtoKeyError> for Error {
         }
         if let Some(conflict) = error.conflict.take() {
             return crate::error::new_write_conflict(conflict).into();
+        }
+        if let Some(conflict) = error.lock_upgrade_conflict.take() {
+            return crate::error::LockUpgradeConflictError { conflict }.into();
         }
         if !error.retryable.is_empty() {
             return crate::error::RetryableError {

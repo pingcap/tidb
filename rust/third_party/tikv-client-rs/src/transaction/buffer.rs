@@ -867,6 +867,24 @@ impl Buffer {
         shared: bool,
         returned: Option<&crate::ReturnedValue>,
     ) -> std::result::Result<(), &'static str> {
+        self.lock_with_returned_value_inner(key, shared, returned, false)
+    }
+
+    pub(crate) fn lock_with_returned_value_for_upgrade(
+        &mut self,
+        key: Key,
+        returned: Option<&crate::ReturnedValue>,
+    ) -> std::result::Result<(), &'static str> {
+        self.lock_with_returned_value_inner(key, false, returned, true)
+    }
+
+    fn lock_with_returned_value_inner(
+        &mut self,
+        key: Key,
+        shared: bool,
+        returned: Option<&crate::ReturnedValue>,
+        allow_shared_upgrade: bool,
+    ) -> std::result::Result<(), &'static str> {
         let returned_exists = returned.map(|value| value.exists);
         let returned = returned.map(|value| {
             value
@@ -881,7 +899,7 @@ impl Buffer {
             self.primary_key.get_or_insert_with(|| key.clone());
         }
         let current_flags = self.memdb_flags(&key);
-        if current_flags.has_locked_in_share_mode() && !shared {
+        if current_flags.has_locked_in_share_mode() && !shared && !allow_shared_upgrade {
             return Err("upgrading a shared lock to an exclusive lock is not supported");
         }
         let effective_shared =

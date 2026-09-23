@@ -473,12 +473,23 @@ mod tests {
 
     #[test]
     fn descriptor_pool_covers_every_generated_named_message() {
-        assert_eq!(protobuf_descriptors().all_messages().count(), 1_029);
+        assert_eq!(protobuf_descriptors().all_messages().count(), 1_032);
         assert!(protobuf_descriptors()
             .get_message_by_name(<metapb::Region as Name>::full_name().as_str())
             .is_some());
         assert!(protobuf_descriptors()
             .get_message_by_name(<kvrpcpb::KeyError as Name>::full_name().as_str())
+            .is_some());
+        assert!(protobuf_descriptors()
+            .get_message_by_name(<kvrpcpb::LockUpgradeConflict as Name>::full_name().as_str())
+            .is_some());
+        assert!(protobuf_descriptors()
+            .get_message_by_name(<kvrpcpb::SharedLockLost as Name>::full_name().as_str())
+            .is_some());
+        assert!(protobuf_descriptors()
+            .get_message_by_name(
+                <crate::proto::pdpb::GlobalGcBarriersInfo as Name>::full_name().as_str()
+            )
             .is_some());
     }
 }

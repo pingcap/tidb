@@ -2401,6 +2401,7 @@ mod tests {
     use std::task::{Context, Poll};
     use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
     use tonic::transport::{Channel, Endpoint, Server};
+    use tonic_prost::ProstCodec;
 
     type BatchResponseStream = Pin<
         Box<
@@ -2594,7 +2595,7 @@ mod tests {
                 "/tikvpb.Tikv/BatchCommands" => {
                     let service = self.service.clone();
                     Box::pin(async move {
-                        let mut grpc = tonic::server::Grpc::new(tonic_prost::ProstCodec::default());
+                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
                         Ok(grpc.streaming(service, request).await)
                     })
                 }

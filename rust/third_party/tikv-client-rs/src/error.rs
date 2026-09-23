@@ -177,6 +177,42 @@ impl fmt::Display for WriteConflictError {
 
 impl StdError for WriteConflictError {}
 
+/// TiKV rejected an exclusive upgrade of an existing shared lock.
+#[derive(Debug)]
+pub struct LockUpgradeConflictError {
+    pub conflict: kvrpcpb::LockUpgradeConflict,
+}
+
+impl fmt::Display for LockUpgradeConflictError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "lock upgrade conflict {{ {} }}",
+            protobuf_text(&self.conflict)
+        )
+    }
+}
+
+impl StdError for LockUpgradeConflictError {}
+
+/// TiKV confirmed that a transaction lost ownership of a shared lock.
+#[derive(Debug)]
+pub struct SharedLockLostError {
+    pub shared_lock_lost: kvrpcpb::SharedLockLost,
+}
+
+impl fmt::Display for SharedLockLostError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "shared lock lost {{ {} }}",
+            protobuf_text(&self.shared_lock_lost)
+        )
+    }
+}
+
+impl StdError for SharedLockLostError {}
+
 pub fn new_write_conflict(conflict: kvrpcpb::WriteConflict) -> WriteConflictError {
     crate::stats::increment_write_conflict();
     WriteConflictError { conflict }
@@ -395,8 +431,14 @@ pub fn extract_key_error(key_error: &mut kvrpcpb::KeyError) -> BoxError {
     }
 
     crate::redact::redact_key_error_if_necessary(key_error);
+    if let Some(shared_lock_lost) = key_error.shared_lock_lost.clone() {
+        return Box::new(SharedLockLostError { shared_lock_lost });
+    }
     if let Some(conflict) = key_error.conflict.clone() {
         return Box::new(new_write_conflict(conflict));
+    }
+    if let Some(conflict) = key_error.lock_upgrade_conflict.clone() {
+        return Box::new(LockUpgradeConflictError { conflict });
     }
     if !key_error.retryable.is_empty() {
         return Box::new(RetryableError {
@@ -1326,6 +1368,79 @@ mod tests {
             kvrpcpb::write_conflict::Reason::Optimistic,
         );
         assert_eq!(crate::stats::write_conflict_count(), before + 1);
+    }
+
+    #[test]
+    #[serial]
+    fn shared_lock_errors_use_client_go_priority_and_typed_results() {
+        crate::redact::set_redact_log_enabled(false);
+        let _reset = DisableRedaction;
+
+        let mut shared_lock_lost = kvrpcpb::KeyError {
+            shared_lock_lost: Some(kvrpcpb::SharedLockLost {
+                key: b"lost-key".to_vec(),
+                start_ts: 101,
+            }),
+            conflict: Some(kvrpcpb::WriteConflict {
+                start_ts: 101,
+                reason: kvrpcpb::write_conflict::Reason::PessimisticRetry as i32,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let error = extract_key_error(&mut shared_lock_lost);
+        let lost = error.downcast_ref::<SharedLockLostError>().unwrap();
+        assert_eq!(lost.shared_lock_lost.key, b"lost-key");
+        assert_eq!(lost.shared_lock_lost.start_ts, 101);
+        assert_eq!(
+            error.to_string(),
+            "shared lock lost { key:\"lost-key\" start_ts:101  }"
+        );
+
+        let mut upgrade_conflict = kvrpcpb::KeyError {
+            lock_upgrade_conflict: Some(kvrpcpb::LockUpgradeConflict {
+                key: b"upgrade-key".to_vec(),
+                start_ts: 101,
+                owner_start_ts: 202,
+                reason: kvrpcpb::lock_upgrade_conflict::Reason::SecondUpgrader as i32,
+            }),
+            retryable: "lower priority".to_owned(),
+            ..Default::default()
+        };
+        let error = extract_key_error(&mut upgrade_conflict);
+        let conflict = error.downcast_ref::<LockUpgradeConflictError>().unwrap();
+        assert_eq!(conflict.conflict.key, b"upgrade-key");
+        assert_eq!(conflict.conflict.start_ts, 101);
+        assert_eq!(conflict.conflict.owner_start_ts, 202);
+        assert_eq!(
+            conflict.conflict.reason,
+            kvrpcpb::lock_upgrade_conflict::Reason::SecondUpgrader as i32
+        );
+
+        let shared_error: crate::Error = kvrpcpb::KeyError {
+            shared_lock_lost: Some(kvrpcpb::SharedLockLost {
+                key: b"lost-key".to_vec(),
+                start_ts: 101,
+            }),
+            conflict: Some(kvrpcpb::WriteConflict::default()),
+            ..Default::default()
+        }
+        .into();
+        assert!(matches!(shared_error, crate::Error::SharedLockLost(_)));
+
+        let upgrade_error: crate::Error = kvrpcpb::KeyError {
+            lock_upgrade_conflict: Some(kvrpcpb::LockUpgradeConflict {
+                key: b"upgrade-key".to_vec(),
+                ..Default::default()
+            }),
+            retryable: "lower priority".to_owned(),
+            ..Default::default()
+        }
+        .into();
+        assert!(matches!(
+            upgrade_error,
+            crate::Error::LockUpgradeConflict(_)
+        ));
     }
 
     #[test]

@@ -2025,7 +2025,7 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
     transaction.set_snapshot_runtime_stats(Some(Arc::clone(&stats)));
     assert_eq!(
         transaction.snapshot_point_response_stats(),
-        tikv_client::util::PointResponseStats::default()
+        tikv_client::PointResponseStats::default()
     );
     let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
     assert_eq!(
@@ -2037,7 +2037,7 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
     assert!(point.payload_complete());
     assert_eq!(
         point.scan_detail,
-        tikv_client::util::PointReadScanDetail {
+        tikv_client::PointReadScanDetail {
             total_keys: 5,
             processed_keys: 3,
             processed_keys_size: 30
@@ -2099,7 +2099,7 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
     assert!(transaction.snapshot_get(b"region-error", &call).is_err());
     assert_eq!(
         empty.point_response_stats(),
-        tikv_client::util::PointResponseStats::default()
+        tikv_client::PointResponseStats::default()
     );
     assert_eq!(empty.rpc_count(tikv_client::SnapshotRpcCommand::Get), 2);
     // Scanner pair errors are reread with Get; the enclosing Scan is not a

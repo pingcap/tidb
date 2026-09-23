@@ -422,10 +422,10 @@ where
 
     /// Go point-response data and coverage. An absent collector is invalid;
     /// an installed collector with no responses is valid without coverage.
-    pub fn snapshot_point_response_stats(&self) -> tikv_client::util::PointResponseStats {
+    pub fn snapshot_point_response_stats(&self) -> tikv_client::PointResponseStats {
         self.snapshot_runtime_stats.as_ref().map_or_else(
             || {
-                let mut stats = tikv_client::util::PointResponseStats::default();
+                let mut stats = tikv_client::PointResponseStats::default();
                 stats.invalidate();
                 stats
             },

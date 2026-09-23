@@ -360,6 +360,40 @@ fn normalize_prewrite_error(error: Error) -> Error {
     errors.remove(selected)
 }
 
+#[derive(Clone)]
+enum SharedLockAbort {
+    SharedLockLost(kvrpcpb::SharedLockLost),
+    LockUpgradeConflict(kvrpcpb::LockUpgradeConflict),
+}
+
+fn shared_lock_abort_from_error(error: &Error) -> Option<SharedLockAbort> {
+    match error {
+        Error::SharedLockLost(error) => Some(SharedLockAbort::SharedLockLost(
+            error.shared_lock_lost.clone(),
+        )),
+        Error::LockUpgradeConflict(error) => {
+            Some(SharedLockAbort::LockUpgradeConflict(error.conflict.clone()))
+        }
+        Error::KeyError(error) => error
+            .shared_lock_lost
+            .clone()
+            .map(SharedLockAbort::SharedLockLost)
+            .or_else(|| {
+                error
+                    .lock_upgrade_conflict
+                    .clone()
+                    .map(SharedLockAbort::LockUpgradeConflict)
+            }),
+        Error::Connection { source, .. }
+        | Error::UndeterminedError(source)
+        | Error::PessimisticLockError { inner: source, .. } => shared_lock_abort_from_error(source),
+        Error::ExtractedErrors(errors) | Error::MultipleKeyErrors(errors) => {
+            errors.iter().find_map(shared_lock_abort_from_error)
+        }
+        _ => None,
+    }
+}
+
 fn is_transaction_transport_error(error: &Error) -> bool {
     match error {
         Error::Grpc(_) | Error::GrpcAPI(_) | Error::Channel(_) => true,
@@ -1161,6 +1195,9 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     heartbeat_generation: Arc<atomic::AtomicU64>,
     committer_initialized: bool,
     pessimistic_lock_count: usize,
+    /// The first shared-lock upgrade error aborts further locking and commit
+    /// attempts, while rollback remains available to release other locks.
+    shared_lock_abort: Option<SharedLockAbort>,
     /// Set once the transaction enters the commit path (`StartedCommit`), where
     /// prewrite may place 2PC locks. Kept as a dedicated flag because the status
     /// transitions to `StartedRollback` on rollback, losing the fact that commit
@@ -1286,6 +1323,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             heartbeat_generation: Arc::new(atomic::AtomicU64::new(0)),
             committer_initialized: pipelined,
             pessimistic_lock_count: 0,
+            shared_lock_abort: None,
             prewritten: false,
             aggressive_locking: None,
             aggressive_locking_dirty: false,
@@ -3130,6 +3168,10 @@ impl<PdC: PdClient> Transaction<PdC> {
         lock_wait_time_ms: i64,
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
+        self.check_allow_operation().await?;
+        if let Some(error) = self.shared_lock_abort_error() {
+            return Err(error);
+        }
         let for_update_timestamp = if self.is_pessimistic() {
             self.rpc.clone().get_timestamp().await?.version()
         } else {
@@ -3174,6 +3216,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     ) -> Result<()> {
         debug!("invoking transactional lock_keys request");
         self.check_allow_operation().await?;
+        if let Some(error) = self.shared_lock_abort_error() {
+            return Err(error);
+        }
         // client-go decides whether aggressive locking is applicable from the
         // caller's original key list, before deduplication or exclusion of
         // locks already acquired in this stage.
@@ -3211,6 +3256,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys.dedup();
 
         let mut pending = Vec::with_capacity(keys.len());
+        let mut upgrade_keys = Vec::new();
         for key in keys {
             if let Some(entry) = self
                 .aggressive_locking
@@ -3233,9 +3279,19 @@ impl<PdC: PdClient> Transaction<PdC> {
                 continue;
             }
             if self.buffer.is_shared_locked(&key) && !context.in_share_mode {
-                return Err(Error::StringError(
-                    "upgrading a shared lock to an exclusive lock is not supported".to_owned(),
-                ));
+                if !self.is_pessimistic() || !context.allow_shared_lock_upgrade {
+                    return Err(Error::StringError(
+                        "upgrading a shared lock to an exclusive lock is not supported".to_owned(),
+                    ));
+                }
+                if self.aggressive_locking.is_some() {
+                    return Err(Error::StringError(
+                        "shared lock upgrade is not supported in aggressive/fair locking mode"
+                            .to_owned(),
+                    ));
+                }
+                upgrade_keys.push(key);
+                continue;
             }
             if self.buffer.is_locked(&key) {
                 if self.is_pessimistic()
@@ -3258,27 +3314,34 @@ impl<PdC: PdClient> Transaction<PdC> {
                 pending.push(key);
             }
         }
-        if pending.is_empty() {
+        if pending.is_empty() && upgrade_keys.is_empty() {
             return Ok(());
         }
 
         if context.lock_only_if_exists {
+            let first_key = pending.first().or_else(|| upgrade_keys.first()).unwrap();
             if !context.return_values {
                 return Err(crate::error::LockOnlyIfExistsNoReturnValueError {
                     start_timestamp: self.timestamp.version(),
                     for_update_timestamp: context.for_update_ts,
-                    lock_key: <&[u8]>::from(&pending[0]).to_vec(),
+                    lock_key: <&[u8]>::from(first_key).to_vec(),
                 }
                 .into());
             }
-            if self.buffer.get_primary_key().is_none() && pending.len() > 1 {
+            if self.buffer.get_primary_key().is_none() && pending.len() + upgrade_keys.len() > 1 {
                 return Err(crate::error::LockOnlyIfExistsNoPrimaryKeyError {
                     start_timestamp: self.timestamp.version(),
                     for_update_timestamp: context.for_update_ts,
-                    lock_key: <&[u8]>::from(&pending[0]).to_vec(),
+                    lock_key: <&[u8]>::from(first_key).to_vec(),
                 }
                 .into());
             }
+        }
+
+        if !upgrade_keys.is_empty() && context.for_update_ts == 0 {
+            return Err(Error::StringError(
+                "shared lock upgrade requires ForUpdateTS to be greater than zero".to_owned(),
+            ));
         }
 
         if !self.is_pessimistic() || context.for_update_ts == 0 {
@@ -3305,6 +3368,37 @@ impl<PdC: PdClient> Transaction<PdC> {
             return Err(Error::StringError(
                 "pessimistic lock in share mode requires primary key to be selected".to_owned(),
             ));
+        }
+        if !upgrade_keys.is_empty() {
+            if self.buffer.get_primary_key().is_none() && pending.is_empty() {
+                return Err(Error::StringError(
+                    "pessimistic lock in share mode requires primary key to be selected".to_owned(),
+                ));
+            }
+            if !pending.is_empty() {
+                self.pessimistic_lock_with_context_options(
+                    pending,
+                    kvrpcpb::Op::PessimisticLock,
+                    kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal,
+                    context,
+                )
+                .await?;
+            }
+            for key in upgrade_keys {
+                if let Err(error) = self
+                    .pessimistic_lock_upgrade_with_context_options(
+                        vec![key],
+                        kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal,
+                        context,
+                    )
+                    .await
+                {
+                    self.record_shared_lock_abort(&error);
+                    return Err(error);
+                }
+            }
+            self.maybe_flush_pipelined(false).await?;
+            return Ok(());
         }
         if self.aggressive_locking.is_some() && pending.len() == 1 {
             let key = pending[0].clone();
@@ -3577,6 +3671,11 @@ impl<PdC: PdClient> Transaction<PdC> {
             "committing transaction, start_ts: {}",
             self.timestamp.version()
         );
+        if self.get_status() == TransactionStatus::Active {
+            if let Some(error) = self.shared_lock_abort_error() {
+                return Err(error);
+            }
+        }
         if !self.transit_status(
             |status| matches!(status, TransactionStatus::Active),
             TransactionStatus::StartedCommit,
@@ -4851,6 +4950,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             kvrpcpb::Op::PessimisticLock,
             wait_timeout,
             wake_up_mode,
+            false,
             None,
         )
         .await
@@ -4868,8 +4968,38 @@ impl<PdC: PdClient> Transaction<PdC> {
             .into_iter()
             .map(|key| (key, kvrpcpb::Assertion::None))
             .collect();
-        self.pessimistic_lock_impl(locks, need_value, lock_type, 0, wake_up_mode, Some(context))
-            .await
+        self.pessimistic_lock_impl(
+            locks,
+            need_value,
+            lock_type,
+            0,
+            wake_up_mode,
+            false,
+            Some(context),
+        )
+        .await
+    }
+
+    async fn pessimistic_lock_upgrade_with_context_options(
+        &mut self,
+        keys: Vec<Key>,
+        wake_up_mode: kvrpcpb::PessimisticLockWakeUpMode,
+        context: &mut LockContext,
+    ) -> Result<Vec<KvPair>> {
+        let locks = keys
+            .into_iter()
+            .map(|key| (key, kvrpcpb::Assertion::None))
+            .collect();
+        self.pessimistic_lock_impl(
+            locks,
+            context.return_values,
+            kvrpcpb::Op::PessimisticLock,
+            0,
+            wake_up_mode,
+            true,
+            Some(context),
+        )
+        .await
     }
 
     async fn execute_pessimistic_lock_request(
@@ -4984,6 +5114,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         lock_type: kvrpcpb::Op,
         wait_timeout: i64,
         wake_up_mode: kvrpcpb::PessimisticLockWakeUpMode,
+        is_shared_lock_upgrade: bool,
         context: Option<&mut LockContext>,
     ) -> Result<Vec<KvPair>> {
         let source_retry_owner = self.source_retry_owner(PESSIMISTIC_LOCK_MAX_BACKOFF);
@@ -4993,6 +5124,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             lock_type,
             wait_timeout,
             wake_up_mode,
+            is_shared_lock_upgrade,
             context,
             source_retry_owner,
         )
@@ -5007,6 +5139,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         lock_type: kvrpcpb::Op,
         wait_timeout: i64,
         wake_up_mode: kvrpcpb::PessimisticLockWakeUpMode,
+        is_shared_lock_upgrade: bool,
         mut context: Option<&mut LockContext>,
         source_retry_owner: Option<Arc<tokio::sync::Mutex<RetryBackoffer>>>,
     ) -> Result<Vec<KvPair>> {
@@ -5289,7 +5422,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             let err = normalize_prewrite_error(err);
             let definitive_single_key_failure = keys.len() == 1
                 && (crate::error::is_write_conflict(&err) || crate::error::is_key_exists(&err));
-            if !definitive_single_key_failure {
+            if !is_shared_lock_upgrade && !definitive_single_key_failure {
                 debug!(
                     "pessimistic lock failed, rolling back {} potentially-acquired lock(s), start_ts: {}, for_update_ts: {}",
                     keys.len(),
@@ -5438,12 +5571,18 @@ impl<PdC: PdClient> Transaction<PdC> {
                     self.buffer
                         .lock_with_returned_value(key.clone(), true, returned_value)
                         .map_err(|error| Error::StringError(error.to_owned()))?;
+                } else if is_shared_lock_upgrade {
+                    self.buffer
+                        .lock_with_returned_value_for_upgrade(key.clone(), returned_value)
+                        .map_err(|error| Error::StringError(error.to_owned()))?;
                 } else {
                     self.buffer
                         .lock_with_returned_value(key.clone(), false, returned_value)
                         .map_err(|error| Error::StringError(error.to_owned()))?;
                 }
-                self.pessimistic_lock_count += 1;
+                if !is_shared_lock_upgrade {
+                    self.pessimistic_lock_count += 1;
+                }
             }
 
             if let Some(error) = aggressive_lock_error {
@@ -5530,6 +5669,29 @@ impl<PdC: PdClient> Transaction<PdC> {
             | TransactionStatus::StartedCommit
             | TransactionStatus::StartedRollback
             | TransactionStatus::Dropped => Err(Error::OperationAfterCommitError),
+        }
+    }
+
+    fn shared_lock_abort_error(&self) -> Option<Error> {
+        match self.shared_lock_abort.as_ref()? {
+            SharedLockAbort::SharedLockLost(shared_lock_lost) => Some(
+                crate::error::SharedLockLostError {
+                    shared_lock_lost: shared_lock_lost.clone(),
+                }
+                .into(),
+            ),
+            SharedLockAbort::LockUpgradeConflict(conflict) => Some(
+                crate::error::LockUpgradeConflictError {
+                    conflict: conflict.clone(),
+                }
+                .into(),
+            ),
+        }
+    }
+
+    fn record_shared_lock_abort(&mut self, error: &Error) {
+        if self.shared_lock_abort.is_none() {
+            self.shared_lock_abort = shared_lock_abort_from_error(error);
         }
     }
 
@@ -9482,6 +9644,7 @@ mod tests {
 
     use crate::disable_resource_control;
     use crate::enable_resource_control;
+    use crate::kv::LOCK_NO_WAIT;
     use crate::mock::MockKvClient;
     use crate::mock::MockPdClient;
     use crate::oracle::{OracleError, OracleOption, OracleResult, ReadTimestampValidator};
@@ -17064,6 +17227,287 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shared_lock_upgrade_locks_regular_keys_first_and_counts_each_key_once() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&observed);
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+                    captured.lock().unwrap().push((
+                        request
+                            .mutations
+                            .iter()
+                            .map(|mutation| mutation.key.clone())
+                            .collect::<Vec<_>>(),
+                        request.mutations[0].op,
+                    ));
+                    return Ok(Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request while testing shared-lock upgrade");
+            },
+        )));
+        rpc.set_timestamp(Timestamp::from_version(10));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_pessimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+
+        transaction
+            .lock_keys_with_wait_time(LOCK_NO_WAIT, ["primary".to_owned()])
+            .await
+            .unwrap();
+        transaction
+            .lock_keys_shared_with_wait_time(
+                LOCK_NO_WAIT,
+                ["shared-a".to_owned(), "shared-b".to_owned()],
+            )
+            .await
+            .unwrap();
+        let mut context = LockContext::new(10, LOCK_NO_WAIT, SystemTime::now());
+        context.allow_shared_lock_upgrade = true;
+        transaction
+            .lock_keys_with_context(
+                &mut context,
+                [
+                    "shared-a".to_owned(),
+                    "normal".to_owned(),
+                    "shared-b".to_owned(),
+                ],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![
+                (
+                    vec![b"primary".to_vec()],
+                    kvrpcpb::Op::PessimisticLock as i32
+                ),
+                (
+                    vec![b"shared-a".to_vec(), b"shared-b".to_vec()],
+                    kvrpcpb::Op::SharedPessimisticLock as i32,
+                ),
+                (
+                    vec![b"normal".to_vec()],
+                    kvrpcpb::Op::PessimisticLock as i32
+                ),
+                (
+                    vec![b"shared-a".to_vec()],
+                    kvrpcpb::Op::PessimisticLock as i32
+                ),
+                (
+                    vec![b"shared-b".to_vec()],
+                    kvrpcpb::Op::PessimisticLock as i32
+                ),
+            ]
+        );
+        assert!(!transaction
+            .buffer
+            .is_shared_locked(&Key::from(b"shared-a".to_vec())));
+        assert!(!transaction
+            .buffer
+            .is_shared_locked(&Key::from(b"shared-b".to_vec())));
+        assert_eq!(transaction.pessimistic_lock_count, 4);
+    }
+
+    #[tokio::test]
+    async fn shared_lock_upgrade_requires_opt_in_pessimistic_mode_and_timestamp() {
+        let lock_requests = Arc::new(AtomicUsize::new(0));
+        let captured = Arc::clone(&lock_requests);
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::PessimisticLockRequest>() {
+                    captured.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request while validating shared-lock upgrade");
+            },
+        )));
+        rpc.set_timestamp(Timestamp::from_version(2));
+        let mut pessimistic = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_pessimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        pessimistic
+            .lock_keys_with_wait_time(LOCK_NO_WAIT, ["primary".to_owned()])
+            .await
+            .unwrap();
+        pessimistic
+            .lock_keys_shared_with_wait_time(LOCK_NO_WAIT, ["shared".to_owned()])
+            .await
+            .unwrap();
+        let requests_before_upgrade = lock_requests.load(Ordering::SeqCst);
+
+        let mut context = LockContext::new(0, LOCK_NO_WAIT, SystemTime::now());
+        context.allow_shared_lock_upgrade = true;
+        let error = pessimistic
+            .lock_keys_with_context(&mut context, ["shared".to_owned()])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "shared lock upgrade requires ForUpdateTS to be greater than zero"
+        );
+        assert_eq!(
+            lock_requests.load(Ordering::SeqCst),
+            requests_before_upgrade
+        );
+
+        pessimistic.start_aggressive_locking();
+        let mut context = LockContext::new(2, LOCK_NO_WAIT, SystemTime::now());
+        context.allow_shared_lock_upgrade = true;
+        let error = pessimistic
+            .lock_keys_with_context(&mut context, ["shared".to_owned()])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "shared lock upgrade is not supported in aggressive/fair locking mode"
+        );
+        pessimistic.cancel_aggressive_locking().await.unwrap();
+
+        let mut optimistic = Transaction::new(
+            Timestamp::from_version(1),
+            Arc::new(MockPdClient::default()),
+            TransactionOptions::new_optimistic().drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        optimistic
+            .buffer
+            .primary_key_or(&Key::from(b"primary".to_vec()));
+        optimistic
+            .buffer
+            .lock_shared(Key::from(b"shared".to_vec()))
+            .unwrap();
+        let mut context = LockContext::new(2, LOCK_NO_WAIT, SystemTime::now());
+        context.allow_shared_lock_upgrade = true;
+        let error = optimistic
+            .lock_keys_with_context(&mut context, ["shared".to_owned()])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "upgrading a shared lock to an exclusive lock is not supported"
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_lock_upgrade_errors_abort_later_lock_and_commit_but_allow_rollback() {
+        for (upgrade_error, expect_lost) in [
+            (
+                kvrpcpb::KeyError {
+                    shared_lock_lost: Some(kvrpcpb::SharedLockLost {
+                        key: b"shared".to_vec(),
+                        start_ts: 1,
+                    }),
+                    conflict: Some(kvrpcpb::WriteConflict {
+                        start_ts: 1,
+                        reason: kvrpcpb::write_conflict::Reason::PessimisticRetry as i32,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                true,
+            ),
+            (
+                kvrpcpb::KeyError {
+                    lock_upgrade_conflict: Some(kvrpcpb::LockUpgradeConflict {
+                        key: b"shared".to_vec(),
+                        start_ts: 1,
+                        owner_start_ts: 2,
+                        reason: kvrpcpb::lock_upgrade_conflict::Reason::SecondUpgrader as i32,
+                    }),
+                    retryable: "lower priority".to_owned(),
+                    ..Default::default()
+                },
+                false,
+            ),
+        ] {
+            let captured_error = Arc::new(Mutex::new(Some(upgrade_error)));
+            let captured_for_hook = Arc::clone(&captured_error);
+            let requests = Arc::new(AtomicUsize::new(0));
+            let rollback_requests = Arc::new(AtomicUsize::new(0));
+            let requests_for_hook = Arc::clone(&requests);
+            let rollbacks_for_hook = Arc::clone(&rollback_requests);
+            let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    if let Some(request) = request.downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+                    {
+                        requests_for_hook.fetch_add(1, Ordering::SeqCst);
+                        if request.mutations[0].op == kvrpcpb::Op::PessimisticLock as i32
+                            && request.mutations[0].key == b"shared"
+                        {
+                            return Ok(Box::new(kvrpcpb::PessimisticLockResponse {
+                                errors: vec![captured_for_hook
+                                    .lock()
+                                    .unwrap()
+                                    .take()
+                                    .expect("one upgrade error per transaction")],
+                                ..Default::default()
+                            }) as Box<dyn Any>);
+                        }
+                        return Ok(
+                            Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>
+                        );
+                    }
+                    if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                        rollbacks_for_hook.fetch_add(1, Ordering::SeqCst);
+                        return Ok(
+                            Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                        );
+                    }
+                    panic!("unexpected request while testing shared-lock abort state");
+                },
+            )));
+            rpc.set_timestamp(Timestamp::from_version(2));
+            let mut transaction = Transaction::new(
+                Timestamp::from_version(1),
+                rpc,
+                TransactionOptions::new_pessimistic().drop_check(CheckLevel::None),
+                Keyspace::Disable,
+            );
+            transaction
+                .lock_keys_with_wait_time(LOCK_NO_WAIT, ["primary".to_owned()])
+                .await
+                .unwrap();
+            transaction
+                .lock_keys_shared_with_wait_time(LOCK_NO_WAIT, ["shared".to_owned()])
+                .await
+                .unwrap();
+
+            let mut context = LockContext::new(2, LOCK_NO_WAIT, SystemTime::now());
+            context.allow_shared_lock_upgrade = true;
+            let first_error = transaction
+                .lock_keys_with_context(&mut context, ["shared".to_owned()])
+                .await
+                .unwrap_err();
+            assert_eq!(matches!(first_error, Error::SharedLockLost(_)), expect_lost);
+            assert_eq!(rollback_requests.load(Ordering::SeqCst), 0);
+
+            let later_error = transaction
+                .lock_keys_with_wait_time(LOCK_NO_WAIT, ["later".to_owned()])
+                .await
+                .unwrap_err();
+            assert_eq!(matches!(later_error, Error::SharedLockLost(_)), expect_lost);
+            let commit_error = transaction.commit().await.unwrap_err();
+            assert_eq!(
+                matches!(commit_error, Error::SharedLockLost(_)),
+                expect_lost
+            );
+            assert_eq!(transaction.get_status(), TransactionStatus::Active);
+            assert_eq!(requests.load(Ordering::SeqCst), 3);
+
+            transaction.rollback().await.unwrap();
+            assert!(rollback_requests.load(Ordering::SeqCst) > 0);
+        }
+    }
+
+    #[tokio::test]
     async fn source_uncovered_lock_keys_callback_starts_after_aggressive_preflight() {
         let mut transaction = Transaction::new(
             Timestamp::from_version(1),
@@ -17230,6 +17674,7 @@ mod tests {
                 kvrpcpb::Op::PessimisticLock,
                 0,
                 kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal,
+                false,
                 Some(&mut context),
                 Some(Arc::clone(&owner)),
             )
