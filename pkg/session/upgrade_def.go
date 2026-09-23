@@ -525,7 +525,6 @@ const (
 	// version284 migrate tidb_disable_txn_file (from TiDB-CSE) to tidb_enable_txn_file and inverts its value.
 	version284 = 284
 
-	// version285 materializes adaptive LIMIT scan as OFF for upgraded clusters when no persisted value exists.
 	// version285 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
 	version285 = 285
 
@@ -2342,9 +2341,6 @@ func upgradeToVer284(s sessionapi.Session, _ int64) {
 
 func upgradeToVer285(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
-	// Fresh clusters persist ON during initial bootstrap. Preserve old executor
-	// behavior for upgraded clusters without overwriting an explicit value.
-	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)
 }
 
 func upgradeToVer316(s sessionapi.Session, _ int64) {
@@ -2358,4 +2354,6 @@ func upgradeToVer317(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
+	// Preserve the old behavior for upgraded clusters that do not have a persisted value.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)
 }
