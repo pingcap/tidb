@@ -710,7 +710,7 @@ impl DataSource {
 /// selects `(total - null_count) / total` rows; `isnull(col)` alone selects
 /// `null_count / total`. Returns `None` for every other shape so the caller
 /// keeps its previous estimate.
-pub(crate) fn is_null_condition_selectivity(
+fn is_null_condition_selectivity(
     condition: &Expression,
     stats: &StatsInfo,
 ) -> Option<f64> {

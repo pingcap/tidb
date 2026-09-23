@@ -2629,26 +2629,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             )
                         })
                     });
-                } else if let Some(stats) = table_stats.as_ref() {
-                    // Go `deriveStatsByFilter` scales the datasource profile by
-                    // `cardinality.Selectivity` over ALL pushed conditions —
-                    // with no access ranges the residual table filters still
-                    // narrow the count. Master counts `not(isnull(col))` as the
-                    // column's not-null histogram range, i.e.
-                    // (total - null_count) / total; `isnull(col)` alone counts
-                    // null_count / total. Other filter shapes keep the unscaled
-                    // count this port used before.
-                    let mut ratio = 1.0;
-                    for condition in &table_filters {
-                        if let Some(selectivity) = crate::logical::data_source::
-                            is_null_condition_selectivity(condition, stats)
-                        {
-                            ratio *= selectivity;
-                        }
-                    }
-                    if ratio < 1.0 {
-                        count_after_access = Some(stats.row_count() * ratio);
-                    }
                 }
                 if let (Some(count), Some(floor)) =
                     (count_after_access.as_mut(), probe_access_rows_floor)
