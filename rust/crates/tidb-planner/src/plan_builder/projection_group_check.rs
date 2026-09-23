@@ -18,6 +18,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::extract_columns;
 use tidb_funcdep::ColSet;
 
+use super::marker::{MarkerKind, PlanMarker};
 use super::ProjectionField;
 use crate::logical::{LogicalPlan, LogicalProjection};
 use crate::plan_base::PlanError;
@@ -45,6 +46,15 @@ pub(super) fn check(
     let ungrouped = fds.group_by_cols.equals(&ColSet::new([0]));
     let closure = fds.closure_of_strict(&fds.group_by_cols);
     for (offset, expr) in projection.exprs.iter().take(fields.len()).enumerate() {
+        // Go `ProjectionGroupCheck.Check` skips the aggregate fields
+        // (`ast.HasAggFlag(expr)` continues) — an aggregate's own output is
+        // always allowed in the SELECT list. The Rust tree carries the
+        // aggregate in the field's marker expression.
+        if PlanMarker::from_expr(&fields[offset].expr)
+            .is_some_and(|marker| marker.kind == MarkerKind::Agg)
+        {
+            continue;
+        }
         if ungrouped && order_by_range.is_some_and(|(from, to)| (from..to).contains(&offset)) {
             continue;
         }
