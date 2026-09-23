@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/dumpling/dumpservice"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/pkg/dumpformat/sqlfile"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -74,6 +75,7 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
+	serviceClient atomic.Pointer[dumpservice.Client]
 }
 
 // NewDumper returns a new Dumper
@@ -112,6 +114,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 
 	err = adjustConfig(conf,
 		buildTLSConfig,
+		validateDumpService,
 		validateSpecifiedSQL,
 		adjustFileFormat)
 	if err != nil {
@@ -127,6 +130,14 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 			}
 		}()
 	})
+
+	if conf.DumpService != "" {
+		err = runSteps(d,
+			initLogger,
+			createExternalStore,
+			startHTTPService)
+		return d, err
+	}
 
 	err = runSteps(d,
 		initLogger,
@@ -150,6 +161,9 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 // nolint: gocyclo
 func (d *Dumper) Dump() (dumpErr error) {
 	initColumnTypeSets()
+	if d.conf.DumpService != "" {
+		return d.dumpFromService()
+	}
 	var (
 		conn    *sql.Conn
 		err     error
@@ -1579,7 +1593,7 @@ func startHTTPService(d *Dumper) error {
 	conf := d.conf
 	if conf.StatusAddr != "" {
 		go func() {
-			err := startDumplingService(d.tctx, conf.StatusAddr)
+			err := startDumplingService(d, conf.StatusAddr)
 			if err != nil {
 				d.L().Info("meet error when stopping dumpling http service", log.ShortError(err))
 			}

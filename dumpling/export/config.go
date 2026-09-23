@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/dumpling/dumpservice"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
@@ -91,10 +92,44 @@ const (
 	flagParquetCompress          = "parquet-compress"
 	flagParquetPageSize          = "parquet-page-size"
 	flagParquetRowGroupSize      = "parquet-row-group-size"
+	flagDumpService              = "dump-service"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
 )
+
+var dumpServiceIncompatibleFlags = []string{
+	flagSnapshot,
+	flagDatabase,
+	flagHost,
+	flagUser,
+	flagPort,
+	flagPassword,
+	flagAllowCleartextPasswords,
+	flagConsistency,
+	flagNoViews,
+	flagNoSequences,
+	flagSortByPk,
+	flagRows,
+	flagWhere,
+	flagSQL,
+	flagColumnFilter,
+	flagColumnFilterFile,
+	flagDumpEmptyDatabase,
+	flagTidbMemQuotaQuery,
+	flagCA,
+	flagCert,
+	flagKey,
+	flagCompleteInsert,
+	flagParams,
+	flagReadTimeout,
+	flagTransactionalConsistency,
+	flagPDAddr,
+	flagClusterSSLCA,
+	flagClusterSSLCert,
+	flagClusterSSLKey,
+	flagPartitions,
+}
 
 // CSVDialect is the dialect of the CSV output for compatible with different import target
 type CSVDialect int
@@ -212,6 +247,8 @@ type Config struct {
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
+	// DumpService is the Unix URL of an externally managed dump service.
+	DumpService string
 	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
 	// to PD endpoints for GC control.
 	ClusterSSLCA   string
@@ -365,7 +402,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagLogfile, "L", "", "Log file `path`, leave empty to write to console")
 	flags.String(flagLogfmt, "text", "Log `format`: {text|json}")
 	flags.String(flagConsistency, ConsistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
-	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
+	flags.String(flagSnapshot, "", "Snapshot position as uint64. SQL-source dumps also accept a MySQL style string timestamp and require consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
 	flags.Bool(flagNoSequences, true, "Do not dump sequences")
 	flags.Bool(flagSortByPk, true, "Sort dump results by primary key through order by sql")
@@ -420,11 +457,16 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
 		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
 	)
+	flags.String(flagDumpService, "", "Export using an external dump service at unix:///absolute/path.sock")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
 // nolint: gocyclo
 func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
+	if err := validateDumpServiceFlags(flags); err != nil {
+		return err
+	}
+
 	var err error
 	conf.Databases, err = flags.GetStringSlice(flagDatabase)
 	if err != nil {
@@ -735,6 +777,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.DumpService, err = flags.GetString(flagDumpService)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	for k, v := range params {
 		conf.SessionParams[k] = v
@@ -745,6 +791,25 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+func validateDumpServiceFlags(flags *pflag.FlagSet) error {
+	dumpService, err := flags.GetString(flagDumpService)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if dumpService == "" && !flags.Changed(flagDumpService) {
+		return nil
+	}
+	if _, err := dumpservice.ParseSocketURL(dumpService); err != nil {
+		return err
+	}
+	for _, flagName := range dumpServiceIncompatibleFlags {
+		if flags.Changed(flagName) {
+			return errors.Errorf("--%s cannot be combined with --dump-service", flagName)
+		}
+	}
 	return nil
 }
 
@@ -1033,6 +1098,22 @@ func validateSpecifiedSQL(conf *Config) error {
 	}
 	if conf.SQL != "" && len(conf.Partitions) > 0 {
 		return errors.New("can't specify both --sql and --partitions at the same time")
+	}
+	return nil
+}
+
+func validateDumpService(conf *Config) error {
+	if conf.DumpService == "" {
+		return nil
+	}
+	if _, err := dumpservice.ParseSocketURL(conf.DumpService); err != nil {
+		return err
+	}
+	if conf.Snapshot != "" {
+		return errors.New("--snapshot cannot be combined with --dump-service; the service owns the snapshot")
+	}
+	if conf.SQL != "" || conf.Where != "" || conf.Rows != UnspecifiedSize {
+		return errors.New("--dump-service cannot be combined with --sql, --where, or --rows")
 	}
 	return nil
 }

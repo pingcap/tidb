@@ -243,7 +243,8 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
-	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
+	_, isKVData := ir.(*kvTableData)
+	namer := newOutputFileNamer(meta, curChkIdx, isKVData || conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileFmtExtension := format.Extension()
 	if format == FileFormatParquet && conf.ParquetCompressType != compressedio.NoCompression {
 		compressSuffix := strings.TrimPrefix(conf.ParquetCompressType.FileSuffix(), ".")
