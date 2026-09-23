@@ -152,7 +152,9 @@ func tiDBServerVersionInfosConsistent(currentVersion serverinfo.VersionInfo, ser
 		if info == nil {
 			return false, errors.Errorf("TiDB server info is nil, server ID: %s", id)
 		}
-		if info.IsAssumed() {
+		// Assumed cross-keyspace entries and processes that only publish server
+		// info, such as standalone BR, are not TiDB workers.
+		if info.IsAssumed() || !info.CanServeTiDBRPC() {
 			continue
 		}
 		realServerCount++

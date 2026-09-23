@@ -245,8 +245,10 @@ func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
 	bytes, err := json.Marshal(map[string]any{
 		"br": map[string]any{
 			"ddl_id":            "br",
-			"ip":                "127.0.0.1",
+			"ip":                "",
+			"listening_port":    4000,
 			"status_port":       10080,
+			"version":           "8.0.11-TiDB-v8.5.0",
 			"tidb_rpc_disabled": true,
 		},
 	})
@@ -262,6 +264,8 @@ func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
 	rows := tk.MustQuery("select * from information_schema.cluster_slow_query").Rows()
 	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	require.Equal(t, 0, len(rows))
+	// cluster_info is the address source for config/log/metrics fanout.
+	tk.MustQuery("select instance from information_schema.cluster_info where type = 'tidb'").Check(testkit.Rows())
 }
 
 func TestTiDBClusterInfo(t *testing.T) {
