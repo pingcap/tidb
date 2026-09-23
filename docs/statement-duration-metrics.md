@@ -36,16 +36,22 @@ reach finalization can each contribute a sample.
 
 ## Compatibility with request metrics
 
-`tidb_server_handle_query_duration_seconds` is unchanged. It retains its existing
-request-level timing (including an entire multi-statement request), DB-label fanout,
-and DDL exclusions. Its existing SQL-type attribution limitations are not fixed
-by this new metric.
+`tidb_server_handle_query_duration_seconds` retains its existing request-level
+timing (including an entire multi-statement request), DB-label fanout, and DDL
+exclusions. For a `COM_QUERY` that parses into more than one statement, its
+`sql_type` label is `MultiStmt`, not the last statement's type. This also applies
+when a parsed multi-statement request is rejected or stops on an execution error.
+Single-statement requests and other protocol commands retain their existing label
+behavior; a parse failure cannot be classified as multi-statement. The RPC and
+processed-key histograms still describe the final statement context and are not
+relabeled by this change.
 Do not add the two histograms: their timed intervals overlap, and their counts have
 different meanings.
 
 For example, a request containing a two-second INSERT followed by a three-second
 UPDATE contributes one sample to each statement type in the new histogram. The
-existing server histogram still receives one approximately five-second sample.
+existing server histogram receives an approximately five-second sample labeled
+`sql_type="MultiStmt"` for each applicable DB label.
 Adding statement histogram buckets cannot reconstruct a request-latency
 distribution.
 
