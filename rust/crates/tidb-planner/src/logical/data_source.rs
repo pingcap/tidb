@@ -678,8 +678,73 @@ impl DataSource {
     /// caller can tell it was not estimated.
     pub fn derive_stats(&mut self) -> Option<(StatsInfo, bool)> {
         let table_stats = self.table_stats.clone()?;
-        self.base.base.set_stats(Some(table_stats.clone()));
-        Some((table_stats.clone(), self.all_conds.is_empty()))
+        // Go `deriveStatsByFilter` (`pkg/planner/core/stats.go:576`) scales the
+        // table profile by `cardinality.Selectivity` over the pushed-down
+        // conditions. Master's walk turns `not(isnull(col))` into the column's
+        // not-null range and counts it from the histogram, i.e. a ratio of
+        // `(total - null_count) / total`; `isnull(col)` alone counts
+        // `null_count / total`. Other condition shapes in this port keep the
+        // unscaled table profile they had before this correction.
+        let mut ratio = 1.0;
+        for condition in &self.pushed_down_conds {
+            if let Some(selectivity) =
+                is_null_condition_selectivity(condition, &table_stats)
+            {
+                ratio *= selectivity;
+            }
+        }
+        let scaled = if ratio < 1.0 {
+            table_stats.scale_by_expect_cnt(table_stats.row_count() * ratio, 1.0)
+        } else {
+            table_stats.clone()
+        };
+        self.base.base.set_stats(Some(scaled.clone()));
+        Some((scaled, self.all_conds.is_empty()))
+    }
+}
+
+/// The isnull/not-isnull arm of Go master `cardinality.Selectivity`
+/// (`pkg/planner/cardinality/selectivity.go`): master's ranger turns
+/// `not(isnull(col))` into the column's not-null range and
+/// `GetRowCountByColumnRanges` counts it from the histogram, so the condition
+/// selects `(total - null_count) / total` rows; `isnull(col)` alone selects
+/// `null_count / total`. Returns `None` for every other shape so the caller
+/// keeps its previous estimate.
+fn is_null_condition_selectivity(
+    condition: &Expression,
+    stats: &StatsInfo,
+) -> Option<f64> {
+    let Expression::ScalarFunction(function) = condition else {
+        return None;
+    };
+    let name = function.func_name.lowercase();
+    let inner = if name == "not" {
+        match function.get_args().first()? {
+            Expression::ScalarFunction(inner) => inner,
+            _ => return None,
+        }
+    } else if name == "isnull" {
+        function
+    } else {
+        return None;
+    };
+    if inner.func_name.lowercase() != "isnull" {
+        return None;
+    }
+    let Expression::Column(column) = inner.get_args().first()? else {
+        return None;
+    };
+    let hist_coll = stats.hist_coll()?;
+    let column_stats = hist_coll.histogram(column.unique_id)?;
+    let total = stats.row_count();
+    if total <= 0.0 {
+        return None;
+    }
+    let null_ratio = (column_stats.histogram.null_count as f64 / total).clamp(0.0, 1.0);
+    if name == "not" {
+        Some(1.0 - null_ratio)
+    } else {
+        Some(null_ratio)
     }
 }
 
@@ -879,4 +944,98 @@ fn index_covers_column(
                 field_type.eval_type() == tidb_datatype::EvalType::String
                     && !field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
             }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stats_info::HistColl;
+    use std::sync::Arc;
+    use tidb_ast::CiString;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_expr::scalar_function::ScalarFunction;
+    use tidb_stats::histogram::Histogram;
+
+    fn call(name: &str, arguments: Vec<Expression>) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new(name),
+            FieldType::new(FieldTypeCode::LongLong),
+            arguments,
+        ))
+    }
+
+    fn profile(row_count: f64, null_count: i64) -> StatsInfo {
+        let hist_coll = HistColl::new(false, row_count as i64, std::iter::empty())
+            .with_histograms([(
+                1,
+                Arc::new(crate::cardinality::row_count_estimator::ColumnStats {
+                    histogram: Histogram {
+                        id: 1,
+                        ndv: 0,
+                        null_count,
+                        last_update_version: 0,
+                        tot_col_size: 0,
+                        correlation: 0.0,
+                        buckets: Vec::new(),
+                    },
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )]);
+        StatsInfo::new(row_count, std::iter::empty()).with_hist_coll(hist_coll)
+    }
+
+    #[test]
+    fn not_isnull_selects_the_histogram_not_null_ratio() {
+        // Go master `deriveStatsByFilter` scales the datasource profile by
+        // `cardinality.Selectivity` over the pushed conditions; master counts
+        // `not(isnull(col))` as the column's not-null range, i.e.
+        // (total - null_count) / total, and `isnull(col)` alone as
+        // null_count / total.
+        let stats = profile(1_000.0, 100);
+        let column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+        let condition = call(
+            "not",
+            vec![call("isnull", vec![Expression::Column(column.clone())])],
+        );
+        let selectivity = is_null_condition_selectivity(&condition, &stats)
+            .expect("not(isnull(col)) is an isnull-class condition");
+        assert!((selectivity - 0.9).abs() < 1e-9);
+
+        let condition = call("isnull", vec![Expression::Column(column)]);
+        let selectivity = is_null_condition_selectivity(&condition, &stats)
+            .expect("isnull(col) is an isnull-class condition");
+        assert!((selectivity - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn other_condition_shapes_keep_the_previous_estimate() {
+        // Only the isnull family is covered: every other shape answers None so
+        // the caller keeps the unscaled table profile it used before.
+        let stats = profile(1_000.0, 100);
+        let unknown_column = call(
+            "not",
+            vec![call(
+                "isnull",
+                vec![Expression::Column(Column::new(
+                    99,
+                    FieldType::new(FieldTypeCode::LongLong),
+                ))],
+            )],
+        );
+        assert_eq!(is_null_condition_selectivity(&unknown_column, &stats), None);
+
+        let plain_column = call(
+            "isnull",
+            vec![Expression::Constant(
+                tidb_expr::constant::Constant::new(
+                    tidb_datatype::Datum::Int(1),
+                    FieldType::new(FieldTypeCode::LongLong),
+                ),
+            )],
+        );
+        assert_eq!(is_null_condition_selectivity(&plain_column, &stats), None);
+    }
 }
