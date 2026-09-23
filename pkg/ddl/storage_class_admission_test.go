@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -86,4 +87,44 @@ func TestStorageClassAdmission(t *testing.T) {
 	tk.MustExec("CREATE TABLE standard (id INT) STORAGE_CLASS='STANDARD'")
 	tk.MustExec("CREATE TABLE standard_copy LIKE standard")
 	tk.MustQuery("SELECT * FROM ia").Check(testkit.Rows("1 7"))
+}
+
+func TestStorageClassVisibility(t *testing.T) {
+	defer config.RestoreFunc()()
+	for _, enabled := range []bool{false, true} {
+		name := "disabled"
+		if enabled {
+			name = "enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.EnableIA = enabled
+			})
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tables := tk.MustQuery("SHOW TABLES FROM information_schema LIKE 'TIKV_STORAGE_CLASS_TRANSITIONS'")
+			metadata := tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema='INFORMATION_SCHEMA' AND table_name='TIKV_STORAGE_CLASS_TRANSITIONS'")
+			columns := tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='INFORMATION_SCHEMA' AND table_name='TIKV_STORAGE_CLASS_TRANSITIONS'")
+			if enabled {
+				tables.Check(testkit.Rows("TIKV_STORAGE_CLASS_TRANSITIONS"))
+				metadata.Check(testkit.Rows("TIKV_STORAGE_CLASS_TRANSITIONS"))
+				require.Len(t, columns.Rows(), 12)
+				tk.MustQuery("SELECT * FROM information_schema.tikv_storage_class_transitions LIMIT 0").Check(testkit.Rows())
+				tk.MustQuery("SHOW STORAGE_CLASS TRANSITIONS WHERE 0").Check(testkit.Rows())
+			} else {
+				tables.Check(testkit.Rows())
+				metadata.Check(testkit.Rows())
+				columns.Check(testkit.Rows())
+				tk.MustGetErrCode("SELECT * FROM information_schema.tikv_storage_class_transitions", 1146)
+				tk.MustGetErrCode("SHOW STORAGE_CLASS TRANSITIONS", 8200)
+				tk.MustGetErrCode("SHOW STORAGE_CLASS TRANSITIONS LIKE 't%'", 8200)
+				tk.MustGetErrCode("SHOW STORAGE_CLASS TRANSITIONS WHERE DIRECTION='TO_IA'", 8200)
+			}
+			// Shared metadata columns and durable history remain available.
+			tk.MustQuery("SELECT table_name FROM information_schema.columns WHERE table_schema='INFORMATION_SCHEMA' AND table_name IN ('TABLES','PARTITIONS') AND column_name='TIDB_STORAGE_CLASS' ORDER BY table_name").Check(testkit.Rows("PARTITIONS", "TABLES"))
+			if kerneltype.IsNextGen() {
+				tk.MustQuery("SELECT * FROM mysql.tidb_storage_class_transition_history LIMIT 0").Check(testkit.Rows())
+			}
+		})
+	}
 }

@@ -261,7 +261,7 @@ type Config struct {
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
-	// EnableIA permits DDL to introduce IA storage or IA transition policies.
+	// EnableIA permits DDL to introduce IA storage or IA transition policies and exposes transition status queries.
 	// Disabling it does not affect existing IA data or policies.
 	EnableIA bool `toml:"enable-ia" json:"enable-ia"`
 	// EnableTableLock indicate whether enable table lock.

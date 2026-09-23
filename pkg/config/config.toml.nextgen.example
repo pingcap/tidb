@@ -70,6 +70,7 @@ max-index-length = 3072
 index-limit = 64
 
 # Allow DDL to introduce IA storage or IA transition policies. Existing IA data and policies remain usable when false.
+# Transition status queries are hidden when false.
 # This startup setting must be the same on all TiDB servers in the cluster.
 enable-ia = false
 
