@@ -99,7 +99,7 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 	c.NullCount += rc.NullCount
 	c.Count += rc.Count
 	c.TotalSize += rc.TotalSize
-	c.FMSketch.MergeFMSketch(rc.FMSketch)
+	terror.Log(errors.Trace(c.FMSketch.MergeFMSketch(rc.FMSketch)))
 	if rc.CMSketch != nil {
 		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
 		terror.Log(errors.Trace(err))

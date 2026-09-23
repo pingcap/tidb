@@ -123,7 +123,7 @@ func TestDistributedWeightedSampling(t *testing.T) {
 			}
 			collector, err := builder.Collect()
 			require.NoError(t, err)
-			rootRowCollector.MergeCollector(collector)
+			require.NoError(t, rootRowCollector.MergeCollector(collector))
 			require.Nil(t, sets[i].Close())
 		}
 		for _, sample := range rootRowCollector.Samples {

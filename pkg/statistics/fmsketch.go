@@ -178,9 +178,9 @@ func hashRow(sc *stmtctx.StatementContext, values []types.Datum) (uint64, error)
 }
 
 // MergeFMSketch merges two FM Sketch.
-func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
+func (s *FMSketch) MergeFMSketch(rs *FMSketch) error {
 	if s == nil || rs == nil {
-		return
+		return nil
 	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
@@ -191,6 +191,7 @@ func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	for key := range rs.hashset {
 		s.insertHashValue(key)
 	}
+	return nil
 }
 
 // FMSketchToProto converts FMSketch to its protobuf representation.

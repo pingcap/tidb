@@ -219,6 +219,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for range totalLen {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
+	defer func() { e.memTracker.Release(rootRowCollector.Base().MemSize) }()
 
 	sc := e.ctx.GetSessionVars().StmtCtx
 
@@ -273,7 +274,13 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			oldRootCollectorSize := rootRowCollector.Base().MemSize
 			oldRootCollectorCount := rootRowCollector.Base().Count
 			// Merge the result from sub-collectors.
-			rootRowCollector.MergeCollector(mergeResult.collector)
+			if mergeErr := rootRowCollector.MergeCollector(mergeResult.collector); mergeErr != nil {
+				err = mergeErr
+				taskCancel(err)
+				e.memTracker.Release(mergeResult.collector.Base().MemSize)
+				mergeResult.collector.DestroyAndPutToPool()
+				continue
+			}
 			newRootCollectorCount := rootRowCollector.Base().Count
 			printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
 				mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
@@ -295,7 +302,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 	err = mergeEg.Wait()
 	drainPendingSamplingMergeTasks(mergeTaskCh, e.memTracker)
-	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
 		taskCancel(err)
 		return 0, nil, nil, nil, err
@@ -674,7 +680,14 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 
 			oldRetCollectorSize := retCollector.Base().MemSize
 			oldRetCollectorCount := retCollector.Base().Count
-			retCollector.MergeCollector(subCollector)
+			if err := retCollector.MergeCollector(subCollector); err != nil {
+				cancel(err)
+				e.memTracker.Release(subCollector.Base().MemSize)
+				subCollector.DestroyAndPutToPool()
+				cleanupCollector()
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
 			newRetCollectorCount := retCollector.Base().Count
 			printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
 				e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
