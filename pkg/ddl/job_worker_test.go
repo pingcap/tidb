@@ -125,7 +125,7 @@ func TestDDLJobRU(t *testing.T) {
 		requireExpectedJobRU(t, historyJob.RU)
 	})
 
-	t.Run("reorg jobs account backfill RU", func(t *testing.T) {
+	t.Run("transactional backfill jobs account RU", func(t *testing.T) {
 		cases := []struct {
 			name    string
 			jobType model.ActionType
@@ -215,10 +215,10 @@ func TestDDLJobRU(t *testing.T) {
 			// The accounting hook fires for every committed reorg backfill
 			// transaction, before the NextGen gate, so this also proves the
 			// reorg workers actually route their txn bytes through it.
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/accountBackfillTxnRU", func(_ int64, accountTxnRU bool, writtenBytes int) {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/accountBackfillTxnRU", func(_ int64, writtenBytes int) {
 				mu.Lock()
 				backfillTxnCalls++
-				if accountTxnRU && writtenBytes > 0 {
+				if writtenBytes > 0 {
 					backfillTxnBytes += writtenBytes
 				}
 				mu.Unlock()
@@ -258,6 +258,26 @@ func TestDDLJobRU(t *testing.T) {
 				checkReorgRU(t, tc.jobType, tc.table, tc.setup, tc.alter, nil)
 			})
 		}
+
+		t.Run("add index in txn mode", func(t *testing.T) {
+			originalEnableDistTask := vardef.EnableDistTask.Load()
+			originalEnableFastReorg := vardef.EnableFastReorg.Load()
+			t.Cleanup(func() {
+				vardef.EnableDistTask.Store(originalEnableDistTask)
+				vardef.EnableFastReorg.Store(originalEnableFastReorg)
+			})
+			rows := make([]string, 0, 200)
+			for i := range 200 {
+				rows = append(rows, "("+strconv.Itoa(i)+")")
+			}
+			checkReorgRU(t, model.ActionAddIndex, "t_ddl_ru_add_idx_txn", []string{
+				"create table t_ddl_ru_add_idx_txn (a int)",
+				"insert into t_ddl_ru_add_idx_txn values " + strings.Join(rows, ","),
+			}, "alter table t_ddl_ru_add_idx_txn add index idx_a(a)", func() {
+				vardef.EnableDistTask.Store(false)
+				vardef.EnableFastReorg.Store(false)
+			})
+		})
 
 		t.Run("modify column reorg in txn mode", func(t *testing.T) {
 			// With both optimizations off, the index reorg falls back to the
