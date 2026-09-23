@@ -1097,21 +1097,36 @@ fn physical_operator_info(
             }
             parts.join(", ")
         }
-        PhysicalPlan::Apply(apply) => join_info(
-            eval_ctx,
-            apply.hash_join.join_type,
-            apply.hash_join.base.children().first(),
-            ignore_explain_id_suffix,
-            false,
-            &apply.hash_join.left_join_keys,
-            &apply.hash_join.right_join_keys,
-            &apply.hash_join.is_null_eq,
-            &apply.hash_join.equal_conditions,
-            &apply.hash_join.na_equal_conditions,
-            &apply.hash_join.left_conditions,
-            &apply.hash_join.right_conditions,
-            &apply.hash_join.other_conditions,
-        ),
+        PhysicalPlan::Apply(apply) => {
+            // Go `BasePhysicalJoin` renders through the shared join explain:
+            // a cartesian apply (no equal or null-aware conditions) prefixes
+            // `CARTESIAN ` (physical_hash_join.go:231).
+            let prefix = if apply.hash_join.equal_conditions.is_empty() {
+                if apply.hash_join.na_equal_conditions.is_empty() {
+                    "CARTESIAN "
+                } else {
+                    "Null-aware "
+                }
+            } else {
+                ""
+            };
+            let info = join_info(
+                eval_ctx,
+                apply.hash_join.join_type,
+                apply.hash_join.base.children().first(),
+                ignore_explain_id_suffix,
+                false,
+                &apply.hash_join.left_join_keys,
+                &apply.hash_join.right_join_keys,
+                &apply.hash_join.is_null_eq,
+                &apply.hash_join.equal_conditions,
+                &apply.hash_join.na_equal_conditions,
+                &apply.hash_join.left_conditions,
+                &apply.hash_join.right_conditions,
+                &apply.hash_join.other_conditions,
+            );
+            format!("{prefix}{info}")
+        }
         PhysicalPlan::Sort(sort) => by_items_text(eval_ctx, &sort.by_items),
         PhysicalPlan::Limit(limit) => limit.explain_info(RedactMode::Disable),
         PhysicalPlan::TableScan(scan) => {
