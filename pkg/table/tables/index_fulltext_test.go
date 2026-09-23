@@ -133,11 +133,14 @@ func TestFullTextIndexMutationCheck(t *testing.T) {
 		require.NoError(t, err)
 		return key
 	}
-	require.NoError(t, checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("hello"), row, nil))
-	require.NoError(t, checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("world"), row, nil))
-	err := checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("absent"), row, nil)
+	cache := make(map[fullTextTermsKey]map[string]struct{})
+	require.NoError(t, checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("hello"), row, nil, cache))
+	require.NoError(t, checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("world"), row, nil, cache))
+	// The row was tokenized once for both entries.
+	require.Len(t, cache, 1)
+	err := checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("absent"), row, nil, cache)
 	require.ErrorContains(t, err, "inconsistent")
 	// An entry for a row whose document is NULL cannot be right either.
-	err = checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("hello"), []types.Datum{types.NewIntDatum(1), types.NewDatum(nil)}, nil)
+	err = checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("hello"), []types.Datum{types.NewIntDatum(1), types.NewDatum(nil)}, nil, cache)
 	require.ErrorContains(t, err, "inconsistent")
 }
