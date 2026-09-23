@@ -2410,6 +2410,19 @@ func TestSampledNDVCompatibility(t *testing.T) {
 	// so the old mock peer's response exposes a late column-mode conflict.
 	require.ErrorIs(t, tk.ExecToErr("analyze table ndv_virtual partition p0 with 0.1 NDVRATE"), statistics.ErrIncompatibleNDV)
 
+	// A locked partition keeps its sketch. When that sketch cannot join the
+	// requested global merge, ANALYZE fails before it scans anything.
+	tk.MustExec("drop stats ndv")
+	tk.MustExec("lock stats ndv partition p1")
+	jobs := tk.MustQuery("select count(*) from mysql.analyze_jobs").Rows()
+	for _, stmt := range []string{"analyze table ndv partition p0 with 0.1 NDVRATE", "analyze table ndv with 0.1 NDVRATE"} {
+		err = tk.ExecToErr(stmt)
+		require.ErrorIs(t, err, statistics.ErrIncompatibleNDV)
+		require.ErrorContains(t, err, "partition p1 column a has no saved sketch, and the partition is locked")
+	}
+	tk.MustQuery("select count(*) from mysql.analyze_jobs").Check(jobs)
+	tk.MustExec("unlock stats ndv partition p1")
+
 	// Only sampled NDV needs every retained sketch. Full input keeps skipping
 	// partitions without one, such as statistics loaded by older versions.
 	tk.MustExec("analyze table ndv")

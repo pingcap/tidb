@@ -2737,7 +2737,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if err != nil {
 		return err
 	}
-	// Global statistics reuse the saved sketches of skipped partitions.
+	// Global statistics reuse the saved sketches of skipped and locked partitions.
 	if !(as.IndexFlag && allSpecialGlobalIndex) && dynamicPrune && isPartitioned {
 		cols := astColsInfo
 		if savedCols, ok := colsInfoMap[physicalIDs[0]]; ok {

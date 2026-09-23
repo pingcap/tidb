@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -28,15 +29,28 @@ import (
 )
 
 // checkRetainedNDVSketches checks the saved sketches that the global merge
-// reuses: those of partitions this ANALYZE skips. It returns why those
-// partitions must be analyzed too. Only headers are read here; the merge
-// validates its actual inputs again.
+// reuses: those of partitions this ANALYZE skips or cannot update because they
+// are locked. It returns why unlocked partitions must be analyzed too, and fails
+// when a locked partition blocks the merge. Only headers are read here; the
+// merge validates its actual inputs again.
 func (b *PlanBuilder) checkRetainedNDVSketches(tbl *resolve.TableNameW, updated []int64, cols []*model.ColumnInfo, rate float64) (string, error) {
 	defs := tbl.TableInfo.Partition.Definitions
+	ids := []int64{tbl.TableInfo.ID}
+	for _, def := range defs {
+		ids = append(ids, def.ID)
+	}
+	locked, err := domain.GetDomain(b.ctx).StatsHandle().GetLockedTables(ids...)
+	if err != nil {
+		return "", err
+	}
+	if _, ok := locked[tbl.TableInfo.ID]; ok {
+		// ANALYZE skips a locked table entirely.
+		return "", nil
+	}
 	retained := make([]model.PartitionDefinition, 0, len(defs))
 	retainedIDs := make([]string, 0, len(defs))
 	for _, def := range defs {
-		if !slices.Contains(updated, def.ID) {
+		if _, ok := locked[def.ID]; ok || !slices.Contains(updated, def.ID) {
 			retained = append(retained, def)
 			retainedIDs = append(retainedIDs, strconv.FormatInt(def.ID, 10))
 		}
@@ -85,6 +99,7 @@ func (b *PlanBuilder) checkRetainedNDVSketches(tbl *resolve.TableNameW, updated 
 	for _, row := range rows {
 		saved[key{row.GetInt64(0), target{row.GetInt64(1), row.GetInt64(2)}}] = row.GetBytes(3)
 	}
+	var reason string
 	for _, def := range retained {
 		for _, want := range targets {
 			var problem string
@@ -101,8 +116,14 @@ func (b *PlanBuilder) checkRetainedNDVSketches(tbl *resolve.TableNameW, updated 
 			} else {
 				continue
 			}
-			return fmt.Sprintf("partition %s %s %s", def.Name.O, want.name, problem), nil
+			problem = fmt.Sprintf("partition %s %s %s", def.Name.O, want.name, problem)
+			if _, ok := locked[def.ID]; ok {
+				return "", fmt.Errorf("%s, and the partition is locked: %w", problem, statistics.ErrIncompatibleNDV)
+			}
+			if reason == "" {
+				reason = problem
+			}
 		}
 	}
-	return "", nil
+	return reason, nil
 }
