@@ -87,7 +87,7 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm sessmgr.Manager)
 // Coprocessor service will handle the cop task from other TiDB server. Currently, it's only use for read the cluster memory table.
 type rpcServer struct {
 	*sysutil.DiagnosticsServer
-	tikvpb.TikvServer
+	tikvpb.UnimplementedTikvServer
 	dom *domain.Domain
 	sm  sessmgr.Manager
 }
