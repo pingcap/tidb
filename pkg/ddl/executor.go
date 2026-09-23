@@ -1037,6 +1037,16 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if kerneltype.IsClassic() {
+		for _, constr := range s.Constraints {
+			if constr.Tp == ast.ConstraintFulltext {
+				if err := checkTiKVFullTextClusterSupport(); err != nil {
+					return errors.Trace(err)
+				}
+				break
+			}
+		}
+	}
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -5703,10 +5713,8 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if !kerneltype.IsClassic() {
 			return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index is not supported")
 		}
-		if model.GetJobVerInUse() < model.JobVersion2 {
-			// The analyzer snapshot travels in typed job arguments, which the
-			// untyped v1 layout cannot carry.
-			return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index requires DDL job version 2, which the cluster does not use yet")
+		if err := checkTiKVFullTextClusterSupport(); err != nil {
+			return errors.Trace(err)
 		}
 		indexOption = NormalizeTiKVFullTextIndexOption(indexOption)
 		tikvFullText = true
