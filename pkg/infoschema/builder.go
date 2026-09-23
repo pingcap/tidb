@@ -182,6 +182,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 
 			needsCharsetUpdate := currentSchema.Charset != dbInfo.Charset || currentSchema.Collate != dbInfo.Collate
 			needsPlacementUpdate := !equalPlacementPolicy(currentSchema.PlacementPolicyRef, dbInfo.PlacementPolicyRef)
+			needsReadOnlyUpdate := currentSchema.ReadOnly != dbInfo.ReadOnly
 
 			if needsCharsetUpdate {
 				charsetDiff := &model.SchemaDiff{
@@ -207,6 +208,20 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 					IsRefreshMeta: true,
 				}
 				if err := applyModifySchemaDefaultPlacement(b, m, placementDiff); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+
+			if needsReadOnlyUpdate {
+				readOnlyDiff := &model.SchemaDiff{
+					Version:       diff.Version,
+					Type:          model.ActionModifySchemaReadOnly,
+					SchemaID:      schemaID,
+					OldSchemaID:   oldSchemaID,
+					OldTableID:    oldTableID,
+					IsRefreshMeta: true,
+				}
+				if err := applyModifySchemaReadOnly(b, m, readOnlyDiff); err != nil {
 					return nil, errors.Trace(err)
 				}
 			}

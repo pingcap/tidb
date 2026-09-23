@@ -26,6 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -857,4 +858,65 @@ func TestTTLDeleteError(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return ttlError != nil && strings.Contains(ttlError.Error(), "Schema 'test' is in read only mode")
 	}, 10*time.Second, 100*time.Millisecond)
+}
+
+// TestRefreshMetaSchemaReadOnly covers a database whose ReadOnly flag is changed
+// in meta kv without a DDL, as PiTR log restore does. A database-level refresh
+// meta must reconcile the flag into infoschema in both directions.
+func TestRefreshMetaSchemaReadOnly(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("infoschemaV2=%v", v2), func(t *testing.T) {
+			enableReadOnlyDDLFp(t)
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			if v2 {
+				tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+			} else {
+				tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+			}
+			tk.MustExec("create database test_db")
+			tk.MustExec("create table test_db.t (a int)")
+			isV2, _ := infoschema.IsV2(dom.InfoSchema())
+			require.Equal(t, v2, isV2)
+
+			setReadOnlyInKV := func(readOnly bool) *model.DBInfo {
+				dbInfo, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test_db"))
+				require.True(t, ok)
+				dbInfo = dbInfo.Clone()
+				dbInfo.ReadOnly = readOnly
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+				require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+					return meta.NewMutator(txn).UpdateDatabase(dbInfo)
+				}))
+				return dbInfo
+			}
+			isReadOnly := func() bool {
+				dbInfo, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test_db"))
+				require.True(t, ok)
+				return dbInfo.ReadOnly
+			}
+			refreshDB := func(dbInfo *model.DBInfo) {
+				testutil.RefreshMeta(tk.Session(), t, dom.DDLExecutor(), dbInfo.ID, 0, dbInfo.Name.O, model.InvolvingAll)
+			}
+
+			// read only -> read write
+			tk.MustExec("alter database test_db read only = 1")
+			require.True(t, isReadOnly())
+			dbInfo := setReadOnlyInKV(false)
+			require.True(t, isReadOnly())
+			tk.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3989]Schema 'test_db' is in read only mode.")
+			refreshDB(dbInfo)
+			require.False(t, isReadOnly())
+			tk.MustExec("insert into test_db.t values (1)")
+
+			// read write -> read only
+			dbInfo = setReadOnlyInKV(true)
+			require.False(t, isReadOnly())
+			tk.MustExec("insert into test_db.t values (2)")
+			refreshDB(dbInfo)
+			require.True(t, isReadOnly())
+			tk.MustGetErrMsg("insert into test_db.t values (3)", "[schema:3989]Schema 'test_db' is in read only mode.")
+			tk.MustQuery("select a from test_db.t order by a").Check(testkit.Rows("1", "2"))
+		})
+	}
 }
