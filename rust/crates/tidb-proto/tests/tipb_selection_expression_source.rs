@@ -32,6 +32,7 @@ fn bounded_selection_contract_keeps_upstream_numeric_values() {
     assert_eq!(ScalarFuncSig::EqInt as i32, 140);
     assert_eq!(ScalarFuncSig::NeInt as i32, 150);
     assert_eq!(ScalarFuncSig::InString as i32, 4004);
+    assert_eq!(ScalarFuncSig::RegexpLikeSig as i32, 4313);
 }
 
 #[test]
