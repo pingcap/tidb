@@ -177,7 +177,7 @@ fn declared(catalog: &Catalog, database: &str, table: &str) -> (Vec<KvForeignKey
 
 /// Go `buildFKCheckForReferredFK`'s index, computed on demand: every
 /// `(schema, table, foreign key)` whose constraint REFERS to `database.table`.
-fn referring(
+pub(crate) fn referring(
     catalog: &Catalog,
     database: &str,
     table: &str,

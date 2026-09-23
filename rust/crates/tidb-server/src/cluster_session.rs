@@ -45,7 +45,7 @@ use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::{Catalog, SequenceDef, ViewDef};
-use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
+use tidb_executor::kv_table::{KvColumn, KvForeignKey, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
 use tidb_session::{Session, SharedCatalog};
@@ -696,6 +696,38 @@ pub(crate) fn cluster_table(
         .set_check_constraint_infos(constraints, &tidb_datatype::SessionTimeZone::utc(), b'\\')
         .map_err(|error| format!("its check constraints cannot be built: {error:?}"))?;
     kv_table.set_max_constraint_id(table.max_constraint_id);
+    // Go `TableInfo.ForeignKeys` ride the loaded `TableInfo` into every
+    // `tables.Table`: the planner's FK triggers (`physicalop/foreign_key.go`)
+    // build their `FKCheck`/`FKCascade` EXPLAIN leaves from them and the FK
+    // check execs resolve parents through them. Only public, versioned keys
+    // take effect, matching Go's `fk.Version < 1` skip and the state gate in
+    // `buildOnDeleteOrUpdateFKTrigger`. Dropping them here made every
+    // foreign key a Go-created schema carried invisible to this node.
+    for fk in table.foreign_keys.iter_deref() {
+        let fk = fk.read();
+        if fk.version < 1 || fk.state != SchemaState::PUBLIC {
+            continue;
+        }
+        kv_table.add_foreign_key(KvForeignKey {
+            name: fk.name.original().to_owned(),
+            cols: fk
+                .cols
+                .snapshot()
+                .into_iter()
+                .map(|column| column.original().to_owned())
+                .collect(),
+            ref_schema: fk.ref_schema.original().to_owned(),
+            ref_table: fk.ref_table.original().to_owned(),
+            ref_cols: fk
+                .ref_cols
+                .snapshot()
+                .into_iter()
+                .map(|column| column.original().to_owned())
+                .collect(),
+            on_delete: fk_action_from_stored(fk.on_delete),
+            on_update: fk_action_from_stored(fk.on_update),
+        });
+    }
     // Go `TableInfo.Comment` reaches every reader of the loaded table:
     // `SHOW CREATE TABLE` prints it and
     // `information_schema.tables.table_comment` reports it. Dropping it
@@ -860,6 +892,21 @@ pub(crate) fn cluster_table(
 /// (`PartitionExpr`); this is that rebuild. The column names and types come
 /// from the table being loaded, so the expression binds to the same offsets
 /// the scan decodes.
+/// Go `ast.ReferOptionType` over the stored `FKInfo.On{Delete,Update}` int
+/// (`pkg/parser/ast/model.go:242`): NoOption 0, Restrict 1, Cascade 2,
+/// SetNull 3, NoAction 4, SetDefault 5.
+fn fk_action_from_stored(action: i64) -> tidb_executor::kv_table::FkAction {
+    use tidb_executor::kv_table::FkAction;
+    match action {
+        1 => FkAction::Restrict,
+        2 => FkAction::Cascade,
+        3 => FkAction::SetNull,
+        4 => FkAction::NoAction,
+        5 => FkAction::SetDefault,
+        _ => FkAction::NoOption,
+    }
+}
+
 fn partition_spec_for(
     table_columns: &[GoShared<tidb_model::column::ColumnInfo>],
     partition: &tidb_model::partition::PartitionInfo,

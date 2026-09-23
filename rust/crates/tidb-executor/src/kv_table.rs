@@ -44,7 +44,7 @@ mod column_deps;
 mod index_entries;
 mod partition_maintenance;
 mod row_decoder;
-mod table_meta;
+pub(crate) mod table_meta;
 mod table_scan;
 
 pub use column_deps::ColumnDependent;

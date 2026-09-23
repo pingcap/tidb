@@ -2059,6 +2059,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
             access_cols: None,
             ranges: closed_point_ranges(&[point.key_values]),
             range_rebuild: None,
+            lock: false,
         },
     )))
 }

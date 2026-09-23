@@ -249,7 +249,205 @@ fn physical_dml_plan_with_cache_mode(
         go_operator: operator.to_owned(),
         select_plan: select_plan.map(Box::new),
         update_expressions,
+        fk_triggers: Vec::new(),
     }))
+}
+
+/// The plain `EXPLAIN` shape of an INSERT/UPDATE/DELETE, reproducing Go's
+/// plan-builder allocation order and DML-local plan nodes:
+///
+/// * Go `buildInsert` allocates the physical `Insert` root, then the
+///   `LogicalTableDual` mock plan (`planbuilder.go:4195`), then the source,
+///   then `BuildOnInsertFKTriggers`. The mock plan never renders, but its id
+///   shifts everything after it, so the explain path allocates one filler.
+/// * Go's single-table point UPDATE/DELETE (`point_get_plan.go:1254/1374`)
+///   builds the locked `PointGet` first; the UPDATE path allocates one extra
+///   plan before the `Update` root, the DELETE path does not.
+/// * Non-point UPDATE/DELETE build the source logically, allocate the
+///   `Update`/`Delete` root, then `DoOptimize` — with `buildSelectLock`
+///   wrapping the single-table source (`logical_plan_builder.go:6117/6552`).
+/// * `BuildOn{Insert,Update,Delete}FKTriggers` runs last, allocating the
+///   `Foreign_Key_Check` / `Foreign_Key_Cascade` leaves.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn physical_dml_plan_for_explain(
+    operator: &str,
+    source: Option<&tidb_ast::QueryStmt>,
+    update: Option<&tidb_ast::UpdateStmt>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    fk_spec: &fk_trigger_plan::FkPlanSpec,
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    use tidb_planner::physical::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
+
+    let plan_ids = tidb_planner::plan_base::PlanIdAllocator::new();
+    let column_ids = tidb_planner::expression_rewriter::ColumnIdAllocator::new();
+    let mut update_expressions = Vec::new();
+
+    // Go `buildInsert`'s mockTablePlan filler, right after the Insert root.
+    let mut root_base = if operator.eq_ignore_ascii_case("Insert") {
+        let root = BasePhysicalPlan::new(&plan_ids, operator, 0);
+        let _mock_table_plan = plan_ids.alloc();
+        Some(root)
+    } else {
+        None
+    };
+
+    let select_plan = match source {
+        None => None,
+        // INSERT ... SELECT: Go's `buildSelectPlanOfInsert` builds the source
+        // without a select lock (only UPDATE/DELETE lock their read), and the
+        // Insert root plus its mockTablePlan filler are already allocated
+        // above, ahead of the source.
+        Some(tidb_ast::QueryStmt::Select(select)) if operator.eq_ignore_ascii_case("Insert") => Some(
+            super::planner_bridge::physical_query_plan_with_allocators(
+                &tidb_ast::QueryStmt::Select(select.clone()),
+                catalog,
+                current_db,
+                ctx,
+                false,
+                &plan_ids,
+                &column_ids,
+            )
+            .map_err(super::planner_error_to_driver)?,
+        ),
+        Some(tidb_ast::QueryStmt::Select(select)) => {
+            let allow_fast_plan = update.is_none_or(|update| update_allows_fast_plan(update));
+            let fast = allow_fast_plan
+                .then(|| {
+                    super::access::try_fast_dml_point_physical_plan_with_allocator(
+                        select, catalog, current_db, ctx, &plan_ids,
+                    )
+                })
+                .transpose()?
+                .flatten();
+            if let Some(mut fast) = fast {
+                // Go's point plans carry `Lock` for UPDATE and DELETE.
+                if let PhysicalPlan::PointGet(point) = &mut fast {
+                    point.lock = true;
+                }
+                // Go's point-UPDATE builder allocates one extra plan between
+                // the PointGet and the Update root; the DELETE builder does
+                // not.
+                if operator.eq_ignore_ascii_case("Update") {
+                    let _point_update_filler = plan_ids.alloc();
+                }
+                root_base = Some(BasePhysicalPlan::new(&plan_ids, operator, 0));
+                Some(fast)
+            } else {
+                let update_assignment_values = update
+                    .map(|update| {
+                        update_assignment_values_for_plan(update, catalog, current_db, ctx)
+                    })
+                    .transpose()?;
+                let (plan, expressions, root) =
+                    super::planner_bridge::physical_dml_source_plan_explained(
+                        select,
+                        update_assignment_values.as_deref(),
+                        catalog,
+                        current_db,
+                        ctx,
+                        &plan_ids,
+                        &column_ids,
+                        operator,
+                    )
+                    .map_err(super::planner_error_to_driver)?;
+                update_expressions = expressions;
+                root_base = Some(root);
+                Some(plan)
+            }
+        }
+        Some(query) => Some(
+            super::planner_bridge::physical_query_plan_with_allocators(
+                query,
+                catalog,
+                current_db,
+                ctx,
+                false,
+                &plan_ids,
+                &column_ids,
+            )
+            .map_err(super::planner_error_to_driver)?,
+        ),
+    };
+
+    let base =
+        root_base.ok_or_else(|| {
+            DriverError::unsupported("explain DML build produced no root")
+        })?;
+    // Go `BuildOn{Insert,Update,Delete}FKTriggers`, last in the builders.
+    let fk_triggers =
+        fk_trigger_plan::build_fk_triggers(catalog, ctx, operator, fk_spec, &plan_ids);
+    Ok(PhysicalPlan::Dml(PhysicalDmlRoot {
+        base,
+        go_operator: operator.to_owned(),
+        select_plan: select_plan.map(Box::new),
+        update_expressions,
+        fk_triggers,
+    }))
+}
+
+/// Go `tnW.DBInfo.Name.L` / `tableInfo.Name` for the INSERT target, plus the
+/// REPLACE / ON DUPLICATE facts `BuildOnInsertFKTriggers` branches on.
+pub(crate) fn fk_spec_for_insert(
+    insert: &tidb_ast::InsertStmt,
+    current_db: &str,
+) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
+    let (database, table) = super::catalog::split_table_path(&insert.table, current_db)?;
+    Ok(fk_trigger_plan::FkPlanSpec {
+        database: database.to_owned(),
+        table: table.to_owned(),
+        updated_cols: Vec::new(),
+        replace: insert.replace,
+        on_duplicate_cols: insert
+            .on_duplicate
+            .iter()
+            .filter_map(|assignment| assignment.col.last().cloned())
+            .collect(),
+    })
+}
+
+/// Go `buildTbl2UpdateColumns` narrowed to the SET column names.
+pub(crate) fn fk_spec_for_update(
+    update: &tidb_ast::UpdateStmt,
+    current_db: &str,
+) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
+    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
+        return Err(DriverError::unsupported(
+            "multi-table UPDATE plans are not supported yet",
+        ));
+    };
+    let (database, table) = super::catalog::split_table_path(&table_ref.name, current_db)?;
+    Ok(fk_trigger_plan::FkPlanSpec {
+        database: database.to_owned(),
+        table: table.to_owned(),
+        updated_cols: update
+            .assignments
+            .iter()
+            .filter_map(|assignment| assignment.col.last().cloned())
+            .collect(),
+        replace: false,
+        on_duplicate_cols: Vec::new(),
+    })
+}
+
+pub(crate) fn fk_spec_for_delete(
+    delete: &tidb_ast::DeleteStmt,
+    current_db: &str,
+) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
+    let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind else {
+        return Err(DriverError::unsupported(
+            "multi-table DELETE plans are not supported yet",
+        ));
+    };
+    let (database, table) = super::catalog::split_table_path(&table_ref.name, current_db)?;
+    Ok(fk_trigger_plan::FkPlanSpec {
+        database: database.to_owned(),
+        table: table.to_owned(),
+        updated_cols: Vec::new(),
+        replace: false,
+        on_duplicate_cols: Vec::new(),
+    })
 }
 
 fn dml_select_plan_mut<'a>(
@@ -2709,6 +2907,7 @@ fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPl
             access_cols: Some(scan.cost_columns.clone()),
             ranges: scan.ranges.clone(),
             range_rebuild: Some(PointRangeRebuild::Table(rebuild)),
+            lock: false,
         });
         return;
     }

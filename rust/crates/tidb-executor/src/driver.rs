@@ -278,6 +278,7 @@ mod multi_dml;
 mod record_set;
 pub use record_set::QueryRecordSet;
 pub(crate) mod params;
+pub(crate) mod fk_trigger_plan;
 pub(crate) mod physical_builder;
 pub(crate) mod planner_bridge;
 pub(crate) mod point_get_key;

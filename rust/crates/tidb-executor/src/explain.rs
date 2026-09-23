@@ -1209,13 +1209,23 @@ fn physical_operator_info(
             let common_handle = catalog
                 .kv_table_by_id(point.table_id)
                 .is_some_and(|table| !table.common_handle_offsets().is_empty());
-            if point.index_id.is_some() || common_handle {
+            let mut info = if point.index_id.is_some() || common_handle {
                 String::new()
             } else {
                 point.ranges.first().map_or_else(String::new, |range| {
                     format!("handle:{}", point_handle_text(range))
                 })
+            };
+            // Go `PointGetPlan.ExplainInfo` appends `lock` for the
+            // UPDATE/DELETE read.
+            if point.lock {
+                if info.is_empty() {
+                    info = "lock".to_owned();
+                } else {
+                    info.push_str(", lock");
+                }
             }
+            info
         }
         PhysicalPlan::BatchPointGet(batch) => {
             let common_handle = catalog
@@ -1450,24 +1460,45 @@ fn physical_explain_operator(
                 )
             })
             .collect(),
-        PhysicalPlan::Dml(root) => root
-            .select_plan
-            .as_deref()
-            .map(|child| {
-                vec![physical_explain_operator(
-                    eval_ctx,
-                    brief_binary,
-                    child,
-                    catalog,
-                    ExplainTask::Root,
-                    "",
-                    runtime,
-                    ignore_explain_id_suffix,
-                    index_join_context,
-                    probe_count,
-                )]
-            })
-            .unwrap_or_default(),
+        PhysicalPlan::Dml(root) => {
+            let mut children = root
+                .select_plan
+                .as_deref()
+                .map(|child| {
+                    vec![physical_explain_operator(
+                        eval_ctx,
+                        brief_binary,
+                        child,
+                        catalog,
+                        ExplainTask::Root,
+                        "",
+                        runtime,
+                        ignore_explain_id_suffix,
+                        index_join_context,
+                        probe_count,
+                    )]
+                })
+                .unwrap_or_default();
+            // Go `flat_plan.go`: the FK checks and cascades flatten as the
+            // DML root's remaining children, after the select source.
+            for trigger in &root.fk_triggers {
+                children.push(ExplainOperator {
+                    operator: trigger.operator.to_owned(),
+                    id: trigger.id,
+                    label: String::new(),
+                    estimated_rows: Some(0.0),
+                    actual_rows: None,
+                    execution_info: None,
+                    task: ExplainTask::Root,
+                    access_object: Some(AccessObject::Other(OtherAccessObject(
+                        trigger.access.clone(),
+                    ))),
+                    operator_info: trigger.info.clone(),
+                    children: Vec::new(),
+                });
+            }
+            children
+        }
         _ => plan
             .children()
             .iter()
@@ -2327,14 +2358,15 @@ pub fn explain_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let physical = crate::driver::physical_dml_plan(
+    let fk_spec = crate::driver::fk_spec_for_insert(insert, current_db)?;
+    let physical = crate::driver::physical_dml_plan_for_explain(
         "Insert",
         insert.source.as_deref(),
-        true,
         None,
         catalog,
         current_db,
         ctx,
+        &fk_spec,
     )?;
     render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
 }
@@ -2395,14 +2427,15 @@ pub fn explain_update_stmt(
     let source = crate::driver::update_source_query(update).ok_or_else(|| {
         DriverError::unsupported("multi-table UPDATE plans are not supported yet")
     })?;
-    let physical = crate::driver::physical_dml_plan(
+    let fk_spec = crate::driver::fk_spec_for_update(update, current_db)?;
+    let physical = crate::driver::physical_dml_plan_for_explain(
         "Update",
         Some(&source),
-        false,
         Some(update),
         catalog,
         current_db,
         ctx,
+        &fk_spec,
     )?;
     render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
 }
@@ -2419,14 +2452,15 @@ pub fn explain_delete_stmt(
     let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
         DriverError::unsupported("multi-table DELETE plans are not supported yet")
     })?;
-    let physical = crate::driver::physical_dml_plan(
+    let fk_spec = crate::driver::fk_spec_for_delete(delete, current_db)?;
+    let physical = crate::driver::physical_dml_plan_for_explain(
         "Delete",
         Some(&source),
-        false,
         None,
         catalog,
         current_db,
         ctx,
+        &fk_spec,
     )?;
     render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
 }

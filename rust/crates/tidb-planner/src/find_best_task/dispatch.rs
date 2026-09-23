@@ -2853,6 +2853,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             range_rebuild: table_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Table),
+                            lock: false,
                         })
                     } else {
                         PhysicalPlan::BatchPointGet(crate::physical::PhysicalBatchPointGet {
@@ -3392,6 +3393,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             range_rebuild: index_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Index),
+                            lock: false,
                         })
                     } else {
                         PhysicalPlan::BatchPointGet(crate::physical::PhysicalBatchPointGet {

@@ -2194,6 +2194,109 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     Ok((physical, update_expressions))
 }
 
+/// The plain-`EXPLAIN` DML-source build, reproducing Go's allocation order:
+/// the source builds logically, `buildSelectLock` wraps the single-table
+/// UPDATE/DELETE source (`logical_plan_builder.go:6117/6552`, pessimistic
+/// mode), the `Update`/`Delete` root allocates, and only then `DoOptimize`
+/// lowers the tree. Returns the physical source, the UPDATE assignment
+/// expressions, and the allocated DML root base for `PhysicalDmlRoot`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn physical_dml_source_plan_explained(
+    select: &tidb_ast::SelectStmt,
+    update_assignment_values: Option<&[Option<tidb_ast::Expr>]>,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+    operator: &str,
+) -> Result<
+    (
+        PhysicalPlan,
+        Vec<Option<tidb_expr::expression::Expression>>,
+        tidb_planner::physical::BasePhysicalPlan,
+    ),
+    tidb_planner::plan_base::PlanError,
+> {
+    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
+    let session_zone = ctx.session_zone();
+    let registry = ScalarSubqueryRegistry::default();
+    let evaluator = subquery_evaluator(
+        catalog,
+        ctx,
+        plan_ids,
+        column_ids,
+        false,
+        &session_zone,
+        &registry,
+    );
+    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
+        .with_subquery_evaluator(&evaluator);
+    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
+    builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
+    builder.only_full_group_by = ctx.only_full_group_by();
+    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
+    builder.set_isolation_read_engines(ctx.isolation_read_engines());
+    builder.set_partition_processor_enabled(ctx.static_partition_prune());
+    builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
+    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
+    builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
+    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
+    builder.prefer_index_merge_by_fix_control = ctx
+        .optimizer_fix_control()
+        .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
+    builder.add_opt_flag(flags::PRUNE_COLUMNS);
+    let (plan, mut update_expressions, plan_flags) = match update_assignment_values {
+        Some(values) => builder.build_update_dml_source(select, values)?,
+        None => {
+            let (plan, build_flags) = builder.build_dml_source(select)?;
+            (plan, Vec::new(), build_flags)
+        }
+    };
+    // Go `b.buildSelectLock(p, &ast.SelectLockInfo{LockType:
+    // ast.SelectLockForUpdate})`: single-table UPDATE/DELETE lock their rows
+    // pessimistically before the root is allocated. The driver only reaches
+    // here for single-table statements (`update_source_query` /
+    // `delete_source_query` reject multi-table ones).
+    let plan = builder.build_select_lock(
+        plan,
+        tidb_planner::logical::SelectLockType::ForUpdate,
+        0,
+    )?;
+    // Go: `updt := physicalop.Update{...}.Init(b.ctx)` between the logical
+    // build and `DoOptimize`.
+    let root = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, operator, 0);
+    // Go's `DoOptimize` allocates one plan between the DML root and the
+    // physical `SelectLock` (go W51: root 5, ?, SelectLock 7; W52: root 9,
+    // ?, SelectLock 14). The single-table shape consumes exactly one here;
+    // the freezing projection `logical_plan_builder.go:6140` creates is
+    // already absorbed by this tier's DML-source build.
+    let _go_optimize_filler = plan_ids.alloc();
+    let logical = optimize_built_logical(
+        plan,
+        plan_flags,
+        Some(select),
+        catalog,
+        ctx,
+        false,
+        plan_ids,
+        column_ids,
+        &session_zone,
+    )?;
+    let physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
+    let schema = physical.schema().ok_or_else(|| {
+        tidb_planner::plan_base::PlanError::internal("physical DML source has no schema")
+    })?;
+    for expression in update_expressions.iter_mut().flatten() {
+        tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(|_| {
+            tidb_planner::plan_base::PlanError::internal(
+                "UPDATE assignment does not resolve in its physical source",
+            )
+        })?;
+    }
+    Ok((physical, update_expressions, root))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn optimize_built_logical(
     plan: LogicalPlan,

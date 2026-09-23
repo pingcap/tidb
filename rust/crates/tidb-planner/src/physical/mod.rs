@@ -2516,6 +2516,10 @@ pub struct PhysicalPointGet {
     pub ranges: crate::ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+    /// Go `PointGetPlan.Lock`: the enclosing UPDATE/DELETE locks the row it
+    /// reads, rendered as the `lock` operator detail. SELECT-built point
+    /// plans leave this off.
+    pub lock: bool,
 }
 
 /// Go `PointGetPlan.PartitionNames` and its execution-time `PartitionIdx`.
@@ -2592,6 +2596,28 @@ pub struct PhysicalDmlRoot {
     /// Apply operators into `select_plan`. Non-subquery SET expressions are
     /// evaluated by the ordinary Update executor and remain `None` here.
     pub update_expressions: Vec<Option<Expression>>,
+    /// Go `Insert.FKChecks` / `Update.FKChecks` / `Delete.FKChecks` and the
+    /// matching cascade fields, flattened in `flat_plan.go` render order
+    /// (select children first, then FK checks, then FK cascades; the
+    /// multi-table maps render sorted by table id). These render-only nodes
+    /// carry the plan ids Go allocates when `BuildOn{Insert,Update,Delete}FK
+    /// Triggers` runs; the write path enforces the same constraints through
+    /// `crate::foreign_key`.
+    pub fk_triggers: Vec<FkTriggerNode>,
+}
+
+/// One Go `FKCheck` or `FKCascade` EXPLAIN leaf (`physicalop/foreign_key.go`).
+#[derive(Clone, Debug)]
+pub struct FkTriggerNode {
+    /// The plan id allocated at `Init` time from the session allocator.
+    pub id: i32,
+    /// Go operator identity: `Foreign_Key_Check` or `Foreign_Key_Cascade`.
+    pub operator: &'static str,
+    /// Go `AccessObject().String()`: `table:<name>` or `table:<name>, index:<name>`.
+    pub access: String,
+    /// Go `OperatorInfo()`: `foreign_key:<name>, check_exist` / `check_not_exist`
+    /// / `on_delete:<option>` / `on_update:<option>`.
+    pub info: String,
 }
 
 /// Go `physicalop.PushedDownLimit`.
@@ -4360,6 +4386,7 @@ impl PhysicalPlan {
                 access_cols: op.access_cols.clone(),
                 ranges: op.ranges.clone(),
                 range_rebuild: op.range_rebuild.clone(),
+                lock: op.lock,
             }),
             Self::BatchPointGet(op) => Self::BatchPointGet(PhysicalBatchPointGet {
                 base: base_of(&op.base),
@@ -4388,6 +4415,7 @@ impl PhysicalPlan {
                 go_operator: op.go_operator.clone(),
                 select_plan: op.select_plan.clone(),
                 update_expressions: op.update_expressions.clone(),
+                fk_triggers: op.fk_triggers.clone(),
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),
