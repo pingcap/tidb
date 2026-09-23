@@ -34,9 +34,10 @@ use crate::{ResolvingLock, SharedReadRuntime, UnaryCallContext};
 use super::model::{BlockingLock, PessimisticLock};
 use super::resolver::{
     check_cancelled, check_lock_call, classify_determined_status, flush_lite_resolve_cleanups,
-    map_rpc_error, query_txn_status, recover_lock_region_error, remaining_lock_ttl,
-    resolve_optimistic_lock_refs_collecting, resolve_optimistic_lock_refs_with_backoff,
-    route_key_attempt, LiteResolveCleanups, LockStatus, LockStatusQuery,
+    map_rpc_error, primary_lock_from_check_response, query_txn_status, recover_lock_region_error,
+    remaining_lock_ttl, resolve_async_commit_lock, resolve_optimistic_lock_refs_collecting,
+    resolve_optimistic_lock_refs_with_backoff, route_key_attempt, LiteResolveCleanups, LockStatus,
+    LockStatusQuery,
 };
 use super::{
     LockRecoveryClient, LockRecoveryError, LockRecoveryResult, ResolvedTxnStatus, TimestampSource,
@@ -222,6 +223,7 @@ where
                 base_context,
                 call,
                 timestamp_source,
+                for_read,
                 backoff,
             )?,
         };
@@ -252,6 +254,7 @@ fn resolve_one_pessimistic_lock<C, L, T>(
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
     timestamp_source: &T,
+    for_read: bool,
     backoff: &mut RegionBackoffBudget,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
@@ -259,7 +262,7 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
-    let response = match query_txn_status(
+    let (response, cached_status) = match query_txn_status(
         runtime,
         &LockStatusQuery {
             primary: &lock.primary,
@@ -274,7 +277,10 @@ where
         false,
         backoff,
     )? {
-        LockStatus::Answered(response) => response,
+        LockStatus::Answered {
+            response,
+            cached_status,
+        } => (response, cached_status),
         // Go `lock_resolver.go:966-968`: the owner is alive and merely rolled
         // its own primary lock back, so waiting lets it retry instead of
         // aborting it.
@@ -295,18 +301,59 @@ where
             ));
         }
     };
-    if response.lock_ttl > 0 {
+    let ttl = if response.lock_ttl > 0 {
         let post_check_ts = timestamp_source
             .current_ts()
             .map_err(LockRecoveryError::Timestamp)?;
         check_cancelled(call)?;
-        return Ok(LockRecoveryResult::alive(remaining_lock_ttl(
+        remaining_lock_ttl(lock.txn_id, response.lock_ttl, post_check_ts)
+    } else {
+        Duration::ZERO
+    };
+    let primary_lock = primary_lock_from_check_response(&response);
+    let async_commit_primary = primary_lock
+        .as_ref()
+        .is_some_and(|primary_lock| primary_lock.use_async_commit);
+    if async_commit_primary && ttl.is_zero() {
+        let primary_lock = primary_lock.expect("an async-commit primary was observed");
+        let determined_status = cached_status.or_else(|| {
+            (response.lock_ttl == 0)
+                .then(|| classify_determined_pessimistic_status(&response).ok())
+                .flatten()
+        });
+        let status = resolve_async_commit_lock(
+            runtime,
             lock.txn_id,
-            response.lock_ttl,
-            post_check_ts,
-        )));
+            &lock.primary,
+            &primary_lock,
+            &response,
+            determined_status,
+            base_context,
+            call,
+            backoff,
+        )?;
+        return Ok(LockRecoveryResult::resolved(
+            lock.txn_id,
+            status,
+            caller_start_ts,
+        ));
     }
-    let status = classify_determined_pessimistic_status(&response)?;
+    if response.lock_ttl > 0 {
+        if for_read {
+            if let Some(status) = cached_status {
+                return Ok(LockRecoveryResult::resolved(
+                    lock.txn_id,
+                    status,
+                    caller_start_ts,
+                ));
+            }
+        }
+        return Ok(LockRecoveryResult::alive(ttl));
+    }
+    let status = match cached_status {
+        Some(status) => status,
+        None => classify_determined_pessimistic_status(&response)?,
+    };
     // CheckTxnStatus with `resolving_pessimistic_lock` already dropped the
     // primary's own lock when it decided the transaction was expired, so only a
     // non-primary key still needs its lock entry removed.

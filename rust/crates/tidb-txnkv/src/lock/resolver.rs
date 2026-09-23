@@ -898,7 +898,7 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
-    let check_response = match query_txn_status(
+    let (check_response, cached_status) = match query_txn_status(
         runtime,
         &LockStatusQuery {
             primary: &lock.primary,
@@ -913,7 +913,10 @@ where
         force_sync_commit,
         backoff,
     )? {
-        LockStatus::Answered(response) => response,
+        LockStatus::Answered {
+            response,
+            cached_status,
+        } => (response, cached_status),
         // Both of these are gated on `resolving_pessimistic_lock` inside the
         // query, exactly as Go gates them (`lock_resolver.go:947-968,1069`), so
         // an optimistic lock reaches neither. Go's own non-pessimistic arm at
@@ -943,24 +946,8 @@ where
     // transaction -- and a pessimistic primary is simply the ordinary state
     // of one still in its locking phase, which answers "not an async-commit
     // primary" and nothing more.
-    let primary_lock = check_response
-        .lock_info
-        .as_ref()
-        .map(|info| OptimisticLock {
-            key: info.key.clone(),
-            primary: info.primary_lock.clone(),
-            txn_id: info.lock_version,
-            ttl_ms: info.lock_ttl,
-            txn_size: info.txn_size,
-            lock_type: info.lock_type,
-            min_commit_ts: info.min_commit_ts,
-            use_async_commit: info.use_async_commit,
-            secondaries: info.secondaries.clone(),
-        });
-    if check_response.lock_ttl > 0 {
-        let async_commit_primary = primary_lock
-            .as_ref()
-            .is_some_and(|primary_lock| primary_lock.use_async_commit);
+    let primary_lock = primary_lock_from_check_response(&check_response);
+    let ttl = if check_response.lock_ttl > 0 {
         // client-go sends the pre-RPC TSO in CheckTxnStatus, then asks the
         // oracle again when converting the returned absolute lock TTL to
         // a remaining wait. A slow status RPC must consume its own time.
@@ -969,27 +956,50 @@ where
             .current_ts()
             .map_err(LockRecoveryError::Timestamp)?;
         check_cancelled(call)?;
-        let ttl = remaining_lock_ttl(lock.txn_id, check_response.lock_ttl, post_check_ts);
-        // Go `expiredAsyncCommitLocks`: an async-commit primary that is
-        // still present but expired is not "alive". Its commit point is the
-        // completed prewrite, so waiting for a TTL nobody will refresh only
-        // stalls the reader; the fate must come from the secondaries.
-        // `!forceSyncCommit` is part of Go's condition: the retry exists
-        // precisely to stop taking the async-commit path for this lock.
-        if async_commit_primary && !force_sync_commit && ttl.is_zero() {
-            let primary_lock = primary_lock.expect("an async-commit primary was observed");
-            return Ok(OneLockOutcome::Resolved {
-                status: resolve_async_commit_lock(
-                    runtime,
-                    lock,
-                    &primary_lock,
-                    &check_response,
-                    base_context,
-                    call,
-                    backoff,
-                )?,
-                pending_lite_cleanup: false,
-            });
+        remaining_lock_ttl(lock.txn_id, check_response.lock_ttl, post_check_ts)
+    } else {
+        Duration::ZERO
+    };
+    let async_commit_primary = primary_lock
+        .as_ref()
+        .is_some_and(|primary_lock| primary_lock.use_async_commit);
+    // Go `expiredAsyncCommitLocks`: an async-commit primary that is still
+    // present but expired is not alive. A determined cached status bypasses
+    // secondary checks and applies that status to the primary plus all keys
+    // recorded in the primary lock, as `resolveAsyncCommitLock` does in Go.
+    // `!forceSyncCommit` is part of Go's condition: its retry exists precisely
+    // to stop taking the async-commit path for this lock.
+    if async_commit_primary && !force_sync_commit && (check_response.lock_ttl == 0 || ttl.is_zero())
+    {
+        let primary_lock = primary_lock.expect("an async-commit primary was observed");
+        let determined_status = cached_status.or_else(|| {
+            (check_response.lock_ttl == 0)
+                .then(|| classify_determined_status(&check_response).ok())
+                .flatten()
+        });
+        return Ok(OneLockOutcome::Resolved {
+            status: resolve_async_commit_lock(
+                runtime,
+                lock.txn_id,
+                &lock.primary,
+                &primary_lock,
+                &check_response,
+                determined_status,
+                base_context,
+                call,
+                backoff,
+            )?,
+            pending_lite_cleanup: false,
+        });
+    }
+    if check_response.lock_ttl > 0 {
+        if for_read {
+            if let Some(status) = cached_status {
+                return Ok(OneLockOutcome::Resolved {
+                    status,
+                    pending_lite_cleanup: false,
+                });
+            }
         }
         return Ok(OneLockOutcome::Alive {
             wait: ttl,
@@ -998,13 +1008,32 @@ where
             min_commit_ts_pushed: check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32,
         });
     }
-    let status = classify_determined_status(&check_response)?;
+    let status = match cached_status {
+        Some(status) => status,
+        None => classify_determined_status(&check_response)?,
+    };
     if lock.key != lock.primary && !defer_lite_cleanup {
         resolve_secondary(runtime, lock, status, base_context, call, for_read, backoff)?;
     }
     Ok(OneLockOutcome::Resolved {
         status,
         pending_lite_cleanup: defer_lite_cleanup,
+    })
+}
+
+pub(super) fn primary_lock_from_check_response(
+    response: &KvrpcCheckTxnStatusResponse,
+) -> Option<OptimisticLock> {
+    response.lock_info.as_ref().map(|info| OptimisticLock {
+        key: info.key.clone(),
+        primary: info.primary_lock.clone(),
+        txn_id: info.lock_version,
+        ttl_ms: info.lock_ttl,
+        txn_size: info.txn_size,
+        lock_type: info.lock_type,
+        min_commit_ts: info.min_commit_ts,
+        use_async_commit: info.use_async_commit,
+        secondaries: info.secondaries.clone(),
     })
 }
 
@@ -1034,8 +1063,12 @@ pub(super) struct LockStatusQuery<'a> {
 /// allocation to the hot answer.
 #[allow(clippy::large_enum_variant)]
 pub(super) enum LockStatus {
-    /// TiKV determined something; the caller interprets the response.
-    Answered(KvrpcCheckTxnStatusResponse),
+    /// The caller interprets a fresh or previously determined status response.
+    Answered {
+        response: KvrpcCheckTxnStatusResponse,
+        /// Present only when the shared status cache supplied the result.
+        cached_status: Option<ResolvedTxnStatus>,
+    },
     /// A live pessimistic transaction whose primary record does not exist.
     ///
     /// Go `lock_resolver.go:966-968`: rolling this back would abort a running
@@ -1084,8 +1117,11 @@ where
             .current_ts()
             .map_err(LockRecoveryError::Timestamp)?
     };
-    if let Some(response) = runtime.cached_lock_status(query.txn_id) {
-        return Ok(LockStatus::Answered(response));
+    if let Some((status, response)) = runtime.cached_lock_status(query.txn_id) {
+        return Ok(LockStatus::Answered {
+            response,
+            cached_status: Some(status),
+        });
     }
     let mut rollback_if_not_exist = false;
     loop {
@@ -1121,10 +1157,13 @@ where
             continue;
         }
         let Some(key_error) = response.error.as_ref() else {
-            if let Some(status) = cacheable_status(&response) {
+            if let Some(status) = cacheable_check_txn_status(&response) {
                 runtime.cache_lock_status(query.txn_id, status, response.clone());
             }
-            return Ok(LockStatus::Answered(response));
+            return Ok(LockStatus::Answered {
+                response,
+                cached_status: None,
+            });
         };
         if key_error.txn_not_found.is_some() {
             // Go re-reads the oracle on every iteration, so a lock that expires
@@ -1232,8 +1271,9 @@ pub(super) fn classify_determined_status(
     })
 }
 
-/// Matches Go `TxnStatus.StatusCacheable`: a commit is determined regardless
-/// of lock TTL; rollback is cacheable only after the lock TTL reached zero.
+/// Matches Go `TxnStatus.StatusCacheable` after the status has been determined.
+/// Async-commit recovery may determine a commit while retaining the TTL from
+/// its initial primary-lock response.
 fn cacheable_status(response: &KvrpcCheckTxnStatusResponse) -> Option<ResolvedTxnStatus> {
     if response.commit_version > 0 {
         return Some(ResolvedTxnStatus::Committed(response.commit_version));
@@ -1249,6 +1289,16 @@ fn cacheable_status(response: &KvrpcCheckTxnStatusResponse) -> Option<ResolvedTx
         return Some(ResolvedTxnStatus::RolledBack);
     }
     None
+}
+
+/// Go `getTxnStatus` only derives a final status from a direct response after
+/// `LockTtl == 0`; a nonzero TTL remains an active transaction even if another
+/// response field is populated.
+fn cacheable_check_txn_status(response: &KvrpcCheckTxnStatusResponse) -> Option<ResolvedTxnStatus> {
+    if response.lock_ttl > 0 {
+        return None;
+    }
+    cacheable_status(response)
 }
 
 /// Commit-timestamp evidence assembled from an async-commit transaction's
@@ -1320,11 +1370,13 @@ impl AsyncResolveData {
 /// them still hold a lock, and the transaction counts as committed exactly when
 /// the assembled commit timestamp is nonzero. Only then is ResolveLock sent, so
 /// a partially-prewritten async-commit transaction is never half committed.
-fn resolve_async_commit_lock<C, L>(
+pub(super) fn resolve_async_commit_lock<C, L>(
     runtime: &SharedReadRuntime<C, L>,
-    lock: &OptimisticLock,
+    txn_id: u64,
+    primary_key: &[u8],
     primary_lock: &OptimisticLock,
     check_response: &KvrpcCheckTxnStatusResponse,
+    determined_status: Option<ResolvedTxnStatus>,
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
     backoff: &mut RegionBackoffBudget,
@@ -1333,44 +1385,53 @@ where
     C: LockRecoveryClient,
     L: RegionRecoveryLoader,
 {
-    let mut data = AsyncResolveData {
-        commit_ts: primary_lock.min_commit_ts,
-        keys: Vec::new(),
-        missing_lock: false,
-    };
-    // Go's pool fallback runs each initial region synchronously, but still
-    // forks from the unchanged parent. Only the last completed worker history
-    // is returned; successful sibling regions are never queried again.
-    let groups = group_keys_by_region(runtime, &primary_lock.secondaries, base_context)?;
-    let mut last = None;
-    let mut first_error = None;
-    for group in groups {
-        let mut worker = backoff.fork();
-        let result = check_secondary_group(
-            runtime,
-            lock.txn_id,
-            group,
-            base_context,
-            call,
-            &mut worker,
-            &mut data,
-        );
-        last = Some(worker);
-        if first_error.is_none() {
-            first_error = result.err();
-        }
-    }
-    if let Some(last) = last {
-        backoff.update_from_forked(&last);
-    }
-    if let Some(error) = first_error {
-        return Err(error);
-    }
-    data.keys.push(lock.primary.clone());
-    let status = if data.commit_ts == 0 {
-        ResolvedTxnStatus::RolledBack
+    let (status, keys) = if let Some(status) = determined_status {
+        // Go's cached status is already final. Its retained primary lock lists
+        // every async-commit secondary, so cleanup can skip CheckSecondaryLocks.
+        let mut keys = primary_lock.secondaries.clone();
+        keys.push(primary_key.to_vec());
+        (status, keys)
     } else {
-        ResolvedTxnStatus::Committed(data.commit_ts)
+        let mut data = AsyncResolveData {
+            commit_ts: primary_lock.min_commit_ts,
+            keys: Vec::new(),
+            missing_lock: false,
+        };
+        // Go's pool fallback runs each initial region synchronously, but still
+        // forks from the unchanged parent. Only the last completed worker
+        // history is returned; successful sibling regions are not queried again.
+        let groups = group_keys_by_region(runtime, &primary_lock.secondaries, base_context)?;
+        let mut last = None;
+        let mut first_error = None;
+        for group in groups {
+            let mut worker = backoff.fork();
+            let result = check_secondary_group(
+                runtime,
+                txn_id,
+                group,
+                base_context,
+                call,
+                &mut worker,
+                &mut data,
+            );
+            last = Some(worker);
+            if first_error.is_none() {
+                first_error = result.err();
+            }
+        }
+        if let Some(last) = last {
+            backoff.update_from_forked(&last);
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        data.keys.push(primary_key.to_vec());
+        let status = if data.commit_ts == 0 {
+            ResolvedTxnStatus::RolledBack
+        } else {
+            ResolvedTxnStatus::Committed(data.commit_ts)
+        };
+        (status, data.keys)
     };
     let mut determined_response = check_response.clone();
     determined_response.commit_version = match status {
@@ -1378,16 +1439,16 @@ where
         ResolvedTxnStatus::RolledBack => 0,
     };
     if let Some(cache_status) = cacheable_status(&determined_response) {
-        runtime.cache_lock_status(lock.txn_id, cache_status, determined_response);
+        runtime.cache_lock_status(txn_id, cache_status, determined_response);
     }
-    let groups = group_keys_by_region(runtime, &data.keys, base_context)?;
+    let groups = group_keys_by_region(runtime, &keys, base_context)?;
     let mut last = None;
     let mut errors = Vec::new();
     for group in groups {
         let mut worker = backoff.fork();
         if let Err(error) = resolve_region_keys(
             runtime,
-            lock.txn_id,
+            txn_id,
             group,
             status,
             base_context,
@@ -1775,8 +1836,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        cacheable_status, wait_status_backoff, LockRecoveryError, LockRecoveryResult,
-        ResolvedTxnStatus, SnapshotLockSet,
+        cacheable_check_txn_status, cacheable_status, wait_status_backoff, LockRecoveryError,
+        LockRecoveryResult, ResolvedTxnStatus, SnapshotLockSet,
     };
     use crate::region::RegionBackoffBudget;
     use crate::{UnaryCallContext, UnaryCancellation};
@@ -1791,7 +1852,7 @@ mod tests {
         ];
         for action in rollback_actions {
             assert_eq!(
-                cacheable_status(&KvrpcCheckTxnStatusResponse {
+                cacheable_check_txn_status(&KvrpcCheckTxnStatusResponse {
                     action: action as i32,
                     ..KvrpcCheckTxnStatusResponse::default()
                 }),
@@ -1799,7 +1860,7 @@ mod tests {
                 "TTL-zero rollback action {action:?} is cacheable"
             );
             assert_eq!(
-                cacheable_status(&KvrpcCheckTxnStatusResponse {
+                cacheable_check_txn_status(&KvrpcCheckTxnStatusResponse {
                     lock_ttl: 1,
                     action: action as i32,
                     ..KvrpcCheckTxnStatusResponse::default()
@@ -1809,14 +1870,20 @@ mod tests {
             );
         }
 
+        let live_commit = KvrpcCheckTxnStatusResponse {
+            commit_version: 123,
+            lock_ttl: 1,
+            ..KvrpcCheckTxnStatusResponse::default()
+        };
         assert_eq!(
-            cacheable_status(&KvrpcCheckTxnStatusResponse {
-                commit_version: 123,
-                lock_ttl: 1,
-                ..KvrpcCheckTxnStatusResponse::default()
-            }),
+            cacheable_check_txn_status(&live_commit),
+            None,
+            "a direct status response with nonzero TTL remains live"
+        );
+        assert_eq!(
+            cacheable_status(&live_commit),
             Some(ResolvedTxnStatus::Committed(123)),
-            "a commit is determined even if the response reports a TTL"
+            "an async-commit result may become determined with the original TTL"
         );
         for action in [
             KvrpcTxnAction::MinCommitTsPushed,

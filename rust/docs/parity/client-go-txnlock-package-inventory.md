@@ -62,12 +62,16 @@ the explicit Go `Lite` and `resultRequired` option combinations remain open.
 The current real-TiKV and embedded unistore server openers both install the
 pool; unistore authority and server compile checks cover that wiring.
 
-The 2,048-entry transaction-status cache now follows Go's FIFO eviction order,
-checks after the per-lock TSO read, and retains the original CheckTxnStatus
-response (including async-commit primary-lock details) on cache hits. It only
-caches commits or TTL-zero rollback actions, and rejects a contradictory
-determined status like Go's `saveResolved`. Rust cache metrics and the original
-Go cache tests are still open.
+The 2,048-entry transaction-status cache follows Go's FIFO eviction order and
+is checked after the per-lock TSO read. Cache hits retain both the determined
+status and original CheckTxnStatus response, including async-commit primary-lock
+details; an expired async-commit hit reuses its fate and resolves the primary
+and all secondaries without repeating CheckSecondaryLocks. Both optimistic
+read and pessimistic lock recovery consume that cached fate. Direct status
+responses are cached only when LockTtl is zero; async-commit recovery can cache
+a determined commit with the original positive TTL. Contradictory status saves
+match Go's `saveResolved` invariant. Rust cache metrics and the original Go
+cache tests are still open.
 
 The async pool currently admits up to 10,000 tasks but Tokio's blocking runtime
 caps worker threads at 512. Upstream's `gp.New(10000, 10*time.Second)` can run

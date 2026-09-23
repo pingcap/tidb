@@ -1412,10 +1412,14 @@ reconciliation, all caller wiring, and the 512-worker concurrency gap above.
 ### Transaction-status cache receipt (2026-09-22)
 
 The pinned resolver keeps up to 2,048 determined statuses in FIFO order. Rust
-now checks this cache after fetching the per-lock TSO, preserves the cached
-CheckTxnStatus response so expired async-commit primary metadata remains
-available, and caches only determined commit or TTL-zero rollback results.
-Contradictory status saves fail with the same invariant violation as Go.
+now checks this cache after fetching the per-lock TSO and returns both the
+determined status and original CheckTxnStatus response. For an expired
+async-commit lock, that preserves primary-lock metadata so cleanup can reuse the
+cached fate and resolve its primary plus all secondaries without repeating
+CheckSecondaryLocks. Direct CheckTxnStatus results are cached only after
+LockTtl reaches zero, while an async-commit resolution may cache its determined
+commit with the original positive TTL. Contradictory status saves fail with the
+same invariant violation as Go.
 
 Validation after this addition passed:
 
@@ -1423,10 +1427,12 @@ Validation after this addition passed:
     cargo test --offline --locked -p tidb-txnkv --lib resolved_txn_status_cache
     cargo test --offline --locked -p tidb-txnkv --lib txn_status_cacheability_matches_go
     cargo test --offline --locked -p tidb-txnkv --test lock_resolver_source
+    cargo test --offline --locked -p tidb-txnkv --lib
     cargo check --offline --locked -p tidb-server --message-format=short
     python3 /private/tmp/tidb-snapshot-format.py --check
     git diff --check
 
-Both cache tests and the Go cacheability case passed, and the resolver source
-suite passed all 26 cases. Cache metrics and original Go cache test
-reconciliation remain open.
+Both cache tests and the Go cacheability case passed. All 191 txnkv library
+tests passed (one ignored), and all 28 resolver source tests passed, including
+cached async-commit reuse from both optimistic reads and pessimistic lock
+recovery. Cache metrics and original Go cache test reconciliation remain open.

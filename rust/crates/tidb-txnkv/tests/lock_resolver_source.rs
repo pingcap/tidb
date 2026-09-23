@@ -1511,6 +1511,116 @@ fn an_expired_async_commit_txn_commits_at_the_largest_min_commit_ts() {
     }));
 }
 
+#[test]
+fn cached_async_commit_status_reuses_the_determined_fate_and_all_secondaries() {
+    let (runtime, recorded) = runtime_with_secondary_checks(
+        vec![async_primary_status(1_400 << 18)],
+        vec![
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"alpha", 1_500 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"secondary", 1_450 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+        ],
+    );
+
+    for _ in 0..2 {
+        let result = resolve_optimistic_locks(
+            &runtime,
+            &[async_blocker()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &expired_timestamps(),
+            true,
+        )
+        .expect("the determined async-commit status is reusable");
+        assert_eq!(
+            result.statuses,
+            vec![ResolvedTxnStatus::Committed(1_500 << 18)]
+        );
+    }
+
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 1, "the primary status is cached");
+    assert_eq!(
+        recorded.secondary_checks.len(),
+        2,
+        "a determined cached status does not recheck secondaries"
+    );
+    let cached_cleanup = recorded.resolves[2..]
+        .iter()
+        .map(|(_, request, _)| request.keys.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        cached_cleanup,
+        vec![
+            vec![b"alpha".to_vec(), b"primary".to_vec()],
+            vec![b"secondary".to_vec()],
+        ]
+    );
+    assert!(recorded.resolves[2..].iter().all(|(_, request, _)| {
+        request.commit_version == 1_500 << 18 && request.start_version == ASYNC_TXN_ID
+    }));
+}
+
+#[test]
+fn pessimistic_resolution_reuses_a_cached_async_commit_fate() {
+    let (runtime, recorded) = runtime_with_secondary_checks(
+        vec![async_primary_status(1_400 << 18)],
+        vec![
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"alpha", 1_500 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"secondary", 1_450 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+        ],
+    );
+    resolve_optimistic_locks(
+        &runtime,
+        &[async_blocker()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &expired_timestamps(),
+        true,
+    )
+    .expect("the first read determines and caches the async-commit fate");
+
+    let result = resolve_blocking_locks(
+        &runtime,
+        &[blocking_pessimistic(b"secondary", 0)],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &expired_timestamps(),
+        false,
+    )
+    .expect("the blocking write reuses the cached async-commit fate");
+    assert_eq!(
+        result,
+        ignoring(
+            vec![ResolvedTxnStatus::Committed(1_500 << 18)],
+            vec![ASYNC_TXN_ID]
+        )
+    );
+
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 1);
+    assert_eq!(recorded.secondary_checks.len(), 2);
+    assert_eq!(recorded.resolves.len(), 4);
+    assert!(recorded.pessimistic_rollbacks.is_empty());
+    assert!(recorded.resolves[2..].iter().all(|(_, request, _)| {
+        request.commit_version == 1_500 << 18 && request.start_version == ASYNC_TXN_ID
+    }));
+}
+
 /// A key whose lock is already gone fixes the commit timestamp for every other
 /// key, overriding the locks that are still present.
 ///

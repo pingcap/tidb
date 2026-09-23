@@ -65,10 +65,10 @@ struct ResolvedTxnStatusCache {
 }
 
 impl ResolvedTxnStatusCache {
-    fn get(&self, txn_id: u64) -> Option<KvrpcCheckTxnStatusResponse> {
+    fn get(&self, txn_id: u64) -> Option<(ResolvedTxnStatus, KvrpcCheckTxnStatusResponse)> {
         self.entries
             .get(&txn_id)
-            .map(|(_, response)| response.clone())
+            .map(|(status, response)| (*status, response.clone()))
     }
 
     fn insert(
@@ -444,7 +444,10 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     }
 
     /// Returns a cached determined CheckTxnStatus response for this resolver.
-    pub(crate) fn cached_lock_status(&self, txn_id: u64) -> Option<KvrpcCheckTxnStatusResponse> {
+    pub(crate) fn cached_lock_status(
+        &self,
+        txn_id: u64,
+    ) -> Option<(ResolvedTxnStatus, KvrpcCheckTxnStatusResponse)> {
         self.resolved_txn_statuses
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -774,10 +777,13 @@ mod async_resolve_tests {
         assert!(cache.get(0).is_none());
         assert_eq!(
             cache.get(RESOLVED_TXN_STATUS_CACHE_SIZE as u64),
-            Some(KvrpcCheckTxnStatusResponse {
-                commit_version: RESOLVED_TXN_STATUS_CACHE_SIZE as u64 + 1,
-                ..KvrpcCheckTxnStatusResponse::default()
-            })
+            Some((
+                ResolvedTxnStatus::Committed(RESOLVED_TXN_STATUS_CACHE_SIZE as u64 + 1),
+                KvrpcCheckTxnStatusResponse {
+                    commit_version: RESOLVED_TXN_STATUS_CACHE_SIZE as u64 + 1,
+                    ..KvrpcCheckTxnStatusResponse::default()
+                }
+            ))
         );
     }
 
