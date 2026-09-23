@@ -1831,6 +1831,14 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
 		executor_metrics.SessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
+		// Unlike the server query histogram, this records each statement in a multi-statement
+		// request separately. Include parsing before DurationParse is reset below.
+		sqlType := sessVars.StmtCtx.StmtType
+		if sqlType == "" {
+			sqlType = metrics.LblGeneral
+		}
+		metrics.StatementDurationHistogram.WithLabelValues(sqlType, sessVars.StmtCtx.ResourceGroupName).
+			Observe(sessVars.GetTotalCostDuration().Seconds())
 	}
 	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
 	sessVars.DurationParse = 0

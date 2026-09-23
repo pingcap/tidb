@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -72,7 +73,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
+	"github.com/prometheus/client_golang/prometheus"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
@@ -2790,6 +2793,137 @@ func TestConnAddMetrics(t *testing.T) {
 	// ok
 	cc.addQueryMetrics(mysql.ComStmtExecute, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
+}
+
+func TestStatementDurationMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table statement_duration (id int primary key, v int)")
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+	}
+	tc := &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
+	cc.SetCtx(tc)
+	vars := tk.Session().GetSessionVars()
+	// Isolate observations from bootstrap and background internal SQL without resetting global metrics.
+	tk.MustExec("create resource group statement_duration_test RU_PER_SEC = UNLIMITED")
+	tk.MustExec("set resource group statement_duration_test")
+	tc.SetClientCapability(vars.ClientCapability | mysql.ClientMultiStatements)
+	ctx := context.Background()
+	readHistogram := func(observer prometheus.Observer) *dto.Metric {
+		metric, ok := observer.(prometheus.Metric)
+		require.True(t, ok)
+		value := &dto.Metric{}
+		require.NoError(t, metric.Write(value))
+		return value
+	}
+	statementMetric := func(sqlType string) *dto.Metric {
+		return readHistogram(metrics.StatementDurationHistogram.WithLabelValues(sqlType, vars.ResourceGroupName))
+	}
+
+	t.Run("multi statement timing", func(t *testing.T) {
+		insertBefore := statementMetric("Insert").GetHistogram()
+		updateBefore := statementMetric("Update").GetHistogram()
+		var statementTypes []string
+		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+			statementTypes = append(statementTypes, vars.StmtCtx.StmtType)
+			if vars.StmtCtx.StmtType == "Insert" {
+				// Simulate a slow INSERT and parsing without sleeping. The UPDATE must get its own clock.
+				vars.StartTime = vars.StartTime.Add(-time.Hour)
+				vars.DurationParse = time.Minute
+			}
+		})
+		t.Cleanup(func() { tk.Session().ClearValue(breakpoint.NotifyBreakPointFuncKey) })
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+		start := time.Now()
+		err := cc.handleQuery(ctx, "insert into statement_duration values (1, 0); update statement_duration set v = v + 1 where id = 1")
+		require.NoError(t, err)
+		elapsed := time.Since(start).Seconds()
+		require.Equal(t, []string{"Insert", "Update"}, statementTypes)
+		insert := statementMetric("Insert").GetHistogram()
+		update := statementMetric("Update").GetHistogram()
+		require.Equal(t, insertBefore.GetSampleCount()+1, insert.GetSampleCount())
+		require.Equal(t, updateBefore.GetSampleCount()+1, update.GetSampleCount())
+		require.GreaterOrEqual(t, insert.GetSampleSum()-insertBefore.GetSampleSum(), (time.Hour + time.Minute).Seconds())
+		for i, bucket := range insert.GetBucket() {
+			if bucket.GetUpperBound() < (time.Hour + time.Minute).Seconds() {
+				require.Equal(t, insertBefore.GetBucket()[i].GetCumulativeCount(), bucket.GetCumulativeCount())
+			}
+		}
+		// Bound by the measured whole command, not a fixed latency ceiling that flakes on slow CI.
+		require.LessOrEqual(t, update.GetSampleSum()-updateBefore.GetSampleSum(), elapsed)
+
+		// The existing server histogram still measures one whole command under its last statement type.
+		dbNames := session.GetDBNames(vars)
+		require.Len(t, dbNames, 1)
+		query := metrics.QueryDurationHistogram.WithLabelValues("Update", dbNames[0], vars.ResourceGroupName)
+		queryBefore := readHistogram(query).GetHistogram()
+		cc.addQueryMetrics(mysql.ComQuery, start, nil)
+		queryAfter := readHistogram(query).GetHistogram()
+		require.Equal(t, queryBefore.GetSampleCount()+1, queryAfter.GetSampleCount())
+		require.GreaterOrEqual(t, queryAfter.GetSampleSum()-queryBefore.GetSampleSum(), elapsed)
+		require.LessOrEqual(t, queryAfter.GetSampleSum()-queryBefore.GetSampleSum(), time.Since(start).Seconds())
+		require.Equal(t, update.GetSampleCount(), statementMetric("Update").GetHistogram().GetSampleCount())
+
+		labels := map[string]string{}
+		for _, label := range statementMetric("Insert").GetLabel() {
+			labels[label.GetName()] = label.GetValue()
+		}
+		require.Equal(t, map[string]string{"sql_type": "Insert", "resource_group": vars.ResourceGroupName}, labels)
+		require.Positive(t, promtestutils.CollectAndCount(metrics.StatementDurationHistogram, "tidb_session_statement_duration_seconds"))
+	})
+
+	t.Run("prepared execute and resultset close", func(t *testing.T) {
+		before := statementMetric("Select").GetHistogram().GetSampleCount()
+		stmt, _, _, err := tc.Prepare("select v from statement_duration where id = 1")
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, stmt.Close()) })
+		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
+		for i := uint64(0); i < 2; i++ {
+			rs, err := stmt.Execute(ctx, nil)
+			require.NoError(t, err)
+			require.NotNil(t, rs)
+			require.Equal(t, before+i, statementMetric("Select").GetHistogram().GetSampleCount())
+			rs.Close()
+			require.Equal(t, before+i+1, statementMetric("Select").GetHistogram().GetSampleCount())
+			rs.Close()
+			require.Equal(t, before+i+1, statementMetric("Select").GetHistogram().GetSampleCount())
+		}
+	})
+
+	t.Run("text prepare and execute", func(t *testing.T) {
+		prepareBefore := statementMetric("Prepare").GetHistogram().GetSampleCount()
+		selectBefore := statementMetric("Select").GetHistogram().GetSampleCount()
+		require.NoError(t, cc.handleQuery(ctx, "prepare duration_stmt from 'select 1'; execute duration_stmt; deallocate prepare duration_stmt"))
+		require.Equal(t, prepareBefore+1, statementMetric("Prepare").GetHistogram().GetSampleCount())
+		require.Equal(t, selectBefore+1, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("parse and compile errors", func(t *testing.T) {
+		before := statementMetric("Select").GetHistogram().GetSampleCount()
+		require.Error(t, cc.handleQuery(ctx, "select from"))
+		require.Error(t, cc.handleQuery(ctx, "select * from statement_duration_missing"))
+		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("execution error", func(t *testing.T) {
+		require.NoError(t, cc.handleQuery(ctx, "insert into statement_duration values (2, 0)"))
+		before := statementMetric("Insert").GetHistogram().GetSampleCount()
+		require.Error(t, cc.handleQuery(ctx, "insert into statement_duration values (2, 2)"))
+		require.Equal(t, before+1, statementMetric("Insert").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("restricted SQL", func(t *testing.T) {
+		before := statementMetric("Select").GetHistogram().GetSampleCount()
+		vars.InRestrictedSQL = true
+		t.Cleanup(func() { vars.InRestrictedSQL = false })
+		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+		require.NoError(t, cc.handleQuery(internalCtx, "select v from statement_duration where id = 1"))
+		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
 }
 
 func TestIssue54335(t *testing.T) {
