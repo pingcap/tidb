@@ -993,6 +993,7 @@ mod tests {
             .set_schema(Some(Schema::new(vec![column.clone()])));
         PhysicalPlan::PointGet(PhysicalPointGet {
             base,
+            lock: false,
             table_id: i64::from(id),
             partition: None,
             index_id: None,

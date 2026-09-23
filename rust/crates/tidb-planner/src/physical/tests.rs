@@ -354,6 +354,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
+            lock: false,
         base: BasePhysicalPlan::with_id(11, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -391,6 +392,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         ..PhysicalIndexMergeReader::default()
     });
     let template = PhysicalPlan::Dml(PhysicalDmlRoot {
+            fk_triggers: Vec::new(),
         base: BasePhysicalPlan::with_id(14, "Update", 0),
         go_operator: "Update".to_owned(),
         select_plan: Some(Box::new(index_merge)),
@@ -450,6 +452,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         ]
     };
     let common_handle = PhysicalPlan::PointGet(PhysicalPointGet {
+            lock: false,
         base: BasePhysicalPlan::with_id(31, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -463,6 +466,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         ))),
     });
     let unique_index = PhysicalPlan::PointGet(PhysicalPointGet {
+            lock: false,
         base: BasePhysicalPlan::with_id(32, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -537,6 +541,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
         high_exclude: false,
     };
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
+            lock: false,
         base: BasePhysicalPlan::with_id(34, "PointGet", 0),
         table_id: 1,
         partition: None,
