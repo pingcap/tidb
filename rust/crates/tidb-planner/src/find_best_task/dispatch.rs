@@ -836,6 +836,7 @@ fn exhaust_physical_plans(
                             keep_outer_order,
                             inner_access_table_id: None,
                             inner_access_index_id: None,
+                            inner_range_bare: false,
                             inner_access_conditions: Vec::new(),
                             left_join_keys: left_columns.clone(),
                             right_join_keys: right_columns.clone(),
@@ -2098,6 +2099,12 @@ fn index_join_feedback(
     )?;
     access_conditions.extend(last_col_access);
     Some(crate::task::IndexJoinInfo {
+        // Bare outer-key spelling only when the probe is the integer handle
+        // (`constructDS2TableScanTask`'s int-PK branch); rowid tables without
+        // a matching handle and index probes render the `eq(inner, outer)`
+        // pairs of `indexJoinPathRangeInfo`.
+        range_bare: matches!(path, crate::access_path::PossiblePath::Table { .. })
+            && ds.handle_is_int,
         table_id: ds.physical_table_id,
         index_id: match path {
             crate::access_path::PossiblePath::Index { index } => {

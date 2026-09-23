@@ -644,6 +644,10 @@ struct IndexJoinExplainContext<'a> {
     /// Go `indexJoinResult.chosenAccess`: the conditions that extend the
     /// per-probe range past the equality keys.
     access_conditions: &'a [tidb_expr::expression::Expression],
+    /// Master's `RangeInfo` spelling for this probe: the integer-handle
+    /// branch renders bare outer keys, every other probe renders
+    /// `eq(inner, outer)` pairs.
+    range_bare: bool,
 }
 
 fn is_index_join_table_range(
@@ -749,12 +753,13 @@ fn index_join_decided_by_text_for_scan(
     scan: &tidb_planner::physical::PhysicalTableScan,
     catalog: &Catalog,
 ) -> String {
-    // The handle kind, not the join variant or the number of join keys,
-    // selects the integer-PK form in buildDataSource2TableScanByIndexJoinProp.
-    if catalog
-        .physical_kv_table_by_id(scan.table_id)
-        .is_some_and(|table| table.common_handle_offsets().is_empty())
-    {
+    // Master picks the integer-PK spelling when the join probes the table's
+    // integer handle (`constructDS2TableScanTask`'s int-PK branch records the
+    // bare `indexJoinIntPKRangeInfo`); every other probe (index path,
+    // common handle, rowid mutable ranges) records the `eq(inner, outer)`
+    // pairs of `indexJoinPathRangeInfo`. The join construction records which
+    // branch selected the inner access.
+    if context.range_bare {
         return index_join_int_pk_decided_by_text(eval_ctx, context);
     }
     index_join_decided_by_text(eval_ctx, *context)
@@ -1463,6 +1468,7 @@ fn physical_explain_operator(
                             outer_keys: &join.outer_join_keys,
                             key_offsets: &join.key_off2_idx_off,
                             access_conditions: &join.inner_access_conditions,
+                            range_bare: join.inner_range_bare,
                         }),
                     PhysicalPlan::IndexJoin(_) => None,
                     _ => index_join_context,

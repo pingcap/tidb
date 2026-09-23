@@ -777,6 +777,11 @@ pub struct PhysicalIndexJoin {
     pub compare_filters: Option<IndexJoinCompareFilters>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+    /// Which `RangeInfo` spelling master renders on the inner access scan:
+    /// bare outer keys for the integer-handle probe, `eq(inner, outer)`
+    /// pairs otherwise (`indexJoinIntPKRangeInfo` vs
+    /// `indexJoinPathRangeInfo`).
+    pub inner_range_bare: bool,
 }
 
 impl Default for PhysicalIndexJoin {
@@ -807,6 +812,7 @@ impl Default for PhysicalIndexJoin {
             idx_col_lens: Vec::new(),
             compare_filters: None,
             range_rebuild: None,
+            inner_range_bare: false,
         }
     }
 }
@@ -4151,6 +4157,7 @@ impl PhysicalPlan {
                 kind: op.kind,
                 keep_outer_order: op.keep_outer_order,
                 inner_access_table_id: op.inner_access_table_id,
+                inner_range_bare: op.inner_range_bare,
                 inner_access_index_id: op.inner_access_index_id,
                 inner_access_conditions: op.inner_access_conditions.clone(),
                 left_join_keys: op.left_join_keys.clone(),

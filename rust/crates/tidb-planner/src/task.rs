@@ -71,6 +71,12 @@ pub struct IndexJoinInfo {
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
     /// Go `IndexJoinInfo.CompareFilters`.
     pub compare_filters: Option<crate::physical::IndexJoinCompareFilters>,
+    /// Go `AccessPath.RangeInfo`'s spelling: `indexJoinIntPKRangeInfo` renders
+    /// the bare outer join keys when the probe is the integer handle
+    /// (`constructDS2TableScanTask`'s int-PK branch); every other probe
+    /// (index path, common handle, rowid mutable ranges) renders
+    /// `indexJoinPathRangeInfo`'s `eq(inner, outer)` pairs.
+    pub range_bare: bool,
 }
 
 /// Go `context.WarnLevelWarning` / `WarnLevelNote` — the two levels this
@@ -2760,6 +2766,7 @@ fn complete_physical_index_join(
         }
     }
 
+    join.inner_range_bare = info.range_bare;
     join.inner_access_table_id = Some(info.table_id);
     join.inner_access_index_id = info.index_id;
     join.inner_access_conditions = info.access_conditions;
@@ -4456,6 +4463,7 @@ mod attach_tests {
             IndexJoinInfo {
                 table_id: 7,
                 index_id: Some(8),
+                range_bare: false,
                 ranges: crate::ranger::types::Ranges::new(),
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![0, -1],
@@ -4560,6 +4568,7 @@ mod attach_tests {
             IndexJoinInfo {
                 table_id: 7,
                 index_id: Some(8),
+                range_bare: false,
                 ranges: crate::ranger::types::Ranges::new(),
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![-1],
