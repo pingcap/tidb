@@ -2737,6 +2737,44 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if err != nil {
 		return err
 	}
+	// Global statistics reuse the saved sketches of skipped partitions.
+	if !(as.IndexFlag && allSpecialGlobalIndex) && dynamicPrune && isPartitioned {
+		cols := astColsInfo
+		if savedCols, ok := colsInfoMap[physicalIDs[0]]; ok {
+			cols = savedCols
+		}
+		cols, _ = b.filterSkipColumnTypes(cols, tbl, &mustAnalyzedCols)
+		rate := math.Float64frombits(fillAnalyzeOptions(astOpts)[ast.AnalyzeOptNDVRate])
+		reason, err := b.checkRetainedNDVSketches(tbl, physicalIDs, cols, rate)
+		if err != nil {
+			return err
+		}
+		if reason != "" {
+			requested := strings.Join(partitionNames, ", ")
+			oldIDs := physicalIDs
+			physicalIDs, partitionNames, err = GetPhysicalIDsAndPartitionNames(tbl.TableInfo, nil)
+			if err != nil {
+				return err
+			}
+			var added []string
+			for i, id := range physicalIDs {
+				if !slices.Contains(oldIDs, id) {
+					added = append(added, partitionNames[i])
+				}
+			}
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+				"ANALYZE table %s expands partitions [%s] to all partitions: %s; added [%s]. Global statistics require compatible sketches",
+				tbl.Name.O, requested, reason, strings.Join(added, ", ")))
+			// Dynamic mode uses the table's options and columns for every partition.
+			if options, ok := optionsMap[oldIDs[0]]; ok {
+				for _, id := range physicalIDs {
+					options.PhyTableID = id
+					optionsMap[id] = options
+					colsInfoMap[id] = colsInfoMap[oldIDs[0]]
+				}
+			}
+		}
+	}
 	maps.Copy(analyzePlan.OptionsMap, optionsMap)
 
 	var indexes, independentIndexes, specialGlobalIndexes []*model.IndexInfo

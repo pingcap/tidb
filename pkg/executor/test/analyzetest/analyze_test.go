@@ -2389,10 +2389,40 @@ func TestSampledNDVCompatibility(t *testing.T) {
 	require.NoError(t, h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), &restored, 0))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("6"))
 
-	// The legacy peer returns full input for p0, which cannot merge with the sampled p1.
+	// The precheck allows matching saved rates, but legacy responses still fail the real merge.
 	err = tk.ExecToErr("analyze table ndv partition p0 with 0.1 NDVRATE")
 	require.ErrorIs(t, err, statistics.ErrIncompatibleNDV)
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id in (?,?)", data, part0, part1)
+	tk.MustExec("analyze table ndv partition p0 with 0.2 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("expands partitions [p0] to all partitions: partition p1 column a uses NDVRATE 0.1, requested 0.2; added [p1]")
 	// NDVRATE is a statement option; the next statement returns to full input.
 	tk.MustExec("analyze table ndv")
 	tk.MustQuery("select job_info like '%ndvrate%' from mysql.analyze_jobs where table_name='ndv' and partition_name='p0' order by id desc limit 1").Check(testkit.Rows("0"))
+	// Index offsets in a partial column list differ from table offsets.
+	tk.MustExec("create table ndv_virtual (a int primary key, unused int, v int as (b+1), b int, key idx(v)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv_virtual(a,b) values (1,1),(11,1)")
+	tk.MustExec("analyze table ndv_virtual columns a,b")
+	virtual, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv_virtual"))
+	require.NoError(t, err)
+	kept := virtual.Meta().Partition.Definitions[1].ID
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=? and is_index=0", data, kept)
+	// The virtual index stays on full input. Matching retained rates need no expansion,
+	// so the old mock peer's response exposes a late column-mode conflict.
+	require.ErrorIs(t, tk.ExecToErr("analyze table ndv_virtual partition p0 with 0.1 NDVRATE"), statistics.ErrIncompatibleNDV)
+
+	// Only sampled NDV needs every retained sketch. Full input keeps skipping
+	// partitions without one, such as statistics loaded by older versions.
+	tk.MustExec("analyze table ndv")
+	tk.MustExec("delete from mysql.stats_fm_sketch where table_id = ?", part1)
+	tk.MustExec("analyze table ndv partition p0 with 0.1 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("partition p1 column a has no saved sketch")
+	tk.MustExec("delete from mysql.stats_fm_sketch where table_id = ?", part1)
+	tk.MustExec("lock stats ndv partition p1")
+	for _, async := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_async_merge_global_stats=%t", async))
+		tk.MustExec("analyze table ndv partition p0")
+		tk.MustQuery("show warnings").CheckNotContain("expands partitions")
+	}
+	tk.MustExec("analyze table ndv")
+	tk.MustExec("unlock stats ndv partition p1")
 }

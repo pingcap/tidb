@@ -114,6 +114,22 @@ func (s *FMSketch) sampledNDV() int64 {
 	return int64(max(d, estimate))
 }
 
+// SavedFMSketchNDVRate reads only the header of a saved, non-empty sketch.
+// Legacy sketches use rate one. The global merge still decodes the full input.
+func SavedFMSketchNDVRate(data []byte) (float64, error) {
+	if data[0] != 0 {
+		return 1, nil
+	}
+	if len(data) < 10 || data[1] != 1 {
+		return 0, errors.New("unsupported sampled NDV sketch format")
+	}
+	rate := math.Float64frombits(binary.LittleEndian.Uint64(data[2:10]))
+	if !validNDVRate(rate) || rate == 1 {
+		return 0, errors.Errorf("invalid saved NDVRATE %g", rate)
+	}
+	return rate, nil
+}
+
 func (s *FMSketch) encodeSampled() ([]byte, error) {
 	sample := s.sample
 	collector := tipb.RowSampleCollector{
@@ -134,12 +150,9 @@ func (s *FMSketch) encodeSampled() ([]byte, error) {
 }
 
 func decodeSampledFMSketch(data []byte) (*FMSketch, error) {
-	if len(data) < 10 || data[1] != 1 {
-		return nil, errors.New("unsupported sampled NDV sketch format")
-	}
-	rate := math.Float64frombits(binary.LittleEndian.Uint64(data[2:10]))
-	if !validNDVRate(rate) || rate == 1 {
-		return nil, errors.Errorf("invalid saved NDVRATE %g", rate)
+	rate, err := SavedFMSketchNDVRate(data)
+	if err != nil {
+		return nil, err
 	}
 	var collector tipb.RowSampleCollector
 	if err := collector.Unmarshal(data[10:]); err != nil {
