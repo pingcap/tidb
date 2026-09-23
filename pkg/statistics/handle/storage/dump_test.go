@@ -266,8 +266,8 @@ func TestLoadPartitionStats(t *testing.T) {
 
 	// load stats back
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
-	// Loading does not restore the partition FM sketches that a later global merge needs.
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
+	// A later global merge needs the partition FM sketches of the column and the index.
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("16"))
 
 	// compare
 	for i, def := range pi.Definitions {
