@@ -162,34 +162,16 @@ impl Collector {
     pub fn new() -> Self {
         let index_usage = Arc::new(RwLock::new(take_index_usage()));
         let target = Arc::clone(&index_usage);
-        let inline_target = Arc::clone(&index_usage);
-        let collector = GlobalCollector::with_inline_merge(
-            move |delta: Arc<IndexUsage>| {
-                merge(
-                    &mut target.write().expect("index usage lock poisoned"),
-                    &delta,
-                );
-                recycle_index_usage(delta);
-            },
-            // Go `sessionCollector.SendDelta` never blocks the session: the
-            // session merges here only when the global map is free, and a
-            // reader (`GetIndexUsage`, the dump) or another merge holding it
-            // sends the delta through the worker as before.
-            move |delta: Arc<IndexUsage>| match inline_target.try_write() {
-                Ok(mut usage) => {
-                    merge(&mut usage, &delta);
-                    drop(usage);
-                    recycle_index_usage(delta);
-                    Ok(())
-                }
-                Err(std::sync::TryLockError::WouldBlock) => Err(delta),
-                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
-                    merge(&mut poisoned.into_inner(), &delta);
-                    recycle_index_usage(delta);
-                    Ok(())
-                }
-            },
-        );
+        // Match Go's bounded, nonblocking SendDelta channel. In particular,
+        // do not merge inline when the queue is full: Go returns false and
+        // keeps the current session delta for its next report attempt.
+        let collector = GlobalCollector::new(move |delta: Arc<IndexUsage>| {
+            merge(
+                &mut target.write().expect("index usage lock poisoned"),
+                &delta,
+            );
+            recycle_index_usage(delta);
+        });
         Self {
             collector,
             index_usage,

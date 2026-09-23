@@ -22,16 +22,11 @@ use std::time::{Duration, Instant};
 const DEFAULT_CHANNEL_SIZE: usize = 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// A merge that runs on the sending thread when it can take the merge
-/// target without blocking, handing the delta back otherwise.
-pub type InlineMerge<T> = dyn Fn(T) -> Result<(), T> + Send + Sync;
-
 struct Shared<T> {
     normal: (Sender<T>, Receiver<T>),
     high_priority: (Sender<T>, Receiver<T>),
     closed: Receiver<()>,
     close_once: Mutex<Option<Sender<()>>>,
-    inline_merge: Option<Arc<InlineMerge<T>>>,
 }
 
 /// Go `GlobalCollector` and `globalCollector`.
@@ -47,29 +42,6 @@ impl<T: Send + 'static> GlobalCollector<T> {
     where
         F: Fn(T) + Send + Sync + 'static,
     {
-        Self::build(Arc::new(merge), None)
-    }
-
-    /// Like [`Self::new`], with `inline_merge` tried on the sending thread
-    /// before a delta goes through the channel. Go's `SendDelta` hands the
-    /// delta to the merge goroutine through a buffered channel at no cost
-    /// beyond readying it; the Rust channel send instead wakes the parked
-    /// worker thread through a futex on every delta. `inline_merge` MUST
-    /// merge into the same state the worker merges into, MUST NOT block, and
-    /// returns the delta unchanged when it cannot take that state without
-    /// blocking; the delta then takes the channel path exactly as before.
-    pub fn with_inline_merge<F, G>(merge: F, inline_merge: G) -> Self
-    where
-        F: Fn(T) + Send + Sync + 'static,
-        G: Fn(T) -> Result<(), T> + Send + Sync + 'static,
-    {
-        Self::build(Arc::new(merge), Some(Arc::new(inline_merge)))
-    }
-
-    fn build(
-        merge: Arc<dyn Fn(T) + Send + Sync>,
-        inline_merge: Option<Arc<InlineMerge<T>>>,
-    ) -> Self {
         let (close, closed) = bounded(0);
         Self {
             shared: Arc::new(Shared {
@@ -77,9 +49,8 @@ impl<T: Send + 'static> GlobalCollector<T> {
                 high_priority: bounded(DEFAULT_CHANNEL_SIZE),
                 closed,
                 close_once: Mutex::new(Some(close)),
-                inline_merge,
             }),
-            merge,
+            merge: Arc::new(merge),
             workers: Mutex::new(Vec::new()),
         }
     }
@@ -88,7 +59,7 @@ impl<T: Send + 'static> GlobalCollector<T> {
     pub fn spawn_session(&self) -> SessionCollector<T> {
         SessionCollector {
             shared: Arc::clone(&self.shared),
-            last_update: Mutex::new(Instant::now()),
+            last_update: Instant::now(),
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -152,79 +123,34 @@ impl<T: Send + 'static> GlobalCollector<T> {
 /// Go `SessionCollector` and `sessionCollector`.
 pub struct SessionCollector<T> {
     shared: Arc<Shared<T>>,
-    last_update: Mutex<Instant>,
+    last_update: Instant,
     timeout: Duration,
 }
 
 impl<T: Send + 'static> SessionCollector<T> {
     /// Go `SessionCollector.SendDelta`.
-    pub fn send_delta(&self, data: T) -> bool {
-        let expired = self
-            .last_update
-            .lock()
-            .expect("session timestamp lock poisoned")
-            .elapsed()
-            > self.timeout;
-        if expired {
+    pub fn send_delta(&mut self, data: T) -> bool {
+        if self.last_update.elapsed() > self.timeout {
             return self.send_delta_sync(data);
         }
-        // The delta reaches the same merged state either way; merging here
-        // only skips waking the worker thread (see `with_inline_merge`).
-        let data = match self.shared.inline_merge.as_deref() {
-            Some(inline_merge) => match inline_merge(data) {
-                Ok(()) => {
-                    *self
-                        .last_update
-                        .lock()
-                        .expect("session timestamp lock poisoned") = Instant::now();
-                    return true;
-                }
-                Err(data) => data,
-            },
-            None => data,
-        };
         if self.shared.normal.0.try_send(data).is_err() {
             return false;
         }
-        *self
-            .last_update
-            .lock()
-            .expect("session timestamp lock poisoned") = Instant::now();
+        self.last_update = Instant::now();
         true
     }
 
     /// Go `SessionCollector.SendDeltaSync`.
-    pub fn send_delta_sync(&self, data: T) -> bool {
-        if let Some(inline_merge) = self.shared.inline_merge.as_deref() {
-            let data = match inline_merge(data) {
-                Ok(()) => {
-                    *self
-                        .last_update
-                        .lock()
-                        .expect("session timestamp lock poisoned") = Instant::now();
-                    return true;
-                }
-                Err(data) => data,
-            };
-            self.shared
-                .high_priority
-                .0
-                .send(data)
-                .expect("retained receiver");
-        } else {
-            // Pinned Go `SpawnSession` leaves `sessionCollector.closeCh` nil, so
-            // this synchronous path cannot observe `GlobalCollector.Close` and
-            // still enqueues while the high-priority channel has capacity.
-            self.shared
-                .high_priority
-                .0
-                .send(data)
-                .expect("retained receiver");
-        }
-        *self
-            .last_update
-            .lock()
-            .expect("session timestamp lock poisoned") = Instant::now();
+    pub fn send_delta_sync(&mut self, data: T) -> bool {
+        // Pinned Go `SpawnSession` leaves `sessionCollector.closeCh` nil, so
+        // this synchronous path cannot observe `GlobalCollector.Close` and
+        // still enqueues while the high-priority channel has capacity.
+        self.shared
+            .high_priority
+            .0
+            .send(data)
+            .expect("retained receiver");
+        self.last_update = Instant::now();
         true
     }
 }

@@ -23,7 +23,13 @@ use std::time::Instant;
 use tidb_stats_handle_usage_indexusage::{new_sample, Collector};
 
 fn benchmark_index_collector(name: &str, report_per_operation: usize) {
-    const OPERATIONS: usize = 100_000;
+    // Match the Go -benchtime=100ms run's roughly 1.6 million operations on
+    // this host; short fixed runs were too noisy to compare meaningfully.
+    const OPERATIONS: usize = 1_600_000;
+    // Go testing.PB acquires about 100 microseconds of work per atomic
+    // reservation, capped at 10,000 operations. This is its grain at the
+    // measured Go collector throughput on the reference machine.
+    const GRAIN: usize = 1_500;
     let operations: Vec<_> = (0..OPERATIONS)
         .map(|index| {
             (
@@ -48,22 +54,39 @@ fn benchmark_index_collector(name: &str, report_per_operation: usize) {
             scope.spawn(move || {
                 let mut session = collector.spawn_session_collector();
                 let mut local_counter = 0;
-                while iteration.fetch_add(1, Ordering::Relaxed) < OPERATIONS {
-                    let index = operation_index.load(Ordering::Relaxed);
-                    let (table_id, index_id, sample) = operations[index].clone();
-                    session.update(table_id, index_id, sample);
-                    if local_counter % report_per_operation == 0 {
-                        session.report();
+                loop {
+                    let start = iteration.fetch_add(GRAIN, Ordering::Relaxed);
+                    if start >= OPERATIONS {
+                        break;
                     }
-                    local_counter += 1;
-                    operation_index.fetch_add(1, Ordering::Relaxed);
+                    for _ in start..(start + GRAIN).min(OPERATIONS) {
+                        let index = operation_index.load(Ordering::Relaxed);
+                        let (table_id, index_id, sample) = operations[index].clone();
+                        session.update(table_id, index_id, sample);
+                        if local_counter % report_per_operation == 0 {
+                            session.report();
+                        }
+                        local_counter += 1;
+                        operation_index.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 session.flush();
             });
         }
     });
     collector.close();
-    println!("{name}: {:?}", black_box(started.elapsed()));
+    let total_reported = (0..100)
+        .map(|index| {
+            collector
+                .get_index_usage((index / 10) as i64, (index % 10) as i64)
+                .query_total
+        })
+        .sum::<u64>();
+    assert_eq!(total_reported, OPERATIONS as u64);
+    println!(
+        "{name} ({workers} workers): {:?}",
+        black_box(started.elapsed())
+    );
 }
 
 fn main() {

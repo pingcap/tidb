@@ -24,7 +24,8 @@ build/platform variant.
 
 `rust/crates/tidb-stats-handle-usage-collector` is the package owner:
 
-- normal and high-priority queues each retain the source capacity of ten;
+- Crossbeam normal and high-priority channels each retain the source capacity
+  of ten;
 - normal sends are nonblocking until five minutes without an accepted update,
   after which they use the synchronous high-priority path;
 - synchronous sends wait for high-priority capacity;
@@ -59,13 +60,12 @@ No Go or Bazel source changed, so `make bazel_prepare` is not required.
 
 ## Risk and unverified boundaries
 
-- Correctness: the native mutex/condition-variable queues preserve accepted,
-  rejected, synchronous, priority, drain, and close outcomes; scheduling among
-  concurrently runnable workers remains intentionally nondeterministic.
+- Correctness: bounded channels preserve accepted, rejected, synchronous,
+  priority, drain, and close outcomes; scheduling among concurrently runnable
+  workers remains intentionally nondeterministic.
 - Compatibility: the public owner moved to the Go package boundary;
   `usage/indexusage` is the only production consumer and is rewired directly.
-- Performance: each source channel maps to a preallocated bounded deque; the
-  single normal call path remains nonblocking when full.
+- Performance: normal sends remain nonblocking when the source queue is full.
 - Broader repository and integration suites remain outside this package-scoped
   gate and are tracked by the continuing parity ExecPlan.
 
@@ -112,3 +112,28 @@ PASS.
 Only Rust source/tests and parity documentation changed. No Go, Bazel, Cargo
 metadata, or module dependency changed, so `make bazel_prepare` is not
 required.
+
+## Follow-up: Go backpressure and single-owner report path (2026-09-23)
+
+The full three-artifact, 289-line Go package was rechecked against
+`origin/master` `bfcc826f420238c574b30758551117320da3bf9a`; each file remains
+byte-identical to the inventory above. The Rust owner still consists of
+`Cargo.toml`, `src/lib.rs`, and `tests/collector_source.rs`.
+
+Removed the Rust-only `GlobalCollector::with_inline_merge` API and its two
+tests. Merging a report inline accepted deltas when Go's ten-entry normal
+channel would return false, so `indexusage` could discard a delta that Go
+retains for a later report. The collector now uses the bounded channel path
+for every ordinary report. `SessionCollector` owns its `Instant` and takes
+`&mut self` for report calls, matching Go's single-owner mutation model and
+removing timestamp-lock overhead from this hot path. The source-shaped
+collector suite has five tests, including the Go close/sync edge case.
+
+The backpressure regression `report_retains_delta_when_global_queue_is_full`
+in the indexusage owner failed before the change (the eleventh pending delta
+was not retained) and passes after it. The two package tests passed on TiDB's
+Go master and Rust; all eleven Rust tests across the collector and indexusage
+owners passed. Downstream `tidb-stats-handle-usage`, session, executor, and
+server crates compile. `make lint`, clippy all-targets, Rust formatting, and
+`git diff --check` pass. `make bazel_prepare` remains unnecessary because no
+Go, import, module, or Bazel input changed.

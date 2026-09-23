@@ -125,3 +125,38 @@ PASS.
 Only Rust source/tests and parity documentation changed. No Go, Bazel, Cargo
 metadata, or module dependency changed, so `make bazel_prepare` is not
 required.
+
+## Follow-up: bounded report backpressure and benchmark alignment (2026-09-23)
+
+The full three-artifact, 568-line Go package was rechecked against
+`origin/master` `bfcc826f420238c574b30758551117320da3bf9a`; every source,
+test, and BUILD artifact remains byte-identical to the inventory above. The
+Rust owner inventory is unchanged: `Cargo.toml`, `src/lib.rs`, `src/tests.rs`,
+and `benches/collector.rs`.
+
+The added `report_retains_delta_when_global_queue_is_full` regression exposed
+a real behavior difference. With the former Rust-only inline merge, the
+eleventh report was accepted even though Go's ten-entry bounded channel is
+full; Go returns false and keeps the session delta. The indexusage owner now
+uses the generic collector's ordinary bounded queue, restoring the Go result.
+The inline-merge extension and its tests were removed because Go has no such
+API. Session reporting now uses an owned timestamp instead of locking it on
+each call. The native synchronized map pool remains an implementation detail
+in place of Go `sync.Pool`; recorded samples, counters, and collector API are
+unchanged.
+
+The Rust benchmark uses Go `testing.PB`-sized batches (about 1,500 operations
+per reservation on this host), measures 1.6 million operations (about 100 ms),
+and checks that every operation was counted. On the same Apple M4 Max host,
+one Go `-benchtime=100ms` run with 16 workers measured 63.56/68.25/69.12 ns
+per operation for report-per-1/4/8. Two Rust runs with 16 workers measured
+69.26/68.66/67.82 and 67.60/67.99/68.41 ns per operation. These are focused
+collector microbenchmarks, not named sysbench/TPC-C/TPC-H/YCSB workload
+results.
+
+Go tests for both packages passed. The combined Rust suite passed all eleven
+tests, and `cargo check` passed for the aggregate usage, session, executor,
+and server consumers. Clippy all-targets, `make lint`, Rust formatting, and
+`git diff --check` passed. No Go/Bazel inputs changed; `make bazel_prepare`
+was not required. Broader TiDB workload parity/performance validation remains
+open in the overall parity effort.

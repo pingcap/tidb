@@ -11638,3 +11638,14 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (PROCESSLIST pin): SHOW PROCESSLIST lists the session's own
  connection with Command=Query and the current database. Pinned in
  `crates/tidb-session/tests/processlist_self_source.rs`.
+- 2026-09-23 (`pkg/statistics/handle/usage/{collector,indexusage}` bounded
+  reporting parity): verified both complete Go packages against
+  `origin/master` `bfcc826f420238c574b30758551117320da3bf9a`. Removed the
+  Rust-only inline-merge path that bypassed Go's bounded-queue backpressure;
+  a new regression failed before the fix and passes after. `SessionCollector`
+  now owns its report timestamp without a mutex. Go/Rust package tests,
+  downstream compile, clippy, lint, formatting, and diff checks pass; focused
+  index-collector benchmark is recorded in the two package receipts. No
+  sysbench/TPC-C/TPC-H/YCSB results are claimed. Receipts:
+  `receipts/statistics_handle_usage_collector.md` and
+  `receipts/statistics_handle_usage_indexusage.md`.

@@ -36,7 +36,7 @@ fn session_send_delta() {
         merged_by_worker.fetch_add(delta, Ordering::Relaxed);
     });
     collector.start_worker();
-    let session = collector.spawn_session();
+    let mut session = collector.spawn_session();
     let mut expected = 0;
     for _ in 0..256 {
         if session.send_delta(1) {
@@ -58,7 +58,7 @@ fn session_parallel_send_delta() {
     let expected = Arc::new(AtomicI64::new(0));
     let mut workers = Vec::new();
     for _ in 0..256 {
-        let session = collector.spawn_session();
+        let mut session = collector.spawn_session();
         let expected = Arc::clone(&expected);
         workers.push(thread::spawn(move || {
             for _ in 0..256 {
@@ -88,7 +88,7 @@ fn session_parallel_send_delta_sync() {
     collector.start_worker();
     let mut workers = Vec::new();
     for _ in 0..256 {
-        let session = collector.spawn_session();
+        let mut session = collector.spawn_session();
         workers.push(thread::spawn(move || {
             for _ in 0..256 {
                 session.send_delta_sync(1);
@@ -105,7 +105,7 @@ fn session_parallel_send_delta_sync() {
 #[test]
 fn synchronous_send_after_close_matches_the_spawned_go_session() {
     let collector = GlobalCollector::new(|_: i32| {});
-    let session = collector.spawn_session();
+    let mut session = collector.spawn_session();
     collector.start_worker();
     collector.close();
 

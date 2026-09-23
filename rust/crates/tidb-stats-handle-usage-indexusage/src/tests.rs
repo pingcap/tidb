@@ -91,6 +91,25 @@ fn update_index() {
     assert_eq!(usage.percentage_access, [0, 0, 0, 1, 0, 0, 2]);
 }
 
+#[test]
+fn report_retains_delta_when_global_queue_is_full() {
+    let global_collector = Collector::new();
+    // Go's GlobalCollector has a ten-entry buffered channel even before its
+    // worker starts. SendDelta succeeds until that queue fills, then leaves
+    // the current session delta in place for the next report attempt.
+    let mut collector = global_collector.spawn_session_collector();
+
+    for index_id in 0..10 {
+        collector.update(1, index_id, new_sample(1, 1, 1, 1));
+        collector.report();
+        assert!(pending_usage(&collector, 1, index_id).is_none());
+    }
+
+    collector.update(1, 10, new_sample(1, 1, 1, 1));
+    collector.report();
+    assert!(pending_usage(&collector, 1, 10).is_some());
+}
+
 #[derive(Clone)]
 struct TestOp {
     info: Sample,
