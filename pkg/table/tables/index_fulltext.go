@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -106,6 +107,17 @@ func (c *index) fullTextTerms(doc types.Datum) (map[string]struct{}, error) {
 		terms[string(val[0].GetBytes())] = struct{}{}
 	}
 	return terms, nil
+}
+
+// FullTextIndexTerms returns the distinct terms the document analyzes to under
+// a FULLTEXT index built in TiKV, for consistency checks that need to know
+// which entries a row should have.
+func FullTextIndexTerms(idx table.Index, doc types.Datum) (map[string]struct{}, error) {
+	c, ok := idx.(*index)
+	if !ok || c.fullText == nil {
+		return nil, errors.Errorf("index %s is not a fulltext index built in TiKV", idx.Meta().Name.O)
+	}
+	return c.fullTextTerms(doc)
 }
 
 // genFullTextIndexKey encodes the key of one [term, positions] tuple.

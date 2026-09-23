@@ -18,15 +18,19 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -179,6 +183,15 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 	tk.MustQuery("show warnings").CheckContain("Duplicate key name")
 	tk.MustContainErrMsg("create fulltext index idx_taken on t (body)", "Duplicate key name")
 
+	// A cluster with a node that would not maintain the index cannot create
+	// one; the DDL version detection loop decides that.
+	model.SetTiKVFullTextSupported(false)
+	tk.MustContainErrMsg("create fulltext index idx_mixed on t (title)", "requires every TiDB node in the cluster to support it")
+	tk.MustContainErrMsg("create table mixed (body text, fulltext index idx (body))", "requires every TiDB node in the cluster to support it")
+	tk.MustContainErrMsg("alter table t add fulltext index idx_mixed (title)", "requires every TiDB node in the cluster to support it")
+	model.SetTiKVFullTextSupported(true)
+	tk.MustExec("create table mixed (body text, fulltext index idx (body))")
+
 	// Crossed token bounds would build an index that admits no token.
 	tk.MustExec("set global innodb_ft_min_token_size = 16")
 	tk.MustExec("set global innodb_ft_max_token_size = 10")
@@ -273,6 +286,47 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, txn.Set(removedKey, removedValue))
 	require.NoError(t, txn.Commit(context.Background()))
+	tk.MustExec("admin check table t")
+
+	// ADMIN RECOVER INDEX puts a missing entry back; cleanup cannot read
+	// the index and says so.
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
+	require.NoError(t, txn.Delete(removedKey))
+	require.NoError(t, txn.Commit(context.Background()))
+	tk.MustQuery("admin recover index t idx").Check(testkit.Rows("1 5"))
+	tk.MustExec("admin check table t")
+	tk.MustContainErrMsg("admin cleanup index t idx", "fulltext index `idx` is not supported for cleanup index")
+
+	// The other direction: an entry whose row is gone, and an entry for a
+	// term the row does not contain, are both reported.
+	mutate := func(fn func(txn kv.Transaction)) {
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err)
+		fn(txn)
+		require.NoError(t, txn.Commit(context.Background()))
+	}
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tblInfo.ID, kv.IntHandle(2))
+	var rowValue []byte
+	mutate(func(txn kv.Transaction) {
+		rowValue, err = kv.GetValue(context.Background(), txn, rowKey)
+		require.NoError(t, err)
+		require.NoError(t, txn.Delete(rowKey))
+	})
+	tk.MustContainErrMsg("admin check table t", "data inconsistency in table: t, index: idx, handle: 2")
+	mutate(func(txn kv.Transaction) { require.NoError(t, txn.Set(rowKey, rowValue)) })
+	tk.MustExec("admin check table t")
+	bogusKey := tablecodec.EncodeIndexSeekKey(tblInfo.ID, idxInfo.ID, nil)
+	encodedTerm, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum([]byte("bogus")), types.NewIntDatum(1))
+	require.NoError(t, err)
+	bogusKey = append(bogusKey, encodedTerm...)
+	mutate(func(txn kv.Transaction) {
+		require.NoError(t, txn.Set(bogusKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPositions(nil, []int{0}), false)))
+	})
+	tk.MustContainErrMsg("admin check table t", "data inconsistency in table: t, index: idx, handle: 1")
+	mutate(func(txn kv.Transaction) { require.NoError(t, txn.Delete(bogusKey)) })
 	tk.MustExec("admin check table t")
 
 	// Updating the document replaces its entries; updating another column

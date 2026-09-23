@@ -722,6 +722,12 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		b.err = errors.Errorf("columnar index `%v` is not supported for cleanup index", v.IndexName)
 		return nil
 	}
+	if index.Meta().IsTiKVFullTextIndex() {
+		// Cleanup reads the index through a coprocessor scan that would
+		// decode its terms as column values.
+		b.err = errors.Errorf("fulltext index `%v` is not supported for cleanup index", v.IndexName)
+		return nil
+	}
 	e := &CleanupIndexExec{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta(), false),
