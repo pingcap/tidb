@@ -2981,9 +2981,6 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	// writtenBytes samples the payload buffered by the txn that finally
-	// commits, so a retried RunInNewTxn overwrites it instead of double counting.
-	var writtenBytes int
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) (err error) {
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
@@ -3042,13 +3039,10 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 			taskCtx.addedCount++
 		}
 
-		writtenBytes = txn.Size()
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillData", 3000)
-	if errInTxn == nil {
-		w.accountBackfillTxnRU(jobID, writtenBytes)
-	}
 	failpoint.Inject("mockDMLExecution", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecution != nil {
@@ -4039,6 +4033,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 			}
 			taskCtx.addedCount++
 		}
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "cleanUpIndexBackfillDataInTxn", 3000)

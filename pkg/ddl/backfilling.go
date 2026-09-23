@@ -152,6 +152,7 @@ type backfillTaskContext struct {
 	done          bool
 	addedCount    int
 	scanCount     int
+	writtenBytes  int
 	warnings      map[errors.ErrorID]*terror.Error
 	warningsCount map[errors.ErrorID]int64
 	finishTS      uint64
@@ -254,16 +255,11 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 }
 
 // accountBackfillTxnRU converts the bytes written by one committed reorg
-// backfill transaction into RU, reusing the general DDL transaction-KV
-// formula, and accumulates it on the job's reorg context so runReorgJob can
-// carry it to the foreground worker.
-func (w *backfillCtx) accountBackfillTxnRU(jobID int64, writtenBytes int) {
+// backfill transaction into RU and accumulates it with the other per-task
+// statistics on the job's reorg context.
+func accountBackfillTxnRU(rc *reorgCtx, jobID int64, writtenBytes int) {
 	failpoint.InjectCall("accountBackfillTxnRU", jobID, writtenBytes)
 	if !kerneltype.IsNextGen() {
-		return
-	}
-	rc := w.getReorgCtx(jobID)
-	if rc == nil {
 		return
 	}
 	rc.increaseRU(float64(writtenBytes) * currentDDLRUWeights().TxnKVBytes)
@@ -400,6 +396,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// successfully committed small ranges rather than fetching it in the total result.
 		rc.increaseRowCount(int64(taskCtx.addedCount))
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+		accountBackfillTxnRU(rc, jobID, taskCtx.writtenBytes)
 
 		if num := result.scanCount - lastLogCount; num >= 90000 {
 			lastLogCount = result.scanCount
