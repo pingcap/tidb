@@ -3277,8 +3277,19 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	if err != nil {
 		return nil, err
 	}
-	if _, explicit := stmtOpts[ast.AnalyzeOptNDVRate]; explicit && statsVersion != statistics.Version2 {
-		return nil, errors.New("NDVRATE requires tidb_analyze_version = 2")
+	if bits, explicit := stmtOpts[ast.AnalyzeOptNDVRate]; explicit {
+		if statsVersion != statistics.Version2 {
+			return nil, errors.New("NDVRATE requires tidb_analyze_version = 2")
+		}
+		if math.Float64frombits(bits) < 1 {
+			enabled, err := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableSampledNDV)
+			if err != nil {
+				return nil, err
+			}
+			if enabled != vardef.On {
+				return nil, errors.Errorf("sampled NDV is disabled by %s", vardef.TiDBEnableSampledNDV)
+			}
+		}
 	}
 	// These options are the fallback used when tidb_persist_analyze_options is
 	// off, so there is no saved value for an option given as DEFAULT to reset and

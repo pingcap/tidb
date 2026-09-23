@@ -2294,6 +2294,9 @@ func TestSampledNDVCompatibility(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
 	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	tk.MustExec("set global tidb_enable_sampled_ndv=OFF")
+	require.ErrorContains(t, tk.ExecToErr("analyze table ndv with 0.1 NDVRATE"), "tidb_enable_sampled_ndv")
+	tk.MustExec("set global tidb_enable_sampled_ndv=ON")
 	for _, rate := range []string{"0", "1.01"} {
 		require.Error(t, tk.ExecToErr("analyze table ndv with "+rate+" NDVRATE"))
 	}
