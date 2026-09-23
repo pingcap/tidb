@@ -788,24 +788,9 @@ type SessionVars struct {
 	QueryCopStoreLimit int
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize int
-	// MViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
-	MViewMaintainIsolationReadEngines string
-	// MViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
-	MViewMaintainImportThreads int
-	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
-	MViewMaintainImportDiskQuota string
-	// MLogPurgeBatchSize indicates the maximum number of MLog rows deleted by one purge batch.
-	MLogPurgeBatchSize int
-	// MLogPurgeMinRate indicates the minimum target delete rate for adaptive MLog purge throttling.
-	MLogPurgeMinRate int
-	// MLogPurgeRateBudgetRatio indicates the fraction of the scheduling window that purge may spend deleting.
-	MLogPurgeRateBudgetRatio float64
-	// MLogPurgeDeleteTiFlashThreads controls TiFlash threads used by MLog purge DELETE statements.
-	// Zero means that the current tidb_max_tiflash_threads value is inherited.
-	MLogPurgeDeleteTiFlashThreads int64
-	RetryLimit                    int64
-	DisableTxnAutoRetry           bool
+	DMLBatchSize        int
+	RetryLimit          int64
+	DisableTxnAutoRetry bool
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -1493,9 +1478,6 @@ type SessionVars struct {
 	// EnableFullOuterJoin indicates whether to enable full outer join.
 	EnableFullOuterJoin bool
 
-	// EnableMView indicates whether to enable materialized view DDL.
-	EnableMView bool
-
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
 
@@ -1680,8 +1662,6 @@ type SessionVars struct {
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
-	// InMViewMaintenance indicates the session is executing internal MV build/refresh statements.
-	InMViewMaintenance bool
 
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
@@ -2470,7 +2450,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
 		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
 		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
-		EnableMView:                      vardef.DefTiDBMViewEnable,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2530,17 +2509,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ExecutorConcurrency:               vardef.DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:         vardef.DefTiDBMemQuotaQuery,
-		MViewMaintainMemQuota: vardef.DefTiDBMViewMaintainMemQuota,
-		MemQuotaApplyCache:    vardef.DefTiDBMemQuotaApplyCache,
+		MemQuotaQuery:      vardef.DefTiDBMemQuotaQuery,
+		MemQuotaApplyCache: vardef.DefTiDBMemQuotaApplyCache,
 	}
-	vars.MViewMaintainIsolationReadEngines = defaultIsolationReadEnginesValue()
-	vars.MViewMaintainImportThreads = vardef.DefTiDBMViewMaintainImportThreads
-	vars.MViewMaintainImportDiskQuota = vardef.DefTiDBMViewMaintainImportDiskQuota
-	vars.MLogPurgeBatchSize = vardef.DefTiDBMLogPurgeBatchSize
-	vars.MLogPurgeMinRate = vardef.DefTiDBMLogPurgeMinRate
-	vars.MLogPurgeRateBudgetRatio = vardef.DefTiDBMLogPurgeRateBudgetRatio
-	vars.MLogPurgeDeleteTiFlashThreads = vardef.DefTiDBMLogPurgeDeleteTiFlashThreads
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: vardef.DefIndexJoinBatchSize,
 		IndexLookupSize:    vardef.DefIndexLookupSize,
@@ -3518,8 +3489,6 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-	// MViewMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
-	MViewMaintainMemQuota int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
 }

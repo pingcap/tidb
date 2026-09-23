@@ -293,7 +293,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		args, err := model.GetFinishedDropTableArgs(job)
@@ -309,11 +309,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
-	case model.ActionCreateMaterializedView:
-		if !job.IsRollbackDone() || job.TableID == 0 {
-			return nil
-		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{job.TableID}, ea, "create materialized view rollback: table ID"))
 	case model.ActionTruncateTable:
 		tableID := job.TableID
 		args, err := model.GetFinishedTruncateTableArgs(job)

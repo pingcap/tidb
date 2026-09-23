@@ -142,29 +142,10 @@ const (
 	// TiDBDMLMaxExecutionTime is the maximum execution time for transactional DML statements and COMMIT, in milliseconds.
 	TiDBDMLMaxExecutionTime = "tidb_dml_max_execution_time"
 
-	// TiDBMLogPurgeBatchSize is used to split PURGE MATERIALIZED VIEW LOG into multiple delete batches.
-	TiDBMLogPurgeBatchSize = "tidb_mlog_purge_batch_size"
-	// TiDBMLogPurgeMinRate controls the minimum target delete rate for adaptive MLog purge throttling.
-	TiDBMLogPurgeMinRate = "tidb_mlog_purge_min_rate"
-	// TiDBMLogPurgeRateBudgetRatio controls the fraction of the scheduling window that purge may spend deleting.
-	TiDBMLogPurgeRateBudgetRatio = "tidb_mlog_purge_rate_budget_ratio"
-	// TiDBMLogPurgeDeleteTiFlashThreads controls TiFlash threads used by MLog purge DELETE statements.
-	TiDBMLogPurgeDeleteTiFlashThreads = "tidb_mlog_purge_delete_tiflash_threads"
-	// TiDBMLogLogSlowPurge controls whether MLog purge statements are recorded in the slow query log.
-	TiDBMLogLogSlowPurge = "tidb_mlog_log_slow_purge"
-
 	// The following session variables controls the memory quota during query execution.
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
 	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
-	// TiDBMViewMaintainMemQuota controls the memory quota used by MV maintenance sessions.
-	TiDBMViewMaintainMemQuota = "tidb_mview_maintain_mem_quota"
-	// TiDBMViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance sessions.
-	TiDBMViewMaintainIsolationReadEngines = "tidb_mview_maintain_isolation_read_engines"
-	// TiDBMViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
-	TiDBMViewMaintainImportThreads = "tidb_mview_maintain_import_threads"
-	// TiDBMViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
-	TiDBMViewMaintainImportDiskQuota = "tidb_mview_maintain_import_disk_quota"
 	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
@@ -1157,9 +1138,6 @@ const (
 	// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
 	TiDBEnableFullOuterJoin = "tidb_enable_full_outer_join"
 
-	// TiDBMViewEnable indicates whether to enable materialized view DDL.
-	TiDBMViewEnable = "tidb_mview_enable"
-
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
@@ -1763,14 +1741,6 @@ const (
 	DefMaxAllowedPacket                        uint64 = config.DefMaxAllowedPacket
 	DefTiDBEnableBatchDML                             = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
-	DefTiDBMViewMaintainMemQuota                      = int64(2 * size.GB)
-	DefTiDBMLogPurgeBatchSize                         = 10000
-	DefTiDBMLogPurgeMinRate                           = 2000
-	DefTiDBMLogPurgeRateBudgetRatio                   = 0.5
-	DefTiDBMLogPurgeDeleteTiFlashThreads              = 0
-	DefTiDBMLogLogSlowPurge                           = false
-	DefTiDBMViewMaintainImportThreads                 = 0
-	DefTiDBMViewMaintainImportDiskQuota               = ""
 	DefTiDBStatsCacheMemQuota                         = 0
 	MaxTiDBStatsCacheMemQuota                         = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                             = 4096
@@ -1862,8 +1832,6 @@ const (
 	DefTiDBTTLDeleteBatchSize                         = 100
 	DefTiDBTTLDeleteBatchMaxSize                      = 10240
 	DefTiDBTTLDeleteBatchMinSize                      = 1
-	DefTiDBMLogPurgeBatchMaxSize                      = 1000000
-	DefTiDBMLogPurgeBatchMinSize                      = 1
 	DefTiDBTTLDeleteRateLimit                         = 0
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0
@@ -1914,7 +1882,6 @@ const (
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBEnableFullOuterJoin                        = false
-	DefTiDBMViewEnable                                = false
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
 	DefTiDBOptIndexJoinBuild                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
@@ -2100,7 +2067,6 @@ var (
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
-	MLogLogSlowPurge                = atomic.NewBool(DefTiDBMLogLogSlowPurge)
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")

@@ -70,35 +70,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func normalizeIsolationReadEnginesValue(varName, normalizedValue string) (string, error) {
-	engines := strings.Split(normalizedValue, ",")
-	var formatted string
-	for i, engine := range engines {
-		engine = strings.TrimSpace(engine)
-		if engine == "" {
-			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(varName, normalizedValue)
-		}
-		if i != 0 {
-			formatted += ","
-		}
-		switch {
-		case strings.EqualFold(engine, kv.TiKV.Name()):
-			formatted += kv.TiKV.Name()
-		case strings.EqualFold(engine, kv.TiFlash.Name()):
-			formatted += kv.TiFlash.Name()
-		case strings.EqualFold(engine, kv.TiDB.Name()):
-			formatted += kv.TiDB.Name()
-		default:
-			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(varName, normalizedValue)
-		}
-	}
-	return formatted, nil
-}
-
-func defaultIsolationReadEnginesValue() string {
-	return strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ",")
-}
-
 type concurrencySetter func(s *SessionVars, v int)
 type execConcurrencySysVarOption func(sv *SysVar)
 
@@ -445,7 +416,25 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		return normalizeIsolationReadEnginesValue(vardef.TiDBIsolationReadEngines, normalizedValue)
+		engines := strings.Split(normalizedValue, ",")
+		var formatVal string
+		for i, engine := range engines {
+			engine = strings.TrimSpace(engine)
+			if i != 0 {
+				formatVal += ","
+			}
+			switch {
+			case strings.EqualFold(engine, kv.TiKV.Name()):
+				formatVal += kv.TiKV.Name()
+			case strings.EqualFold(engine, kv.TiFlash.Name()):
+				formatVal += kv.TiFlash.Name()
+			case strings.EqualFold(engine, kv.TiDB.Name()):
+				formatVal += kv.TiDB.Name()
+			default:
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBIsolationReadEngines, normalizedValue)
+			}
+		}
+		return formatVal, nil
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
@@ -2605,50 +2594,6 @@ var defaultSysVars = []*SysVar{
 		s.DMLBatchSize = int(TidbOptInt64(val, vardef.DefDMLBatchSize))
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMLogPurgeBatchSize, Value: strconv.Itoa(vardef.DefTiDBMLogPurgeBatchSize), Type: vardef.TypeUnsigned, MinValue: vardef.DefTiDBMLogPurgeBatchMinSize, MaxValue: vardef.DefTiDBMLogPurgeBatchMaxSize, SetSession: func(s *SessionVars, val string) error {
-		s.MLogPurgeBatchSize = int(TidbOptInt64(val, vardef.DefTiDBMLogPurgeBatchSize))
-		return nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMLogPurgeMinRate, Value: strconv.Itoa(vardef.DefTiDBMLogPurgeMinRate), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, Validation: func(_ *SessionVars, normalizedValue, originalValue string, _ vardef.ScopeFlag) (string, error) {
-		v, err := strconv.ParseUint(normalizedValue, 10, 64)
-		if err != nil {
-			return normalizedValue, err
-		}
-		if v == 0 {
-			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBMLogPurgeMinRate, originalValue)
-		}
-		return normalizedValue, nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.MLogPurgeMinRate = int(TidbOptInt64(val, vardef.DefTiDBMLogPurgeMinRate))
-		return nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMLogPurgeRateBudgetRatio, Value: strconv.FormatFloat(vardef.DefTiDBMLogPurgeRateBudgetRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, Validation: func(_ *SessionVars, normalizedValue, originalValue string, _ vardef.ScopeFlag) (string, error) {
-		v, err := strconv.ParseFloat(originalValue, 64)
-		if err != nil || v <= 0 || v > 1 {
-			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBMLogPurgeRateBudgetRatio, originalValue)
-		}
-		return normalizedValue, nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.MLogPurgeRateBudgetRatio = tidbOptFloat64(val, vardef.DefTiDBMLogPurgeRateBudgetRatio)
-		return nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMLogPurgeDeleteTiFlashThreads, Value: strconv.Itoa(vardef.DefTiDBMLogPurgeDeleteTiFlashThreads), Type: vardef.TypeInt, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency, Validation: func(_ *SessionVars, normalizedValue, originalValue string, _ vardef.ScopeFlag) (string, error) {
-		v, err := strconv.ParseInt(originalValue, 10, 64)
-		if err != nil || v < 0 {
-			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBMLogPurgeDeleteTiFlashThreads, originalValue)
-		}
-		return normalizedValue, nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.MLogPurgeDeleteTiFlashThreads = TidbOptInt64(val, vardef.DefTiDBMLogPurgeDeleteTiFlashThreads)
-		return nil
-	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMLogLogSlowPurge, Value: BoolToOnOff(vardef.DefTiDBMLogLogSlowPurge), Type: vardef.TypeBool,
-		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
-			vardef.MLogLogSlowPurge.Store(TiDBOptOn(val))
-			return nil
-		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return BoolToOnOff(vardef.MLogLogSlowPurge.Load()), nil
-		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaxChunkSize, Value: strconv.Itoa(vardef.DefMaxChunkSize), Type: vardef.TypeUnsigned, MinValue: maxChunkSizeLowerBound, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.MaxChunkSize = tidbOptPositiveInt32(val, vardef.DefMaxChunkSize)
 		return nil
@@ -3046,10 +2991,6 @@ var defaultSysVars = []*SysVar{
 		s.EnableFullOuterJoin = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewEnable, Value: BoolToOnOff(vardef.DefTiDBMViewEnable), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableMView = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableIndexMergeJoin, Value: BoolToOnOff(vardef.DefTiDBEnableIndexMergeJoin), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 		return nil
@@ -3196,40 +3137,6 @@ var defaultSysVars = []*SysVar{
 			normalizedValue = "128"
 		}
 		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewMaintainMemQuota, Value: strconv.FormatInt(vardef.DefTiDBMViewMaintainMemQuota, 10), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MViewMaintainMemQuota = TidbOptInt64(val, vardef.DefTiDBMViewMaintainMemQuota)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		intVal := TidbOptInt64(normalizedValue, vardef.DefTiDBMViewMaintainMemQuota)
-		if intVal > 0 && intVal < 128 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(vardef.TiDBMViewMaintainMemQuota, originalValue))
-			normalizedValue = "128"
-		}
-		return normalizedValue, nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewMaintainIsolationReadEngines, Value: defaultIsolationReadEnginesValue(), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		return normalizeIsolationReadEnginesValue(vardef.TiDBMViewMaintainIsolationReadEngines, normalizedValue)
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.MViewMaintainIsolationReadEngines = val
-		return nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewMaintainImportThreads, Value: strconv.Itoa(vardef.DefTiDBMViewMaintainImportThreads), Type: vardef.TypeInt, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
-		s.MViewMaintainImportThreads = TidbOptInt(val, vardef.DefTiDBMViewMaintainImportThreads)
-		return nil
-	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewMaintainImportDiskQuota, Value: vardef.DefTiDBMViewMaintainImportDiskQuota, Type: vardef.TypeStr, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		if normalizedValue == "" {
-			return normalizedValue, nil
-		}
-		byteSize, err := units.RAMInBytes(normalizedValue)
-		if err != nil || byteSize <= 0 {
-			return "", ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBMViewMaintainImportDiskQuota, originalValue)
-		}
-		return normalizedValue, nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.MViewMaintainImportDiskQuota = val
-		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBNonTransactionalIgnoreError, Value: BoolToOnOff(vardef.DefTiDBBatchDMLIgnoreError), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
