@@ -92,8 +92,12 @@ errdoc:tools/bin/errdoc-gen
 	@echo "generator errors.toml"
 	./tools/check/check-errdoc.sh
 
+.PHONY: rust_proto_check
+rust_proto_check:
+	python3 rust/scripts/sync-tipb-scalar-func-sig.py
+
 .PHONY: lint
-lint:tools/bin/revive
+lint:tools/bin/revive rust_proto_check
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml \
 	-exclude pkg/util/hack/... -exclude ./pkg/util/hack/...  $(FILES_TIDB_TESTS)
