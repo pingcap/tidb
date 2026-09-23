@@ -2635,7 +2635,14 @@ fn attach_agg_over_cop(
     let ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
     let (partial, final_plan) =
         crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator)?;
-    if let Some(mut partial) = partial {
+    let Some(mut partial) = partial else {
+        // Go `attach2Task4PhysicalHashAgg`: a TiKV cop aggregate whose split
+        // is impossible (e.g. DISTINCT with tidb_opt_distinct_agg_push_down
+        // off) is an INVALID task — the Root-task candidate wins instead of
+        // a cop candidate being re-labelled as a root aggregate.
+        return Ok(Task::invalid_task());
+    };
+    {
         if let Some(table_plan) = cop.table_plan.take() {
             cop.finish_index_plan();
             inherit_index_join_stats(
