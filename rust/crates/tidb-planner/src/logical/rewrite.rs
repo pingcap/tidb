@@ -365,7 +365,7 @@ pub(crate) fn analyzed_filter_selectivity(
                 // range path first; a pattern the ranges cannot answer
                 // (`%dim%`, a contains shape) falls to TopN-assisted
                 // evaluation and only then the 0.1 default.
-                let selectivity = histogram_prefix_selectivity(table_stats, column, &pattern.value)
+                let selectivity = histogram_prefix_range_selectivity(table_stats, column, &pattern.value)
                     .or_else(|| {
                         stats_negate_like_selectivity(
                             table_stats,
@@ -501,6 +501,77 @@ fn flatten_boolean_conditions(condition: &Expression, connector: &str) -> Vec<Ex
         }
     }
     vec![condition.clone()]
+}
+
+/// Go `newBuildFromPatternLike`'s wildcard case (`pkg/util/ranger/points.go:718-856`):
+/// a `prefix%` LIKE becomes the half-open range `[prefix, successor(prefix))`,
+/// where the successor increments the last byte carrying upward (all-`0xFF`
+/// overflows to `MaxValue`). Rows are then answered by the same
+/// `GetRowCountByColumnRanges` the comparison ranges use, so a prefix
+/// pattern interpolates inside the straddling bucket instead of counting
+/// whole buckets.
+fn histogram_prefix_range_selectivity(
+    table_stats: &StatsInfo,
+    column: &tidb_expr::column::Column,
+    pattern: &tidb_datatype::Datum,
+) -> Option<f64> {
+    let pattern = match pattern {
+        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        tidb_datatype::Datum::String(string) => {
+            String::from_utf8_lossy(string.bytes()).into_owned()
+        }
+        _ => return None,
+    };
+    let prefix = pattern.strip_suffix('%')?;
+    if prefix.is_empty() || prefix.contains('%') || prefix.contains('_') {
+        return None;
+    }
+    let hist_coll = table_stats.hist_coll()?;
+    let column_stats = hist_coll.histogram(column.unique_id)?;
+    if column_stats.histogram.buckets.is_empty() {
+        return None;
+    }
+    let realtime = hist_coll.realtime_count();
+    if realtime <= 0 {
+        return None;
+    }
+    let mut low = prefix.as_bytes().to_vec();
+    let mut high = low.clone();
+    let mut carried = false;
+    for byte in high.iter_mut().rev() {
+        *byte = byte.wrapping_add(1);
+        if *byte != 0 {
+            carried = true;
+            break;
+        }
+    }
+    let high = if carried {
+        tidb_datatype::Datum::Bytes(high)
+    } else {
+        tidb_datatype::Datum::MaxValue
+    };
+    let ranges = vec![
+        crate::cardinality::row_count_estimator::ColumnRange::new(
+            tidb_datatype::Datum::Bytes(low),
+            high,
+            false,
+            true,
+        ),
+    ];
+    let is_handle = hist_coll.pk_is_handle()
+        && hist_coll
+            .column(column.unique_id)
+            .is_some_and(|stats| stats.is_handle);
+    let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+        Some(column_stats),
+        &ranges,
+        tidb_datatype::Collation::Utf8Mb4Bin,
+        realtime,
+        hist_coll.modify_count(),
+        is_handle,
+        crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+    );
+    Some((estimate.est / table_stats.row_count()).min(1.0))
 }
 
 /// A `prefix%` LIKE estimated from the column histogram's bucket bounds: sum
@@ -3607,21 +3678,27 @@ mod analyzed_filter_selectivity_tests {
         };
 
         // One bucket's bounds start with `green`; its single row over 128.
+        // The range path [green, greo) covers that bucket (1 row), while
+        // `green` sits below every bucket bound: GetColumnRowCount adds the
+        // out-of-range estimate (not_null/ndv = 101/100 = 1.01) and scales
+        // by the increase factor (128/101), landing at 2.01 rows:
+        // selectivity = 2.01 × (128/101) / 128 = 2.01/101.
         let selectivity =
             analyzed_filter_selectivity(&table_stats, &[like("green%")]).expect("analyzed");
         assert!(
-            (selectivity - 1.0 / 128.0).abs() < 1e-12,
+            (selectivity - 2.01 / 101.0).abs() < 1e-9,
             "{selectivity} != {}",
-            1.0 / 128.0
+            2.01 / 101.0
         );
 
-        // No bucket bound starts with `blue`, so the sampled estimate is
-        // empty and floors at Go's one-row minimum.
+        // No bucket bound starts with `blue`, so no bucket is counted; the
+        // below-histogram out-of-range estimate alone gives 1.01 rows over
+        // the same factor: selectivity = 1.01 × (128/101) / 128 = 1.01/101.
         let selectivity =
             analyzed_filter_selectivity(&table_stats, &[like("blue%")]).expect("analyzed");
         assert!(
-            (selectivity - 1.0 / 128.0).abs() < 1e-12,
-            "an empty histogram sample floors at one row: {selectivity}"
+            (selectivity - 1.01 / 101.0).abs() < 1e-9,
+            "an empty histogram sample prices the out-of-range tail: {selectivity}"
         );
 
         // Without a histogram the pattern answers the 0.1 default.
