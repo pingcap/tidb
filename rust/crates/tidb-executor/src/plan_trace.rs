@@ -167,10 +167,11 @@ fn string_with_ctx_constant(
     } else {
         &constant.value
     };
-    // Go `Constant.StringWithCtx`: a NULL constant prints `<nil>`
-    // (`constant.go:188`), never the empty stringify output.
+    // Go `Constant.StringWithCtx` renders through `dt.String()`: a NULL
+    // constant prints `NULL` (`constant.go:188`), never the empty stringify
+    // output.
     if value.is_null() {
-        return Some("<nil>".to_owned());
+        return Some("NULL".to_owned());
     }
     let value = value
         .truncated_stringify()
@@ -202,9 +203,9 @@ fn explain_constant(
     } else {
         &constant.value
     };
-    // Go `Constant.Format`/`StringWithCtx`: a NULL constant prints `<nil>`.
+    // Go `Constant.Format`/`StringWithCtx`: a NULL constant prints `NULL`.
     if datum.is_null() {
-        return Some("<nil>".to_owned());
+        return Some("NULL".to_owned());
     }
     let value = datum
         .truncated_stringify()
