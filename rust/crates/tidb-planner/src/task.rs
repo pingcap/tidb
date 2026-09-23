@@ -2548,7 +2548,17 @@ fn sink_into_index_look_up(
                         .as_ref()
                         .is_some_and(|stats| stats.row_count() >= limit_rows)
                     {
-                        scan.base.base.set_stats(limit_stats.clone());
+                        // Go `sinkIntoIndexLookUp` stamps the limit's fresh
+                        // stats and then restores the scan's own version:
+                        // "keep the original stats version"
+                        // (`task.go:792-796`) — without this the analyzed
+                        // table side renders `stats:pseudo`.
+                        let mut stamped = limit_stats.clone();
+                        if let Some(origin) = ts_stats.as_ref() {
+                            stamped = stamped
+                                .map(|stats| stats.with_stats_version(origin.stats_version()));
+                        }
+                        scan.base.base.set_stats(stamped);
                     }
                 }
                 reader.base.base.set_stats(limit_stats.clone());

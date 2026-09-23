@@ -3715,7 +3715,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         from_data_source: true,
                     })
                 };
-                let (table_side, root_task_conds) = if single_scan {
+                let (mut table_side, root_task_conds) = if single_scan {
                     // A condition that is not covered by the index key (for
                     // example an unsigned integer handle predicate) remains
                     // above the covering IndexReader as Go's
@@ -3733,7 +3733,31 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     table_base.base.set_stats(
                         runtime_probe_stats
                             .clone()
-                            .or_else(|| index_plan.base().base.stats_info().cloned()),
+                            .or_else(|| {
+                                index_plan.base().base.stats_info().cloned().map(|stats| {
+                                    // Go `convertToIndexScan`:
+                                    // `ts.SetStats(&property.StatsInfo{StatsVersion:
+                                    // ds.TableStats.StatsVersion})` — the table
+                                    // side carries the TABLE stats' VERSION (the
+                                    // row counts are filled from the index plan
+                                    // in `(*copTask).finishIndexPlan`). Inheriting
+                                    // the cop Limit's fresh stats verbatim left
+                                    // the pseudo version on an analyzed table.
+                                    let version = ds
+                                        .table_stats
+                                        .as_ref()
+                                        .map(|table_stats| table_stats.stats_version())
+                                        .or_else(|| {
+                                            ds.base.base.stats_info()
+                                                .map(|ds_stats| ds_stats.stats_version())
+                                        });
+                                    if let Some(version) = version {
+                                        stats.with_stats_version(version)
+                                    } else {
+                                        stats
+                                    }
+                                })
+                            }),
                     );
                     table_base.base.set_schema(ds.base.base.schema().cloned());
                     let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
@@ -3815,9 +3839,54 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     };
                     (Some(Box::new(table_plan)), Vec::new())
                 };
+                // Go `convertToIndexScan` (`find_best_task.go:2665`): a
+                // keep-order read on a non-common-handle table appends the
+                // extra handle column to the table side
+                // (`AppendExtraHandleCol`, isNew) and projects it back away
+                // above the reader — `cop.NeedExtraProj = true` with
+                // `cop.OriginSchema = ds.Schema()`. The common-handle
+                // missing-handle-column append (`:2652`) is a no-op here:
+                // this tier's table side already carries the full schema.
+                // Without the appended column the reader schema equals the
+                // origin schema, so Go's postOptimize
+                // eliminatePhysicalProjection would erase the projection
+                // `BuildIndexLookUpTask` builds (the reader's schema is the
+                // table side's, `physical_indexlookup_reader.go:205`).
+                let extra_handle_proj =
+                    keep_order && table_side.is_some() && ds.common_handle_cols.is_empty();
+                if extra_handle_proj {
+                    if let Some(table_plan) = table_side.as_deref_mut() {
+                        if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
+                            let mut schema = schema_shared.as_ref().clone();
+                            let next_id = schema
+                                .columns
+                                .iter()
+                                .map(|column| column.unique_id)
+                                .max()
+                                .unwrap_or(0)
+                                + 1;
+                            let mut extra = tidb_expr::column::Column::new(
+                                ctx.column_ids.map(|ids| ids.alloc()).unwrap_or(next_id),
+                                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                                    .with_flags(
+                                        tidb_datatype::FieldTypeFlags::NOT_NULL
+                                            | tidb_datatype::FieldTypeFlags::PRI_KEY,
+                                    ),
+                            );
+                            extra.id = crate::logical::data_source::EXTRA_HANDLE_ID;
+                            extra.orig_name = "_tidb_rowid".to_owned();
+                            schema.columns.push(extra);
+                            table_plan.base_mut().base.set_schema(Some(schema));
+                        }
+                    }
+                }
                 Task::Cop(crate::task::CopTask {
                     index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
+                    need_extra_proj: extra_handle_proj,
+                    origin_schema: extra_handle_proj
+                        .then(|| ds.base.base.schema().cloned())
+                        .flatten(),
                     common_handle_cols: ds.common_handle_cols.clone(),
                     index_lookup_push_down_by: if single_scan {
                         crate::access_path::IndexLookupPushDownBy::None
