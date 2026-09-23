@@ -5005,11 +5005,30 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalInde
 	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
 	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	hasGlobalIndex := false
+	var fullTextSnapshot kv.Snapshot
+	fullTextSearches := make([]string, partialPlanCount)
 	for i := range partialPlanCount {
 		var tempReq *tipb.DAGRequest
 		var err error
 
-		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
+		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok && is.FullText != nil {
+			// The index is read by TiDB's posting-list engine, not by a
+			// coprocessor request. It sees the statement's snapshot with the
+			// transaction's memory buffer laid over it.
+			if fullTextSnapshot == nil {
+				if fullTextSnapshot, err = b.getSnapshot(); err != nil {
+					return nil, err
+				}
+			}
+			fullTextSearches[i] = is.FullText.Search
+			partialReqs = append(partialReqs, nil)
+			descs = append(descs, false)
+			indexes = append(indexes, is.Index)
+			isCorColInPartialFilters = append(isCorColInPartialFilters, false)
+			isCorColInPartialAccess = append(isCorColInPartialAccess, false)
+			partialDataSizes = append(partialDataSizes, 0)
+			continue
+		} else if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
 			tempReq, err = buildIndexReq(b.sctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
@@ -5073,6 +5092,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalInde
 		pushedLimit:              v.PushedLimit,
 		keepOrder:                v.KeepOrder,
 		hasGlobalIndex:           hasGlobalIndex,
+		fullTextSnapshot:         fullTextSnapshot,
+		fullTextSearches:         fullTextSearches,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable

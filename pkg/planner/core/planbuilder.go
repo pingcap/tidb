@@ -1350,6 +1350,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	var err error
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
+	fullTextIndexes := make(map[string]struct{})
 
 	// When NO_INDEX_LOOKUP_PUSHDOWN hint is specified, we should set `forceNoIndexLookUpPushDown = true` to avoid
 	// using index look up push down even if other hint or system variable `tidb_index_lookup_pushdown_policy`
@@ -1395,7 +1396,8 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if index.IsTiKVFullTextIndex() {
 				// Its keys are analyzed terms, not column values, so it cannot
 				// serve a column-value range. MATCH ... AGAINST reaches it
-				// through its own access path.
+				// through its own access path, which honours the hints itself.
+				fullTextIndexes[index.Name.L] = struct{}{}
 				continue
 			}
 			if index.IsColumnarIndex() {
@@ -1487,6 +1489,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 		for _, idxName := range hint.IndexNames {
 			if _, ok := invertedIndexes[idxName.L]; ok {
+				continue
+			}
+			if _, ok := fullTextIndexes[idxName.L]; ok {
 				continue
 			}
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)

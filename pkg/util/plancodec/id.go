@@ -147,6 +147,8 @@ const (
 	TypePhysicalCTESource = "PhysicalCTESource"
 	// TypeAnalyze is the type of Analyze.
 	TypeAnalyze = "Analyze"
+	// TypeFullTextIndexScan is the type of a scan of a FULLTEXT index built in TiKV.
+	TypeFullTextIndexScan = "FullTextIndexScan"
 )
 
 // plan id.
@@ -216,6 +218,7 @@ const (
 	typePhysicalCTESinkID     int = 62
 	typePhysicalCTESourceID   int = 63
 	typeAnalyzeID             int = 64
+	typeFullTextIndexScanID   int = 65
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -349,6 +352,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typePhysicalCTESourceID
 	case TypeAnalyze:
 		return typeAnalyzeID
+	case TypeFullTextIndexScan:
+		return typeFullTextIndexScanID
 	}
 	// Should never reach here.
 	return 0
@@ -485,6 +490,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypePhysicalCTESource
 	case typeAnalyzeID:
 		return TypeAnalyze
+	case typeFullTextIndexScanID:
+		return TypeFullTextIndexScan
 	}
 
 	// Should never reach here.

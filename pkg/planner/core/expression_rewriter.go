@@ -2476,7 +2476,9 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 			// EXPLORE can enumerate the enabled state from its default OFF.
 			if expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
 				sessVars.RecordRelevantOptVar(vardef.TiDBEnableLocalMatchAgainst)
-				if sessVars.EnableLocalMatchAgainst {
+				// A FULLTEXT index built in TiKV authorises the MATCH on its
+				// own: local evaluation is the only way to read it.
+				if sessVars.EnableLocalMatchAgainst || er.tikvFullTextIndexForMatch(numCols, stackLen) != nil {
 					useLocalMatch = true
 				}
 			}
@@ -2510,16 +2512,59 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	}
 }
 
+// tikvFullTextIndexForMatch returns the public FULLTEXT index built in TiKV
+// over the single column a MATCH names, or nil when the MATCH names several
+// columns, a column of no base table, or a column without such an index.
+func (er *expressionRewriter) tikvFullTextIndexForMatch(numCols, stackLen int) *model.IndexInfo {
+	nameStart := stackLen - numCols - 1
+	if numCols != 1 || nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil || er.planCtx.builder.is == nil {
+		return nil
+	}
+	name := er.ctxNameStk[nameStart]
+	if name == nil {
+		return nil
+	}
+	tblName := name.OrigTblName
+	if tblName.L == "" {
+		tblName = name.TblName
+	}
+	if tblName.L == "" {
+		return nil
+	}
+	dbName := name.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(er.planCtx.builder.ctx.GetSessionVars().CurrentDB)
+	}
+	tblInfo, err := er.planCtx.builder.is.TableInfoByName(dbName, tblName)
+	if err != nil {
+		return nil
+	}
+	colName := name.OrigColName
+	if colName.L == "" {
+		colName = name.ColName
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.IsTiKVFullTextIndex() && idx.State == model.StatePublic &&
+			len(idx.Columns) == 1 && idx.Columns[0].Name.L == colName.L {
+			return idx
+		}
+	}
+	return nil
+}
+
 // matchAgainstToLocalBuiltin emits the native MATCH ... AGAINST builtin marked
 // for local no-score evaluation in TiDB. Unlike matchAgainstToBuiltin it does
 // not require the modifier to survive pushdown, because the expression is
 // evaluated here rather than sent to a storage node.
 //
-// The analyzer configuration is resolved from session variables and frozen into
-// the plan. TiDB has no FULLTEXT index on this path to carry a parser snapshot,
-// so the STANDARD parser is used; that matches MySQL's default for a FULLTEXT
-// index declared without WITH PARSER.
+// The analyzer configuration is frozen into the plan. A FULLTEXT index built
+// in TiKV over the matched column supplies it, so that the query compiles to
+// the terms the index stores; otherwise it is resolved from session variables
+// with the STANDARD parser, which matches MySQL's default for a FULLTEXT index
+// declared without WITH PARSER.
 func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
+	fullTextIndex := er.tikvFullTextIndexForMatch(numCols, stackLen)
+
 	against := er.ctxStack[stackLen-1]
 	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
 
@@ -2543,11 +2588,16 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		return
 	}
 
-	sessVars := er.planCtx.builder.ctx.GetSessionVars()
-	config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1)
-	if err != nil {
-		er.err = err
-		return
+	var config fulltext.AnalyzerConfig
+	if fullTextIndex != nil {
+		config = fulltext.AnalyzerConfigFromTiKVFullTextIndex(fullTextIndex.TiKVFullText)
+	} else {
+		sessVars := er.planCtx.builder.ctx.GetSessionVars()
+		config, err = fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1)
+		if err != nil {
+			er.err = err
+			return
+		}
 	}
 	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
 

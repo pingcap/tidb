@@ -318,10 +318,10 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	if untouched && c.fullText != nil {
 		// An untouched entry is rewritten only so that later reads in the
 		// same transaction find the key in the memory buffer. A FULLTEXT
-		// index is read by scanning its terms and merging the buffer over the
-		// snapshot, which finds the unchanged entries in the snapshot anyway,
-		// and rewriting them would re-tokenize the whole document for every
-		// update of an unrelated column.
+		// index is read from the snapshot, with the transaction's own
+		// changes merged in by UnionScan from the rows themselves, so the
+		// entry is not needed there, and rewriting it would re-tokenize the
+		// whole document for every update of an unrelated column.
 		return nil, nil
 	}
 	indexedValues, err := c.getIndexedValue(indexedValue)
