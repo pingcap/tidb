@@ -3337,14 +3337,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // fresh UniqueID. Preserving this identity is also what lets an
             // IndexJoinRuntimeProp pass through a derived-table projection
             // and still match the underlying data-source key.
-            // Master's buildProjectionField allocates a FRESH output column
-            // for aggregate-expression fields (the aggregate call is not a
-            // column), rendering `Column#agg->Column#fresh` — the Rust tree
-            // reused the aggregation's output column instead.
-            let agg_marker_field = PlanMarker::from_expr(&field.expr)
-                .is_some_and(|marker| marker.kind == MarkerKind::Agg);
             let mut output = match &built {
-                Expression::Column(column) if !agg_marker_field => column.clone(),
+                Expression::Column(column) => column.clone(),
                 _ => {
                     let ret_type = built
                         .static_type()
