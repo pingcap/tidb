@@ -432,9 +432,24 @@ pub(crate) fn analyzed_filter_selectivity(
         if let Some(histogram_selectivity) =
             histogram_point_selectivity(table_stats, column, &values)
         {
+            if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+                eprintln!(
+                    "[sel-debug] point name={} vals={} sel={histogram_selectivity}",
+                    function.func_name,
+                    values.len()
+                );
+            }
             selectivity_total *= histogram_selectivity;
             recognized = true;
             continue;
+        }
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            let ndv = table_stats.col_ndv(column.unique_id);
+            eprintln!(
+                "[sel-debug] point-fallback name={} vals={} ndv={ndv}",
+                function.func_name,
+                values.len(),
+            );
         }
         let ndv = table_stats.col_ndv(column.unique_id);
         if ndv > 0.0 {
@@ -761,7 +776,12 @@ fn histogram_point_selectivity(
 ) -> Option<f64> {
     let hist_coll = table_stats.hist_coll()?;
     let column_stats = hist_coll.histogram(column.unique_id)?;
-    if column_stats.histogram.is_empty() || values.is_empty() {
+    // Go `getColumnRowCount` answers IN/point lists for a TopN-only column
+    // (stats ver2 persists no histogram buckets for low-NDV columns) from
+    // the TopN counts; rejecting an empty histogram here demoted TPC-H
+    // Q16's in(p_size) to the NDV ratio (0.16) while Go interpolates the
+    // TopN counts (0.15964). Only an empty VALUES list stays rejected.
+    if values.is_empty() {
         return None;
     }
     let realtime = hist_coll.realtime_count();
