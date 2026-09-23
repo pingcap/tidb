@@ -932,13 +932,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // `partition by i_class`). Only a column that no field
                 // carries yet (wildcard expansion edges) is appended.
                 for (existing_index, field) in fields.iter().enumerate() {
-                    if matches!(&field.expr, Expr::Column(existing) if existing == path)
-                    {
-                        marker::substitute(
-                            node,
-                            PlanMarker::new(MarkerKind::Column, existing_index),
-                        );
-                        return true;
+                    if let Expr::Column(existing) = &field.expr {
+                        // Compare the bare column name: a spec may qualify the
+                        // column differently from the select list, but name
+                        // resolution in one query block makes the reference
+                        // unambiguous.
+                        if existing.last() == path.last() {
+                            marker::substitute(
+                                node,
+                                PlanMarker::new(MarkerKind::Column, existing_index),
+                            );
+                            return true;
+                        }
                     }
                 }
                 let index = fields.len();
