@@ -2163,9 +2163,9 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     let (plan, mut update_expressions, flags) = match update_assignment_values {
-        Some(values) => builder.build_update_dml_source(select, values)?,
+        Some(values) => builder.build_update_dml_source(select, values, false)?,
         None => {
-            let (plan, flags) = builder.build_dml_source(select)?;
+            let (plan, flags) = builder.build_dml_source(select, false)?;
             (plan, Vec::new(), flags)
         }
     };
@@ -2247,31 +2247,19 @@ pub(crate) fn physical_dml_source_plan_explained(
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     let (plan, mut update_expressions, plan_flags) = match update_assignment_values {
-        Some(values) => builder.build_update_dml_source(select, values)?,
+        Some(values) => builder.build_update_dml_source(select, values, true)?,
         None => {
-            let (plan, build_flags) = builder.build_dml_source(select)?;
+            let (plan, build_flags) = builder.build_dml_source(select, true)?;
             (plan, Vec::new(), build_flags)
         }
     };
-    // Go `b.buildSelectLock(p, &ast.SelectLockInfo{LockType:
-    // ast.SelectLockForUpdate})`: single-table UPDATE/DELETE lock their rows
-    // pessimistically before the root is allocated. The driver only reaches
-    // here for single-table statements (`update_source_query` /
-    // `delete_source_query` reject multi-table ones).
-    let plan = builder.build_select_lock(
-        plan,
-        tidb_planner::logical::SelectLockType::ForUpdate,
-        0,
-    )?;
-    // Go: `updt := physicalop.Update{...}.Init(b.ctx)` between the logical
-    // build and `DoOptimize`.
+    // Go `buildUpdate`/`buildDelete` allocate the `Update`/`Delete` root
+    // after the logical build (which now includes `buildSelectLock` and the
+    // freezing projection) and before `DoOptimize`. The optimize pass then
+    // allocates the physical projection candidate (Go id 6 in the captured
+    // W51 receipt) before the physical `SelectLock` — reproducing Go's
+    // exact id sequence without a filler.
     let root = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, operator, 0);
-    // Go's `DoOptimize` allocates one plan between the DML root and the
-    // physical `SelectLock` (go W51: root 5, ?, SelectLock 7; W52: root 9,
-    // ?, SelectLock 14). The single-table shape consumes exactly one here;
-    // the freezing projection `logical_plan_builder.go:6140` creates is
-    // already absorbed by this tier's DML-source build.
-    let _go_optimize_filler = plan_ids.alloc();
     let logical = optimize_built_logical(
         plan,
         plan_flags,

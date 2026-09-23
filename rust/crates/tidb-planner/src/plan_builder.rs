@@ -3642,12 +3642,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_dml_source(
         &mut self,
         select: &SelectStmt,
+        wrap_lock: bool,
     ) -> Result<(LogicalPlan, u64), PlanError> {
         self.is_for_update_read = true;
         let mut plan = self.build_table_refs(select.from.as_ref())?;
         let markers = BTreeMap::new();
         if let Some(where_clause) = &select.where_clause {
             plan = self.build_selection(plan, where_clause, &markers)?;
+        }
+        if wrap_lock {
+            // Go `buildUpdate`/`buildDelete`: a single-table DML source locks
+            // its rows pessimistically right after the WHERE clause
+            // (`logical_plan_builder.go:6117` / `:6552`) — before ORDER BY,
+            // LIMIT, and the trailing projection, which is what puts the
+            // physical `SelectLock` between the reader and the projection in
+            // the optimized tree.
+            plan = self.build_select_lock(plan, crate::logical::SelectLockType::ForUpdate, 0)?;
         }
         if !select.order_by.is_empty() {
             plan = self.build_sort(plan, &select.order_by, &markers)?;
@@ -3702,8 +3712,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &mut self,
         select: &SelectStmt,
         assignment_values: &[Option<Expr>],
+        wrap_lock: bool,
     ) -> Result<(LogicalPlan, Vec<Option<Expression>>, u64), PlanError> {
-        let (mut plan, _) = self.build_dml_source(select)?;
+        let (mut plan, _) = self.build_dml_source(select, wrap_lock)?;
         self.cur_clause = ClauseCode::FieldList;
         let mut expressions = Vec::with_capacity(assignment_values.len());
         for value in assignment_values {
