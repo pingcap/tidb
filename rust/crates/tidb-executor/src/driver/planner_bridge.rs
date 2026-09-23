@@ -1393,8 +1393,7 @@ impl OwnedRewrite for InitStats<'_> {
                 },
                 self.range_context,
             );
-            let cached_predicate_matches = source.pushed_down_conds.is_empty()
-                || source.base.base.schema().is_some_and(|schema| {
+            let cached_predicate_matches = source.base.base.schema().is_some_and(|schema| {
                     let names = source
                         .columns
                         .iter()

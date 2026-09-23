@@ -593,13 +593,16 @@ impl AnalyzedColumn {
     /// The collation a column of this type is sampled under, or the refusal
     /// its collation earns.
     ///
-    /// One rule for both tiers: a string column is stored and compared by its
-    /// collation KEY, and a collation with no key generator has no sampling
-    /// this engine can reproduce.
+    /// Under new collation, string columns are stored and compared by their
+    /// collation KEY. Legacy collation stores the original string bytes.
+    /// A new-collation key without a generator cannot be sampled here.
     pub fn sampling_collation(
         field_type: &FieldType,
         qualified_name: &str,
     ) -> Result<Option<Collation>, AnalyzeError> {
+        if !tidb_datatype::new_collation_enabled() {
+            return Ok(None);
+        }
         if field_type.eval_type() != EvalType::String
             || field_type.code() == FieldTypeCode::Enum
             || field_type.code() == FieldTypeCode::Set

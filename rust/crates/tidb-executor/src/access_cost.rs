@@ -2127,7 +2127,9 @@ fn string_match_selectivity(
     };
     let offset = *offset;
     let column = table.columns.get(offset)?;
-    if !tidb_datatype::is_bin_collation(column.field_type.collation_name()) {
+    if tidb_datatype::new_collation_enabled()
+        && !tidb_datatype::is_bin_collation(column.field_type.collation_name())
+    {
         return None;
     }
     // Go temporarily points the unique column at slot zero in its sample
