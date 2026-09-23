@@ -1,0 +1,74 @@
+# Statement and command duration metrics
+
+`tidb_session_statement_duration_seconds` measures completed, non-restricted SQL
+statement executions. It is a Prometheus histogram with `sql_type` (for example,
+`Select`, `Insert`, or `Update`) and `resource_group` labels. It does not retain SQL
+text or digests, and does not depend on statement-summary retention or slow-log
+thresholds.
+
+## Timing and accounting
+
+The observation uses the same statement timer as slow log and statement summary:
+`time.Since(SessionVars.StartTime) + SessionVars.DurationParse`. It includes
+compilation, execution, lock waits, and statement finalization, including an
+autocommit transaction's commit. A later explicit `COMMIT` is a separate statement;
+client idle time between statements is not included. For result sets, the sample
+is recorded when the result set is closed, not when execution first returns it;
+pauses while a cursor/result set remains open can therefore contribute.
+Execution errors that reach statement finalization are included. Parsing or
+compilation failures that do not reach that hook are not included.
+
+For a multi-statement `COM_QUERY`, each executed statement contributes its own
+sample. Parsing is performed once for the entire request; its duration is included
+in the first statement's sample, not divided among the statements. Request-level
+work before the individual statement timer, such as multi-statement key prefetch,
+is not included. For ordinary DML, writing the final OK packet occurs after the
+statement sample is recorded.
+
+Binary-protocol `COM_STMT_PREPARE` does not execute a statement and does not
+contribute a sample. Each `COM_STMT_EXECUTE` is labeled with the underlying SQL
+statement type, not `Execute`. Text-protocol SQL `PREPARE` is itself a statement
+and can contribute a `Prepare` sample. Non-SQL commands such as `PING` and
+`COM_STMT_CLOSE` do not contribute samples. Restricted internal SQL is excluded.
+The metric follows execution finalization: retries inside an execution that do not
+invoke this hook separately do not add samples, while separate re-executions that
+reach finalization can each contribute a sample.
+
+## Compatibility with request metrics
+
+`tidb_server_handle_query_duration_seconds` is unchanged. It retains its existing
+request-level timing (including an entire multi-statement request), DB-label fanout,
+and DDL exclusions. Its existing SQL-type attribution limitations are not fixed
+by this new metric.
+Do not add the two histograms: their timed intervals overlap, and their counts have
+different meanings.
+
+For example, a request containing a two-second INSERT followed by a three-second
+UPDATE contributes one sample to each statement type in the new histogram. The
+existing server histogram still receives one approximately five-second sample.
+Adding statement histogram buckets cannot reconstruct a request-latency
+distribution.
+
+## PromQL examples
+
+Average statement latency in seconds, grouped by SQL type (add instance/cluster
+selectors appropriate for the deployment):
+
+```promql
+sum by (sql_type) (rate(tidb_session_statement_duration_seconds_sum[5m]))
+/
+sum by (sql_type) (rate(tidb_session_statement_duration_seconds_count[5m]))
+```
+
+P99 statement latency in seconds:
+
+```promql
+histogram_quantile(0.99,
+  sum by (le, sql_type) (
+    rate(tidb_session_statement_duration_seconds_bucket[5m])
+  )
+)
+```
+
+Include `resource_group` in the aggregation keys to retain that dimension. The
+histogram uses the same bucket boundaries as the server query-duration histogram.

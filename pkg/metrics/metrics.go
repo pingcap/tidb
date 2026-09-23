@@ -194,6 +194,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(SessionExecuteCompileDuration)
 	prometheus.MustRegister(SessionExecuteParseDuration)
 	prometheus.MustRegister(SessionExecuteRunDuration)
+	prometheus.MustRegister(StatementDurationHistogram)
 	prometheus.MustRegister(SessionRestrictedSQLCounter)
 	prometheus.MustRegister(SessionRetry)
 	prometheus.MustRegister(SessionRetryErrorCounter)
