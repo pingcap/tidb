@@ -3375,7 +3375,11 @@ pub fn get_stream_aggs(
         if !prop.is_prefix(&child_prop_probe) {
             continue;
         }
-        let task_types: &[TaskType] = if prop.no_cop_push_down || agg.has_distinct() {
+        // Go gates ONLY on NoCopPushDown (`physical_stream_agg.go`): a
+        // DISTINCT aggregate still enumerates the cop candidate here and
+        // `attach2Task4PhysicalHashAgg`/`attachAggOverCop` invalidates it
+        // later, so keep both task types for distinct too.
+        let task_types: &[TaskType] = if prop.no_cop_push_down {
             &[TaskType::Root]
         } else {
             &[TaskType::CopSingleRead, TaskType::Root]
