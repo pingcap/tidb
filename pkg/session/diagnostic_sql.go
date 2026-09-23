@@ -20,9 +20,9 @@ import "github.com/pingcap/tidb/pkg/parser/ast"
 // diagnostic SQL endpoint. Internal restricted SQL is handled by the caller
 // and intentionally does not use this predicate.
 //
-// The diagnostic endpoint is deliberately an allowlist: it accepts a
-// non-ANALYZE EXPLAIN over a SELECT (or a SELECT set operation), USE, and the
-// explicitly listed metadata SHOW statements. A generic read-only check is
+// The diagnostic endpoint is deliberately an allowlist: it accepts a SELECT
+// (or a SELECT set operation), a non-ANALYZE EXPLAIN over either form, USE, and
+// the explicitly listed metadata SHOW statements. A generic read-only check is
 // insufficient because SELECT can acquire locks, write a file, assign a
 // variable, or call functions that change session/sequence or advisory-lock
 // state; future SHOW statement types must also be reviewed before they are
@@ -35,6 +35,10 @@ func isDiagnosticSQLAllowed(stmt ast.StmtNode) bool {
 		if !diagnosticSQLReadOnlyShowTypes[node.Tp] {
 			return false
 		}
+		checker := diagnosticSQLChecker{}
+		_, _ = node.Accept(&checker)
+		return !checker.denied
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		checker := diagnosticSQLChecker{}
 		_, _ = node.Accept(&checker)
 		return !checker.denied
@@ -78,7 +82,7 @@ func (c *diagnosticSQLChecker) Enter(node ast.Node) (ast.Node, bool) {
 		return node, true
 	case *ast.SubqueryExpr:
 		// Non-CTE subqueries may be evaluated by the optimizer while it is
-		// compiling EXPLAIN. Reject them before compilation can start.
+		// compiling SELECT or EXPLAIN. Reject them before compilation can start.
 		c.denied = true
 	case *ast.SelectStmt:
 		// Any lock clause can cause TiKV lock-resolution or lock-writing
