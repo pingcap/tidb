@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -297,7 +298,9 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
 	for _, pbSketch := range pbCollector.FmSketch {
-		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
+		sketch := FMSketchFromProto(pbSketch)
+		sketch.maxSize = MaxSketchSize
+		s.FMSketches = append(s.FMSketches, sketch)
 	}
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
@@ -369,17 +372,8 @@ func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 
 // MergeCollector merges the collectors to a final one.
 func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) error {
-	s.Count += subCollector.Base().Count
-	for i, fms := range subCollector.Base().FMSketches {
-		if err := s.FMSketches[i].MergeFMSketch(fms); err != nil {
-			return err
-		}
-	}
-	for i, nullCount := range subCollector.Base().NullCount {
-		s.NullCount[i] += nullCount
-	}
-	for i, totSize := range subCollector.Base().TotalSizes {
-		s.TotalSizes[i] += totSize
+	if err := s.mergeBase(subCollector.Base()); err != nil {
+		return err
 	}
 	oldSampleNum := len(s.Samples)
 	for _, sample := range subCollector.Base().Samples {
@@ -466,20 +460,39 @@ func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 
 // MergeCollector merges the collectors to a final one.
 func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) error {
-	s.Count += subCollector.Base().Count
-	for i := range subCollector.Base().FMSketches {
-		if err := s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i]); err != nil {
+	if err := s.mergeBase(subCollector.Base()); err != nil {
+		return err
+	}
+	s.Samples = append(s.Samples, subCollector.Base().Samples...)
+	s.MemSize += subCollector.Base().MemSize
+	return nil
+}
+
+func (s *baseCollector) mergeBase(other *baseCollector) error {
+	// A worker that received no responses has no sketches.
+	if len(other.FMSketches) == 0 {
+		return nil
+	}
+	if len(s.FMSketches) == 0 {
+		s.Count = other.Count
+		s.NullCount = append(s.NullCount[:0], other.NullCount...)
+		s.TotalSizes = append(s.TotalSizes[:0], other.TotalSizes...)
+		for _, sketch := range other.FMSketches {
+			s.FMSketches = append(s.FMSketches, sketch.Copy())
+		}
+		return nil
+	}
+	if len(s.FMSketches) != len(other.FMSketches) {
+		return errors.New("analyze collector target mismatch")
+	}
+	for i, sketch := range s.FMSketches {
+		if err := sketch.MergeFMSketch(other.FMSketches[i]); err != nil {
 			return err
 		}
+		s.NullCount[i] += other.NullCount[i]
+		s.TotalSizes[i] += other.TotalSizes[i]
 	}
-	for i := range subCollector.Base().NullCount {
-		s.NullCount[i] += subCollector.Base().NullCount[i]
-	}
-	for i := range subCollector.Base().TotalSizes {
-		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
-	}
-	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
-	s.MemSize += subCollector.Base().MemSize
+	s.Count += other.Count
 	return nil
 }
 
