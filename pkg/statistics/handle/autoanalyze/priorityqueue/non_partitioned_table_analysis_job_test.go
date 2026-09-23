@@ -98,7 +98,8 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 		duration, wantSampled bool
 	}{
 		{3, 0, false, false}, {2, 0, false, true},
-		{0, 10, true, true}, {0, 0, true, false},
+		// The last sampled run was fast, but it keeps the next run sampled.
+		{0, 10, true, true}, {0, 10, false, true}, {0, 0, true, false},
 	} {
 		tk.MustExec("set global tidb_analyze_sampled_ndv_table_size_threshold=?", tc.rows)
 		tk.MustExec("set global tidb_analyze_sampled_ndv_duration_threshold=?", tc.seconds)

@@ -61,7 +61,9 @@ func sampledNDVOption(sctx sessionctx.Context, handle statstypes.StatsHandle, ta
 		return sampledOption, nil
 	}
 	if thresholds[1] > 0 {
-		rows, _, err := util.ExecRows(sctx, `SELECT TIMESTAMPDIFF(SECOND, start_time, end_time)
+		// A sampled run is faster. Keep sampling instead of letting that shorter
+		// run switch the next one back to full input.
+		rows, _, err := util.ExecRows(sctx, `SELECT TIMESTAMPDIFF(SECOND, start_time, end_time), INSTR(job_info, 'ndvrate') > 0
 			FROM mysql.analyze_jobs WHERE table_schema = %? AND table_name = %?
 			AND state = 'finished' AND fail_reason IS NULL
 			AND (job_info LIKE 'analyze table %' OR job_info LIKE 'auto analyze table %')
@@ -69,7 +71,7 @@ func sampledNDVOption(sctx sessionctx.Context, handle statstypes.StatsHandle, ta
 		if err != nil {
 			return "", err
 		}
-		if len(rows) > 0 && !rows[0].IsNull(0) && rows[0].GetInt64(0) > thresholds[1] {
+		if len(rows) > 0 && !rows[0].IsNull(0) && (rows[0].GetInt64(0) > thresholds[1] || rows[0].GetInt64(1) == 1) {
 			return sampledOption, nil
 		}
 	}
