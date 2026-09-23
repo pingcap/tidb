@@ -119,14 +119,14 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	// Initial bootstrap uses the new-cluster policy.
 	assertValue(vardef.On)
 	// The upgrade backfill must preserve an existing value.
-	upgradeToVer318(se, version317)
+	upgradeToVer317(se, version316)
 	assertValue(vardef.On)
 
-	// Simulate an existing cluster before the variable backfill.
+	// Simulate an existing cluster before the version317 backfill.
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version317)))
-	RevertVersionAndVariables(t, se, version317)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version316)))
+	RevertVersionAndVariables(t, se, version316)
 	MustExec(t, se, fmt.Sprintf(
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBEnableAdaptiveLimitScan,
