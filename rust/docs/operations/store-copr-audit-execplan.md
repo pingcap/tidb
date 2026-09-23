@@ -1212,9 +1212,10 @@ Async recovery must preserve the source's initial-region fork boundaries.
 Regroup only a failed group's keys, retain successful sibling answers, and
 batch ResolveLock keys by region. The existing native synchronous path can
 follow Go's synchronous pool fallback, including returning the last worker's
-history. The asynchronous worker modes, resolver options, status-cache metrics
-and original cache tests, PD/routing budget ownership and SQL attachment remain
-separate open acceptance gates.
+history. The asynchronous worker modes, resolver options, original cache tests,
+PD/routing budget ownership and SQL attachment remain separate open acceptance
+gates. The pinned txnlock package has no status-cache-specific metric; adding
+one in Rust would exceed TiDB master behavior.
 
 Add red regressions for nested snapshot histories, repeated expired
 TxnNotFound responses and per-region cleanup batching before implementation.
@@ -1265,7 +1266,7 @@ this does not validate or contradict the Rust recovery change. Rust lint passed
 before the last upstream fast-forward and must be rerun for the final revision.
 
 All changes are seed evidence in open package audits. The async pool itself,
-cache metrics and original status-cache tests, all resolver options, PD/routing
+original status-cache tests, all resolver options, PD/routing
 retry budgets, Scanner and replica paths, SQL runtime-stat attachment, original
 Go support/test inventory, and whole-package platform/build gates remain open.
 No TiKV cluster or matched sysbench, TPC-C, TPC-H or YCSB benchmark has been
@@ -1406,8 +1407,9 @@ Validation after this addition passed:
 
 The async-cleanup unit tests passed all 4 cases and the resolver source suite
 passed all 26 cases. Full package parity remains open for resolver options,
-cache metrics/tests, async-commit/secondary workers, failpoints, source test
-reconciliation, all caller wiring, and the 512-worker concurrency gap above.
+cache tests (the pinned Go package defines no cache-specific metric),
+async-commit/secondary workers, failpoints, source test reconciliation, all
+caller wiring, and the 512-worker concurrency gap above.
 
 ### Transaction-status cache receipt (2026-09-22)
 

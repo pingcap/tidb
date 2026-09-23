@@ -35,7 +35,9 @@ existing backoffer. The explicit lite/result-required modes, TiKV-side
 async-resolve option, async-commit and secondary-check worker paths, failpoints,
 original tests and all caller integrations remain open. The 2,048-entry
 determined-status FIFO cache is now shared by sessions under one read
-authority; cache metrics and original cache tests remain open.
+authority; original cache-test reconciliation remains open. The pinned Go
+package has no cache-specific metrics in `getResolved` or `saveResolved`, so
+Rust must not add cache metrics.
 
 The direct-unary cop response delegate now borrows the current per-region
 budget through blocking-lock status/cleanup recovery, matching
@@ -70,9 +72,10 @@ and all secondaries without repeating CheckSecondaryLocks. Both optimistic
 read and pessimistic lock recovery consume that cached fate. Direct status
 responses are cached only when LockTtl is zero; async-commit recovery can cache
 a determined commit with the original positive TTL. Contradictory status saves
-match Go's `saveResolved` invariant. Rust cache metrics and the original Go
-cache tests are still open. The three CheckTxnStatus counters now follow
-client-go's cache-miss and zero-TTL boundaries. Resolver counters for nonempty
+match Go's `saveResolved` invariant. The pinned Go package has no cache-specific
+metrics; the original Go cache tests are still open. The three CheckTxnStatus
+counters now follow client-go's cache-miss and zero-TTL boundaries. Resolver
+counters for nonempty
 resolve batches, expired/live/wait outcomes, async-commit recovery, secondary
 status checks, ResolveLock calls, and lite cleanup now follow the corresponding
 client-go event boundaries. The batch-resolve API/counter, async-commit worker
