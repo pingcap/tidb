@@ -95,6 +95,25 @@ func GetGlobalIndexV1Supported() bool {
 	return globalIndexV1Supported.Load()
 }
 
+// tikvFullTextSupported tracks whether every TiDB node in the cluster knows a
+// FULLTEXT index built in TiKV. It is set by the DDL version detection loop
+// and checked when such an index is created: a node without the feature reads
+// the index as an ordinary index over the column and would write column-value
+// keys under its ID.
+var tikvFullTextSupported atomic.Bool
+
+// SetTiKVFullTextSupported sets whether every node supports a FULLTEXT index
+// built in TiKV.
+func SetTiKVFullTextSupported(supported bool) {
+	tikvFullTextSupported.Store(supported)
+}
+
+// GetTiKVFullTextSupported returns whether every node supports a FULLTEXT
+// index built in TiKV.
+func GetTiKVFullTextSupported() bool {
+	return tikvFullTextSupported.Load()
+}
+
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
 func GenUniqueChangingIndexName(tblInfo *TableInfo, idxInfo *IndexInfo) string {
 	// Check whether the new index name is used.

@@ -37,6 +37,21 @@ import (
 // The next-gen kernel never reaches this code: its preprocessor rewrites a
 // FULLTEXT index into a columnar index, which is held by the columnar engine.
 
+// checkTiKVFullTextClusterSupport refuses to create a FULLTEXT index in TiKV
+// while a node in the cluster would not maintain it. The DDL version
+// detection loop records whether every node is at least tikvFullTextFirstVer.
+func checkTiKVFullTextClusterSupport() error {
+	if model.GetJobVerInUse() < model.JobVersion2 {
+		// The analyzer snapshot travels in typed job arguments, which the
+		// untyped v1 layout cannot carry.
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index requires DDL job version 2, which the cluster does not use yet")
+	}
+	if !model.GetTiKVFullTextSupported() {
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index requires every TiDB node in the cluster to support it; upgrade the remaining nodes first")
+	}
+	return nil
+}
+
 // IsTiKVFullTextIndexOption reports whether an index option describes a
 // FULLTEXT index built in TiKV. The preprocessor marks the option on the
 // classic kernel; NormalizeTiKVFullTextIndexOption does the same for callers
