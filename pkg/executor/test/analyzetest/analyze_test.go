@@ -16,8 +16,10 @@ package analyzetest
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,11 +44,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2289,7 +2293,7 @@ partition by range (a) (
 }
 
 func TestSampledNDVCompatibility(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
@@ -2303,7 +2307,43 @@ func TestSampledNDVCompatibility(t *testing.T) {
 	// The mock server is a legacy peer: a sampled request may get full-input results.
 	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv"))
+	require.NoError(t, err)
+	tbl := table.Meta()
+	part0, part1 := tbl.Partition.Definitions[0].ID, tbl.Partition.Definitions[1].ID
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
+
+	// Both partitions contain the same two sampled values. Their merged NDV is two.
+	selected := int64(3)
+	wire, err := (&tipb.RowSampleCollector{Count: 10, NdvSampleCount: &selected,
+		NullCounts: []int64{3}, FmSketch: []*tipb.FMSketch{{Hashset: []uint64{1, 2}}}}).Marshal()
+	require.NoError(t, err)
+	data := make([]byte, 10)
+	data[1] = 1
+	binary.LittleEndian.PutUint64(data[2:], math.Float64bits(.1))
+	data = append(data, wire...)
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id in (?,?)", data, part0, part1)
+	tk.MustExec("update mysql.stats_meta set count=10 where table_id in (?,?)", part0, part1)
+	h := dom.StatsHandle()
+
+	opts := map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumBuckets: 10, ast.AnalyzeOptNumTopN: 0}
+	mergeColumnB := func(async bool) (*globalstats.GlobalStats, error) {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_async_merge_global_stats=%t", async))
+		return globalstats.MergePartitionStats2GlobalStats(tk.Session(), h, opts, dom.InfoSchema(), tbl, false, []int64{tbl.Columns[1].ID})
+	}
+	for _, async := range []bool{false, true} {
+		merged, err := mergeColumnB(async)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), merged.Hg[0].NDV)
+		tk.MustExec("update mysql.stats_fm_sketch set value=x'08001001' where table_id=?", part1)
+		_, err = mergeColumnB(async)
+		require.ErrorIs(t, err, statistics.ErrIncompatibleNDV)
+		tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=?", data, part1)
+	}
+
+	// The legacy peer returns full input for p0, which cannot merge with the sampled p1.
+	err = tk.ExecToErr("analyze table ndv partition p0 with 0.1 NDVRATE")
+	require.ErrorIs(t, err, statistics.ErrIncompatibleNDV)
 	// NDVRATE is a statement option; the next statement returns to full input.
 	tk.MustExec("analyze table ndv")
 	tk.MustQuery("select job_info like '%ndvrate%' from mysql.analyze_jobs where table_name='ndv' and partition_name='p0' order by id desc limit 1").Check(testkit.Rows("0"))

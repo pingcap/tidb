@@ -304,7 +304,9 @@ func blockingMergePartitionStats2GlobalStats(
 			if globalStats.Fms[i] == nil {
 				globalStats.Fms[i] = allFms[i][j]
 			} else {
-				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+				if err = globalStats.Fms[i].MergeFMSketch(allFms[i][j]); err != nil {
+					return
+				}
 				allFms[i][j] = nil // Release for GC.
 			}
 		}
@@ -375,4 +377,11 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 		}
 	}
 	return err
+}
+
+func targetName(tbl *model.TableInfo, isIndex bool, id int64) string {
+	if isIndex {
+		return "index " + tbl.FindIndexNameByID(id)
+	}
+	return "column " + tbl.FindColumnNameByID(id)
 }

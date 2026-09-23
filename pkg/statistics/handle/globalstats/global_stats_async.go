@@ -300,7 +300,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 		}
 		close(a.cpuWorkerExitChan)
 	}()
-	a.dealFMSketch()
+	if err = a.dealFMSketch(isIndex); err != nil {
+		return err
+	}
 	select {
 	case <-a.ioWorkerExitWhenErrChan:
 		return nil
@@ -396,7 +398,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 			}
 			fmsketch, err := storage.FMSketchFromStorage(sctx, partitionID, int64(toSQLIndex(isIndex)), a.histIDs[i])
 			if err != nil {
-				return err
+				return fmt.Errorf("table %s partition %s %s: %w", a.globalTableInfo.Name.O, a.PartitionDefinition[partitionID].Name.O, targetName(a.globalTableInfo, isIndex, a.histIDs[i]), err)
 			}
 			select {
 			case a.fmsketch <- mergeItem[*statistics.FMSketch]{
@@ -500,21 +502,23 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
+func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch(isIndex bool) error {
 	failpoint.Inject("PanicInCPUWorker", nil)
 	for {
 		select {
 		case fms, ok := <-a.fmsketch:
 			if !ok {
-				return
+				return nil
 			}
 			if a.globalStats.Fms[fms.idx] == nil {
 				a.globalStats.Fms[fms.idx] = fms.item
 			} else {
-				a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
+				if err := a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item); err != nil {
+					return fmt.Errorf("table %s %s: %w", a.globalTableInfo.Name.O, targetName(a.globalTableInfo, isIndex, a.histIDs[fms.idx]), err)
+				}
 			}
 		case <-a.ioWorkerExitWhenErrChan:
-			return
+			return nil
 		}
 	}
 }

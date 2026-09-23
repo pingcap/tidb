@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// ErrIncompatibleNDV reports NDV sketches that cannot be merged.
+// ErrIncompatibleNDV prevents a failed sampled merge from being reported as a
+// successful ANALYZE with only a log message.
 var ErrIncompatibleNDV = errors.New("incompatible NDV statistics")
 
 // ndvSample stays with the sketch so saved partitions use collection-time
