@@ -278,23 +278,28 @@ func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parse
 		}
 		return errors.Trace(err)
 	}
-	if err := si.runJob(ctx, job, stmts); err != nil {
-		// CREATE TABLE may fail during execution even when the table already
-		// exists. For example, TiDB validates an unsupported collation before
-		// honoring IF NOT EXISTS. Check the downstream table after the failure
-		// so an existing table can be validated by the caller and reused.
-		exist, err2 := si.isTableExist(ctx, job.dbName, job.tblName)
-		if err2 != nil {
-			return err2
-		}
-		if exist {
-			si.logger.Info("table already exists in downstream, skip",
-				zap.String("db", job.dbName), zap.String("table", job.tblName))
-			return nil
-		}
+	failedStmt, err := si.runJob(ctx, job, stmts)
+	if err == nil {
+		return nil
+	}
+	if failedStmt < 0 || failedStmt >= len(stmts) || !isCreateTableStmt(p, stmts[failedStmt]) {
 		return err
 	}
-	return nil
+
+	// CREATE TABLE may fail during execution even when the table already
+	// exists. For example, TiDB validates an unsupported collation before
+	// honoring IF NOT EXISTS. Check the downstream table after the failure
+	// so an existing table can be validated by the caller and reused.
+	exist, err2 := si.isTableExist(ctx, job.dbName, job.tblName)
+	if err2 != nil {
+		return err2
+	}
+	if exist {
+		si.logger.Info("create table failed but table already exists in downstream, ignore error",
+			zap.String("db", job.dbName), zap.String("table", job.tblName), zap.Error(err))
+		return nil
+	}
+	return err
 }
 
 func tableKey(dbName, tblName string) filter.Table {
@@ -371,13 +376,14 @@ func (si *SchemaImporter) runCommonJob(ctx context.Context, p *parser.Parser, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return si.runJob(ctx, job, stmts)
+	_, err = si.runJob(ctx, job, stmts)
+	return err
 }
 
-func (si *SchemaImporter) runJob(ctx context.Context, job *schemaJob, stmts []string) error {
+func (si *SchemaImporter) runJob(ctx context.Context, job *schemaJob, stmts []string) (int, error) {
 	conn, err := si.db.Conn(ctx)
 	if err != nil {
-		return err
+		return -1, err
 	}
 	defer func() {
 		_ = conn.Close()
@@ -388,16 +394,16 @@ func (si *SchemaImporter) runJob(ctx context.Context, job *schemaJob, stmts []st
 		Logger: logger,
 		DB:     conn,
 	}
-	for _, stmt := range stmts {
+	for i, stmt := range stmts {
 		task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
 		err = sqlWithRetry.Exec(ctx, "run create schema job", stmt)
 		task.End(zap.ErrorLevel, err)
 
 		if err != nil {
-			return common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
+			return i, common.ErrCreateSchema.Wrap(err).GenWithStackByArgs(common.UniqueTable(job.dbName, job.tblName), job.stmtType.String())
 		}
 	}
-	return nil
+	return -1, nil
 }
 
 func (si *SchemaImporter) getExistingDatabases(ctx context.Context) (set.StringSet, error) {
@@ -478,6 +484,15 @@ func (si *SchemaImporter) queryStringRows(ctx context.Context, query string) ([]
 		return nil, errors.Trace(err)
 	}
 	return stringRows, nil
+}
+
+func isCreateTableStmt(p *parser.Parser, stmt string) bool {
+	stmts, _, err := p.ParseSQL(stmt)
+	if err != nil || len(stmts) != 1 {
+		return false
+	}
+	_, ok := stmts[0].(*ast.CreateTableStmt)
+	return ok
 }
 
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {

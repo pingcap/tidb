@@ -209,6 +209,26 @@ func TestSchemaImporter(t *testing.T) {
 		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
 	})
 
+	t.Run("table: do not ignore later statement error", func(t *testing.T) {
+		importer2 := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 1)
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		fileName := "test01.t4-schema.sql"
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte("CREATE TABLE t4(a int); SET @a = 1;"), 0o644))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test01", Tables: []*MDTableMeta{
+				{DB: "test01", Name: "t4", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
+			}},
+		}
+		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t4`").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec("SET .*a.*=1").
+			WillReturnError(errors.New("later statement error"))
+		require.ErrorContains(t, importer2.Run(ctx, dbMetas), "later statement error")
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
+	})
+
 	t.Run("table: ignore drop table in schema file", func(t *testing.T) {
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
