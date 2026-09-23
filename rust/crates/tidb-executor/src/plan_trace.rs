@@ -70,14 +70,10 @@ pub(crate) fn physical_expression_text_with_columns(
             ))
         }
         Expression::Column(column) => {
-            let index = usize::try_from(column.index).ok()?;
-            if let Some(physical_name) = column_names.get(index) {
-                return Some(
-                    physical_name
-                        .clone()
-                        .unwrap_or_else(|| format!("Column#{}", column.unique_id)),
-                );
-            }
+            // Go `Column.StringWithCtx` renders `OrigName` (the
+            // table-qualified physical name) when non-empty, falling back to
+            // `Column#<UniqueID>` — the output names (aliases) are not part
+            // of the explain rendering.
             (!column.orig_name.is_empty())
                 .then(|| column.orig_name.clone())
                 .or_else(|| Some(format!("Column#{}", column.unique_id)))
