@@ -2640,12 +2640,19 @@ fn attach_agg_over_cop(
         // Go `attach2Task4PhysicalHashAgg`: a TiKV cop aggregate whose split
         // is impossible (e.g. DISTINCT with tidb_opt_distinct_agg_push_down
         // off) is an INVALID task — the Root-task candidate wins instead of
-        // a cop candidate being re-labelled as a root aggregate. The
-        // inlined NewPartialAggregate still allocates the rejected cop
-        // aggregate node (go R33 receipt alloc 11); consume the id.
+        // a cop candidate being re-labelled as a root aggregate. The attach
+        // still consumes two ids: the inlined NewPartialAggregate's rejected
+        // cop aggregate node (go R33 receipt alloc 11) and the
+        // ConvertToRootTask's reader (alloc 12) for the fallback root
+        // aggregate that competes and loses.
         let _ = crate::physical::BasePhysicalPlan::new(
             allocator,
             "HashAgg",
+            query_block_offset,
+        );
+        let _ = crate::physical::BasePhysicalPlan::new(
+            allocator,
+            "TableReader",
             query_block_offset,
         );
         return Ok(Task::invalid_task());
