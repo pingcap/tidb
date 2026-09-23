@@ -17,9 +17,11 @@ package statistics
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"math/rand"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -34,7 +36,7 @@ import (
 
 // RowSampleCollector implements the needed interface for a row-based sample collector.
 type RowSampleCollector interface {
-	MergeCollector(collector RowSampleCollector)
+	MergeCollector(collector RowSampleCollector) error
 	sampleRow(row []types.Datum, rng *rand.Rand)
 	Base() *baseCollector
 	DestroyAndPutToPool()
@@ -292,14 +294,37 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
-func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker, req *tipb.AnalyzeColumnsReq) error {
+	targetCount := len(req.ColumnsInfo) + len(req.ColumnGroups)
+	if pbCollector == nil || pbCollector.Count < 0 || len(pbCollector.FmSketch) != targetCount ||
+		len(pbCollector.NullCounts) != targetCount || len(pbCollector.TotalSize) != targetCount {
+		return errors.New("invalid analyze collector layout or row count")
+	}
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
-	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
-	for _, pbSketch := range pbCollector.FmSketch {
-		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
-	}
 	s.TotalSizes = pbCollector.TotalSize
+	s.FMSketches = make([]*FMSketch, targetCount)
+	for i, pbSketch := range pbCollector.FmSketch {
+		if pbSketch == nil || s.NullCount[i] < 0 || s.NullCount[i] > s.Count || s.TotalSizes[i] < 0 {
+			return errors.New("invalid analyze sketch or counters")
+		}
+		if pbCollector.NdvSampleCount != nil {
+			sketch, err := newSampledFMSketch(pbSketch, ndvSample{
+				rate: req.GetNdvRate(), rows: s.Count, samples: *pbCollector.NdvSampleCount,
+				nulls: s.NullCount[i],
+			})
+			if err != nil {
+				return err
+			}
+			s.FMSketches[i] = sketch
+		} else {
+			if len(pbSketch.MultiHashset) != 0 {
+				return errors.New("sampled hashes without NDV sample count")
+			}
+			s.FMSketches[i] = FMSketchFromProto(pbSketch)
+			s.FMSketches[i].maxSize = MaxSketchSize
+		}
+	}
 	sampleNum := len(pbCollector.Samples)
 	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
 	// consume mandatory memory at the beginning, including all empty ReservoirRowSampleItems and all empty Datums of all sample rows, if exceeds, fast fail
@@ -325,6 +350,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		s.MemSize += deltaSize
 	}
 	memTracker.Consume(bufferedMemSize)
+	return nil
 }
 
 // Base implements the RowSampleCollector interface.
@@ -368,16 +394,9 @@ func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 }
 
 // MergeCollector merges the collectors to a final one.
-func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
-	s.Count += subCollector.Base().Count
-	for i, fms := range subCollector.Base().FMSketches {
-		s.FMSketches[i].MergeFMSketch(fms)
-	}
-	for i, nullCount := range subCollector.Base().NullCount {
-		s.NullCount[i] += nullCount
-	}
-	for i, totSize := range subCollector.Base().TotalSizes {
-		s.TotalSizes[i] += totSize
+func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) error {
+	if err := s.mergeBase(subCollector.Base()); err != nil {
+		return err
 	}
 	oldSampleNum := len(s.Samples)
 	for _, sample := range subCollector.Base().Samples {
@@ -391,6 +410,7 @@ func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	} else {
 		s.MemSize = (s.MemSize + subCollector.Base().MemSize) * int64(newSampleNum) / int64(totalSampleNum)
 	}
+	return nil
 }
 
 // DestroyAndPutToPool implements the interface RowSampleCollector.
@@ -462,19 +482,42 @@ func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 }
 
 // MergeCollector merges the collectors to a final one.
-func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
-	s.Count += subCollector.Base().Count
-	for i := range subCollector.Base().FMSketches {
-		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
+func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) error {
+	if err := s.mergeBase(subCollector.Base()); err != nil {
+		return err
 	}
-	for i := range subCollector.Base().NullCount {
-		s.NullCount[i] += subCollector.Base().NullCount[i]
-	}
-	for i := range subCollector.Base().TotalSizes {
-		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
-	}
-	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
+	s.Samples = append(s.Samples, subCollector.Base().Samples...)
 	s.MemSize += subCollector.Base().MemSize
+	return nil
+}
+
+func (s *baseCollector) mergeBase(other *baseCollector) error {
+	// A worker that received no responses has no mode. An empty response does.
+	if len(other.FMSketches) == 0 {
+		return nil
+	}
+	if len(s.FMSketches) == 0 {
+		s.Count = other.Count
+		s.NullCount = append(s.NullCount[:0], other.NullCount...)
+		s.TotalSizes = append(s.TotalSizes[:0], other.TotalSizes...)
+		for _, sketch := range other.FMSketches {
+			s.FMSketches = append(s.FMSketches, sketch.Copy())
+		}
+		return nil
+	}
+	if len(s.FMSketches) != len(other.FMSketches) {
+		return errors.New("analyze collector target mismatch")
+	}
+	for i, sketch := range s.FMSketches {
+		// Each request uses one rate, so only a mix of old and new TiKV fails here.
+		if err := sketch.MergeFMSketch(other.FMSketches[i]); err != nil {
+			return fmt.Errorf("retry after upgrading every TiKV: %w", err)
+		}
+		s.NullCount[i] += other.NullCount[i]
+		s.TotalSizes[i] += other.TotalSizes[i]
+	}
+	s.Count += other.Count
+	return nil
 }
 
 // Base implements the interface RowSampleCollector.

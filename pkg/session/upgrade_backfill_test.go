@@ -105,8 +105,8 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	se := CreateSessionAndSetID(t, store)
 	assertValue := func(expected string) {
 		res := MustExecToRecodeSet(t, se, fmt.Sprintf(
-			"select variable_value, @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan from mysql.GLOBAL_VARIABLES where variable_name='%s'",
-			vardef.TiDBEnableAdaptiveLimitScan,
+			"select variable_value, @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan, (select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s') from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			vardef.TiDBEnableSampledNDV, vardef.TiDBEnableAdaptiveLimitScan,
 		))
 		defer func() { require.NoError(t, res.Close()) }()
 		chk := res.NewChunk(nil)
@@ -115,11 +115,13 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 		require.Equal(t, expected, chk.GetRow(0).GetString(0))
 		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(1) == 1)
 		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(2) == 1)
+		require.Equal(t, expected, chk.GetRow(0).GetString(3))
 	}
 	// Initial bootstrap uses the new-cluster policy.
 	assertValue(vardef.On)
 	// The upgrade backfill must preserve an existing value.
 	upgradeToVer317(se, version316)
+	upgradeToVer318(se, version317)
 	assertValue(vardef.On)
 
 	// Simulate an existing cluster before the version317 backfill.
@@ -130,6 +132,10 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	MustExec(t, se, fmt.Sprintf(
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBEnableAdaptiveLimitScan,
+	))
+	MustExec(t, se, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		vardef.TiDBEnableSampledNDV,
 	))
 	require.NoError(t, txn.Commit(ctx))
 	store.SetOption(StoreBootstrappedKey, nil)

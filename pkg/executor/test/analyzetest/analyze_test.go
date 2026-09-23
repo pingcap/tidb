@@ -16,8 +16,10 @@ package analyzetest
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,11 +44,14 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2286,4 +2291,151 @@ partition by range (a) (
 		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 0 and stats_ver = 2",
 		p1ID,
 	)).Check(testkit.Rows("4"))
+}
+
+func TestSampledNDVCompatibility(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	tk.MustExec("set global tidb_enable_sampled_ndv=OFF")
+	require.ErrorContains(t, tk.ExecToErr("analyze table ndv with 0.1 NDVRATE"), "tidb_enable_sampled_ndv")
+	tk.MustExec("set global tidb_enable_sampled_ndv=ON")
+	for _, rate := range []string{"0", "1.01"} {
+		require.Error(t, tk.ExecToErr("analyze table ndv with "+rate+" NDVRATE"))
+	}
+	// The mock server is a legacy peer: a sampled request may get full-input results.
+	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
+	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv"))
+	require.NoError(t, err)
+	tbl := table.Meta()
+	part0, part1 := tbl.Partition.Definitions[0].ID, tbl.Partition.Definitions[1].ID
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
+
+	// Both partitions contain the same two sampled values. Their merged NDV is two.
+	selected := int64(3)
+	wire, err := (&tipb.RowSampleCollector{Count: 10, NdvSampleCount: &selected,
+		NullCounts: []int64{3}, FmSketch: []*tipb.FMSketch{{Hashset: []uint64{1, 2}}}}).Marshal()
+	require.NoError(t, err)
+	data := make([]byte, 10)
+	data[1] = 1
+	binary.LittleEndian.PutUint64(data[2:], math.Float64bits(.1))
+	data = append(data, wire...)
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id in (?,?)", data, part0, part1)
+	tk.MustExec("update mysql.stats_meta set count=10 where table_id in (?,?)", part0, part1)
+	h := dom.StatsHandle()
+	jsonTable, err := h.DumpStatsToJSON("test", tbl, nil, true)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(jsonTable)
+	require.NoError(t, err)
+	var restored statsutil.JSONTable
+	require.NoError(t, json.Unmarshal(encoded, &restored))
+	wantSketch, err := statistics.DecodeFMSketch(data)
+	require.NoError(t, err)
+	for _, name := range []string{"p0", "p1"} {
+		for _, saved := range [][]byte{restored.Partitions[name].Columns["b"].FMSketchData, restored.Partitions[name].Indices["idx"].FMSketchData} {
+			sketch, err := statistics.DecodeFMSketch(saved)
+			require.NoError(t, err)
+			require.Equal(t, wantSketch, sketch)
+		}
+	}
+	var oldColumn struct {
+		FMSketch *tipb.FMSketch `json:"fm_sketch"`
+	}
+	columnJSON, err := json.Marshal(restored.Partitions["p0"].Columns["b"])
+	require.NoError(t, err)
+	require.Error(t, json.Unmarshal(columnJSON, &oldColumn))
+
+	opts := map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumBuckets: 10, ast.AnalyzeOptNumTopN: 0}
+	mergeColumnB := func(async bool) (*globalstats.GlobalStats, error) {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_async_merge_global_stats=%t", async))
+		return globalstats.MergePartitionStats2GlobalStats(tk.Session(), h, opts, dom.InfoSchema(), tbl, false, []int64{tbl.Columns[1].ID})
+	}
+	for _, async := range []bool{false, true} {
+		merged, err := mergeColumnB(async)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), merged.Hg[0].NDV)
+		tk.MustExec("update mysql.stats_fm_sketch set value=x'08001001' where table_id=?", part1)
+		_, err = mergeColumnB(async)
+		require.ErrorIs(t, err, statistics.ErrIncompatibleNDV)
+		require.ErrorContains(t, err, "analyze all partitions")
+		tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=?", data, part1)
+	}
+	zero := int64(0)
+	emptyWire, err := (&tipb.RowSampleCollector{Count: 10, NdvSampleCount: &zero,
+		NullCounts: []int64{0}, FmSketch: []*tipb.FMSketch{{}}}).Marshal()
+	require.NoError(t, err)
+	emptyData := append(append([]byte(nil), data[:10]...), emptyWire...)
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=? and is_index=0 and hist_id=?", emptyData, part1, tbl.Columns[1].ID)
+	tk.MustExec("delete from mysql.stats_buckets where table_id=? and is_index=0 and hist_id=?", part1, tbl.Columns[1].ID)
+	tk.MustExec("delete from mysql.stats_top_n where table_id=? and is_index=0 and hist_id=?", part1, tbl.Columns[1].ID)
+	for _, async := range []bool{false, true} {
+		merged, err := mergeColumnB(async)
+		require.NoError(t, err)
+		// The empty partition adds rows but no hashes to the GEE estimate.
+		require.Equal(t, int64(5), merged.Hg[0].NDV)
+	}
+
+	// Reject an unsupported format before writing any partition.
+	before := tk.MustQuery("select table_id, version from mysql.stats_meta order by table_id").Rows()
+	bad := restored.Partitions["p1"].Columns["b"].FMSketchData
+	bad[1] = 2
+	require.Error(t, h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), &restored, 0))
+	require.Equal(t, before, tk.MustQuery("select table_id, version from mysql.stats_meta order by table_id").Rows())
+	bad[1] = 1
+	tk.MustExec("delete from mysql.stats_fm_sketch where table_id in (?,?)", part0, part1)
+	require.NoError(t, h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), &restored, 0))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("6"))
+
+	// The precheck allows matching saved rates, but legacy responses still fail the real merge.
+	err = tk.ExecToErr("analyze table ndv partition p0 with 0.1 NDVRATE")
+	require.ErrorIs(t, err, statistics.ErrIncompatibleNDV)
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id in (?,?)", data, part0, part1)
+	tk.MustExec("analyze table ndv partition p0 with 0.2 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("expands partitions [p0] to all partitions: partition p1 column a uses NDVRATE 0.1, requested 0.2; added [p1]")
+	// NDVRATE is a statement option; the next statement returns to full input.
+	tk.MustExec("analyze table ndv")
+	tk.MustQuery("select job_info like '%ndvrate%' from mysql.analyze_jobs where table_name='ndv' and partition_name='p0' order by id desc limit 1").Check(testkit.Rows("0"))
+	// Index offsets in a partial column list differ from table offsets.
+	tk.MustExec("create table ndv_virtual (a int primary key, unused int, v int as (b+1), b int, key idx(v)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv_virtual(a,b) values (1,1),(11,1)")
+	tk.MustExec("analyze table ndv_virtual columns a,b")
+	virtual, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv_virtual"))
+	require.NoError(t, err)
+	kept := virtual.Meta().Partition.Definitions[1].ID
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=? and is_index=0", data, kept)
+	// The virtual index stays on full input. Matching retained rates need no expansion,
+	// so the old mock peer's response exposes a late column-mode conflict.
+	require.ErrorIs(t, tk.ExecToErr("analyze table ndv_virtual partition p0 with 0.1 NDVRATE"), statistics.ErrIncompatibleNDV)
+
+	// A locked partition keeps its sketch. When that sketch cannot join the
+	// requested global merge, ANALYZE fails before it scans anything.
+	tk.MustExec("drop stats ndv")
+	tk.MustExec("lock stats ndv partition p1")
+	jobs := tk.MustQuery("select count(*) from mysql.analyze_jobs").Rows()
+	for _, stmt := range []string{"analyze table ndv partition p0 with 0.1 NDVRATE", "analyze table ndv with 0.1 NDVRATE"} {
+		err = tk.ExecToErr(stmt)
+		require.ErrorIs(t, err, statistics.ErrIncompatibleNDV)
+		require.ErrorContains(t, err, "partition p1 column a has no saved sketch, and the partition is locked")
+	}
+	tk.MustQuery("select count(*) from mysql.analyze_jobs").Check(jobs)
+	tk.MustExec("unlock stats ndv partition p1")
+
+	// Only sampled NDV needs every retained sketch. Full input keeps skipping
+	// partitions without one, such as statistics loaded by older versions.
+	tk.MustExec("analyze table ndv")
+	tk.MustExec("delete from mysql.stats_fm_sketch where table_id = ?", part1)
+	tk.MustExec("analyze table ndv partition p0 with 0.1 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("partition p1 column a has no saved sketch")
+	tk.MustExec("delete from mysql.stats_fm_sketch where table_id = ?", part1)
+	tk.MustExec("lock stats ndv partition p1")
+	for _, async := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_async_merge_global_stats=%t", async))
+		tk.MustExec("analyze table ndv partition p0")
+		tk.MustQuery("show warnings").CheckNotContain("expands partitions")
+	}
+	tk.MustExec("analyze table ndv")
+	tk.MustExec("unlock stats ndv partition p1")
 }

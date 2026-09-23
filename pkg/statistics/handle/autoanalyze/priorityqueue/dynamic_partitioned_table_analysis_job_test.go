@@ -52,7 +52,8 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
-	job.Analyze(handle, dom.SysProcTracker())
+	job.GlobalTableID = tbl.Meta().ID
+	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -61,6 +62,24 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.Equal(t, int64(1), tblStats.RealtimeCount)
+
+	// The later global-merge job has no partition name and took only one second.
+	tk.MustExec("set global tidb_analyze_sampled_ndv_table_size_threshold=0")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_duration_threshold=10")
+	tk.MustExec("update mysql.analyze_jobs set start_time='2020-01-01 00:00:00', end_time=if(job_info like '%analyze table %', '2020-01-01 00:00:11', '2020-01-01 00:00:01') where table_name='t'")
+	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
+	tk.MustQuery("select job_info like '%0.05 ndvrate%' from mysql.analyze_jobs where table_name='t' and job_info like 'auto analyze table %' order by id desc limit 1").Check(testkit.Rows("1"))
+
+	// A locked partition keeps its sketch, so Auto Analyze reuses its rate.
+	// The mock store saved a full-input sketch; a 0.1 header replaces it next.
+	lastAutoJob := "select job_info from mysql.analyze_jobs where table_name='t' and job_info like 'auto analyze table %' order by id desc limit 1"
+	tk.MustExec("lock stats t partition p1")
+	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
+	tk.MustQuery(lastAutoJob).CheckNotContain("ndvrate")
+	tk.MustExec("update mysql.stats_fm_sketch set value = x'00019A9999999999B93F' where table_id = ?", tbl.Meta().GetPartitionInfo().Definitions[1].ID)
+	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
+	tk.MustQuery(lastAutoJob).CheckContain("0.1 ndvrate")
+	tk.MustExec("unlock stats t partition p1")
 }
 
 func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {

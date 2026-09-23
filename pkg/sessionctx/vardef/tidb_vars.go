@@ -93,6 +93,13 @@ const (
 	// TiDBAutoAnalyzeRatio will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
+	// TiDBEnableSampledNDV controls whether ANALYZE can collect sampled NDV.
+	TiDBEnableSampledNDV = "tidb_enable_sampled_ndv"
+	// TiDBAnalyzeSampledNDVTableSizeThreshold selects sampled NDV above this row count; zero disables the condition.
+	TiDBAnalyzeSampledNDVTableSizeThreshold = "tidb_analyze_sampled_ndv_table_size_threshold"
+	// TiDBAnalyzeSampledNDVDurationThreshold selects sampled NDV above this running time in seconds; zero disables the condition.
+	TiDBAnalyzeSampledNDVDurationThreshold = "tidb_analyze_sampled_ndv_duration_threshold"
+
 	// TiDBAutoAnalyzeStartTime will run if current time is within start time and end time.
 	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
 	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
@@ -1529,6 +1536,7 @@ const (
 	DefIndexLookupConcurrency           = ConcurrencyUnset
 	DefIndexLookupJoinConcurrency       = ConcurrencyUnset
 	DefTiDBEnableAdaptiveLimitScan      = false
+	DefTiDBEnableSampledNDV             = false
 	DefIndexSerialScanConcurrency       = 1
 	DefIndexJoinBatchSize               = 25000
 	DefIndexLookupSize                  = 20000

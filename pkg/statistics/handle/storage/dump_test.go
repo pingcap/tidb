@@ -199,6 +199,11 @@ func TestLoadGlobalStats(t *testing.T) {
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0))
 	loadedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
+
+	// Historical dumps can contain null partitions when their metadata is missing.
+	globalStats.Partitions["p0"] = nil
+	require.NoError(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0))
+	require.Equal(t, loadedStats.Partitions["p0"], getStatsJSON(t, dom, "test", "t").Partitions["p0"])
 }
 
 func TestLastStatsHistUpdateVersionAfterLoadStats(t *testing.T) {
@@ -259,12 +264,15 @@ func TestLoadPartitionStats(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_fm_sketch")
 	dom.StatsHandle().Clear()
 	clearedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
 	// load stats back
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
+	// A later global merge needs the partition FM sketches of the column and the index.
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("16"))
 
 	// compare
 	for i, def := range pi.Definitions {

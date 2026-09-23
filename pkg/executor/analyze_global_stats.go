@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -78,6 +79,9 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 				return err
 			}()
 			statsHandle.FinishAnalyzeJob(job, mergeStatsErr, statistics.GlobalStatsMergeJob)
+			if errors.Is(mergeStatsErr, statistics.ErrIncompatibleNDV) {
+				return mergeStatsErr
+			}
 		}
 	}
 

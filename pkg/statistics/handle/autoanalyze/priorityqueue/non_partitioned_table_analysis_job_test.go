@@ -79,13 +79,40 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	tblStats := handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
-	job.Analyze(handle, dom.SysProcTracker())
+	job.TableID = tbl.Meta().ID
+	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats = handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
+	tk.MustExec("set global tidb_analyze_sampled_ndv_table_size_threshold=2")
+	tk.MustExec("set global tidb_enable_sampled_ndv=OFF")
+	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
+	tk.MustQuery("select job_info like '%ndvrate%' from mysql.analyze_jobs where table_name='t' order by id desc limit 1").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_sampled_ndv=ON")
+	// Thresholds use the row count and the last running time.
+	for _, tc := range []struct {
+		rows, seconds         int
+		duration, wantSampled bool
+	}{
+		{3, 0, false, false}, {2, 0, false, true},
+		// The last sampled run was fast, but it keeps the next run sampled.
+		{0, 10, true, true}, {0, 10, false, true}, {0, 0, true, false},
+	} {
+		tk.MustExec("set global tidb_analyze_sampled_ndv_table_size_threshold=?", tc.rows)
+		tk.MustExec("set global tidb_analyze_sampled_ndv_duration_threshold=?", tc.seconds)
+		if tc.duration {
+			tk.MustExec("update mysql.analyze_jobs set start_time='2020-01-01 00:00:00', end_time='2020-01-01 00:00:11' where table_name='t'")
+		}
+		require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
+		want := "0"
+		if tc.wantSampled {
+			want = "1"
+		}
+		tk.MustQuery("select job_info like '%0.05 ndvrate%' from mysql.analyze_jobs where table_name='t' order by id desc limit 1").Check(testkit.Rows(want))
+	}
 }
 
 func TestAnalyzeNonPartitionedIndexes(t *testing.T) {

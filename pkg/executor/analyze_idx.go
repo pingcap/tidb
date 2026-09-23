@@ -360,7 +360,9 @@ func updateIndexResult(
 		}
 	}
 	if fms != nil && resp.Collector != nil && resp.Collector.FmSketch != nil {
-		fms.MergeFMSketch(statistics.FMSketchFromProto(resp.Collector.FmSketch))
+		if err := fms.MergeFMSketch(statistics.FMSketchFromProto(resp.Collector.FmSketch)); err != nil {
+			return nil, nil, nil, nil, err
+		}
 	}
 	return hist, cms, fms, topn, nil
 }

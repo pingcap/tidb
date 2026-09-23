@@ -300,7 +300,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 		}
 		close(a.cpuWorkerExitChan)
 	}()
-	a.dealFMSketch()
+	if err = a.dealFMSketch(isIndex); err != nil {
+		return err
+	}
 	select {
 	case <-a.ioWorkerExitWhenErrChan:
 		return nil
@@ -385,18 +387,29 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 		zap.Int("partitions", len(a.partitionIDs)),
 		zap.String("reads", "mysql.stats_fm_sketch"))
 	for i := range a.globalStats.Num {
-		// load fmsketch from tikv
+		var rate float64
+		missing := false
+		// Read skipped inputs too: sampled NDV cannot represent a subset of partitions.
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
 				histID:      a.histIDs[i],
 				partitionID: partitionID,
 			}]
-			if ok {
-				continue
-			}
 			fmsketch, err := storage.FMSketchFromStorage(sctx, partitionID, int64(toSQLIndex(isIndex)), a.histIDs[i])
 			if err != nil {
-				return err
+				return fmt.Errorf("table %s partition %s %s: %w", a.globalTableInfo.Name.O, a.PartitionDefinition[partitionID].Name.O, targetName(a.globalTableInfo, isIndex, a.histIDs[i]), err)
+			}
+			if got := fmsketch.NDVRate(); got != 0 {
+				if rate != 0 && got != rate {
+					return ndvRateConflict(a.globalTableInfo, a.PartitionDefinition[partitionID].Name.O, isIndex, a.histIDs[i], got, rate)
+				}
+				rate = got
+			}
+			if ok || fmsketch == nil {
+				missing = true
+			}
+			if ok {
+				continue
 			}
 			select {
 			case a.fmsketch <- mergeItem[*statistics.FMSketch]{
@@ -406,6 +419,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 				statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
 				return nil
 			}
+		}
+		if rate > 0 && rate < 1 && missing {
+			return missingSampledNDV(a.globalTableInfo, isIndex, a.histIDs[i])
 		}
 	}
 	return nil
@@ -500,21 +516,23 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
+func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch(isIndex bool) error {
 	failpoint.Inject("PanicInCPUWorker", nil)
 	for {
 		select {
 		case fms, ok := <-a.fmsketch:
 			if !ok {
-				return
+				return nil
 			}
 			if a.globalStats.Fms[fms.idx] == nil {
 				a.globalStats.Fms[fms.idx] = fms.item
 			} else {
-				a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
+				if err := a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item); err != nil {
+					return fmt.Errorf("table %s %s: %w", a.globalTableInfo.Name.O, targetName(a.globalTableInfo, isIndex, a.histIDs[fms.idx]), err)
+				}
 			}
 		case <-a.ioWorkerExitWhenErrChan:
-			return
+			return nil
 		}
 	}
 }

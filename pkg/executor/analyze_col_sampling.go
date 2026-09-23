@@ -216,9 +216,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	totalLen := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-	for range totalLen {
-		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
-	}
+	defer func() { e.memTracker.Release(rootRowCollector.Base().MemSize) }()
 
 	sc := e.ctx.GetSessionVars().StmtCtx
 
@@ -273,7 +271,13 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			oldRootCollectorSize := rootRowCollector.Base().MemSize
 			oldRootCollectorCount := rootRowCollector.Base().Count
 			// Merge the result from sub-collectors.
-			rootRowCollector.MergeCollector(mergeResult.collector)
+			if mergeErr := rootRowCollector.MergeCollector(mergeResult.collector); mergeErr != nil {
+				err = mergeErr
+				taskCancel(err)
+				e.memTracker.Release(mergeResult.collector.Base().MemSize)
+				mergeResult.collector.DestroyAndPutToPool()
+				continue
+			}
 			newRootCollectorCount := rootRowCollector.Base().Count
 			printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
 				mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
@@ -295,7 +299,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 	err = mergeEg.Wait()
 	drainPendingSamplingMergeTasks(mergeTaskCh, e.memTracker)
-	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
 		taskCancel(err)
 		return 0, nil, nil, nil, err
@@ -638,9 +641,6 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	})
 	// Keep one private collector per merge worker and flush it when taskCh is closed.
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-	for range totalLen {
-		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
-	}
 	// Early-return paths need to release the worker-local collector explicitly.
 	cleanupCollector := func() {
 		e.memTracker.Release(retCollector.Base().MemSize)
@@ -669,12 +669,24 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			e.memTracker.Consume(inflightRespSize)
 
 			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+			if err := subCollector.Base().FromProto(colResp.RowCollector, e.memTracker, e.analyzePB.ColReq); err != nil {
+				cancel(err)
+				cleanupCollector()
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
 			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 
 			oldRetCollectorSize := retCollector.Base().MemSize
 			oldRetCollectorCount := retCollector.Base().Count
-			retCollector.MergeCollector(subCollector)
+			if err := retCollector.MergeCollector(subCollector); err != nil {
+				cancel(err)
+				e.memTracker.Release(subCollector.Base().MemSize)
+				subCollector.DestroyAndPutToPool()
+				cleanupCollector()
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
 			newRetCollectorCount := retCollector.Base().Count
 			printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
 				e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),

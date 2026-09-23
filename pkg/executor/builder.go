@@ -3548,6 +3548,12 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
+	if bits, exists := opts[ast.AnalyzeOptNDVRate]; exists {
+		rate := math.Float64frombits(bits)
+		if rate < 1 {
+			e.analyzePB.ColReq.NdvRate = &rate
+		}
+	}
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		if task.TblInfo.IsCommonHandle {
