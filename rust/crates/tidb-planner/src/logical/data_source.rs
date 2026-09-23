@@ -38,6 +38,7 @@
 //!   this operator holds the handle COLUMNS, which is what the ported bodies
 //!   need, plus [`DataSource::handle_is_int`].
 
+use tidb_datatype::{Collation, Datum};
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::normal_form::split_cnf_items;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
@@ -740,10 +741,32 @@ pub(crate) fn is_null_condition_selectivity(
     if total <= 0.0 {
         return None;
     }
-    let null_ratio = (column_stats.histogram.null_count as f64 / total).clamp(0.0, 1.0);
     if name == "not" {
-        Some(1.0 - null_ratio)
+        // Master `GetRowCountByColumnRanges` (`row_count_column.go:229`)
+        // counts `not(isnull(col))` over the not-null range [MinNotNull,
+        // MaxValue]. Both bounds sit outside the histogram's [min, max], so
+        // the count runs through `Histogram.OutOfRangeRowCount`'s heuristic —
+        // slightly below the raw table count (TPC-DS q6/q45: 1158371.5 over
+        // customer).
+        let ranges = vec![crate::cardinality::row_count_estimator::ColumnRange {
+            low: Datum::MinNotNull,
+            high: Datum::MaxValue,
+            low_exclude: false,
+            high_exclude: false,
+        }];
+        let estimate = crate::cardinality::row_count_estimator::get_column_row_count(
+            column_stats,
+            &ranges,
+            Collation::Binary,
+            total as i64,
+            0,
+            false,
+            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        );
+        Some((estimate.est / total).clamp(0.0, 1.0))
     } else {
+        let null_ratio =
+            (column_stats.histogram.null_count as f64 / total).clamp(0.0, 1.0);
         Some(null_ratio)
     }
 }
@@ -954,7 +977,7 @@ mod tests {
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::scalar_function::ScalarFunction;
-    use tidb_stats::histogram::Histogram;
+    use tidb_stats::histogram::{Bucket, Histogram};
 
     fn call(name: &str, arguments: Vec<Expression>) -> Expression {
         Expression::ScalarFunction(ScalarFunction::new(
@@ -965,18 +988,28 @@ mod tests {
     }
 
     fn profile(row_count: f64, null_count: i64) -> StatsInfo {
+        // One bucket covering values [1, 1000] with 900 rows; the not-null
+        // range estimate for such a histogram runs through the same
+        // OutOfRangeRowCount heuristic master applies to
+        // `not(isnull(col))`'s [MinNotNull, MaxValue] range.
         let hist_coll = HistColl::new(false, row_count as i64, std::iter::empty())
             .with_histograms([(
                 1,
                 Arc::new(crate::cardinality::row_count_estimator::ColumnStats {
                     histogram: Histogram {
                         id: 1,
-                        ndv: 0,
+                        ndv: 900,
                         null_count,
                         last_update_version: 0,
                         tot_col_size: 0,
                         correlation: 0.0,
-                        buckets: Vec::new(),
+                        buckets: vec![Bucket {
+                            count: row_count as i64 - null_count,
+                            repeat: 0,
+                            ndv: 900,
+                            lower_bound: Datum::Int(1),
+                            upper_bound: Datum::Int(1000),
+                        }],
                     },
                     topn: None,
                     cms: None,
@@ -1002,7 +1035,34 @@ mod tests {
         );
         let selectivity = is_null_condition_selectivity(&condition, &stats)
             .expect("not(isnull(col)) is an isnull-class condition");
-        assert!((selectivity - 0.9).abs() < 1e-9);
+        // Master counts the condition over the not-null range through
+        // `Histogram.OutOfRangeRowCount`; the wiring must answer the same
+        // column-estimator value.
+        let column_stats = stats
+            .hist_coll()
+            .and_then(|h| h.histogram(column.unique_id))
+            .expect("column histogram");
+        let ranges = vec![crate::cardinality::row_count_estimator::ColumnRange {
+            low: Datum::MinNotNull,
+            high: Datum::MaxValue,
+            low_exclude: false,
+            high_exclude: false,
+        }];
+        let estimate = crate::cardinality::row_count_estimator::get_column_row_count(
+            column_stats,
+            &ranges,
+            Collation::Binary,
+            1000,
+            0,
+            false,
+            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        );
+        let expected = (estimate.est / 1000.0).clamp(0.0, 1.0);
+        assert!(
+            (selectivity - expected).abs() < 1e-9,
+            "selectivity {selectivity} vs estimator {expected}"
+        );
+        assert!(selectivity > 0.0 && selectivity <= 1.0);
 
         let condition = call("isnull", vec![Expression::Column(column)]);
         let selectivity = is_null_condition_selectivity(&condition, &stats)
