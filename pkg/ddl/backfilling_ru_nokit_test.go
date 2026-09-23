@@ -37,11 +37,7 @@ func TestAccountBackfillTxnRU(t *testing.T) {
 	)
 
 	rc := &reorgCtx{}
-	dc := &ddlCtx{}
-	dc.reorgCtx.reorgCtxMap = map[int64]*reorgCtx{jobID: rc}
-	bc := &backfillCtx{ddlCtx: dc}
-
-	bc.accountBackfillTxnRU(jobID, writtenSize)
+	accountBackfillTxnRU(rc, jobID, writtenSize)
 
 	want := 0.0
 	if kerneltype.IsNextGen() {
@@ -56,13 +52,6 @@ func TestAccountBackfillTxnRU(t *testing.T) {
 	stageReorgResultRU(jobCtx, reorgFnResult{ru: rc.getRU()})
 	accountPendingReorgRU(jobCtx, job, nil)
 	require.Equal(t, 5+want, job.RU)
-
-	t.Run("missing reorg ctx is a no-op", func(t *testing.T) {
-		bc := &backfillCtx{ddlCtx: &ddlCtx{}}
-		require.NotPanics(t, func() {
-			bc.accountBackfillTxnRU(jobID, writtenSize)
-		})
-	})
 
 	t.Run("failed transition discards staged backfill RU", func(t *testing.T) {
 		rc := &reorgCtx{}

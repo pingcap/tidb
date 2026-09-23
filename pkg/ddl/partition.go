@@ -2407,6 +2407,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// used by ApplyDiff in updateSchemaVersion
 		args.OldPhysicalTblIDs = physicalTableIDs
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		accountPendingReorgRU(jobCtx, job, err)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2720,6 +2721,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// used by ApplyDiff in updateSchemaVersion
 		args.ShouldUpdateAffectedPartitions = true
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		accountPendingReorgRU(jobCtx, job, err)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -3915,9 +3917,6 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	// writtenBytes samples the payload buffered by the txn that finally
-	// commits, so a retried RunInNewTxn overwrites it instead of double counting.
-	var writtenBytes int
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -4031,13 +4030,10 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 			}
 			taskCtx.addedCount++
 		}
-		writtenBytes = txn.Size()
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
-	if errInTxn == nil {
-		w.accountBackfillTxnRU(handleRange.getJobID(), writtenBytes)
-	}
 
 	return
 }

@@ -164,6 +164,26 @@ func TestDDLJobRU(t *testing.T) {
 				alter: "alter table t_ddl_ru_add_part partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
 			},
 			{
+				name:    "drop partition global index cleanup",
+				jobType: model.ActionDropTablePartition,
+				table:   "t_ddl_ru_drop_part",
+				setup: []string{
+					"create table t_ddl_ru_drop_part (a int, b int, unique key idx_b(b) global) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+					"insert into t_ddl_ru_drop_part values (1,1),(5,5),(11,11),(15,15)",
+				},
+				alter: "alter table t_ddl_ru_drop_part drop partition p0",
+			},
+			{
+				name:    "truncate partition global index cleanup",
+				jobType: model.ActionTruncateTablePartition,
+				table:   "t_ddl_ru_truncate_part",
+				setup: []string{
+					"create table t_ddl_ru_truncate_part (a int, b int, unique key idx_b(b) global) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+					"insert into t_ddl_ru_truncate_part values (1,1),(5,5),(11,11),(15,15)",
+				},
+				alter: "alter table t_ddl_ru_truncate_part truncate partition p0",
+			},
+			{
 				name:    "modify column reorg",
 				jobType: model.ActionModifyColumn,
 				table:   "t_ddl_ru_mod_col",
