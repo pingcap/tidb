@@ -1256,14 +1256,28 @@ func (e *executor) CreateTableWithInfo(
 			scatterScope = val
 		}
 
-		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
-		if e.startMode == BR {
-			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
-				return errors.Trace(err)
-			}
+		if err := e.createTableWithInfoPost(ctx, tbInfo, jobW.Job, scatterScope); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return errors.Trace(err)
+}
+
+func (e *executor) createTableWithInfoPost(
+	ctx sessionctx.Context,
+	tbInfo *model.TableInfo,
+	job *model.Job,
+	scatterScope string,
+) error {
+	if e.startMode == BR {
+		// BR applies its own split strategy while restoring table data.
+		if err := handleAutoIncID(e.getAutoIDRequirement(), job, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
+	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+	return nil
 }
 
 func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
@@ -1357,11 +1371,8 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
-		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
-		if e.startMode == BR {
-			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
-				return errors.Trace(err)
-			}
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.Job, scatterScope); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
