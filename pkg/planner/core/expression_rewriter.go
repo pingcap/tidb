@@ -2415,16 +2415,13 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 // walks the resolved column FieldNames sitting on ctxNameStk (stack layout is
 // [..., col1, ..., colN, against]) and requires for each column:
 //   - the originating table has an available TiFlash replica;
-//   - the column is covered by a public FULLTEXT index on that table.
+//   - the column list matches one public FULLTEXT index on that table.
 //
 // In addition, BOOLEAN MODE requires a parser and analyzer configuration that
 // are represented by the TiFlash protocol. Natural-language mode retains its
 // existing native viability rules; query expansion is not part of this feature.
 func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
 	if numCols <= 0 {
-		return false
-	}
-	if modifier.IsBooleanMode() && numCols != 1 {
 		return false
 	}
 	if !ftsModifierAllowsNativePushdown(modifier) {
@@ -2436,6 +2433,8 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 	if nameStart < 0 || stackLen > len(er.ctxNameStk) || stackLen > len(er.ctxStack) {
 		return false
 	}
+	matchColumnNames := make([]pmodel.CIStr, 0, numCols)
+	var matchTable *model.TableInfo
 	for i := range numCols {
 		name := er.ctxNameStk[nameStart+i]
 		if name == nil {
@@ -2456,6 +2455,16 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 		if err != nil {
 			return false
 		}
+		if modifier.IsBooleanMode() {
+			if matchTable == nil {
+				matchTable = tblInfo
+			} else if tblInfo.ID != matchTable.ID {
+				// A Boolean MATCH must resolve to one composite FULLTEXT index
+				// on one table; independent indexes on different tables cannot
+				// represent one MATCH column list.
+				return false
+			}
+		}
 		if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available || tblInfo.TiFlashReplica.Count == 0 {
 			return false
 		}
@@ -2466,16 +2475,21 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 		if !tableHasPublicFTSIndexOnColumnWithParser(tblInfo, colName.L, modifier.IsBooleanMode()) {
 			return false
 		}
+		if modifier.IsBooleanMode() {
+			matchColumnNames = append(matchColumnNames, colName)
+		}
 	}
 	if modifier.IsBooleanMode() {
+		matchingIndex := publicFTSIndexOnColumns(matchTable, matchColumnNames, true)
+		if matchingIndex == nil {
+			return false
+		}
 		against := er.ctxStack[stackLen-1]
 		if constant, ok := against.(*expression.Constant); ok && !constant.Value.IsNull() {
-			if _, err := expression.BuildFTSBooleanQuery(constant.Value.GetString(), model.FullTextParserTypeStandardV1); err != nil {
-				if _, ngramErr := expression.BuildFTSBooleanQuery(constant.Value.GetString(), model.FullTextParserTypeNgramV1); ngramErr != nil {
-					return false
-				}
+			if _, err := expression.BuildFTSBooleanQuery(constant.Value.GetString(), matchingIndex.FullTextInfo.ParserType); err != nil {
+				return false
 			}
-			if !ftsNativeAnalyzerConfigSupportedForTables(builder, er.ctxNameStk[nameStart:nameStart+numCols], sessVars) {
+			if !ftsNativeAnalyzerConfigSupportedForParser(sessVars, matchingIndex.FullTextInfo.ParserType) {
 				return false
 			}
 		}
@@ -2492,9 +2506,7 @@ func ftsModifierAllowsNativePushdown(modifier ast.FulltextSearchModifier) bool {
 }
 
 // tableHasPublicFTSIndexOnColumn reports whether tblInfo has a public FULLTEXT
-// index covering the given column. TiDB's FULLTEXT index is single-column, so
-// each column in MATCH(...) needs its own FTS index for the native path to be
-// viable.
+// index covering the given column.
 func tableHasPublicFTSIndexOnColumn(tblInfo *model.TableInfo, columnNameL string) bool {
 	return tableHasPublicFTSIndexOnColumnWithParser(tblInfo, columnNameL, false)
 }
@@ -2514,63 +2526,16 @@ func tableHasPublicFTSIndexOnColumnWithParser(tblInfo *model.TableInfo, columnNa
 	return false
 }
 
-func ftsNativeAnalyzerConfigSupportedForTables(
-	builder *PlanBuilder,
-	names []*types.FieldName,
-	sessVars *variable.SessionVars,
-) bool {
-	for _, name := range names {
-		if name == nil {
-			return false
-		}
-		tblName := name.OrigTblName
-		if tblName.L == "" {
-			tblName = name.TblName
-		}
-		dbName := name.DBName
-		if dbName.L == "" {
-			dbName = pmodel.NewCIStr(sessVars.CurrentDB)
-		}
-		tblInfo, err := builder.is.TableInfoByName(dbName, tblName)
-		if err != nil {
-			return false
-		}
-		colName := name.OrigColName
-		if colName.L == "" {
-			colName = name.ColName
-		}
-		parserType, ok := publicFTSParserForColumn(tblInfo, colName.L)
-		if !ok {
-			return false
-		}
-		switch parserType {
-		case model.FullTextParserTypeStandardV1:
-			if !ftsNativeAnalyzerConfigSupported(sessVars) {
-				return false
-			}
-		case model.FullTextParserTypeNgramV1:
-			config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, parserType)
-			if err != nil || config.NgramTokenSize <= 0 {
-				return false
-			}
-		default:
-			return false
-		}
+func ftsNativeAnalyzerConfigSupportedForParser(sessVars *variable.SessionVars, parserType model.FullTextParserType) bool {
+	switch parserType {
+	case model.FullTextParserTypeStandardV1:
+		return ftsNativeAnalyzerConfigSupported(sessVars)
+	case model.FullTextParserTypeNgramV1:
+		config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, parserType)
+		return err == nil && config.NgramTokenSize > 0
+	default:
+		return false
 	}
-	return true
-}
-
-func publicFTSParserForColumn(tblInfo *model.TableInfo, columnNameL string) (model.FullTextParserType, bool) {
-	for _, idx := range tblInfo.Indices {
-		if idx.FullTextInfo == nil || !idx.IsPublic() || idx.FindColumnByName(columnNameL) == nil {
-			continue
-		}
-		if !isNativeFTSParser(idx.FullTextInfo.ParserType) {
-			continue
-		}
-		return idx.FullTextInfo.ParserType, true
-	}
-	return model.FullTextParserTypeInvalid, false
 }
 
 func ftsNativeAnalyzerConfigSupported(sessVars *variable.SessionVars) bool {

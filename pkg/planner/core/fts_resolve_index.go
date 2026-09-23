@@ -196,12 +196,16 @@ func (*FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor
 }
 
 func findMatchingFullTextIndex(ds *logicalop.DataSource, ftsInfo *expression.FTSInfo) *model.IndexInfo {
-	if ftsInfo.IsMatchAgainst && len(ftsInfo.Columns) != 1 {
-		// The TiFlash table-scan protocol carries one physical FTS index per
-		// scan. Until TiDB has a multi-column index representation, keep
-		// multi-column MATCH local rather than risking false negatives from
-		// choosing only the first column's index.
-		return nil
+	if ftsInfo.IsMatchAgainst {
+		columnNames := make([]pmodel.CIStr, 0, len(ftsInfo.Columns))
+		for _, column := range ftsInfo.Columns {
+			columnInfo := ds.TableInfo.FindColumnByID(column.ID)
+			if columnInfo == nil {
+				return nil
+			}
+			columnNames = append(columnNames, columnInfo.Name)
+		}
+		return publicFTSIndexOnColumns(ds.TableInfo, columnNames, true)
 	}
 	for _, idx := range ds.TableInfo.Indices {
 		if idx.FullTextInfo == nil || !idx.IsPublic() || len(idx.Columns) != 1 {
@@ -217,6 +221,39 @@ func findMatchingFullTextIndex(ds *logicalop.DataSource, ftsInfo *expression.FTS
 				}
 				return idx
 			}
+		}
+	}
+	return nil
+}
+
+// publicFTSIndexOnColumns finds a public FULLTEXT index whose ordered column
+// list exactly matches a MATCH(...) expression. Boolean MATCH is one logical
+// query over one composite index; independently indexed columns are not an
+// equivalent substitute.
+func publicFTSIndexOnColumns(
+	tblInfo *model.TableInfo,
+	columnNames []pmodel.CIStr,
+	nativeParserOnly bool,
+) *model.IndexInfo {
+	if tblInfo == nil || len(columnNames) == 0 {
+		return nil
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.FullTextInfo == nil || !idx.IsPublic() || len(idx.Columns) != len(columnNames) {
+			continue
+		}
+		if nativeParserOnly && !isNativeFTSParser(idx.FullTextInfo.ParserType) {
+			continue
+		}
+		matched := true
+		for i, column := range idx.Columns {
+			if column.Name.L != columnNames[i].L {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return idx
 		}
 	}
 	return nil
