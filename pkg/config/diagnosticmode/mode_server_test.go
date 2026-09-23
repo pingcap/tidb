@@ -52,8 +52,10 @@ func TestTiDBServerGoroutinesInDiagnosticMode(t *testing.T) {
 	require.True(t, diagnosticmode.Enabled())
 	require.True(t, cfg.Status.ReportStatus)
 	statusOn, statusAddr := server.GetStatusServerAddr()
-	require.True(t, statusOn)
-	require.NotEmpty(t, statusAddr)
+	require.False(t, statusOn)
+	require.Empty(t, statusAddr)
+	// Diagnostic HTTP still listens, but does not provide the MPP gRPC service.
+	require.NotNil(t, server.StatusListenerAddr())
 
 	var buf bytes.Buffer
 	goroutineProfile := pprof.Lookup("goroutine")

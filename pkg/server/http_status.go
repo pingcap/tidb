@@ -76,17 +76,13 @@ import (
 
 const defaultStatusPort = 10080
 
-func (s *Server) statusHTTPEnabled() bool {
-	return s.cfg.Status.ReportStatus
-}
-
 // fullStatusServerEnabled reports whether cluster HTTP APIs and gRPC are available.
 func (s *Server) fullStatusServerEnabled() bool {
-	return s.statusHTTPEnabled()
+	return s.cfg.Status.ReportStatus && !diagnosticmode.Enabled()
 }
 
 func (s *Server) startStatusHTTP() error {
-	if !s.statusHTTPEnabled() {
+	if !s.cfg.Status.ReportStatus {
 		return nil
 	}
 	if diagnosticmode.Enabled() {

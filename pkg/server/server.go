@@ -501,7 +501,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
-	if s.statusHTTPEnabled() {
+	if s.cfg.Status.ReportStatus {
 		err := s.startStatusHTTP()
 		if err != nil {
 			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
