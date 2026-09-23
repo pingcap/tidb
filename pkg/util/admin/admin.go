@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -190,6 +191,82 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+// CheckFullTextIndexAndRecord is the index-to-record direction of ADMIN CHECK
+// for a FULLTEXT index built in TiKV: every entry must belong to a row that
+// exists, and its term must be one the row's document analyzes to. The
+// record-to-index direction is CheckRecordAndIndex, which for this index
+// checks each row for an entry per term.
+func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+	idxInfo := idx.Meta()
+	if len(idxInfo.Columns) != 1 {
+		return errors.Errorf("fulltext index %s must index one column", idxInfo.Name.O)
+	}
+	col := t.Cols()[idxInfo.Columns[0].Offset]
+	rowDecoder, err := makeRowDecoder(t, sessCtx)
+	if err != nil {
+		return err
+	}
+	report := func(handle kv.Handle, term string, row *consistency.RecordData) error {
+		reporter := &consistency.Reporter{
+			HandleEncode:    func(handle kv.Handle) kv.Key { return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle) },
+			IndexEncode:     func(*consistency.RecordData) kv.Key { return nil },
+			Tbl:             t.Meta(),
+			Idx:             idxInfo,
+			EnableRedactLog: sessCtx.GetSessionVars().EnableRedactLog,
+			Storage:         sessCtx.GetStore(),
+		}
+		entry := &consistency.RecordData{Handle: handle, Values: []types.Datum{types.NewStringDatum(term)}}
+		return reporter.ReportAdminCheckInconsistent(ctx, handle, entry, row)
+	}
+
+	prefix := tablecodec.EncodeTableIndexPrefix(t.Meta().ID, idxInfo.ID)
+	it, err := txn.Iter(prefix, prefix.PrefixNext())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+	// Entries of one row are spread over its terms, so rows are fetched and
+	// tokenized once and remembered while their entries keep appearing.
+	rowTerms := make(map[string]map[string]struct{})
+	for it.Valid() {
+		term, err := tables.DecodeTiKVFullTextIndexKey(it.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		handle, err := tablecodec.DecodeIndexHandle(it.Key(), it.Value(), 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := it.Next(); err != nil {
+			return errors.Trace(err)
+		}
+		handleKey := string(handle.Encoded())
+		terms, seen := rowTerms[handleKey]
+		if !seen {
+			rowValue, err := kv.GetValue(ctx, txn, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
+			if kv.ErrNotExist.Equal(err) {
+				return report(handle, string(term), nil)
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx.GetExprCtx(), handle, rowValue, sessCtx.GetSessionVars().Location(), nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if terms, err = tables.FullTextIndexTerms(idx, rowMap[col.ID]); err != nil {
+				return errors.Trace(err)
+			}
+			rowTerms[handleKey] = terms
+		}
+		if _, ok := terms[string(term)]; !ok {
+			row := &consistency.RecordData{Handle: handle}
+			return report(handle, string(term), row)
+		}
+	}
 	return nil
 }
 

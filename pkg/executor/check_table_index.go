@@ -245,12 +245,23 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 	if err != nil {
 		return err
 	}
+	check := func(physicalTable table.Table, idx table.Index) error {
+		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, physicalTable, idx); err != nil {
+			return errors.Trace(err)
+		}
+		if idxInfo.IsTiKVFullTextIndex() {
+			// No index lookup covers this index, so the index-to-record
+			// direction is checked here as well.
+			return errors.Trace(admin.CheckFullTextIndexAndRecord(ctx, e.Ctx(), txn, physicalTable, idx))
+		}
+		return nil
+	}
 	if e.table.Meta().GetPartitionInfo() == nil {
 		idx, err := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
 		if err != nil {
 			return err
 		}
-		return admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, e.table, idx)
+		return check(e.table, idx)
 	}
 
 	info := e.table.Meta().GetPartitionInfo()
@@ -261,8 +272,8 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 		if err != nil {
 			return err
 		}
-		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, partition, idx); err != nil {
-			return errors.Trace(err)
+		if err := check(partition, idx); err != nil {
+			return err
 		}
 	}
 	return nil
