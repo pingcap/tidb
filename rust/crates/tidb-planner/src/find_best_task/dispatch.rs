@@ -3245,6 +3245,39 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     "IndexScan",
                     ds.base.base.query_block_offset(),
                 );
+                // Go `InitSchema` (`physical_index_scan.go:366-376`): index
+                // columns beyond the resolved access prefix receive FRESH
+                // plan column ids in the scan schema. This tier does not
+                // materialise them; consume the ids so the downstream column
+                // numbering matches Go.
+                if let Some(ids) = ctx.column_ids {
+                    // Go `InitSchema` burns a fresh id per index column the
+                    // detacher did not resolve to a DataSource column
+                    // (`idxExprCols[i] == nil`).
+                    let referenced: std::collections::BTreeSet<i64> = ds
+                        .pushed_down_conds
+                        .iter()
+                        .flat_map(|condition| {
+                            tidb_expr::simple_expr::extract_columns(condition)
+                                .into_iter()
+                                .map(|column| column.unique_id)
+                        })
+                        .collect();
+                    let uncovered = source_index
+                        .columns
+                        .iter()
+                        .filter(|index_column| {
+                            ds.table_columns
+                                .get(index_column.offset)
+                                .is_none_or(|table_column| {
+                                    !referenced.contains(&table_column.unique_id)
+                                })
+                        })
+                        .count();
+                    for _ in 0..uncovered {
+                        let _ = ids.alloc();
+                    }
+                }
                 if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
                     base.base
                         .set_noncacheable_reason("IndexScan of partial index is uncacheable");
