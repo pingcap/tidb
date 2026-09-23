@@ -12,6 +12,7 @@ go_library(
         "non_partitioned_table_analysis_job.go",
         "queue.go",
         "queue_ddl_handler.go",
+        "sampled_ndv.go",
         "static_partitioned_table_analysis_job.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue",

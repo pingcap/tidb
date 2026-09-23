@@ -101,11 +101,16 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 	}()
 
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		option, err := sampledNDVOption(sctx, statsHandle, j.TableID, j.TableStatsVer, j.SchemaName, j.TableName)
+		if err != nil {
+			success = false
+			return err
+		}
 		switch j.getAnalyzeType() {
 		case analyzeTable:
-			success = j.analyzeTable(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeTable(sctx, statsHandle, sysProcTracker, option)
 		case analyzeIndex:
-			success = j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeIndexes(sctx, statsHandle, sysProcTracker, option)
 		}
 		return nil
 	})
@@ -225,9 +230,10 @@ func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	option string,
 ) bool {
 	sql, params := j.GenSQLForAnalyzeTable()
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql+option, params...)
 }
 
 // GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
@@ -242,6 +248,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	option string,
 ) bool {
 	if len(j.IndexNames) == 0 {
 		return true
@@ -250,7 +257,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	// Therefore, to avoid redundancy, only analyze the first index.
 	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql+option, params...)
 }
 
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.

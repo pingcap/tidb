@@ -106,11 +106,16 @@ func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	}()
 
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		option, err := sampledNDVOption(sctx, statsHandle, j.GlobalTableID, j.TableStatsVer, j.SchemaName, j.GlobalTableName)
+		if err != nil {
+			success = false
+			return err
+		}
 		switch j.getAnalyzeType() {
 		case analyzeStaticPartition:
-			success = j.analyzeStaticPartition(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeStaticPartition(sctx, statsHandle, sysProcTracker, option)
 		case analyzeStaticPartitionIndex:
-			success = j.analyzeStaticPartitionIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeStaticPartitionIndexes(sctx, statsHandle, sysProcTracker, option)
 		}
 		return nil
 	})
@@ -261,15 +266,17 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	option string,
 ) bool {
 	sql, params := j.GenSQLForAnalyzeStaticPartition()
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql+option, params...)
 }
 
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	option string,
 ) bool {
 	if len(j.IndexNames) == 0 {
 		return true
@@ -278,7 +285,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	// Therefore, to avoid redundancy, only analyze the first index.
 	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql+option, params...)
 }
 
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.

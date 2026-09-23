@@ -922,6 +922,8 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableSampledNDV, Value: BoolToOnOff(vardef.DefTiDBEnableSampledNDV), Type: vardef.TypeBool},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAnalyzeSampledNDVTableSizeThreshold, Value: "1000000000", Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAnalyzeSampledNDVDurationThreshold, Value: "1800", Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeStartTime, Value: vardef.DefAutoAnalyzeStartTime, Type: vardef.TypeTime},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeEndTime, Value: vardef.DefAutoAnalyzeEndTime, Type: vardef.TypeTime},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBMemQuotaBindingCache, Value: strconv.FormatInt(vardef.DefTiDBMemQuotaBindingCache, 10), Type: vardef.TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {

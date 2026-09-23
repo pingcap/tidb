@@ -117,11 +117,16 @@ func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	}()
 
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		option, err := sampledNDVOption(sctx, statsHandle, j.GlobalTableID, j.TableStatsVer, j.SchemaName, j.GlobalTableName)
+		if err != nil {
+			success = false
+			return err
+		}
 		switch j.getAnalyzeType() {
 		case analyzeDynamicPartition:
-			success = j.analyzePartitions(sctx, statsHandle, sysProcTracker)
+			success = j.analyzePartitions(sctx, statsHandle, sysProcTracker, option)
 		case analyzeDynamicPartitionIndex:
-			success = j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker, option)
 		}
 		return nil
 	})
@@ -274,6 +279,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	option string,
 ) bool {
 	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(j.PartitionNames))
@@ -286,7 +292,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
 		params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
-		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql+option, params...)
 		if !success {
 			return false
 		}
@@ -299,6 +305,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	option string,
 ) (success bool) {
 	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	// Analyze version 2 refreshes the partition columns and other indexes when analyzing one index.
@@ -315,7 +322,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
 			params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
-			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql+option, params...)
 			if !success {
 				return false
 			}
