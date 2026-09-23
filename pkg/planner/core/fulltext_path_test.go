@@ -46,9 +46,8 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 		plan := explain(sql)
 		require.Contains(t, plan, "FullTextIndexScan(Build)", plan)
 		require.Contains(t, plan, "index:"+index, plan)
-		// The MATCH stays a residual filter above the reader.
-		require.Contains(t, plan, "Selection", plan)
-		require.Contains(t, plan, "match_against(", plan)
+		// The MATCH is consumed by the path, not re-evaluated above it.
+		require.NotRegexp(t, `Selection.*match_against`, plan)
 	}
 	scans := func(sql string) {
 		plan := explain(sql)

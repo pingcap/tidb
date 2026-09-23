@@ -33,9 +33,13 @@ import (
 // conjunct that a FULLTEXT index built in TiKV can answer. The path is an
 // IndexMerge path with one partial path: the index is read by TiDB's
 // posting-list engine, which yields the handles of the matching rows, and the
-// ordinary IndexMerge table lookup turns them into rows. The MATCH stays among
-// the table filters and is evaluated on the rows returned, so the path can only
-// narrow the result.
+// ordinary IndexMerge table lookup turns them into rows. The engine evaluates
+// the whole boolean query, positions included, so the rows it yields are
+// exactly the rows the MATCH accepts and the MATCH is consumed by the path
+// like an access condition rather than re-evaluated on every row returned,
+// which for a long document would tokenize it a second time. Rows changed by
+// the current transaction are not read through the index at all; UnionScan
+// re-evaluates the MATCH on them itself.
 //
 // Only a MATCH that is a top-level conjunct qualifies. Under a negation, or in
 // one branch of an OR, the rows the index selects are exactly the ones that
@@ -183,9 +187,15 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 	}
 	partial.IdxCols, partial.IdxColLens, partial.FullIdxCols, partial.FullIdxColLens =
 		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, idx)
+	tableFilters := make([]expression.Expression, 0, len(ds.AllConds))
+	for _, cond := range ds.AllConds {
+		if cond != expression.Expression(match) {
+			tableFilters = append(tableFilters, cond)
+		}
+	}
 	return &util.AccessPath{
 		PartialIndexPaths: []*util.AccessPath{partial},
-		TableFilters:      ds.AllConds,
+		TableFilters:      tableFilters,
 		CountAfterAccess:  count,
 		StoreType:         kv.TiKV,
 	}, nil

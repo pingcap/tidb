@@ -193,7 +193,52 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+	predicates = ds.absorbFullTextPredicates(predicates)
 	return predicates, ds, nil
+}
+
+// absorbFullTextPredicates keeps, among the predicates that cannot be pushed
+// to the storage engine, the MATCH ... AGAINST predicates a FULLTEXT index
+// built in TiKV can serve: the full-text access path answers them exactly
+// and consumes them, and any other path evaluates them as a root condition,
+// which is where a Selection above the data source would have evaluated them
+// anyway. Returns the predicates that stay above the data source.
+func (ds *DataSource) absorbFullTextPredicates(predicates []expression.Expression) []expression.Expression {
+	if ds.TableInfo == nil || len(predicates) == 0 {
+		return predicates
+	}
+	remaining := predicates[:0]
+	for _, pred := range predicates {
+		if ds.fullTextIndexServes(pred) {
+			ds.PushedDownConds = append(ds.PushedDownConds, pred)
+			continue
+		}
+		remaining = append(remaining, pred)
+	}
+	return remaining
+}
+
+// fullTextIndexServes reports whether pred is a locally evaluated boolean
+// MATCH over one column that a public FULLTEXT index built in TiKV covers.
+func (ds *DataSource) fullTextIndexServes(pred expression.Expression) bool {
+	sf, ok := pred.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.FTSMysqlMatchAgainst || len(sf.GetArgs()) != 2 {
+		return false
+	}
+	if _, ok := expression.FTSMysqlMatchAgainstLocalEvalInfo(sf); !ok {
+		return false
+	}
+	col, ok := sf.GetArgs()[1].(*expression.Column)
+	if !ok {
+		return false
+	}
+	for _, idx := range ds.TableInfo.Indices {
+		if idx.IsTiKVFullTextIndex() && idx.State == model.StatePublic && len(idx.Columns) == 1 &&
+			ds.TableInfo.Columns[idx.Columns[0].Offset].ID == col.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

@@ -49,7 +49,7 @@ func fullTextCorpus(t *testing.T, tk *testkit.TestKit, table string, rows int, s
 }
 
 // mustUseFullTextIndex asserts that the plan reads the FULLTEXT index under an
-// IndexMerge and keeps the MATCH above it as a residual filter.
+// IndexMerge and that the MATCH is consumed by it rather than re-evaluated.
 func mustUseFullTextIndex(t *testing.T, tk *testkit.TestKit, sql, index, search string) {
 	plan := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 	var text strings.Builder
@@ -67,7 +67,7 @@ func mustUseFullTextIndex(t *testing.T, tk *testkit.TestKit, sql, index, search 
 	require.Regexp(t, `TableRowIDScan(\(Probe\))? [0-9.]+ cop\[tikv\] table:`, text.String())
 	require.Contains(t, text.String(), "index:"+index, text.String())
 	require.Contains(t, text.String(), "fulltext:"+strconv.Quote(search), text.String())
-	require.Contains(t, text.String(), "match_against(", text.String())
+	require.NotRegexp(t, `Selection.*match_against`, text.String())
 }
 
 func mustScan(t *testing.T, tk *testkit.TestKit, sql string) {
@@ -110,8 +110,7 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	tk.MustQuery("select @@tidb_enable_local_match_against").Check(testkit.Rows("0"))
 	mustScan(t, tk, "select id from t ignore index (idx) where match(body) against('+rareword' in boolean mode)")
 
-	// Other predicates ride along on the table side; the MATCH stays a
-	// residual above the lookup.
+	// Other predicates ride along on the table side.
 	sql := "select id from t where match(body) against('+rareword' in boolean mode) and k = 3 order by id"
 	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 	tk.MustQuery(sql).Check(tk.MustQuery("select id from t ignore index (idx) where match(body) against('+rareword' in boolean mode) and k = 3 order by id").Rows())
