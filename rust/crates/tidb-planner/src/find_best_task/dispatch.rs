@@ -3647,7 +3647,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     (Some(runtime_stats), _) => Some(runtime_stats.clone()),
                     _ => stats.clone(),
                 };
-                base.base.set_stats(scan_stats);
+                base.base.set_stats(scan_stats.clone());
                 let mut cost_columns = source_index
                     .columns
                     .iter()
@@ -3703,7 +3703,44 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         if let Some(runtime_stats) = &runtime_probe_stats {
                             Some(runtime_stats.clone())
                         } else if table_filters.is_empty() {
-                            ds.base.base.stats_info().cloned()
+                            // Go `addPushedDownSelection4PhysicalIndexScan`
+                            // (`find_best_task.go:2762`): count =
+                            // is.StatsInfo().RowCount x (path.CountAfterIndex
+                            // / path.CountAfterAccess), then
+                            // `ds.TableStats.ScaleByExpectCnt(count)`. The
+                            // ratio IS the histogram selectivity of the index
+                            // filters, so derive it from the analyzed profile
+                            // instead of keeping the raw DataSource profile.
+                            let selectivity = ds
+                                .table_stats
+                                .as_ref()
+                                .and_then(|table_stats| {
+                                    crate::logical::rewrite::analyzed_filter_selectivity(
+                                        table_stats,
+                                        &index_filters,
+                                    )
+                                })
+                                .filter(|value| *value > 0.0);
+                            let count = scan_stats
+                                .as_ref()
+                                .map(crate::stats_info::StatsInfo::row_count)
+                                .zip(selectivity)
+                                .map(|(rows, selectivity)| rows * selectivity);
+                            match count {
+                                Some(count) => ds
+                                    .table_stats
+                                    .as_ref()
+                                    .map(|table_stats| {
+                                        table_stats.scale_by_expect_cnt(
+                                            count,
+                                            ctx.skew_ratio,
+                                        )
+                                    })
+                                    .or_else(|| {
+                                        Some(crate::stats_info::StatsInfo::new(count, []))
+                                    }),
+                                None => stats.clone(),
+                            }
                         } else {
                             stats.clone()
                         },
