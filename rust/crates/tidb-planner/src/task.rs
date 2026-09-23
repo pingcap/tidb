@@ -2633,13 +2633,21 @@ fn attach_agg_over_cop(
     // Go's expression context is consulted only for argument TYPES during
     // the split's TypeInfer; a column-free context is exact for that.
     let ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
+    let query_block_offset = plan.query_block_offset();
     let (partial, final_plan) =
         crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator)?;
     let Some(mut partial) = partial else {
         // Go `attach2Task4PhysicalHashAgg`: a TiKV cop aggregate whose split
         // is impossible (e.g. DISTINCT with tidb_opt_distinct_agg_push_down
         // off) is an INVALID task — the Root-task candidate wins instead of
-        // a cop candidate being re-labelled as a root aggregate.
+        // a cop candidate being re-labelled as a root aggregate. The
+        // inlined NewPartialAggregate still allocates the rejected cop
+        // aggregate node (go R33 receipt alloc 11); consume the id.
+        let _ = crate::physical::BasePhysicalPlan::new(
+            allocator,
+            "HashAgg",
+            query_block_offset,
+        );
         return Ok(Task::invalid_task());
     };
     {
