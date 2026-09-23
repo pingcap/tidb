@@ -259,12 +259,15 @@ func TestLoadPartitionStats(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_fm_sketch")
 	dom.StatsHandle().Clear()
 	clearedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
 	// load stats back
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
+	// Loading does not restore the partition FM sketches that a later global merge needs.
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
 
 	// compare
 	for i, def := range pi.Definitions {
