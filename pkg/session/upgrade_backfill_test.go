@@ -95,31 +95,21 @@ func TestUpgradeToVer279BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 }
 
 func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
-	}
-
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
 	assertValue := func(expected string) {
 		res := MustExecToRecodeSet(t, se, fmt.Sprintf(
-			"select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			"select variable_value, @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 			vardef.TiDBEnableAdaptiveLimitScan,
 		))
 		chk := res.NewChunk(nil)
 		require.NoError(t, res.Next(ctx, chk))
 		require.Equal(t, 1, chk.NumRows())
 		require.Equal(t, expected, chk.GetRow(0).GetString(0))
-		require.NoError(t, res.Close())
-
-		res = MustExecToRecodeSet(t, se, "select @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan")
-		chk = res.NewChunk(nil)
-		require.NoError(t, res.Next(ctx, chk))
-		require.Equal(t, 1, chk.NumRows())
-		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(0) == 1)
 		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(1) == 1)
+		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(2) == 1)
 		require.NoError(t, res.Close())
 	}
 
@@ -128,14 +118,14 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 
 	// The upgrade is idempotent and must not overwrite an existing setting.
 	MustExec(t, se, "set global tidb_enable_adaptive_limit_scan=ON")
-	upgradeToVer287(se, version286)
+	upgradeToVer286(se, version285)
 	assertValue(vardef.On)
 
-	// Simulate a v286 cluster where this unreleased variable does not exist.
+	// Simulate a v285 cluster where this variable does not exist.
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version286)))
-	RevertVersionAndVariables(t, se, version286)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version285)))
+	RevertVersionAndVariables(t, se, version285)
 	MustExec(t, se, fmt.Sprintf(
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBEnableAdaptiveLimitScan,
