@@ -118,6 +118,9 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	}
 	// Initial bootstrap uses the new-cluster policy.
 	assertValue(vardef.On)
+	// The upgrade backfill must preserve an existing value.
+	upgradeToVer318(se, version317)
+	assertValue(vardef.On)
 
 	// Simulate an existing cluster before the variable backfill.
 	txn, err := store.Begin()
