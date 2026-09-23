@@ -3428,8 +3428,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .static_type()
                 .cloned()
                 .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            // Go `buildProjectionField` (`logical_plan_builder.go:1601`): a
+            // computed expression's fresh column carries NO `OrigName` — the
+            // alias lives on the `FieldName` only, so `EXPLAIN` renders
+            // `expr->Column#N` instead of the user alias.
             let mut output = Column::new(self.column_ids.alloc(), ret_type);
-            output.orig_name = name.display_name();
             output.is_hidden = field.hidden;
             projection_columns.push(output);
             projection_names.push(name);
