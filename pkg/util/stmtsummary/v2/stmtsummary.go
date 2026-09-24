@@ -512,26 +512,24 @@ func (s *StmtSummary) rotate(now time.Time) {
 // Called while the record's lock is held (see newStmtWindow). We copy the
 // fields we need and hand the clone off to the async log goroutine. A
 // non-blocking send is used so the hot Add() path never stalls on log I/O.
-func (s *StmtSummary) onEvict(_ *stmtsummary.StmtDigestKey, r *StmtRecord, begin, end time.Time) bool {
+func (s *StmtSummary) onEvict(_ *stmtsummary.StmtDigestKey, r *StmtRecord, begin, end time.Time) {
 	if !s.optPersistEvicted.Load() {
-		return false
+		return
 	}
 	if s.evictedCh == nil {
-		return false
+		return
 	}
 	clone := cloneRecordForLog(r)
 	clone.Begin = begin.Unix()
 	clone.End = end.Unix()
 	select {
 	case s.evictedCh <- clone:
-		return true
 	default:
 		s.evictedDropped.Add(1)
 		metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
 			metrics.StmtSummaryTypeV2,
 			metrics.StmtSummaryEvictedLogResultDropped,
 		).Inc()
-		return false
 	}
 }
 
@@ -641,10 +639,8 @@ type stmtWindow struct {
 
 // onEvictFn is invoked for every LRU eviction. The callback receives the
 // locked record (caller holds r.Lock) so it can copy fields cheaply. It
-// returns true when the record has been handed off for per-record persistence,
-// in which case the caller can skip adding it to the persisted aggregate.
-// Must not block.
-type onEvictFn func(key *stmtsummary.StmtDigestKey, r *StmtRecord, begin, end time.Time) bool
+// must not block.
+type onEvictFn func(key *stmtsummary.StmtDigestKey, r *StmtRecord, begin, end time.Time)
 
 func newStmtWindow(begin time.Time, capacity uint, onEvict onEvictFn) *stmtWindow {
 	w := &stmtWindow{
@@ -658,11 +654,10 @@ func newStmtWindow(begin time.Time, capacity uint, onEvict onEvictFn) *stmtWindo
 		r.Lock()
 		defer r.Unlock()
 		key := k.(*stmtsummary.StmtDigestKey)
-		queuedForEvictedLog := false
 		if onEvict != nil {
-			queuedForEvictedLog = onEvict(key, r.StmtRecord, w.begin, timeNow())
+			onEvict(key, r.StmtRecord, w.begin, timeNow())
 		}
-		w.evicted.add(key, r.StmtRecord, queuedForEvictedLog)
+		w.evicted.add(key, r.StmtRecord)
 	})
 	return w
 }
@@ -687,8 +682,8 @@ type stmtEvicted struct {
 	keys map[string]struct{}
 	// other contains all evicted records in the current window.
 	other *StmtRecord
-	// otherForPersist contains records not covered by per-record evicted logs.
-	// When per-record evicted logging is disabled, it is equivalent to other.
+	// otherForPersist preserves the aggregate used by statement summary history.
+	// Individually logged eviction records are filtered out by the history reader.
 	otherForPersist *StmtRecord
 }
 
@@ -700,7 +695,7 @@ func newStmtEvicted() *stmtEvicted {
 	}
 }
 
-func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord, queuedForEvictedLog bool) {
+func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord) {
 	if key == nil || record == nil {
 		return
 	}
@@ -708,9 +703,7 @@ func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord, qu
 	defer e.Unlock()
 	e.keys[string(key.Hash())] = struct{}{}
 	e.other.Merge(record)
-	if !queuedForEvictedLog {
-		e.otherForPersist.Merge(record)
-	}
+	e.otherForPersist.Merge(record)
 }
 
 func (e *stmtEvicted) count() int {
