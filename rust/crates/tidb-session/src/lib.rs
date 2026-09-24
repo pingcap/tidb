@@ -2129,6 +2129,13 @@ impl Session {
         self.append_warning(WarningLevel::Error, code, message);
     }
 
+    /// Clears the statement warning buffer (go `ResetContextOfStmt`'s
+    /// per-statement fresh start for write-door statements that bypass the
+    /// session's own statement boundary).
+    pub fn clear_statement_warnings(&mut self) {
+        self.warnings.clear();
+    }
+
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
         self.publish_statement_status(result);
         if let Some(guard) = &self.process {
