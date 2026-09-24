@@ -656,6 +656,38 @@ func TestSchemaReadOnlyUsesWriteTargetSchema(t *testing.T) {
 	tk.MustExec("delete a from rw.a a join ro.t t on a.id = t.id")
 }
 
+func TestSchemaReadOnlyAlterTableSecondaryTargets(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database rw")
+	tk.MustExec("create database ro")
+	tk.MustExec(`create table rw.pt (
+		id int primary key,
+		v varchar(16)
+	) partition by range (id) (
+		partition p0 values less than (100)
+	)`)
+	tk.MustExec("create table ro.t(id int primary key, v varchar(16))")
+	tk.MustExec("insert into rw.pt values (5, 'from_rw')")
+	tk.MustExec("insert into ro.t values (1, 'from_ro')")
+	tk.MustExec("alter database ro read only = 1")
+
+	errMsg := "[schema:3989]Schema 'ro' is in read only mode."
+	tk.MustGetErrMsg("alter table rw.pt exchange partition p0 with table ro.t", errMsg)
+	tk.MustGetErrMsg("alter table rw.pt rename to ro.t2", errMsg)
+
+	// Unqualified secondary targets must use the current database for the read-only check.
+	tk.MustExec("use ro")
+	tk.MustGetErrMsg("alter table rw.pt exchange partition p0 with table t", errMsg)
+	tk.MustGetErrMsg("alter table rw.pt rename to t2", errMsg)
+
+	// Rejected statements must not exchange data or move the table.
+	tk.MustQuery("select * from rw.pt").Check(testkit.Rows("5 from_rw"))
+	tk.MustQuery("select * from ro.t").Check(testkit.Rows("1 from_ro"))
+	tk.MustGetErrCode("select * from ro.t2", errno.ErrNoSuchTable)
+}
+
 func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
