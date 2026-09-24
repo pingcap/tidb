@@ -1622,6 +1622,17 @@ fn new_partial_aggregate_for_store(
         &mut split.partial.schema,
         &split.first_row_func_map,
     );
+    // Go `BasePhysicalAgg.NewPartialAggregate` appends these descriptors for
+    // a TiDB cop task after removing redundant firstrow functions. The TiKV
+    // coprocessor reuses the TiDB aggregation executor, whose partial output
+    // does not otherwise carry group-by values. TiFlash and MPP partials have
+    // their own group-by output contract and must not receive this addition.
+    if !is_tiflash && !is_mpp {
+        let first_row_funcs =
+            gen_first_row_agg_for_group_by(ctx, &split.partial.group_by_items)
+                .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
+        split.partial.agg_funcs.extend(first_row_funcs);
+    }
     // Go mutates `p` into the partial half (same plan id, same stats) and
     // Init's a NEW final of the same kind above it, with
     // `ExpectedCnt: math.MaxFloat64` and `p`'s stats.
