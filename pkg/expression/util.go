@@ -1887,8 +1887,8 @@ type SQLDigestTextRetriever struct {
 
 	// Replace querying for test purposes.
 	mockQuery func(queryGlobal, history bool, inValues []any) (map[string]string, error)
-	// Current-summary lookups query all rows when there are more than `fetchAllLimit` digests, avoiding an overly
-	// long WHERE IN clause. History lookups always use bounded batches so unrelated history records are not scanned.
+	// Lookups with more than `fetchAllLimit` digests read the whole table once instead of building a very
+	// long WHERE IN clause. This also keeps a history lookup to a single scan of the summary files.
 	fetchAllLimit int
 }
 
@@ -1985,24 +1985,22 @@ func (r *SQLDigestTextRetriever) retrieveDigests(ctx context.Context, exec expro
 	if batchSize <= 0 {
 		batchSize = 512
 	}
-	if !history && len(digests) > batchSize {
-		// The current summary is small and in memory, so reading it once avoids a long WHERE IN clause.
-		queryResult, err := r.runFetchDigestQuery(ctx, exec, queryGlobal, false, nil)
+	if len(digests) > batchSize {
+		// Reading the table once avoids a very long WHERE IN clause. It also matters for the history
+		// table: every history query rescans all summary files, so issuing one query per digest batch
+		// would multiply the scan cost.
+		queryResult, err := r.runFetchDigestQuery(ctx, exec, queryGlobal, history, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		r.updateDigestInfo(queryResult)
 		return nil
 	}
-
-	for start := 0; start < len(digests); start += batchSize {
-		end := min(start+batchSize, len(digests))
-		queryResult, err := r.runFetchDigestQuery(ctx, exec, queryGlobal, history, digests[start:end])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		r.updateDigestInfo(queryResult)
+	queryResult, err := r.runFetchDigestQuery(ctx, exec, queryGlobal, history, digests)
+	if err != nil {
+		return errors.Trace(err)
 	}
+	r.updateDigestInfo(queryResult)
 	return nil
 }
 

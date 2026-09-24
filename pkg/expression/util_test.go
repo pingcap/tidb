@@ -564,7 +564,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 		require.Equal(t, map[string]string{"requested": ""}, r.SQLDigestsMap)
 	})
 
-	t.Run("large history lookup is batched", func(t *testing.T) {
+	t.Run("large history lookup scans history once", func(t *testing.T) {
 		r := NewSQLDigestTextRetriever()
 		r.fetchAllLimit = 2
 		r.SQLDigestsMap = map[string]string{
@@ -574,25 +574,20 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 			"digest4": "",
 			"digest5": "",
 		}
-		var historyBatches [][]string
+		// Every history query rescans all summary files, so the number of history
+		// queries equals the number of history scans. Record len(inValues) per call:
+		// more digests than the limit must fetch all rows in one unfiltered query.
+		var historyCalls []int
 		r.mockQuery = func(_, history bool, inValues []any) (map[string]string, error) {
 			if history {
-				batch := make([]string, len(inValues))
-				for i, value := range inValues {
-					batch[i] = value.(string)
-				}
-				historyBatches = append(historyBatches, batch)
+				historyCalls = append(historyCalls, len(inValues))
 			}
 			return nil, nil
 		}
 
 		err := r.RetrieveLocal(context.Background(), nil)
 		require.NoError(t, err)
-		require.Equal(t, [][]string{
-			{"digest1", "digest2"},
-			{"digest3", "digest4"},
-			{"digest5"},
-		}, historyBatches)
+		require.Equal(t, []int{0}, historyCalls)
 	})
 }
 
