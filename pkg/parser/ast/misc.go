@@ -685,7 +685,7 @@ type CancelMaterializedViewJobStmt struct {
 func (n *CancelMaterializedViewJobStmt) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case CancelMaterializedViewJobTypeRefresh:
-		ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW REFRESH JOB ")
+		ctx.WriteKeyWord(CancelMaterializedViewRefreshJobCommand + " ")
 	case CancelMaterializedViewJobTypeLogPurge:
 		ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW LOG PURGE JOB ")
 	default:
@@ -766,11 +766,6 @@ func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) e
 		ctx.WritePlain(strconv.FormatUint(n.MLogRetainedLowerTSO, 10))
 	}
 	return nil
-}
-
-// SEMCommand implements StmtNode.
-func (n *RefreshMaterializedViewImplementStmt) SEMCommand() string {
-	return RefreshMaterializedViewCommand
 }
 
 // Accept implements Node Accept interface.

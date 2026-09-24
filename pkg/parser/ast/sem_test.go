@@ -52,7 +52,7 @@ func TestBRIECommand(t *testing.T) {
 func TestRefreshMaterializedViewCommand(t *testing.T) {
 	require.Equal(t, RefreshMaterializedViewCommand, (&RefreshMaterializedViewStmt{}).SEMCommand())
 	require.Equal(t, RefreshMaterializedViewCommand, (&RefreshMaterializedViewImplementStmt{}).SEMCommand())
-	require.Equal(t, "CANCEL MATERIALIZED VIEW REFRESH JOB", (&CancelMaterializedViewJobStmt{Tp: CancelMaterializedViewJobTypeRefresh}).SEMCommand())
+	require.Equal(t, CancelMaterializedViewRefreshJobCommand, (&CancelMaterializedViewJobStmt{Tp: CancelMaterializedViewJobTypeRefresh}).SEMCommand())
 }
 
 func TestRefreshMaterializedViewMode(t *testing.T) {
