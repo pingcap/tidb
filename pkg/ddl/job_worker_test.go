@@ -17,17 +17,20 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
@@ -120,6 +123,205 @@ func TestDDLJobRU(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, historyJob)
 		requireExpectedJobRU(t, historyJob.RU)
+	})
+
+	t.Run("transactional backfill jobs account RU", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			jobType model.ActionType
+			table   string
+			setup   []string
+			alter   string
+		}{
+			{
+				name:    "reorganize partition",
+				jobType: model.ActionReorganizePartition,
+				table:   "t_ddl_ru_reorg_part",
+				setup: []string{
+					"create table t_ddl_ru_reorg_part (a int, b int, key idx_b(b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+					"insert into t_ddl_ru_reorg_part values (1,1),(5,5),(11,11),(15,15)",
+				},
+				alter: "alter table t_ddl_ru_reorg_part reorganize partition p0,p1 into (partition p0 values less than (10), partition p1 values less than (15), partition p2 values less than (20))",
+			},
+			{
+				name:    "remove partitioning",
+				jobType: model.ActionRemovePartitioning,
+				table:   "t_ddl_ru_rm_part",
+				setup: []string{
+					"create table t_ddl_ru_rm_part (a int, b int, key idx_b(b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+					"insert into t_ddl_ru_rm_part values (1,1),(5,5),(11,11),(15,15)",
+				},
+				alter: "alter table t_ddl_ru_rm_part remove partitioning",
+			},
+			{
+				name:    "convert to partitioned",
+				jobType: model.ActionAlterTablePartitioning,
+				table:   "t_ddl_ru_add_part",
+				setup: []string{
+					"create table t_ddl_ru_add_part (a int, b int, key idx_b(b))",
+					"insert into t_ddl_ru_add_part values (1,1),(5,5),(11,11),(15,15)",
+				},
+				alter: "alter table t_ddl_ru_add_part partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+			},
+			{
+				name:    "drop partition global index cleanup",
+				jobType: model.ActionDropTablePartition,
+				table:   "t_ddl_ru_drop_part",
+				setup: []string{
+					"create table t_ddl_ru_drop_part (a int, b int, unique key idx_b(b) global) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+					"insert into t_ddl_ru_drop_part values (1,1),(5,5),(11,11),(15,15)",
+				},
+				alter: "alter table t_ddl_ru_drop_part drop partition p0",
+			},
+			{
+				name:    "truncate partition global index cleanup",
+				jobType: model.ActionTruncateTablePartition,
+				table:   "t_ddl_ru_truncate_part",
+				setup: []string{
+					"create table t_ddl_ru_truncate_part (a int, b int, unique key idx_b(b) global) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+					"insert into t_ddl_ru_truncate_part values (1,1),(5,5),(11,11),(15,15)",
+				},
+				alter: "alter table t_ddl_ru_truncate_part truncate partition p0",
+			},
+			{
+				name:    "modify column reorg",
+				jobType: model.ActionModifyColumn,
+				table:   "t_ddl_ru_mod_col",
+				setup: []string{
+					"create table t_ddl_ru_mod_col (a timestamp default '2020-07-10 01:05:08', b int, key idx_a(a))",
+					"insert into t_ddl_ru_mod_col (b) values (1),(2),(3)",
+				},
+				alter: "alter table t_ddl_ru_mod_col modify column a bigint",
+			},
+			{
+				// Without a related index only the row backfill worker runs, which
+				// isolates that worker's transaction accounting.
+				name:    "modify column reorg without index",
+				jobType: model.ActionModifyColumn,
+				table:   "t_ddl_ru_mod_col_no_idx",
+				setup: []string{
+					"create table t_ddl_ru_mod_col_no_idx (a timestamp default '2020-07-10 01:05:08', b int)",
+					"insert into t_ddl_ru_mod_col_no_idx (b) values (1),(2),(3)",
+				},
+				alter: "alter table t_ddl_ru_mod_col_no_idx modify column a bigint",
+			},
+		}
+
+		checkReorgRU := func(t *testing.T, jobType model.ActionType, table string, setup []string, alter string, beforeAlter func()) {
+			t.Helper()
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			for _, stmt := range setup {
+				tk.MustExec(stmt)
+			}
+			if beforeAlter != nil {
+				beforeAlter()
+			}
+
+			var mu sync.Mutex
+			var jobID int64
+			var backfillTxnCalls int
+			var backfillTxnBytes int
+			var stagedRU float64
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, updateErr *error) {
+				if job.Type != jobType || job.TableName != table || *updateErr != nil {
+					return
+				}
+				mu.Lock()
+				jobID = job.ID
+				mu.Unlock()
+			})
+			// The accounting hook fires for every committed reorg backfill
+			// transaction, before the NextGen gate, so this also proves the
+			// reorg workers actually route their txn bytes through it.
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/accountBackfillTxnRU", func(_ int64, writtenBytes int) {
+				mu.Lock()
+				backfillTxnCalls++
+				if writtenBytes > 0 {
+					backfillTxnBytes += writtenBytes
+				}
+				mu.Unlock()
+			})
+			// Records the RU actually persisted from the staged reorganization
+			// result, so the test can prove every accounted byte reached Job.RU.
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/accountPendingReorgRU", func(_ int64, ru float64, persisted bool) {
+				if !persisted {
+					return
+				}
+				mu.Lock()
+				stagedRU += ru
+				mu.Unlock()
+			})
+
+			tk.MustExec(alter)
+
+			mu.Lock()
+			capturedJobID, capturedCalls, capturedBytes, capturedStagedRU := jobID, backfillTxnCalls, backfillTxnBytes, stagedRU
+			mu.Unlock()
+			require.NotZero(t, capturedJobID)
+			require.Positive(t, capturedCalls)
+			require.Positive(t, capturedBytes)
+			historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
+			require.NoError(t, err)
+			require.NotNil(t, historyJob)
+			requireExpectedJobRU(t, historyJob.RU)
+			if kerneltype.IsNextGen() {
+				weight := config.GetGlobalConfig().RUV2.DDLWeights.TxnKVBytes
+				require.InDelta(t, float64(capturedBytes)*weight, capturedStagedRU, 1e-6,
+					"every accounted reorg byte must be persisted to Job.RU")
+			}
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				checkReorgRU(t, tc.jobType, tc.table, tc.setup, tc.alter, nil)
+			})
+		}
+
+		t.Run("add index in txn mode", func(t *testing.T) {
+			originalEnableDistTask := vardef.EnableDistTask.Load()
+			originalEnableFastReorg := vardef.EnableFastReorg.Load()
+			t.Cleanup(func() {
+				vardef.EnableDistTask.Store(originalEnableDistTask)
+				vardef.EnableFastReorg.Store(originalEnableFastReorg)
+			})
+			rows := make([]string, 0, 200)
+			for i := range 200 {
+				rows = append(rows, "("+strconv.Itoa(i)+")")
+			}
+			checkReorgRU(t, model.ActionAddIndex, "t_ddl_ru_add_idx_txn", []string{
+				"create table t_ddl_ru_add_idx_txn (a int)",
+				"insert into t_ddl_ru_add_idx_txn values " + strings.Join(rows, ","),
+			}, "alter table t_ddl_ru_add_idx_txn add index idx_a(a)", func() {
+				vardef.EnableDistTask.Store(false)
+				vardef.EnableFastReorg.Store(false)
+			})
+		})
+
+		t.Run("modify column reorg in txn mode", func(t *testing.T) {
+			// With both optimizations off, the index reorg falls back to the
+			// transaction backfill path that has no separate merge stage.
+			originalEnableDistTask := vardef.EnableDistTask.Load()
+			originalEnableFastReorg := vardef.EnableFastReorg.Load()
+			t.Cleanup(func() {
+				vardef.EnableDistTask.Store(originalEnableDistTask)
+				vardef.EnableFastReorg.Store(originalEnableFastReorg)
+			})
+			// Use enough rows so both the row and index backfill stages report a
+			// non-zero byte count.
+			rows := make([]string, 0, 200)
+			for i := range 200 {
+				rows = append(rows, "("+strconv.Itoa(i)+")")
+			}
+			checkReorgRU(t, model.ActionModifyColumn, "t_ddl_ru_mod_col_txn", []string{
+				"create table t_ddl_ru_mod_col_txn (a timestamp default '2020-07-10 01:05:08', b int, key idx_a(a))",
+				"insert into t_ddl_ru_mod_col_txn (b) values " + strings.Join(rows, ","),
+			}, "alter table t_ddl_ru_mod_col_txn modify column a bigint", func() {
+				vardef.EnableDistTask.Store(false)
+				vardef.EnableFastReorg.Store(false)
+			})
+		})
 	})
 
 	t.Run("commit retry reloads durable RU", func(t *testing.T) {
