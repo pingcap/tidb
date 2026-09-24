@@ -2857,7 +2857,11 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
             self.data_source_asked_groups = down.clone();
         }
         ndv_debug(&format!(
-            "ASKDBG ds descend down_groups={}",
+            "ASKDBG ds={} down_groups={}",
+            match node {
+                LogicalPlan::DataSource(op) => op.table_name.clone(),
+                _ => String::new(),
+            },
             down.len()
         ));
         // Go: `cumColGroups := p.self.ExtractColGroups(colGroups)`, handed to
@@ -2909,9 +2913,9 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                      Go's initStats attaches at least the pseudo table first",
                 ))),
                 Some(table_stats) => {
-                    if let Some(stats) = op.base.base.stats_info().cloned() {
-                        StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
-                    } else {
+                    let mut stats = match op.base.base.stats_info().cloned() {
+                        Some(stats) => stats,
+                        None => {
                         // Go preprocesses pushed predicates before deriving
                         // ranges and selectivity, retaining casts in projections.
                         for condition in &mut op.pushed_down_conds {
@@ -3019,27 +3023,49 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 )
                             })
                             .collect();
-                        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-                            eprintln!(
-                                "DSDBG table={} rows={} conds={} asked={} stats_rows={}",
-                                op.table_name,
-                                stats.row_count(),
-                                op.pushed_down_conds.len(),
-                                self.data_source_asked_groups.len(),
-                                stats.row_count()
-                            );
+                        stats
                         }
-                        ndv_debug(&format!(
-                            "DSDBG table={} rows={} conds={} asked={} groups_in_profile={}",
-                            op.table_name,
-                            stats.row_count(),
-                            op.pushed_down_conds.len(),
-                            self.data_source_asked_groups.len(),
-                            stats.group_ndvs().len()
-                        ));
-                        op.base.base.set_stats(Some(stats.clone()));
-                        StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                    };
+                    // GO's datasource profile carries GroupNDVs for the asked
+                    // groups; the cached-profile short-circuit must carry them
+                    // too (the earlier pass may predate the join-key
+                    // registration).
+                    if !self.data_source_asked_groups.is_empty() {
+                        let index_groups = table_stats
+                            .hist_coll()
+                            .map(|hist_coll| hist_coll.index_ndvs().clone())
+                            .unwrap_or_default();
+                        let mut group_ndvs: Vec<GroupNdv> = Vec::new();
+                        for group in &self.data_source_asked_groups {
+                            let mut ids: Vec<i64> =
+                                group.iter().map(|column| column.unique_id).collect();
+                            ids.sort_unstable();
+                            for (_index_id, (columns, ndv)) in &index_groups {
+                                let mut index_columns = columns.clone();
+                                index_columns.sort_unstable();
+                                if index_columns == ids {
+                                    group_ndvs.push(GroupNdv {
+                                        columns: ids.clone(),
+                                        ndv: *ndv,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        if !group_ndvs.is_empty() {
+                            stats.set_group_ndvs(group_ndvs);
+                        }
                     }
+                    ndv_debug(&format!(
+                        "DSDBG table={} rows={} conds={} asked={} groups_in_profile={}",
+                        op.table_name,
+                        stats.row_count(),
+                        op.pushed_down_conds.len(),
+                        self.data_source_asked_groups.len(),
+                        stats.group_ndvs().len()
+                    ));
+                    op.base.base.set_stats(Some(stats.clone()));
+                    StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
                 }
             },
             LogicalPlan::Selection(op) => StatsOutcome::Done(
