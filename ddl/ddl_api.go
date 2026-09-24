@@ -4600,6 +4600,10 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 
 	ntMeta := nt.Meta()
 
+	if util.IsMemOrSysDB(ntSchema.Name.L) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
+	}
+
 	err = checkExchangePartition(ptMeta, ntMeta)
 	if err != nil {
 		return errors.Trace(err)
