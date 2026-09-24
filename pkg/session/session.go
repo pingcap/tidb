@@ -2250,6 +2250,8 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	prevStmtType := s.sessionVars.StmtCtx.StmtType
 	prevTables := s.sessionVars.StmtCtx.Tables
 	prevInRestrictedSQL := s.sessionVars.StmtCtx.InRestrictedSQL
+	prevStartTime := s.sessionVars.StartTime
+	prevDurationParse := s.sessionVars.DurationParse
 	prevRUV2Metrics := s.sessionVars.RUV2Metrics
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
@@ -2264,6 +2266,8 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
 		s.sessionVars.StmtCtx.InRestrictedSQL = prevInRestrictedSQL
+		s.sessionVars.StartTime = prevStartTime
+		s.sessionVars.DurationParse = prevDurationParse
 		s.sessionVars.RUV2Metrics = prevRUV2Metrics
 		s.sessionVars.MemTracker.Detach()
 	}, nil

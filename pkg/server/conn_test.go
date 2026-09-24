@@ -3097,22 +3097,56 @@ func TestStatementDurationMetrics(t *testing.T) {
 	})
 
 	t.Run("nested restricted SQL", func(t *testing.T) {
-		showBefore := statementMetric("Show").GetHistogram().GetSampleCount()
-		selectBefore := statementMetric("Select").GetHistogram().GetSampleCount()
-		internalBefore := statementMetric(metrics.LblInternal).GetHistogram().GetSampleCount()
+		showBefore := statementMetric("Show").GetHistogram()
+		selectBefore := statementMetric("Select").GetHistogram()
+		internalBefore := statementMetric(metrics.LblInternal).GetHistogram()
 		command := metrics.CommandDurationHistogram.WithLabelValues(metrics.LblInternal, "", vars.ResourceGroupName)
 		commandBefore := readHistogram(command).GetHistogram().GetSampleCount()
 
+		var outerStartTime time.Time
+		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+			if !vars.InRestrictedSQL && vars.StmtCtx.StmtType == "Show" {
+				// Simulate outer execution and parsing before the nested SQL, without sleeping.
+				vars.StartTime = vars.StartTime.Add(-time.Hour)
+				vars.DurationParse = time.Minute
+				outerStartTime = vars.StartTime
+			}
+		})
+		t.Cleanup(func() { tk.Session().ClearValue(breakpoint.NotifyBreakPointFuncKey) })
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+
 		// SHOW TABLE STATUS runs restricted SQL on the current session. Its inner
-		// result set must remain internal, without hiding the outer user statement.
+		// result set must remain internal, without hiding or resetting the outer statement.
+		start := time.Now()
 		require.NoError(t, cc.handleQuery(ctx, "show table status from test"))
-		require.Equal(t, showBefore+1, statementMetric("Show").GetHistogram().GetSampleCount())
-		require.Equal(t, selectBefore, statementMetric("Select").GetHistogram().GetSampleCount())
-		require.Equal(t, internalBefore+1, statementMetric(metrics.LblInternal).GetHistogram().GetSampleCount())
+		elapsed := time.Since(start).Seconds()
+		require.False(t, outerStartTime.IsZero())
+		show := statementMetric("Show").GetHistogram()
+		require.Equal(t, showBefore.GetSampleCount()+1, show.GetSampleCount())
+		require.GreaterOrEqual(t, show.GetSampleSum()-showBefore.GetSampleSum(), (time.Hour + time.Minute).Seconds())
+		for i, bucket := range show.GetBucket() {
+			if bucket.GetUpperBound() < (time.Hour + time.Minute).Seconds() {
+				require.Equal(t, showBefore.GetBucket()[i].GetCumulativeCount(), bucket.GetCumulativeCount())
+			}
+		}
+		require.Equal(t, outerStartTime, vars.StartTime)
+		require.Zero(t, vars.DurationParse)
+		require.Equal(t, selectBefore.GetSampleCount(), statementMetric("Select").GetHistogram().GetSampleCount())
+		internal := statementMetric(metrics.LblInternal).GetHistogram()
+		require.Equal(t, internalBefore.GetSampleCount()+1, internal.GetSampleCount())
+		require.LessOrEqual(t, internal.GetSampleSum()-internalBefore.GetSampleSum(), elapsed)
 		require.Equal(t, commandBefore+1, readHistogram(command).GetHistogram().GetSampleCount())
 		require.False(t, vars.InRestrictedSQL)
 		require.False(t, vars.StmtCtx.InRestrictedSQL)
 		require.Equal(t, "Show", vars.StmtCtx.StmtType)
+
+		// The next user statement must not inherit the outer statement's synthetic timing.
+		start = time.Now()
+		require.NoError(t, cc.handleQuery(ctx, "select 1"))
+		elapsed = time.Since(start).Seconds()
+		selectAfter := statementMetric("Select").GetHistogram()
+		require.Equal(t, selectBefore.GetSampleCount()+1, selectAfter.GetSampleCount())
+		require.LessOrEqual(t, selectAfter.GetSampleSum()-selectBefore.GetSampleSum(), elapsed)
 	})
 
 	t.Run("internal result set close", func(t *testing.T) {
