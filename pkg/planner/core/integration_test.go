@@ -42,6 +42,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNullifJoinKeyImplicitCast(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table nullif_l(c int)")
+	tk.MustExec("create table nullif_r(c int)")
+	tk.MustQuery("select 1 from nullif_l l, nullif_r r where nullif(1|1,r.c)=l.c").Check(testkit.Rows())
+	tk.MustExec("insert into nullif_l values (1),(1),(2),(null)")
+	tk.MustExec("insert into nullif_r values (1),(2),(null)")
+	for _, cond := range []string{"nullif(1|1,r.c)=l.c", "l.c=nullif(1|1,r.c)", "nullif(1,r.c)=l.c"} {
+		tk.MustQuery("select l.c,r.c from nullif_l l, nullif_r r where " + cond).Sort().Check(testkit.Rows("1 2", "1 2", "1 <nil>", "1 <nil>"))
+	}
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
