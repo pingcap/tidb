@@ -16,17 +16,29 @@ package ddl
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -245,29 +257,28 @@ func buildSplitPolicyTestTableInfo(t *testing.T, createSQL string) (*model.Table
 	return tblInfo, createStmt
 }
 
-// splitKeysForPersistedPolicy normalizes the split policies declared in
-// createSQL and returns the keys produced when they are applied, emulating what
-// a later table operation (for example truncate) does with the stored policy.
-func splitKeysForPersistedPolicy(t *testing.T, createSQL string) [][]byte {
+// splitKeysForPersistedPolicy normalizes the single split policy declared in
+// createSQL and returns the keys produced when it is applied, emulating what a
+// later table operation (for example truncate) does with the stored policy.
+// defineCtx is the session that creates the policy. applyCtx is the session
+// that reapplies it; they may differ in SQL mode and time zone.
+func splitKeysForPersistedPolicy(t *testing.T, createSQL string, defineCtx, applyCtx sessionctx.Context) [][]byte {
 	t.Helper()
 	tblInfo, createStmt := buildSplitPolicyTestTableInfo(t, createSQL)
-	require.NotEmpty(t, createStmt.SplitIndex, "expected a split policy in %q", createSQL)
+	require.Len(t, createStmt.SplitIndex, 1, "expected exactly one split policy in %q", createSQL)
 
-	sctx := mock.NewContext()
-	for _, splitOpt := range createStmt.SplitIndex {
-		policy, indexName, err := normalizeSplitPolicy(sctx.GetExprCtx(), splitOpt, tblInfo)
-		require.NoError(t, err)
-		if indexName == "" {
-			tblInfo.TableSplitPolicy = policy
-			continue
-		}
+	policy, indexName, err := normalizeSplitPolicy(defineCtx.GetExprCtx(), createStmt.SplitIndex[0], tblInfo)
+	require.NoError(t, err)
+	if indexName == "" {
+		tblInfo.TableSplitPolicy = policy
+	} else {
 		idxInfo := tblInfo.FindIndexByName(indexName)
 		require.NotNil(t, idxInfo)
 		idxInfo.RegionSplitPolicy = policy
 	}
 
 	store := &fakeAutoPreSplitStore{}
-	splitTableRegion(sctx, store, tblInfo, vardef.ScatterOff)
+	splitTableRegion(applyCtx, store, tblInfo, vardef.ScatterOff)
 	require.Len(t, store.calls, 1)
 	return store.calls[0].keys
 }
@@ -278,7 +289,8 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 	// split. See https://github.com/pingcap/tidb/issues/71395.
 	t.Run("string literal bound on integer handle", func(t *testing.T) {
 		keys := splitKeysForPersistedPolicy(t,
-			"create table t (id bigint primary key) split between ('0') and ('10000') regions 4")
+			"create table t (id bigint primary key) split between ('0') and ('10000') regions 4",
+			mock.NewContext(), mock.NewContext())
 		recordPrefix := tablecodec.GenTableRecordPrefix(100)
 		require.Equal(t, [][]byte{
 			tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(2500)),
@@ -292,8 +304,8 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 	// index split keys.
 	t.Run("integer literal bound on string index column", func(t *testing.T) {
 		const tableSQL = "create table t (id bigint primary key, name varchar(100), index idx_name(name)) split index idx_name between (%s) and (%s) regions 3"
-		fromIntLiterals := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "0", "100"))
-		fromStringLiterals := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "'0'", "'100'"))
+		fromIntLiterals := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "0", "100"), mock.NewContext(), mock.NewContext())
+		fromStringLiterals := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "'0'", "'100'"), mock.NewContext(), mock.NewContext())
 		require.NotEmpty(t, fromIntLiterals)
 		require.Equal(t, fromStringLiterals, fromIntLiterals)
 	})
@@ -302,8 +314,8 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 	// string bounds to the primary key column types.
 	t.Run("string bound on common handle columns", func(t *testing.T) {
 		const tableSQL = "create table t (a int, b varchar(20), primary key (a, b) clustered) split between (%s) and (%s) regions 4"
-		converted := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "'0', 'x'", "'100', 'z'"))
-		typed := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "0, 'x'", "100, 'z'"))
+		converted := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "'0', 'x'", "'100', 'z'"), mock.NewContext(), mock.NewContext())
+		typed := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "0, 'x'", "100, 'z'"), mock.NewContext(), mock.NewContext())
 		require.NotEmpty(t, converted)
 		require.Equal(t, typed, converted)
 	})
@@ -317,4 +329,155 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 		require.Error(t, err)
 		require.True(t, types.ErrTruncated.Equal(err), "unexpected error: %v", err)
 	})
+
+	// CREATE and ALTER both set TruncateAsWarning when sql_mode is non-strict,
+	// then call normalizeSplitPolicy. The invalid bound must still fail.
+	t.Run("non-strict sql mode rejects unconvertible bound", func(t *testing.T) {
+		for _, stmtSQL := range []string{
+			"create table t (id bigint primary key) split between ('abc') and ('10000') regions 4",
+			"alter table t split between ('abc') and ('10000') regions 4",
+		} {
+			tblInfo, splitOpt := splitPolicyOption(t, stmtSQL)
+			sctx := mock.NewContext()
+			sc := sctx.GetSessionVars().StmtCtx
+			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
+			_, _, err := normalizeSplitPolicy(sctx.GetExprCtx(), splitOpt, tblInfo)
+			require.Error(t, err)
+			require.True(t, types.ErrTruncated.Equal(err), "unexpected error: %v", err)
+		}
+	})
+
+	// A valid string bound accepted under non-strict mode must still split when
+	// a later operation reapplies the policy.
+	t.Run("non-strict valid string bound keeps split keys", func(t *testing.T) {
+		defineCtx := mock.NewContext()
+		sc := defineCtx.GetSessionVars().StmtCtx
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
+		keys := splitKeysForPersistedPolicy(t,
+			"create table t (id bigint primary key) split between ('0') and ('10000') regions 4",
+			defineCtx, mock.NewContext())
+		recordPrefix := tablecodec.GenTableRecordPrefix(100)
+		require.Equal(t, [][]byte{
+			tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(2500)),
+			tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(5000)),
+			tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(7500)),
+		}, keys)
+	})
+
+	t.Run("timestamp policy keeps defining time zone", func(t *testing.T) {
+		const createSQL = "create table t (id bigint primary key, ts timestamp, index idx_ts(ts)) split index idx_ts between ('2020-01-01 00:00:00') and ('2020-01-02 00:00:00') regions 4"
+		defineCtx := mock.NewContext()
+		defineLoc, err := timeutil.ParseTimeZone("+08:00")
+		require.NoError(t, err)
+		defineCtx.ResetSessionAndStmtTimeZone(defineLoc)
+		applyCtx := mock.NewContext()
+		utc, err := timeutil.ParseTimeZone("+00:00")
+		require.NoError(t, err)
+		applyCtx.ResetSessionAndStmtTimeZone(utc)
+
+		keys := splitKeysForPersistedPolicy(t, createSQL, defineCtx, applyCtx)
+		defined := timestampIndexSplitKeys(t, createSQL, defineLoc)
+		reappliedAsUTC := timestampIndexSplitKeys(t, createSQL, utc)
+		require.NotEmpty(t, keys)
+		require.Equal(t, defined, keys)
+		require.NotEqual(t, reappliedAsUTC, keys)
+	})
+
+	t.Run("clustered prefix primary key matches one-shot keys", func(t *testing.T) {
+		const createSQL = "create table t (a varchar(20), b int, primary key (a(3), b) clustered) split between ('abcdef', 0) and ('uvwxyz', 10000) regions 4"
+		sctx := mock.NewContext()
+		keys := splitKeysForPersistedPolicy(t, createSQL, sctx, mock.NewContext())
+		require.Equal(t, oneShotCommonHandleSplitKeys(t, createSQL, sctx), keys)
+	})
+}
+
+// splitPolicyOption parses a CREATE or ALTER statement and returns the table
+// the split policy is validated against plus that statement's split option.
+func splitPolicyOption(t *testing.T, stmtSQL string) (*model.TableInfo, *ast.SplitIndexOption) {
+	t.Helper()
+	stmt, err := parser.New().ParseOneStmt(stmtSQL, "", "")
+	require.NoError(t, err)
+	switch s := stmt.(type) {
+	case *ast.CreateTableStmt:
+		tblInfo, err := BuildTableInfoFromAST(metabuild.NewContext(), s)
+		require.NoError(t, err)
+		require.Len(t, s.SplitIndex, 1)
+		return tblInfo, s.SplitIndex[0]
+	case *ast.AlterTableStmt:
+		tblInfo, _ := buildSplitPolicyTestTableInfo(t, "create table t (id bigint primary key)")
+		require.Len(t, s.Specs, 1)
+		require.NotNil(t, s.Specs[0].SplitIndex)
+		return tblInfo, s.Specs[0].SplitIndex
+	default:
+		require.Failf(t, "unexpected statement", "%T", stmt)
+		return nil, nil
+	}
+}
+
+// timestampIndexSplitKeys converts the timestamp index bounds in loc and returns
+// the one-shot split keys for that zone.
+func timestampIndexSplitKeys(t *testing.T, createSQL string, loc *time.Location) [][]byte {
+	t.Helper()
+	tblInfo, createStmt := buildSplitPolicyTestTableInfo(t, createSQL)
+	idx := tblInfo.FindIndexByName("idx_ts")
+	require.NotNil(t, idx)
+	tblInfo.ID = 100
+	sctx := mock.NewContext()
+	sctx.ResetSessionAndStmtTimeZone(loc)
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
+	lower, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Lower), splitPolicyIndexColumns(tblInfo, idx), sc.TypeCtx())
+	require.NoError(t, err)
+	upper, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Upper), splitPolicyIndexColumns(tblInfo, idx), sc.TypeCtx())
+	require.NoError(t, err)
+	keys, err := regionsplit.GetSplitIndexKeys(sc, tblInfo, idx, tblInfo.ID, lower, upper, int(createStmt.SplitIndex[0].SplitOpt.Num), nil, dbterror.ErrInvalidSplitRegionRanges)
+	require.NoError(t, err)
+	return keys
+}
+
+func restoreBounds(t *testing.T, exprs []ast.ExprNode) []string {
+	t.Helper()
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	out := make([]string, len(exprs))
+	for i, expr := range exprs {
+		buf.Reset()
+		require.NoError(t, expr.Restore(restoreCtx))
+		out[i] = buf.String()
+	}
+	return out
+}
+
+// oneShotCommonHandleSplitKeys builds split keys the way SPLIT TABLE does:
+// truncate prefix-index values, then encode the common handle.
+func oneShotCommonHandleSplitKeys(t *testing.T, createSQL string, sctx sessionctx.Context) [][]byte {
+	t.Helper()
+	tblInfo, createStmt := buildSplitPolicyTestTableInfo(t, createSQL)
+	pk := tables.FindPrimaryIndex(tblInfo)
+	require.NotNil(t, pk)
+	sc := sctx.GetSessionVars().StmtCtx
+	cols := splitPolicyHandleColumns(tblInfo)
+	lower, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Lower), cols, sc.TypeCtx())
+	require.NoError(t, err)
+	upper, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Upper), cols, sc.TypeCtx())
+	require.NoError(t, err)
+
+	tableCols := make([]*expression.Column, len(tblInfo.Columns))
+	for i, col := range tblInfo.Columns {
+		tableCols[i] = &expression.Column{ID: col.ID, RetType: &col.FieldType}
+	}
+	for i, pkCol := range pk.Columns {
+		tableCols[pkCol.Offset].Index = i
+	}
+	handleCols := plannerutil.NewCommonHandleCols(tblInfo, pk, tableCols)
+	lowerHandle, err := handleCols.BuildHandleByDatums(sc, lower)
+	require.NoError(t, err)
+	upperHandle, err := handleCols.BuildHandleByDatums(sc, upper)
+	require.NoError(t, err)
+	recordPrefix := tablecodec.GenTableRecordPrefix(tblInfo.ID)
+	return util.GetValuesList(
+		tablecodec.EncodeRecordKey(recordPrefix, lowerHandle),
+		tablecodec.EncodeRecordKey(recordPrefix, upperHandle),
+		int(createStmt.SplitIndex[0].SplitOpt.Num),
+		nil,
+	)
 }

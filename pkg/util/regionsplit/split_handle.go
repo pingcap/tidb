@@ -207,15 +207,28 @@ func (*intHandleCols) IsInt() bool {
 	return true
 }
 
-type commonHandleCols struct{}
+type commonHandleCols struct {
+	tbInfo  *model.TableInfo
+	idxInfo *model.IndexInfo
+}
 
-func newCommonHandleCols() *commonHandleCols {
-	return &commonHandleCols{}
+func newCommonHandleCols(tbInfo *model.TableInfo) *commonHandleCols {
+	return &commonHandleCols{
+		tbInfo:  tbInfo,
+		idxInfo: tables.FindPrimaryIndex(tbInfo),
+	}
 }
 
 // BuildHandleByDatums implements SplitHandleCols interface.
-func (*commonHandleCols) BuildHandleByDatums(sc *stmtctx.StatementContext, row []types.Datum) (kv.Handle, error) {
-	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, row...)
+func (c *commonHandleCols) BuildHandleByDatums(sc *stmtctx.StatementContext, row []types.Datum) (kv.Handle, error) {
+	// Copy before truncating so a prefix primary key such as (a(3), b) encodes
+	// the same bytes as the one-shot SPLIT TABLE path.
+	datumBuf := make([]types.Datum, len(row))
+	copy(datumBuf, row)
+	if c.idxInfo != nil && len(datumBuf) == len(c.idxInfo.Columns) {
+		tablecodec.TruncateIndexValues(c.tbInfo, c.idxInfo, datumBuf)
+	}
+	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, datumBuf...)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +243,7 @@ func (*commonHandleCols) IsInt() bool {
 // BuildHandleColsForSplit builds a SplitHandleCols for region split operations.
 func BuildHandleColsForSplit(tbInfo *model.TableInfo) SplitHandleCols {
 	if tbInfo.IsCommonHandle {
-		return newCommonHandleCols()
+		return newCommonHandleCols(tbInfo)
 	}
 	return newIntHandleCols()
 }
