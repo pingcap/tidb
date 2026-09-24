@@ -1256,15 +1256,29 @@ fn physical_operator_info(
                 format!("{prefix}, {order}")
             }
         }
-        PhysicalPlan::IndexMergeReader(reader) => format!(
-            "type:{}, keep order:{}",
-            if reader.is_intersection_type {
-                "intersection"
-            } else {
-                "union"
-            },
-            reader.keep_order
-        ),
+        PhysicalPlan::IndexMergeReader(reader) => {
+            // Go `PhysicalIndexMergeReader.ExplainInfo`: the merge type, then
+            // the embedded limit when one was pushed. KeepOrder is NOT
+            // printed on this operator.
+            let mut text = format!(
+                "type: {}",
+                if reader.is_intersection_type {
+                    "intersection"
+                } else {
+                    "union"
+                }
+            );
+            if let Some(limit) = reader.pushed_limit.as_ref() {
+                text.push_str(
+                    format!(
+                        ", limit embedded(offset:{}, count:{})",
+                        limit.offset, limit.count
+                    )
+                    .as_str(),
+                );
+            }
+            text
+        }
         PhysicalPlan::Dml(_) => "N/A".to_owned(),
         PhysicalPlan::TopN(topn) => format!(
             "{}, offset:{}, count:{}",

@@ -4230,18 +4230,20 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     // estimates, so the candidate only fires on pseudo-stats sources —
     // exactly the recorded fixtures. Analyzed tables keep the ordinary
     // paths until per-partial histogram cardinality is ported.
-    if ctx.index_merge_enabled
-        && !ordered
-        && prop.task_tp == TaskType::Root
-        && prop.index_join_prop.is_none()
-        && ds.table_scan_penalty.pseudo_stats
     {
-        if let Some(merge_task) =
-            crate::find_best_task::index_merge_union::build_union_index_merge_task(ds, ctx)?
+        if ctx.index_merge_enabled
+            && !ordered
+            && prop.task_tp == TaskType::Root
+            && prop.index_join_prop.is_none()
+            && ds.table_scan_penalty.pseudo_stats
         {
-            if best.invalid() || compare_task_cost(ctx.coster, &merge_task, &best)? {
-                best = merge_task;
-                best_is_full_range = false;
+            if let Some(merge_task) =
+                crate::find_best_task::index_merge_union::build_union_index_merge_task(ds, ctx)?
+            {
+                if best.invalid() || compare_task_cost(ctx.coster, &merge_task, &best)? {
+                    best = merge_task;
+                    best_is_full_range = false;
+                }
             }
         }
     }

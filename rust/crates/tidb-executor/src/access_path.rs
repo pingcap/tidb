@@ -3605,6 +3605,47 @@ impl IndexRangeSourceExec {
 }
 
 impl IndexRangeSourceExec {
+    /// Whether every conjunct in `predicates` names only entry-carried
+    /// columns: ordered index key parts plus clustered-handle columns. A
+    /// conjunct surviving a remap onto the carried slots of `keep`
+    /// references nothing else. Go's
+    /// `addPushedDownSelection4PhysicalIndexScan` gates the index-side
+    /// Selection on the same column availability.
+    fn predicates_entry_carried(
+        &self,
+        predicates: &[crate::predicate_pushdown::ScanPredicate],
+    ) -> bool {
+        let Some(index) = self
+            .table
+            .indexes()
+            .iter()
+            .find(|index| index.id == self.index_id)
+        else {
+            return false;
+        };
+        let mut carried = index.ordered_column_offsets().to_vec();
+        for offset in self.table.common_handle_offsets() {
+            if !carried.contains(offset) {
+                carried.push(*offset);
+            }
+        }
+        if let Some(pk) = self.table.pk_handle_offset() {
+            if !carried.contains(&pk) {
+                carried.push(pk);
+            }
+        }
+        let carried_slots: Vec<usize> = self
+            .keep
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, physical)| carried.contains(physical).then_some(slot))
+            .collect();
+        predicates.iter().all(|predicate| {
+            let mut probe = predicate.clone();
+            crate::predicate_pushdown::remap_scan_predicate(&mut probe, &carried_slots).is_some()
+        })
+    }
+
     /// Restores the planner-owned partial output columns after an
     /// index-lookup table plan accepts aggregate pushdown. The generated
     /// source columns carry implementation-local ids; the root final
@@ -4433,6 +4474,20 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         if filter.is_empty() {
             return false;
         }
+        // A covering source answers from index entries alone (Go's
+        // `PhysicalIndexReader`): pushed conjuncts must ride the index-side
+        // DAG Selection, because the narrow projected entries it emits leave
+        // no wider row for a local re-check. Refuse conjuncts the entries
+        // cannot carry so the driver keeps the local `SelectionExec` over
+        // them, exactly as Go's planner keeps a residual above the reader.
+        let mut candidate = Vec::new();
+        if let Some(existing) = self.filter.as_ref() {
+            candidate.extend_from_slice(existing.predicates());
+        }
+        candidate.extend_from_slice(filter.predicates());
+        if self.covering && !self.predicates_entry_carried(&candidate) {
+            return false;
+        }
         match self.filter.as_mut() {
             Some(existing) => existing.conjoin(filter),
             None => {
@@ -4442,6 +4497,11 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
                     self.meta.new_chunk(),
                 ));
             }
+        }
+        if self.covering {
+            // The entries carry every conjunct's columns: evaluate them in
+            // the coprocessor Selection (Go `idxIsCovering`), not locally.
+            self.index_filter = true;
         }
         self.pushed = self
             .filter
@@ -5984,7 +6044,9 @@ fn scan_predicates_for_filters(
         .filter_map(|filter| {
             let mut predicate =
                 crate::predicate_pushdown::describe_execution_condition(filter, context).ok()?;
-            crate::predicate_pushdown::remap_scan_predicate(&mut predicate, keep)?;
+            if crate::predicate_pushdown::remap_scan_predicate(&mut predicate, keep).is_none() {
+                return None;
+            }
             Some(predicate)
         })
         .collect()

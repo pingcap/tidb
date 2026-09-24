@@ -73,6 +73,12 @@ pub fn build_union_index_merge_task(
             if source_index.is_columnar {
                 continue;
             }
+            // Go models an int-clustered table's PRIMARY key AS the handle,
+            // never as a secondary index partial; the handle fallback below
+            // builds that disjunct's TableRangeScan instead.
+            if ds.handle_is_int && source_index.primary {
+                continue;
+            }
             let resolved = source_index
                 .columns
                 .iter()
@@ -123,11 +129,29 @@ pub fn build_union_index_merge_task(
                     && !result.ranges.iter().any(|range| range.is_full_range(false))
                     && result.remained_conds.is_empty()
                 {
+                    // Go `getDatasetRowCnt`/partial stats price a table
+                    // partial by its own range estimate: under pseudo
+                    // statistics the int-handle estimator (`pseudo.go`'s
+                    // signed/unsigned range counters), not the raw
+                    // table-path count, which is the UNACCESSed row count
+                    // and once made a `[2,2]` partial price the whole table.
+                    let rows = if ds.table_scan_penalty.pseudo_stats {
+                        crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
+                            &result.ranges,
+                            ds.table_stats
+                                .as_ref()
+                                .map_or(0.0, |stats| stats.row_count()),
+                            ds.handle_cols
+                                .first()
+                                .and_then(|handle| handle.ret_type.as_ref())
+                                .is_some_and(tidb_datatype::FieldType::is_unsigned),
+                        )
+                    } else {
+                        ds.table_path_count_after_access.unwrap_or(result.ranges.len() as f64)
+                    };
                     chosen = Some(Partial::Table {
                         ranges: result.ranges.clone(),
-                        rows: ds
-                            .table_path_count_after_access
-                            .unwrap_or(result.ranges.len() as f64),
+                        rows,
                     });
                 }
             }
@@ -274,7 +298,9 @@ pub fn build_union_index_merge_task(
 
     let mut base = crate::physical::BasePhysicalPlan::new(
         ctx.allocator,
-        "IndexMergeReader",
+        // Go EXPLAIN prints this operator as `IndexMerge` (the physical
+        // type name), not the executor's `IndexMergeReader` spelling.
+        "IndexMerge",
         ds.base.base.query_block_offset(),
     );
     base.base

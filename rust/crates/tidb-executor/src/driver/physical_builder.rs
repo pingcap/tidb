@@ -3692,7 +3692,16 @@ fn build_index_merge_reader(
         DriverError::unsupported("physical index-merge table ID is absent from the catalog")
     })?;
     let physical_ids = table.record_physical_ids();
-    let mut partials: Vec<Box<dyn PartialHandleSource>> = Vec::new();
+    // Go starts one worker goroutine per partial in plan order, all racing to
+    // push handle tasks into one fetch channel. The lighter index requests
+    // consistently complete first, so go's ARRIVAL order -- the union's
+    // emission order -- is the index partials first, then the table partials,
+    // whatever the DNF order the plans carry (go itself flips under load;
+    // that residual race is nondeterministic there). This port is
+    // deterministic, so it drains in go's modal order: build every source,
+    // then let the index-partial sources overtake the table ones while
+    // keeping their relative order inside each wave.
+    let mut built: Vec<(bool, Box<dyn PartialHandleSource>)> = Vec::new();
     for partial in &reader.partial_plans_raw {
         let partial_schema = plan_schema(partial)?;
         let selected = index_merge_partition_indexes(partial, &table)?;
@@ -3722,7 +3731,7 @@ fn build_index_merge_reader(
                 if let Some(counters) = state.runtime_counters.as_mut() {
                     counters.insert(runtime_plan_key(partial), source.produced_rows().into());
                 }
-                partials.push(Box::new(IndexPartialHandleSource {
+                built.push((reader.by_items.is_empty(), Box::new(IndexPartialHandleSource {
                     source,
                     partition_indexes: selected,
                     stats: catalog.table_statistics(partial_table.stats_physical_id()),
@@ -3730,7 +3739,7 @@ fn build_index_merge_reader(
                     ctx: ctx.clone(),
                     index_id: scan.index_id,
                     reported: false,
-                }));
+                })));
                 continue;
             }
         }
@@ -3771,8 +3780,13 @@ fn build_index_merge_reader(
         if let Some(counters) = state.runtime_counters.as_mut() {
             counters.insert(runtime_plan_key(partial), source.produced_rows().into());
         }
-        partials.push(Box::new(source));
+        built.push((false, Box::new(source)));
     }
+    let (index_first, rest): (Vec<_>, Vec<_>) =
+        built.into_iter().partition(|(index_first, _)| *index_first);
+    let mut partials: Vec<Box<dyn PartialHandleSource>> =
+        index_first.into_iter().map(|(_, source)| source).collect();
+    partials.extend(rest.into_iter().map(|(_, source)| source));
 
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
