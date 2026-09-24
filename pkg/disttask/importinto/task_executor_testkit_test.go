@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -80,6 +81,39 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	executor := importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
+
+	ticiTableInfo := table.Meta().Clone()
+	ticiTableInfo.Indices = append(ticiTableInfo.Indices, &metamodel.IndexInfo{
+		ID:           101,
+		Name:         model.NewCIStr("idx_tici"),
+		FullTextInfo: &metamodel.FullTextIndexInfo{},
+		State:        metamodel.StatePublic,
+	})
+	taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo = ticiTableInfo, ticiTableInfo
+	stepMeta.Checksum[101] = importinto.Checksum{Sum: 9, KVs: 8, Size: 7}
+	bytes, err = json.Marshal(stepMeta)
+	require.NoError(t, err)
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
+	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
+	require.NoError(t, err)
+
+	nonTiCITableInfo := table.Meta().Clone()
+	nonTiCITableInfo.Indices = append(nonTiCITableInfo.Indices, &metamodel.IndexInfo{
+		ID:    102,
+		Name:  model.NewCIStr("idx_normal"),
+		State: metamodel.StatePublic,
+	})
+	taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo = nonTiCITableInfo, nonTiCITableInfo
+	delete(stepMeta.Checksum, 101)
+	stepMeta.Checksum[102] = importinto.Checksum{Sum: 9, KVs: 8, Size: 7}
+	bytes, err = json.Marshal(stepMeta)
+	require.NoError(t, err)
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
+	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
+	require.ErrorContains(t, err, "checksum mismatched remote vs local")
+
+	taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo = table.Meta(), table.Meta()
+	delete(stepMeta.Checksum, 102)
 
 	tmp := stepMeta.Checksum[-1]
 	tmp.Sum += 1

@@ -70,6 +70,8 @@ import (
 	"github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -1098,6 +1100,98 @@ func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
 
+func TestLocalDoWriteTiCIOnly(t *testing.T) {
+	createCalled := 0
+	factory := &mockImportClientFactory{
+		stores: []*metapb.Store{{Id: 1}},
+		createClientFn: func(_ *metapb.Store) sst.ImportSSTClient {
+			createCalled++
+			return nil
+		},
+	}
+	local := &Backend{
+		BackendConfig:       BackendConfig{LocalStoreDir: path.Join(t.TempDir(), "sorted-kv")},
+		logger:              log.L(),
+		writeLimiter:        newStoreWriteLimiter(0),
+		importClientFactory: factory,
+		tikvCodec:           keyspace.CodecV1,
+		ticiWriteGroup:      &mockTiCIWriteGroup{},
+	}
+	var err error
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	require.NoError(t, err)
+
+	const ticiIndexID int64 = 101
+	job := &regionJob{
+		keyRange:         common.Range{Start: []byte("a"), End: []byte("z")},
+		stage:            regionScanned,
+		ingestData:       mockIngestData{{[]byte("a"), []byte("a")}},
+		region:           testTiCIRegionInfo(),
+		regionSplitSize:  int64(config.SplitRegionSize),
+		regionSplitKeys:  100,
+		ticiWriteEnabled: true,
+		ticiIndexID:      ticiIndexID,
+	}
+
+	err = local.doWrite(context.Background(), job)
+	require.NoError(t, err)
+	require.NotNil(t, job.writeResult)
+	require.True(t, job.writeResult.skipIngest)
+	require.Equal(t, ingested, job.stage)
+	require.Zero(t, createCalled)
+	require.Equal(t, ticiIndexID, local.ticiWriteGroup.(*mockTiCIWriteGroup).lastIndexID)
+}
+
+func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
+	ticiGroup := &mockTiCIWriteGroup{}
+	local := &Backend{
+		BackendConfig:       BackendConfig{LocalStoreDir: path.Join(t.TempDir(), "sorted-kv")},
+		logger:              log.L(),
+		writeLimiter:        newStoreWriteLimiter(0),
+		importClientFactory: &mockImportClientFactory{},
+		tikvCodec:           keyspace.CodecV1,
+		ticiWriteGroup:      ticiGroup,
+	}
+	var err error
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	require.NoError(t, err)
+
+	const ticiIndexID int64 = 202
+	job := &regionJob{
+		keyRange:         common.Range{Start: []byte("a"), End: []byte("z")},
+		stage:            regionScanned,
+		ingestData:       mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("b"), []byte("b")}, {[]byte("c"), []byte("c")}, {[]byte("d"), []byte("d")}},
+		region:           testTiCIRegionInfo(),
+		regionSplitSize:  int64(config.SplitRegionSize),
+		regionSplitKeys:  2,
+		ticiWriteEnabled: true,
+		ticiIndexID:      ticiIndexID,
+	}
+
+	err = local.doWrite(context.Background(), job)
+	require.NoError(t, err)
+	require.NotNil(t, job.writeResult)
+	require.Equal(t, []byte("c"), job.writeResult.remainingStartKey)
+	expectedLowerBound := codec.EncodeBytes([]byte{}, []byte("a"))
+	expectedUpperBound := codec.EncodeBytes([]byte{}, []byte("b"))
+	require.Equal(t, expectedLowerBound, ticiGroup.lastLowerBound)
+	require.Equal(t, expectedUpperBound, ticiGroup.lastUpperBound)
+	require.Equal(t, ticiIndexID, ticiGroup.lastIndexID)
+	require.Less(t, bytes.Compare(ticiGroup.lastUpperBound, job.writeResult.remainingStartKey), 0)
+}
+
+func testTiCIRegionInfo() *split.RegionInfo {
+	leader := &metapb.Peer{Id: 1, StoreId: 1}
+	return &split.RegionInfo{
+		Leader: leader,
+		Region: &metapb.Region{
+			Id:          1,
+			Peers:       []*metapb.Peer{leader},
+			RegionEpoch: &metapb.RegionEpoch{ConfVer: 1, Version: 1},
+		},
+	}
+}
+
 // mockIngestData must be ordered on the first element of each [2][]byte.
 type mockIngestData [][2][]byte
 
@@ -1712,6 +1806,9 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		f,
 		10*units.GB,
 		1<<30,
+		false,
+		0,
+		0,
 		jobCh,
 		&jobWg,
 	)
@@ -1779,6 +1876,9 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		extEngine,
 		10*units.GB,
 		1<<30,
+		false,
+		0,
+		0,
 		jobCh,
 		&jobWg,
 	)
@@ -1946,7 +2046,7 @@ func TestDoImport(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -1973,7 +2073,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange"),
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "meet error when generateJobForRange")
 
 	// test second call to generateJobForRange (needRescan) meet error
@@ -2018,7 +2118,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange again"),
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "meet error when generateJobForRange again")
 
 	// test write meet unretryable error
@@ -2066,7 +2166,7 @@ func TestDoImport(t *testing.T) {
 			},
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "fatal error")
 }
 
@@ -2152,7 +2252,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2211,7 +2311,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2246,7 +2346,7 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		),
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2516,6 +2616,49 @@ func TestTotalMemoryConsume(t *testing.T) {
 	b.CloseEngineMgr()
 }
 
+func TestMarkTiCIWriteEngineLogs(t *testing.T) {
+	core, recorded := observer.New(zap.InfoLevel)
+	logger := zap.New(core)
+	backend := &Backend{logger: log.Logger{Logger: logger}}
+	engineUUID := uuid.New()
+
+	backend.markTiCIWriteEngine(engineUUID, true)
+	backend.markTiCIWriteEngine(engineUUID, false)
+
+	entries := recorded.FilterMessage("mark tici write engine").All()
+	require.Len(t, entries, 2)
+	fields := entries[0].ContextMap()
+	require.Equal(t, engineUUID.String(), fields["engine-uuid"])
+	require.Equal(t, true, fields["tici-write-enabled"])
+	fields = entries[1].ContextMap()
+	require.Equal(t, false, fields["tici-write-enabled"])
+}
+
+func TestTiCIIndexIDByEngine(t *testing.T) {
+	backend := &Backend{}
+	engineUUID := uuid.New()
+
+	backend.setTiCIIndexID(engineUUID, true, 101)
+	require.Equal(t, int64(101), backend.getTiCIIndexID(engineUUID))
+
+	backend.setTiCIIndexID(engineUUID, true, 0)
+	require.Zero(t, backend.getTiCIIndexID(engineUUID))
+
+	backend.setTiCIIndexID(engineUUID, true, 202)
+	backend.setTiCIIndexID(engineUUID, false, 202)
+	require.Zero(t, backend.getTiCIIndexID(engineUUID))
+}
+
+func TestMarkTiCIWriteEngineWithNilLogger(t *testing.T) {
+	backend := &Backend{}
+	engineUUID := uuid.New()
+
+	require.NotPanics(t, func() {
+		backend.markTiCIWriteEngine(engineUUID, true)
+		backend.markTiCIWriteEngine(engineUUID, false)
+	})
+}
+
 // refCountIngestData is a mock IngestData that tracks reference count.
 type refCountIngestData struct {
 	mockIngestData
@@ -2767,7 +2910,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 
 	// Generate and send jobs
 	// The fix ensures all jobs are ref'd before sending to jobToWorkerCh
-	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), jobToWorkerCh, &jobWg)
+	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0, jobToWorkerCh, &jobWg)
 	require.NoError(t, err)
 
 	// Wait for all jobs to be processed
@@ -2836,7 +2979,7 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 		close(firstJobDone)
 	}()
 
-	err := local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), jobToWorkerCh, &jobWg)
+	err := local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0, jobToWorkerCh, &jobWg)
 	require.NoError(t, err)
 	<-firstJobDone
 
@@ -2905,4 +3048,11 @@ func (m *mockEngineWithData) GetRegionSplitKeys() ([][]byte, error) {
 
 func (m *mockEngineWithData) Close() error {
 	return nil
+}
+
+func TestInitTiCIWriterGroupWithoutIndexes(t *testing.T) {
+	backend := &Backend{}
+	require.NoError(t, backend.InitTiCIWriterGroup(context.Background(), nil, nil, "test", "1", nil))
+	// An interface containing a nil *DataWriterGroup must not enable TiCI paths.
+	require.True(t, backend.ticiWriteGroup == nil)
 }

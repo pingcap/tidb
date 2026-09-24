@@ -922,7 +922,7 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		if collate.IsBinCollation(col.Ft.GetCollate()) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
 			// NOTE: the corresponding datum is generated as `types.NewUintDatum(paddingSize)`, and the raw data is
-			// encoded via `encodeUint`. Thus we should mark the field type as unsigened here so that the BytesDecoder
+			// encoded via `encodeUint`. Thus we should mark the field type as unsigned here so that the BytesDecoder
 			// can decode it correctly later. Otherwise there might be issues like #47115.
 			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
 			copyColInfo.Ft.AddFlag(mysql.UnsignedFlag)
@@ -1071,7 +1071,7 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-// DecodeHandleInIndexValue decodes handle in unqiue index value.
+// DecodeHandleInIndexValue decodes handle in unique index value.
 func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return DecodeIntHandleInIndexValue(value), nil
@@ -1221,6 +1221,67 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
+func hybridShardingIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, shardingCols []*model.IndexColumn, indexedValues []types.Datum) ([]types.Datum, error) {
+	if len(shardingCols) == 0 {
+		return indexedValues, nil
+	}
+	indexOffsets := make(map[int]int, len(idxInfo.Columns))
+	for i, col := range idxInfo.Columns {
+		indexOffsets[col.Offset] = i
+	}
+	values := make([]types.Datum, len(shardingCols))
+	for i, col := range shardingCols {
+		pos, ok := indexOffsets[col.Offset]
+		if !ok {
+			return nil, errors.Errorf("hybrid index sharding column offset %d missing in index %s", col.Offset, idxInfo.Name.O)
+		}
+		values[i] = indexedValues[pos]
+		TruncateIndexValue(&values[i], col, tblInfo.Columns[col.Offset])
+	}
+	return values, nil
+}
+
+// fulltextIndexKeyValues returns the datum list used to build a fulltext index key.
+// For fulltext indexes, the key is intentionally filled with PK values from the handle
+// rather than the indexed document columns. This behavior was requested by TiCi so
+// global sort during reorg/backfill orders index entries by PK instead of fulltext columns.
+func fulltextIndexKeyValues(tblInfo *model.TableInfo, h kv.Handle) ([]types.Datum, bool, error) {
+	if h == nil {
+		return nil, false, errors.New("fulltext index requires handle for primary key encoding")
+	}
+	if !h.IsInt() {
+		pkIdx := tblInfo.GetPrimaryKey()
+		if pkIdx == nil {
+			return nil, false, errors.New("fulltext index requires primary key for common handle")
+		}
+		values := make([]types.Datum, len(pkIdx.Columns))
+		for i, idxCol := range pkIdx.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			d, err := decodeHandleToDatum(h, &col.FieldType, i)
+			if err != nil {
+				return nil, false, err
+			}
+			values[i] = d
+			TruncateIndexValue(&values[i], idxCol, col)
+		}
+		return values, true, nil
+	}
+	if tblInfo.PKIsHandle {
+		pkIdx := tblInfo.GetPrimaryKey()
+		if pkIdx != nil && len(pkIdx.Columns) > 0 {
+			idxCol := pkIdx.Columns[0]
+			col := tblInfo.Columns[idxCol.Offset]
+			d, err := decodeHandleToDatum(h, &col.FieldType, 0)
+			if err != nil {
+				return nil, false, err
+			}
+			TruncateIndexValue(&d, idxCol, col)
+			return []types.Datum{d}, true, nil
+		}
+	}
+	return []types.Datum{types.NewIntDatum(h.IntValue())}, true, nil
+}
+
 // GenIndexKey generates index key using input physical table id
 func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
@@ -1240,14 +1301,31 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
 	TruncateIndexValues(tblInfo, idxInfo, indexedValues)
-	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
+	keyValues := indexedValues
+	if idxInfo.FullTextInfo != nil {
+		// TiCi requires fulltext index keys to be PK-derived, so we switch key payload
+		// from fulltext document values to handle/PK values here for global-sort ordering.
+		keyValues, _, err = fulltextIndexKeyValues(tblInfo, h)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	if shardingCols := idxInfo.HybridShardingColumns(); len(shardingCols) > 0 {
+		keyValues, err = hybridShardingIndexValues(tblInfo, idxInfo, shardingCols, indexedValues)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(keyValues)*9+9)
 	key = appendTableIndexPrefix(key, phyTblID)
 	key = codec.EncodeInt(key, idxInfo.ID)
-	key, err = codec.EncodeKey(loc, key, indexedValues...)
+	key, err = codec.EncodeKey(loc, key, keyValues...)
 	if err != nil {
 		return nil, false, err
 	}
 	if !distinct && h != nil {
+		// Fulltext key columns are PK-derived for TiCI global-sort ordering, while
+		// this trailing handle preserves the regular non-distinct index-key layout.
 		// For PartitionHandle on global indexes V1+, we must encode BOTH partition ID and inner handle
 		// in the key to prevent collisions when different partitions have duplicate handles.
 		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
@@ -1593,6 +1671,12 @@ func TempIndexValueIsUntouched(b []byte) bool {
 func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
+	if idxInfo.FullTextInfo != nil || len(idxInfo.HybridShardingColumns()) > 0 {
+		// TODO: For hybrid and fulltext indexes, we always store all index columns for now. This can be optimized later:
+		// - Sharding key columns can follow the original restored data rules.
+		// - Non-sharding columns can be forced into restored data.
+		needRestoredData = true
+	}
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
 	}
@@ -1643,19 +1727,31 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	if idxInfo.Global {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
-	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
+	// If an index is a hybrid or fulltext index (detected by the presence of sharding columns or fulltext info),
+	// we must encode restored data for *all index columns* into the index value.
+	// The sharding columns are only used to identify the hybrid-index case and to build the key;
+	// the value side intentionally carries all index columns to satisfy TiCi’s data ingest.
+	forceAllColumns := idxInfo.FullTextInfo != nil || len(idxInfo.HybridShardingColumns()) > 0
+	if idxValNeedRestoredData || len(handleRestoredData) > 0 || forceAllColumns {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
+		colIDSet := make(map[int64]struct{}, len(idxInfo.Columns)+len(handleRestoredData))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
 			col := tblInfo.Columns[idxCol.Offset]
 			// If the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
+			if !forceAllColumns && mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
-			if types.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
+			if forceAllColumns || types.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
 				colIds = append(colIds, col.ID)
-				if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
+				colIDSet[col.ID] = struct{}{}
+				if forceAllColumns {
+					// For hybrid or fulltext indexes we rewrite the "encodedKeyValues" part of index key,
+					// so _bin columns cannot be reconstructed from key sortKey + padding count.
+					// Always store the original value in restore data to preserve the column value.
+					allRestoredData = append(allRestoredData, indexedValues[i])
+				} else if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
 					allRestoredData = append(allRestoredData, indexedValues[i])
@@ -1665,8 +1761,13 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 
 		if len(handleRestoredData) > 0 {
 			pkColIDs := TryGetCommonPkColumnRestoredIds(tblInfo)
-			colIds = append(colIds, pkColIDs...)
-			allRestoredData = append(allRestoredData, handleRestoredData...)
+			for i, colID := range pkColIDs {
+				if _, exists := colIDSet[colID]; exists {
+					continue
+				}
+				colIds = append(colIds, colID)
+				allRestoredData = append(allRestoredData, handleRestoredData[i])
+			}
 		}
 
 		rd := rowcodec.Encoder{Enable: true}
@@ -2027,13 +2128,13 @@ func VerifyTableIDForRanges(keyRanges *kv.KeyRanges) ([]int64, error) {
 		}
 		tid := DecodeTableID(ranges[0].StartKey)
 		if tid <= 0 {
-			return errors.New("Incorrect keyRange is constrcuted")
+			return errors.New("Incorrect keyRange is constructed")
 		}
 		tids = append(tids, tid)
 		for i := 1; i < len(ranges); i++ {
 			tmpTID := DecodeTableID(ranges[i].StartKey)
 			if tmpTID <= 0 {
-				return errors.New("Incorrect keyRange is constrcuted")
+				return errors.New("Incorrect keyRange is constructed")
 			}
 			if tid != tmpTID {
 				return errors.Errorf("Using multi partition's ranges as single table's")

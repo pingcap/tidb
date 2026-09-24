@@ -934,6 +934,9 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, pmodel.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+			case ast.ConstraintHybrid:
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeHybrid, pmodel.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintPrimaryKey:
 				err = d.createPrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintForeignKey,
