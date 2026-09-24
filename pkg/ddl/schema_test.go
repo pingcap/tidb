@@ -607,6 +607,7 @@ func TestSchemaReadOnlyUsesWriteTargetSchema(t *testing.T) {
 	tk.MustExec("alter database ro read only = 1")
 
 	errMsg := "[schema:3989]Schema 'ro' is in read only mode."
+	tk.MustGetErrMsg("prepare alter_default_no_db from 'alter database default character set latin1'", "[planner:1046]No database selected")
 	// The session has no current database. The write target must be derived from
 	// the table source instead of the session's CurrentDB.
 	tk.MustGetErrMsg("update ro.t set v = 2 where id = 1", errMsg)
@@ -627,17 +628,36 @@ func TestSchemaReadOnlyUsesWriteTargetSchema(t *testing.T) {
 	tk.MustGetErrMsg("delete t from ro.t t join rw.t", errMsg)
 	tk.MustExec("update ro.t, rw.t set t.w = 2")
 	tk.MustExec("delete t from rw.t t join ro.t")
+	tk.MustExec("prepare alter_default from 'alter database default character set latin1'")
+	// The statement is rebound to CurrentDB on every execution. Executing it
+	// once also changes the schema version, so the next execution exercises the
+	// schema-changed preprocessing path.
+	tk.MustExec("execute alter_default")
+	tk.MustQuery("select default_character_set_name from information_schema.schemata where schema_name = 'rw'").Check(testkit.Rows("latin1"))
+	// This statement records the new schema version. Only USE runs before its
+	// execution, so it covers rebinding when the schema version is unchanged.
+	tk.MustExec("prepare alter_default_same_schema from 'alter database default character set latin1'")
 
 	// CurrentDB preserves the spelling used by USE, while schema comparisons
 	// are case-insensitive.
 	tk.MustExec("use Ro")
+	currentDBErrMsg := "[schema:3989]Schema 'Ro' is in read only mode."
+	tk.MustGetErrMsg("execute alter_default_same_schema", currentDBErrMsg)
+	tk.MustExec("deallocate prepare alter_default_same_schema")
 	tk.MustGetErrMsg("update t set v = 2 where id = 1", errMsg)
 	tk.MustGetErrMsg("delete t from t", errMsg)
 	tk.MustGetErrMsg("delete t from Ro.t", errMsg)
-	currentDBErrMsg := "[schema:3989]Schema 'Ro' is in read only mode."
+	tk.MustGetErrMsg("execute alter_default", currentDBErrMsg)
+	tk.MustExec("deallocate prepare alter_default")
+	tk.MustGetErrMsg("alter database default character set latin1", currentDBErrMsg)
+	tk.MustGetErrMsg("alter schema default collate latin1_bin", currentDBErrMsg)
+	tk.MustQuery("select default_character_set_name from information_schema.schemata where schema_name = 'ro'").Check(testkit.Rows("utf8mb4"))
 	tk.MustGetErrMsg("create sequence s2", currentDBErrMsg)
 	tk.MustGetErrMsg("alter sequence s increment by 2", currentDBErrMsg)
 	tk.MustGetErrMsg("drop sequence s", currentDBErrMsg)
+	// Changing READ ONLY itself must stay allowed so the database can be made writable.
+	tk.MustExec("alter database read only = 0")
+	tk.MustExec("alter database read only = 1")
 
 	// Invalid assignments and delete targets must retain their planner errors
 	// instead of being rejected based on the read-only current database.
@@ -654,6 +674,27 @@ func TestSchemaReadOnlyUsesWriteTargetSchema(t *testing.T) {
 	tk.MustGetErrMsg("update rw.a join ro.t on a.id = t.id set t.v = 2", errMsg)
 	tk.MustExec("update rw.a join ro.t on a.id = t.id set a.v = 3")
 	tk.MustExec("delete a from rw.a a join ro.t t on a.id = t.id")
+}
+
+func TestPreparedAlterDefaultDatabaseUsesCurrentDB(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ro")
+	tk.MustExec("create database rw1")
+	tk.MustExec("create database rw2")
+	tk.MustExec("alter database ro read only = 1")
+
+	tk.MustExec("use ro")
+	tk.MustGetErrMsg("prepare alter_default_ro from 'alter database default character set latin1'", "[schema:3989]Schema 'ro' is in read only mode.")
+
+	tk.MustExec("use rw1")
+	tk.MustExec("prepare alter_default_rebind from 'alter database default character set latin1'")
+	tk.MustExec("use rw2")
+	tk.MustExec("execute alter_default_rebind")
+	tk.MustExec("deallocate prepare alter_default_rebind")
+	tk.MustQuery("select default_character_set_name from information_schema.schemata where schema_name = 'rw1'").Check(testkit.Rows("utf8mb4"))
+	tk.MustQuery("select default_character_set_name from information_schema.schemata where schema_name = 'rw2'").Check(testkit.Rows("latin1"))
 }
 
 func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
