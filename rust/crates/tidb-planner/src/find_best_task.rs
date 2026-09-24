@@ -526,8 +526,8 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
         // `table_range_scan` flag rather than as a property field.
-        for table_range_scan in [true, false] {
-            for kind in [IndexJoinKind::IndexJoin, IndexJoinKind::IndexHashJoin] {
+        for table_range_scan in [true] {
+            for kind in [IndexJoinKind::IndexJoin] {
                 let mut child_roles = [LeafRole::Plain, LeafRole::Plain];
                 child_roles[1 - outer_idx] = LeafRole::IndexJoinProbe { table_range_scan };
                 out.push(EnumeratedJoin {
