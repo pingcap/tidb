@@ -1,4 +1,4 @@
-# Full-text search on a FULLTEXT index built in TiKV
+# Full-text search on a positional inverted FULLTEXT index (classic kernel)
 
 - Author(s): [terry1purcell](https://github.com/terry1purcell)
 - Discussion PR: https://github.com/pingcap/tidb/pull/71531
@@ -24,8 +24,8 @@ engine in TiDB that evaluates the whole boolean query, positions included,
 against those entries and feeds the matching handles to the ordinary
 IndexMerge table lookup.
 
-"In TiKV" describes where the entries live, not where code changes. The index
-is ordinary non-unique KV index entries, written through the ordinary index
+The entries live in TiKV, but no storage-layer code changes. The index is
+ordinary non-unique KV index entries, written through the ordinary index
 machinery and read back with plain snapshot range scans from TiDB. Nothing in
 TiKV, client-go, kvproto, tipb or the coprocessor changes, and no coprocessor
 request is ever issued against the index. The whole implementation is TiDB
