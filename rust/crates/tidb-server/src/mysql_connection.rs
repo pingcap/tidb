@@ -874,9 +874,7 @@ fn record_connection_exit_metrics(result: &Result<ConnectionReport, MysqlConnect
             }
             ConnectionExit::PeerClosed | ConnectionExit::Killed => {
                 disconnection
-                    .with_label_values(&[
-                        crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR,
-                    ])
+                    .with_label_values(&[crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR])
                     .inc();
             }
             ConnectionExit::AuthenticationRejected => {
@@ -894,16 +892,12 @@ fn record_connection_exit_metrics(result: &Result<ConnectionReport, MysqlConnect
                 .with_label_values(&["session"])
                 .inc();
             disconnection
-                .with_label_values(&[
-                    crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR,
-                ])
+                .with_label_values(&[crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR])
                 .inc();
         }
         Err(_) => {
             disconnection
-                .with_label_values(&[
-                    crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR,
-                ])
+                .with_label_values(&[crate::server_metrics::disconnect::BY_CLIENT_WITH_ERROR])
                 .inc();
         }
     }
@@ -1530,7 +1524,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // session's IN-TRANS status read as "0"/"1".
         {
             let idle = last_active.elapsed().as_secs_f64();
-            let in_txn = engine.wire_status().bits() & crate::wire_status::SERVER_STATUS_IN_TRANS != 0;
+            let in_txn =
+                engine.wire_status().bits() & crate::wire_status::SERVER_STATUS_IN_TRANS != 0;
             crate::server_metrics::CONN_IDLE_DURATION
                 .with_label_values(&[if in_txn { "1" } else { "0" }])
                 .observe(idle);
@@ -1695,8 +1690,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                     // Go `conn.go:1915`: `NumOfMultiQueryHistogram` observes
                     // how many statements one multi-statement text carried.
-                    crate::server_metrics::MULTI_QUERY_NUM
-                        .observe(statements.len() as f64);
+                    crate::server_metrics::MULTI_QUERY_NUM.observe(statements.len() as f64);
                     let last_index = statements.len().saturating_sub(1);
                     // One COM_QUERY, one packet numbering: the chained results
                     // CONTINUE the sequence rather than restarting at 1.
@@ -1721,10 +1715,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 // go session.go:1955-1968's parse-failure
                                 // half: fresh warning context + the error row
                                 // (see the session's own record_parse_failure).
-                                engine.record_parse_failure(
-                                    error.code,
-                                    error.message.clone(),
-                                );
+                                engine.record_parse_failure(error.code, error.message.clone());
                                 write_query_error_at(&mut output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
@@ -2197,11 +2188,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // feeds `tidb_executor_statement_total` exactly like the
                     // text protocol does.
                     tidb_executor::metrics::STATEMENT_TOTAL
-                        .with_label_values(&[
-                            "",
-                            engine.metrics_resource_group(),
-                            statement_label,
-                        ])
+                        .with_label_values(&["", engine.metrics_resource_group(), statement_label])
                         .inc();
                     match prepared_statement.as_ref() {
                         // The same two lines the text arm runs, so the transaction

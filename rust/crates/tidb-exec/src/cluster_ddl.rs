@@ -1418,7 +1418,11 @@ fn lower_alter_table_catalog(
                 to_table,
             }))
         }
-        tidb_ast::AlterTableAction::SetTiFlashReplica { hypo, count, labels } => {
+        tidb_ast::AlterTableAction::SetTiFlashReplica {
+            hypo,
+            count,
+            labels,
+        } => {
             if *hypo {
                 // Go `onSetTiFlashReplicaSpec` (ddl/executor/alter_executor.go):
                 // the planner-only HYPO form has no DDL execution.

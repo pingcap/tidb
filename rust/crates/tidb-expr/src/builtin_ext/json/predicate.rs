@@ -31,8 +31,10 @@ use std::cmp::Ordering;
 use serde_json::{Number, Value as Json};
 
 use super::path::{extract, parse_path};
-use super::value::{json_argument, parse_json_document_argument, parse_json_document_argument_strict,
-                    StringArgument};
+use super::value::{
+    json_argument, parse_json_document_argument, parse_json_document_argument_strict,
+    StringArgument,
+};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 
@@ -74,7 +76,7 @@ pub(super) fn json_contains(vals: &[Datum]) -> Result<Datum, EvalError> {
     // A NUMERIC scalar document argument is go's ErrInvalidTypeForJSON
     // (3146, argument 1, json_contains), not a silent coercion.
     parse_json_document_argument_strict(document, 1, "json_contains")?;
-    let mut document = json_argument(document, StringArgument::Document, None)?;;
+    let mut document = json_argument(document, StringArgument::Document, None)?;
     // Document, not Value: `JSON_CONTAINS`'s candidate keeps `ParseToJSONFlag`,
     // so `JSON_CONTAINS('[1]', '1')` is TRUE. Only `MEMBER OF` (above)
     // disables it for its candidate.
@@ -108,7 +110,7 @@ pub(super) fn json_overlaps(vals: &[Datum]) -> Result<Datum, EvalError> {
     }
     parse_json_document_argument_strict(left, 1, "json_overlaps")?;
     parse_json_document_argument_strict(right, 2, "json_overlaps")?;
-    let left = json_argument(left, StringArgument::Document, None)?;;
+    let left = json_argument(left, StringArgument::Document, None)?;
     let right = json_argument(right, StringArgument::Document, None)?;
     Ok(Datum::Int(i64::from(json_overlaps_value(&left, &right))))
 }

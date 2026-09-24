@@ -26,7 +26,9 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramVec, HistogramOpts, Opts};
+use prometheus::{
+    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts,
+};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -46,7 +48,6 @@ pub static TOPSQL_IGNORED_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
         &["type"],
     ))
 });
-
 
 /// Go `TopSQLReportDataHistogram` (`pkg/metrics/topsql.go`).
 pub static TOPSQL_REPORT_DATA: LazyLock<HistogramVec> = LazyLock::new(|| {

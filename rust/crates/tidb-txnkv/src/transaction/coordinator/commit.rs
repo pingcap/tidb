@@ -74,9 +74,7 @@ where
                     CommittedProtocol::AsyncCommit => {
                         crate::client_go_metrics::TxnCommitProtocol::AsyncCommit
                     }
-                    CommittedProtocol::OnePc => {
-                        crate::client_go_metrics::TxnCommitProtocol::OnePc
-                    }
+                    CommittedProtocol::OnePc => crate::client_go_metrics::TxnCommitProtocol::OnePc,
                 };
                 // Go's 2PC arm counts `committed || undetermined` as ok;
                 // the 1PC and async-commit arms count any error as err.

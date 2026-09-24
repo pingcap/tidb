@@ -2101,6 +2101,15 @@ impl Session {
     /// failed parse reports ONLY its own 1064) and the syntax error is
     /// appended into it, so `SHOW WARNINGS` after a failed parse reports the
     /// error row. Evaluation-origin errors never reach here.
+    /// go `ResetContextOfStmt` opens every statement with a fresh warning
+    /// context: the previous statement's entries go unless this statement
+    /// reports them itself. Front-end doors that bypass the session's own
+    /// statement boundary (transaction control, global-variable sets) must
+    /// still open that fresh context or a parse-failure row lingers.
+    pub fn drop_previous_statement_warnings(&mut self) {
+        self.warnings.clear();
+    }
+
     pub fn record_parse_failure(&mut self, error: &DriverError) {
         let reported = error.clone().to_mysql_error();
         self.record_parse_failure_coded(reported.code, reported.message);
@@ -2142,8 +2151,7 @@ impl Session {
             // 1411 leave the statement warning buffer EMPTY, while 3146/
             // 1305/1235 and every parse/plan/executor failure show their own
             // error row there.
-            if !reported.is_from_evaluation()
-                || !matches!(reported.code, 3140 | 3143 | 1411 | 1690)
+            if !reported.is_from_evaluation() || !matches!(reported.code, 3140 | 3143 | 1411 | 1690)
             {
                 self.append_warning(WarningLevel::Error, reported.code, reported.message);
             }
@@ -2295,6 +2303,7 @@ mod session_source_tests {
     }
 }
 
+pub mod metrics;
 #[cfg(test)]
 mod tests_admin_check;
 #[cfg(test)]
@@ -2504,7 +2513,6 @@ mod tests_window;
 mod tests_write_conversion;
 #[cfg(test)]
 mod tests_zero_date;
-pub mod metrics;
 
 /// Go `time.Duration.String()` for a whole number of seconds, which is what
 /// `UPTIME` carries: `time.Since(startTime).String()` with the sub-second

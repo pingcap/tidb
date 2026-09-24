@@ -2181,11 +2181,13 @@ fn attach_hash_agg_to_mpp(
     }
 
     match mode {
-        crate::physical::AggMppRunMode::NoMpp
-        | crate::physical::AggMppRunMode::Mpp1Phase => {
+        crate::physical::AggMppRunMode::NoMpp | crate::physical::AggMppRunMode::Mpp1Phase => {
             let task = attach_plan_to_task(plan, Task::Mpp(mpp));
             if let Some(projection) = avg_projection.take() {
-                Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task))
+                Ok(attach_plan_to_task(
+                    PhysicalPlan::Projection(projection),
+                    task,
+                ))
             } else {
                 Ok(task)
             }
@@ -2197,11 +2199,9 @@ fn attach_hash_agg_to_mpp(
                 ));
             };
             let (Some(partial), final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp(
-                &expr_ctx,
-                column_ids,
-                plan,
-                allocator,
-            )? else {
+                &expr_ctx, column_ids, plan, allocator,
+            )?
+            else {
                 return Ok(Task::invalid_task());
             };
             let mut partial = partial;
@@ -2220,8 +2220,8 @@ fn attach_hash_agg_to_mpp(
                     .group_by_items
                     .iter()
                     .map(|item| match item {
-                        Expression::Column(column) => Ok(
-                            crate::physical_property::MppPartitionColumn {
+                        Expression::Column(column) => {
+                            Ok(crate::physical_property::MppPartitionColumn {
                                 collate_id: column
                                     .get_static_type()
                                     .map(|field_type| {
@@ -2231,8 +2231,8 @@ fn attach_hash_agg_to_mpp(
                                     })
                                     .unwrap_or(-1),
                                 col: column.clone(),
-                            },
-                        ),
+                            })
+                        }
                         _ => Err(PlanError::internal(
                             "MPP HashAgg partition key must be a column",
                         )),
@@ -2254,7 +2254,10 @@ fn attach_hash_agg_to_mpp(
             let mpp = mpp.enforce_exchanger_impl(&required, allocator)?;
             let task = attach_plan_to_task(final_agg, Task::Mpp(mpp));
             if let Some(projection) = avg_projection.take() {
-                Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task))
+                Ok(attach_plan_to_task(
+                    PhysicalPlan::Projection(projection),
+                    task,
+                ))
             } else {
                 Ok(task)
             }
@@ -2266,10 +2269,7 @@ fn attach_hash_agg_to_mpp(
                 ));
             };
             let (partial, final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp_tidb(
-                &expr_ctx,
-                column_ids,
-                plan,
-                allocator,
+                &expr_ctx, column_ids, plan, allocator,
             )?;
             let task = if let Some(partial) = partial {
                 attach_plan_to_task(partial, Task::Mpp(mpp))
@@ -2279,7 +2279,10 @@ fn attach_hash_agg_to_mpp(
             let task = task.into_root_task(allocator)?;
             let task = attach_plan_to_task(final_agg, task);
             if let Some(projection) = avg_projection.take() {
-                Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task))
+                Ok(attach_plan_to_task(
+                    PhysicalPlan::Projection(projection),
+                    task,
+                ))
             } else {
                 Ok(task)
             }
@@ -2311,7 +2314,10 @@ fn attach_hash_agg_to_mpp(
             ) {
                 let task = attach_plan_to_task(plan, Task::Mpp(mpp));
                 if let Some(projection) = avg_projection.take() {
-                    return Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task));
+                    return Ok(attach_plan_to_task(
+                        PhysicalPlan::Projection(projection),
+                        task,
+                    ));
                 }
                 return Ok(task);
             }
@@ -2321,10 +2327,7 @@ fn attach_hash_agg_to_mpp(
                 ));
             };
             let (partial, final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp(
-                &expr_ctx,
-                column_ids,
-                plan,
-                allocator,
+                &expr_ctx, column_ids, plan, allocator,
             )?;
             if can_use_three_stage {
                 let Some(partial) = partial else {
@@ -2377,10 +2380,7 @@ fn attach_hash_agg_to_mpp(
                     );
                 }
                 let Some(split) = crate::final_mode_agg::adjust_three_stage_single_distinct(
-                    partial,
-                    final_agg,
-                    column_ids,
-                    allocator,
+                    partial, final_agg, column_ids, allocator,
                 )?
                 else {
                     return Ok(Task::invalid_task());
@@ -2441,7 +2441,10 @@ fn finish_scalar_aggregate_output(
     allocator: &crate::plan_base::PlanIdAllocator,
 ) -> Result<Task, PlanError> {
     if let Some(projection) = avg_projection {
-        return Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task));
+        return Ok(attach_plan_to_task(
+            PhysicalPlan::Projection(projection),
+            task,
+        ));
     }
     let Some(schema) = original_schema else {
         return Ok(task);
@@ -2449,11 +2452,8 @@ fn finish_scalar_aggregate_output(
     let child = task
         .plan()
         .ok_or_else(|| PlanError::internal("scalar MPP aggregate has no final plan"))?;
-    let mut base = crate::physical::BasePhysicalPlan::new(
-        allocator,
-        "Projection",
-        child.query_block_offset(),
-    );
+    let mut base =
+        crate::physical::BasePhysicalPlan::new(allocator, "Projection", child.query_block_offset());
     base.base.set_stats(child.stats_info().cloned());
     base.base.set_schema(Some(schema.clone()));
     base.set_children_req_props(vec![Some(
@@ -2645,16 +2645,9 @@ fn attach_agg_over_cop(
         // cop aggregate node (go R33 receipt alloc 11) and the
         // ConvertToRootTask's reader (alloc 12) for the fallback root
         // aggregate that competes and loses.
-        let _ = crate::physical::BasePhysicalPlan::new(
-            allocator,
-            "HashAgg",
-            query_block_offset,
-        );
-        let _ = crate::physical::BasePhysicalPlan::new(
-            allocator,
-            "TableReader",
-            query_block_offset,
-        );
+        let _ = crate::physical::BasePhysicalPlan::new(allocator, "HashAgg", query_block_offset);
+        let _ =
+            crate::physical::BasePhysicalPlan::new(allocator, "TableReader", query_block_offset);
         return Ok(Task::invalid_task());
     };
     {
@@ -2895,9 +2888,7 @@ fn heavy_topn_split(
         .by_items
         .iter()
         .enumerate()
-        .filter_map(|(index, item)| {
-            contains_heavy_topn_function(&item.expr).then_some(index)
-        })
+        .filter_map(|(index, item)| contains_heavy_topn_function(&item.expr).then_some(index))
         .collect();
     if heavy_indexes.is_empty() {
         return None;
@@ -2944,10 +2935,7 @@ fn heavy_topn_split(
     let mut pushed = topn.clone();
     pushed.base.set_children(Vec::new());
     pushed.base.base.set_stats(pushed_stats);
-    pushed
-        .base
-        .base
-        .set_schema(Some(projection_schema));
+    pushed.base.base.set_schema(Some(projection_schema));
     pushed.offset = 0;
     pushed.count = new_count;
     for (index, distance) in &distance_columns {
@@ -3462,10 +3450,7 @@ pub fn attach2_task(
                                 return Ok(pushed_task);
                             }
                             let converted = pushed_task.into_root_task(allocator)?;
-                            return Ok(attach_plan_to_task(
-                                PhysicalPlan::TopN(global),
-                                converted,
-                            ));
+                            return Ok(attach_plan_to_task(PhysicalPlan::TopN(global), converted));
                         }
                         let new_count = topn.offset.wrapping_add(topn.count);
                         let stats = cop
@@ -3512,7 +3497,7 @@ pub fn attach2_task(
                             mpp.plan.as_deref().ok_or_else(|| {
                                 PlanError::internal("MPP TopN attachment received an empty task")
                             })?,
-                    );
+                        );
                     if pushable {
                         if let Some((projection, pushed, global)) = heavy_topn_split(
                             topn,
@@ -3534,10 +3519,7 @@ pub fn attach2_task(
                                 return Ok(pushed_task);
                             }
                             let converted = pushed_task.into_root_task(allocator)?;
-                            return Ok(attach_plan_to_task(
-                                PhysicalPlan::TopN(global),
-                                converted,
-                            ));
+                            return Ok(attach_plan_to_task(PhysicalPlan::TopN(global), converted));
                         }
                         let new_count = topn.offset.wrapping_add(topn.count);
                         let stats = mpp
@@ -3955,7 +3937,10 @@ mod attach_tests {
         let heavy = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("vec_l2_distance"),
             FieldType::new(FieldTypeCode::Double),
-            vec![Expression::Column(vector), Expression::Constant(query_vector)],
+            vec![
+                Expression::Column(vector),
+                Expression::Constant(query_vector),
+            ],
         ));
         let topn_schema = Schema::new(vec![id.clone(), score.clone()]);
         let mut topn_base = op_with_stats("TopN", 10.0);
@@ -4130,13 +4115,8 @@ mod attach_tests {
             MppPartitionType::Any,
             [],
         ));
-        let attached = attach2_task(
-            hash,
-            vec![child],
-            Some(&column_allocator),
-            &plan_allocator,
-        )
-        .expect("MPP HashAgg attaches");
+        let attached = attach2_task(hash, vec![child], Some(&column_allocator), &plan_allocator)
+            .expect("MPP HashAgg attaches");
         let Task::Mpp(mpp) = attached else {
             panic!("two-phase MPP HashAgg remains an MPP task");
         };
@@ -4209,10 +4189,9 @@ mod attach_tests {
             ..PhysicalHashAgg::default()
         });
         let mut child_base = op_with_stats("Dual", 12.0);
-        child_base.base.set_schema(Some(Schema::new(vec![
-            distinct_col,
-            ordinary_col,
-        ])));
+        child_base
+            .base
+            .set_schema(Some(Schema::new(vec![distinct_col, ordinary_col])));
         let child = Task::Mpp(MppTask::new(
             PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
                 base: child_base,
@@ -4221,13 +4200,8 @@ mod attach_tests {
             MppPartitionType::Any,
             [],
         ));
-        let attached = attach2_task(
-            hash,
-            vec![child],
-            Some(&column_allocator),
-            &plan_allocator,
-        )
-        .expect("three-stage scalar MPP HashAgg attaches");
+        let attached = attach2_task(hash, vec![child], Some(&column_allocator), &plan_allocator)
+            .expect("three-stage scalar MPP HashAgg attaches");
         let Task::Mpp(mpp) = attached else {
             panic!("scalar MPP HashAgg remains an MPP task");
         };
@@ -4251,13 +4225,16 @@ mod attach_tests {
         let Some(PhysicalPlan::HashAgg(middle)) = single_sender.base.children().first() else {
             panic!("the single-partition exchange feeds the middle HashAgg");
         };
-        assert_eq!(middle.agg_funcs[0].mode, tidb_expr::aggregation::AggFunctionMode::Partial1);
-        let Some(PhysicalPlan::ExchangeReceiver(hash_receiver)) =
-            middle.base.children().first()
+        assert_eq!(
+            middle.agg_funcs[0].mode,
+            tidb_expr::aggregation::AggFunctionMode::Partial1
+        );
+        let Some(PhysicalPlan::ExchangeReceiver(hash_receiver)) = middle.base.children().first()
         else {
             panic!("the middle aggregation is fed by a hash exchange");
         };
-        let Some(PhysicalPlan::ExchangeSender(sender)) = hash_receiver.base.children().first() else {
+        let Some(PhysicalPlan::ExchangeSender(sender)) = hash_receiver.base.children().first()
+        else {
             panic!("the hash receiver owns its sender");
         };
         assert_eq!(sender.hash_cols.len(), 1);
@@ -4320,7 +4297,11 @@ mod attach_tests {
         ])));
         let hash = PhysicalPlan::HashAgg(PhysicalHashAgg {
             base,
-            agg_funcs: vec![count_distinct(distinct_a.clone()), count_distinct(distinct_b.clone()), ordinary],
+            agg_funcs: vec![
+                count_distinct(distinct_a.clone()),
+                count_distinct(distinct_b.clone()),
+                ordinary,
+            ],
             group_by_items: Vec::new(),
             mpp_run_mode: AggMppRunMode::MppScalar,
             enable_3_stage_distinct_agg: true,
@@ -4341,13 +4322,8 @@ mod attach_tests {
             MppPartitionType::Any,
             [],
         ));
-        let attached = attach2_task(
-            hash,
-            vec![child],
-            Some(&column_allocator),
-            &plan_allocator,
-        )
-        .expect("multi-distinct scalar MPP HashAgg attaches");
+        let attached = attach2_task(hash, vec![child], Some(&column_allocator), &plan_allocator)
+            .expect("multi-distinct scalar MPP HashAgg attaches");
         let Task::Mpp(mpp) = attached else {
             panic!("multi-distinct scalar MPP HashAgg remains an MPP task");
         };
@@ -4375,10 +4351,15 @@ mod attach_tests {
         else {
             panic!("the middle aggregation is fed by a hash exchange");
         };
-        let Some(PhysicalPlan::ExchangeSender(sender)) = hash_receiver.base.children().first() else {
+        let Some(PhysicalPlan::ExchangeSender(sender)) = hash_receiver.base.children().first()
+        else {
             panic!("the hash receiver owns its sender");
         };
-        assert_eq!(sender.hash_cols.len(), 3, "a, b, and grouping ID partition the middle stage");
+        assert_eq!(
+            sender.hash_cols.len(),
+            3,
+            "a, b, and grouping ID partition the middle stage"
+        );
         let Some(PhysicalPlan::HashAgg(partial)) = sender.base.children().first() else {
             panic!("the hash exchange feeds the partial HashAgg");
         };

@@ -354,7 +354,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
-            lock: false,
+        lock: false,
         base: BasePhysicalPlan::with_id(11, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -392,7 +392,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         ..PhysicalIndexMergeReader::default()
     });
     let template = PhysicalPlan::Dml(PhysicalDmlRoot {
-            fk_triggers: Vec::new(),
+        fk_triggers: Vec::new(),
         base: BasePhysicalPlan::with_id(14, "Update", 0),
         go_operator: "Update".to_owned(),
         select_plan: Some(Box::new(index_merge)),
@@ -452,7 +452,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         ]
     };
     let common_handle = PhysicalPlan::PointGet(PhysicalPointGet {
-            lock: false,
+        lock: false,
         base: BasePhysicalPlan::with_id(31, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -466,7 +466,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         ))),
     });
     let unique_index = PhysicalPlan::PointGet(PhysicalPointGet {
-            lock: false,
+        lock: false,
         base: BasePhysicalPlan::with_id(32, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -541,7 +541,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
         high_exclude: false,
     };
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
-            lock: false,
+        lock: false,
         base: BasePhysicalPlan::with_id(34, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -1276,11 +1276,8 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
         FieldType::new(FieldTypeCode::LongLong),
     )])));
     base.set_has_tiflash(true);
-    let aggregation = LogicalAggregation::new(
-        base,
-        vec![count],
-        vec![Expression::Column(input.clone())],
-    );
+    let aggregation =
+        LogicalAggregation::new(base, vec![count], vec![Expression::Column(input.clone())]);
     let root = PhysicalProperty::default();
     let plans = get_hash_aggs_with_mpp(&aggregation, &root, &allocator, 1.0, true, false);
     let modes: Vec<AggMppRunMode> = plans
@@ -1292,11 +1289,14 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
             _ => None,
         })
         .collect();
-    assert_eq!(modes, [
-        AggMppRunMode::Mpp1Phase,
-        AggMppRunMode::Mpp2Phase,
-        AggMppRunMode::MppTiDB,
-    ]);
+    assert_eq!(
+        modes,
+        [
+            AggMppRunMode::Mpp1Phase,
+            AggMppRunMode::Mpp2Phase,
+            AggMppRunMode::MppTiDB,
+        ]
+    );
     let one_phase = plans
         .iter()
         .find_map(|plan| match plan {
@@ -1307,7 +1307,10 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
         })
         .expect("one-phase candidate");
     assert_eq!(one_phase.mpp_partition_tp, MppPartitionType::Hash);
-    assert_eq!(one_phase.mpp_partition_cols[0].col.unique_id, input.unique_id);
+    assert_eq!(
+        one_phase.mpp_partition_cols[0].col.unique_id,
+        input.unique_id
+    );
 }
 
 #[test]

@@ -84,11 +84,7 @@ pub fn new_bundle(id: i64) -> Bundle {
 /// (`GenTableRecordPrefix` / `EncodeTablePrefix(table+1)`); the rules carry
 /// them hex-encoded exactly as PD expects.
 #[must_use]
-pub fn new_tiflash_bundle(
-    table_id: i64,
-    count: u64,
-    location_labels: &[String],
-) -> Bundle {
+pub fn new_tiflash_bundle(table_id: i64, count: u64, location_labels: &[String]) -> Bundle {
     // Go `codec.EncodeRegionRange` escapes the raw range with
     // `codec.EncodeBytes` (the PD rule API consumes the escaped form); the
     // un-escaped bytes are rejected with `invalid marker byte`.
@@ -103,23 +99,21 @@ pub fn new_tiflash_bundle(
         index: crate::common::RULE_INDEX_TIFLASH,
         r#override: false,
         rules: (count > 0)
-            .then(|| {
-                crate::pd::Rule {
-                    group_id: crate::common::TIFLASH_RULE_GROUP_ID.to_owned(),
-                    id: format!("table-{table_id}-r"),
-                    index: 0,
-                    start_key_hex: hex_encode(&start_encoded),
-                    end_key_hex: hex_encode(&end_encoded),
-                    role: crate::pd::PeerRoleType::LEARNER,
-                    is_witness: false,
-                    count: count as i64,
-                    label_constraints: vec![crate::pd::LabelConstraint {
-                        key: crate::common::ENGINE_LABEL_KEY.to_owned(),
-                        op: crate::pd::LabelConstraintOp::IN,
-                        values: vec![crate::common::ENGINE_LABEL_TIFLASH.to_owned()],
-                    }],
-                    location_labels: location_labels.to_vec(),
-                }
+            .then(|| crate::pd::Rule {
+                group_id: crate::common::TIFLASH_RULE_GROUP_ID.to_owned(),
+                id: format!("table-{table_id}-r"),
+                index: 0,
+                start_key_hex: hex_encode(&start_encoded),
+                end_key_hex: hex_encode(&end_encoded),
+                role: crate::pd::PeerRoleType::LEARNER,
+                is_witness: false,
+                count: count as i64,
+                label_constraints: vec![crate::pd::LabelConstraint {
+                    key: crate::common::ENGINE_LABEL_KEY.to_owned(),
+                    op: crate::pd::LabelConstraintOp::IN,
+                    values: vec![crate::common::ENGINE_LABEL_TIFLASH.to_owned()],
+                }],
+                location_labels: location_labels.to_vec(),
             })
             .into_iter()
             .collect(),

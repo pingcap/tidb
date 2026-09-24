@@ -1047,6 +1047,25 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.warning_context
     }
 
+    fn eval_constant(&self, expression: &Expression) -> Result<tidb_datatype::Datum, EvalError> {
+        match self.warning_context {
+            // The live statement context: constant-materialization warnings
+            // reach the client exactly as go's statement-context evaluation
+            // emits them.
+            Some(context) => tidb_expr::eval_expression_once(expression, context),
+            None => tidb_expr::eval_expression_once(
+                expression,
+                &tidb_expr::ZonedNoColumns(self.time_zone.clone()),
+            ),
+        }
+    }
+
+    /// Evaluates materialized constants in the LIVE statement context when
+    /// one is bound. The trait default's zone-only context is deliberately
+    /// dry — its `HandleTruncate` warnings vanish — which silently dropped
+    /// go's 1292 rows for constants such as a derived table's
+    /// `CAST('{}' AS JSON)` feeding `BITAND(j, j)` (captured on the oracle:
+    /// two 1292 rows, values equal).
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
         // A live statement context owns warning emission. Defer value folding
         // until `PlanBuilder::rewrite_scalar` can invoke the folder with that
@@ -3061,7 +3080,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     expanded.extend(Self::unfold_wild_star(path, schema, names));
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
-                window_spec_column: false,
+                    window_spec_column: false,
                     expr: expr.clone(),
                     column_reference: matches!(
                         inner_from_parentheses_and_unary_plus(expr),
@@ -3126,7 +3145,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     expanded.extend(list);
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
-                window_spec_column: false,
+                    window_spec_column: false,
                     expr: expr.clone(),
                     column_reference: matches!(
                         inner_from_parentheses_and_unary_plus(expr),
@@ -3215,7 +3234,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     }
                     let index = fields.len();
                     fields.push(ProjectionField {
-                window_spec_column: false,
+                        window_spec_column: false,
                         expr: node.clone(),
                         column_reference: true,
                         alias: None,
@@ -3247,7 +3266,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // that trim is what renders q42's `Column#77->Column#81`.
                 let index = if aggregation::is_aggregate_call(node) {
                     fields.push(ProjectionField {
-                window_spec_column: false,
+                        window_spec_column: false,
                         expr: node.clone(),
                         column_reference: matches!(node, Expr::Column(_)),
                         alias: None,
@@ -3260,7 +3279,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         Some(index) => index,
                         None => {
                             fields.push(ProjectionField {
-                window_spec_column: false,
+                                window_spec_column: false,
                                 expr: node.clone(),
                                 column_reference: matches!(node, Expr::Column(_)),
                                 alias: None,
@@ -4137,7 +4156,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             for (index, _) in having_aggs.iter().enumerate() {
                 let position = fields.len();
                 fields.push(ProjectionField {
-                window_spec_column: false,
+                    window_spec_column: false,
                     expr: PlanMarker::new(MarkerKind::Agg, having_offset + index).as_expr(),
                     column_reference: false,
                     alias: Some(format!("sel_agg_{position}")),

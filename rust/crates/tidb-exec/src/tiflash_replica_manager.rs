@@ -58,7 +58,7 @@ pub struct TiFlashReplicaManager<C: StoreWriteClient, L: StoreWriteLoader, P: St
     /// The PD HTTP endpoint (`http://host:client-port`), where the region
     /// stats live.
     pd_http: String,
-    }
+}
 
 /// One raw HTTP/1.1 call over TCP, `Connection: close`.
 ///
@@ -69,11 +69,7 @@ pub struct TiFlashReplicaManager<C: StoreWriteClient, L: StoreWriteLoader, P: St
 /// `200 "Update rules and groups successfully."`). Classic plaintext PD only;
 /// a TLS cluster needs the TLS-configured client from the cluster security
 /// settings and is deferred with the rest of TLS support.
-fn http_call(
-    method: &str,
-    url: &str,
-    body: Option<&str>,
-) -> Result<(u16, String), String> {
+fn http_call(method: &str, url: &str, body: Option<&str>) -> Result<(u16, String), String> {
     use std::io::{Read, Write};
     let rest = url
         .strip_prefix("http://")
@@ -91,12 +87,18 @@ fn http_call(
         request.push_str(&format!("Content-Length: {}\r\n", body.len()));
     }
     request.push_str("\r\n");
-    stream.write_all(request.as_bytes()).map_err(|error| error.to_string())?;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| error.to_string())?;
     if let Some(body) = body {
-        stream.write_all(body.as_bytes()).map_err(|error| error.to_string())?;
+        stream
+            .write_all(body.as_bytes())
+            .map_err(|error| error.to_string())?;
     }
     let mut response = String::new();
-    stream.read_to_string(&mut response).map_err(|error| error.to_string())?;
+    stream
+        .read_to_string(&mut response)
+        .map_err(|error| error.to_string())?;
     let status = response
         .lines()
         .next()
@@ -135,9 +137,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
             .spawn(move || loop {
                 std::thread::sleep(POLL_INTERVAL);
                 if let Err(error) = self.poll_once() {
-                    eprintln!(
-                        "{{\"event\":\"tiflash_replica_poll_error\",\"error\":\"{error}\"}}"
-                    );
+                    eprintln!("{{\"event\":\"tiflash_replica_poll_error\",\"error\":\"{error}\"}}");
                 }
             })
             .expect("the TiFlash replica poller starts")
@@ -155,13 +155,9 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
             .into_iter()
             .filter(|store| {
                 store.state == PdStoreState::Up
-                    && store
-                        .labels
-                        .iter()
-                        .any(|(key, value)| {
-                            key.eq_ignore_ascii_case("engine")
-                                && value.eq_ignore_ascii_case("tiflash")
-                        })
+                    && store.labels.iter().any(|(key, value)| {
+                        key.eq_ignore_ascii_case("engine") && value.eq_ignore_ascii_case("tiflash")
+                    })
             })
             .collect();
         if stores.is_empty() {
@@ -191,8 +187,11 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
         // Go `refreshTiFlashPlacementRules`: rules whose tables no longer
         // carry a replica (reset, dropped, or gone) are removed, so stale
         // learners stop being placed.
-        let (rules_status, rules_body) =
-            http_call("GET", &format!("{endpoint}/pd/api/v1/config/rules/group/tiflash"), None)?;
+        let (rules_status, rules_body) = http_call(
+            "GET",
+            &format!("{endpoint}/pd/api/v1/config/rules/group/tiflash"),
+            None,
+        )?;
         if rules_status == 200 {
             // An empty rules group answers JSON `null`, not `[]`.
             let existing: Vec<serde_json::Value> = match serde_json::from_str(&rules_body) {
@@ -213,9 +212,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
                 }
                 let (delete_status, delete_body) = http_call(
                     "DELETE",
-                    &format!(
-                        "{endpoint}/pd/api/v1/config/rule/tiflash/{id}"
-                    ),
+                    &format!("{endpoint}/pd/api/v1/config/rule/tiflash/{id}"),
                     None,
                 )?;
                 eprintln!(
@@ -225,82 +222,74 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
         }
 
         for (table_id, count, labels) in &replica_tables {
-                let table_id = *table_id;
-                let count = *count;
-                let labels = labels.clone();
+            let table_id = *table_id;
+            let count = *count;
+            let labels = labels.clone();
 
-                // Go `syncTiFlashTableRule`: ensure the ONE learner rule
-                // (`table-{id}-r`) exists with the requested count — the
-                // manager repairs it every tick; the DDL job itself only
-                // persists metadata. Delivered over raw close-delimited
-                // HTTP/1.1: PD answers this POST over a keep-alive client
-                // with an empty 502 (live-verified).
-                let bundle = tidb_placement::new_tiflash_bundle(table_id, count, &labels);
-                let bundle_body = serde_json::to_string(&vec![bundle])
-                    .map_err(|error| error.to_string())?;
-                let (status, _) = http_call(
-                    "POST",
-                    &format!(
-                        "{endpoint}/pd/api/v1/config/placement-rule?partial=true"
-                    ),
-                    Some(&bundle_body),
-                )?;
-                if status != 200 {
-                    return Err(format!(
-                        "placement rule sync refused by PD ({status})"
-                    ));
-                }
+            // Go `syncTiFlashTableRule`: ensure the ONE learner rule
+            // (`table-{id}-r`) exists with the requested count — the
+            // manager repairs it every tick; the DDL job itself only
+            // persists metadata. Delivered over raw close-delimited
+            // HTTP/1.1: PD answers this POST over a keep-alive client
+            // with an empty 502 (live-verified).
+            let bundle = tidb_placement::new_tiflash_bundle(table_id, count, &labels);
+            let bundle_body =
+                serde_json::to_string(&vec![bundle]).map_err(|error| error.to_string())?;
+            let (status, _) = http_call(
+                "POST",
+                &format!("{endpoint}/pd/api/v1/config/placement-rule?partial=true"),
+                Some(&bundle_body),
+            )?;
+            if status != 200 {
+                return Err(format!("placement rule sync refused by PD ({status})"));
+            }
 
-                // Go `PostAccelerateScheduleBatch` (tiflash_manager.go:317):
-                // nudge PD to schedule the table's regions onto the TiFlash
-                // store; without this the learner peers can wait on the
-                // balance loop.
-                // The accelerate-schedule range is the SAME
-                // `EncodeBytes`-escaped range the placement rule carries.
-                let raw_start = tidb_codec::gen_table_record_prefix(table_id);
-                let mut accel_start = Vec::new();
-                tidb_codec::encode_bytes(&mut accel_start, &raw_start);
-                let raw_end = tidb_codec::table_key::encode_table_prefix(table_id + 1);
-                let mut accel_end = Vec::new();
-                tidb_codec::encode_bytes(&mut accel_end, &raw_end);
-                let (accel_status, _) = http_call(
-                    "POST",
-                    &format!(
-                        "{endpoint}/pd/api/v1/regions/accelerate-schedule/batch"
-                    ),
-                    Some(&format!(
-                        "[{{\"start_key\":\"{}\",\"end_key\":\"{}\"}}]",
-                        hex_upper(&accel_start),
-                        hex_upper(&accel_end)
-                    )),
-                )?;
-                if accel_status != 200 {
-                    eprintln!(
-                        "{{\"event\":\"tiflash_accelerate_refused\",\"status\":{accel_status}}}"
-                    );
-                }
+            // Go `PostAccelerateScheduleBatch` (tiflash_manager.go:317):
+            // nudge PD to schedule the table's regions onto the TiFlash
+            // store; without this the learner peers can wait on the
+            // balance loop.
+            // The accelerate-schedule range is the SAME
+            // `EncodeBytes`-escaped range the placement rule carries.
+            let raw_start = tidb_codec::gen_table_record_prefix(table_id);
+            let mut accel_start = Vec::new();
+            tidb_codec::encode_bytes(&mut accel_start, &raw_start);
+            let raw_end = tidb_codec::table_key::encode_table_prefix(table_id + 1);
+            let mut accel_end = Vec::new();
+            tidb_codec::encode_bytes(&mut accel_end, &raw_end);
+            let (accel_status, _) = http_call(
+                "POST",
+                &format!("{endpoint}/pd/api/v1/regions/accelerate-schedule/batch"),
+                Some(&format!(
+                    "[{{\"start_key\":\"{}\",\"end_key\":\"{}\"}}]",
+                    hex_upper(&accel_start),
+                    hex_upper(&accel_end)
+                )),
+            )?;
+            if accel_status != 200 {
+                eprintln!("{{\"event\":\"tiflash_accelerate_refused\",\"status\":{accel_status}}}");
+            }
 
-                let Ok((one_replica_progress, full_progress)) =
-                    self.progress(table_id, &endpoint, &stores)
-                else {
-                    // Transient stats/region or sync-status failures cost one
-                    // tick: Go keeps the table in the backoff set and
-                    // retries on the next poll.
-                    continue;
-                };
-                // Go ddl_tiflash_api.go:500: `avail = availProgress >= 1.0`,
-                // where availProgress is the ONE-replica progress: every
-                // region carries at least one learner peer.
-                let available = one_replica_progress >= 1.0;
-                eprintln!(
-                    "{{\"event\":\"tiflash_replica_progress\",\"table_id\":{table_id},\
+            let Ok((one_replica_progress, full_progress)) =
+                self.progress(table_id, &endpoint, &stores)
+            else {
+                // Transient stats/region or sync-status failures cost one
+                // tick: Go keeps the table in the backoff set and
+                // retries on the next poll.
+                continue;
+            };
+            // Go ddl_tiflash_api.go:500: `avail = availProgress >= 1.0`,
+            // where availProgress is the ONE-replica progress: every
+            // region carries at least one learner peer.
+            let available = one_replica_progress >= 1.0;
+            eprintln!(
+                "{{\"event\":\"tiflash_replica_progress\",\"table_id\":{table_id},\
                      \"available\":{available},\"one\":{one_replica_progress},\
                      \"full\":{full_progress}}}"
-                );
-                if available {
-                    self.flip(table_id)?;
-                }
+            );
+            if available {
+                self.flip(table_id)?;
             }
+        }
         Ok(())
     }
 
@@ -322,8 +311,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
         if status != 200 {
             return Err(format!("stats/region answered {status}"));
         }
-        let body: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|error| format!("stats/region body: {error}"))?;
+        let body: serde_json::Value =
+            serde_json::from_str(&body).map_err(|error| format!("stats/region body: {error}"))?;
         let region_count = body
             .get("count")
             .and_then(serde_json::Value::as_u64)

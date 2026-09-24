@@ -158,9 +158,7 @@ mod tests {
                 &[Some(boolean_int()), Some(boolean_int())],
             )
             .unwrap(),
-            Datum::Json(
-                tidb_datatype::BinaryJSON::parse("[true, false]").expect("fixture parses"),
-            ),
+            Datum::Json(tidb_datatype::BinaryJSON::parse("[true, false]").expect("fixture parses"),),
         );
         // Same values, no boolean flag: the numeric rendering is unchanged.
         assert_eq!(
@@ -172,9 +170,7 @@ mod tests {
                 ],
             )
             .unwrap(),
-            Datum::Json(
-                tidb_datatype::BinaryJSON::parse("[1, 0]").expect("fixture parses"),
-            ),
+            Datum::Json(tidb_datatype::BinaryJSON::parse("[1, 0]").expect("fixture parses"),),
         );
         // The untyped row/AST path (no field type) also keeps the number.
         assert_eq!(

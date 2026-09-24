@@ -24,17 +24,17 @@
 //! Physical-planner integration is present; complete upstream package validation
 //! remains pending. Unit tests are focused regression evidence.
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use crossbeam_channel::{Receiver, Sender, bounded, select_biased};
+use crossbeam_channel::{bounded, select_biased, Receiver, Sender};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
-use tidb_expr::Columns;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expr::Columns;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::vec_group_checker::VecGroupChecker;
@@ -934,8 +934,8 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tidb_datatype::FieldTypeCode;
-    use tidb_expr::NoColumns;
     use tidb_expr::column::Column;
+    use tidb_expr::NoColumns;
 
     const MAX_CHUNK: usize = 4;
 
@@ -1399,11 +1399,9 @@ mod tests {
             done.send(receiver.next(&mut chunk).map(|()| chunk.num_rows()))
                 .unwrap();
         });
-        assert!(
-            result
-                .recv_timeout(std::time::Duration::from_millis(20))
-                .is_err()
-        );
+        assert!(result
+            .recv_timeout(std::time::Duration::from_millis(20))
+            .is_err());
         finish.set();
         assert_eq!(
             result

@@ -41,9 +41,7 @@ use crate::builtin_arithmetic::new_return_field_type;
 use crate::constant::Constant;
 use crate::context::{Columns, EvalError};
 use crate::expression::Expression;
-use tidb_datatype::{
-    Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags,
-};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 
 /// The result `FieldType` Go's `compareFunctionClass.getFunction` derives, for
 /// the comparison scalar-function `name` (`eq`/`nulleq`/`ne`/`lt`/`le`/`gt`/

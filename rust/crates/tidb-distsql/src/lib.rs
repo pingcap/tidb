@@ -134,6 +134,6 @@ pub use transport::{
 };
 pub use warning::{Warning, WarningClass, WarningCollector, WarningLevel};
 
+pub mod metrics;
 #[cfg(test)]
 mod tests;
-pub mod metrics;

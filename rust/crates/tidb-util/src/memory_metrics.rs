@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -39,22 +39,29 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 /// Go `ArbitratorEventCount` (`pkg/metrics`).
 pub static ARBITRATOR_EVENT: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_memory_arbitrator_event", "Event count of the global memory arbitrator"),
+        Opts::new(
+            "tidb_memory_arbitrator_event",
+            "Event count of the global memory arbitrator",
+        ),
         &["type"],
     ))
 });
 
 /// Go `ArbitratorMagnifiRatio` (`pkg/metrics`).
 pub static ARBITRATOR_MAGNIFI_RATIO: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(
-        Opts::new("tidb_memory_arbitrator_magnifi_ratio", "Runtime profile (heapinuse vs. quota) of the global memory arbitrator"),
-    ))
+    register(Gauge::with_opts(Opts::new(
+        "tidb_memory_arbitrator_magnifi_ratio",
+        "Runtime profile (heapinuse vs. quota) of the global memory arbitrator",
+    )))
 });
 
 /// Go `ArbitratorQuotaBytes` (`pkg/metrics`).
 pub static ARBITRATOR_QUOTA_BYTES: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
-        Opts::new("tidb_memory_arbitrator_quota_bytes", "Quota info of the global memory arbitrator"),
+        Opts::new(
+            "tidb_memory_arbitrator_quota_bytes",
+            "Quota info of the global memory arbitrator",
+        ),
         &["type"],
     ))
 });
@@ -62,7 +69,10 @@ pub static ARBITRATOR_QUOTA_BYTES: LazyLock<GaugeVec> = LazyLock::new(|| {
 /// Go `ArbitratorRootPool` (`pkg/metrics`).
 pub static ARBITRATOR_ROOT_POOL: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
-        Opts::new("tidb_memory_arbitrator_root_pool", "Root pool info of the global memory arbitrator"),
+        Opts::new(
+            "tidb_memory_arbitrator_root_pool",
+            "Root pool info of the global memory arbitrator",
+        ),
         &["type"],
     ))
 });
@@ -70,7 +80,10 @@ pub static ARBITRATOR_ROOT_POOL: LazyLock<GaugeVec> = LazyLock::new(|| {
 /// Go `ArbitratorTaskExecCount` (`pkg/metrics`).
 pub static ARBITRATOR_TASK_EXEC: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_memory_arbitrator_task_exec", "Task execution count of the global memory arbitrator"),
+        Opts::new(
+            "tidb_memory_arbitrator_task_exec",
+            "Task execution count of the global memory arbitrator",
+        ),
         &["type"],
     ))
 });
@@ -78,7 +91,10 @@ pub static ARBITRATOR_TASK_EXEC: LazyLock<CounterVec> = LazyLock::new(|| {
 /// Go `ArbitratorWaitingTaskNum` (`pkg/metrics`).
 pub static ARBITRATOR_WAITING_TASK: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
-        Opts::new("tidb_memory_arbitrator_waiting_task", "Waiting task num of the global memory arbitrator"),
+        Opts::new(
+            "tidb_memory_arbitrator_waiting_task",
+            "Waiting task num of the global memory arbitrator",
+        ),
         &["type"],
     ))
 });
@@ -86,7 +102,10 @@ pub static ARBITRATOR_WAITING_TASK: LazyLock<GaugeVec> = LazyLock::new(|| {
 /// Go `ArbitratorWorkMode` (`pkg/metrics`).
 pub static ARBITRATOR_WORK_MODE: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
-        Opts::new("tidb_memory_arbitrator_work_mode", "Work mode of the global memory arbitrator"),
+        Opts::new(
+            "tidb_memory_arbitrator_work_mode",
+            "Work mode of the global memory arbitrator",
+        ),
         &["type"],
     ))
 });
@@ -109,7 +128,9 @@ pub static MEMORY_ARBITRATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|
             "tidb_memory_arbitration_duration_seconds",
             "Bucketed histogram of mem quota arbitration time (s) in SQL execution",
         )
-        .buckets(prometheus::exponential_buckets(5e-05, 3.77873541252838, 17).expect("valid buckets")),
+        .buckets(
+            prometheus::exponential_buckets(5e-05, 3.77873541252838, 17).expect("valid buckets"),
+        ),
         &["type"],
     ))
 });
@@ -117,7 +138,8 @@ pub static MEMORY_ARBITRATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|
 /// The (fq name, help, kind) of every histogram family in this module,
 /// for the exposition header shim that mirrors Go's registered-family output.
 pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
-    vec![
-            ("tidb_memory_arbitration_duration_seconds", "Bucketed histogram of mem quota arbitration time (s) in SQL execution"),
-    ]
+    vec![(
+        "tidb_memory_arbitration_duration_seconds",
+        "Bucketed histogram of mem quota arbitration time (s) in SQL execution",
+    )]
 }

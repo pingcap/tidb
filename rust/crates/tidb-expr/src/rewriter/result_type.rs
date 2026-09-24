@@ -1170,13 +1170,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
     // unsigned 18446744073709551614 on the wire, not the signed -2.
     if matches!(
         name,
-        "bitand"
-            | "bitor"
-            | "bitxor"
-            | "leftshift"
-            | "rightshift"
-            | "intdiv"
-            | "div"
+        "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift" | "intdiv" | "div"
     ) {
         return Some(FieldType::new(FieldTypeCode::LongLong));
     }
@@ -1186,11 +1180,13 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         return Some(ft);
     }
     if matches!(name, "minus" | "mod") {
-        let any_decimal = args
-            .iter()
-            .any(|arg| crate::builtin_arithmetic::numeric_context_result_type(arg) == tidb_datatype::EvalType::Decimal);
+        let any_decimal = args.iter().any(|arg| {
+            crate::builtin_arithmetic::numeric_context_result_type(arg)
+                == tidb_datatype::EvalType::Decimal
+        });
         let any_real = args.iter().any(|arg| {
-            crate::builtin_arithmetic::numeric_context_result_type(arg) == tidb_datatype::EvalType::Real
+            crate::builtin_arithmetic::numeric_context_result_type(arg)
+                == tidb_datatype::EvalType::Real
         });
         return Some(if any_decimal {
             let mut ft = FieldType::new(FieldTypeCode::NewDecimal);

@@ -172,9 +172,7 @@ pub fn start_status_listener_with_routes(
                             // rust-prometheus omits them. Append the family
                             // catalog headers the gathered body lacks so
                             // dashboards resolve the same family surface.
-                            for (fq, help) in
-                                crate::server_metrics::family_catalog()
-                            {
+                            for (fq, help) in crate::server_metrics::family_catalog() {
                                 if !body.contains(fq.as_str()) {
                                     body.push_str(&format!(
                                         "# HELP {fq} {help}\n# TYPE {fq} histogram\n"

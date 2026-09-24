@@ -29,7 +29,9 @@
 use serde_json::Value as Json;
 
 use super::path::{parse_path, ArraySelection, PathLeg};
-use super::value::{binary_json_datum, json_argument, parse_json_document_argument, StringArgument};
+use super::value::{
+    binary_json_datum, json_argument, parse_json_document_argument, StringArgument,
+};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;

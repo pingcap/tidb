@@ -171,16 +171,19 @@ impl BuildState {
         // Shuffle builds several executors for the same physical node. Go
         // merges their BasicRuntimeStats by plan ID; share one accumulator
         // instead of replacing it with the last worker's counters.
-        let stats = counters.entry(runtime_plan_key(plan)).or_insert_with(|| {
-            PhysicalRuntimeCounter {
-                rows: crate::executor::RowCount::default(),
-                calls: None,
-            }
-        });
+        let stats =
+            counters
+                .entry(runtime_plan_key(plan))
+                .or_insert_with(|| PhysicalRuntimeCounter {
+                    rows: crate::executor::RowCount::default(),
+                    calls: None,
+                });
         let counter = stats.rows.clone();
-        let calls = Arc::clone(stats.calls.get_or_insert_with(|| {
-            Arc::new(Mutex::new(PhysicalCallStats::default()))
-        }));
+        let calls = Arc::clone(
+            stats
+                .calls
+                .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
+        );
         Box::new(PhysicalCountExec {
             child: executor,
             counter,
@@ -3731,15 +3734,18 @@ fn build_index_merge_reader(
                 if let Some(counters) = state.runtime_counters.as_mut() {
                     counters.insert(runtime_plan_key(partial), source.produced_rows().into());
                 }
-                built.push((reader.by_items.is_empty(), Box::new(IndexPartialHandleSource {
-                    source,
-                    partition_indexes: selected,
-                    stats: catalog.table_statistics(partial_table.stats_physical_id()),
-                    table: partial_table,
-                    ctx: ctx.clone(),
-                    index_id: scan.index_id,
-                    reported: false,
-                })));
+                built.push((
+                    reader.by_items.is_empty(),
+                    Box::new(IndexPartialHandleSource {
+                        source,
+                        partition_indexes: selected,
+                        stats: catalog.table_statistics(partial_table.stats_physical_id()),
+                        table: partial_table,
+                        ctx: ctx.clone(),
+                        index_id: scan.index_id,
+                        reported: false,
+                    }),
+                ));
                 continue;
             }
         }
@@ -4173,7 +4179,9 @@ fn build_with_state(
     }
     let executor: Box<dyn Executor> = match plan {
         PhysicalPlan::Shuffle(shuffle) => build_shuffle(plan, shuffle, catalog, ctx, state),
-        PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported("shuffle receiver has no owning worker")),
+        PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported(
+            "shuffle receiver has no owning worker",
+        )),
         PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
         PhysicalPlan::TableScan(scan) => build_table_scan(plan, scan, catalog, ctx),
         PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
@@ -5015,7 +5023,9 @@ mod tests {
         });
         let mut plan = tidb_planner::physical::eliminate_physical_projection(plan);
         let ids = tidb_planner::plan_base::PlanIdAllocator::new();
-        for _ in 0..7 { ids.alloc(); }
+        for _ in 0..7 {
+            ids.alloc();
+        }
         tidb_planner::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
         let mut exec = build(&plan, &Catalog::default(), &crate::StmtContext::default()).unwrap();
         for _ in 0..2 {

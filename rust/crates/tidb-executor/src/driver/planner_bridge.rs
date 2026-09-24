@@ -1777,6 +1777,7 @@ fn optimize_cte_tree(
             range_context: crate::index_range::RangeContext {
                 max_size: ctx.range_max_size(),
                 fallback_handler: Some(ctx.range_fallback_handler()),
+                eval_ctx: Some(ctx),
             },
             catalog,
             select: None,
@@ -2387,6 +2388,7 @@ fn optimize_built_logical(
                     range_context: crate::index_range::RangeContext {
                         max_size: self.context.range_max_size(),
                         fallback_handler: Some(self.context.range_fallback_handler()),
+                        eval_ctx: Some(self.context),
                     },
                     catalog: self.catalog,
                     select: self.select,

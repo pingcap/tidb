@@ -596,11 +596,7 @@ impl fmt::Debug for QueryCopStoreLimiter {
             .field("limit", &self.limit)
             .field(
                 "stores",
-                &self
-                    .stores
-                    .read()
-                    .map(|stores| stores.len())
-                    .unwrap_or(0),
+                &self.stores.read().map(|stores| stores.len()).unwrap_or(0),
             )
             .finish()
     }

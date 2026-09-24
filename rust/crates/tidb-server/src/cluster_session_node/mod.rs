@@ -6553,7 +6553,11 @@ impl QuerySession for ClusterServerSession {
 
     /// The session's own `tidb_slow_log_threshold`, in milliseconds.
     fn slow_log_threshold(&self) -> Option<std::time::Duration> {
-        let raw = self.session.vars().get_system("tidb_slow_log_threshold").ok()?;
+        let raw = self
+            .session
+            .vars()
+            .get_system("tidb_slow_log_threshold")
+            .ok()?;
         let millis: u64 = raw.parse().ok()?;
         Some(std::time::Duration::from_millis(millis))
     }
@@ -6740,13 +6744,10 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        let stmt = self
-            .session
-            .parse_statement(sql)
-            .map_err(|error| {
-                self.session.record_parse_failure(&error);
-                map_error(error)
-            })?;
+        let stmt = self.session.parse_statement(sql).map_err(|error| {
+            self.session.record_parse_failure(&error);
+            map_error(error)
+        })?;
         self.execute_write_parsed(sql, &stmt)
     }
 
@@ -7298,13 +7299,10 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        let stmt = self
-            .session
-            .parse_statement(sql)
-            .map_err(|error| {
-                self.session.record_parse_failure(&error);
-                map_error(error)
-            })?;
+        let stmt = self.session.parse_statement(sql).map_err(|error| {
+            self.session.record_parse_failure(&error);
+            map_error(error)
+        })?;
         self.execute_parsed(sql, &stmt)
     }
 

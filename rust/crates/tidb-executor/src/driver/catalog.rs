@@ -3962,7 +3962,8 @@ mod planner_view_tests {
         .unwrap();
         assert_eq!(before_write, original.metadata_version());
         crate::run_create_table_on("CREATE TABLE left_branch(a INT)", &mut original).unwrap();
-        crate::run_create_table_on("CREATE TABLE right_branch(a VARCHAR(10))", &mut branch).unwrap();
+        crate::run_create_table_on("CREATE TABLE right_branch(a VARCHAR(10))", &mut branch)
+            .unwrap();
         assert_ne!(original.metadata_version(), branch.metadata_version());
         let mut rebuilt = Catalog::default();
         crate::run_create_table_on("CREATE TABLE epoch(a INT, b INT)", &mut rebuilt).unwrap();

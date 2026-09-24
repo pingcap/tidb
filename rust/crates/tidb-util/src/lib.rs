@@ -124,9 +124,9 @@ pub mod versioninfo;
 
 #[cfg(test)]
 pub(crate) static SEM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub mod memory_metrics;
 /// Vitess shard-key hashing.
 pub mod vitess;
 /// Polling file watcher.
 pub mod watcher;
 pub mod zeropool;
-pub mod memory_metrics;

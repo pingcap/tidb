@@ -237,7 +237,7 @@ pub(crate) fn eval_cast(
                 }
                 Ok(Datum::Real(converted))
             }
-        }
+        },
         CastType::Vector { dimensions } => {
             let mut target = FieldType::new(FieldTypeCode::VectorFloat32);
             if let Some(dimensions) = dimensions {

@@ -122,7 +122,7 @@
 //!   borrowing reader is shared the same way through scoped threads.
 
 pub mod evicted;
+pub mod metrics;
 pub mod reader;
 pub mod statement_summary;
 pub mod v2;
-pub mod metrics;

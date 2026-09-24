@@ -688,9 +688,7 @@ impl DataSource {
         // unscaled table profile they had before this correction.
         let mut ratio = 1.0;
         for condition in &self.pushed_down_conds {
-            if let Some(selectivity) =
-                is_null_condition_selectivity(condition, &table_stats)
-            {
+            if let Some(selectivity) = is_null_condition_selectivity(condition, &table_stats) {
                 ratio *= selectivity;
             }
         }
@@ -765,8 +763,7 @@ pub(crate) fn is_null_condition_selectivity(
         );
         Some((estimate.est / total).clamp(0.0, 1.0))
     } else {
-        let null_ratio =
-            (column_stats.histogram.null_count as f64 / total).clamp(0.0, 1.0);
+        let null_ratio = (column_stats.histogram.null_count as f64 / total).clamp(0.0, 1.0);
         Some(null_ratio)
     }
 }
@@ -992,8 +989,8 @@ mod tests {
         // range estimate for such a histogram runs through the same
         // OutOfRangeRowCount heuristic master applies to
         // `not(isnull(col))`'s [MinNotNull, MaxValue] range.
-        let hist_coll = HistColl::new(false, row_count as i64, std::iter::empty())
-            .with_histograms([(
+        let hist_coll =
+            HistColl::new(false, row_count as i64, std::iter::empty()).with_histograms([(
                 1,
                 Arc::new(crate::cardinality::row_count_estimator::ColumnStats {
                     histogram: Histogram {
@@ -1089,12 +1086,10 @@ mod tests {
 
         let plain_column = call(
             "isnull",
-            vec![Expression::Constant(
-                tidb_expr::constant::Constant::new(
-                    tidb_datatype::Datum::Int(1),
-                    FieldType::new(FieldTypeCode::LongLong),
-                ),
-            )],
+            vec![Expression::Constant(tidb_expr::constant::Constant::new(
+                tidb_datatype::Datum::Int(1),
+                FieldType::new(FieldTypeCode::LongLong),
+            ))],
         );
         assert_eq!(is_null_condition_selectivity(&plain_column, &stats), None);
     }

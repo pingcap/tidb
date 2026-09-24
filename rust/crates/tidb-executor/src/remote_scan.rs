@@ -816,8 +816,8 @@ mod tests {
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
     use crate::driver::{
-        Catalog, DEFAULT_DATABASE, PreparedPlanCacheEnvironment, build_prepared_select_plan,
-        run_select_on,
+        build_prepared_select_plan, run_select_on, Catalog, PreparedPlanCacheEnvironment,
+        DEFAULT_DATABASE,
     };
     use crate::executor::{Executor, ExecutorMeta};
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
@@ -825,7 +825,7 @@ mod tests {
     use crate::mem_table::MemTableSourceExec;
     use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
     use crate::run_prepared_select_for_test;
-    use crate::storage::{MemTableStorage, TableStorage, capture_storage_ops};
+    use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
 
     /// The committed half of a cluster read, shared by the snapshot the
     /// session reads through and by the coprocessor below it.

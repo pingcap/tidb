@@ -23,7 +23,6 @@
 //! `haveArchLog*` are false, so the pure-Go bodies below are exactly what
 //! runs there.
 
-
 /// Go `math.Exp`'s amd64 `archExp` (src/math/exp_amd64.s), bit-exact over
 /// the FMA path the oracle's CPU takes (`useFMA` is CPUID-gated on; every
 /// FMA-capable amd64 runs this branch). The method is SLEEF-derived
@@ -169,4 +168,3 @@ pub(crate) fn go_log10(x: f64) -> f64 {
     // correctly rounded reciprocal.
     go_log(x) * 0.434_294_481_903_251_827_651_128_918_916_605_082_294_167_230_997_174_2
 }
-

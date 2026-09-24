@@ -3824,8 +3824,11 @@ impl Executor for IndexRangeSourceExec {
             .index_probe
             .as_ref()
             .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described)
-            && (!legacy_index_filter || self.filter.as_ref()
-                .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described));
+            && (!legacy_index_filter
+                || self
+                    .filter
+                    .as_ref()
+                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described));
         if let Some(aggregate) = self
             .partial_aggregate
             .as_ref()

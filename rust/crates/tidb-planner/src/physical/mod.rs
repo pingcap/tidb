@@ -2823,9 +2823,7 @@ pub fn get_phys_topn(
                 expected_cnt: f64::MAX,
                 cte_producer_status: prop.cte_producer_status,
                 no_cop_push_down: prop.no_cop_push_down,
-                partial_order_info: Some(crate::physical_property::PartialOrderInfo {
-                    sort_items,
-                }),
+                partial_order_info: Some(crate::physical_property::PartialOrderInfo { sort_items }),
                 ..PhysicalProperty::default()
             };
             let mut base = BasePhysicalPlan::new(
@@ -2914,11 +2912,13 @@ fn can_use_partial_order_topn(topn: &crate::logical::LogicalTopN) -> bool {
         match plan {
             Some(crate::logical::LogicalPlan::DataSource(_)) => true,
             Some(crate::logical::LogicalPlan::Selection(selection))
-                if selection.base.children().len() == 1 => {
+                if selection.base.children().len() == 1 =>
+            {
                 supported(selection.base.children().first())
             }
             Some(crate::logical::LogicalPlan::Projection(projection))
-                if projection.base.children().len() == 1 => {
+                if projection.base.children().len() == 1 =>
+            {
                 supported(projection.base.children().first())
             }
             _ => false,
@@ -3041,9 +3041,7 @@ pub fn get_hash_aggs_with_mpp_options(
     if !prop.is_sort_item_empty() {
         return Vec::new();
     }
-    let can_push_mpp = mpp_allowed
-        && agg.base.has_tiflash()
-        && check_agg_can_push_mpp(agg);
+    let can_push_mpp = mpp_allowed && agg.base.has_tiflash() && check_agg_can_push_mpp(agg);
     if prop.task_tp == TaskType::Mpp && !can_push_mpp {
         return Vec::new();
     }
@@ -3149,7 +3147,8 @@ fn get_mpp_hash_aggs(
     let build = |child_prop: PhysicalProperty,
                  mode: AggMppRunMode,
                  partition_cols: Vec<MppPartitionColumn>| {
-        let mut base = BasePhysicalPlan::new(allocator, "HashAgg", agg.base.base.query_block_offset());
+        let mut base =
+            BasePhysicalPlan::new(allocator, "HashAgg", agg.base.base.query_block_offset());
         base.base.set_stats(stats.clone());
         base.base.set_schema(agg.base.base.schema().cloned());
         base.set_children_req_props(vec![Some(child_prop)]);
@@ -3169,18 +3168,19 @@ fn get_mpp_hash_aggs(
         })
     };
 
-    let mut push_candidate = |child_prop: PhysicalProperty,
-                              mode: AggMppRunMode,
-                              partition_cols: Vec<MppPartitionColumn>| {
-        let candidate = build(child_prop, mode, partition_cols);
-        let valid = match &candidate {
-            PhysicalPlan::HashAgg(agg) => valid_mpp_agg(&agg.agg_funcs),
-            _ => false,
+    let mut push_candidate =
+        |child_prop: PhysicalProperty,
+         mode: AggMppRunMode,
+         partition_cols: Vec<MppPartitionColumn>| {
+            let candidate = build(child_prop, mode, partition_cols);
+            let valid = match &candidate {
+                PhysicalPlan::HashAgg(agg) => valid_mpp_agg(&agg.agg_funcs),
+                _ => false,
+            };
+            if valid {
+                result.push(candidate);
+            }
         };
-        if valid {
-            result.push(candidate);
-        }
-    };
 
     let potential = agg.get_potential_partition_keys();
     let partition_cols = match prop.mpp_partition_tp {
@@ -3225,11 +3225,7 @@ fn get_mpp_hash_aggs(
             no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         };
-        push_candidate(
-            child_prop.clone(),
-            AggMppRunMode::Mpp2Phase,
-            partition_cols,
-        );
+        push_candidate(child_prop.clone(), AggMppRunMode::Mpp2Phase, partition_cols);
         if prop.task_tp == TaskType::Root {
             push_candidate(child_prop, AggMppRunMode::MppTiDB, Vec::new());
         }
@@ -3257,9 +3253,9 @@ fn get_mpp_hash_aggs(
         None
     };
     if let Some(preferred_mode) = preferred_mode {
-        result.retain(|plan| {
-            matches!(plan, PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode == preferred_mode)
-        });
+        result.retain(
+            |plan| matches!(plan, PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode == preferred_mode),
+        );
     }
     result
 }
@@ -3857,8 +3853,14 @@ impl PhysicalPlan {
         option: PlanCostOption,
         is_child_of_inl: bool,
     ) -> Result<CostVer2, PlanError> {
-        Ok(crate::find_best_task::coster::Ver2Coster::default()
-            .plan_cost_with_option(self, task_type, is_child_of_inl, option))
+        Ok(
+            crate::find_best_task::coster::Ver2Coster::default().plan_cost_with_option(
+                self,
+                task_type,
+                is_child_of_inl,
+                option,
+            ),
+        )
     }
 
     // Go `Attach2Task(...Task) Task` (`<2nd>`) lives at
@@ -4039,8 +4041,11 @@ impl PhysicalPlan {
         let mut stack = vec![self];
         while let Some(node) = stack.pop() {
             total += match node {
-                Self::ShuffleReceiver(receiver) => receiver.base.base.memory_usage()
-                    + std::mem::size_of::<Box<Self>>() as i64 + receiver.data_source.memory_usage(),
+                Self::ShuffleReceiver(receiver) => {
+                    receiver.base.base.memory_usage()
+                        + std::mem::size_of::<Box<Self>>() as i64
+                        + receiver.data_source.memory_usage()
+                }
                 Self::ExchangeReceiver(receiver) => {
                     receiver.base.base.memory_usage()
                         + std::mem::size_of::<Vec<MppTaskMeta>>() as i64

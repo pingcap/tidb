@@ -625,10 +625,7 @@ fn binary_expression(
                             // boundary; a wrap that early-returned leaves the
                             // argument untouched and needs no fold.
                             if is_newly_built_cast(argument) {
-                                resolver.fold_constant(
-                                    argument,
-                                    ConstantFoldMode::Normal,
-                                );
+                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
                             }
                         }
                     }
@@ -644,10 +641,7 @@ fn binary_expression(
                                 ),
                             )?;
                             if is_newly_built_cast(argument) {
-                                resolver.fold_constant(
-                                    argument,
-                                    ConstantFoldMode::Normal,
-                                );
+                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
                             }
                         }
                     }
@@ -664,10 +658,7 @@ fn binary_expression(
                                 None,
                             )?;
                             if is_newly_built_cast(argument) {
-                                resolver.fold_constant(
-                                    argument,
-                                    ConstantFoldMode::Normal,
-                                );
+                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
                             }
                         }
                     }
@@ -1477,9 +1468,7 @@ fn rewrite_leaf_compound(
                 if !duplicate {
                     if position > 0 {
                         if let Expression::Constant(constant) = &argument {
-                            if constant.param_marker.is_none()
-                                && constant.deferred_expr.is_none()
-                            {
+                            if constant.param_marker.is_none() && constant.deferred_expr.is_none() {
                                 seen_values.push(constant.value.clone());
                             }
                         }
@@ -1509,14 +1498,12 @@ fn rewrite_leaf_compound(
                     Some(EvalType::Real) => wrap_with_cast_as_real(argument)?,
                     Some(EvalType::Decimal) => wrap_with_cast_as_decimal(argument)?,
                     Some(EvalType::String) => wrap_with_cast_as_string(argument, connection)?,
-                    Some(EvalType::Datetime) => wrap_with_cast_as_time(
-                        argument,
-                        FieldType::new(FieldTypeCode::Datetime),
-                    )?,
-                    Some(EvalType::Timestamp) => wrap_with_cast_as_time(
-                        argument,
-                        FieldType::new(FieldTypeCode::Timestamp),
-                    )?,
+                    Some(EvalType::Datetime) => {
+                        wrap_with_cast_as_time(argument, FieldType::new(FieldTypeCode::Datetime))?
+                    }
+                    Some(EvalType::Timestamp) => {
+                        wrap_with_cast_as_time(argument, FieldType::new(FieldTypeCode::Timestamp))?
+                    }
                     Some(EvalType::Duration) => wrap_with_cast_as_duration(argument)?,
                     Some(EvalType::Json) => wrap_with_cast_as_json(argument)?,
                     _ => argument,
@@ -2833,8 +2820,7 @@ mod tests {
             ],
             not: false,
         };
-        let rewritten =
-            rewrite_expr_resolved(&expression, &DateColumnResolver).unwrap();
+        let rewritten = rewrite_expr_resolved(&expression, &DateColumnResolver).unwrap();
         let Expression::ScalarFunction(function) = &rewritten else {
             panic!("expected the in() node, got {rewritten:?}")
         };
@@ -2855,10 +2841,7 @@ mod tests {
                 panic!("expected a folded constant candidate, got {candidate:?}")
             };
             let Datum::Time(time) = &constant.value else {
-                panic!(
-                    "expected a datetime constant, got {:?}",
-                    constant.value
-                )
+                panic!("expected a datetime constant, got {:?}", constant.value)
             };
             // `WrapWithCastAsTime` raises a string source to `MaxFsp`.
             assert_eq!(time.fsp(), 6);

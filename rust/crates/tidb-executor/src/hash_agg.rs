@@ -72,10 +72,10 @@ use crate::agg_spill::{AggSpillDiskAction, ParallelAggSpillDiskAction};
 mod builder;
 mod group_key;
 mod input;
-mod window_extremum;
-mod window_numeric;
 mod parallel;
 mod spill;
+mod window_extremum;
+mod window_numeric;
 
 use group_key::GroupKeyBuffer;
 use input::AggInputMode;
@@ -367,7 +367,11 @@ impl WindowAggState {
             // and NULL handling. Disjoint frames still visit the gap twice,
             // just as Go's two loops do.
             let mut departing = AggState::new(func);
-            fold(&mut departing, last_start, chunk.sliding_end(last_start, start))?;
+            fold(
+                &mut departing,
+                last_start,
+                chunk.sliding_end(last_start, start),
+            )?;
             chunk.check_sliding_end(last_start, start)?;
             match (&mut self.state.partial, departing.partial) {
                 (Partial::Count(count), Partial::Count(removed)) => {

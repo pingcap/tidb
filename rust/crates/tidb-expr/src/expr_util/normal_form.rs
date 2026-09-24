@@ -110,9 +110,7 @@ fn extract_binary_op_items_ref<'a>(
 
 /// Borrowed twin: the disjunct leaves of a nested `OR` tree as references.
 #[must_use]
-pub fn flatten_dnf_conditions_ref<'a>(
-    dnf_condition: &'a ScalarFunction,
-) -> Vec<&'a Expression> {
+pub fn flatten_dnf_conditions_ref<'a>(dnf_condition: &'a ScalarFunction) -> Vec<&'a Expression> {
     extract_binary_op_items_ref(dnf_condition, "or")
 }
 
@@ -136,7 +134,6 @@ fn extract_binary_op_items(function: &ScalarFunction, func_name: &str) -> Vec<Ex
     }
     result
 }
-
 
 /// Go `FlattenDNFConditions` (`expression.go:865`): the leaves of a nested
 /// `OR` tree.

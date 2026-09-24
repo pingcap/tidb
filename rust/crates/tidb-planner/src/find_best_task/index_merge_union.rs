@@ -147,7 +147,8 @@ pub fn build_union_index_merge_task(
                                 .is_some_and(tidb_datatype::FieldType::is_unsigned),
                         )
                     } else {
-                        ds.table_path_count_after_access.unwrap_or(result.ranges.len() as f64)
+                        ds.table_path_count_after_access
+                            .unwrap_or(result.ranges.len() as f64)
                     };
                     chosen = Some(Partial::Table {
                         ranges: result.ranges.clone(),

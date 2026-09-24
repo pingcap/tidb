@@ -383,9 +383,7 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                     // text, and rolls back only the INSERT statement.
                     if duplicate_cause(cause) {
                         if let Some(hint) = duplicate_hints.get(cause.key()) {
-                            return LockKeysOutcome::StatementError(duplicate_key_sql_error(
-                                hint,
-                            ));
+                            return LockKeysOutcome::StatementError(duplicate_key_sql_error(hint));
                         }
                     }
                 }

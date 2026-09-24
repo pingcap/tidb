@@ -59,8 +59,8 @@ const HASHMUL: u32 = 0x1e35_a7bd;
 
 // huffman_bit_writer.go's length tables.
 const LENGTH_EXTRA_BITS: [i8; 29] = [
-    /* 257 */ 0, 0, 0, /* 260 */ 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, /* 270 */ 2,
-    2, 2, 3, 3, 3, 3, 4, 4, 4, /* 280 */ 4, 5, 5, 5, 5, 0,
+    /* 257 */ 0, 0, 0, /* 260 */ 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, /* 270 */ 2, 2, 2, 3,
+    3, 3, 3, 4, 4, 4, /* 280 */ 4, 5, 5, 5, 5, 0,
 ];
 const LENGTH_BASE: [u32; 29] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128,
@@ -76,7 +76,9 @@ const OFFSET_BASE: [u32; 30] = [
     0x000200, 0x000300, 0x000400, 0x000600, 0x000800, 0x000c00, 0x001000, 0x001800, 0x002000,
     0x003000, 0x004000, 0x006000,
 ];
-const CODEGEN_ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+const CODEGEN_ORDER: [usize; 19] = [
+    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+];
 
 // token.go: the LZ77 token encoding.
 const LENGTH_SHIFT: u32 = 22;
@@ -85,41 +87,31 @@ const LITERAL_TYPE: u32 = 0 << 30;
 const MATCH_TYPE: u32 = 1 << 30;
 
 const LENGTH_CODES: [u32; 256] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 9, 10, 10, 11, 11,
-    12, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 14, 15, 15, 15, 15,
-    16, 16, 16, 16, 16, 16, 16, 16, 17, 17, 17, 17, 17, 17, 17, 17,
-    18, 18, 18, 18, 18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19,
-    20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
-    21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21,
-    22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22,
-    23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23,
-    24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
-    24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
-    25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
-    25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
-    26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
-    26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
-    27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27,
-    27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 28,
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14,
+    14, 15, 15, 15, 15, 16, 16, 16, 16, 16, 16, 16, 16, 17, 17, 17, 17, 17, 17, 17, 17, 18, 18, 18,
+    18, 18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
+    20, 20, 20, 20, 20, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 22, 22, 22,
+    22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23,
+    23, 23, 23, 23, 23, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
+    24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
+    25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 26, 26, 26,
+    26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
+    26, 26, 26, 26, 26, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27,
+    27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 28,
 ];
 const LENGTH_CODES_START: usize = 257;
 const OFFSET_CODES: [u32; 256] = [
-    0, 1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7,
-    8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9,
-    10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-    11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
-    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
-    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
-    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    0, 1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9,
+    10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 11, 11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 13, 13,
+    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
+    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
+    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
+    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15,
 ];
 
 /// go `token`: the low 22 bits hold the literal or the offset.
@@ -131,9 +123,6 @@ fn literal_token(literal: u32) -> Token {
 }
 
 fn match_token(xlength: u32, xoffset: u32) -> Token {
-    if xlength >= 4 || xoffset >= (1 << 22) {
-        eprintln!("[DBG-tok] match_token xl={xlength} xo={xoffset}");
-    }
     Token(MATCH_TYPE + (xlength << LENGTH_SHIFT) + xoffset)
 }
 
@@ -314,9 +303,7 @@ impl HuffmanEncoder {
             // go `byLiteral.sort`.
             chunk.sort_by_key(|node| node.literal);
             for node in chunk.iter() {
-                if node.literal == u16::MAX {
-                    eprintln!("[DBG-hc] sentinel in chunk: n={n} bits={bits} list_len={list_len} bit_count={bit_count:?}");
-                }
+                if node.literal == u16::MAX {}
                 self.codes[node.literal as usize] = Hcode {
                     code: reverse_bits(code, n as u8),
                     len: n as u16,
@@ -354,10 +341,7 @@ impl HuffmanEncoder {
             return;
         }
         // go `byFreq.sort`: frequency first, literal second.
-        list.sort_by(|a, b| {
-            (a.freq, a.literal)
-                .cmp(&(b.freq, b.literal))
-        });
+        list.sort_by(|a, b| (a.freq, a.literal).cmp(&(b.freq, b.literal)));
         let real_len = list.len();
         let bit_count = self.bit_counts(&mut list, max_bits);
         // go's `list = list[0 : n+1]; list[n] = maxNode()` re-slices locally:
@@ -578,7 +562,11 @@ impl HuffmanBitWriter {
         while num_codegens > 4 && self.codegen_freq[CODEGEN_ORDER[num_codegens - 1]] == 0 {
             num_codegens -= 1;
         }
-        let header = 3 + 5 + 5 + 4 + (3 * num_codegens)
+        let header = 3
+            + 5
+            + 5
+            + 4
+            + (3 * num_codegens)
             + self.codegen_encoding.bit_length(&self.codegen_freq)
             + self.codegen_freq[16] as usize * 2
             + self.codegen_freq[17] as usize * 3
@@ -675,9 +663,6 @@ impl HuffmanBitWriter {
         self.offset_freq.iter_mut().for_each(|f| *f = 0);
         for t in tokens {
             if !t.is_match() {
-                if t.literal() as usize >= MAX_NUM_LIT {
-                    eprintln!("[DBG-tok] bad literal {} (token={:#x})", t.literal(), t.0);
-                }
                 self.literal_freq[t.literal() as usize] += 1;
                 continue;
             }
@@ -742,8 +727,8 @@ impl HuffmanBitWriter {
                     * LENGTH_EXTRA_BITS[length_code - 257] as usize;
             }
             for offset_code in 4..num_offsets {
-                extra_bits +=
-                    self.offset_freq[offset_code] as usize * OFFSET_EXTRA_BITS[offset_code] as usize;
+                extra_bits += self.offset_freq[offset_code] as usize
+                    * OFFSET_EXTRA_BITS[offset_code] as usize;
             }
         }
         let mut using_fixed = true;
@@ -767,10 +752,8 @@ impl HuffmanBitWriter {
             // go writes the tokens through the FIXED tables here.
             let fixed_lit = fixed_literal_encoding();
             let fixed_off = fixed_offset_encoding();
-            let (le_codes, oe_codes): (Vec<Hcode>, Vec<Hcode>) = (
-                fixed_lit.codes.clone(),
-                fixed_off.codes.clone(),
-            );
+            let (le_codes, oe_codes): (Vec<Hcode>, Vec<Hcode>) =
+                (fixed_lit.codes.clone(), fixed_off.codes.clone());
             self.write_tokens_with(&tokens, &le_codes, &oe_codes);
             return;
         }
@@ -1106,10 +1089,8 @@ fn bulk_hash4(b: &[u8], dst: &mut [u32]) {
     if b.len() < MIN_MATCH_LENGTH {
         return;
     }
-    let mut hb = u32::from(b[3])
-        | u32::from(b[2]) << 8
-        | u32::from(b[1]) << 16
-        | u32::from(b[0]) << 24;
+    let mut hb =
+        u32::from(b[3]) | u32::from(b[2]) << 8 | u32::from(b[1]) << 16 | u32::from(b[0]) << 24;
     dst[0] = (hb.wrapping_mul(HASHMUL)) >> (32 - HASH_BITS);
     let end = b.len() - MIN_MATCH_LENGTH + 1;
     for i in 1..end {
@@ -1181,15 +1162,15 @@ mod tests {
         assert_eq!(
             go_zlib_deflate(b"aaaaaaaaaa"),
             [
-                0x78, 0x9c, 0x4a, 0x84, 0x03, 0x40, 0x00, 0x00, 0x00, 0xff, 0xff, 0x14, 0xe1,
-                0x03, 0xcb,
+                0x78, 0x9c, 0x4a, 0x84, 0x03, 0x40, 0x00, 0x00, 0x00, 0xff, 0xff, 0x14, 0xe1, 0x03,
+                0xcb,
             ]
         );
         assert_eq!(
             go_zlib_deflate(b"hello world"),
             [
-                0x78, 0x9c, 0xca, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0x28, 0xcf, 0x2f, 0xca, 0x49,
-                0x01, 0x04, 0x00, 0x00, 0xff, 0xff, 0x1a, 0x0b, 0x04, 0x5d,
+                0x78, 0x9c, 0xca, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0x28, 0xcf, 0x2f, 0xca, 0x49, 0x01,
+                0x04, 0x00, 0x00, 0xff, 0xff, 0x1a, 0x0b, 0x04, 0x5d,
             ]
         );
     }

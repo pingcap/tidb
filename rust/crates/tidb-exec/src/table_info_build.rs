@@ -1523,7 +1523,10 @@ fn build_table(
         > 1
     {
         // Go `ErrMultiplePriKey` (1068).
-        return Err(DdlAdmissionError::with_code(1068, "Multiple primary key defined"));
+        return Err(DdlAdmissionError::with_code(
+            1068,
+            "Multiple primary key defined",
+        ));
     }
 
     for constraint in &constraints {

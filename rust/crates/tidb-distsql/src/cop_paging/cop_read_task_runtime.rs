@@ -445,7 +445,14 @@ impl CopReadTaskRuntime {
         generation: ReadEngineGeneration,
         seed_read_bytes: u64,
     ) -> Result<Self, CopReadTaskError> {
-        Self::prepare_inner(metadata, topology, cache, generation, seed_read_bytes, false)
+        Self::prepare_inner(
+            metadata,
+            topology,
+            cache,
+            generation,
+            seed_read_bytes,
+            false,
+        )
     }
 
     fn prepare_inner(
@@ -528,11 +535,14 @@ impl CopReadTaskRuntime {
             let paging_size = task.paging_size;
             self.prepare_attempt_with_id(index, ranges, paging_size, attempt_id)?;
         }
-        self.prepared_attempt_shared(attempt_id).ok_or(CopReadTaskError::UnmatchedResponse)
+        self.prepared_attempt_shared(attempt_id)
+            .ok_or(CopReadTaskError::UnmatchedResponse)
     }
 
     pub(super) fn initial_tasks(&self) -> impl Iterator<Item = (u64, &RegionTaskEnvelope)> {
-        self.deferred.iter().map(|(&id, &index)| (id, &self.tasks[index].task))
+        self.deferred
+            .iter()
+            .map(|(&id, &index)| (id, &self.tasks[index].task))
     }
 
     pub(super) fn has_small_tasks(&self) -> bool {
@@ -565,7 +575,10 @@ impl CopReadTaskRuntime {
         // rather than scanning every attempt for each region task.
         let mut prepared_by_task: BTreeMap<u64, Vec<Arc<PreparedCopReadTask>>> = BTreeMap::new();
         for attempt in std::mem::take(&mut self.prepared) {
-            prepared_by_task.entry(attempt.logical_task_id).or_default().push(attempt);
+            prepared_by_task
+                .entry(attempt.logical_task_id)
+                .or_default()
+                .push(attempt);
         }
         tasks
             .into_iter()
@@ -1095,8 +1108,10 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     if metadata.store_type != StoreType::TiKv {
         return Err(CopReadTaskError::UnsupportedStore);
     }
-    if !matches!(metadata.request_type, RequestType::Dag | RequestType::Analyze)
-        || (metadata.request_type == RequestType::Analyze && metadata.paging.enabled)
+    if !matches!(
+        metadata.request_type,
+        RequestType::Dag | RequestType::Analyze
+    ) || (metadata.request_type == RequestType::Analyze && metadata.paging.enabled)
     {
         return Err(CopReadTaskError::UnsupportedRequestType);
     }
@@ -1200,28 +1215,47 @@ mod tests {
     fn transport_only_prepares_dispatched_region_requests() {
         use super::*;
         let key = |i: u64| format!("{i:08}").into_bytes();
-        let topology: Vec<_> = (0..64).map(|i| RegionTaskTopology {
-            region_id: i + 1, start_key: key(i), end_key: key(i + 1),
-            ..Default::default()
-        }).collect();
+        let topology: Vec<_> = (0..64)
+            .map(|i| RegionTaskTopology {
+                region_id: i + 1,
+                start_key: key(i),
+                end_key: key(i + 1),
+                ..Default::default()
+            })
+            .collect();
         let mut metadata = KvRequestMetadata::default();
         metadata.request_type = RequestType::Dag;
         metadata.store_type = StoreType::TiKv;
         metadata.data = Some(vec![42; 4096]);
         metadata.keep_order = true;
         metadata.start_ts = 100;
-        metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
-            start_key: key(0).into(), end_key: key(64).into(),
-        }]).into());
-        let mut runtime = CopReadTaskRuntime::prepare_for_transport(&metadata, &topology, None,
-            ReadEngineGeneration::Classic, 0).unwrap();
+        metadata.key_ranges = Some(
+            RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+                start_key: key(0).into(),
+                end_key: key(64).into(),
+            }])
+            .into(),
+        );
+        let mut runtime = CopReadTaskRuntime::prepare_for_transport(
+            &metadata,
+            &topology,
+            None,
+            ReadEngineGeneration::Classic,
+            0,
+        )
+        .unwrap();
         assert_eq!(runtime.tasks.len(), 64);
-        assert!(runtime.prepared.is_empty(),
-            "Go creates cop requests only inside an admitted worker, not for unsent regions");
+        assert!(
+            runtime.prepared.is_empty(),
+            "Go creates cop requests only inside an admitted worker, not for unsent regions"
+        );
         assert!(runtime.in_flight.is_empty());
         let first = runtime.activate_attempt(1).unwrap();
         assert_eq!(first.logical_task_id(), 1);
-        assert_eq!(first.request().data.as_ref(), metadata.data.as_ref().unwrap());
+        assert_eq!(
+            first.request().data.as_ref(),
+            metadata.data.as_ref().unwrap()
+        );
         assert_eq!(first.request().ranges, first.task().ranges);
         assert!(Arc::ptr_eq(&first, &runtime.activate_attempt(1).unwrap()));
         assert_eq!(runtime.prepared.len(), 1);
@@ -1231,11 +1265,19 @@ mod tests {
         for (id, worker) in &mut workers {
             let prepared = worker.activate_attempt(*id).unwrap();
             assert_eq!(prepared.logical_task_id(), *id);
-            assert_eq!(prepared.request().data.as_ptr(), first.request().data.as_ptr());
+            assert_eq!(
+                prepared.request().data.as_ptr(),
+                first.request().data.as_ptr()
+            );
             assert_eq!(worker.prepared.len(), 1);
             assert!(worker.deferred.is_empty());
-            let retry = worker.prepare_attempt(0, prepared.task().ranges.clone(), 0).unwrap();
-            assert!(retry > 64, "retry IDs must not collide with deferred initial requests");
+            let retry = worker
+                .prepare_attempt(0, prepared.task().ranges.clone(), 0)
+                .unwrap();
+            assert!(
+                retry > 64,
+                "retry IDs must not collide with deferred initial requests"
+            );
         }
     }
 
@@ -1244,36 +1286,57 @@ mod tests {
         use super::*;
         use prost::Message;
         let key = |i: u64| format!("{i:08}").into_bytes();
-        let topology: Vec<_> = (0..64).map(|i| RegionTaskTopology {
-            region_id: i + 1, start_key: key(i), end_key: key(i + 1),
-            ..Default::default()
-        }).collect();
+        let topology: Vec<_> = (0..64)
+            .map(|i| RegionTaskTopology {
+                region_id: i + 1,
+                start_key: key(i),
+                end_key: key(i + 1),
+                ..Default::default()
+            })
+            .collect();
         let mut metadata = KvRequestMetadata::default();
         metadata.request_type = RequestType::Dag;
         metadata.store_type = StoreType::TiKv;
         metadata.data = Some(vec![42; 4096]);
         metadata.keep_order = true;
         metadata.start_ts = 100;
-        metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
-            start_key: key(0).into(), end_key: key(64).into(),
-        }]).into());
-        let mut runtime = CopReadTaskRuntime::prepare(&metadata, &topology, None,
-            ReadEngineGeneration::Classic, 0).unwrap();
+        metadata.key_ranges = Some(
+            RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+                start_key: key(0).into(),
+                end_key: key(64).into(),
+            }])
+            .into(),
+        );
+        let mut runtime = CopReadTaskRuntime::prepare(
+            &metadata,
+            &topology,
+            None,
+            ReadEngineGeneration::Classic,
+            0,
+        )
+        .unwrap();
         let data = &runtime.prepared[0].request.data;
         let ptr = data.as_ptr();
         assert_eq!(&data[..], metadata.data.as_ref().unwrap().as_slice());
         for attempt in &runtime.prepared {
-            assert_eq!(attempt.request.data.as_ptr(), ptr,
-                "Go cop requests share worker.req.Data across region tasks");
+            assert_eq!(
+                attempt.request.data.as_ptr(),
+                ptr,
+                "Go cop requests share worker.req.Data across region tasks"
+            );
         }
         for (_, mut worker) in runtime.take_tasks() {
             let ranges = worker.tasks[0].task.ranges.clone();
             let id = worker.prepare_attempt(0, ranges, 0).unwrap();
             let retry = worker.prepared_attempt(id).unwrap();
-            assert_eq!(retry.request.data.as_ptr(), ptr,
-                "retry preparation must retain the same immutable DAG");
-            let decoded = tidb_proto::CoprocessorRequest::decode(
-                retry.request.encode_to_vec().as_slice()).unwrap();
+            assert_eq!(
+                retry.request.data.as_ptr(),
+                ptr,
+                "retry preparation must retain the same immutable DAG"
+            );
+            let decoded =
+                tidb_proto::CoprocessorRequest::decode(retry.request.encode_to_vec().as_slice())
+                    .unwrap();
             assert_eq!(decoded.data, metadata.data.as_ref().unwrap().as_slice());
         }
     }
@@ -1284,21 +1347,35 @@ mod tests {
         use super::*;
         fn measure(count: u64) -> Duration {
             let key = |i: u64| format!("{i:08}").into_bytes();
-            let topology: Vec<_> = (0..count).map(|i| RegionTaskTopology {
-                region_id: i + 1, start_key: key(i), end_key: key(i + 1),
-                ..Default::default()
-            }).collect();
+            let topology: Vec<_> = (0..count)
+                .map(|i| RegionTaskTopology {
+                    region_id: i + 1,
+                    start_key: key(i),
+                    end_key: key(i + 1),
+                    ..Default::default()
+                })
+                .collect();
             let mut metadata = KvRequestMetadata::default();
             metadata.request_type = RequestType::Dag;
             metadata.store_type = StoreType::TiKv;
             metadata.data = Some(b"dag".to_vec());
             metadata.keep_order = true;
             metadata.start_ts = 100;
-            metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
-                start_key: key(0).into(), end_key: key(count).into(),
-            }]).into());
-            let mut runtime = CopReadTaskRuntime::prepare(&metadata, &topology, None,
-                ReadEngineGeneration::Classic, 0).unwrap();
+            metadata.key_ranges = Some(
+                RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+                    start_key: key(0).into(),
+                    end_key: key(count).into(),
+                }])
+                .into(),
+            );
+            let mut runtime = CopReadTaskRuntime::prepare(
+                &metadata,
+                &topology,
+                None,
+                ReadEngineGeneration::Classic,
+                0,
+            )
+            .unwrap();
             let start = std::time::Instant::now();
             let tasks = runtime.take_tasks();
             let elapsed = start.elapsed();
@@ -1313,7 +1390,10 @@ mod tests {
         let small = (0..3).map(|_| measure(2000)).min().unwrap();
         let large = (0..3).map(|_| measure(8000)).min().unwrap();
         eprintln!("task transfer: 2000={small:?}, 8000={large:?}");
-        assert!(large < small * 8, "task transfer must not rescan every attempt for every task");
+        assert!(
+            large < small * 8,
+            "task transfer must not rescan every attempt for every task"
+        );
     }
 
     #[test]

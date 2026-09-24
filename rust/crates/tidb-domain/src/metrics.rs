@@ -25,7 +25,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -41,7 +41,10 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 /// Go `InfoCacheCounters` (`pkg/metrics`).
 pub static INFOCACHE_COUNTERS: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_domain_infocache_counters", "Counters of infoCache: get/hit."),
+        Opts::new(
+            "tidb_domain_infocache_counters",
+            "Counters of infoCache: get/hit.",
+        ),
         &["action", "type"],
     ))
 });
@@ -49,37 +52,44 @@ pub static INFOCACHE_COUNTERS: LazyLock<CounterVec> = LazyLock::new(|| {
 /// Go `InfoSchemaV2CacheCounter` (`pkg/metrics`).
 pub static INFOSCHEMA_V2_CACHE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_domain_infoschema_v2_cache", "infoschema cache v2 hit, evict and miss number"),
+        Opts::new(
+            "tidb_domain_infoschema_v2_cache",
+            "infoschema cache v2 hit, evict and miss number",
+        ),
         &["type"],
     ))
 });
 
 /// Go `InfoSchemaV2CacheCount` (`pkg/metrics`).
 pub static INFOSCHEMA_V2_CACHE_COUNT: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(
-        Opts::new("tidb_domain_infoschema_v2_cache_count", "infoschema cache v2 table count"),
-    ))
+    register(Gauge::with_opts(Opts::new(
+        "tidb_domain_infoschema_v2_cache_count",
+        "infoschema cache v2 table count",
+    )))
 });
 
 /// Go `InfoSchemaV2CacheLimit` (`pkg/metrics`).
 pub static INFOSCHEMA_V2_CACHE_LIMIT: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(
-        Opts::new("tidb_domain_infoschema_v2_cache_limit", "infoschema cache v2 limit"),
-    ))
+    register(Gauge::with_opts(Opts::new(
+        "tidb_domain_infoschema_v2_cache_limit",
+        "infoschema cache v2 limit",
+    )))
 });
 
 /// Go `InfoSchemaV2CacheSize` (`pkg/metrics`).
 pub static INFOSCHEMA_V2_CACHE_SIZE: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(
-        Opts::new("tidb_domain_infoschema_v2_cache_size", "infoschema cache v2 size"),
-    ))
+    register(Gauge::with_opts(Opts::new(
+        "tidb_domain_infoschema_v2_cache_size",
+        "infoschema cache v2 size",
+    )))
 });
 
 /// Go `LeaseExpireTime` (`pkg/metrics`).
 pub static LEASE_EXPIRE_TIME: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(
-        Opts::new("tidb_domain_lease_expire_time", "When the last time the lease is expired, it is in seconds"),
-    ))
+    register(Gauge::with_opts(Opts::new(
+        "tidb_domain_lease_expire_time",
+        "When the last time the lease is expired, it is in seconds",
+    )))
 });
 
 /// Go `LoadSchemaCounter` (`pkg/metrics`).
@@ -128,7 +138,13 @@ pub static INFOSCHEMA_TABLE_BY_NAME_DURATION: LazyLock<HistogramVec> = LazyLock:
 /// for the exposition header shim that mirrors Go's registered-family output.
 pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
     vec![
-            ("tidb_domain_load_schema_duration_seconds", "Bucketed histogram of processing time (s) in load schema."),
-            ("tidb_infoschema_table_by_name_duration_nanoseconds", "infoschema v2 TableByName API duration"),
+        (
+            "tidb_domain_load_schema_duration_seconds",
+            "Bucketed histogram of processing time (s) in load schema.",
+        ),
+        (
+            "tidb_infoschema_table_by_name_duration_nanoseconds",
+            "infoschema v2 TableByName API duration",
+        ),
     ]
 }

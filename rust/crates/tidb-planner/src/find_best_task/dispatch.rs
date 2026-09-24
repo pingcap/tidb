@@ -1442,12 +1442,9 @@ fn is_eq_or_in_on_column(condition: &tidb_expr::expression::Expression, unique_i
     if column.unique_id != unique_id {
         return false;
     }
-    function.args[1..].iter().all(|argument| {
-        matches!(
-            argument,
-            tidb_expr::expression::Expression::Constant(_)
-        )
-    })
+    function.args[1..]
+        .iter()
+        .all(|argument| matches!(argument, tidb_expr::expression::Expression::Constant(_)))
 }
 
 /// `where a > 10 order by _tidb_rowid` on a no-PK table reads
@@ -2548,11 +2545,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             ctx.opt_prefix_index_single_scan,
                         )
                         && source_index.columns.first().is_some_and(|first| {
-                            ds.table_columns.get(first.offset).is_some_and(|table_column| {
-                                ds.pushed_down_conds.iter().any(|condition| {
-                                    is_eq_or_in_on_column(condition, table_column.unique_id)
+                            ds.table_columns
+                                .get(first.offset)
+                                .is_some_and(|table_column| {
+                                    ds.pushed_down_conds.iter().any(|condition| {
+                                        is_eq_or_in_on_column(condition, table_column.unique_id)
+                                    })
                                 })
-                            })
                         })
                 }) {
                     continue 'paths;
@@ -3023,38 +3022,34 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .set_schema(ds.base.base.schema().cloned());
                         selection_base
                             .base
-                            .set_stats(
-                                ds.base.base.stats_info().cloned().map(|stats| {
-                                    let scaled = stats.scale_by_expect_cnt(
-                                        prop.expected_cnt,
-                                        ctx.skew_ratio,
-                                    );
-                                    // Go `LogicalSelection.DeriveStats` scales
-                                    // the child profile by
-                                    // `cardinality.Selectivity` over the
-                                    // derived conditions: master counts
-                                    // `not(isnull(col))` as the column's
-                                    // not-null histogram range, i.e.
-                                    // (total - null_count) / total. Other
-                                    // filter shapes keep the expected-count
-                                    // scaling this port used before.
-                                    let mut ratio = 1.0;
-                                    for condition in &table_filters {
-                                        if let Some(selectivity) = crate::logical::
-                                            data_source::is_null_condition_selectivity(
-                                                condition, &scaled,
-                                            )
-                                        {
-                                            ratio *= selectivity;
-                                        }
+                            .set_stats(ds.base.base.stats_info().cloned().map(|stats| {
+                                let scaled =
+                                    stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio);
+                                // Go `LogicalSelection.DeriveStats` scales
+                                // the child profile by
+                                // `cardinality.Selectivity` over the
+                                // derived conditions: master counts
+                                // `not(isnull(col))` as the column's
+                                // not-null histogram range, i.e.
+                                // (total - null_count) / total. Other
+                                // filter shapes keep the expected-count
+                                // scaling this port used before.
+                                let mut ratio = 1.0;
+                                for condition in &table_filters {
+                                    if let Some(selectivity) =
+                                        crate::logical::data_source::is_null_condition_selectivity(
+                                            condition, &scaled,
+                                        )
+                                    {
+                                        ratio *= selectivity;
                                     }
-                                    if ratio < 1.0 {
-                                        scaled.scale(ratio, 1.0)
-                                    } else {
-                                        scaled
-                                    }
-                                }),
-                            );
+                                }
+                                if ratio < 1.0 {
+                                    scaled.scale(ratio, 1.0)
+                                } else {
+                                    scaled
+                                }
+                            }));
                         selection_base.set_children(vec![point]);
                         point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,
@@ -3221,10 +3216,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     // selection's estimate.
                     selection_base.base.set_stats(
                         ds.base.base.stats_info().cloned().map(|stats| {
-                            stats.scale_by_expect_cnt(
-                                prop.expected_cnt,
-                                ctx.skew_ratio,
-                            )
+                            stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
                         }),
                     );
                     selection_base.set_children(vec![scan]);
@@ -3372,7 +3364,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .get(&source_index.id)
                     .copied()
                     .unwrap_or_else(|| {
-                        index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan)
+                        index_path_is_single_scan(
+                            ds,
+                            source_index,
+                            ctx.opt_prefix_index_single_scan,
+                        )
                     });
                 // The two COP property kinds are disjoint: a covering index
                 // is single-read, while a lookup is multi-read.
@@ -3416,17 +3412,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 .map(|column| column.unique_id)
                         })
                         .collect();
-                    let uncovered = source_index
-                        .columns
-                        .iter()
-                        .filter(|index_column| {
-                            ds.table_columns
-                                .get(index_column.offset)
-                                .is_none_or(|table_column| {
-                                    !referenced.contains(&table_column.unique_id)
-                                })
-                        })
-                        .count();
+                    let uncovered =
+                        source_index
+                            .columns
+                            .iter()
+                            .filter(|index_column| {
+                                ds.table_columns.get(index_column.offset).is_none_or(
+                                    |table_column| !referenced.contains(&table_column.unique_id),
+                                )
+                            })
+                            .count();
                     for _ in 0..uncovered {
                         let _ = ids.alloc();
                     }
@@ -3612,14 +3607,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .set_schema(ds.base.base.schema().cloned());
                         selection_base
                             .base
-                            .set_stats(
-                                ds.base.base.stats_info().cloned().map(|stats| {
-                                    stats.scale_by_expect_cnt(
-                                        prop.expected_cnt,
-                                        ctx.skew_ratio,
-                                    )
-                                }),
-                            );
+                            .set_stats(ds.base.base.stats_info().cloned().map(|stats| {
+                                stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
+                            }));
                         selection_base.set_children(vec![point]);
                         point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,
@@ -3889,35 +3879,35 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         "TableScan",
                         ds.base.base.query_block_offset(),
                     );
-                    table_base.base.set_stats(
-                        runtime_probe_stats
-                            .clone()
-                            .or_else(|| {
-                                scan.base().base.stats_info().cloned().map(|stats| {
-                                    // Go `convertToIndexScan`:
-                                    // `ts.SetStats(&property.StatsInfo{StatsVersion:
-                                    // ds.TableStats.StatsVersion})` — the table
-                                    // side carries the TABLE stats' VERSION (the
-                                    // row counts are filled from the index plan
-                                    // in `(*copTask).finishIndexPlan`). Inheriting
-                                    // the cop Limit's fresh stats verbatim left
-                                    // the pseudo version on an analyzed table.
-                                    let version = ds
-                                        .table_stats
-                                        .as_ref()
-                                        .map(|table_stats| table_stats.stats_version())
-                                        .or_else(|| {
-                                            ds.base.base.stats_info()
-                                                .map(|ds_stats| ds_stats.stats_version())
-                                        });
-                                    if let Some(version) = version {
-                                        stats.with_stats_version(version)
-                                    } else {
-                                        stats
-                                    }
-                                })
-                            }),
-                    );
+                    table_base
+                        .base
+                        .set_stats(runtime_probe_stats.clone().or_else(|| {
+                            scan.base().base.stats_info().cloned().map(|stats| {
+                                // Go `convertToIndexScan`:
+                                // `ts.SetStats(&property.StatsInfo{StatsVersion:
+                                // ds.TableStats.StatsVersion})` — the table
+                                // side carries the TABLE stats' VERSION (the
+                                // row counts are filled from the index plan
+                                // in `(*copTask).finishIndexPlan`). Inheriting
+                                // the cop Limit's fresh stats verbatim left
+                                // the pseudo version on an analyzed table.
+                                let version = ds
+                                    .table_stats
+                                    .as_ref()
+                                    .map(|table_stats| table_stats.stats_version())
+                                    .or_else(|| {
+                                        ds.base
+                                            .base
+                                            .stats_info()
+                                            .map(|ds_stats| ds_stats.stats_version())
+                                    });
+                                if let Some(version) = version {
+                                    stats.with_stats_version(version)
+                                } else {
+                                    stats
+                                }
+                            })
+                        }));
                     table_base.base.set_schema(ds.base.base.schema().cloned());
                     let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                         base: table_base,
@@ -3966,16 +3956,15 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         // (total - null_count) / total. Other filter shapes
                         // keep the expected-count scaling this port used
                         // before.
-                        selection_base.base.set_stats(
-                            ds.base.base.stats_info().cloned().map(|stats| {
-                                let scaled = stats.scale_by_expect_cnt(
-                                    prop.expected_cnt,
-                                    ctx.skew_ratio,
-                                );
+                        selection_base
+                            .base
+                            .set_stats(ds.base.base.stats_info().cloned().map(|stats| {
+                                let scaled =
+                                    stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio);
                                 let mut ratio = 1.0;
                                 for condition in &table_filters {
-                                    if let Some(selectivity) = crate::logical::
-                                        data_source::is_null_condition_selectivity(
+                                    if let Some(selectivity) =
+                                        crate::logical::data_source::is_null_condition_selectivity(
                                             condition, &scaled,
                                         )
                                     {
@@ -3987,8 +3976,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 } else {
                                     scaled
                                 }
-                            }),
-                        );
+                            }));
                         selection_base.set_children(vec![table_scan]);
                         PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,
@@ -4041,14 +4029,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                     .table_stats
                                     .as_ref()
                                     .map(|table_stats| {
-                                        table_stats.scale_by_expect_cnt(
-                                            count,
-                                            ctx.skew_ratio,
-                                        )
+                                        table_stats.scale_by_expect_cnt(count, ctx.skew_ratio)
                                     })
-                                    .or_else(|| {
-                                        Some(crate::stats_info::StatsInfo::new(count, []))
-                                    }),
+                                    .or_else(|| Some(crate::stats_info::StatsInfo::new(count, []))),
                                 None => stats.clone(),
                             }
                         } else {
@@ -4090,11 +4073,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 + 1;
                             let mut extra = tidb_expr::column::Column::new(
                                 ctx.column_ids.map(|ids| ids.alloc()).unwrap_or(next_id),
-                                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
-                                    .with_flags(
-                                        tidb_datatype::FieldTypeFlags::NOT_NULL
-                                            | tidb_datatype::FieldTypeFlags::PRI_KEY,
-                                    ),
+                                tidb_datatype::FieldType::new(
+                                    tidb_datatype::FieldTypeCode::LongLong,
+                                )
+                                .with_flags(
+                                    tidb_datatype::FieldTypeFlags::NOT_NULL
+                                        | tidb_datatype::FieldTypeFlags::PRI_KEY,
+                                ),
                             );
                             extra.id = crate::logical::data_source::EXTRA_HANDLE_ID;
                             extra.orig_name = "_tidb_rowid".to_owned();

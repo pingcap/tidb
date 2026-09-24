@@ -388,13 +388,13 @@ pub(crate) fn parse_json_document_argument(v: &Datum) -> Result<Option<Json>, Ev
         // Go `WrapWithCastAsJSON`'s numeric arm: a numeric scalar becomes the
         // JSON number it spells (`JSON_LENGTH(1)` is 1, `JSON_DEPTH(1)` is
         // 1, `JSON_PRETTY(1)` is '1'), captured on the oracle.
-        Datum::Int(_)
-        | Datum::UInt(_)
-        | Datum::Decimal(_)
-        | Datum::Real(_) => datum_json_scalar(v).map(Some),
+        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => {
+            datum_json_scalar(v).map(Some)
+        }
         Datum::Json(value) => parse_json(&value.to_string()).map(Some),
-        Datum::MinNotNull
-        | Datum::MaxValue => Err(EvalError::Unsupported("JSON document requires string")),
+        Datum::MinNotNull | Datum::MaxValue => {
+            Err(EvalError::Unsupported("JSON document requires string"))
+        }
         Datum::Float32(_)
         | Datum::BinaryLiteral(_)
         | Datum::Duration(_)

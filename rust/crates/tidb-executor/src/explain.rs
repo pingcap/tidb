@@ -29,8 +29,8 @@ use tidb_planner::physical::{PhysicalPlan, RedactMode};
 use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, OperatorLabel};
 
 use crate::driver::{
-    Catalog, DriverError, SelectMeta, run_delete_stmt_with_physical_and_stats,
-    run_insert_stmt_with_physical_and_stats, run_update_stmt_with_physical_and_stats,
+    run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats,
+    run_update_stmt_with_physical_and_stats, Catalog, DriverError, SelectMeta,
 };
 /// The `EXPLAIN FORMAT = '...'` this tier accepts. Go's `'row'` (the
 /// default, also the explicit spelling) and `'brief'` render the identical
@@ -2036,12 +2036,9 @@ fn collect_executor_process_fields(
     index_names: &mut Vec<String>,
 ) {
     match plan {
-        PhysicalPlan::ShuffleReceiver(receiver) => collect_executor_process_fields(
-            &receiver.data_source,
-            catalog,
-            table_ids,
-            index_names,
-        ),
+        PhysicalPlan::ShuffleReceiver(receiver) => {
+            collect_executor_process_fields(&receiver.data_source, catalog, table_ids, index_names)
+        }
         PhysicalPlan::TableReader(reader) => {
             if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
                 table_ids.push(logical_table_id(catalog, scan.table_id));

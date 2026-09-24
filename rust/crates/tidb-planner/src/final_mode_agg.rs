@@ -41,8 +41,8 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 
-use crate::expression_rewriter::ColumnIdAllocator;
 use crate::cardinality::ndv::GroupNdv;
+use crate::expression_rewriter::ColumnIdAllocator;
 use crate::stats_info::StatsInfo;
 
 /// Go `AggInfo` (`base_physical_agg.go:592`): the descriptor triple either
@@ -136,9 +136,7 @@ pub fn can_use_three_stage_single_distinct(
         } else if function.base.args.len() > 1 {
             return false;
         }
-        if !function.order_by_items.is_empty()
-            || function.mode != AggFunctionMode::Complete
-        {
+        if !function.order_by_items.is_empty() || function.mode != AggFunctionMode::Complete {
             return false;
         }
         // Go's middle-stage construction reads the one ordinary argument as
@@ -207,9 +205,7 @@ pub fn can_use_three_stage_multi_distinct(
         } else if function.base.args.len() > 1 {
             return None;
         }
-        if !function.order_by_items.is_empty()
-            || function.mode != AggFunctionMode::Complete
-        {
+        if !function.order_by_items.is_empty() || function.mode != AggFunctionMode::Complete {
             return None;
         }
     }
@@ -294,9 +290,9 @@ pub fn mark_three_stage_grouping_ids(
             .collect();
         let Some(index) = grouping_sets.iter().position(|set| {
             let set_ids: HashSet<_> = set.iter().map(|column| column.unique_id).collect();
-            argument_ids
-                .iter()
-                .all(|column_id| set_ids.contains(column_id) || !all_grouping_ids.contains(column_id))
+            argument_ids.iter().all(|column_id| {
+                set_ids.contains(column_id) || !all_grouping_ids.contains(column_id)
+            })
         }) else {
             return false;
         };
@@ -375,9 +371,9 @@ pub fn adjust_three_stage_single_distinct(
         tiflash_pre_agg_mode: final_hash.tiflash_pre_agg_mode.clone(),
     };
     middle_hash.base.base.set_id(plan_ids.alloc());
-    middle_hash
-        .base
-        .set_children_req_props(vec![Some(crate::physical_property::PhysicalProperty::default())]);
+    middle_hash.base.set_children_req_props(vec![Some(
+        crate::physical_property::PhysicalProperty::default(),
+    )]);
 
     let mut middle_schema = Schema::default();
     let mut ordinary_arg_map = std::collections::HashMap::new();
@@ -394,7 +390,10 @@ pub fn adjust_three_stage_single_distinct(
         }
         middle_schema.columns.push(output);
     }
-    middle_hash.base.base.set_schema(Some(middle_schema.clone()));
+    middle_hash
+        .base
+        .base
+        .set_schema(Some(middle_schema.clone()));
 
     for (index, function) in final_hash.agg_funcs.iter_mut().enumerate() {
         if index == distinct_pos {
@@ -418,9 +417,9 @@ pub fn adjust_three_stage_single_distinct(
         }
         function.mode = AggFunctionMode::Final;
     }
-    final_hash
-        .base
-        .set_children_req_props(vec![Some(crate::physical_property::PhysicalProperty::default())]);
+    final_hash.base.set_children_req_props(vec![Some(
+        crate::physical_property::PhysicalProperty::default(),
+    )]);
 
     Ok(Some(ThreeStageAggSplit {
         partial,
@@ -442,8 +441,8 @@ pub fn adjust_three_stage_multi_distinct(
     column_ids: &ColumnIdAllocator,
     plan_ids: &crate::plan_base::PlanIdAllocator,
 ) -> Result<Option<MultiDistinctThreeStageAggSplit>, crate::plan_base::PlanError> {
-    use crate::physical::{BasePhysicalPlan, PhysicalHashAgg, PhysicalPlan, PhysicalProjection};
     use crate::physical::expand::PhysicalExpand;
+    use crate::physical::{BasePhysicalPlan, PhysicalHashAgg, PhysicalPlan, PhysicalProjection};
     use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder};
 
     let PhysicalPlan::HashAgg(mut final_hash) = final_agg else {
@@ -470,10 +469,8 @@ pub fn adjust_three_stage_multi_distinct(
         .iter()
         .enumerate()
         .map(|(offset, grouping_set)| {
-            let grouping_set_ids: HashSet<_> = grouping_set
-                .iter()
-                .map(|column| column.unique_id)
-                .collect();
+            let grouping_set_ids: HashSet<_> =
+                grouping_set.iter().map(|column| column.unique_id).collect();
             let mut level = Vec::with_capacity(expand_schema_columns.len());
             for column in &child_schema.columns {
                 if grouping_ids.contains(&column.unique_id)
@@ -486,17 +483,16 @@ pub fn adjust_three_stage_multi_distinct(
                     level.push(Expression::Column(column.clone()));
                 }
             }
-            let mut gid = Constant::new(tidb_datatype::Datum::UInt((offset + 1) as u64), gid_type.clone());
+            let mut gid = Constant::new(
+                tidb_datatype::Datum::UInt((offset + 1) as u64),
+                gid_type.clone(),
+            );
             gid.ret_type = Some(gid_type.clone());
             level.push(Expression::Constant(gid));
             level
         })
         .collect::<Vec<_>>();
-    let mut expand_base = BasePhysicalPlan::new(
-        plan_ids,
-        "Expand",
-        child.query_block_offset(),
-    );
+    let mut expand_base = BasePhysicalPlan::new(plan_ids, "Expand", child.query_block_offset());
     expand_base.base.set_stats(
         child
             .stats_info()
@@ -509,7 +505,9 @@ pub fn adjust_three_stage_multi_distinct(
         extra_grouping_col_names: vec!["gid".to_owned()],
     });
 
-    partial_hash.group_by_items.push(Expression::Column(grouping_id_col.clone()));
+    partial_hash
+        .group_by_items
+        .push(Expression::Column(grouping_id_col.clone()));
     if let Some(schema) = partial_hash.base.base.schema().cloned() {
         let mut schema = schema;
         schema.columns.push(grouping_id_col.clone());
@@ -549,7 +547,10 @@ pub fn adjust_three_stage_multi_distinct(
                 None,
                 vec![
                     Expression::Column(grouping_id_col.clone()),
-                    Expression::Constant(Constant::new(tidb_datatype::Datum::UInt(grouping_id as u64), gid_type.clone())),
+                    Expression::Constant(Constant::new(
+                        tidb_datatype::Datum::UInt(grouping_id as u64),
+                        gid_type.clone(),
+                    )),
                 ],
             )
             .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
@@ -572,11 +573,8 @@ pub fn adjust_three_stage_multi_distinct(
         projection_columns.push(case_column.clone());
         function.base.args[0] = Expression::Column(case_column);
     }
-    let mut projection_base = BasePhysicalPlan::new(
-        plan_ids,
-        "Projection",
-        child.query_block_offset(),
-    );
+    let mut projection_base =
+        BasePhysicalPlan::new(plan_ids, "Projection", child.query_block_offset());
     projection_base.base.set_stats(child.stats_info().cloned());
     projection_base
         .base
@@ -598,9 +596,9 @@ pub fn adjust_three_stage_multi_distinct(
         tiflash_pre_agg_mode: final_hash.tiflash_pre_agg_mode.clone(),
     };
     middle_hash.base.base.set_id(plan_ids.alloc());
-    middle_hash
-        .base
-        .set_children_req_props(vec![Some(crate::physical_property::PhysicalProperty::default())]);
+    middle_hash.base.set_children_req_props(vec![Some(
+        crate::physical_property::PhysicalProperty::default(),
+    )]);
 
     let mut middle_schema = Schema::default();
     let mut ordinary_arg_map = HashMap::new();
@@ -617,7 +615,10 @@ pub fn adjust_three_stage_multi_distinct(
         }
         middle_schema.columns.push(output);
     }
-    middle_hash.base.base.set_schema(Some(middle_schema.clone()));
+    middle_hash
+        .base
+        .base
+        .set_schema(Some(middle_schema.clone()));
 
     for (index, function) in final_hash.agg_funcs.iter_mut().enumerate() {
         if function.has_distinct {
@@ -640,9 +641,9 @@ pub fn adjust_three_stage_multi_distinct(
         function.mode = AggFunctionMode::Final;
         function.grouping_id = 0;
     }
-    final_hash
-        .base
-        .set_children_req_props(vec![Some(crate::physical_property::PhysicalProperty::default())]);
+    final_hash.base.set_children_req_props(vec![Some(
+        crate::physical_property::PhysicalProperty::default(),
+    )]);
 
     let partition_cols = partial_hash
         .group_by_items
@@ -856,7 +857,12 @@ pub fn convert_avg_for_mpp(
         let quotient = builder
             .new_function(
                 "div",
-                Some(output_column.ret_type.clone().unwrap_or_else(|| function.base.ret_type.clone())),
+                Some(
+                    output_column
+                        .ret_type
+                        .clone()
+                        .unwrap_or_else(|| function.base.ret_type.clone()),
+                ),
                 vec![Expression::Column(sum_column), denominator],
             )
             .map_err(|error| crate::plan_base::PlanError::internal(error.to_string()))?;
@@ -868,13 +874,14 @@ pub fn convert_avg_for_mpp(
 
     agg.agg_funcs = new_agg_funcs;
     agg.base.base.set_schema(Some(new_schema));
-    let mut projection_base = BasePhysicalPlan::new(
-        plan_ids,
-        "Projection",
-        agg.base.base.query_block_offset(),
-    );
-    projection_base.base.set_stats(agg.base.base.stats_info().cloned());
-    projection_base.base.set_schema(Some(original_schema.clone()));
+    let mut projection_base =
+        BasePhysicalPlan::new(plan_ids, "Projection", agg.base.base.query_block_offset());
+    projection_base
+        .base
+        .set_stats(agg.base.base.stats_info().cloned());
+    projection_base
+        .base
+        .set_schema(Some(original_schema.clone()));
     if let Some(prop) = agg.base.child_req_prop(0) {
         projection_base.set_children_req_props(vec![Some(prop.clone_essential_fields())]);
     }
@@ -1435,10 +1442,7 @@ pub fn check_agg_can_push_cop_tikv(
 /// `CheckAggCanPushCop`.  TiFlash MPP currently permits DISTINCT only for
 /// COUNT and GROUP_CONCAT, and does not admit APPROX_COUNT_DISTINCT.
 #[must_use]
-pub fn check_agg_can_push_mpp(
-    agg_funcs: &[AggFuncDesc],
-    group_by_items: &[Expression],
-) -> bool {
+pub fn check_agg_can_push_mpp(agg_funcs: &[AggFuncDesc], group_by_items: &[Expression]) -> bool {
     let blacklist = HashMap::new();
     for agg_func in agg_funcs {
         if contain_virtual_column(&agg_func.base.args)
@@ -1796,7 +1800,8 @@ mod tests {
         let plan_ids = crate::plan_base::PlanIdAllocator::new();
         let column_ids = ColumnIdAllocator::new();
         let mut base = crate::physical::BasePhysicalPlan::new(&plan_ids, "HashAgg", 0);
-        base.base.set_schema(Some(Schema::new(vec![output.clone()])));
+        base.base
+            .set_schema(Some(Schema::new(vec![output.clone()])));
         base.set_children_req_props(vec![Some(
             crate::physical_property::PhysicalProperty::default(),
         )]);

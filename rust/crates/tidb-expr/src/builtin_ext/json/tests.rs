@@ -1698,10 +1698,7 @@ fn object_keys_print_in_plain_byte_order() {
         r#"{"0": 6, "A": 4, "B": 2, "_": 5, "a": 3, "z": 1}"#
     );
     assert_eq!(
-        rendered(call(
-            "JSON_KEYS",
-            &[s(r#"{"bb":1,"a":2,"ccc":3,"dd":4}"#)]
-        )),
+        rendered(call("JSON_KEYS", &[s(r#"{"bb":1,"a":2,"ccc":3,"dd":4}"#)])),
         r#"["a", "bb", "ccc", "dd"]"#
     );
     // The separators are `, ` and `: `, not serde's compact form.

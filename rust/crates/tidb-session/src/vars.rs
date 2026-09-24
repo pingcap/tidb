@@ -3315,12 +3315,10 @@ impl SessionVars {
         // 1115 `Unknown character set: '...'` (the parser defers the check
         // here, which is what makes `SET NAMES anyword` a runtime error).
         if !tidb_datatype::charset_known(charset) {
-            return Err(VarError::SqlError(
-                tidb_error::mysql::SqlError::new(
-                    tidb_error::mysql::errcode::ErrUnknownCharacterSet,
-                    &[tidb_error::mysql::FormatArg::from(charset)],
-                ),
-            ));
+            return Err(VarError::SqlError(tidb_error::mysql::SqlError::new(
+                tidb_error::mysql::errcode::ErrUnknownCharacterSet,
+                &[tidb_error::mysql::FormatArg::from(charset)],
+            )));
         }
         for name in [
             "character_set_client",

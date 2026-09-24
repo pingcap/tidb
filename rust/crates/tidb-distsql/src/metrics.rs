@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -39,7 +39,10 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 /// Go `DistSQLCoprCacheCounter` (`pkg/metrics`).
 pub static COPR_CACHE: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_distsql_copr_cache", "coprocessor cache hit, evict and miss number"),
+        Opts::new(
+            "tidb_distsql_copr_cache",
+            "coprocessor cache hit, evict and miss number",
+        ),
         &["type"],
     ))
 });
@@ -47,7 +50,10 @@ pub static COPR_CACHE: LazyLock<CounterVec> = LazyLock::new(|| {
 /// Go `DistSQLCoprClosestReadCounter` (`pkg/metrics`).
 pub static COPR_CLOSEST_READ: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_distsql_copr_closest_read", "counter of total copr read local read hit."),
+        Opts::new(
+            "tidb_distsql_copr_closest_read",
+            "counter of total copr read local read hit.",
+        ),
         &["type"],
     ))
 });
@@ -118,10 +124,25 @@ pub static DISTSQL_COPR_RESP_SIZE: LazyLock<HistogramVec> = LazyLock::new(|| {
 /// for the exposition header shim that mirrors Go's registered-family output.
 pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
     vec![
-            ("tidb_distsql_handle_query_duration_seconds", "Bucketed histogram of processing time (s) of handled queries."),
-            ("tidb_distsql_scan_keys_num", "number of scanned keys for each query."),
-            ("tidb_distsql_partial_num", "number of partial results for each query."),
-            ("tidb_distsql_scan_keys_partial_num", "number of scanned keys for each partial result."),
-            ("tidb_distsql_copr_resp_size", "copr task response data size in bytes."),
+        (
+            "tidb_distsql_handle_query_duration_seconds",
+            "Bucketed histogram of processing time (s) of handled queries.",
+        ),
+        (
+            "tidb_distsql_scan_keys_num",
+            "number of scanned keys for each query.",
+        ),
+        (
+            "tidb_distsql_partial_num",
+            "number of partial results for each query.",
+        ),
+        (
+            "tidb_distsql_scan_keys_partial_num",
+            "number of scanned keys for each partial result.",
+        ),
+        (
+            "tidb_distsql_copr_resp_size",
+            "copr task response data size in bytes.",
+        ),
     ]
 }

@@ -365,17 +365,18 @@ pub(crate) fn analyzed_filter_selectivity(
                 // range path first; a pattern the ranges cannot answer
                 // (`%dim%`, a contains shape) falls to TopN-assisted
                 // evaluation and only then the 0.1 default.
-                let selectivity = histogram_prefix_range_selectivity(table_stats, column, &pattern.value)
-                    .or_else(|| {
-                        stats_negate_like_selectivity(
-                            table_stats,
-                            column,
-                            &pattern.value,
-                            escape_from_constant(rest.first()),
-                            false,
-                        )
-                    })
-                    .unwrap_or(DEFAULT_STRING_MATCH_SELECTIVITY);
+                let selectivity =
+                    histogram_prefix_range_selectivity(table_stats, column, &pattern.value)
+                        .or_else(|| {
+                            stats_negate_like_selectivity(
+                                table_stats,
+                                column,
+                                &pattern.value,
+                                escape_from_constant(rest.first()),
+                                false,
+                            )
+                        })
+                        .unwrap_or(DEFAULT_STRING_MATCH_SELECTIVITY);
                 selectivity_total *= selectivity;
                 recognized = true;
                 continue;
@@ -476,10 +477,7 @@ const DEFAULT_STRING_MATCH_SELECTIVITY: f64 = 0.1;
 /// recursively estimated over its CNF items. `None` when any referenced
 /// column lacks statistics or the DNF flattens to a single item — Go
 /// skips those to the ranger/default paths.
-fn dnf_independence_selectivity(
-    table_stats: &StatsInfo,
-    condition: &Expression,
-) -> Option<f64> {
+fn dnf_independence_selectivity(table_stats: &StatsInfo, condition: &Expression) -> Option<f64> {
     let items = flatten_boolean_conditions(condition, "or");
     if items.len() <= 1 {
         return None;
@@ -565,14 +563,12 @@ fn histogram_prefix_range_selectivity(
     } else {
         tidb_datatype::Datum::MaxValue
     };
-    let ranges = vec![
-        crate::cardinality::row_count_estimator::ColumnRange::new(
-            tidb_datatype::Datum::Bytes(low),
-            high,
-            false,
-            true,
-        ),
-    ];
+    let ranges = vec![crate::cardinality::row_count_estimator::ColumnRange::new(
+        tidb_datatype::Datum::Bytes(low),
+        high,
+        false,
+        true,
+    )];
     let is_handle = hist_coll.pk_is_handle()
         && hist_coll
             .column(column.unique_id)
@@ -2946,7 +2942,9 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 (
                                     index.id,
                                     super::data_source::index_path_is_single_scan(
-                                        op, index, self.opt_prefix_index_single_scan,
+                                        op,
+                                        index,
+                                        self.opt_prefix_index_single_scan,
                                     ),
                                 )
                             })

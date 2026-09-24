@@ -509,8 +509,8 @@ impl Parser {
                             // utf8mb4_bin, LEFT(.., 1) returns the first
                             // CHARACTER (all captured on the oracle). Decode
                             // here so the literal evaluates as text.
-                            let bytes = hex_to_bytes(&digits)
-                                .map_err(|reason| self.err_here(&reason))?;
+                            let bytes =
+                                hex_to_bytes(&digits).map_err(|reason| self.err_here(&reason))?;
                             let text = String::from_utf8(bytes).map_err(|_| {
                                 self.err_here("introduced hex literal is not valid charset text")
                             })?;

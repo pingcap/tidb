@@ -404,13 +404,7 @@ pub(crate) fn wrap_string_args(
             mask |= 1 << 3;
         }
     }
-    wrap(
-        mask,
-        vals,
-        arg_types,
-        ctx,
-        crate::cast::cast_arg_as_string,
-    )
+    wrap(mask, vals, arg_types, ctx, crate::cast::cast_arg_as_string)
 }
 
 /// The `EvalString` a signature body reads out of an argument this layer has

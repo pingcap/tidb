@@ -21,7 +21,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Wake, Waker};
 
 use tidb_txnkv::rpc::{
-    CompletionError, UnaryCallContext, go_max_procs, query_worker_runtime, wait_with_call,
+    go_max_procs, query_worker_runtime, wait_with_call, CompletionError, UnaryCallContext,
 };
 
 use crate::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};

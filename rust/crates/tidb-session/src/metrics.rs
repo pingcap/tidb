@@ -23,7 +23,9 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts};
+use prometheus::{
+    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts,
+};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -39,7 +41,10 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 /// Go `SessionRetryErrorCounter` (`pkg/metrics/session.go`).
 pub static SESSION_RETRY_ERROR: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_session_retry_error_total", "Counter of session retry error."),
+        Opts::new(
+            "tidb_session_retry_error_total",
+            "Counter of session retry error.",
+        ),
         &["sql_type", "type"],
     ))
 });
@@ -47,14 +52,20 @@ pub static SESSION_RETRY_ERROR: LazyLock<CounterVec> = LazyLock::new(|| {
 /// Go `ResourceGroupQueryTotalCounter` (`pkg/metrics`).
 pub static RESOURCE_GROUP_QUERY_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_session_resource_group_query_total", "Counter of the total number of queries for the resource group"),
+        Opts::new(
+            "tidb_session_resource_group_query_total",
+            "Counter of the total number of queries for the resource group",
+        ),
         &["name", "resource_group"],
     ))
 });
 
 /// Go `SessionRestrictedSQLCounter` (`pkg/metrics`).
 pub static RESTRICTED_SQL_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
-    register(Counter::new("tidb_session_restricted_sql_total", "Counter of internal restricted sql."))
+    register(Counter::new(
+        "tidb_session_restricted_sql_total",
+        "Counter of internal restricted sql.",
+    ))
 });
 
 /// Go `FairLockingUsageCounter` (`pkg/metrics`).
@@ -68,7 +79,10 @@ pub static TRANSACTION_FAIR_LOCKING_USAGE: LazyLock<CounterVec> = LazyLock::new(
 /// Go `TxnStateEnteringCounter` (`pkg/metrics`).
 pub static TXN_STATE_ENTERING_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_session_txn_state_entering_count", "How many times transactions enter this state"),
+        Opts::new(
+            "tidb_session_txn_state_entering_count",
+            "How many times transactions enter this state",
+        ),
         &["type"],
     ))
 });
@@ -79,25 +93,19 @@ pub static TXN_STATE_ENTERING_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
 /// passes `false`.
 pub fn observe_parse_duration(seconds: f64, internal: bool) {
     let label = if internal { "internal" } else { "general" };
-    SESSION_PARSE
-        .with_label_values(&[label])
-        .observe(seconds);
+    SESSION_PARSE.with_label_values(&[label]).observe(seconds);
 }
 
 /// Go `session.ExecuteStmt`'s compile observation (`session.go:2624`).
 pub fn observe_compile_duration(seconds: f64, internal: bool) {
     let label = if internal { "internal" } else { "general" };
-    SESSION_COMPILE
-        .with_label_values(&[label])
-        .observe(seconds);
+    SESSION_COMPILE.with_label_values(&[label]).observe(seconds);
 }
 
 /// Go `ExecStmt.finishExecutor`'s run observation (`adapter.go:1723`).
 pub fn observe_execute_duration(seconds: f64, internal: bool) {
     let label = if internal { "internal" } else { "general" };
-    SESSION_EXECUTE
-        .with_label_values(&[label])
-        .observe(seconds);
+    SESSION_EXECUTE.with_label_values(&[label]).observe(seconds);
 }
 
 /// Materializes the series Go's subsystem startup writes, mirroring the
@@ -256,15 +264,45 @@ pub static TXN_STATE_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
 /// for the exposition header shim that mirrors Go's registered-family output.
 pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
     vec![
-            ("tidb_session_parse_duration_seconds", "Bucketed histogram of processing time (s) in parse SQL."),
-            ("tidb_session_compile_duration_seconds", "Bucketed histogram of processing time (s) in query optimize."),
-            ("tidb_session_execute_duration_seconds", "Bucketed histogram of processing time (s) in running executor."),
-            ("tidb_session_retry_num", "Bucketed histogram of session retry count."),
-            ("tidb_session_statement_lock_keys_count", "Keys locking for a single statement"),
-            ("tidb_session_statement_pessimistic_retry_count", "Bucketed histogram of statement pessimistic retry count"),
-            ("tidb_session_statement_shared_lock_keys_count", "Keys locking for a single statement"),
-            ("tidb_session_transaction_duration_seconds", "Bucketed histogram of a transaction execution duration, including retry."),
-            ("tidb_session_transaction_statement_num", "Bucketed histogram of statements count in each transaction."),
-            ("tidb_session_txn_state_seconds", "Bucketed histogram of different states of a transaction."),
+        (
+            "tidb_session_parse_duration_seconds",
+            "Bucketed histogram of processing time (s) in parse SQL.",
+        ),
+        (
+            "tidb_session_compile_duration_seconds",
+            "Bucketed histogram of processing time (s) in query optimize.",
+        ),
+        (
+            "tidb_session_execute_duration_seconds",
+            "Bucketed histogram of processing time (s) in running executor.",
+        ),
+        (
+            "tidb_session_retry_num",
+            "Bucketed histogram of session retry count.",
+        ),
+        (
+            "tidb_session_statement_lock_keys_count",
+            "Keys locking for a single statement",
+        ),
+        (
+            "tidb_session_statement_pessimistic_retry_count",
+            "Bucketed histogram of statement pessimistic retry count",
+        ),
+        (
+            "tidb_session_statement_shared_lock_keys_count",
+            "Keys locking for a single statement",
+        ),
+        (
+            "tidb_session_transaction_duration_seconds",
+            "Bucketed histogram of a transaction execution duration, including retry.",
+        ),
+        (
+            "tidb_session_transaction_statement_num",
+            "Bucketed histogram of statements count in each transaction.",
+        ),
+        (
+            "tidb_session_txn_state_seconds",
+            "Bucketed histogram of different states of a transaction.",
+        ),
     ]
 }

@@ -231,8 +231,7 @@ impl Session {
             .is_none_or(|value| tidb_exec::hash_join_version::is_optimized_version(&value))
             && tidb_exec::hash_join_version::is_hash_join_v2_supported();
         env.session.mpp_allowed = enabled("tidb_allow_mpp", true);
-        env.session.mpp_enforced =
-            env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
+        env.session.mpp_enforced = env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
 
         env.cost_factors.index_scan = number("tidb_opt_index_scan_cost_factor", 1.0);
         env.cost_factors.table_row_id_scan = number("tidb_opt_table_rowid_scan_cost_factor", 1.0);

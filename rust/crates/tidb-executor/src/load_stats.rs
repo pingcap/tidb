@@ -961,14 +961,24 @@ pub fn table_statistics_from_table_schema(
         .iter()
         .filter(|(id, _)| existence.as_ref().is_some_and(|map| map.has(*id, false)))
         .map(|(id, _)| {
-            (*id, existence.as_ref().is_some_and(|map| map.has_analyzed(*id, false)))
+            (
+                *id,
+                existence
+                    .as_ref()
+                    .is_some_and(|map| map.has_analyzed(*id, false)),
+            )
         })
         .collect::<BTreeMap<_, _>>();
     let mut index_stats_existence = schema_indexes
         .iter()
         .filter(|(id, _, _)| existence.as_ref().is_some_and(|map| map.has(*id, true)))
         .map(|(id, _, _)| {
-            (*id, existence.as_ref().is_some_and(|map| map.has_analyzed(*id, true)))
+            (
+                *id,
+                existence
+                    .as_ref()
+                    .is_some_and(|map| map.has_analyzed(*id, true)),
+            )
         })
         .collect::<BTreeMap<_, _>>();
     let mut columns = BTreeMap::new();
@@ -1067,9 +1077,15 @@ mod tests {
     #[test]
     fn projection_keeps_analyzed_items_that_are_not_resident() {
         let mut stats = statistics_table_from_json_schema(
-            &LoadStatsTableSchema { columns: Vec::new(), indexes: Vec::new(), pk_is_handle: false },
-            41, &JsonTable::default(),
-        ).expect("empty canonical table");
+            &LoadStatsTableSchema {
+                columns: Vec::new(),
+                indexes: Vec::new(),
+                pk_is_handle: false,
+            },
+            41,
+            &JsonTable::default(),
+        )
+        .expect("empty canonical table");
         let mut existence = ColAndIdxExistenceMap::new(1, 1);
         existence.insert_column(3, true);
         existence.insert_index(7, true);

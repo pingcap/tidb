@@ -334,12 +334,12 @@ pub mod builtin_op;
 pub mod builtin_registry;
 mod cast;
 mod coerce;
-mod go_flate;
 pub mod collation_derive;
 pub mod column;
 pub mod constant;
 pub mod constant_fold;
 pub mod constant_propagation;
+mod go_flate;
 pub use constant_fold::{
     derive_constant_null_flag, fold_constant_in_mode,
     fold_constant_in_mode_preserving_warning_casts, ConstantFoldMode,

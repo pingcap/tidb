@@ -1624,13 +1624,8 @@ impl Session {
         // before the observation. This door is where preprocess, privilege,
         // and planning happen, so it is the compile boundary.
         let started = std::time::Instant::now();
-        let result = self.prepare_parsed_statement_compile_phase(
-            sql,
-            stmt,
-            prepared,
-            select_plan,
-            dml_plan,
-        );
+        let result =
+            self.prepare_parsed_statement_compile_phase(sql, stmt, prepared, select_plan, dml_plan);
         if result.is_ok() {
             crate::metrics::observe_compile_duration(started.elapsed().as_secs_f64(), false);
         }

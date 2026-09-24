@@ -1291,7 +1291,8 @@ pub fn load_active_persisted_ddl_jobs_cached<
         if cached_job_table.is_none() {
             let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
             *cached_job_table = Some(
-                DdlJobTable::locate(&catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                DdlJobTable::locate(&catalog)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             );
         }
         // Requiring `&mut snapshot` means the cache can only hold table
@@ -1360,7 +1361,8 @@ pub fn load_min_persisted_ddl_job_id_cached<
         if cached_job_table.is_none() {
             let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
             *cached_job_table = Some(
-                DdlJobTable::locate(&catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                DdlJobTable::locate(&catalog)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             );
         }
         let read = cached_job_table

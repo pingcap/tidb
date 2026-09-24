@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -38,7 +38,10 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 
 /// Go `AutoIDClientConnResetCounter` (`pkg/metrics`).
 pub static AUTOID_CLIENT_CONN_RESET: LazyLock<Counter> = LazyLock::new(|| {
-    register(Counter::new("tidb_meta_autoid_client_conn_reset_total", "Counter of resetting autoid client connection."))
+    register(Counter::new(
+        "tidb_meta_autoid_client_conn_reset_total",
+        "Counter of resetting autoid client connection.",
+    ))
 });
 
 /// Materializes the series Go's subsystem startup writes, mirroring the
@@ -73,7 +76,13 @@ pub static AUTOID_OPERATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| 
 /// for the exposition header shim that mirrors Go's registered-family output.
 pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
     vec![
-            ("tidb_meta_operation_duration_seconds", "Bucketed histogram of processing time (s) of tidb meta data operations."),
-            ("tidb_autoid_operation_duration_seconds", "Bucketed histogram of processing time (s) of handled autoid."),
+        (
+            "tidb_meta_operation_duration_seconds",
+            "Bucketed histogram of processing time (s) of tidb meta data operations.",
+        ),
+        (
+            "tidb_autoid_operation_duration_seconds",
+            "Bucketed histogram of processing time (s) of handled autoid.",
+        ),
     ]
 }

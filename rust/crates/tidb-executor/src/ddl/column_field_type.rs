@@ -792,9 +792,7 @@ pub fn check_column_attributes(
             // is %d.`) -- the same ErrTooBigPrecision template the datetime
             // family answers. Without this, `DECIMAL(66,2)` is accepted and
             // materialized, which go never does.
-            if field_type.code() == FieldTypeCode::NewDecimal
-                && field_type.flen() > 65
-            {
+            if field_type.code() == FieldTypeCode::NewDecimal && field_type.flen() > 65 {
                 return Err(ColumnAttributeError::TooBigPrecision {
                     precision: field_type.flen(),
                     maximum: 65,

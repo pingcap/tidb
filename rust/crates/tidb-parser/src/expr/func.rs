@@ -760,9 +760,7 @@ impl Parser {
         // function call, so `in(1)` is yacc's 1064 at the `in` token
         // itself (captured: line 1 column 9 near "in(1)"), not the
         // binder's 1582.
-        if self.peek().text.eq_ignore_ascii_case("in")
-            && self.peek().kind == TokenKind::Keyword
-        {
+        if self.peek().text.eq_ignore_ascii_case("in") && self.peek().kind == TokenKind::Keyword {
             return Err(self.err_here("IN is a reserved keyword and cannot be a function name"));
         }
         let origin_position = self.peek().offset;

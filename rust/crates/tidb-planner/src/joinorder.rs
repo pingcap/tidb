@@ -1658,7 +1658,6 @@ fn cum_cost_significantly_less(cost: f64, best_cost: f64) -> bool {
     best_cost - cost > scale * 1e-12
 }
 
-
 fn build_bushy_tree_from_dp(
     context: &RuleContext<'_>,
     detector: &mut ConflictDetector,

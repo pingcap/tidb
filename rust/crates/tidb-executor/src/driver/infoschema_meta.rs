@@ -1824,7 +1824,6 @@ const CLUSTER_PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         deflt: None,
         comment: None,
     },
-
     InfoColumn {
         name: "ID",
         tp: FieldTypeCode::LongLong,
@@ -1986,7 +1985,6 @@ const CLUSTER_PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
 ];
-
 
 /// Go `infoschema.tableMemoryUsageOpsHistoryCols`.
 const MEMORY_USAGE_OPS_HISTORY_COLUMNS: &[InfoColumn] = &[

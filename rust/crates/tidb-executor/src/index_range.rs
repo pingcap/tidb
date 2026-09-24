@@ -74,6 +74,10 @@ use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 pub(crate) struct RangeContext<'a> {
     pub max_size: i64,
     pub fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    /// The live statement context for folds the range builder performs.
+    /// go's detacher folds under `StmtCtx`, so its constant-materialization
+    /// warnings reach the client; a dry context drops them.
+    pub eval_ctx: Option<&'a dyn tidb_expr::Columns>,
 }
 
 impl Default for RangeContext<'_> {
@@ -81,6 +85,7 @@ impl Default for RangeContext<'_> {
         Self {
             max_size: 64 * 1024 * 1024,
             fallback_handler: None,
+            eval_ctx: None,
         }
     }
 }
@@ -2732,10 +2737,28 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
     struct Resolver<'a> {
         columns: &'a [RangeColumn],
         zone: &'a tidb_datatype::SessionTimeZone,
+        eval_ctx: Option<&'a dyn tidb_expr::Columns>,
     }
     impl tidb_expr::rewriter::ColumnResolver for Resolver<'_> {
         fn time_zone(&self) -> tidb_expr::SessionTimeZone {
             self.zone.clone()
+        }
+        fn fold_constant(
+            &self,
+            expression: &mut tidb_expr::expression::Expression,
+            mode: tidb_expr::ConstantFoldMode,
+        ) {
+            // go's detacher folds under `StmtCtx`: constant-materialization
+            // warnings (a JSON column coerced by a bit operator, say) reach
+            // the client from HERE, and the runtime then sees the folded
+            // constant without re-warning. A dry context dropped them.
+            if mode != tidb_expr::ConstantFoldMode::Disabled {
+                if let Some(ctx) = self.eval_ctx {
+                    tidb_expr::fold_constant_in_mode(expression, ctx, mode);
+                    return;
+                }
+            }
+            tidb_expr::constant_fold::derive_constant_null_flag(expression);
         }
         fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
             let name = path.last()?;
@@ -2753,6 +2776,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
     let resolver = Resolver {
         columns: schema_columns,
         zone,
+        eval_ctx: context.eval_ctx,
     };
     let rewritten = conjuncts
         .iter()
