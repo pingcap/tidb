@@ -1093,6 +1093,14 @@ pub trait QuerySession {
         Ok(None)
     }
 
+    /// Records a COM_QUERY parse failure on the session's warning buffer:
+    /// go `session.go:1955-1968` opens a FRESH warning context on a parse
+    /// failure and appends the syntax error into it, so `SHOW WARNINGS`
+    /// after a failed parse reports the error row and NOT the previous
+    /// statement's leftovers. Default: nothing, for sessions without a
+    /// warning buffer.
+    fn record_parse_failure(&mut self, _code: u16, _message: String) {}
+
     /// Returns the client-local path a statement asks the connection to read.
     fn local_infile_path(&mut self, _sql: &str) -> Result<Option<String>, SqlQueryError> {
         Ok(None)

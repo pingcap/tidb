@@ -1718,6 +1718,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         let parsed = match engine.parse_statement(sql) {
                             Ok(parsed) => parsed,
                             Err(error) => {
+                                // go session.go:1955-1968's parse-failure
+                                // half: fresh warning context + the error row
+                                // (see the session's own record_parse_failure).
+                                engine.record_parse_failure(
+                                    error.code,
+                                    error.message.clone(),
+                                );
                                 write_query_error_at(&mut output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;

@@ -2093,6 +2093,26 @@ impl Session {
         result
     }
 
+    /// Go `session.go:1955-1968`'s parse-failure half, for front ends that
+    /// parse through the `&self` [`StmtCtx::parse_statement`] door and
+    /// surface the error without entering the statement lifecycle: the
+    /// statement boundary opens a FRESH warning context (the previous
+    /// statement's entries go — captured: after a failing `mid()` the next
+    /// failed parse reports ONLY its own 1064) and the syntax error is
+    /// appended into it, so `SHOW WARNINGS` after a failed parse reports the
+    /// error row. Evaluation-origin errors never reach here.
+    pub fn record_parse_failure(&mut self, error: &DriverError) {
+        let reported = error.clone().to_mysql_error();
+        self.record_parse_failure_coded(reported.code, reported.message);
+    }
+
+    /// [`Self::record_parse_failure`] for front ends whose parse door
+    /// surfaces an already-classified `(code, message)` error.
+    pub fn record_parse_failure_coded(&mut self, code: u16, message: String) {
+        self.warnings.clear();
+        self.append_warning(WarningLevel::Error, code, message);
+    }
+
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
         self.publish_statement_status(result);
         if let Some(guard) = &self.process {
@@ -2117,7 +2137,16 @@ impl Session {
         }
         if let Err(error) = &result {
             let reported = error.clone().to_mysql_error();
-            self.append_warning(WarningLevel::Error, reported.code, reported.message);
+            // Go's wire behavior is asymmetric per error class (captured on
+            // the oracle with SHOW WARNINGS after each failure): 3140/3143/
+            // 1411 leave the statement warning buffer EMPTY, while 3146/
+            // 1305/1235 and every parse/plan/executor failure show their own
+            // error row there.
+            if !reported.is_from_evaluation()
+                || !matches!(reported.code, 3140 | 3143 | 1411 | 1690)
+            {
+                self.append_warning(WarningLevel::Error, reported.code, reported.message);
+            }
         }
     }
 }

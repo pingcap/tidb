@@ -4185,11 +4185,11 @@ impl tidb_session::binding::GlobalBindingWriter for InternalBindingWriter {
         operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_executor::DriverError>,
     ) -> Result<u64, tidb_executor::DriverError> {
         let to_driver = |error: SqlQueryError| {
-            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError {
-                code: error.code,
-                state: error.state,
-                message: error.message,
-            })
+            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
+                error.code,
+                error.state,
+                error.message,
+            ))
         };
         let factory = self.factory.upgrade().ok_or_else(|| {
             tidb_executor::DriverError::unsupported("global binding session factory is stopped")
@@ -6484,6 +6484,10 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    fn record_parse_failure(&mut self, code: u16, message: String) {
+        self.session.record_parse_failure_coded(code, message);
+    }
+
     fn metrics_resource_group(&self) -> &str {
         self.session.current_resource_group()
     }
@@ -6736,7 +6740,13 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        let stmt = self
+            .session
+            .parse_statement(sql)
+            .map_err(|error| {
+                self.session.record_parse_failure(&error);
+                map_error(error)
+            })?;
         self.execute_write_parsed(sql, &stmt)
     }
 
@@ -7288,7 +7298,13 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        let stmt = self
+            .session
+            .parse_statement(sql)
+            .map_err(|error| {
+                self.session.record_parse_failure(&error);
+                map_error(error)
+            })?;
         self.execute_parsed(sql, &stmt)
     }
 
