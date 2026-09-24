@@ -744,7 +744,7 @@ impl ColumnAttributeError {
                 "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '{column}')."
             ),
             Self::TooBigPrecision { precision, maximum } => format!(
-                "Too big precision {precision} specified for column '{column}'. Maximum is {maximum}."
+                "Too-big precision {precision} specified for '{column}'. Maximum is {maximum}."
             ),
             Self::DuplicatedValueInType { value, type_name } => format!(
                 "Column '{column}' has duplicated value '{value}' in {type_name}"
