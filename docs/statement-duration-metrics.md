@@ -16,7 +16,10 @@ client idle time between statements is not included. For result sets, the sample
 is recorded when the result set is closed, not when execution first returns it;
 pauses while a cursor/result set remains open can therefore contribute.
 Execution errors that reach statement finalization are included. Parsing or
-compilation failures that do not reach that hook are not included.
+compilation failures that do not reach that hook are not included. Parse timing
+is reset when starting a new parse and when entering binary prepared execution,
+so an earlier failed statement cannot contribute stale parse time to a later
+`COM_STMT_EXECUTE`. Text-protocol statements retain their own parsing time.
 
 For a multi-statement `COM_QUERY`, each executed statement contributes its own
 sample. Parsing is performed once for the entire request; its duration is included
