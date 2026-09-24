@@ -2459,6 +2459,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if ds.indexes.iter().any(|source_index| {
                     source_index.is_public
                         && !source_index.is_multi_valued
+                        && index_path_is_single_scan(
+                            ds,
+                            source_index,
+                            ctx.opt_prefix_index_single_scan,
+                        )
                         && source_index.columns.first().is_some_and(|first| {
                             ds.table_columns.get(first.offset).is_some_and(|table_column| {
                                 ds.pushed_down_conds.iter().any(|condition| {
