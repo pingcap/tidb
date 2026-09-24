@@ -39,6 +39,7 @@ go_library(
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/importinto/conflictedkv",
+        "//pkg/dxf/importinto/conflictrows",
         "//pkg/dxf/importinto/taskkey",
         "//pkg/dxf/operator",
         "//pkg/executor/importer",
@@ -118,6 +119,7 @@ go_test(
     flaky = True,
     shard_count = 38,
     deps = [
+        "//br/pkg/utils",
         "//pkg/config",
         "//pkg/config/configtypes",
         "//pkg/config/deploymode",

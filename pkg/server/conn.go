@@ -2115,6 +2115,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	if len(idxKeys) == 0 && len(rowKeys) == 0 {
 		return pointPlans, nil
 	}
+	// Multi-statement prefetch runs before handleStmt and can wait on pessimistic
+	// locks, so it needs its own connection-liveness probe.
+	clearConnectionAlive := cc.setSQLKillerConnectionAlive()
+	defer clearConnectionAlive()
 	snapshot := txn.GetSnapshot()
 	setResourceGroupTaggerForMultiStmtPrefetch(snapshot, sqls)
 	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
@@ -2133,8 +2137,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		allKeys := append(rowKeys, idxKeys...)
 		err = executor.LockKeys(ctx, cc.getCtx(), vars.LockWaitTimeout, allKeys...)
 		if err != nil {
+			if exeerrors.ErrQueryInterrupted.Equal(err) {
+				return nil, err
+			}
 			// suppress the lock error, we are not going to handle it here for simplicity.
-			err = nil
 			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
 		}
 	} else {
@@ -2193,23 +2199,46 @@ func (cc *clientConn) cancelDispatch() {
 	}
 }
 
-func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
-	if !sessVars.IsAutocommit() || sessVars.InTxn() {
-		return false
+func shouldInstallConnectionAlive(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+unwrapStmt:
+	for {
+		switch wrappedStmt := stmt.(type) {
+		case *ast.ExecuteStmt:
+			prepared, err := plannercore.GetPreparedStmt(wrappedStmt, sessVars)
+			if err != nil || prepared.PreparedAst == nil {
+				return false
+			}
+			stmt = prepared.PreparedAst.Stmt
+		case *ast.TraceStmt:
+			stmt = wrappedStmt.Stmt
+		case *ast.ExplainStmt:
+			if !wrappedStmt.Analyze {
+				return true
+			}
+			stmt = wrappedStmt.Stmt
+		default:
+			break unwrapStmt
+		}
 	}
-	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
-		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
-		if err != nil || prepared.PreparedAst == nil {
+
+	switch stmt := stmt.(type) {
+	case *ast.BRIEStmt:
+		switch stmt.Kind {
+		case ast.BRIEKindBackup, ast.BRIEKindRestore:
+			// BACKUP and RESTORE are synchronous operations that can run for a long time.
+			// Avoid unexpectedly killing them when client keepalive is not configured properly.
 			return false
 		}
-		stmt = prepared.PreparedAst.Stmt
-	}
-	switch stmt.(type) {
-	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
-		return true
-	default:
+	case ast.DDLNode, *ast.AnalyzeTableStmt, *ast.LoadDataStmt, *ast.ImportIntoStmt:
+		// Avoid unexpectedly killing long-running operations when client keepalive
+		// is not configured properly.
+		return false
+	case *ast.CommitStmt, *ast.RollbackStmt:
+		// The corresponding client-go commit and rollback/cleanup actions are
+		// non-interruptible, so keep SQL transaction finalization non-interruptible too.
 		return false
 	}
+	return true
 }
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
@@ -2235,8 +2264,7 @@ func (cc *clientConn) handleStmt(
 	}
 
 	clearConnectionAlive := func() {}
-	checkingConnectionAlive := shouldInstallConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
-	if checkingConnectionAlive {
+	if shouldInstallConnectionAlive(stmt, cc.ctx.GetSessionVars()) {
 		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 		defer clearConnectionAlive()
 	}
@@ -2273,10 +2301,6 @@ func (cc *clientConn) handleStmt(
 	if rs != nil {
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
-		}
-		if !checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
 		}
 		cc.ctx.GetSessionVars().SQLKiller.SetFinishFunc(
 			func() {
@@ -2533,25 +2557,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	req := rs.NewChunk(cc.ctx.GetSessionVars().GetChunkAllocator())
 	gotColumnInfo := false
 	var columns []*column.Info
-	columnCount := 0
 	firstNext := true
 	validNextCount := 0
 	var start time.Time
 	stmtDetail := stmtExecDetailsFromContext(ctx)
-	totalRows := 0
-	defer func() {
-		cells := int64(totalRows) * int64(columnCount)
-		if cells <= 0 {
-			return
-		}
-		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-		if ruv2Metrics == nil {
-			ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
-		}
-		if ruv2Metrics != nil {
-			ruv2Metrics.AddResultChunkCells(cells)
-		}
-	}()
 	defer func() {
 		finishWriteSQLRespDuration(stmtDetail, &start)
 	}()
@@ -2580,7 +2589,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns = rs.Columns()
-			columnCount = len(columns)
 			start = beginWriteSQLRespDuration(stmtDetail)
 			if err = cc.writeColumnInfo(columns); err != nil {
 				return false, err
@@ -2598,7 +2606,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if rowCount == 0 {
 			break
 		}
-		totalRows += rowCount
 		validNextCount++
 		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
@@ -2644,12 +2651,8 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start      time.Time
 	)
 	data := cc.alloc.AllocWithLen(4, 1024)
-	writtenRows := 0
 	stmtDetail = stmtExecDetailsFromContext(ctx)
-	defer func() {
-		cells := int64(writtenRows) * int64(len(rs.Columns()))
-		resultset.ReportCursorRUV2Delta(rs, cells)
-	}()
+	defer resultset.ReportCursorRUV2Delta(rs)
 	defer func() {
 		finishWriteSQLRespDuration(stmtDetail, &start)
 	}()
@@ -2668,7 +2671,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
-		writtenRows++
 
 		iter.Next(ctx)
 	}

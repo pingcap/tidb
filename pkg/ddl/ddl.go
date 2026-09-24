@@ -171,9 +171,9 @@ const (
 )
 
 var (
-	// EnableSplitTableRegion is a flag to decide whether to split a new region for
-	// a newly created table. It takes effect only if the Storage supports split
-	// region.
+	// EnableSplitTableRegion controls whether to split a new Region for a newly
+	// created table without pre-split configuration or Region split policies. It
+	// takes effect only if the Storage supports splitting Regions.
 	EnableSplitTableRegion = uint32(0)
 )
 
@@ -200,6 +200,8 @@ type DDL interface {
 	GetID() string
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
+	// StorageClassTransitionStatuses returns active explicit storage-class operation statuses.
+	StorageClassTransitionStatuses() []StorageClassTransitionStatus
 }
 
 type jobSubmitResult struct {
@@ -265,12 +267,13 @@ type ddl struct {
 	wg tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 
 	*ddlCtx
-	sessPool          *sess.Pool
-	delRangeMgr       delRangeManager
-	enableTiFlashPoll *atomicutil.Bool
-	sysTblMgr         systable.Manager
-	minJobIDRefresher *systable.MinJobIDRefresher
-	eventPublishStore notifier.Store
+	sessPool                      *sess.Pool
+	delRangeMgr                   delRangeManager
+	enableTiFlashPoll             *atomicutil.Bool
+	sysTblMgr                     systable.Manager
+	minJobIDRefresher             *systable.MinJobIDRefresher
+	eventPublishStore             notifier.Store
+	storageClassTransitionManager *storageClassTransitionManager
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -794,6 +797,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		eventPublishStore: opt.EventPublishStore,
 	}
+	d.storageClassTransitionManager = newStorageClassTransitionManager(d)
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
@@ -953,7 +957,7 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-// this detection is only used for Classic kernel. for NextGen(TiDB-X), the job
+// this detection is only used for Classic kernel. for NextGen(TiDB X), the job
 // version is always started with V2, no need to detect kernel version.
 //
 // detect versions of all TiDB instances and choose a job version to use, rules:

@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
@@ -36,10 +38,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -61,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -174,6 +179,104 @@ func TestVerifyChecksum(t *testing.T) {
 	localChecksum = verify.MakeKVChecksum(1, 2, 1)
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), getRemoteChecksumFn)
 	require.NoError(t, err)
+}
+
+type testKitStoreHelper struct {
+	store kv.Storage
+}
+
+func (h testKitStoreHelper) GetTS(context.Context) (physical, logical int64, err error) {
+	return 12345, 67890, nil
+}
+
+func (h testKitStoreHelper) GetTiKVCodec() tikv.Codec {
+	return h.store.GetCodec()
+}
+
+func TestLocalBackendSortedWriterWithTestKitTable(t *testing.T) {
+	ctx := context.Background()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Without a primary key, the table uses the hidden, non-clustered row ID.
+	tk.MustExec("create table t (v int)")
+
+	tableInfo, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	lightningConfig := config.NewConfig()
+	lightningConfig.TikvImporter.Backend = config.BackendLocal
+	lightningConfig.TikvImporter.SortedKVDir = filepath.Join(t.TempDir(), "sorted-kv")
+	lightningConfig.TikvImporter.RangeConcurrency = 1
+	lightningConfig.TikvImporter.EngineMemCacheSize = config.DefaultEngineMemCacheSize
+	lightningConfig.TikvImporter.LocalWriterMemCacheSize = config.DefaultLocalWriterMemCacheSize
+	lightningConfig.Conflict.Strategy = config.ReplaceOnDup
+	backendConfig := ingestctrl.NewBackendConfig(lightningConfig, 1000, "", "", "", 0)
+	localBackend, err := ingestctrl.NewBackendForTest(ctx, backendConfig, testKitStoreHelper{store: store})
+	require.NoError(t, err)
+	backendClosed := false
+	t.Cleanup(func() {
+		if !backendClosed {
+			localBackend.Close()
+		}
+	})
+
+	engineConfig := &backend.EngineConfig{
+		TableInfo: &importdef.TableInfo{
+			ID:   tableInfo.ID,
+			DB:   "test",
+			Name: "t",
+			Core: tableInfo,
+		},
+	}
+	engineManager := backend.MakeEngineManager(localBackend)
+	openedEngine, err := engineManager.OpenEngine(ctx, engineConfig, "`test`.`t`", 1)
+	require.NoError(t, err)
+
+	writerConfig := &backend.LocalWriterConfig{}
+	writerConfig.Local.IsKVSorted = true
+	writer, err := openedEngine.LocalWriter(ctx, writerConfig)
+	require.NoError(t, err)
+
+	makeRow := func(id int64) []common.KvPair {
+		return []common.KvPair{{
+			Key:   tablecodec.EncodeRowKeyWithHandle(tableInfo.ID, kv.IntHandle(id)),
+			Val:   make([]byte, 96*1024),
+			RowID: common.EncodeIntRowID(id),
+		}}
+	}
+
+	// A large row can make the importer deliver one KV per batch. Keep the
+	// encoded keys the same length so the next batch overwrites the previous
+	// last key at the same offset in Writer.sortedKeyBuf.
+	for id := int64(1); id <= 3; id++ {
+		require.NoError(t, writer.AppendRows(ctx, nil, backendkv.MakeRowsFromKvPairs(makeRow(id))))
+	}
+	flushStatus, err := writer.Close(ctx)
+	require.NoError(t, err)
+	require.Eventually(t, flushStatus.Flushed, time.Second, time.Millisecond)
+
+	_, err = openedEngine.Close(ctx)
+	require.NoError(t, err)
+	localBackend.Close()
+	backendClosed = true
+
+	// Close the engine before opening its Pebble database read-only. The engine
+	// metadata key is outside the normal KV key range, so the iterator count is
+	// the number of data KVs written by the local backend.
+	dbPath := filepath.Join(backendConfig.LocalStoreDir, openedEngine.GetEngineUUID().String())
+	db, err := pebble.Open(dbPath, &pebble.Options{ReadOnly: true})
+	require.NoError(t, err)
+	iter, err := db.NewIter(&pebble.IterOptions{LowerBound: []byte{1}})
+	require.NoError(t, err)
+	kvCount := 0
+	for valid := iter.First(); valid; valid = iter.Next() {
+		kvCount++
+	}
+	require.NoError(t, iter.Error())
+	require.NoError(t, iter.Close())
+	require.NoError(t, db.Close())
+	require.Equal(t, 3, kvCount)
 }
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {

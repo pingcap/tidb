@@ -43,8 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -261,6 +259,12 @@ func checkDropColumn(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *mod
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
+	if colInfo.State == model.StatePublic {
+		if err = checkDropColumnWithMLogBaseConstraint(jobCtx.metaMut, job.SchemaID, tblInfo, colName); err != nil {
+			job.State = model.JobStateCancelled
+			return nil, nil, nil, false, errors.Trace(err)
+		}
+	}
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
@@ -273,6 +277,32 @@ func checkDropColumn(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *mod
 	}
 	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
 	return tblInfo, colInfo, idxInfos, false, nil
+}
+
+func checkDropColumnWithMLogBaseConstraint(
+	t *meta.Mutator,
+	schemaID int64,
+	tblInfo *model.TableInfo,
+	colName ast.CIStr,
+) error {
+	if tblInfo.MaterializedViewBase == nil || tblInfo.MaterializedViewBase.MLogID == 0 {
+		return nil
+	}
+
+	mlogTableInfo, err := t.GetTable(schemaID, tblInfo.MaterializedViewBase.MLogID)
+	if err != nil || mlogTableInfo == nil || mlogTableInfo.MaterializedViewLog == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"ALTER TABLE on base table with invalid materialized view log metadata",
+		)
+	}
+	for _, mlogCol := range mlogTableInfo.MaterializedViewLog.Columns {
+		if mlogCol.L == colName.L {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("ALTER TABLE on base table column %s referenced by materialized view log", colName.L),
+			)
+		}
+	}
+	return nil
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName ast.CIStr) error {
@@ -812,8 +842,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if w.checksumNeeded {
 		checksum = rowcodec.RawChecksum{Handle: handle}
 	}
-	enc := codec.NewEncoder(collate.NewCollationEnabled())
-	newRowVal, err := tablecodec.EncodeRow(enc, sysTZ, newRow, newColumnIDs, nil, nil, checksum, rd)
+	newRowVal, err := tablecodec.EncodeRow(sysTZ, newRow, newColumnIDs, nil, nil, checksum, rd)
 	err = ec.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)

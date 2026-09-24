@@ -89,12 +89,17 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.AllDroppedTableIDs), nil
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
 		args, err := model.GetFinishedDropTableArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		return len(args.OldPartitionIDs) + 1, nil
+	case model.ActionCreateMaterializedView:
+		if job.IsRollbackDone() && job.TableID != 0 {
+			return 1, nil
+		}
+		return 0, nil
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		args, err := model.GetFinishedTruncateTableArgs(job)
 		if err != nil {
@@ -238,6 +243,22 @@ func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *mod
 			}
 		case model.ActionCreateTable:
 			if _, ok := st.(*ast.CreateTableStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateMaterializedView:
+			if _, ok := st.(*ast.CreateMaterializedViewStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateMaterializedViewLog:
+			if _, ok := st.(*ast.CreateMaterializedViewLogStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionDropMaterializedView:
+			if _, ok := st.(*ast.DropMaterializedViewStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionDropMaterializedViewLog:
+			if _, ok := st.(*ast.DropMaterializedViewLogStmt); !ok {
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		case model.ActionCreateSchema:

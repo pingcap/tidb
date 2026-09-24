@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 // ShowSlowExec represents the executor of showing the slow queries.
@@ -82,6 +83,10 @@ func (e *ShowSlowExec) Next(_ context.Context, req *chunk.Chunk) error {
 		}
 		req.AppendString(12, slow.Digest)
 		req.AppendString(13, slow.SessAlias)
+		iaStats := execdetails.GetIARemoteReadSegmentStats(slow.Detail.ScanDetail)
+		req.AppendUint64(14, iaStats.Count)
+		req.AppendUint64(15, iaStats.Bytes)
+		req.AppendFloat64(16, iaStats.WaitTime.Seconds())
 		e.cursor++
 	}
 	return nil

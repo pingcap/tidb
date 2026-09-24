@@ -65,8 +65,6 @@ type BuildOptions struct {
 	AllowCastArray bool
 	// TargetFieldType indicates to cast the expression to the target field type if it is not nil
 	TargetFieldType *types.FieldType
-	// UseNewCollate whether to use new collate when building expression.
-	UseNewCollate bool
 }
 
 // BuildOption is a function to apply optional settings
@@ -104,12 +102,8 @@ func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 	}
 }
 
-// WithUseNewCollate fixes the collation mode used while building expressions
-// that must stay consistent with table or index encoding created earlier.
-func WithUseNewCollate(useNewCollate bool) BuildOption {
-	return func(options *BuildOptions) {
-		options.UseNewCollate = useNewCollate
-	}
+func getCollator(ctx BuildContext, collation string) collate.Collator {
+	return collate.GetCollatorWithCollate(ctx.NewCollationEnabled(), collation)
 }
 
 // BuildSimpleExpr builds a simple expression from an ast node.
@@ -1106,18 +1100,11 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.Tab
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
-	return ColumnInfos2ColumnsAndNamesWithCollate(ctx, dbName, tblName, colInfos, tblInfo, collate.NewCollationEnabled())
-}
-
-// ColumnInfos2ColumnsAndNamesWithCollate converts the ColumnInfo to the *Column
-// and NameSlice with a fixed collation mode.
-func ColumnInfos2ColumnsAndNamesWithCollate(
+func ColumnInfos2ColumnsAndNames(
 	ctx BuildContext,
 	dbName, tblName ast.CIStr,
 	colInfos []*model.ColumnInfo,
 	tblInfo *model.TableInfo,
-	useNewCollate bool,
 ) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
@@ -1161,8 +1148,7 @@ func ColumnInfos2ColumnsAndNamesWithCollate(
 			}
 			e, err := BuildSimpleExpr(ctx, expr,
 				WithInputSchemaAndNames(mockSchema, names, tblInfo),
-				WithAllowCastArray(true),
-				WithUseNewCollate(useNewCollate))
+				WithAllowCastArray(true))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

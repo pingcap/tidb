@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
-	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -285,7 +284,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 
 	// first, try to clear the left cursor if there is one
 	if useCursor && stmt.GetCursorActive() {
-		resultset.ReportCursorRUV2Delta(stmt.GetResultSet(), 0)
+		resultset.ReportCursorRUV2Delta(stmt.GetResultSet())
 		if stmt.GetResultSet() != nil && stmt.GetResultSet().GetRowIterator() != nil {
 			stmt.GetResultSet().GetRowIterator().Close()
 		}
@@ -314,13 +313,9 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	clearConnectionAlive := func() {}
-	checkingConnectionAlive := false
-	if planCacheStmt != nil && planCacheStmt.PreparedAst != nil {
-		checkingConnectionAlive = shouldInstallConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
-		if checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
-		}
+	if shouldInstallConnectionAlive(execStmt, vars) {
+		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
 	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if rs == nil || err != nil {
@@ -328,10 +323,6 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	var lazy bool
 	if rs != nil {
-		if !checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
-		}
 		defer func() {
 			if !lazy {
 				rs.Close()
@@ -474,27 +465,15 @@ func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedSt
 
 	vars := (&cc.ctx).GetSessionVars()
 	crs := resultset.WrapWithLazyCursor(drs, vars.InitChunkSize, vars.MaxChunkSize)
-	// The execute phase may already have accumulated RU before the first cursor fetch arrives.
-	// Seed the tracker from the current totals so FETCH/CLOSE only reports post-execute deltas.
 	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
 	return true, err
 }
 
-func (cc *clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
+func (*clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
 	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 	ruDetails, _ := ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
-	if ruv2Metrics == nil && ruDetails == nil {
-		return nil
-	}
-
-	var reporter resourcegroup.ConsumptionReporter
-	var resourceGroupName string
-	if dctx := cc.ctx.GetDistSQLCtx(); dctx != nil {
-		reporter = dctx.RUConsumptionReporter
-		resourceGroupName = dctx.ResourceGroupName
-	}
-	return resultset.NewCursorRUV2Tracker(reporter, resourceGroupName, ruv2Metrics, ruDetails, cc.ctx.GetSessionVars().RUV2Weights())
+	return resultset.NewCursorRUV2Tracker(ruv2Metrics, ruDetails)
 }
 
 // writeExecuteResultWithCursor will store the `ResultSet` in `stmt` and send the column info to the client. The logic is shared between

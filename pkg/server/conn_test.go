@@ -34,6 +34,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -43,6 +44,10 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -53,12 +58,15 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -68,6 +76,7 @@ import (
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestMatchIdentityWithVariantsStarter(t *testing.T) {
@@ -1116,6 +1125,130 @@ func TestConnExecutionTimeout(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestConnDMLExecutionTimeout(t *testing.T) {
+	const dmlTimeout = 500
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("create table dml_timeout (id int primary key)")
+
+	srv := CreateMockServer(t, store)
+	defer srv.Close()
+	go dom.ExpensiveQueryHandle().SetSessionManager(srv).Run()
+
+	runBlockedRPC := func(
+		t *testing.T,
+		conn MockConn,
+		sql string,
+		target tikvrpc.CmdType,
+		rpcResultAfterTimeout func(*tikvrpc.Response, error) (*tikvrpc.Response, error),
+	) error {
+		t.Helper()
+		require.NoError(t, failpoint.Enable("tikvclient/onRPCFinishedHook", "return"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("tikvclient/onRPCFinishedHook"))
+		}()
+
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var enteredOnce, releaseOnce sync.Once
+		releaseHook := func() {
+			releaseOnce.Do(func() { close(release) })
+		}
+		defer releaseHook()
+
+		hook := func(req *tikvrpc.Request, resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
+			if req.Type != target {
+				return resp, rpcErr
+			}
+			// Block the primary commit response to exercise classic 2PC outcome handling.
+			if target == tikvrpc.CmdCommit && req.Commit().GetCommitRole() != kvrpcpb.CommitRole_Primary {
+				return resp, rpcErr
+			}
+			enteredOnce.Do(func() { close(entered) })
+			<-release
+			return rpcResultAfterTimeout(resp, rpcErr)
+		}
+		ctx, cancel := context.WithCancel(context.WithValue(context.Background(), "onRPCFinishedHook", hook))
+		defer cancel()
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- conn.Dispatch(ctx, append([]byte{mysql.ComQuery}, sql...))
+		}()
+
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s RPC was not reached", target)
+		}
+		require.Eventually(t, func() bool {
+			pi := conn.Context().ShowProcess()
+			return pi != nil && pi.MaxExecutionTime == dmlTimeout &&
+				conn.Context().GetSessionVars().SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded
+		}, 5*time.Second, 10*time.Millisecond)
+
+		// killQuery sets the SQLKiller signal before canceling the dispatch context.
+		// Cancel the parent explicitly so the hook result is observed with a canceled
+		// request context even if the test sees the signal in that narrow interval.
+		cancel()
+		releaseHook()
+		select {
+		case err := <-errCh:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("statement did not return after releasing the RPC hook")
+		}
+		return nil
+	}
+	returnCanceled := func(*tikvrpc.Response, error) (*tikvrpc.Response, error) {
+		return nil, context.Canceled
+	}
+	returnOriginal := func(resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
+		return resp, rpcErr
+	}
+
+	configureConn := func(t *testing.T) (MockConn, *testkit.TestKit) {
+		t.Helper()
+		conn := CreateMockConn(t, srv)
+		tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_1pc = OFF")
+		tk.MustExec("set tidb_enable_async_commit = OFF")
+		tk.MustExec("set tidb_dml_max_execution_time = 500")
+		return conn, tk
+	}
+
+	t.Run("explicit commit", func(t *testing.T) {
+		conn, tk := configureConn(t)
+		defer conn.Close()
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into dml_timeout values (2)")
+		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdPrewrite, returnCanceled)
+		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
+
+	t.Run("autocommit commit succeeds after timeout", func(t *testing.T) {
+		conn, _ := configureConn(t)
+		defer conn.Close()
+		err := runBlockedRPC(t, conn, "insert into dml_timeout values (4)", tikvrpc.CmdCommit, returnOriginal)
+		require.NoError(t, err)
+		setup.MustQuery("select id from dml_timeout where id = 4").Check(testkit.Rows("4"))
+		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
+
+	t.Run("explicit commit result undetermined after timeout", func(t *testing.T) {
+		conn, tk := configureConn(t)
+		defer conn.Close()
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into dml_timeout values (5)")
+		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdCommit, returnCanceled)
+		require.True(t, terror.ErrResultUndetermined.Equal(err), "%v", err)
+		setup.MustQuery("select id from dml_timeout where id = 5").Check(testkit.Rows("5"))
+	})
+}
+
 func TestShutDown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -1313,6 +1446,52 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+
+	t.Run("scalar followed by a prebuilt PointGet", func(t *testing.T) {
+		tk.MustExec("insert into prefetch values (1, 1, 10), (2, 2, 20)")
+		tk.MustExec("begin optimistic")
+		defer tk.MustExec("rollback")
+		tk.MustQuery("select c from prefetch where a = 1 and b = 1").Check(testkit.Rows("10"))
+		var response bytes.Buffer
+		cc.pkt = internal.NewPacketIOForTest(bufio.NewWriter(&response))
+		var registrySizes, scalarTreeCounts []int
+		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+			vars := tk.Session().GetSessionVars()
+			plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+			require.True(t, ok)
+			prebuilt, ok := tk.Session().Value(plannercore.PointPlanKey).(plannercore.PointPlanVal)
+			require.True(t, ok, "handleQuery must supply the prefetched plan entry")
+			if len(registrySizes) == 0 {
+				require.Nil(t, prebuilt.Plan)
+			} else {
+				require.IsType(t, &physicalop.PointGetPlan{}, plan)
+				require.Same(t, prebuilt.Plan, plan, "the second statement must use the prebuilt plan")
+			}
+			registrySizes = append(registrySizes, len(vars.MapScalarSubQ))
+			scalarTreeCounts = append(scalarTreeCounts, len(plannercore.FlattenPhysicalPlan(plan, true).ScalarSubQueries))
+		})
+		defer tk.Session().ClearValue(breakpoint.NotifyBreakPointFuncKey)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+		err := cc.handleQuery(ctx, "select (select sum(c) from prefetch);select c from prefetch where a = 2 and b = 2;")
+		require.NoError(t, err)
+		t.Logf("multi-statement registry sizes=%v flattened scalar trees=%v", registrySizes, scalarTreeCounts)
+
+		// Each one-column result has a header, column definition, EOF, row and EOF.
+		packets := internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: response}))
+		for _, expected := range []string{"30", "20"} {
+			for range 3 {
+				_, err = packets.ReadPacket()
+				require.NoError(t, err)
+			}
+			row, err := packets.ReadPacket()
+			require.NoError(t, err)
+			require.Equal(t, append([]byte{byte(len(expected))}, expected...), row)
+			_, err = packets.ReadPacket()
+			require.NoError(t, err)
+		}
+		require.Equal(t, []int{1, 0}, scalarTreeCounts)
+		require.Equal(t, []int{1, 0}, registrySizes)
+	})
 }
 
 func TestPrefetchBatchPointGet(t *testing.T) {

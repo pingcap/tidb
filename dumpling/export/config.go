@@ -78,6 +78,7 @@ const (
 	flagCsvLineTerminator        = "csv-line-terminator"
 	flagOutputFilenameTemplate   = "output-filename-template"
 	flagCompleteInsert           = "complete-insert"
+	flagIncludeGeneratedColumns  = "include-generated-columns"
 	flagParams                   = "params"
 	flagReadTimeout              = "read-timeout"
 	flagTransactionalConsistency = "transactional-consistency"
@@ -149,6 +150,11 @@ type Config struct {
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
 	CompressType             compressedio.CompressType
+
+	// IncludeGeneratedColumns controls which generated column values are dumped
+	// into data files. Schema files are not affected. An empty value means
+	// GeneratedColumnsNone.
+	IncludeGeneratedColumns GeneratedColumnsMode
 
 	Host     string
 	Port     int
@@ -274,6 +280,7 @@ func DefaultConfig() *Config {
 		PosAfterConnect:          false,
 		CollationCompatible:      LooseCollationCompatible,
 		CsvOutputDialect:         CSVDialectDefault,
+		IncludeGeneratedColumns:  GeneratedColumnsNone,
 		SpecifiedTables:          false,
 		PromFactory:              promutil.NewDefaultFactory(),
 		PromRegistry:             promutil.NewDefaultRegistry(),
@@ -385,9 +392,9 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringArray(
 		flagColumnFilter,
 		nil,
-		`Inline TOML column filter rule for data output projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Unmatched tables are dumped with all columns; column rules are case-insensitive. Mutually exclusive with --column-filter-file. Requires --no-schemas/-m and cannot be used with --sql`,
+		`Inline TOML column filter rule for data and schema projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Unmatched tables are dumped with all columns; column rules are case-insensitive. Mutually exclusive with --column-filter-file and cannot be used with --sql`,
 	)
-	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data output projection. Unmatched tables are dumped with all columns; column rules are case-insensitive. Requires --no-schemas/-m and cannot be used with --sql")
+	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data and schema projection. Unmatched tables are dumped with all columns; column rules are case-insensitive. Cannot be used with --sql")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
 	flags.Uint64(flagTidbMemQuotaQuery, UnspecifiedSize, "The maximum memory limit for a single SQL statement, in bytes.")
@@ -399,6 +406,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
 	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r or --filesize/-F in split mode, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
+	flags.String(flagIncludeGeneratedColumns, string(GeneratedColumnsNone), "Which generated column values to include in data files: none, stored. Only supported with --filetype csv or parquet, and can't be used with --sql, --where, --column-filter, --column-filter-file or --no-data. Schema files are unchanged, so the output may not be importable back into TiDB/MySQL as-is")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
 	flags.Duration(flagReadTimeout, 15*time.Minute, "I/O read timeout for db connection.")
@@ -563,6 +571,14 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.CompleteInsert, err = flags.GetBool(flagCompleteInsert)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	includeGeneratedColumns, err := flags.GetString(flagIncludeGeneratedColumns)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.IncludeGeneratedColumns, err = parseGeneratedColumnsMode(includeGeneratedColumns)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -737,7 +753,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	for k, v := range params {
-		conf.SessionParams[k] = v
+		conf.SessionParams[strings.ToLower(k)] = v
 	}
 
 	err = conf.BackendOptions.ParseFromFlags(pflag.CommandLine)
@@ -751,9 +767,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 func validateColumnFilterOptions(conf *Config, flagName string) error {
 	if conf.SQL != "" {
 		return errors.Errorf("can't specify both --sql and --%s at the same time", flagName)
-	}
-	if !conf.NoSchemas {
-		return errors.Errorf("--%s requires --no-schemas/-m", flagName)
 	}
 	return nil
 }
@@ -1059,6 +1072,67 @@ func adjustFileFormat(conf *Config) error {
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}
 	return nil
+}
+
+// GeneratedColumnsMode is the value of --include-generated-columns.
+type GeneratedColumnsMode string
+
+const (
+	// GeneratedColumnsNone skips the values of all generated columns.
+	GeneratedColumnsNone GeneratedColumnsMode = "none"
+	// GeneratedColumnsStored includes the values of STORED generated columns.
+	GeneratedColumnsStored GeneratedColumnsMode = "stored"
+	// GeneratedColumnsVirtual is reserved for including VIRTUAL generated columns.
+	GeneratedColumnsVirtual GeneratedColumnsMode = "virtual"
+	// GeneratedColumnsAll is reserved for including all generated columns.
+	GeneratedColumnsAll GeneratedColumnsMode = "all"
+)
+
+func parseGeneratedColumnsMode(value string) (GeneratedColumnsMode, error) {
+	mode := GeneratedColumnsMode(strings.ToLower(strings.TrimSpace(value)))
+	switch mode {
+	case "", GeneratedColumnsNone:
+		return GeneratedColumnsNone, nil
+	case GeneratedColumnsStored:
+		return mode, nil
+	case GeneratedColumnsVirtual, GeneratedColumnsAll:
+		return "", errors.Errorf("--%s=%s is not supported yet, supported values: none, stored", flagIncludeGeneratedColumns, mode)
+	default:
+		return "", errors.Errorf("invalid --%s value '%s', supported values: none, stored", flagIncludeGeneratedColumns, value)
+	}
+}
+
+// validateIncludeGeneratedColumns must run after adjustFileFormat resolves the file type.
+func validateIncludeGeneratedColumns(conf *Config) error {
+	mode, err := parseGeneratedColumnsMode(string(conf.IncludeGeneratedColumns))
+	if err != nil {
+		return err
+	}
+	conf.IncludeGeneratedColumns = mode
+	if mode == GeneratedColumnsNone {
+		return nil
+	}
+	option := fmt.Sprintf("--%s=%s", flagIncludeGeneratedColumns, mode)
+	switch {
+	case conf.SQL != "":
+		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagSQL)
+	case conf.Where != "":
+		// Stored generated columns become chunk key candidates, and the chunk
+		// splitter doesn't cover NULL chunk keys when --where is set.
+		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagWhere)
+	case len(conf.columnFilter.Filters) > 0:
+		return errors.Errorf("can't specify %s with --%s or --%s", option, flagColumnFilter, flagColumnFilterFile)
+	case conf.NoData:
+		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagNoData)
+	case conf.FileType == FileFormatSQLTextString:
+		// INSERT statements that assign values to generated columns can't be imported back.
+		return errors.Errorf("%s is only supported with --%s csv or parquet", option, flagFiletype)
+	}
+	return nil
+}
+
+func (conf *Config) includeStoredGeneratedColumns() bool {
+	return conf.IncludeGeneratedColumns == GeneratedColumnsStored
 }
 
 func matchMysqlBugversion(info version.ServerInfo) bool {

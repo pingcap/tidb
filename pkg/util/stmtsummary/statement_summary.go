@@ -199,6 +199,7 @@ type stmtSummaryStats struct {
 	maxRocksdbBlockReadCount       uint64
 	sumRocksdbBlockReadByte        uint64
 	maxRocksdbBlockReadByte        uint64
+	iaExecCount                    int64
 	sumIARemoteReadSegmentCount    uint64
 	maxIARemoteReadSegmentCount    uint64
 	sumIARemoteReadSegmentSize     uint64
@@ -309,7 +310,6 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
-	TotalRUV2         float64
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
@@ -482,9 +482,11 @@ func (ssMap *stmtSummaryByDigestMap) clearHistory() {
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
 		ssbd.Lock()
-		newHistory := list.New()
-		newHistory.PushFront(ssbd.history.Front().Value)
-		ssbd.history = newHistory
+		if ssbd.history.Len() > 0 {
+			newHistory := list.New()
+			newHistory.PushBack(ssbd.history.Back().Value)
+			ssbd.history = newHistory
+		}
 		ssbd.Unlock()
 	}
 }
@@ -617,20 +619,19 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range sei.StmtCtx.Tables {
+	var tableNames strings.Builder
+	for _, value := range sei.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(sei.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
+		if tableNames.Len() > 0 {
+			tableNames.WriteByte(',')
 		}
+		tableNames.WriteString(strings.ToLower(value.DB))
+		tableNames.WriteByte('.')
+		tableNames.WriteString(strings.ToLower(value.Table))
 	}
-	tableNames := buffer.String()
 
 	ssbd.cumulative = *newStmtSummaryStats(sei)
 
@@ -644,7 +645,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.planDigest = planDigest
 	ssbd.stmtType = sei.StmtCtx.StmtType
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
-	ssbd.tableNames = tableNames
+	ssbd.tableNames = tableNames.String()
 	ssbd.history = list.New()
 	ssbd.initialized = true
 	ssbd.bindingSQL, ssbd.bindingDigest = sei.LazyInfo.GetBindingSQLAndDigest()
@@ -711,11 +712,12 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChe
 		return nil
 	}
 
-	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
-	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
+	ssElements := make([]*stmtSummaryByDigestElement, 0, min(ssbd.history.Len(), historySize))
+	for listElement := ssbd.history.Back(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Prev() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)
 		ssElements = append(ssElements, ssElement)
 	}
+	slices.Reverse(ssElements)
 	return ssElements
 }
 
@@ -877,6 +879,9 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 			ssStats.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
 		iaStats := execdetails.GetIARemoteReadSegmentStats(sei.ExecDetail.ScanDetail)
+		if iaStats.Count > 0 {
+			ssStats.iaExecCount++
+		}
 		ssStats.sumIARemoteReadSegmentCount += iaStats.Count
 		if iaStats.Count > ssStats.maxIARemoteReadSegmentCount {
 			ssStats.maxIARemoteReadSegmentCount = iaStats.Count
@@ -1017,7 +1022,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	ssStats.StmtNetworkTrafficSummary.Add(sei.TiKVExecDetails)
 
 	// request-units
-	ssStats.StmtRUSummary.Add(sei.RUDetail, sei.TotalRUV2)
+	ssStats.StmtRUSummary.Add(sei.RUDetail)
 
 	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
 	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
@@ -1120,12 +1125,10 @@ type StmtRUSummary struct {
 	MaxRRU            float64       `json:"max_rru"`
 	MaxWRU            float64       `json:"max_wru"`
 	MaxRUWaitDuration time.Duration `json:"max_ru_wait_duration"`
-	SumRUV2           float64       `json:"sum_ruv2"`
-	MaxRUV2           float64       `json:"max_ruv2"`
 }
 
 // Add add a new sample value to the ru summary record.
-func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 float64) {
+func (s *StmtRUSummary) Add(info *util.RUDetails) {
 	if info != nil {
 		rru := info.RRU()
 		s.SumRRU += rru
@@ -1143,10 +1146,6 @@ func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 float64) {
 			s.MaxRUWaitDuration = ruWaitDur
 		}
 	}
-	s.SumRUV2 += totalRUV2
-	if s.MaxRUV2 < totalRUV2 {
-		s.MaxRUV2 = totalRUV2
-	}
 }
 
 // Merge merges the value of 2 ru summary records.
@@ -1162,10 +1161,6 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
-	}
-	s.SumRUV2 += other.SumRUV2
-	if s.MaxRUV2 < other.MaxRUV2 {
-		s.MaxRUV2 = other.MaxRUV2
 	}
 }
 

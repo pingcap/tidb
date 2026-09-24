@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -211,6 +212,67 @@ func TestTTLInfoClone(t *testing.T) {
 	require.Equal(t, true, ttlInfo.Enable)
 }
 
+func TestStorageClassTransitionsJSONIncludesAfterSeconds(t *testing.T) {
+	for _, seconds := range []uint{0, 17} {
+		rules := []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 30, AfterSeconds: seconds}}
+		for _, metadata := range []any{
+			TableInfo{StorageClassTransitions: rules},
+			PartitionDefinition{StorageClassTransitions: rules},
+		} {
+			data, err := json.Marshal(metadata)
+			require.NoError(t, err)
+			var fields map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(data, &fields))
+			// CSE requires after_seconds to be present even for days-only rules.
+			expected := fmt.Sprintf(`[{"tier":"IA","after_days":30,"after_seconds":%d}]`, seconds)
+			require.JSONEq(t, expected, string(fields["storage_class_transitions"]))
+		}
+	}
+}
+
+func TestTableInfoCloneStorageClassTransitions(t *testing.T) {
+	tblInfo := &TableInfo{
+		StorageClassTransitions: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 30}},
+		Partition: &PartitionInfo{Definitions: []PartitionDefinition{{
+			ID:                      1,
+			StorageClassTransitions: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 7}},
+		}}},
+	}
+
+	cloned := tblInfo.Clone()
+	cloned.StorageClassTransitions[0].Tier = StorageClassTierStandard
+	cloned.Partition.Definitions[0].StorageClassTransitions[0].Tier = StorageClassTierStandard
+
+	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitions[0].Tier)
+	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransitions[0].Tier)
+}
+
+func TestMaterializedViewInfoClone(t *testing.T) {
+	info := &MaterializedViewInfo{
+		BaseTableIDs:                    []int64{1, 2},
+		SQLContent:                      "select 1",
+		DefinitionSQLMode:               mysql.ModeANSIQuotes,
+		RefreshScheduleSQLMode:          mysql.ModePipesAsConcat,
+		DefinitionDivPrecisionIncrement: 4,
+		DefinitionTimeZone:              TimeZoneLocation{Name: "UTC"},
+		RefreshScheduleTimeZone:         TimeZoneLocation{Name: "Asia/Shanghai"},
+	}
+	_, err := info.DefinitionTimeZone.GetLocation()
+	require.NoError(t, err)
+
+	clone := info.Clone()
+	require.Equal(t, info.BaseTableIDs, clone.BaseTableIDs)
+	require.Equal(t, info.SQLContent, clone.SQLContent)
+	require.Equal(t, info.DefinitionSQLMode, clone.DefinitionSQLMode)
+	require.Equal(t, info.RefreshScheduleSQLMode, clone.RefreshScheduleSQLMode)
+	require.Equal(t, info.DefinitionDivPrecisionIncrement, clone.DefinitionDivPrecisionIncrement)
+	require.Equal(t, info.DefinitionTimeZone.Name, clone.DefinitionTimeZone.Name)
+	require.Equal(t, info.RefreshScheduleTimeZone.Name, clone.RefreshScheduleTimeZone.Name)
+	location, err := clone.DefinitionTimeZone.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, "UTC", location.String())
+}
+
 func TestTTLJobInterval(t *testing.T) {
 	ttlInfo := &TTLInfo{}
 
@@ -242,6 +304,10 @@ func TestTTLDefaultJobInterval(t *testing.T) {
 	d, err := duration.ParseDuration(DefaultTTLJobInterval)
 	require.NoError(t, err)
 	require.Equal(t, 24*time.Hour, d)
+	// test default value of `StarterDefaultTTLJobInterval` is valid.
+	d, err = duration.ParseDuration(StarterDefaultTTLJobInterval)
+	require.NoError(t, err)
+	require.Equal(t, 15*time.Minute, d)
 	// test default value of `OldDefaultTTLJobInterval` is valid.
 	d, err = duration.ParseDuration(OldDefaultTTLJobInterval)
 	require.NoError(t, err)

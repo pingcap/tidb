@@ -137,6 +137,11 @@ func (r *ReservedRowIDAlloc) Reset(base int64, maxv int64) {
 	r.max = maxv
 }
 
+// Current returns the current base and max of reserved rowIDs.
+func (r *ReservedRowIDAlloc) Current() (base int64, maxv int64) {
+	return r.base, r.max
+}
+
 // Consume consumes a reserved rowID.
 // If the second return value is false, it means the reserved rowID is exhausted.
 func (r *ReservedRowIDAlloc) Consume() (int64, bool) {
@@ -453,6 +458,8 @@ type StatementContext struct {
 
 	// SysdateIsNow indicates whether sysdate() is an alias of now() in this statement
 	SysdateIsNow bool
+	// EnableTiKVShortCircuitExpression indicates whether short-circuit expression evaluation is enabled in TiKV.
+	EnableTiKVShortCircuitExpression bool
 
 	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
 	RCCheckTS bool
@@ -510,6 +517,23 @@ type StatementContext struct {
 	// uses this to enable the fts-like-fallback round for cost competition even
 	// when round 1's native plan is executable.
 	AlternativeLogicalPlanHasPredicateContextMatch bool
+	// AlternativeLogicalPlanMixedStorageEngines indicates that round 1's chosen
+	// physical plan reads from both TiKV and TiFlash, and holds no single-scan
+	// index join that an engine-restricted rebuild could trade for a full scan.
+	// The round driver uses this to enable the tikv-only / tiflash-only rounds,
+	// which rebuild the plan with a single storage engine so a fully homogeneous
+	// plan competes on cost.
+	AlternativeLogicalPlanMixedStorageEngines bool
+	// AlternativeLogicalPlanMissingTiFlashPath indicates that some DataSource in
+	// round 1's build ended up without any TiFlash access path (no replica, a
+	// system table, or a FOR UPDATE read). A fully-TiFlash plan is impossible,
+	// so the tiflash-only round is skipped.
+	AlternativeLogicalPlanMissingTiFlashPath bool
+	// AlternativeLogicalPlanHasStoreTypeHint indicates that some DataSource in
+	// round 1's build carries an explicit engine preference from a
+	// READ_FROM_STORAGE hint. The engine-restricted rounds are skipped so the
+	// cost comparison cannot override the user's explicit engine choice.
+	AlternativeLogicalPlanHasStoreTypeHint bool
 	// FTSFunctionIsUsed indicates that FTS_MATCH_WORD() appears in the current
 	// statement, allowing the optimizer to run FTS-specific validation and
 	// rewrite rules only when needed.
@@ -691,6 +715,9 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanSemiJoinRewrite = false
+	sc.AlternativeLogicalPlanMixedStorageEngines = false
+	sc.AlternativeLogicalPlanMissingTiFlashPath = false
+	sc.AlternativeLogicalPlanHasStoreTypeHint = false
 	sc.FTSFunctionIsUsed = false
 }
 
@@ -723,6 +750,25 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 // found a semi join that can try an extra SEMI_JOIN_REWRITE-based logical round.
 func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
 	sc.AlternativeLogicalPlanSemiJoinRewrite = true
+}
+
+// MarkAlternativeLogicalPlanMixedStorageEngines records that round 1's chosen
+// physical plan reads from both TiKV and TiFlash and is eligible for the
+// engine-restricted rounds.
+func (sc *StatementContext) MarkAlternativeLogicalPlanMixedStorageEngines() {
+	sc.AlternativeLogicalPlanMixedStorageEngines = true
+}
+
+// MarkAlternativeLogicalPlanMissingTiFlashPath records that a DataSource in the
+// current build has no TiFlash access path, making a fully-TiFlash plan impossible.
+func (sc *StatementContext) MarkAlternativeLogicalPlanMissingTiFlashPath() {
+	sc.AlternativeLogicalPlanMissingTiFlashPath = true
+}
+
+// MarkAlternativeLogicalPlanHasStoreTypeHint records that a DataSource in the
+// current build carries an explicit READ_FROM_STORAGE engine preference.
+func (sc *StatementContext) MarkAlternativeLogicalPlanHasStoreTypeHint() {
+	sc.AlternativeLogicalPlanHasStoreTypeHint = true
 }
 
 // CtxID returns the context id of the statement
@@ -1252,6 +1298,9 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) PushDownFlags() uint64 {
 	ec := sc.ErrCtx()
 	flags := PushDownFlagsWithTypeFlagsAndErrLevels(sc.TypeFlags(), ec.LevelMap())
+	if sc.EnableTiKVShortCircuitExpression {
+		flags |= model.FlagEnableTiKVShortCircuitExpression
+	}
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
 	} else if sc.InUpdateStmt || sc.InDeleteStmt {
@@ -1293,6 +1342,7 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
+	sc.EnableTiKVShortCircuitExpression = (flags & model.FlagEnableTiKVShortCircuitExpression) > 0
 	levels := sc.ErrLevels()
 	levels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(false,
 		(flags&model.FlagDividedByZeroAsWarning) > 0,

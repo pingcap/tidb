@@ -15,19 +15,26 @@
 package expression
 
 import (
+	"context"
 	"math"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -37,6 +44,168 @@ func boolToInt64(v bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+// MaterializedScheduleTimeToUnixSeconds converts a materialized schedule time
+// interpreted in scheduleTimeZone to Unix seconds for persisting in internal
+// MV system tables.
+func MaterializedScheduleTimeToUnixSeconds(t *types.Time, scheduleTimeZone *time.Location) (*int64, error) {
+	if t == nil {
+		return nil, nil
+	}
+	if scheduleTimeZone == nil {
+		return nil, errors.New("materialized schedule timezone is unavailable")
+	}
+	goTime, err := t.GoTime(scheduleTimeZone)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	unixSeconds := goTime.Unix()
+	return &unixSeconds, nil
+}
+
+// MaterializedScheduleTypeFlagsWithSQLMode derives the type conversion flags
+// used to build and evaluate materialized view schedule expressions.
+func MaterializedScheduleTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
+	return types.StrictFlags.
+		WithTruncateAsWarning(!mode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+}
+
+// MaterializedScheduleErrLevelsWithSQLMode derives the error levels used to
+// build and evaluate materialized view schedule expressions.
+func MaterializedScheduleErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
+	return errctx.LevelMap{
+		errctx.ErrGroupTruncate:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupBadNull:   errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupNoDefault: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
+			!mode.HasErrorForDivisionByZeroMode(),
+			!mode.HasStrictMode(),
+		),
+	}
+}
+
+// SetMaterializedScheduleEvalSession configures a session for evaluating a
+// materialized view schedule expression and returns a function that restores
+// the session state.
+func SetMaterializedScheduleEvalSession(
+	sctx sessionctx.Context,
+	sqlMode mysql.SQLMode,
+	scheduleTimeZone *time.Location,
+) func() {
+	sessVars := sctx.GetSessionVars() //nolint:forbidigo
+	originalSQLMode := sessVars.SQLMode
+	originalNoBackslashEscaped := sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped)
+	originalTypeFlags := sessVars.StmtCtx.TypeFlags()
+	originalErrLevels := sessVars.StmtCtx.ErrLevels()
+	originalTimeZone := sessVars.TimeZone
+	originalStmtTimeZone := sessVars.StmtCtx.TimeZone()
+
+	sessVars.SQLMode = sqlMode
+	// SQLMode is assigned directly below instead of through SetSystemVar, so keep
+	// the corresponding server status flag synchronized for this evaluation.
+	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
+	sessVars.StmtCtx.SetTypeFlags(MaterializedScheduleTypeFlagsWithSQLMode(sqlMode))
+	sessVars.StmtCtx.SetErrLevels(MaterializedScheduleErrLevelsWithSQLMode(sqlMode))
+	sessVars.TimeZone = scheduleTimeZone
+	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
+
+	return func() {
+		sessVars.SQLMode = originalSQLMode
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, originalNoBackslashEscaped)
+		sessVars.StmtCtx.SetTypeFlags(originalTypeFlags)
+		sessVars.StmtCtx.SetErrLevels(originalErrLevels)
+		sessVars.TimeZone = originalTimeZone
+		if originalStmtTimeZone != nil {
+			sessVars.StmtCtx.SetTimeZone(originalStmtTimeZone)
+		} else {
+			sessVars.StmtCtx.SetTimeZone(sessVars.Location())
+		}
+	}
+}
+
+// EvalMaterializedScheduleExpr parses and evaluates a persisted materialized
+// view schedule expression. The caller must configure evalSctx with the
+// schedule's SQL mode, conversion flags, error levels, and timezone first.
+func EvalMaterializedScheduleExpr(
+	evalSctx sessionctx.Context,
+	exprSQL string,
+	scheduleSQLMode mysql.SQLMode,
+) (*types.Time, error) {
+	if evalSctx == nil {
+		return nil, errors.New("materialized schedule eval session is unavailable")
+	}
+	exprNode, err := generatedexpr.ParseExpressionWithSQLMode(exprSQL, scheduleSQLMode)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	builtExpr, err := BuildSimpleExpr(evalSctx.GetExprCtx(), exprNode)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	v, err := builtExpr.Eval(evalSctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if v.IsNull() {
+		return nil, nil
+	}
+	if v.Kind() != types.KindMysqlTime {
+		return nil, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.KindStr(v.Kind()),
+		)
+	}
+	t := v.GetMysqlTime()
+	if tp := t.Type(); tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
+		return nil, errors.Errorf(
+			"materialized schedule expression evaluated to %s, expected DATE/DATETIME/TIMESTAMP",
+			types.TypeStr(tp),
+		)
+	}
+	return &t, nil
+}
+
+// DeriveMaterializedScheduleNextTime evaluates a runtime NEXT expression with
+// the SQL mode and timezone persisted in the MV/MLog metadata.
+func DeriveMaterializedScheduleNextTime(
+	kctx context.Context,
+	evalSctx sessionctx.Context,
+	nextExpr string,
+	scheduleSQLMode mysql.SQLMode,
+	scheduleTimeZone *time.Location,
+) (*types.Time, bool, error) {
+	if evalSctx == nil {
+		return nil, false, errors.New("runtime materialized schedule eval session is unavailable")
+	}
+	if scheduleTimeZone == nil {
+		return nil, false, errors.New("runtime materialized schedule timezone is unavailable")
+	}
+	nextExpr = strings.TrimSpace(nextExpr)
+	if nextExpr == "" {
+		return nil, true, nil
+	}
+
+	restore := SetMaterializedScheduleEvalSession(evalSctx, scheduleSQLMode, scheduleTimeZone)
+	defer restore()
+
+	// Execute a separate statement to refresh the statement timestamp cache.
+	// Schedule expressions can contain NOW(), which must use the current
+	// evaluation time instead of a timestamp left in the pooled session.
+	if _, err := sqlexec.ExecSQL(kctx, evalSctx.GetSQLExecutor(), "SELECT NOW(6)"); err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	t, err := EvalMaterializedScheduleExpr(evalSctx, nextExpr, scheduleSQLMode)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	if t == nil {
+		return nil, true, nil
+	}
+	return t, true, nil
 }
 
 // IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.

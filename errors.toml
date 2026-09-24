@@ -3416,6 +3416,11 @@ error = '''
 TiFlash server is busy
 '''
 
+["tikv:9015"]
+error = '''
+Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s
+'''
+
 ["types:1063"]
 error = '''
 Incorrect column specifier for column '%-.192s'

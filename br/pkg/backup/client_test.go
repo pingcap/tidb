@@ -71,6 +71,7 @@ func mockGetBackupClientCallBack(ctx context.Context, storeID uint64, reset bool
 
 type mockBackupBackupSender struct {
 	backupResponses map[uint64][]*backup.ResponseAndStore
+	afterLoad       func(storeID uint64)
 }
 
 func (m *mockBackupBackupSender) SendAsync(
@@ -99,6 +100,9 @@ func (m *mockBackupBackupSender) SendAsync(
 			lock.Lock()
 			resps = m.backupResponses[storeID]
 			lock.Unlock()
+		}
+		if m.afterLoad != nil {
+			m.afterLoad(storeID)
 		}
 		for _, r := range resps {
 			select {
@@ -609,6 +613,8 @@ func TestMainBackupLoop(t *testing.T) {
 	dropStoreID := uint64(2)
 	s.mockCluster.MarkTombstone(dropStoreID)
 	dropBackupResponses := mockBackupResponses[dropStoreID]
+	remainStoreFirstLoad := make(chan struct{})
+	var remainStoreFirstLoadOnce sync.Once
 	lock.Lock()
 	mockBackupResponses[dropStoreID] = nil
 	lock.Unlock()
@@ -616,6 +622,13 @@ func TestMainBackupLoop(t *testing.T) {
 	mainLoop = &backup.MainBackupLoop{
 		BackupSender: &mockBackupBackupSender{
 			backupResponses: mockBackupResponses,
+			afterLoad: func(storeID uint64) {
+				if storeID == remainStoreID {
+					remainStoreFirstLoadOnce.Do(func() {
+						close(remainStoreFirstLoad)
+					})
+				}
+			},
 		},
 
 		BackupReq:               backuppb.BackupRequest{},
@@ -626,10 +639,9 @@ func TestMainBackupLoop(t *testing.T) {
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 	go func() {
-		// mock region leader balance behaviour.
-		time.Sleep(500 * time.Millisecond)
+		// Mock region leader balance after store 1 has loaded its first partial response set.
+		<-remainStoreFirstLoad
 		lock.Lock()
-		// store 1 has the range after some while.
 		mockBackupResponses[remainStoreID] = append(mockBackupResponses[remainStoreID], dropBackupResponses...)
 		lock.Unlock()
 	}()
