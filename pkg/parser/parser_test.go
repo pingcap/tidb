@@ -467,6 +467,38 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 	}
 }
 
+func TestRefreshMaterializedViewStatements(t *testing.T) {
+	table := []testCase{
+		{"REFRESH MATERIALIZED VIEW mv FAST", true, "REFRESH MATERIALIZED VIEW `mv` FAST"},
+		{"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE FAST", true, "REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE FAST"},
+		{"REFRESH MATERIALIZED VIEW mv FAST AS OF TIMESTAMP '2021-04-15 00:00:00' WITH PROFILE", true, "REFRESH MATERIALIZED VIEW `mv` FAST AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00' WITH PROFILE"},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE", false, ""},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE", true, "REFRESH MATERIALIZED VIEW `mv` COMPLETE IN PLACE"},
+		{"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE OUT OF PLACE DRY RUN", true, "REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE COMPLETE OUT OF PLACE DRY RUN"},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY WITH PROFILE", true, "REFRESH MATERIALIZED VIEW `mv` COMPLETE DELTA APPLY WITH PROFILE"},
+		{"REFRESH MATERIALIZED VIEW mv FAST OUT OF PLACE", false, ""},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE DELTA APPLY", false, ""},
+		{"CANCEL MATERIALIZED VIEW REFRESH JOB", false, ""},
+		{"CANCEL MATERIALIZED VIEW REFRESH JOB 42", true, "CANCEL MATERIALIZED VIEW REFRESH JOB 42"},
+	}
+	RunTest(t, table, false, false)
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY", "", "")
+	require.NoError(t, err)
+	refreshStmt, ok := stmt.(*ast.RefreshMaterializedViewStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.RefreshMaterializedViewTypeComplete, refreshStmt.Type)
+	require.Equal(t, ast.RefreshMaterializedViewCompleteTypeDeltaApply, refreshStmt.CompleteType)
+
+	stmt, err = p.ParseOneStmt("CANCEL MATERIALIZED VIEW REFRESH JOB 42", "", "")
+	require.NoError(t, err)
+	cancelStmt, ok := stmt.(*ast.CancelMaterializedViewJobStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.CancelMaterializedViewJobTypeRefresh, cancelStmt.Tp)
+	require.Equal(t, int64(42), cancelStmt.JobID)
+}
+
 func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 	p := parser.New()
 	dupCases := []struct {
