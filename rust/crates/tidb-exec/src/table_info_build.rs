@@ -729,6 +729,7 @@ enum ConstraintKind {
 struct KeyPart {
     name: String,
     prefix_len: i64,
+    desc: bool,
 }
 
 fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
@@ -759,15 +760,10 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
                 prefix_len,
                 desc,
             } => {
-                if *desc {
-                    return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        "CREATE TABLE descending index parts are not supported by this node",
-                    ));
-                }
                 parts.push(KeyPart {
                     name: name.clone(),
                     prefix_len: prefix_len.unwrap_or(UNSPECIFIED_LENGTH),
+                    desc: *desc,
                 });
             }
             IndexPart::Expr { .. } => {
@@ -1120,7 +1116,7 @@ fn build_column(
                         name: name.clone(),
                         parts: vec![KeyPart {
                             name: name.clone(),
-                            prefix_len: UNSPECIFIED_LENGTH,
+                            prefix_len: UNSPECIFIED_LENGTH, desc: false,
                         }],
                         clustered: storage,
                         comment: String::new(),
@@ -1139,7 +1135,7 @@ fn build_column(
                         name: name.clone(),
                         parts: vec![KeyPart {
                             name: name.clone(),
-                            prefix_len: UNSPECIFIED_LENGTH,
+                            prefix_len: UNSPECIFIED_LENGTH, desc: false,
                         }],
                         clustered: None,
                         comment: String::new(),
