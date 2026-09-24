@@ -1838,6 +1838,13 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         l_len: usize,
     ) -> Result<LogicalPlan, RewriteError> {
         let np_schema = np.schema().ok_or(RewriteError::MissingSchema)?.clone();
+        // Go: buildSubqueryJoin allocates Selection + Agg output Projection
+        // + Join wrapper before the inner join is built. This port folds
+        // them into build_distinct and the join construction below; burn
+        // the plan ids so downstream numbering matches go.
+        let _ = self.env.base(LogicalProjection::TYPE);
+        let _ = self.env.base(LogicalProjection::TYPE);
+        let _ = self.env.base(LogicalProjection::TYPE);
         let mut distinct_child = np;
         let mut distinct_len = np_schema.len();
         let mut join_condition = check_condition.clone();
