@@ -62,20 +62,17 @@ The TiDB, TiDB-KeyspaceName, and TiDB-Worker dashboards include a separate colla
 and Query Detail sections retain their command/executor metrics and remain
 available for older TiDB versions.
 
-The Statement section shows:
+The Statement section contains five panels:
 
-- Overall P999/P99/P95/P80 latency.
-- Completed statement executions per second, by SQL type and in total.
 - Average statement latency by SQL type, weighted by execution count.
-- Accumulated statement wall time per second by SQL type (not CPU utilization;
-  overlapping executions can accumulate more than one second per second).
-- P999/P99/P95/P80 latency by SQL type and by instance.
+- P999/P99/P95/P80 latency by SQL type, each in its own panel.
 
 The panels honor the existing cluster and instance selectors, and the keyspace
-selector on TiDB-KeyspaceName. Resource groups are aggregated rather than creating
-an instance/type/group cross product. Rates use a one-minute window, consistent
-with the existing duration panels; low-volume percentiles, especially P999, can
-be noisy and require enough scrapes.
+selector on TiDB-KeyspaceName. Samples across selected instances and resource
+groups are aggregated by SQL type. Use the Instance selector to focus on a single
+node; there are no separate By Instance panels. Rates use a one-minute window,
+consistent with the existing duration panels; low-volume percentiles, especially
+P999, can be noisy and require enough scrapes.
 
 There is deliberately no automatic fallback to the server query-duration metric.
 A command histogram is not a statement histogram: a multi-statement command has
