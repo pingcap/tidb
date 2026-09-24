@@ -6488,6 +6488,10 @@ impl QuerySession for ClusterServerSession {
         self.session.record_parse_failure_coded(code, message);
     }
 
+    fn record_write_failure(&mut self, code: u16, message: String) {
+        self.session.record_ddl_failure(code, message);
+    }
+
     fn metrics_resource_group(&self) -> &str {
         self.session.current_resource_group()
     }

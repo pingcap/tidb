@@ -1856,6 +1856,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             Some(stmt) => engine.execute_write_parsed(sql, stmt),
                             None => engine.execute_write(sql),
                         };
+                        if let Err(ref error) = written {
+                            engine.record_write_failure(error.code, error.message.clone());
+                        }
                         match written {
                             Ok(Some(outcome)) => {
                                 let info = engine.statement_info();

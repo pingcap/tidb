@@ -1105,6 +1105,11 @@ pub trait QuerySession {
     /// warning buffer.
     fn record_parse_failure(&mut self, _code: u16, _message: String) {}
 
+    /// Records a write-door statement failure (DDL/GlobalVars/etc.) on the
+    /// session's warning buffer: go `driver_tidb.go:376` appends every
+    /// statement error so `SHOW WARNINGS` reports it.
+    fn record_write_failure(&mut self, _code: u16, _message: String) {}
+
     /// Returns the client-local path a statement asks the connection to read.
     fn local_infile_path(&mut self, _sql: &str) -> Result<Option<String>, SqlQueryError> {
         Ok(None)

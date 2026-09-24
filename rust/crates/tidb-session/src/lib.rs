@@ -2122,6 +2122,13 @@ impl Session {
         self.append_warning(WarningLevel::Error, code, message);
     }
 
+    /// go `driver_tidb.go:376`: every statement error lands in the statement
+    /// warning buffer (DDL 1050/1007/1008/1051/1146 et al reach SHOW
+    /// WARNINGS exactly as the query door's errors do).
+    pub fn record_ddl_failure(&mut self, code: u16, message: String) {
+        self.append_warning(WarningLevel::Error, code, message);
+    }
+
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
         self.publish_statement_status(result);
         if let Some(guard) = &self.process {
