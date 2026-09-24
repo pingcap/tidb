@@ -2753,6 +2753,23 @@ pub fn split_cnf(predicates: &[Expression]) -> Vec<Expression> {
 /// * `SessionVars.TiDBOptJoinReorderThreshold` arrives as a parameter;
 ///   `DefTiDBOptJoinReorderThreshold` is `0`, which is what
 ///   [`LogicalPlan::recursive_derive_stats`] passes.
+/// The NDV debug sink: the server's stdout redirect truncates on restart and
+/// its write offset clobbers appended lines, so derive-time diagnostics go to
+/// their own append-only file.
+fn ndv_debug(msg: &str) {
+    if std::env::var("TIDB_DEBUG_NDV").is_err() {
+        return;
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/ndv_debug.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{msg}");
+    }
+}
+
 struct DeriveStatsFold<'a> {
     builder: &'a dyn tidb_expr::expr_util::FunctionBuilder,
     /// The first failure, per the module header's first-failure discipline.
@@ -2839,6 +2856,10 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
         if matches!(node, LogicalPlan::DataSource(_)) {
             self.data_source_asked_groups = down.clone();
         }
+        ndv_debug(&format!(
+            "ASKDBG ds descend down_groups={}",
+            down.len()
+        ));
         // Go: `cumColGroups := p.self.ExtractColGroups(colGroups)`, handed to
         // EVERY child.
         let cum = node.extract_col_groups(&down);
@@ -2973,6 +2994,12 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                     }
                                 }
                             }
+                            ndv_debug(&format!(
+                                "GRPDFilter asked={} index_groups={} matched={}",
+                                self.data_source_asked_groups.len(),
+                                index_groups.len(),
+                                group_ndvs.len()
+                            ));
                             if !group_ndvs.is_empty() {
                                 stats.set_group_ndvs(group_ndvs);
                             }
@@ -3002,6 +3029,14 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 stats.row_count()
                             );
                         }
+                        ndv_debug(&format!(
+                            "DSDBG table={} rows={} conds={} asked={} groups_in_profile={}",
+                            op.table_name,
+                            stats.row_count(),
+                            op.pushed_down_conds.len(),
+                            self.data_source_asked_groups.len(),
+                            stats.group_ndvs().len()
+                        ));
                         op.base.base.set_stats(Some(stats.clone()));
                         StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
                     }
@@ -3035,6 +3070,16 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             join_reorder_threshold: self.join_reorder_threshold,
                         };
                         let equal_cond_out_cnt = estimate_full_join_row_count(&input);
+                        ndv_debug(&format!(
+                            "NDVDBG lkeys_ndv={} rkeys_ndv={} lrows={} rrows={} lgroups={:?} rgroups={:?} out={}",
+                            input.left_join_keys.ndv,
+                            input.right_join_keys.ndv,
+                            left.row_count(),
+                            right.row_count(),
+                            left.group_ndvs(),
+                            right.group_ndvs(),
+                            equal_cond_out_cnt
+                        ));
                         if std::env::var("TIDB_DEBUG_NDV").is_ok() {
                             eprintln!(
                                 "NDVDBG lkeys_ndv={} rkeys_ndv={} lrows={} rrows={} lgroups={:?} rgroups={:?} out={}",

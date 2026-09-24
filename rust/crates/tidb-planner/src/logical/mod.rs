@@ -1068,6 +1068,15 @@ impl LogicalPlan {
             Self::Join(op) => {
                 let (mut left_keys, mut right_keys, _, _) = op.get_join_keys();
                 let mut extracted = Vec::new();
+                if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                    eprintln!(
+                        "EXDBG join keys L={} R={} type={:?} incoming={}",
+                        left_keys.len(),
+                        right_keys.len(),
+                        op.join_type,
+                        col_groups.len()
+                    );
+                }
                 if left_keys.len() > 1
                     && matches!(
                         op.join_type,
@@ -1125,20 +1134,49 @@ impl LogicalPlan {
                     .map(|offset| col_groups[offset].clone())
                     .collect()
             }
+            // GO's BaseLogicalPlan.ExtractColGroups translates the asked
+            // groups through the single child's schema; a node without an
+            // override must not drop them (Selections sit between joins and
+            // datasources, so dropping them here silenced the index
+            // GroupNDVs for every query whose joins were single-key).
             Self::Selection(_)
-            | Self::DataSource(_)
             | Self::Sort(_)
             | Self::Limit(_)
             | Self::TopN(_)
-            | Self::UnionAll(_)
-            | Self::PartitionUnionAll(_)
-            | Self::CTE(_)
-            | Self::CTETable(_)
             | Self::MaxOneRow(_)
             | Self::Lock(_)
             | Self::Sequence(_)
             | Self::UnionScan(_)
             | Self::TiKVSingleGather(_)
+            | Self::CTE(_) => {
+                let Some(schema) = self.children().first().and_then(|child| child.schema()) else {
+                    return Vec::new();
+                };
+                let (_, offsets) = schema.extract_col_groups(col_groups);
+                offsets
+                    .into_iter()
+                    .map(|offset| col_groups[offset].clone())
+                    .collect()
+            }
+            Self::CTETable(op) => {
+                // GO's LogicalCTETable.ExtractColGroups translates through the
+                // SEED schema: the CTE table's output columns are the seed's
+                // columns re-identified.
+                let Some(schema) = op.seed_schema.clone() else {
+                    return Vec::new();
+                };
+                let (_, offsets) = schema.extract_col_groups(col_groups);
+                offsets
+                    .into_iter()
+                    .map(|offset| col_groups[offset].clone())
+                    .collect()
+            }
+            // GO's LogicalUnionAll.ExtractColGroups returns nil: the inner
+            // schemas differ from the outer schema, so groups cannot cross a
+            // union boundary.
+            Self::UnionAll(_)
+            | Self::PartitionUnionAll(_)
+            | Self::DataSource(_)
             | Self::TableScan(_)
             | Self::IndexScan(_)
             | Self::TableDual(_)
