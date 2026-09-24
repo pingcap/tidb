@@ -1729,6 +1729,18 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{
+		Scope:    ScopeGlobal | ScopeSession,
+		Name:     TiDBDMLMaxExecutionTime,
+		Value:    strconv.Itoa(DefTiDBDMLMaxExecutionTime),
+		Type:     TypeUnsigned,
+		MinValue: 0,
+		MaxValue: math.MaxInt32,
+		SetSession: func(s *SessionVars, val string) error {
+			timeoutMS := tidbOptPositiveInt32(val, DefTiDBDMLMaxExecutionTime)
+			s.DMLMaxExecutionTime = uint64(timeoutMS)
+			return nil
+		}},
+	{
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    TiKVClientReadTimeout,
 		Value:                   "0",
