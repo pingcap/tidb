@@ -1334,15 +1334,15 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 	if stmtType != "" {
 		sqlType = stmtType
 	}
-	querySQLType := sqlType
+	commandSQLType := sqlType
 	if cmd == mysql.ComQuery && vars.InMultiStmts {
 		// The duration covers the whole command, not just its last statement.
 		// Other commands must not inherit the previous COM_QUERY's multi-statement flag.
-		querySQLType = "MultiStmt"
+		commandSQLType = "MultiStmt"
 	}
 
 	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(querySQLType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+		metrics.CommandDurationHistogram.WithLabelValues(commandSQLType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
 		if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
 			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys))

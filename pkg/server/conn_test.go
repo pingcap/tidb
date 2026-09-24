@@ -2444,7 +2444,7 @@ func TestStatementDurationMetrics(t *testing.T) {
 		return value
 	}
 	statementMetric := func(sqlType string) *dto.Metric {
-		return readHistogram(metrics.StatementDurationHistogram.WithLabelValues(sqlType, vars.ResourceGroupName))
+		return readHistogram(metrics.QueryDurationHistogram.WithLabelValues(sqlType, "", vars.ResourceGroupName))
 	}
 
 	t.Run("multi statement timing", func(t *testing.T) {
@@ -2482,8 +2482,8 @@ func TestStatementDurationMetrics(t *testing.T) {
 		// The server histogram still measures one whole command, labeled as MultiStmt.
 		dbNames := session.GetDBNames(vars)
 		require.Len(t, dbNames, 1)
-		query := metrics.QueryDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
-		lastStmtQuery := metrics.QueryDurationHistogram.WithLabelValues("Update", dbNames[0], vars.ResourceGroupName)
+		query := metrics.CommandDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
+		lastStmtQuery := metrics.CommandDurationHistogram.WithLabelValues("Update", dbNames[0], vars.ResourceGroupName)
 		lastStmtQueryBefore := readHistogram(lastStmtQuery).GetHistogram().GetSampleCount()
 		queryBefore := readHistogram(query).GetHistogram()
 		cc.addQueryMetrics(mysql.ComQuery, start, nil)
@@ -2498,16 +2498,59 @@ func TestStatementDurationMetrics(t *testing.T) {
 		for _, label := range statementMetric("Insert").GetLabel() {
 			labels[label.GetName()] = label.GetValue()
 		}
-		require.Equal(t, map[string]string{"sql_type": "Insert", "resource_group": vars.ResourceGroupName}, labels)
-		require.Positive(t, promtestutils.CollectAndCount(metrics.StatementDurationHistogram, "tidb_session_statement_duration_seconds"))
+		require.Equal(t, map[string]string{"sql_type": "Insert", "db": "", "resource_group": vars.ResourceGroupName}, labels)
+		buckets := prometheus.ExponentialBuckets(0.0005, 2, 29)
+		require.Len(t, insert.GetBucket(), len(buckets))
+		for i, upperBound := range buckets {
+			require.Equal(t, upperBound, insert.GetBucket()[i].GetUpperBound())
+		}
+		require.Positive(t, promtestutils.CollectAndCount(metrics.QueryDurationHistogram, "tidb_server_handle_query_duration_seconds"))
+		require.Positive(t, promtestutils.CollectAndCount(metrics.CommandDurationHistogram, "tidb_server_handle_command_duration_seconds"))
+	})
+
+	t.Run("database labels", func(t *testing.T) {
+		restoreConfig := config.RestoreFunc()
+		t.Cleanup(restoreConfig)
+		config.UpdateGlobal(func(conf *config.Config) { conf.Status.RecordDBLabel = true })
+		tk.MustExec("create database statement_duration_other")
+		tk.MustExec("create table statement_duration_other.t (id int primary key)")
+		t.Cleanup(func() { tk.MustExec("drop database statement_duration_other") })
+		byDB := func(db string) *dto.Histogram {
+			return readHistogram(metrics.QueryDurationHistogram.WithLabelValues("Select", db, vars.ResourceGroupName)).GetHistogram()
+		}
+		testBefore, otherBefore := byDB("test"), byDB("statement_duration_other")
+		emptyBefore := byDB("").GetSampleCount()
+		start := time.Now()
+		require.NoError(t, cc.handleQuery(ctx, "select * from test.statement_duration; select * from statement_duration_other.t"))
+		require.Equal(t, testBefore.GetSampleCount()+1, byDB("test").GetSampleCount())
+		require.Equal(t, otherBefore.GetSampleCount()+1, byDB("statement_duration_other").GetSampleCount())
+		// Keep the command's original last-statement DB labeling; statements use their own DBs.
+		command := metrics.CommandDurationHistogram.WithLabelValues("MultiStmt", "statement_duration_other", vars.ResourceGroupName)
+		commandBefore := readHistogram(command).GetHistogram().GetSampleCount()
+		cc.addQueryMetrics(mysql.ComQuery, start, nil)
+		require.Equal(t, commandBefore+1, readHistogram(command).GetHistogram().GetSampleCount())
+
+		testBefore, otherBefore = byDB("test"), byDB("statement_duration_other")
+		require.NoError(t, cc.handleQuery(ctx, "select a.id from test.statement_duration a join test.statement_duration b on a.id = b.id join statement_duration_other.t c on a.id = c.id"))
+		testAfter, otherAfter := byDB("test"), byDB("statement_duration_other")
+		// A cross-DB statement is observed once per distinct DB, even with multiple tables in one DB.
+		require.Equal(t, testBefore.GetSampleCount()+1, testAfter.GetSampleCount())
+		require.Equal(t, otherBefore.GetSampleCount()+1, otherAfter.GetSampleCount())
+		require.InDelta(t, testAfter.GetSampleSum()-testBefore.GetSampleSum(), otherAfter.GetSampleSum()-otherBefore.GetSampleSum(), 1e-9)
+		require.Equal(t, emptyBefore, byDB("").GetSampleCount())
+
+		// A statement without table references falls back to the current database.
+		require.NoError(t, cc.handleQuery(ctx, "select 1"))
+		require.Equal(t, testAfter.GetSampleCount()+1, byDB("test").GetSampleCount())
+		require.Equal(t, otherAfter.GetSampleCount(), byDB("statement_duration_other").GetSampleCount())
 	})
 
 	t.Run("command label boundaries", func(t *testing.T) {
 		checkCommand := func(cmd byte, err error, label string) {
 			dbNames := session.GetDBNames(vars)
 			require.Len(t, dbNames, 1)
-			multi := metrics.QueryDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
-			single := metrics.QueryDurationHistogram.WithLabelValues("Select", dbNames[0], vars.ResourceGroupName)
+			multi := metrics.CommandDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
+			single := metrics.CommandDurationHistogram.WithLabelValues("Select", dbNames[0], vars.ResourceGroupName)
 			multiBefore := readHistogram(multi).GetHistogram().GetSampleCount()
 			singleBefore := readHistogram(single).GetHistogram().GetSampleCount()
 			cc.addQueryMetrics(cmd, time.Now(), err)
@@ -2645,11 +2688,64 @@ func TestStatementDurationMetrics(t *testing.T) {
 		})
 	}
 
+	t.Run("binary protocol execute after compile error", func(t *testing.T) {
+		stmt, _, _, err := tc.Prepare("select 1")
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, stmt.Close()) })
+		t.Cleanup(func() { vars.DurationParse = 0 })
+		stmts, err := tk.Session().Parse(ctx, "select * from test.statement_duration_missing")
+		require.NoError(t, err)
+		// Model an expensive parse without sleeping; compilation fails before statement cleanup.
+		vars.DurationParse = time.Hour
+		rs, err := tk.Session().ExecuteStmt(ctx, stmts[0])
+		require.EqualError(t, err, "[schema:1146]Table 'test.statement_duration_missing' doesn't exist")
+		require.Nil(t, rs)
+		before := statementMetric("Select").GetHistogram()
+		data := make([]byte, 9)
+		binary.LittleEndian.PutUint32(data, uint32(stmt.ID()))
+		data[5] = 1 // iteration count; no parameters and no cursor
+		start := time.Now()
+		require.NoError(t, cc.handleStmtExecute(ctx, data))
+		after := statementMetric("Select").GetHistogram()
+		require.Equal(t, before.GetSampleCount()+1, after.GetSampleCount())
+		require.LessOrEqual(t, after.GetSampleSum()-before.GetSampleSum(), time.Since(start).Seconds())
+	})
+
 	t.Run("execution error", func(t *testing.T) {
 		require.NoError(t, cc.handleQuery(ctx, "insert into statement_duration values (2, 0)"))
 		before := statementMetric("Insert").GetHistogram().GetSampleCount()
 		require.Error(t, cc.handleQuery(ctx, "insert into statement_duration values (2, 2)"))
 		require.Equal(t, before+1, statementMetric("Insert").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("internal result set close", func(t *testing.T) {
+		before := statementMetric("Select").GetHistogram().GetSampleCount()
+		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+		rs, err := tk.Session().ExecuteInternal(internalCtx, "select 1")
+		require.NoError(t, err)
+		require.NotNil(t, rs)
+		require.False(t, vars.InRestrictedSQL)
+		require.True(t, vars.StmtCtx.InRestrictedSQL)
+		require.NoError(t, rs.Next(internalCtx, rs.NewChunk(nil)))
+		require.NoError(t, rs.Close())
+		// The restored session flag must not turn an internal statement into a user sample.
+		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
+	})
+
+	t.Run("restricted helper retains internal sample", func(t *testing.T) {
+		internalBefore := statementMetric(metrics.LblInternal).GetHistogram()
+		command := metrics.CommandDurationHistogram.WithLabelValues(metrics.LblInternal, "", vars.ResourceGroupName)
+		commandBefore := readHistogram(command).GetHistogram()
+		selectBefore := statementMetric("Select").GetHistogram().GetSampleCount()
+		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+		_, _, err := tk.Session().GetRestrictedSQLExecutor().ExecRestrictedSQL(internalCtx, nil, "select /*+ RESOURCE_GROUP(statement_duration_test) */ 1")
+		require.NoError(t, err)
+		internalAfter := statementMetric(metrics.LblInternal).GetHistogram()
+		commandAfter := readHistogram(command).GetHistogram()
+		require.Equal(t, internalBefore.GetSampleCount()+1, internalAfter.GetSampleCount())
+		require.Equal(t, commandBefore.GetSampleCount()+1, commandAfter.GetSampleCount())
+		require.InDelta(t, internalAfter.GetSampleSum()-internalBefore.GetSampleSum(), commandAfter.GetSampleSum()-commandBefore.GetSampleSum(), 1e-9)
+		require.Equal(t, selectBefore, statementMetric("Select").GetHistogram().GetSampleCount())
 	})
 
 	t.Run("restricted SQL", func(t *testing.T) {
