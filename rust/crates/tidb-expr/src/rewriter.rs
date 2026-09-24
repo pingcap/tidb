@@ -16,7 +16,8 @@
 
 use crate::aggregation::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
-    wrap_with_cast_as_real, wrap_with_cast_as_string, wrap_with_cast_as_time,
+    wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
+    wrap_with_cast_as_time,
 };
 use crate::column::Column;
 use crate::constant::Constant;
@@ -1377,6 +1378,61 @@ fn rewrite_leaf_compound(
                 }
             }
             let args = deduplicated;
+            // Go `inFunctionClass.getFunction` (`builtin_other.go:89`) coerces
+            // every argument to the FIRST argument's eval type through
+            // `newBaseBuiltinFuncWithTp` (`builtin.go:184`). The wrap replaces
+            // the argument inside the shared backing array, so the built
+            // `in()` node itself carries the coerced arguments, and each cast
+            // over a strict constant folds at Go's `BuildCastFunction`
+            // boundary -- which is why EXPLAIN renders a date column's string
+            // IN-list as bare `datetime(6)` constants rather than quoted
+            // strings (the q83 shape).
+            let in_eval_type = args
+                .first()
+                .and_then(|expression| expression.static_type())
+                .map(|field_type| field_type.eval_type());
+            let connection = resolver.connection_charset_info();
+            let mut coerced = Vec::with_capacity(args.len());
+            for argument in args {
+                let mut coerced_argument = match in_eval_type {
+                    Some(EvalType::Int) => wrap_with_cast_as_int(argument, None)?,
+                    Some(EvalType::Real) => wrap_with_cast_as_real(argument)?,
+                    Some(EvalType::Decimal) => wrap_with_cast_as_decimal(argument)?,
+                    Some(EvalType::String) => wrap_with_cast_as_string(argument, connection)?,
+                    Some(EvalType::Datetime) => wrap_with_cast_as_time(
+                        argument,
+                        FieldType::new(FieldTypeCode::Datetime),
+                    )?,
+                    Some(EvalType::Timestamp) => wrap_with_cast_as_time(
+                        argument,
+                        FieldType::new(FieldTypeCode::Timestamp),
+                    )?,
+                    Some(EvalType::Duration) => wrap_with_cast_as_duration(argument)?,
+                    Some(EvalType::Json) => wrap_with_cast_as_json(argument)?,
+                    _ => argument,
+                };
+                // Go `BuildCastFunctionWithCheck` folds each newly-built cast
+                // except a JSON result. A fold over a non-cast node (the
+                // early-return arms) leaves it untouched, matching Go, whose
+                // `FoldConstant` only runs where a cast was actually built.
+                if matches!(
+                    &coerced_argument,
+                    Expression::ScalarFunction(function)
+                        if function.func_name.lowercase().starts_with("cast_")
+                            && function
+                                .ret_type
+                                .as_ref()
+                                .is_some_and(|tp| tp.eval_type() != EvalType::Json)
+                ) {
+                    crate::constant_fold::fold_constant_in_mode(
+                        &mut coerced_argument,
+                        ctx,
+                        ConstantFoldMode::Normal,
+                    );
+                }
+                coerced.push(coerced_argument);
+            }
+            let args = coerced;
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
             // `ast.In` is in Go's `booleanFunctions` map, so the result carries
@@ -2629,6 +2685,76 @@ mod tests {
             eval_const(&in_list(int("5"), vec![*int("1"), Expr::Null], true)),
             Datum::Null
         );
+    }
+
+    /// Go `inFunctionClass.getFunction` coerces every argument to the FIRST
+    /// argument's eval type (`newBaseBuiltinFuncWithTp`, `builtin.go:184`) and
+    /// folds each strict-constant cast (`BuildCastFunctionWithCheck` ends in
+    /// `FoldConstant`). A DATE column's string IN-list therefore becomes bare
+    /// `datetime(6)` constants in the built node — EXPLAIN renders
+    /// `in(col, 1998-01-02 00:00:00.000000, ...)` (the q83 shape), not quoted
+    /// strings, and the tested column itself is not wrapped (DATE is already
+    /// in the DATETIME comparison domain).
+    #[test]
+    fn in_list_coerces_string_candidates_to_the_column_eval_type() {
+        struct DateColumnResolver;
+
+        impl ColumnResolver for DateColumnResolver {
+            fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+                (path.last().is_some_and(|name| name == "d_date"))
+                    .then(|| (0, FieldType::new(FieldTypeCode::Date), 1))
+            }
+
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+        }
+
+        let expression = Expr::In {
+            expr: Box::new(Expr::Column(vec![
+                "tpcds50".to_owned(),
+                "date_dim".to_owned(),
+                "d_date".to_owned(),
+            ])),
+            list: vec![
+                Expr::String("1998-01-02".to_owned()),
+                Expr::String("1998-10-15".to_owned()),
+                Expr::String("1998-11-10".to_owned()),
+            ],
+            not: false,
+        };
+        let rewritten =
+            rewrite_expr_resolved(&expression, &DateColumnResolver).unwrap();
+        let Expression::ScalarFunction(function) = &rewritten else {
+            panic!("expected the in() node, got {rewritten:?}")
+        };
+        assert_eq!(function.func_name.lowercase(), "in");
+        assert_eq!(function.args.len(), 4, "column + three candidates");
+        assert!(
+            matches!(function.args[0], Expression::Column(_)),
+            "the tested column stays a column: {:?}",
+            function.args[0]
+        );
+        let expected = [
+            "1998-01-02 00:00:00.000000",
+            "1998-10-15 00:00:00.000000",
+            "1998-11-10 00:00:00.000000",
+        ];
+        for (candidate, want) in function.args[1..].iter().zip(expected) {
+            let Expression::Constant(constant) = candidate else {
+                panic!("expected a folded constant candidate, got {candidate:?}")
+            };
+            let Datum::Time(time) = &constant.value else {
+                panic!(
+                    "expected a datetime constant, got {:?}",
+                    constant.value
+                )
+            };
+            // `WrapWithCastAsTime` raises a string source to `MaxFsp`.
+            assert_eq!(time.fsp(), 6);
+            // Rendered bare, like Go's `Time.String()` in EXPLAIN.
+            assert_eq!(time.to_string(), want);
+        }
     }
 
     #[test]
