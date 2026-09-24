@@ -24,6 +24,13 @@ engine in TiDB that evaluates the whole boolean query, positions included,
 against those entries and feeds the matching handles to the ordinary
 IndexMerge table lookup.
 
+"In TiKV" describes where the entries live, not where code changes. The index
+is ordinary non-unique KV index entries, written through the ordinary index
+machinery and read back with plain snapshot range scans from TiDB. Nothing in
+TiKV, client-go, kvproto, tipb or the coprocessor changes, and no coprocessor
+request is ever issued against the index. The whole implementation is TiDB
+code.
+
 ## Motivation or Background
 
 There is no columnar engine on the classic kernel to hold a full-text index,
@@ -73,7 +80,8 @@ SELECT id FROM articles WHERE MATCH(body) AGAINST('分布式数据库' IN BOOLEA
 
   The last column of a `FULLTEXT` index is the one tokenized; every column
   before it is an ordinary key column, encoded ahead of the term in each
-  entry. The index answers a search only when the query pins every key
+  entry as one whole value, whatever its type: a `VARCHAR` tenant holds its
+  collation sort key, exactly as in an ordinary index, and is never analyzed. The index answers a search only when the query pins every key
   column to one value (an equality, or `IS NULL`), and then serves those
   equalities itself. This differs from MySQL, where every column of a
   multi-column `FULLTEXT` index is text searched by `MATCH(a, b)`; that
