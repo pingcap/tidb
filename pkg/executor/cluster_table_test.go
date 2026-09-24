@@ -406,6 +406,10 @@ func TestClusterTableSlowQuerySessionConnectAttrs(t *testing.T) {
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Is_internal: false
 # Succ: true
+# Backoff_types: [txnLock]
+# Prewrite_Backoff_types: [txnLock]
+# Commit_Backoff_types: [regionMiss]
+# Cop_backoff_txnLockFast_total_times: 2 Cop_backoff_txnLockFast_total_time: 0.2 Cop_backoff_txnLockFast_max_time: 0.1 Cop_backoff_txnLockFast_max_addr: 127.0.0.1 Cop_backoff_txnLockFast_avg_time: 0.1 Cop_backoff_txnLockFast_p90_time: 0.1
 ` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
 select * from t;`
 	fileName := "tidb-slow-query-attrs.log"
@@ -426,4 +430,7 @@ select * from t;`
 	require.Len(t, clusterRows, 1)
 	clusterAttrsStr := clusterRows[0][0].(string)
 	testutil.RequireContainsDefaultSessionConnectAttrs(t, clusterAttrsStr)
+	tk.MustQuery("select concat(backoff_types, '|', prewrite_backoff_types, '|', commit_backoff_types, '|', cop_backoff_types) " +
+		"from information_schema.cluster_slow_query where query = 'select * from t;'").
+		Check(testkit.Rows("[txnLock]|[txnLock]|[regionMiss]|[txnLockFast]"))
 }

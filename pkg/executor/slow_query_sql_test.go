@@ -456,6 +456,10 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 		"and table_name = 'CLUSTER_SLOW_QUERY' and column_name in " +
 		"('PREWRITE_BACKOFF_TYPES', 'COMMIT_BACKOFF_TYPES', 'COP_BACKOFF_TYPES') order by ordinal_position").
 		Check(testkit.Rows("Prewrite_Backoff_types", "Commit_Backoff_types", "Cop_backoff_types"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' " +
+		"and table_name = 'CLUSTER_SLOW_QUERY' and column_name in " +
+		"('QUERY', 'PREWRITE_BACKOFF_TYPES', 'COMMIT_BACKOFF_TYPES', 'COP_BACKOFF_TYPES') order by ordinal_position").
+		Check(testkit.Rows("Query", "Prewrite_Backoff_types", "Commit_Backoff_types", "Cop_backoff_types"))
 	tk.MustQuery("select concat(backoff_types, '|', prewrite_backoff_types, '|', commit_backoff_types, '|', cop_backoff_types) " +
 		"from information_schema.slow_query where query = 'select /* legacy backoff types */ 1;'").
 		Check(testkit.Rows("[txnLock]|||"))
