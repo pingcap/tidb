@@ -1049,6 +1049,18 @@ impl InitStats<'_> {
         if columns.is_empty() {
             return None;
         }
+        // A predicate name marks what GO would LOAD; only entries whose
+        // payload actually carries buckets are fully loaded here. An evicted
+        // column keeps NDV metadata but loses its buckets, and treating it as
+        // fully loaded charged the NDV factor with a null-count-only total.
+        columns.retain(|id| {
+            statistics
+                .and_then(|statistics| statistics.columns.get(id))
+                .is_some_and(|column| !column.histogram.buckets.is_empty())
+        });
+        if columns.is_empty() {
+            return None;
+        }
         let mut indexes = BTreeSet::new();
         if let Some(TableEntry::Kv(table)) =
             self.catalog.get_in(&source.db_name, &source.table_name)
@@ -1058,7 +1070,10 @@ impl InitStats<'_> {
                     .column_offsets
                     .first()
                     .and_then(|offset| table.visible_columns().get(*offset));
-                if first.is_some_and(|column| columns.contains(&column.id)) {
+                let loaded = statistics
+                    .and_then(|statistics| statistics.indexes.get(&index.id))
+                    .is_some_and(|index| !index.histogram.buckets.is_empty());
+                if loaded && first.is_some_and(|column| columns.contains(&column.id)) {
                     indexes.insert(index.id);
                 }
             }
@@ -1110,17 +1125,60 @@ impl OwnedRewrite for InitStats<'_> {
         // Go loads only the predicate columns' payloads (and the indexes they
         // cover) and leaves the rest evicted; `estimate_column_ndv` then
         // borrows a loaded same-version index's analyzed count for an evicted
-        // column. Without a predicate for this source the approximation is
-        // "everything is loaded", which is the pre-lite-init shape.
+        // column. Only items whose payload actually carries buckets count as
+        // fully loaded: an EVICTED entry keeps its NDV metadata but loses its
+        // buckets, and charging the factor with its null-count-only
+        // `total_row_count()` inflated every NDV ~29x (q38's customer
+        // group-by: 147950.19 instead of 5161). Without a predicate for this
+        // source the answer is the loaded subset, which is what GO's
+        // lite-init would have kept in memory.
         let (loaded_columns, loaded_indexes) = self
             .predicate_loaded_items(source, statistics)
+            .map(|(columns, indexes)| {
+                let keep_column = |id: &i64| {
+                    statistics
+                        .and_then(|statistics| statistics.columns.get(id))
+                        .is_some_and(|column| !column.histogram.buckets.is_empty())
+                };
+                let keep_index = |id: &i64| {
+                    statistics
+                        .and_then(|statistics| statistics.indexes.get(id))
+                        .is_some_and(|index| !index.histogram.buckets.is_empty())
+                };
+                (
+                    columns
+                        .iter()
+                        .filter(|id| keep_column(id))
+                        .copied()
+                        .collect(),
+                    indexes
+                        .iter()
+                        .filter(|id| keep_index(id))
+                        .copied()
+                        .collect(),
+                )
+            })
             .unwrap_or_else(|| {
                 (
                     statistics
-                        .map(|statistics| statistics.columns.keys().copied().collect())
+                        .map(|statistics| {
+                            statistics
+                                .columns
+                                .iter()
+                                .filter(|(_id, column)| !column.histogram.buckets.is_empty())
+                                .map(|(id, _)| *id)
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     statistics
-                        .map(|statistics| statistics.indexes.keys().copied().collect())
+                        .map(|statistics| {
+                            statistics
+                                .indexes
+                                .iter()
+                                .filter(|(_id, index)| !index.histogram.buckets.is_empty())
+                                .map(|(id, _)| *id)
+                                .collect()
+                        })
                         .unwrap_or_default(),
                 )
             });
