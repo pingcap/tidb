@@ -28,6 +28,7 @@ var (
 
 // Metrics
 var (
+<<<<<<< HEAD
 	PacketIOCounter            *prometheus.CounterVec
 	QueryDurationHistogram     *prometheus.HistogramVec
 	QueryRPCHistogram          *prometheus.HistogramVec
@@ -38,6 +39,22 @@ var (
 	PreparedStmtGauge          prometheus.Gauge
 	ExecuteErrorCounter        *prometheus.CounterVec
 	CriticalErrorCounter       prometheus.Counter
+=======
+	PacketIOCounter                 *prometheus.CounterVec
+	QueryDurationHistogram          *prometheus.HistogramVec
+	CommandDurationHistogram        *prometheus.HistogramVec
+	QueryRPCHistogram               *prometheus.HistogramVec
+	QueryProcessedKeyHistogram      *prometheus.HistogramVec
+	IARemoteReadSegmentCount        *prometheus.CounterVec
+	IARemoteReadSegmentSize         *prometheus.CounterVec
+	IARemoteReadSegmentWaitDuration *prometheus.HistogramVec
+	QueryTotalCounter               *prometheus.CounterVec
+	ConnGauge                       *prometheus.GaugeVec
+	DisconnectionCounter            *prometheus.CounterVec
+	PreparedStmtGauge               prometheus.Gauge
+	ExecuteErrorCounter             *prometheus.CounterVec
+	CriticalErrorCounter            prometheus.Counter
+>>>>>>> 633a9e37f1c (metrics, server: fix multi-statement latency attribution (#71584))
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
@@ -98,8 +115,17 @@ func InitServerMetrics() {
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
-			Help:      "Bucketed histogram of processing time (s) of handled queries.",
+			Help:      "Bucketed histogram of processing time (s) of individual SQL statements.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblSQLType, LblDb, LblResourceGroup})
+
+	CommandDurationHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "handle_command_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of handled commands and restricted SQL operations.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29),
 		}, []string{LblSQLType, LblDb, LblResourceGroup})
 
 	QueryRPCHistogram = metricscommon.NewHistogramVec(
