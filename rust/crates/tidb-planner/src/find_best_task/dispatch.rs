@@ -1493,6 +1493,40 @@ fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProp
     true
 }
 
+/// Count of `ds.pushed_down_conds` whose referenced columns ALL sit inside
+/// `index`'s prefix — a cheap proxy for go's `accessCondsColMap` size
+/// before the ranger detach runs.
+fn index_prefix_access_count(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+) -> usize {
+    if ds.pushed_down_conds.is_empty() || index.columns.is_empty() {
+        return 0;
+    }
+    let prefix: std::collections::BTreeSet<i64> = index
+        .columns
+        .iter()
+        .filter_map(|index_column| {
+            ds.table_columns
+                .get(index_column.offset)
+                .map(|table_column| table_column.unique_id)
+        })
+        .collect();
+    if prefix.is_empty() {
+        return 0;
+    }
+    ds.pushed_down_conds
+        .iter()
+        .filter(|condition| {
+            let columns = tidb_expr::simple_expr::extract_columns(condition);
+            !columns.is_empty()
+                && columns
+                    .iter()
+                    .all(|column| prefix.contains(&column.unique_id))
+        })
+        .count()
+}
+
 fn index_path_matches_order(
     ds: &crate::logical::DataSource,
     index: &crate::plan_builder::catalog::SourceIndex,
@@ -2407,7 +2441,56 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     let mut best_is_preferred_range = false;
     let mut best_is_full_range = true;
     let mut ordinary_candidates = Vec::new();
-    'paths: for path in &ds.enumerated_paths {
+    // Go `skylinePruning`'s pairwise `compareCandidates` fold prunes
+    // dominated index candidates BEFORE the path loop, so their plan ids
+    // are never burned. Port the access-coverage + order-match dominance
+    // that decides R21: an index with strictly MORE fully-covered access
+    // predicates, no worse on order match, dominates the competitor.
+    let rs_skyline_pruned: std::collections::BTreeSet<usize> = {
+        let mut pruned = std::collections::BTreeSet::new();
+        let n = ds.enumerated_paths.len();
+        let mut access_counts = vec![0usize; n];
+        let mut order_matches = vec![false; n];
+        for (i, path) in ds.enumerated_paths.iter().enumerate() {
+            if let crate::access_path::PossiblePath::Index { index } = path {
+                if let Some(source_index) = ds.indexes.get(*index) {
+                    if source_index.is_public && !source_index.is_multi_valued {
+                        access_counts[i] = index_prefix_access_count(ds, source_index);
+                        order_matches[i] = index_path_matches_order(ds, source_index, prop);
+                    }
+                }
+            }
+        }
+        for i in 0..n {
+            if access_counts[i] == 0 && !order_matches[i] {
+                continue;
+            }
+            for j in 0..n {
+                if i == j || pruned.contains(&j) {
+                    continue;
+                }
+                if let (
+                    crate::access_path::PossiblePath::Index { index: idx_i },
+                    crate::access_path::PossiblePath::Index { index: idx_j },
+                ) = (&ds.enumerated_paths[i], &ds.enumerated_paths[j])
+                {
+                    let public_i = ds.indexes.get(*idx_i).is_some_and(|x| x.is_public);
+                    let public_j = ds.indexes.get(*idx_j).is_some_and(|x| x.is_public);
+                    if !public_i || !public_j {
+                        continue;
+                    }
+                    if access_counts[i] > access_counts[j] && order_matches[i] >= order_matches[j] {
+                        pruned.insert(j);
+                    }
+                }
+            }
+        }
+        pruned
+    };
+    'paths: for (rs_path_idx, path) in ds.enumerated_paths.iter().enumerate() {
+        if rs_skyline_pruned.contains(&rs_path_idx) {
+            continue 'paths;
+        }
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
             && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
             || (ds.prefer_store_type & crate::logical::data_source::PREFER_TIKV != 0
