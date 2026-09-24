@@ -1,4 +1,4 @@
-// Source: github.com/pingcap/tipb/proto/resourcetag.proto
+// Source: github.com/pingcap/tipb@v0.0.0-20260623093813-5f9928e91afe/proto/resourcetag.proto
 //
 // The upstream file also imports gogoproto/rustproto option definitions.  Those
 // options control Go/rust-protobuf code generation and have no wire meaning;

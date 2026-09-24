@@ -95,6 +95,7 @@ errdoc:tools/bin/errdoc-gen
 .PHONY: rust_proto_check
 rust_proto_check:
 	python3 rust/scripts/sync-tipb-scalar-func-sig.py
+	python3 rust/scripts/check-tipb-proto-projection.py
 
 .PHONY: lint
 lint:tools/bin/revive rust_proto_check
