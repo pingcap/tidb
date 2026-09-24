@@ -1017,6 +1017,34 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::MultiplyDecimal,
         false,
     ),
+    // `builtin_arithmetic.go` `arithmeticDivideFunctionClass.getFunction`:
+    // the result of `/` is never integral — real operands divide as Real,
+    // everything else (the planner already inserted the decimal casts, as
+    // q34's `div(cast(hd_dep_count, decimal), cast(hd_vehicle_count,
+    // decimal)))` shows) divides as Decimal. Without these rows a `/` nested
+    // inside a conditional fails the PB conversion of the whole conditional.
+    signature(
+        "div",
+        &[
+            ArgPattern::eval(EvalType::Real),
+            ArgPattern::eval(EvalType::Real),
+        ],
+        &[EvalType::Real, EvalType::Real],
+        EvalType::Real,
+        ScalarFuncSig::DivideReal,
+        false,
+    ),
+    signature(
+        "div",
+        &[
+            ArgPattern::eval(EvalType::Decimal),
+            ArgPattern::eval(EvalType::Decimal),
+        ],
+        &[EvalType::Decimal, EvalType::Decimal],
+        EvalType::Decimal,
+        ScalarFuncSig::DivideDecimal,
+        false,
+    ),
     // `builtin_arithmetic.go` `arithmeticModFunctionClass.getFunction`: Real
     // wins over Decimal, Decimal over Int, and the integer case then splits
     // four ways on the two arguments' UNSIGNED flags.
