@@ -454,8 +454,11 @@ func splitPolicyExprCtx(loc *time.Location) expression.BuildContext {
 	if loc == nil {
 		loc = time.UTC
 	}
+	// Match one-shot SPLIT's unsigned conversion without relaxing other
+	// conversion errors handled by StrictFlags.
 	evalCtx := exprstatic.NewEvalContext(
 		exprstatic.WithLocation(loc),
+		exprstatic.WithTypeFlags(types.StrictFlags.WithAllowNegativeToUnsigned(true)),
 	)
 	return exprstatic.NewExprContext(exprstatic.WithEvalCtx(evalCtx))
 }

@@ -311,6 +311,32 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 		require.Equal(t, fromStringLiterals, fromIntLiterals)
 	})
 
+	t.Run("negative bigint unsigned index bound matches unsigned conversion", func(t *testing.T) {
+		const tableSQL = "create table t (id bigint primary key, v bigint unsigned, index idx_v(v)) split index idx_v between (0) and (%s) regions 4"
+		fromNegativeLiteral := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "-1"), mock.NewContext(), mock.NewContext())
+		fromMaxUnsigned := splitKeysForPersistedPolicy(t, fmt.Sprintf(tableSQL, "18446744073709551615"), mock.NewContext(), mock.NewContext())
+		require.NotEmpty(t, fromNegativeLiteral)
+		require.Equal(t, fromMaxUnsigned, fromNegativeLiteral)
+	})
+
+	t.Run("pre-fix negative bigint unsigned table policy is replayed", func(t *testing.T) {
+		splitKeys := func(upper string) [][]byte {
+			tblInfo, _ := buildSplitPolicyTestTableInfo(t, "create table t (id bigint unsigned primary key)")
+			tblInfo.TableSplitPolicy = &model.RegionSplitPolicy{
+				Lower:   []string{"0"},
+				Upper:   []string{upper},
+				Regions: 4,
+			}
+
+			store := &fakeAutoPreSplitStore{}
+			splitTableRegion(mock.NewContext(), store, tblInfo, vardef.ScatterOff)
+			require.Len(t, store.calls, 1)
+			return store.calls[0].keys
+		}
+
+		require.Equal(t, splitKeys("18446744073709551615"), splitKeys("-1"))
+	})
+
 	// A table-level policy on a clustered common-handle table must convert its
 	// string bounds to the primary key column types.
 	t.Run("string bound on common handle columns", func(t *testing.T) {
