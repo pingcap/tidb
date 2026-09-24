@@ -432,7 +432,7 @@ func TestAlterMaterializedViewLogDDL(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select NEXT_PURGE_UNIX_SECONDS is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogTable.ID)).Check(testkit.Rows("1"))
 }
 
-func TestAlterMaterializedViewLogPurgeScheduleTimeZone(t *testing.T) {
+func TestAlterMaterializedViewLogPurgeScheduleUTC(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
@@ -450,24 +450,22 @@ func TestAlterMaterializedViewLogPurgeScheduleTimeZone(t *testing.T) {
 
 	mlogTable, info := getMLog()
 	initialPurgeScheduleSQLMode := info.PurgeScheduleSQLMode
-	initialTimeZoneName := info.PurgeScheduleTimeZone.Name
-	initialTimeZoneOffset := info.PurgeScheduleTimeZone.Offset
-	require.Equal(t, 0, initialTimeZoneOffset)
 
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustExec("alter materialized view log on t purge")
 	_, info = getMLog()
-	require.Equal(t, initialTimeZoneName, info.PurgeScheduleTimeZone.Name)
-	require.Equal(t, initialTimeZoneOffset, info.PurgeScheduleTimeZone.Offset)
 	require.Equal(t, initialPurgeScheduleSQLMode, info.PurgeScheduleSQLMode)
 	require.Empty(t, info.PurgeNext)
 
 	tk.MustExec("set sql_mode = 'PIPES_AS_CONCAT'")
 	tk.MustExec("alter materialized view log on t purge next cast('2030-01-02 10:00:00' as datetime)")
 	_, info = getMLog()
-	require.Equal(t, 8*60*60, info.PurgeScheduleTimeZone.Offset)
 	require.Equal(t, tk.Session().GetSessionVars().SQLMode, info.PurgeScheduleSQLMode)
-	tk.MustQuery("select NEXT_PURGE_UNIX_SECONDS = 1893549600 from mysql.tidb_mlog_purge_info where MLOG_ID = " + strconv.FormatInt(mlogTable.ID, 10)).Check(testkit.Rows("1"))
+	tk.MustQuery("select NEXT_PURGE_UNIX_SECONDS = 1893578400 from mysql.tidb_mlog_purge_info where MLOG_ID = " + strconv.FormatInt(mlogTable.ID, 10)).Check(testkit.Rows("1"))
+
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExec("alter materialized view log on t purge next cast('2021-03-14 02:30:00' as datetime)")
+	tk.MustQuery("select NEXT_PURGE_UNIX_SECONDS = 1615689000 from mysql.tidb_mlog_purge_info where MLOG_ID = " + strconv.FormatInt(mlogTable.ID, 10)).Check(testkit.Rows("1"))
 }
 
 func TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns(t *testing.T) {

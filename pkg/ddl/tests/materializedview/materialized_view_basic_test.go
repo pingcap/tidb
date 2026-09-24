@@ -349,7 +349,7 @@ func TestCreateMaterializedViewRefreshInfoNextUnixSecondsDerivation(t *testing.T
 	)).Check(testkit.Rows("1 1 1"))
 }
 
-func TestCreateMaterializedViewRefreshInfoNextUnixSecondsUsesScheduleTimeZone(t *testing.T) {
+func TestCreateMaterializedViewRefreshInfoNextUnixSecondsUsesUTC(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
@@ -368,16 +368,29 @@ func TestCreateMaterializedViewRefreshInfoNextUnixSecondsUsesScheduleTimeZone(t 
 	tk.MustExec("create materialized view mv_schedule_next (a, s, cnt) refresh fast next cast('2030-01-02 10:00:00' as datetime) as select a, sum(b), count(1) from t group by a")
 	mvID := getMViewID("mv_schedule_next")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_REFRESH_UNIX_SECONDS = 1893549600, NEXT_REFRESH_UNIX_SECONDS = 1893578400 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS = 1893578400, NEXT_REFRESH_UNIX_SECONDS = 1893549600 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mvID,
 	)).Check(testkit.Rows("1 0"))
 
 	tk.MustExec("create materialized view mv_schedule_start (a, s, cnt) refresh fast start with cast('2030-01-02 10:00:00' as datetime) next cast('2030-01-03 10:00:00' as datetime) as select a, sum(b), count(1) from t group by a")
 	mvStartID := getMViewID("mv_schedule_start")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_REFRESH_UNIX_SECONDS = 1893549600, NEXT_REFRESH_UNIX_SECONDS = 1893636000 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS = 1893578400, NEXT_REFRESH_UNIX_SECONDS = 1893636000 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mvStartID,
 	)).Check(testkit.Rows("1 0"))
+
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExec("create materialized view mv_dst_gap (a, s, cnt) refresh fast next cast('2021-03-14 02:30:00' as datetime) as select a, sum(b), count(1) from t group by a")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_REFRESH_UNIX_SECONDS = 1615689000 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		getMViewID("mv_dst_gap"),
+	)).Check(testkit.Rows("1"))
+
+	tk.MustExec("create materialized view mv_utc_now (a, s, cnt) refresh fast next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t group by a")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 30 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 50 minute) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		getMViewID("mv_utc_now"),
+	)).Check(testkit.Rows("1 1"))
 }
 
 func TestCreateMaterializedViewRejectNonBaseObject(t *testing.T) {
