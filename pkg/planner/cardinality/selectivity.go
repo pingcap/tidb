@@ -207,7 +207,7 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
+			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, idxCols)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}

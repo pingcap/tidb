@@ -417,7 +417,9 @@ func (d *SchemaTracker) createIndex(
 		return err
 	}
 	for _, hiddenCol := range hiddenCols {
-		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		colInfo := ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		// Mark the hidden column public to match the metadata produced by executing ADD INDEX.
+		colInfo.State = model.StatePublic
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
@@ -753,6 +755,7 @@ func (d *SchemaTracker) renameIndex(_ sessionctx.Context, ident ast.Ident, spec 
 	if err != nil {
 		return err
 	}
+	ddl.RenameExpressionIndexColumns(tblInfo, spec.FromKey, spec.ToKey)
 	idx := tblInfo.FindIndexByName(spec.FromKey.L)
 	idx.Name = spec.ToKey
 	return nil

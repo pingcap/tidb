@@ -224,6 +224,19 @@ func setFloat64Data(val float64, d *types.Datum) {
 	d.SetFloat64(val)
 }
 
+// getDecimalByteSetter returns a setter for byte array DECIMAL columns.
+// Dictionary decoded values alias the shared dictionary buffer, and
+// binaryToDecimalStr negates its input in place, so copy it into our own
+// buffer first. The buffer is reused across rows, which is safe because
+// binaryToDecimalStr never retains it.
+func getDecimalByteSetter[T parquet.ByteArray | parquet.FixedLenByteArray](scale int) setter[T] {
+	var buf []byte
+	return func(val T, d *types.Datum) {
+		buf = append(buf[:0], val...)
+		d.SetString(binaryToDecimalStr(buf, scale), "utf8mb4_bin")
+	}
+}
+
 func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
 	switch converted.converted {
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
@@ -232,10 +245,7 @@ func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
 			d.SetBytesAsString(val, "utf8mb4_bin", 0)
 		}
 	case schema.ConvertedTypes.Decimal:
-		return func(val parquet.ByteArray, d *types.Datum) {
-			str := binaryToDecimalStr(val, int(converted.decimalMeta.Scale))
-			d.SetString(str, "utf8mb4_bin")
-		}
+		return getDecimalByteSetter[parquet.ByteArray](int(converted.decimalMeta.Scale))
 	}
 
 	return nil
@@ -249,10 +259,7 @@ func getFixedLenByteArraySetter(converted *convertedType) setter[parquet.FixedLe
 			d.SetBytesAsString(val, "utf8mb4_bin", 0)
 		}
 	case schema.ConvertedTypes.Decimal:
-		return func(val parquet.FixedLenByteArray, d *types.Datum) {
-			str := binaryToDecimalStr(val, int(converted.decimalMeta.Scale))
-			d.SetString(str, "utf8mb4_bin")
-		}
+		return getDecimalByteSetter[parquet.FixedLenByteArray](int(converted.decimalMeta.Scale))
 	}
 
 	return nil

@@ -33,8 +33,9 @@ import (
 type LogicalIndexScan struct {
 	LogicalSchemaProducer
 	// DataSource should be read-only here.
-	Source       *DataSource
-	IsDoubleRead bool
+	Source         *DataSource
+	IsDoubleRead   bool
+	NotAlwaysValid bool
 
 	EqCondCount int
 	AccessConds expression.CNFExprs

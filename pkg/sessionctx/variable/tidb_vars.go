@@ -390,6 +390,7 @@ const (
 	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
 	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
 	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
+	TiDBOptIndexJoinMaxScanRowsRatio  = "tidb_opt_index_join_max_scan_rows_ratio"
 
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
@@ -608,6 +609,8 @@ const (
 
 	// TiDBEnableStrictDoubleTypeCheck is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
+	// TiDBEnableStrictNotNullCheck is used to control whether to enable strict not-null check for single-row insert in non-strict mode.
+	TiDBEnableStrictNotNullCheck = "tidb_enable_strict_not_null_check"
 
 	// TiDBOptProjectionPushDown is used to control whether to pushdown projection to coprocessor.
 	TiDBOptProjectionPushDown = "tidb_opt_projection_push_down"
@@ -1384,6 +1387,7 @@ const (
 	DefOptMergeJoinCostFactor               = 1.0
 	DefOptHashJoinCostFactor                = 1.0
 	DefOptIndexJoinCostFactor               = 1.0
+	DefOptIndexJoinMaxScanRowsRatio         = 0.0
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
@@ -1451,6 +1455,7 @@ const (
 	DefEnableWindowFunction                 = true
 	DefEnablePipelinedWindowFunction        = true
 	DefEnableStrictDoubleTypeCheck          = true
+	DefTiDBEnableStrictNotNullCheck         = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true
@@ -1631,6 +1636,8 @@ const (
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0
 	DefPasswordReuseTime                              = 0
+	DefMaxUserConnections                             = 0
+	MaxUserConnectionsLimit                           = 100000
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture            = false
@@ -1805,6 +1812,7 @@ var (
 	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)

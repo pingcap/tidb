@@ -497,6 +497,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.BaseEndpoint = &qs.Endpoint
+			o.EndpointOptions.UseFIPSEndpoint = aws.FIPSEndpointStateDisabled
 		})
 
 		// Recreate client with endpoint resolver

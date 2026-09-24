@@ -94,6 +94,9 @@ func getTableImporter(
 		return nil, err
 	}
 
+	failpoint.Inject("createTableImporterForTest", func() {
+		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
+	})
 	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
@@ -148,6 +151,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	var dataEngine, indexEngine *backend.OpenedEngine
+	defer func() {
+		if err == nil || !s.tableImporter.IsLocalSort() {
+			return
+		}
+		s.tableImporter.Backend().CleanupAllLocalEngines(context.Background())
+	}()
 	if s.tableImporter.IsLocalSort() {
 		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 		if err != nil {
@@ -174,6 +183,9 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
+	defer func() {
+		s.sharedVars.Delete(subtaskMeta.ID)
+	}()
 
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
@@ -275,7 +287,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		}
 	}
 
-	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)

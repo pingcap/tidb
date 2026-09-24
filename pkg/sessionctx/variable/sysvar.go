@@ -1050,6 +1050,14 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxUserConnections, Value: strconv.FormatUint(DefMaxUserConnections, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: MaxUserConnectionsLimit,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			MaxUserConnectionsValue.Store(uint32(TidbOptInt64(val, DefMaxUserConnections)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(uint64(MaxUserConnectionsValue.Load()), 10), nil
+		},
+	},
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
@@ -2154,6 +2162,10 @@ var defaultSysVars = []*SysVar{
 		s.IndexJoinCostFactor = tidbOptFloat64(val, DefOptIndexJoinCostFactor)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptIndexJoinMaxScanRowsRatio, Value: strconv.FormatFloat(DefOptIndexJoinMaxScanRowsRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexJoinMaxScanRowsRatio = tidbOptFloat64(val, DefOptIndexJoinMaxScanRowsRatio)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptimizerEnableNewOnlyFullGroupByCheck, Value: BoolToOnOff(DefTiDBOptimizerEnableNewOFGB), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptimizerEnableNewOnlyFullGroupByCheck = TiDBOptOn(val)
 		return nil
@@ -2224,10 +2236,28 @@ var defaultSysVars = []*SysVar{
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.SetEnableCascadesPlanner(TiDBOptOn(val))
-		return nil
-	}},
+	// TiDBEnableCascadesPlanner is deprecated and retired: the Cascades planner has
+	// been removed. The variable is kept so that existing configurations and sessions
+	// keep working; setting it only emits a warning and has no effect.
+	//
+	// Do NOT re-activate this name for a future Cascades planner implementation. Users
+	// are told that it is deprecated and will be removed, so reviving it would silently
+	// change the plan of every session that still has it set. A new implementation must
+	// ship behind a new variable name; this one should be deleted in a major release.
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: Off, Type: TypeBool,
+		GetSession: func(_ *SessionVars) (string, error) {
+			return Off, nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return Off, nil
+		},
+		Validation: func(vars *SessionVars, _ string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableCascadesPlanner))
+			return Off, nil
+		},
+		SetSession: func(_ *SessionVars, _ string) error {
+			return nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: BoolToOnOff(DefTiDBEnableIndexMerge), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil
@@ -2366,6 +2396,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(DefEnableStrictDoubleTypeCheck), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStrictNotNullCheck, Value: BoolToOnOff(DefTiDBEnableStrictNotNullCheck), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableStrictNotNullCheck = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableVectorizedExpression, Value: BoolToOnOff(DefEnableVectorizedExpression), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {

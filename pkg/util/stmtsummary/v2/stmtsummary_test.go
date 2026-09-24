@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -310,4 +311,46 @@ func TestStmtSummaryFlush(t *testing.T) {
 	storage.Lock()
 	require.Equal(t, 3, len(storage.windows))
 	storage.Unlock()
+}
+
+// TestEvictedConcurrentWithRotate verifies that Evicted() is safe to call
+// concurrently with rotate (V2-25 data race fix).
+func TestEvictedConcurrentWithRotate(t *testing.T) {
+	ss := NewStmtSummary4Test(2)
+	defer ss.Close()
+
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+
+	var wg sync.WaitGroup
+	// Release both workers together so the fast Evicted loop cannot finish
+	// before the rotator starts and silently skip the concurrency under test.
+	start := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 100 {
+			_ = ss.Evicted()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 50 {
+			ss.windowLock.Lock()
+			ss.rotate(timeNow())
+			ss.windowLock.Unlock()
+			ss.Add(GenerateStmtExecInfo4Test("digest_new"))
+			ss.Add(GenerateStmtExecInfo4Test("digest_new2"))
+			ss.Add(GenerateStmtExecInfo4Test("digest_new3"))
+		}
+	}()
+
+	close(start)
+	wg.Wait()
 }

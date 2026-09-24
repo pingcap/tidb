@@ -1238,7 +1238,9 @@ func (w *worker) queryAnalyzeStatusSince(startTS uint64, dbName, tblName string)
 	if startTS > 0 {
 		startTimeStr = model.TSConvert2Time(startTS).UTC().Format(time.DateTime)
 	}
-	kctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnStats)
+	// Deliberately not the analyze source: checking the analyze job state is
+	// lightweight metadata work, not the heavy scan that background throttling targets.
+	kctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnStatsForegroundPriority)
 
 	// set session time zone to UTC to match the time format in `startTimeStr`
 	originalTimeZone := sessCtx.GetSessionVars().TimeZone
@@ -1398,7 +1400,9 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
 		}
 
-		doneCh = make(chan error)
+		// Use a buffered channel so analyze goroutine can always report an error
+		// even after caller has timed out and moved on.
+		doneCh = make(chan error, 1)
 		eg := util.NewErrorGroupWithRecover()
 		eg.Go(func() error {
 			sessCtx, err := w.sessPool.Get()
@@ -3312,12 +3316,13 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		} else {
 			// case 3 (or if not found AddingDefinitions; 4)
 			// check if recreating Global Index (during Reorg Partition)
-			pid, err = findNextPartitionID(currPhysicalTableID, pi.AddingDefinitions)
-			if err != nil {
+			var notAddingErr error
+			pid, notAddingErr = findNextPartitionID(currPhysicalTableID, pi.AddingDefinitions)
+			if notAddingErr != nil {
 				// case 4
 				// Not a partition in the AddingDefinitions, so it must be an existing
 				// non-touched partition, i.e. recreating Global Index for the non-touched partitions
-				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
+				pid = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
 			}
 		}
 	} else {
@@ -3404,22 +3409,28 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
 }
 
-func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInfo) (int64, error) {
+// findNextNonTouchedPartitionID finds the next partition after currPartitionID
+// that is not touched by the current DDL, i.e. the next partition in
+// pi.Definitions which is not in pi.DroppingDefinitions.
+// Returns 0 if there is no such partition left.
+func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInfo) int64 {
 	pid, err := findNextPartitionID(currPartitionID, pi.Definitions)
 	if err != nil {
-		return 0, err
+		// Should not happen, the reorg only runs on partitions of the table.
+		logutil.DDLLogger().Warn("current partition not found in the table definitions",
+			zap.Int64("partitionID", currPartitionID))
+		return 0
 	}
-	if pid == 0 {
-		return 0, nil
-	}
-	for _, notFoundErr := findNextPartitionID(pid, pi.DroppingDefinitions); notFoundErr == nil; {
-		// This can be optimized, but it is not frequently called, so keeping as-is
-		pid, err = findNextPartitionID(pid, pi.Definitions)
-		if pid == 0 {
-			break
+	for pid != 0 {
+		if _, notFoundErr := findNextPartitionID(pid, pi.DroppingDefinitions); notFoundErr != nil {
+			// Not in DroppingDefinitions, so it is a non-touched partition.
+			return pid
 		}
+		// This can be optimized, but it is not frequently called, so keeping as-is
+		// pid is from pi.Definitions, so it can always be found there.
+		pid, _ = findNextPartitionID(pid, pi.Definitions)
 	}
-	return pid, err
+	return 0
 }
 
 // AllocateIndexID allocates an index ID from TableInfo.
@@ -3732,6 +3743,12 @@ func renameIndexes(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}
+	}
+	renameExpressionIndexColumnRefs(tblInfo, from, to)
+}
+
+func renameExpressionIndexColumnRefs(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
+	for _, idx := range tblInfo.Indices {
 		for _, col := range idx.Columns {
 			originalCol := tblInfo.Columns[col.Offset]
 			if originalCol.Hidden && getExpressionIndexOriginName(col.Name) == from.O {
@@ -3740,6 +3757,13 @@ func renameIndexes(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 			}
 		}
 	}
+}
+
+// RenameExpressionIndexColumns renames hidden column definitions in tblInfo and their column-name
+// entries in each index column list. It does not rename the index itself.
+func RenameExpressionIndexColumns(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
+	renameExpressionIndexColumnRefs(tblInfo, from, to)
+	renameHiddenColumns(tblInfo, from, to)
 }
 
 func renameHiddenColumns(tblInfo *model.TableInfo, from, to pmodel.CIStr) {

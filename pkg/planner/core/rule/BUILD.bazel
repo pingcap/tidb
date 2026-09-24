@@ -20,5 +20,6 @@ go_library(
         "//pkg/planner/util",
         "//pkg/planner/util/fixcontrol",
         "//pkg/planner/util/optimizetrace",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )

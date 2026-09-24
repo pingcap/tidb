@@ -452,7 +452,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 
 func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	done := false
-	killed := sctx.GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted
+	killed := exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal())
 	if killed {
 		return true, 1
 	}
@@ -462,7 +462,17 @@ func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	return done, 0
 }
 
-func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
+// convertKillFlag maps killed!=0 to ErrQueryInterrupted for batch
+// ALTER DATABASE SET TIFLASH REPLICA. killed==0 is the failpoint-only abort
+// and still returns nil.
+func convertKillFlag(killed uint32) error {
+	if killed != 0 {
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	}
+	return nil
+}
+
+func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool, uint32) {
 	configRetry := tiflashCheckPendingTablesRetry
 	configWaitTime := tiflashCheckPendingTablesWaitTime
 	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
@@ -474,13 +484,13 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
-			return true, originVersion, pendingCount, false
+			return true, originVersion, pendingCount, false, killed
 		}
 		originVersion, pendingCount = e.getPendingTiFlashTableCount(originVersion, pendingCount)
 		delay := time.Duration(0)
 		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
-			return false, originVersion, pendingCount, false
+			return false, originVersion, pendingCount, false, 0
 		}
 		logutil.DDLLogger().Info("too many unavailable tables, wait",
 			zap.Uint32("threshold", threshold),
@@ -494,7 +504,7 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 	logutil.DDLLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
 	// If timeout here, we will trigger a ddl job, to force sync schema. However, it doesn't mean we remove limiter,
 	// so there is a force check immediately after that.
-	return false, originVersion, pendingCount, true
+	return false, originVersion, pendingCount, true, 0
 }
 
 func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -539,7 +549,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
-			return nil
+			return convertKillFlag(killed)
 		}
 
 		tbReplicaInfo := tbl.TiFlashReplica
@@ -571,10 +581,11 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
 			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
 			finished := false
-			finished, originVersion, pendingCount, forceCheck = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
+			var killed uint32
+			finished, originVersion, pendingCount, forceCheck, killed = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
 			if finished {
-				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
-				return nil
+				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
+				return convertKillFlag(killed)
 			}
 		}
 
@@ -595,14 +606,18 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		args := &model.SetTiFlashReplicaArgs{TiflashReplica: *tiflashReplica}
 		err := e.doDDLJob2(sctx, job, args)
 		if err != nil {
-			oneFail = tbl.ID
-			fail++
 			logutil.DDLLogger().Info("processing schema table error",
 				zap.Int64("tableID", tbl.ID),
 				zap.Int64("schemaID", dbInfo.ID),
 				zap.Stringer("tableName", tbl.Name),
 				zap.Stringer("schemaName", dbInfo.Name),
 				zap.Error(err))
+			// KILL cancelled this job; return the error and do not process remaining tables.
+			if dbterror.ErrCancelledDDLJob.Equal(err) || exeerrors.ErrQueryInterrupted.Equal(err) {
+				return err
+			}
+			oneFail = tbl.ID
+			fail++
 		} else {
 			succ++
 		}
@@ -4225,7 +4240,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				err := adminCheckTableBeforeDrop(ctx, fullti)
+				err := adminCheckTableBeforeDrop(e.sessPool, fullti)
 				if err != nil {
 					return err
 				}
@@ -4300,35 +4315,28 @@ func (e *executor) dropTableObject(
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
 // Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
 // using it in other places by mistake, it's named like this.
-func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
 	logutil.DDLLogger().Warn("admin check table before drop",
 		zap.String("database", fullti.Schema.O),
 		zap.String("table", fullti.Name.O),
 	)
-	exec := ctx.GetRestrictedSQLExecutor()
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
-	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
-	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
-	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
-	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
-	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	sctx, err := sessPool.Get()
 	if err != nil {
 		return err
 	}
-	if !originalFastTableCheck {
-		defer func() {
-			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
-			if err != nil {
-				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
-			}
-		}()
-	}
-	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
-	if err != nil {
-		return err
-	}
-	return nil
+	defer sessPool.Put(sctx)
+	s := sess.NewSession(sctx)
+
+	sessVars := sctx.GetSessionVars()
+	originalFastTableCheck := sessVars.FastCheckTable
+	sessVars.FastCheckTable = true
+	defer func() {
+		sessVars.FastCheckTable = originalFastTableCheck
+	}()
+	_, err = s.Execute(internalCtx, "admin check table %n.%n", "admin_check_table_before_drop", fullti.Schema.O, fullti.Name.O)
+	return err
 }
 
 // DropTable will proceed even if some table in the list does not exists.
@@ -5130,7 +5138,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				}
 			case model.ActionModifyColumn:
 				setReorgParam()
-				if job.NeedReorg {
+				if sub.NeedReorg {
 					err := setDistTaskParam()
 					if err != nil {
 						return err
@@ -5159,15 +5167,6 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Int("maxNodeCount", m.MaxNodeCount),
 	)
 	return nil
-}
-
-func modifyColumnNeedReorg(jobCtxVars []any) bool {
-	if len(jobCtxVars) > 0 {
-		if v, ok := jobCtxVars[0].(bool); ok {
-			return v
-		}
-	}
-	return false
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
@@ -5300,7 +5299,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	if err != nil {
 		return err
 	}
-	if model.FindIndexByColumns(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
+	if model.FindIndexByColumnsForForeignKey(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
@@ -6806,6 +6805,15 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 	return e.DoDDLJobWrapper(ctx, NewJobWrapperWithArgs(job, args, false))
 }
 
+// isRetryableDDLCancelErr reports whether DoDDLJobWrapper should call
+// CancelJobsBySystem again. Finished, cannot-cancel, and not-found results are
+// terminal for the cancel command.
+func isRetryableDDLCancelErr(err error) bool {
+	return !dbterror.ErrCancelFinishedDDLJob.Equal(err) &&
+		!dbterror.ErrCannotCancelDDLJob.Equal(err) &&
+		!dbterror.ErrDDLJobNotFound.Equal(err)
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
@@ -6919,7 +6927,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
-		if sessVars.SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
+		if exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal()) {
 			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
 				logutil.DDLLogger().Info("DoDDLJob will quit because context done")
 				return context.Canceled
@@ -6930,16 +6938,23 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 					logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 					continue
 				}
-				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
 				errs, err := CancelJobsBySystem(se, []int64{jobID})
 				e.sessPool.Put(se)
-				if len(errs) > 0 {
-					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
-				}
 				if err != nil {
 					logutil.DDLLogger().Warn("Kill command could not cancel DDL job", zap.Error(err))
 					continue
 				}
+				// CancelJobsBySystem returns one result per requested job; only
+				// non-nil entries need error handling.
+				if len(errs) > 0 && errs[0] != nil {
+					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
+					if isRetryableDDLCancelErr(errs[0]) {
+						continue
+					}
+				}
+				// Clear DDLJobID so CancelJobsBySystem is not issued again. The wait
+				// loop continues until the job is in history.
+				sessVars.StmtCtx.DDLJobID = 0
 			}
 		}
 

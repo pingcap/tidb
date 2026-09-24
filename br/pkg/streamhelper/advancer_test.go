@@ -310,13 +310,20 @@ func TestBlocked(t *testing.T) {
 	ctx := context.Background()
 	req := require.New(t)
 	c.splitAndScatter("0012", "0034", "0048")
+	blockReq := make(chan struct{})
+	defer close(blockReq)
+	firstBlocked := make(chan struct{}, 1)
+	firstBlockedOnce := sync.Once{}
 	marked := false
 	for _, s := range c.stores {
 		s.clientMu.Lock()
 		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+			firstBlockedOnce.Do(func() {
+				firstBlocked <- struct{}{}
+			})
 			// blocking the thread.
 			// this may happen when TiKV goes down or too busy.
-			<-(chan struct{})(nil)
+			<-blockReq
 			return nil
 		}
 		s.clientMu.Unlock()
@@ -327,14 +334,21 @@ func TestBlocked(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	adv.UpdateConfigWith(func(c *config.CommandConfig) {
-		// ... So the tick timeout would be 100ms
-		c.TickDuration = 10 * time.Millisecond
+		// keep enough headroom so the blocked rpc request is observed before timeout.
+		c.TickDuration = 100 * time.Millisecond
+	})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- adv.OnTick(ctx)
+	}()
+	shouldFinishInTime(t, 5*time.Second, "wait until blocked request observed", func() {
+		<-firstBlocked
 	})
 	var err error
-	shouldFinishInTime(t, time.Second, "ticking", func() {
-		err = adv.OnTick(ctx)
+	shouldFinishInTime(t, 5*time.Second, "ticking", func() {
+		err = <-errCh
 	})
-	req.ErrorIs(errors.Cause(err), context.DeadlineExceeded)
+	req.ErrorIs(err, context.DeadlineExceeded)
 }
 
 func TestResolveLock(t *testing.T) {
@@ -627,8 +641,8 @@ func TestCheckPointLagged(t *testing.T) {
 	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	// after some times, the isPaused will be set and ticks are skipped
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 }
 
@@ -651,18 +665,20 @@ func TestCheckPointResume(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 	//now the checkpoint issue is fixed and resumed
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.ResumeTask(ctx)
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 	//with time passed, the checkpoint will exceed the limit again
 	c.advanceClusterTimeBy(2 * time.Minute)
-	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func TestUnregisterAfterPause(t *testing.T) {
@@ -981,12 +997,20 @@ func TestGCCheckpoint(t *testing.T) {
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
+	require.Eventually(t, func() bool {
+		return adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.PauseTask(ctx, "whole")
 	c.serviceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.ResumeTask(ctx)
-	require.ErrorContains(t, adv.OnTick(ctx), "greater than the target")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "greater than the target")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func TestRedactBackend(t *testing.T) {

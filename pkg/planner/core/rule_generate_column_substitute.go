@@ -96,6 +96,9 @@ func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candi
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	if (*expr).Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
 		schema.ColumnIndex(col) != -1 {
+		if expression.MaybeOverOptimized4PlanCache(lp.SCtx().GetExprCtx(), []expression.Expression{*expr}) {
+			lp.SCtx().GetExprCtx().SetSkipPlanCache("generated column substitution with mutable constants can affect index selection")
+		}
 		*expr = col
 		appendSubstituteColumnStep(lp, candidateExpr, col, opt)
 		changed = true
@@ -209,22 +212,14 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 			for i := 0; i < len(aggFunc.Args); i++ {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()
 				for candidateExpr, column := range exprToColumn {
-					if aggFunc.Args[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
-						x.Schema().ColumnIndex(column) != -1 {
-						aggFunc.Args[i] = column
-						appendSubstituteColumnStep(lp, candidateExpr, column, opt)
-					}
+					tryToSubstituteExpr(&aggFunc.Args[i], lp, candidateExpr, tp, x.Schema(), column, opt)
 				}
 			}
 		}
 		for i := 0; i < len(x.GroupByItems); i++ {
 			tp = x.GroupByItems[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
-				if x.GroupByItems[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
-					x.Schema().ColumnIndex(column) != -1 {
-					x.GroupByItems[i] = column
-					appendSubstituteColumnStep(lp, candidateExpr, column, opt)
-				}
+				tryToSubstituteExpr(&x.GroupByItems[i], lp, candidateExpr, tp, x.Schema(), column, opt)
 			}
 		}
 	}

@@ -1058,6 +1058,7 @@ type SessionVars struct {
 	MergeJoinCostFactor        float64
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
+	IndexJoinMaxScanRowsRatio  float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
@@ -1119,9 +1120,6 @@ type SessionVars struct {
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
-	// EnableCascadesPlanner enables the cascades planner.
-	EnableCascadesPlanner bool
-
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
@@ -1146,6 +1144,9 @@ type SessionVars struct {
 
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
+
+	// EnableStrictNotNullCheck enables strict not-null check for single-row insert in non-strict mode.
+	EnableStrictNotNullCheck bool
 
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
@@ -2258,6 +2259,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MergeJoinCostFactor:           DefOptMergeJoinCostFactor,
 		HashJoinCostFactor:            DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
+		IndexJoinMaxScanRowsRatio:     DefOptIndexJoinMaxScanRowsRatio,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
 		TiDBOptJoinReorderThroughProj: DefTiDBOptJoinReorderThroughProj,
@@ -2336,6 +2338,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
@@ -2425,19 +2428,6 @@ func (s *SessionVars) GetAllowPreferRangeScan() bool {
 // SetAllowPreferRangeScan set SessionVars.preferRangeScan.
 func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
 	s.preferRangeScan = val
-}
-
-// GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
-func (s *SessionVars) GetEnableCascadesPlanner() bool {
-	if s.StmtCtx.HasEnableCascadesPlannerHint {
-		return s.StmtCtx.EnableCascadesPlanner
-	}
-	return s.EnableCascadesPlanner
-}
-
-// SetEnableCascadesPlanner set SessionVars.EnableCascadesPlanner.
-func (s *SessionVars) SetEnableCascadesPlanner(val bool) {
-	s.EnableCascadesPlanner = val
 }
 
 // GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.

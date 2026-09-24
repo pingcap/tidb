@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
@@ -61,8 +62,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -135,7 +138,6 @@ func (l *LogRestoreManager) Close(ctx context.Context) {
 // including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
 type SstRestoreManager struct {
 	restorer         restore.SstRestorer
-	workerPool       *tidbutil.WorkerPool
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
@@ -148,41 +150,6 @@ func (s *SstRestoreManager) Close(ctx context.Context) {
 	if s.checkpointRunner != nil {
 		s.checkpointRunner.WaitForFinish(ctx, true)
 	}
-}
-
-func NewSstRestoreManager(
-	ctx context.Context,
-	metaClient split.SplitClient,
-	snapFileImporter *snapclient.SnapFileImporter,
-	concurrencyPerStore uint,
-	storeCount uint,
-	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
-) (*SstRestoreManager, error) {
-	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-	// This poolSize is similar to full restore, as both workflows are comparable.
-	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
-	poolSize := concurrencyPerStore * 32 * storeCount
-	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
-	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
-
-	s := &SstRestoreManager{
-		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
-	}
-	if sstCheckpointMetaManager != nil {
-		var err error
-		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	if snapFileImporter.GetMergeSst() {
-		log.Info("create batch sst restorer to restore SST files")
-		s.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, metaClient, sstWorkerPool, checkpointRunner)
-	} else {
-		log.Info("create simple sst restorer to restore SST files")
-		s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
-	}
-	return s, nil
 }
 
 type logFilesStatistic struct {
@@ -204,6 +171,7 @@ type LogClient struct {
 	dom           *domain.Domain
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
+	rateLimit     uint64
 	// regionScanConcurrency controls max in-flight region scan requests to PD.
 	regionScanConcurrency uint
 
@@ -220,6 +188,7 @@ type LogClient struct {
 
 	upstreamClusterID uint64
 	restoreID         uint64
+	operationContext  operation.Context
 	checkRequirements bool
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
@@ -236,6 +205,23 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
+	rc.setOperationContextRestoreID(restoreID)
+}
+
+// SetOperationContext sets command-scoped metadata used for storage locks.
+func (rc *LogClient) SetOperationContext(operationContext operation.Context) {
+	rc.operationContext = operationContext
+	rc.setOperationContextRestoreID(rc.restoreID)
+}
+
+const operationHintRestoreID = "restore_id"
+
+func (rc *LogClient) setOperationContextRestoreID(restoreID uint64) {
+	if restoreID == 0 {
+		rc.operationContext.SetHintField(operationHintRestoreID, "")
+		return
+	}
+	rc.operationContext.SetHintField(operationHintRestoreID, strconv.FormatUint(restoreID, 10))
 }
 
 // SetCheckRequirements controls whether backup metadata compatibility checks are enforced.
@@ -333,6 +319,7 @@ func (rc *LogClient) RestoreSSTFiles(
 	compactionsIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
 	importModeSwitcher *restore.ImportModeSwitcher,
+	online bool,
 	onProgress func(int64),
 ) error {
 	begin := time.Now()
@@ -372,16 +359,19 @@ func (rc *LogClient) RestoreSSTFiles(
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
-	err := importModeSwitcher.GoSwitchToImportMode(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
-		if switchErr != nil {
-			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
+
+	if !online {
+		err := importModeSwitcher.GoSwitchToImportMode(ctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
-	}()
+		defer func() {
+			switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
+			if switchErr != nil {
+				log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
+			}
+		}()
+	}
 
 	log.Info("[Compacted SST Restore] Start to restore SST files",
 		zap.Int("sst-file-count", len(backupFileSets)), zap.Duration("iterate-take", time.Since(start)))
@@ -396,21 +386,24 @@ func (rc *LogClient) RestoreSSTFiles(
 	// where batch processing may lead to increased complexity and potential inefficiencies.
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
-	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
-	if err != nil {
+	if err := rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets); err != nil {
 		return errors.Trace(err)
 	}
-	err = rc.sstRestoreManager.restorer.WaitUntilFinish()
+	err := rc.sstRestoreManager.restorer.WaitUntilFinish()
 
+	var totalKvs, totalBytes, totalSize uint64
 	for _, files := range backupFileSets {
 		for _, f := range files.SSTFiles {
-			log.Info("Collected file.", zap.Uint64("total_kv", f.TotalKvs), zap.Uint64("total_bytes", f.TotalBytes), zap.Uint64("size", f.Size_))
+			totalKvs += f.TotalKvs
+			totalBytes += f.TotalBytes
+			totalSize += f.Size_
 			atomic.AddUint64(&rc.restoreStat.restoreSSTKVCount, f.TotalKvs)
 			atomic.AddUint64(&rc.restoreStat.restoreSSTKVSize, f.TotalBytes)
 			atomic.AddUint64(&rc.restoreStat.restoreSSTPhySize, f.Size_)
 		}
 	}
 	atomic.AddUint64(&rc.restoreStat.restoreSSTTakes, uint64(time.Since(begin)))
+	log.Info("Collected files", zap.Uint64("total_kv", totalKvs), zap.Uint64("total_bytes", totalBytes), zap.Uint64("total_size", totalSize))
 	return err
 }
 
@@ -438,6 +431,10 @@ func (rc *LogClient) SetRawKVBatchClient(
 
 	rc.rawKVClient = rawkv.NewRawKVBatchClient(rawkvClient, rawKVBatchCount)
 	return nil
+}
+
+func (rc *LogClient) SetRateLimit(rateLimit uint64) {
+	rc.rateLimit = rateLimit
 }
 
 func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
@@ -573,6 +570,12 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// This poolSize is similar to full restore, as both workflows are comparable.
+	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
+	poolSize := concurrencyPerStore * 32 * uint(len(stores))
+	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
+	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
+
 	var createCallBacks []func(*snapclient.SnapFileImporter) error
 	var closeCallBacks []func(*snapclient.SnapFileImporter) error
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
@@ -581,6 +584,11 @@ func (rc *LogClient) InitClients(
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckBatchDownloadSupport(ctx, stores)
 	})
+	if rc.rateLimit != 0 {
+		createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, rc.pdClient, sstWorkerPool, rc.rateLimit)
+		createCallBacks = append(createCallBacks, createCallBack)
+		closeCallBacks = append(closeCallBacks, closeCallBack)
+	}
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
@@ -591,15 +599,23 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.sstRestoreManager, err = NewSstRestoreManager(
-		ctx,
-		metaClient,
-		fileImporter,
-		concurrencyPerStore,
-		uint(len(stores)),
-		sstCheckpointMetaManager,
-	)
-	return errors.Trace(err)
+	sstRestoreManager := &SstRestoreManager{}
+	if sstCheckpointMetaManager != nil {
+		var err error
+		sstRestoreManager.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if fileImporter.GetMergeSst() {
+		log.Info("create batch sst restorer to restore SST files")
+		sstRestoreManager.restorer = restore.NewBatchSstRestorer(ctx, fileImporter, metaClient, sstWorkerPool, sstRestoreManager.checkpointRunner)
+	} else {
+		log.Info("create simple sst restorer to restore SST files")
+		sstRestoreManager.restorer = restore.NewSimpleSstRestorer(ctx, fileImporter, sstWorkerPool, sstRestoreManager.checkpointRunner)
+	}
+	rc.sstRestoreManager = sstRestoreManager
+	return nil
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
@@ -687,25 +703,27 @@ type LockedMigrations struct {
 	ReadLock storage.RemoteLock
 }
 
-func (rc *LogClient) GetLockedMigrations(ctx context.Context) (*LockedMigrations, error) {
-	ext := stream.MigrationExtension(rc.storage)
+func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrations, retErr error) {
+	ext := stream.MigrationExtension(rc.storage).WithOperationContext(rc.operationContext)
 	readLock, err := ext.GetReadLock(ctx, "restore stream")
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if retErr != nil {
+			readLock.UnlockOnCleanUp(ctx)
+		}
+	}()
 
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	ms := migs.ListAll()
-
-	lms := &LockedMigrations{
-		Migs:     ms,
+	return &LockedMigrations{
+		Migs:     migs.ListAll(),
 		ReadLock: readLock,
-	}
-	return lms, nil
+	}, nil
 }
 
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
@@ -1453,6 +1471,85 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 			}
 		}
 	}
+	return nil
+}
+
+// RebaseAutoIncrementIDForSepAutoIncTables syncs the autoid service's in-memory
+// allocator to the persisted TiKV value for every restored AUTO_ID_CACHE=1 table.
+//
+// Tables with AUTO_ID_CACHE=1 (TableInfo.SepAutoInc()) have their auto-increment
+// counter served by the centralized autoid service. PiTR log replay restores the
+// persisted counter via raw KV writes but never notifies the autoid service, so
+// its cached in-memory base can remain stale and hand out already-restored IDs,
+// producing duplicate-key errors on the first insert after restore. Reading the
+// persisted value and force-rebasing the allocator repairs the stale cache.
+// See https://github.com/pingcap/tidb/issues/69485.
+func (rc *LogClient) RebaseAutoIncrementIDForSepAutoIncTables(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
+	infoSchema := rc.dom.InfoSchema()
+	store := rc.dom.Store()
+	for _, dbReplace := range schemaReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbReplace.DbID, tableReplace.TableID); err != nil {
+				// Best effort: a single table failing to rebase must not abort the
+				// whole restore, so log and continue.
+				log.Warn("failed to rebase auto-increment allocator after PiTR log replay",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name),
+					zap.Error(err))
+			}
+		}
+	}
+	return nil
+}
+
+// rebaseAutoIncrementIDForTable force-rebases the autoid service for a single
+// AUTO_ID_CACHE=1 table to the auto-increment counter currently persisted in
+// TiKV. It is a no-op for tables that do not use a separated auto-increment
+// allocator or that no longer exist in the info schema.
+func (rc *LogClient) rebaseAutoIncrementIDForTable(ctx context.Context, store kv.Storage, infoSchema infoschema.InfoSchema, dbID, tableID int64) error {
+	tbl, ok := infoSchema.TableByID(ctx, tableID)
+	if !ok {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	if !tblInfo.SepAutoInc() {
+		return nil
+	}
+	alloc := tbl.Allocators(nil).Get(autoid.AutoIncrementType)
+	if alloc == nil {
+		return nil
+	}
+	// Read the persisted auto-increment counter directly from TiKV, bypassing the
+	// autoid service cache which is exactly the stale state we want to repair.
+	var persisted int64
+	if err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		persisted, err = meta.NewMutator(txn).GetAutoIDAccessors(dbID, tableID).IncrementID(model.TableInfoVersion5).Get()
+		return err
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	if persisted <= 0 {
+		return nil
+	}
+	// The persisted value is the last allocated ID, so ForceRebase makes the next
+	// allocation persisted+1. It is idempotent when the service already sits at
+	// this value: the persisted counter is untouched and only the in-memory base
+	// is refreshed.
+	if err := alloc.ForceRebase(persisted); err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("rebased auto-increment allocator after PiTR log replay",
+		zap.Int64("schemaID", dbID),
+		zap.Int64("tableID", tableID),
+		zap.Int64("persistedBase", persisted))
 	return nil
 }
 

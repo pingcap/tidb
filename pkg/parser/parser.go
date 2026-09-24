@@ -23359,8 +23359,19 @@ yynewstate:
 	case 2529:
 		{
 			parser.yyVAL.item = yyS[yypt-0].item
-			yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions now, they would be parsed but ignored."))
-			parser.lastErrorAsWarn()
+			needWarning := false
+			for _, option := range yyS[yypt-0].item.([]*ast.ResourceOption) {
+				switch option.Type {
+				case ast.MaxUserConnections:
+					// do nothing.
+				default:
+					needWarning = true
+				}
+			}
+			if needWarning {
+				yylex.AppendError(yylex.Errorf("TiDB only supports MAX_USER_CONNECTIONS in WITH ConnectionOptions; other options will be parsed but ignored."))
+				parser.lastErrorAsWarn()
+			}
 		}
 	case 2530:
 		{

@@ -841,6 +841,8 @@ type PhysicalIndexScan struct {
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
+
+	NotAlwaysValid bool
 }
 
 // Clone implements op.PhysicalPlan interface.

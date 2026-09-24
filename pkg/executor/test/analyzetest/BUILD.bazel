@@ -10,7 +10,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 39,
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -33,6 +33,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/globalconn",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
