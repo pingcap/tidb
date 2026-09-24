@@ -3310,16 +3310,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if access_conds_empty && prop.is_sort_item_empty() && !single_scan {
                     continue 'paths;
                 }
-                // Go `convertToIndexScan` (`find_best_task.go:2595`):
-                // "if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched()
-                // { return base.InvalidTask, nil }" — an index that cannot
-                // provide the required order is rejected BEFORE the plan-id
-                // burn. `index_path_matches_order` is this tier's
-                // `matchProperty` for the sort-item case.
-                if !prop.is_sort_item_empty() && !index_path_matches_order(ds, source_index, prop)
-                {
-                    continue 'paths;
-                }
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
                     "IndexScan",
