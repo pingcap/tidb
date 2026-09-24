@@ -509,19 +509,11 @@ func constructIndexJoin(
 		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-	orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
-	// Record the variable usage for explain explore.
-	outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
-	estimatedRowCount := p.StatsInfo().RowCount
-	if (prop.ExpectedCnt < estimatedRowCount) ||
-		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
-		// Apply the orderRatio to recognize that a large outer table scan may
-		// read additional rows before the inner table reaches the limit values
-		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
-		expCntScale := prop.ExpectedCnt / estimatedRowCount
-		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
-		chReqProps[outerIdx].ExpectedCnt = expectedCnt
+	chReqProps[outerIdx] = &property.PhysicalProperty{
+		TaskTp:            property.RootTaskType,
+		ExpectedCnt:       calcChildExpectedCnt(p.SCtx(), prop, p.Children()[outerIdx].StatsInfo().RowCount, p.StatsInfo().RowCount),
+		SortItems:         prop.SortItems,
+		CTEProducerStatus: prop.CTEProducerStatus,
 	}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
@@ -782,6 +774,12 @@ func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalPro
 
 	joins = buildIndexJoinInner2TableScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
 	if joins != nil {
+		// The legacy builder stops after finding a table probe. A common-handle
+		// prefix is not necessarily unique, so also cost a secondary-index probe
+		// when the usable-key fix is enabled. Keep the legacy choice when OFF.
+		if innerChildWrapper.ds.TableInfo.IsCommonHandle && fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, true) {
+			joins = append(joins, buildIndexJoinInner2IndexScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)...)
+		}
 		return
 	}
 	return buildIndexJoinInner2IndexScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
@@ -892,9 +890,8 @@ childLoop:
 
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
-// If the inner side of a index join is a TableScan, only one tuple will be
-// fetched from the inner side for every tuple from the outer side. This will be
-// promised to be no worse than building IndexScan as the inner child.
+// An integer handle or a complete unique common handle returns at most one row
+// per probe. A common-handle prefix may read multiple rows.
 func buildIndexJoinInner2TableScan(
 	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper,
@@ -921,14 +918,15 @@ func buildIndexJoinInner2TableScan(
 		if indexJoinResult == nil {
 			return nil
 		}
-		rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(p.SCtx(), outerJoinKeys, indexJoinResult)
+		accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, innerJoinKeys, indexJoinResult)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt, accessRowsFloor, maxOneRow)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, accessRowsFloor, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -962,13 +960,13 @@ func buildIndexJoinInner2TableScan(
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt, 0, true)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, 0, true)
 		}
 	}
 	var (
@@ -1019,18 +1017,9 @@ func buildIndexJoinInner2IndexScan(
 		return nil
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-	maxOneRow := false
-	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
-		l := len(indexJoinResult.chosenAccess)
-		if l == 0 {
-			maxOneRow = true
-		} else {
-			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
-			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
-		}
-	}
-	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
+	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(p.SCtx(), outerJoinKeys, indexJoinResult)
+	accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, innerJoinKeys, indexJoinResult)
+	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, accessRowsFloor, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
 			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager))
@@ -1047,7 +1036,7 @@ func buildIndexJoinInner2IndexScan(
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if !wrapper.hasDitryWrite {
-		innerTask2 := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+		innerTask2 := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, accessRowsFloor, maxOneRow)
 		if innerTask2 != nil {
 			joins = append(joins, constructIndexMergeJoin(p, prop, outerIdx, innerTask2, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
 		}
@@ -1066,6 +1055,8 @@ func constructInnerTableScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	accessRowsFloor float64,
+	maxOneRow bool,
 ) base.Task {
 	ds := wrapper.ds
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -1106,9 +1097,13 @@ func constructInnerTableScanTask(
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
 		countAfterAccess = rowCount / selectivity
 	}
+	countAfterAccess = math.Max(countAfterAccess, accessRowsFloor)
+	finalRowCount := countAfterAccess
+	if maxOneRow {
+		finalRowCount = math.Min(1.0, countAfterAccess)
+	}
 	ts.SetStats(&property.StatsInfo{
-		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
-		RowCount:     math.Min(1.0, countAfterAccess),
+		RowCount:     finalRowCount,
 		StatsVersion: ds.StatsInfo().StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	})
@@ -1263,6 +1258,7 @@ func constructInnerIndexScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	accessRowsFloor float64,
 	maxOneRow bool,
 ) base.Task {
 	ds := wrapper.ds
@@ -1424,6 +1420,14 @@ func constructInnerIndexScanTask(
 			cnt = math.Min(cnt, 1.0)
 		}
 		tmpPath.CountAfterAccess = cnt
+	}
+	if !maxOneRow && accessRowsFloor > tmpPath.CountAfterAccess {
+		scale := 1.0
+		if tmpPath.CountAfterAccess > 0 {
+			scale = tmpPath.CountAfterIndex / tmpPath.CountAfterAccess
+		}
+		tmpPath.CountAfterAccess = accessRowsFloor
+		tmpPath.CountAfterIndex = accessRowsFloor * scale
 	}
 	is.SetStats(ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
@@ -2539,10 +2543,6 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
-	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
-		return nil, true, nil
-	}
 	disableAggPushDownToCop(la.Children()[0])
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
@@ -2566,6 +2566,13 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		canUseCache = false
 	}
 
+	// Account for extra outer rows needed to satisfy an ordered Apply's LIMIT,
+	// using the same ordering selectivity model as IndexJoin and MergeJoin.
+	outerExpectedCnt := math.MaxFloat64
+	if !prop.IsSortItemEmpty() {
+		outerExpectedCnt = calcChildExpectedCnt(la.SCtx(), prop, la.Children()[0].StatsInfo().RowCount, la.StatsInfo().RowCount)
+	}
+
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
@@ -2573,7 +2580,7 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
 		la.QueryBlockOffset(),
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
+		&property.PhysicalProperty{ExpectedCnt: outerExpectedCnt, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil
@@ -3349,4 +3356,33 @@ func exhaustPhysicalPlans4LogicalSequence(lp base.LogicalPlan, prop *property.Ph
 		seqs = append(seqs, seq)
 	}
 	return seqs, true, nil
+}
+
+// indexJoinProbeAccessRowsFloor estimates scan rows using only the EQ keys the
+// access path can use. Remaining join keys filter rows after the probe scan.
+// Keep the target's path-ranking NDV separate: the floor uses unfiltered table stats.
+func indexJoinProbeAccessRowsFloor(ds *logicalop.DataSource, innerJoinKeys []*expression.Column, result *indexJoinPathResult) float64 {
+	if result == nil || ds.TableStats == nil || ds.TableStats.StatsVersion == statistics.PseudoVersion || result.lastColIsRange || result.lastColManager != nil {
+		return 0
+	}
+	usedKeys := make(map[int]struct{}, len(innerJoinKeys))
+	for idxOff, keyOff := range result.idxOff2KeyOff {
+		if idxOff >= result.usedColsLen {
+			break
+		}
+		if keyOff >= 0 {
+			usedKeys[keyOff] = struct{}{}
+		}
+	}
+	if len(usedKeys) >= len(innerJoinKeys) {
+		return 0
+	}
+	if !fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, true) {
+		return 0
+	}
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(result.chosenPath.IdxCols[:result.usedColsLen], ds.Schema(), ds.TableStats)
+	if ndv <= 0 {
+		return 0
+	}
+	return ds.TableStats.RowCount / ndv
 }

@@ -571,6 +571,11 @@ func buildAndOptimizeLogicalPlanRound(
 		optErr    error
 	)
 	optFlag := builder.GetOptFlag()
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		optFlag&rule.FlagPushDownTopN > 0 &&
+		optFlag&rule.FlagJoinReOrder > 0 {
+		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	}
 	if optFlagAdjust != nil {
 		optFlag = optFlagAdjust(optFlag)
 	}
@@ -583,6 +588,15 @@ func buildAndOptimizeLogicalPlanRound(
 		return nil, nil, false, optErr
 	}
 
+	if intest.InTest && ctx.Value(FTSAlternativeCostTestKey{}) != nil {
+		cost = ctx.Value(FTSAlternativeCostTestKey{}).(func(bool, float64) float64)(
+			sctx.GetSessionVars().StmtCtx.InFTSLikeFallbackRound, cost)
+	}
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.RecordAnyValuesWithNames(sctx,
+			"FTS ILIKE round", sctx.GetSessionVars().StmtCtx.InFTSLikeFallbackRound,
+			"Candidate cost", cost, "Selected", *bestPlan == nil || cost < *bestCost)
+	}
 	if *bestPlan == nil || cost < *bestCost {
 		*bestCost = cost
 		*bestPlan = finalPlan
@@ -593,6 +607,9 @@ func buildAndOptimizeLogicalPlanRound(
 	}
 	return p, names, false, nil
 }
+
+// FTSAlternativeCostTestKey supplies a per-query cost observer/override in tests.
+type FTSAlternativeCostTestKey struct{}
 
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
@@ -608,22 +625,26 @@ func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
 		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
 }
 
+func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans && sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+}
+
 // alternativeRound describes one alternative logical-plan round.
 // adjustFlag adjusts the optimization flags for the round.
 // enabled returns true when the round should be attempted.
-// setup/cleanup optionally modify session state before/after plan building.
+// setup optionally modifies session state and returns a per-invocation cleanup.
+// The cleanup captures only this round's state, including for future FTS alternatives.
 type alternativeRound struct {
 	name       string
 	adjustFlag func(uint64) uint64
 	enabled    func(*variable.SessionVars) bool
-	setup      func(*variable.SessionVars)
-	cleanup    func(*variable.SessionVars)
+	setup      func(*variable.SessionVars) func()
 }
 
-// savedEnableCorrelateSubquery holds the pre-round value of
-// EnableCorrelateSubquery so setup/cleanup can share it without a closure
-// wrapper. Safe because optimize is single-threaded per session.
-var savedEnableCorrelateSubquery bool
+func shouldTryFTSLikeRound(sv *variable.SessionVars) bool {
+	return sv.EnableAlternativeLogicalPlans && sv.EnableFTSLikeFallback &&
+		sv.StmtCtx.AlternativeLogicalPlanHasPredicateMatch && !sv.StmtCtx.InFTSLikeFallbackRound
+}
 
 var alternativeRounds = [...]alternativeRound{
 	{
@@ -635,12 +656,22 @@ var alternativeRounds = [...]alternativeRound{
 		name:       "correlate",
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
 		enabled:    shouldTryCorrelateRound,
-		setup: func(sv *variable.SessionVars) {
-			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+		setup: func(sv *variable.SessionVars) func() {
+			previous := sv.EnableCorrelateSubquery
 			sv.EnableCorrelateSubquery = true
+			return func() { sv.EnableCorrelateSubquery = previous }
 		},
-		cleanup: func(sv *variable.SessionVars) {
-			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+	},
+	{
+		name:       "order-aware-join-reorder",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+		enabled:    shouldTryOrderAwareReorderRound,
+	},
+	{
+		name:    "fts-like-fallback",
+		enabled: shouldTryFTSLikeRound,
+		setup: func(sv *variable.SessionVars) func() {
+			return sv.StmtCtx.EnterFTSLikeFallbackRound()
 		},
 	},
 }
@@ -710,9 +741,15 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		&bestLogicalPlanCtx,
 		nil,
 	)
-	if err != nil {
+	// Local OFF leaves the default candidate unavailable. Only the ILIKE
+	// alternative may rescue this specific condition, and its successful build
+	// must still perform the privilege and lock checks (checked remains false).
+	defaultUnavailable := errors.Cause(err) == errors.Cause(core.ErrLocalMatchDisabled) && shouldTryFTSLikeRound(sessVars)
+	if err != nil && !defaultUnavailable {
 		return nil, nil, 0, err
 	}
+	defaultErr := err
+
 	if nonLogical {
 		// keep compatible with the old.
 		return p, names, 0, nil
@@ -726,11 +763,18 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// original build's signals.
 	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
 	for _, round := range alternativeRounds {
-		if round.enabled(sessVars) {
+		if (!defaultUnavailable || round.name == "fts-like-fallback") && round.enabled(sessVars) {
 			enabledRounds = append(enabledRounds, round)
 		}
 	}
+	var lastAltErr error
 	for _, round := range enabledRounds {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, 0, err
+		}
+		if err := sessVars.SQLKiller.HandleSignal(); err != nil {
+			return nil, nil, 0, err
+		}
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
 			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
@@ -743,8 +787,9 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		// EnableCorrelateSubquery) is restored even if the round panics.
 		func() {
 			if round.setup != nil {
-				round.setup(sessVars)
-				defer round.cleanup(sessVars)
+				if cleanup := round.setup(sessVars); cleanup != nil {
+					defer cleanup()
+				}
 			}
 			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
 				ctx,
@@ -763,7 +808,19 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 				round.adjustFlag,
 			)
 		}()
+		if ctx.Err() != nil {
+			return nil, nil, 0, ctx.Err()
+		}
+		if killErr := sessVars.SQLKiller.HandleSignal(); killErr != nil {
+			return nil, nil, 0, killErr
+		}
 		if err != nil {
+			// A rescue round has no valid default plan. In particular, errors
+			// from its privilege/lock checks must be returned, not skipped.
+			if defaultUnavailable {
+				return nil, nil, 0, err
+			}
+			lastAltErr = err
 			// Alternative rounds are optional optimizations. If one fails,
 			// log and continue — the first round's plan is still valid.
 			logutil.BgLogger().Warn("alternative logical plan round failed",
@@ -776,6 +833,12 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		}
 	}
 	if bestPlan == nil {
+		if lastAltErr != nil {
+			return nil, nil, 0, lastAltErr
+		}
+		if defaultErr != nil {
+			return nil, nil, 0, defaultErr
+		}
 		return nil, nil, 0, errors.New("failed to build logical plan")
 	}
 	if needRestoreLogicalPlanCtx {

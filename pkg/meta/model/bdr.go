@@ -103,6 +103,7 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionAlterTablePartitioning,
 		ActionRemovePartitioning,
 		ActionAddVectorIndex,
+		ActionAddFullTextIndex,
 		ActionAlterTableMode,
 		ActionRefreshMeta,
 		ActionModifySchemaSoftDeleteAndActiveActive,

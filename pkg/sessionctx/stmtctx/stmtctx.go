@@ -482,6 +482,16 @@ type StatementContext struct {
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
 	AlternativeLogicalPlanPreferCorrelate bool
+	// AlternativeLogicalPlanOrderAwareJoinReorder indicates whether at least one
+	// logical build round produced an order-aware join reorder candidate that is
+	// worth exploring in a dedicated alternative round.
+	AlternativeLogicalPlanOrderAwareJoinReorder bool
+	// AlternativeLogicalPlanHasPredicateMatch enables a separate ILIKE candidate.
+	AlternativeLogicalPlanHasPredicateMatch bool
+	// InFTSLikeFallbackRound overrides the default local MATCH rewrite only while
+	// building the ILIKE alternative. Its setup/cleanup owns this transient flag;
+	// it is deliberately not part of the saved winning plan state.
+	InFTSLikeFallbackRound bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -646,12 +656,22 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 }
 
+// EnterFTSLikeFallbackRound overrides MATCH rewriting for one build and returns
+// its cleanup. Capturing the original value also supports nested metadata builds.
+func (sc *StatementContext) EnterFTSLikeFallbackRound() func() {
+	previous := sc.InFTSLikeFallbackRound
+	sc.InFTSLikeFallbackRound = true
+	return func() { sc.InFTSLikeFallbackRound = previous }
+}
+
 // ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
 // alternative logical plan feature.
 func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanDecorrelatedApply = false
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
+	sc.AlternativeLogicalPlanHasPredicateMatch = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
@@ -671,6 +691,12 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
 // the correlate-to-Apply alternative.
 func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 	sc.AlternativeLogicalPlanPreferCorrelate = true
+}
+
+// MarkAlternativeLogicalPlanOrderAwareJoinReorder records that the current
+// logical build round produced an order-aware join reorder candidate.
+func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = true
 }
 
 // CtxID returns the context id of the statement

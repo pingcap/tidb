@@ -373,18 +373,24 @@ alter table t add unique index idx_b(b);
 Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists t;
 drop table if exists t_ft;
-create table t_ft (a text, fulltext key (a));
+create table t_ft (a text, fulltext key ft_a (a));
 show warnings;
 Level	Code	Message
-Warning	1214	The used table type doesn't support FULLTEXT indexes
-alter table t_ft add fulltext key (a);
-show warnings;
-Level	Code	Message
-Warning	1214	The used table type doesn't support FULLTEXT indexes
 show create table t_ft;
 Table	Create Table
 t_ft	CREATE TABLE `t_ft` (
-  `a` text DEFAULT NULL
+  `a` text DEFAULT NULL,
+  FULLTEXT INDEX `ft_a`(`a`) WITH PARSER STANDARD
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t_ft drop index ft_a;
+alter table t_ft add fulltext key ft_a (a);
+show warnings;
+Level	Code	Message
+show create table t_ft;
+Table	Create Table
+t_ft	CREATE TABLE `t_ft` (
+  `a` text DEFAULT NULL,
+  FULLTEXT INDEX `ft_a`(`a`) WITH PARSER STANDARD
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t_ft;
 drop table if exists t;

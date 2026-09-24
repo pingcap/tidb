@@ -341,6 +341,11 @@ const (
 	// produce an equivalent same-order index join candidate.
 	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
 
+	// TiDBEnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
+	TiDBEnableLocalMatchAgainst = "tidb_enable_local_match_against"
+	// TiDBEnableFTSLikeFallback enables the ILIKE alternative for MATCH predicates.
+	TiDBEnableFTSLikeFallback = "tidb_enable_fts_like_fallback"
+
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -1302,6 +1307,9 @@ const (
 	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
 	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
 	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
+
+	// TiDBEnableConnectionEventLog controls whether to log connection events.
+	TiDBEnableConnectionEventLog = "tidb_enable_connection_event_log"
 )
 
 // TiDB intentional limits
@@ -1350,6 +1358,7 @@ const (
 	DefOptEnableCorrelationAdjustment       = true
 	DefOptEnableNoDecorrelateInSelect       = false
 	DefOptEnableAlternativeLogicalPlans     = false
+	DefTiDBEnableLocalMatchAgainst          = false
 	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9
@@ -1696,7 +1705,8 @@ const (
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
-	DefConnectAttrsSize int64 = 4096
+	DefConnectAttrsSize             int64 = 4096
+	DefTiDBEnableConnectionEventLog       = false
 )
 
 // Process global variables.
@@ -1835,6 +1845,8 @@ var (
 	ConnectAttrsLongestSeen = atomic.NewInt64(0)
 	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
 	ConnectAttrsLost = atomic.NewInt64(0)
+
+	EnableConnectionEventLog = atomic.NewBool(DefTiDBEnableConnectionEventLog)
 )
 
 var (

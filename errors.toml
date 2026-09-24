@@ -2371,6 +2371,11 @@ error = '''
 Key '%-.192s' doesn't exist in table '%-.192s'
 '''
 
+["planner:1191"]
+error = '''
+Can't find FULLTEXT index matching the column list
+'''
+
 ["planner:1210"]
 error = '''
 Incorrect arguments to %s

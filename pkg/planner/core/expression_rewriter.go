@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -350,11 +351,12 @@ type exprRewriterPlanCtx struct {
 }
 
 type expressionRewriter struct {
-	ctxStack   []expression.Expression
-	ctxNameStk []*types.FieldName
-	schema     *expression.Schema
-	names      []*types.FieldName
-	err        error
+	ctxStack     []expression.Expression
+	ctxNameStk   []*types.FieldName
+	astNodeStack []ast.Node
+	schema       *expression.Schema
+	names        []*types.FieldName
+	err          error
 
 	sctx expression.BuildContext
 	ctx  context.Context
@@ -530,6 +532,7 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ct
 
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
+	er.astNodeStack = append(er.astNodeStack, inNode)
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
 		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
@@ -1495,6 +1498,11 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
+	defer func() {
+		if len(er.astNodeStack) > 0 {
+			er.astNodeStack = er.astNodeStack[:len(er.astNodeStack)-1]
+		}
+	}()
 	if er.err != nil {
 		return retNode, false
 	}
@@ -1622,6 +1630,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.patternLikeOrIlikeToExpression(v)
 	case *ast.PatternRegexpExpr:
 		er.regexpToScalarFunc(v)
+	case *ast.MatchAgainst:
+		er.matchAgainstToExpression(v)
 	case *ast.RowExpr:
 		er.rowToScalarFunc(v)
 	case *ast.PatternInExpr:
@@ -2215,6 +2225,257 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 
 	er.ctxStackPop(2)
 	er.ctxStackAppend(function, types.EmptyName)
+}
+
+// inDirectMatchBooleanContext reports whether MATCH ... AGAINST is directly
+// consumed as a WHERE, HAVING, or JOIN ON predicate. Any scalar ancestor would
+// require a relevance score and must not take the local 0/1 path.
+func (er *expressionRewriter) inDirectMatchBooleanContext() bool {
+	if er.planCtx == nil {
+		return false
+	}
+	switch er.planCtx.builder.curClause {
+	case whereClause, havingClause, onClause:
+	default:
+		return false
+	}
+	if len(er.astNodeStack) == 0 {
+		return false
+	}
+	for i := len(er.astNodeStack) - 2; i >= 0; i-- {
+		switch n := er.astNodeStack[i].(type) {
+		case *ast.ParenthesesExpr:
+		case *ast.BinaryOperationExpr:
+			if n.Op != opcode.LogicAnd && n.Op != opcode.LogicOr {
+				return false
+			}
+		case *ast.UnaryOperationExpr:
+			if n.Op != opcode.Not && n.Op != opcode.Not2 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ErrLocalMatchDisabled identifies an unavailable default MATCH candidate.
+// Only this error may be rescued by the explicitly enabled ILIKE alternative;
+// unrelated build, privilege, and lock errors must remain fatal.
+var ErrLocalMatchDisabled = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST without tidb_enable_local_match_against")
+
+func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
+	numCols := len(v.ColumnNames)
+	stackLen := len(er.ctxStack)
+	if stackLen < numCols+1 {
+		er.err = errors.Errorf("unexpected stack length for MatchAgainst: %d", stackLen)
+		return
+	}
+
+	if !er.inDirectMatchBooleanContext() {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context")
+		return
+	}
+	sessVars := er.planCtx.builder.ctx.GetSessionVars()
+	sessVars.StmtCtx.AlternativeLogicalPlanHasPredicateMatch = true
+	// ILIKE is exclusively an alternative-round override, never the default
+	// rewrite even when the local MATCH user switch is disabled.
+	if sessVars.StmtCtx.InFTSLikeFallbackRound {
+		er.matchAgainstToLike(v, numCols, stackLen)
+		return
+	}
+	if !sessVars.EnableLocalMatchAgainst {
+		er.err = ErrLocalMatchDisabled
+		return
+	}
+	if !expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context")
+		return
+	}
+	indexInfo, err := er.resolveLocalFullTextIndex(numCols, stackLen)
+	if err != nil {
+		er.err = err
+		return
+	}
+	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, indexInfo)
+}
+
+func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) (*model.IndexInfo, error) {
+	nameStart := stackLen - numCols - 1
+	if nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil {
+		return nil, plannererrors.ErrFtMatchingKeyNotFound
+	}
+	first := er.ctxNameStk[nameStart]
+	if first == nil {
+		return nil, plannererrors.ErrFtMatchingKeyNotFound
+	}
+	dbName, tblName := first.DBName, first.OrigTblName
+	if tblName.L == "" {
+		tblName = first.TblName
+	}
+	if dbName.L == "" {
+		dbName = pmodel.NewCIStr(er.planCtx.builder.ctx.GetSessionVars().CurrentDB)
+	}
+	tblInfo, err := er.planCtx.builder.is.TableInfoByName(dbName, tblName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	columnNames := make([]string, numCols)
+	for i := range numCols {
+		name := er.ctxNameStk[nameStart+i]
+		if name == nil {
+			return nil, plannererrors.ErrFtMatchingKeyNotFound
+		}
+		nameTable := name.OrigTblName
+		if nameTable.L == "" {
+			nameTable = name.TblName
+		}
+		if nameTable.L != tblName.L || name.DBName.L != "" && name.DBName.L != dbName.L {
+			return nil, plannererrors.ErrFtMatchingKeyNotFound
+		}
+		colName := name.OrigColName
+		if colName.L == "" {
+			colName = name.ColName
+		}
+		columnNames[i] = colName.L
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic || idx.FullTextInfo == nil || len(idx.Columns) != len(columnNames) {
+			continue
+		}
+		matched := true
+		for i, col := range idx.Columns {
+			if col.Name.L != columnNames[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return idx, nil
+		}
+	}
+	return nil, plannererrors.ErrFtMatchingKeyNotFound
+}
+
+func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, indexInfo *model.IndexInfo) {
+	against := er.ctxStack[stackLen-1]
+	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
+	args := make([]expression.Expression, 0, numCols+1)
+	args = append(args, against)
+	args = append(args, cols...)
+
+	er.ctxStackPop(numCols + 1)
+	fn, err := er.newFunction(ast.FTSMysqlMatchAgainst, &v.Type, args...)
+	if err != nil {
+		er.err = err
+		return
+	}
+	sf, ok := fn.(*expression.ScalarFunction)
+	if !ok {
+		er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
+		return
+	}
+	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
+		er.err = err
+		return
+	}
+
+	config, err := fulltext.AnalyzerConfigFromSessionVars(er.planCtx.builder.ctx.GetSessionVars(), indexInfo.FullTextInfo.ParserType)
+	if err != nil {
+		er.err = err
+		return
+	}
+	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
+	if constExpr, isConst := against.(*expression.Constant); isConst &&
+		!expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
+		query, err := expression.CompileFTSMysqlMatchAgainstLocalQuery(er.sctx.GetEvalCtx(), sf, config)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if query != nil {
+			info.MatchNothing = query.MatchesNothing()
+			info.SelectivityTerm, _ = query.SelectivityTerm()
+		}
+	}
+	if err := expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info); err != nil {
+		er.err = err
+		return
+	}
+	er.ctxStackAppend(fn, types.EmptyName)
+}
+
+func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, stackLen int) {
+	againstExpr := er.ctxStack[stackLen-1]
+
+	constExpr, ok := againstExpr.(*expression.Constant)
+	if !ok {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-constant search string")
+		return
+	}
+
+	// The LIKE fallback bakes the search value into the produced plan — either
+	// as ILIKE pattern constants (non-NULL case) or as a Constant(NULL)
+	// short-circuit. A cached plan would reuse the first execution's baked
+	// value for later executions, producing wrong results whenever the AGAINST
+	// argument is mutable: a `?` parameter marker, a user variable, or another
+	// deferred expression. In particular, a NULL first bind would bake a
+	// Constant(NULL) plan and reuse it for a later non-NULL bind. Mark the
+	// plan non-cacheable here, before the NULL fast-path and before Eval, so
+	// the skip applies uniformly across all branches below.
+	if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
+		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
+	}
+
+	// Validate columns before the NULL fast path so unsupported types are
+	// rejected consistently for literal and prepared searches.
+	columns := make([]expression.Expression, numCols)
+	for i := range numCols {
+		col := er.ctxStack[stackLen-numCols-1+i]
+		if col.GetType(er.sctx.GetEvalCtx()).EvalType() != types.ETString {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
+			return
+		}
+		columns[i] = col
+	}
+
+	searchText, err := constExpr.Eval(er.sctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	if searchText.IsNull() {
+		// NULL search yields NULL in MySQL FTS semantics
+		// (builtin_fts.go evalReal returns isNull=true for NULL args), so we
+		// emit Constant(NULL) rather than Constant(0). This preserves
+		// three-valued logic under NOT — NOT NULL = NULL filters the row —
+		// and under IS NULL / IS NOT NULL. A literal Constant(0) would make
+		// NOT(MATCH...) admit every row when the search is NULL, diverging
+		// from native semantics.
+		er.ctxStackPop(numCols + 1)
+		er.ctxStackAppend(&expression.Constant{
+			Value:   types.Datum{},
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}, types.EmptyName)
+		return
+	}
+
+	if searchText.Kind() != types.KindString {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search expression")
+		return
+	}
+
+	er.ctxStackPop(numCols + 1)
+
+	result, err := expression.BuildFTSToILikeExpression(er.sctx, columns, searchText.GetString(), v.Modifier)
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	er.ctxStackAppend(result, types.EmptyName)
 }
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
