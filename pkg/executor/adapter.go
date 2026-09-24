@@ -71,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -1831,6 +1832,19 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
 		executor_metrics.SessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
+	}
+	// Restricted SQL helpers already record query durations. Their session flag may be
+	// restored before the result set closes, so also check the statement's snapshot.
+	if !sessVars.InRestrictedSQL && !sessVars.StmtCtx.InRestrictedSQL {
+		sqlType := sessVars.StmtCtx.StmtType
+		if sqlType == "" {
+			sqlType = metrics.LblGeneral
+		}
+		// Include parsing before DurationParse is reset, and use one duration for all DB labels.
+		cost := sessVars.GetTotalCostDuration().Seconds()
+		for _, dbName := range metricsutil.GetDBNames(sessVars) {
+			metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, sessVars.StmtCtx.ResourceGroupName).Observe(cost)
+		}
 	}
 	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
 	sessVars.DurationParse = 0
