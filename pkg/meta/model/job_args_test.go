@@ -604,7 +604,6 @@ func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
-
 }
 
 func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
@@ -655,7 +654,6 @@ func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
-
 }
 
 func TestGetAlterIndexVisibilityArgs(t *testing.T) {

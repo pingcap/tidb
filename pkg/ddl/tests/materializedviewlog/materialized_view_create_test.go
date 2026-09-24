@@ -133,6 +133,17 @@ func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsUsesUTC(t *testing.T) 
 		"select NEXT_PURGE_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 30 minute), NEXT_PURGE_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 50 minute) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		getMLogID("t_purge_utc_now"),
 	)).Check(testkit.Rows("1 1"))
+
+	const injectNowFailpoint = "github.com/pingcap/tidb/pkg/expression/injectNow"
+	require.NoError(t, failpoint.Enable(injectNowFailpoint, "return(1636275480)"))
+	defer func() { require.NoError(t, failpoint.Disable(injectNowFailpoint)) }()
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExec("create table t_purge_dst_fallback (a int)")
+	tk.MustExec("create materialized view log on t_purge_dst_fallback (a) purge next date_add(now(), interval 5 minute)")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS = 1636275780 from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		getMLogID("t_purge_dst_fallback"),
+	)).Check(testkit.Rows("1"))
 }
 
 func TestCreateMaterializedViewLogPurgeInfoFailureRollback(t *testing.T) {

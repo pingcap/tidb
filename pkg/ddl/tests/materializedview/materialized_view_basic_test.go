@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -391,6 +392,16 @@ func TestCreateMaterializedViewRefreshInfoNextUnixSecondsUsesUTC(t *testing.T) {
 		"select NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 30 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 50 minute) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		getMViewID("mv_utc_now"),
 	)).Check(testkit.Rows("1 1"))
+
+	const injectNowFailpoint = "github.com/pingcap/tidb/pkg/expression/injectNow"
+	require.NoError(t, failpoint.Enable(injectNowFailpoint, "return(1636275480)"))
+	defer func() { require.NoError(t, failpoint.Disable(injectNowFailpoint)) }()
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExec("create materialized view mv_dst_fallback (a, s, cnt) refresh fast next date_add(now(), interval 5 minute) as select a, sum(b), count(1) from t group by a")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_REFRESH_UNIX_SECONDS = 1636275780 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		getMViewID("mv_dst_fallback"),
+	)).Check(testkit.Rows("1"))
 }
 
 func TestCreateMaterializedViewRejectNonBaseObject(t *testing.T) {
