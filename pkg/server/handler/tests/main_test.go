@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
@@ -30,6 +32,58 @@ import (
 	"go.uber.org/goleak"
 )
 
+type statusAPIAuditRecord struct {
+	tp           extension.StmtEventTp
+	sessionAlias string
+	sql          string
+	err          string
+}
+
+type statusAPIAuditRecorder struct {
+	mu      sync.Mutex
+	records []statusAPIAuditRecord
+}
+
+func (r *statusAPIAuditRecorder) onStmtEvent(tp extension.StmtEventTp, info extension.StmtEventInfo) {
+	if info.SessionAlias() != "status-api" {
+		return
+	}
+	rec := statusAPIAuditRecord{
+		tp:           tp,
+		sessionAlias: info.SessionAlias(),
+		sql:          info.OriginalText(),
+	}
+	if err := info.GetError(); err != nil {
+		rec.err = err.Error()
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = append(r.records, rec)
+}
+
+func (r *statusAPIAuditRecorder) sessionHandler() *extension.SessionHandler {
+	return &extension.SessionHandler{
+		OnStmtEvent: r.onStmtEvent,
+	}
+}
+
+func (r *statusAPIAuditRecorder) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = nil
+}
+
+func (r *statusAPIAuditRecorder) Records() []statusAPIAuditRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]statusAPIAuditRecord, len(r.records))
+	copy(out, r.records)
+	return out
+}
+
+var statusAPIAuditTestRecorder = &statusAPIAuditRecorder{}
+
 func TestMain(m *testing.M) {
 	server.RunInGoTest = true
 	server.RunInGoTestChan = make(chan struct{})
@@ -38,6 +92,13 @@ func TestMain(m *testing.M) {
 	unistore.CheckResourceTagForTopSQLInGoTest = true
 
 	tikv.EnableFailpoints()
+
+	if err := extension.Register(
+		"status_api_audit_test",
+		extension.WithSessionHandlerFactory(statusAPIAuditTestRecorder.sessionHandler),
+	); err != nil {
+		panic(err)
+	}
 
 	metrics.RegisterMetrics()
 
