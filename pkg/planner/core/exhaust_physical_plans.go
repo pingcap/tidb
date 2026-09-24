@@ -2539,10 +2539,8 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
-	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
-		return nil, true, nil
-	}
+	// Parallel Apply now supports ordered output via a reorder buffer,
+	// so we no longer reject sort properties here.
 	disableAggPushDownToCop(la.Children()[0])
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
@@ -2566,6 +2564,29 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		canUseCache = false
 	}
 
+	// When the parent requires ordering, compute the expected row count for the
+	// outer child.  For a semi/anti-semi join, each outer row produces at most
+	// one output row, so if the parent expects N rows we need N / selectivity
+	// outer rows.  For other join types the ratio may differ, but using the
+	// Apply's own selectivity is still a reasonable approximation.  Unordered
+	// props keep the unlimited expected count so existing plan choices between
+	// Apply and HashJoin are unchanged (matches #66786 on master).
+	outerExpectedCnt := math.MaxFloat64
+	if !prop.IsSortItemEmpty() && prop.ExpectedCnt < math.MaxFloat64 {
+		outerRowCount := la.Children()[0].StatsInfo().RowCount
+		applyRowCount := la.StatsInfo().RowCount
+		if applyRowCount > 0 && outerRowCount > 0 {
+			selectivity := applyRowCount / outerRowCount
+			if selectivity > 0 {
+				outerExpectedCnt = prop.ExpectedCnt / selectivity
+			}
+		}
+		// The outer side can never need fewer rows than the parent expects.
+		if outerExpectedCnt < prop.ExpectedCnt {
+			outerExpectedCnt = prop.ExpectedCnt
+		}
+	}
+
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
@@ -2573,7 +2594,7 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
 		la.QueryBlockOffset(),
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
+		&property.PhysicalProperty{ExpectedCnt: outerExpectedCnt, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil
