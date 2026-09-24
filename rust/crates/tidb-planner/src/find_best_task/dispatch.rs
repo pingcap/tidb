@@ -3874,77 +3874,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
                 });
-                let index_plan = if index_filters.is_empty() {
-                    scan
-                } else {
-                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
-                        ctx.allocator,
-                        "Selection",
-                        ds.base.base.query_block_offset(),
-                    );
-                    selection_base
-                        .base
-                        .set_schema(ds.base.base.schema().cloned());
-                    selection_base.base.set_stats(
-                        if let Some(runtime_stats) = &runtime_probe_stats {
-                            Some(runtime_stats.clone())
-                        } else if table_filters.is_empty() {
-                            // Go `addPushedDownSelection4PhysicalIndexScan`
-                            // (`find_best_task.go:2762`): count =
-                            // is.StatsInfo().RowCount x (path.CountAfterIndex
-                            // / path.CountAfterAccess), then
-                            // `ds.TableStats.ScaleByExpectCnt(count)`. The
-                            // ratio IS the histogram selectivity of the index
-                            // filters, so derive it from the analyzed profile
-                            // instead of keeping the raw DataSource profile.
-                            let selectivity = ds
-                                .table_stats
-                                .as_ref()
-                                .and_then(|table_stats| {
-                                    crate::logical::rewrite::analyzed_filter_selectivity(
-                                        table_stats,
-                                        &index_filters,
-                                    )
-                                })
-                                .filter(|value| *value > 0.0);
-                            let count = scan_stats
-                                .as_ref()
-                                .map(crate::stats_info::StatsInfo::row_count)
-                                .zip(selectivity)
-                                .map(|(rows, selectivity)| rows * selectivity);
-                            match count {
-                                Some(count) => ds
-                                    .table_stats
-                                    .as_ref()
-                                    .map(|table_stats| {
-                                        table_stats.scale_by_expect_cnt(
-                                            count,
-                                            ctx.skew_ratio,
-                                        )
-                                    })
-                                    .or_else(|| {
-                                        Some(crate::stats_info::StatsInfo::new(count, []))
-                                    }),
-                                None => stats.clone(),
-                            }
-                        } else {
-                            stats.clone()
-                        },
-                    );
-                    selection_base.set_children(vec![scan]);
-                    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
-                        base: selection_base,
-                        conditions: index_filters,
-                        from_data_source: true,
-                    })
-                };
                 let (mut table_side, root_task_conds) = if single_scan {
                     // A condition that is not covered by the index key (for
                     // example an unsigned integer handle predicate) remains
                     // above the covering IndexReader as Go's
                     // `CopTask.RootTaskConds`; it must never disappear merely
                     // because no table probe is required.
-                    (None, table_filters)
+                    (None, table_filters.clone())
                 } else {
                     // Go `convertToIndexScan` builds the lookup's table side
                     // over the source's schema and stats.
@@ -3957,7 +3893,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         runtime_probe_stats
                             .clone()
                             .or_else(|| {
-                                index_plan.base().base.stats_info().cloned().map(|stats| {
+                                scan.base().base.stats_info().cloned().map(|stats| {
                                     // Go `convertToIndexScan`:
                                     // `ts.SetStats(&property.StatsInfo{StatsVersion:
                                     // ds.TableStats.StatsVersion})` — the table
@@ -4056,11 +3992,75 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         selection_base.set_children(vec![table_scan]);
                         PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,
-                            conditions: table_filters,
+                            conditions: table_filters.clone(),
                             from_data_source: true,
                         })
                     };
                     (Some(Box::new(table_plan)), Vec::new())
+                };
+                let index_plan = if index_filters.is_empty() {
+                    scan
+                } else {
+                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        "Selection",
+                        ds.base.base.query_block_offset(),
+                    );
+                    selection_base
+                        .base
+                        .set_schema(ds.base.base.schema().cloned());
+                    selection_base.base.set_stats(
+                        if let Some(runtime_stats) = &runtime_probe_stats {
+                            Some(runtime_stats.clone())
+                        } else if table_filters.is_empty() {
+                            // Go `addPushedDownSelection4PhysicalIndexScan`
+                            // (`find_best_task.go:2762`): count =
+                            // is.StatsInfo().RowCount x (path.CountAfterIndex
+                            // / path.CountAfterAccess), then
+                            // `ds.TableStats.ScaleByExpectCnt(count)`. The
+                            // ratio IS the histogram selectivity of the index
+                            // filters, so derive it from the analyzed profile
+                            // instead of keeping the raw DataSource profile.
+                            let selectivity = ds
+                                .table_stats
+                                .as_ref()
+                                .and_then(|table_stats| {
+                                    crate::logical::rewrite::analyzed_filter_selectivity(
+                                        table_stats,
+                                        &index_filters,
+                                    )
+                                })
+                                .filter(|value| *value > 0.0);
+                            let count = scan_stats
+                                .as_ref()
+                                .map(crate::stats_info::StatsInfo::row_count)
+                                .zip(selectivity)
+                                .map(|(rows, selectivity)| rows * selectivity);
+                            match count {
+                                Some(count) => ds
+                                    .table_stats
+                                    .as_ref()
+                                    .map(|table_stats| {
+                                        table_stats.scale_by_expect_cnt(
+                                            count,
+                                            ctx.skew_ratio,
+                                        )
+                                    })
+                                    .or_else(|| {
+                                        Some(crate::stats_info::StatsInfo::new(count, []))
+                                    }),
+                                None => stats.clone(),
+                            }
+                        } else {
+                            stats.clone()
+                        },
+                    );
+                    selection_base.set_children(vec![scan]);
+                    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                        base: selection_base,
+                        conditions: index_filters,
+                        from_data_source: true,
+                    })
                 };
                 // Go `convertToIndexScan` (`find_best_task.go:2665`): a
                 // keep-order read on a non-common-handle table appends the
