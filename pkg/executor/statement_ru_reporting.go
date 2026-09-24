@@ -19,7 +19,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 )
 
 type statementRUEngine uint8
@@ -27,22 +27,31 @@ type statementRUEngine uint8
 const (
 	statementRUTiDB statementRUEngine = iota
 	statementRUTiKV
+	statementRUTiFlash
 	statementRUEngineCount
 )
 
-var statementRUEngineNames = [...]string{"tidb", "tikv"}
+var statementRUEngineNames = [...]string{"tidb", "tikv", "tiflash"}
 
-// Only computation has location-dependent ownership. Storage/transport units
-// always belong to TiKV; frontend and write-statement units belong to TiDB.
+// Temporary multiplier for TiFlash RU experiments.
+const statementRUTiFlashMultiplier = 10
+
+// Operator work follows its execution engine. A TiDB Reader additionally owns
+// remote scan evidence, which is attributed to the corresponding storage engine.
 type statementRUComputeUnits struct {
-	cpuWork       float64
-	hashStateRows float64
-	operatorNum   float64
+	cpuWork         float64
+	hashStateRows   float64
+	operatorNum     float64
+	joinOutputRows  float64
+	scanBytes       float64
+	netBytes        float64
+	crossAZNetBytes float64
 }
 
 type statementRUEngineResult struct {
-	TiDB float64
-	TiKV float64
+	TiDB    float64
+	TiKV    float64
+	TiFlash float64
 }
 
 // statementRUOperator groups physical operators for RU reporting and includes
@@ -87,11 +96,11 @@ var statementRUOperatorNames = [...]string{
 // numeric values, never plans or runtime statistics. Finalization freezes a copy
 // for the publisher; result mode never allocates either report.
 type statementRUFullReport struct {
-	units [statementRUEngineCount][statementRUOperatorCount]ruv3.StmtUnits
+	units [statementRUEngineCount][statementRUOperatorCount]ruv2.StmtUnits
 	seen  [statementRUEngineCount][statementRUOperatorCount]bool
 }
 
-func (report *statementRUFullReport) add(engine statementRUEngine, operator statementRUOperator, units ruv3.StmtUnits) {
+func (report *statementRUFullReport) add(engine statementRUEngine, operator statementRUOperator, units ruv2.StmtUnits) {
 	report.units[engine][operator] = report.units[engine][operator].Add(units)
 	report.seen[engine][operator] = true
 }
@@ -143,10 +152,14 @@ func statementRUOperatorForPlan(plan base.Plan) statementRUOperator {
 	}
 }
 
-func (report *statementRUFullReport) addOperator(engine statementRUEngine, operator statementRUOperator, units ruv3.StmtUnits) {
+func (report *statementRUFullReport) addOperator(engine statementRUEngine, operator statementRUOperator, units ruv2.StmtUnits) {
+	if engine == statementRUTiFlash {
+		report.add(engine, operator, units)
+		return
+	}
 	// A root Reader/PointGet owns the evidence, but the scan and payload are
 	// TiKV work. Keep that ownership distinct from the local executor work.
-	remote := ruv3.StmtUnits{ScanBytes: units.ScanBytes, NetBytes: units.NetBytes}
+	remote := ruv2.StmtUnits{ScanBytes: units.ScanBytes, NetBytes: units.NetBytes}
 	units.ScanBytes, units.NetBytes = 0, 0
 	report.add(engine, operator, units)
 	if remote.ScanBytes != 0 || remote.NetBytes != 0 {
@@ -154,51 +167,35 @@ func (report *statementRUFullReport) addOperator(engine statementRUEngine, opera
 	}
 }
 
-func (calculator statementRUCalculator) engineResult(weights ruv3.StmtWeights) statementRUEngineResult {
-	tidb, tikv := calculator.compute[statementRUTiDB], calculator.compute[statementRUTiKV]
+func (calculator statementRUCalculator) engineResult(weights ruv2.StmtWeights) statementRUEngineResult {
+	tidb, tikv, tiflash := calculator.compute[statementRUTiDB], calculator.compute[statementRUTiKV], calculator.compute[statementRUTiFlash]
 	units := calculator.units
 	return statementRUEngineResult{
 		TiDB: weights.CPUWork*tidb.cpuWork + weights.HashStateRow*tidb.hashStateRows +
-			weights.OperatorNum*tidb.operatorNum + weights.JoinOutputRow*units.JoinOutputRows +
+			weights.OperatorNum*tidb.operatorNum + weights.JoinOutputRow*(units.JoinOutputRows-tiflash.joinOutputRows) +
 			weights.FrontendCompileByte*units.FrontendCompileBytes + weights.WriteStatement*units.WriteStatement,
 		TiKV: weights.CPUWork*tikv.cpuWork + weights.HashStateRow*tikv.hashStateRows +
-			weights.OperatorNum*tikv.operatorNum + weights.ScanByte*units.ScanBytes +
-			weights.NetByte*units.NetBytes + weights.WriteKey*units.WriteKeys + weights.WriteByte*units.WriteBytes,
+			weights.OperatorNum*tikv.operatorNum + weights.ScanByte*(units.ScanBytes-tiflash.scanBytes) +
+			weights.NetByte*(units.NetBytes-tiflash.netBytes) + weights.WriteKey*units.WriteKeys + weights.WriteByte*units.WriteBytes,
+		TiFlash: calculator.tiFlashRU(weights),
 	}
+}
+
+func (calculator statementRUCalculator) tiFlashRU(weights ruv2.StmtWeights) float64 {
+	tiflash := calculator.compute[statementRUTiFlash]
+	return weights.CPUWork*tiflash.cpuWork + weights.HashStateRow*tiflash.hashStateRows +
+		weights.OperatorNum*tiflash.operatorNum + weights.JoinOutputRow*tiflash.joinOutputRows +
+		weights.ScanByte*tiflash.scanBytes + weights.NetByte*tiflash.netBytes + weights.CrossAZNetByte*tiflash.crossAZNetBytes
 }
 
 // addStatementUnits accounts for evidence outside individual operators once.
-func (report *statementRUFullReport) addStatementUnits(units ruv3.StmtUnits) {
-	report.add(statementRUTiDB, statementRUFrontend, ruv3.StmtUnits{FrontendCompileBytes: units.FrontendCompileBytes})
+func (report *statementRUFullReport) addStatementUnits(units ruv2.StmtUnits) {
+	report.add(statementRUTiDB, statementRUFrontend, ruv2.StmtUnits{FrontendCompileBytes: units.FrontendCompileBytes})
 	if units.WriteStatement != 0 {
-		report.add(statementRUTiDB, statementRUWrite, ruv3.StmtUnits{WriteStatement: units.WriteStatement})
+		report.add(statementRUTiDB, statementRUWrite, ruv2.StmtUnits{WriteStatement: units.WriteStatement})
 	}
 	if units.WriteKeys != 0 || units.WriteBytes != 0 {
-		report.add(statementRUTiKV, statementRUKVWrite, ruv3.StmtUnits{WriteKeys: units.WriteKeys, WriteBytes: units.WriteBytes})
-	}
-}
-
-// statementRUSQLTypeForPlan classifies a successfully calculated statement by
-// its executed plan. Prepared statements have already been unwrapped, and the
-// type is independent of affected rows or whether a transaction wrote any keys.
-func statementRUSQLTypeForPlan(plan base.Plan) string {
-	switch plan := plan.(type) {
-	case *physicalop.Insert:
-		if plan.IsReplace {
-			return "replace"
-		}
-		return "insert"
-	case *physicalop.Update:
-		return "update"
-	case *physicalop.Delete:
-		return "delete"
-	case *plannercore.Analyze:
-		return "analyze"
-	case *plannercore.Simple:
-		// COMMIT is the only supported Simple plan.
-		return "commit"
-	default:
-		return "select"
+		report.add(statementRUTiKV, statementRUKVWrite, ruv2.StmtUnits{WriteKeys: units.WriteKeys, WriteBytes: units.WriteBytes})
 	}
 }
 
@@ -212,25 +209,26 @@ func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
 				name  string
 				value float64
 			}{
-				{metrics.LblRUV3UnitCPUWork, units.CPUWork},
-				{metrics.LblRUV3UnitScanBytes, units.ScanBytes},
-				{metrics.LblRUV3UnitNetBytes, units.NetBytes},
-				{metrics.LblRUV3UnitFrontendCompileBytes, units.FrontendCompileBytes},
-				{metrics.LblRUV3UnitHashStateRows, units.HashStateRows},
-				{metrics.LblRUV3UnitJoinOutputRows, units.JoinOutputRows},
-				{metrics.LblRUV3UnitWriteStatement, units.WriteStatement},
-				{metrics.LblRUV3UnitOperatorNum, units.OperatorNum},
-				{metrics.LblRUV3UnitWriteKeys, units.WriteKeys},
-				{metrics.LblRUV3UnitWriteBytes, units.WriteBytes},
+				{metrics.LblRUV2UnitCPUWork, units.CPUWork},
+				{metrics.LblRUV2UnitScanBytes, units.ScanBytes},
+				{metrics.LblRUV2UnitNetBytes, units.NetBytes},
+				{metrics.LblRUV2UnitCrossAZNetBytes, units.CrossAZNetBytes},
+				{metrics.LblRUV2UnitFrontendCompileBytes, units.FrontendCompileBytes},
+				{metrics.LblRUV2UnitHashStateRows, units.HashStateRows},
+				{metrics.LblRUV2UnitJoinOutputRows, units.JoinOutputRows},
+				{metrics.LblRUV2UnitWriteStatement, units.WriteStatement},
+				{metrics.LblRUV2UnitOperatorNum, units.OperatorNum},
+				{metrics.LblRUV2UnitWriteKeys, units.WriteKeys},
+				{metrics.LblRUV2UnitWriteBytes, units.WriteBytes},
 			} {
 				if unit.value == 0 {
 					continue
 				}
-				metrics.RUV3Unit.WithLabelValues(statementRUEngineNames[engine], statementRUOperatorNames[operator], unit.name).Add(unit.value)
+				metrics.RUV2Unit.WithLabelValues(statementRUEngineNames[engine], statementRUOperatorNames[operator], unit.name).Add(unit.value)
 			}
 		}
 	}
-	metrics.RUV3Statements.WithLabelValues("success", finalized.calibrationState.String()).Inc()
+	metrics.RUV2Statements.WithLabelValues("success", finalized.calibrationState.String()).Inc()
 }
 
 // These reasons are terminal calculation outcomes, not claims of complete
@@ -267,5 +265,5 @@ func publishStatementRUFailureSafely(reason statementRUFailureReason) {
 	if reason == statementRUIneligible || reason == statementRUUnsupported {
 		status = "skipped"
 	}
-	metrics.RUV3Statements.WithLabelValues(status, string(reason)).Inc()
+	metrics.RUV2Statements.WithLabelValues(status, string(reason)).Inc()
 }

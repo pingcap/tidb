@@ -343,6 +343,10 @@ type SysVar struct {
 	skipInit bool
 	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
 	IsNoop bool
+	// IsSensitive marks non-empty values that diagnostics must mask.
+	// Any variable containing secrets, whether built-in or extension-registered, must opt in.
+	// SQL getter semantics are unchanged.
+	IsSensitive bool
 	// IsInitedFromConfig defines if the sysvar is inited from the config file.
 	IsInitedFromConfig bool
 	// GlobalConfigName is the global config name of this global variable.

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
@@ -400,110 +401,31 @@ const (
 	RUReportModeFull   = "full"
 )
 
-// RUV2Config configures legacy RU v2 and statement RU v3 weights and reporting.
+// RUV2Config configures legacy, statement, and DDL RU v2 weights and reporting.
 // Legacy RU v2 defaults are experimentally fitted to remain aligned with RU v1.
-// Statement RU v3 reuses this config section while replacing the legacy model.
+// Statement RU v2 reuses this config section while replacing the legacy model.
 type RUV2Config struct {
-	// ReportMode controls RU v3 metrics. Full additionally reports raw units and
+	// ReportMode controls statement RU v2 metrics. Full additionally reports raw units and
 	// calculation outcomes; result reports total, SQL-type and per-engine RU consumption.
 	ReportMode string `toml:"report-mode" json:"report-mode"`
 
-	// RUScale is the scale factor used to convert RU v2 float values into scaled integer values.
-	// It is intentionally chosen to match legacy RU values for compatibility.
-	RUScale float64 `toml:"ru-scale" json:"ru-scale"`
-
-	// ResultChunkCells is the weight for cells materialized into result chunks.
-	ResultChunkCells float64 `toml:"result-chunk-cells" json:"result-chunk-cells"`
-	// ExecutorL1 is the weight for fast-path executors that scale by cells:
-	// BatchPointGet, PointGet, and Limit.
-	ExecutorL1 float64 `toml:"executor-l1" json:"executor-l1"`
-	// ExecutorL2 is the weight for general executors, including Expand, HashAgg,
-	// HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
-	// MemTableReaderExec, MergeJoin, Projection, SelectionExec, SelectLockExec,
-	// TableDualExec, TableReaderExecutor, TopN, UnionScanExec, and Window.
-	ExecutorL2 float64 `toml:"executor-l2" json:"executor-l2"`
-	// ExecutorL3 is the weight for heavier operators: Sort and StreamAgg.
-	ExecutorL3 float64 `toml:"executor-l3" json:"executor-l3"`
-	// ExecutorL5InsertRows is the weight for insert rows multiplied by inserted
-	// column count. Level 4 is intentionally unused today because only L1/L2/L3
-	// executor groups and this insert-specific tier are currently modeled.
-	ExecutorL5InsertRows    float64 `toml:"executor-l5-insert-rows" json:"executor-l5-insert-rows"`
-	PlanCnt                 float64 `toml:"plan-cnt" json:"plan-cnt"`
-	PlanDeriveStatsPaths    float64 `toml:"plan-derive-stats-paths" json:"plan-derive-stats-paths"`
-	ResourceManagerReadCnt  float64 `toml:"resource-manager-read-cnt" json:"resource-manager-read-cnt"`
-	ResourceManagerWriteCnt float64 `toml:"resource-manager-write-cnt" json:"resource-manager-write-cnt"`
-	WriteKeys               float64 `toml:"write-keys" json:"write-keys"`
-	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
-	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
-
-	// Statement weights convert RU v3 raw work units to RU. They must be finite
+	// Statement weights convert RU v2 raw work units to RU. They must be finite
 	// and non-negative; zero disables the corresponding charge. Their defaults
 	// are uncalibrated internal placeholders, not billing values.
-	StatementCPUWork              float64 `toml:"statement-cpu-work" json:"statement-cpu-work"`
-	StatementScanBytes            float64 `toml:"statement-scan-bytes" json:"statement-scan-bytes"`
-	StatementNetBytes             float64 `toml:"statement-net-bytes" json:"statement-net-bytes"`
-	StatementFrontendCompileBytes float64 `toml:"statement-frontend-compile-bytes" json:"statement-frontend-compile-bytes"`
-	StatementHashStateRows        float64 `toml:"statement-hash-state-rows" json:"statement-hash-state-rows"`
-	StatementJoinOutputRows       float64 `toml:"statement-join-output-rows" json:"statement-join-output-rows"`
-	StatementWriteStatement       float64 `toml:"statement-write-statement" json:"statement-write-statement"`
-	StatementOperatorNum          float64 `toml:"statement-operator-num" json:"statement-operator-num"`
-	StatementWriteKeys            float64 `toml:"statement-write-keys" json:"statement-write-keys"`
-	StatementWriteBytes           float64 `toml:"statement-write-bytes" json:"statement-write-bytes"`
+	ruv2.StmtWeights `toml:"stmt-weights" json:"stmt-weights"`
+
+	// DDLWeights convert DDL RU v2 byte units to RU.
+	DDLWeights ruv2.DDLWeights `toml:"ddl-weights" json:"ddl-weights"`
 }
 
-// DefaultRUV2Config returns the default legacy RU v2 and statement RU v3 configuration.
+// DefaultRUV2Config returns the default legacy, statement, and DDL RU v2 configuration.
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
 		ReportMode: RUReportModeResult,
-		RUScale:    2.01,
 
-		ResultChunkCells:        0.00010000,
-		ExecutorL1:              0.00013278,
-		ExecutorL2:              0.00000383,
-		ExecutorL3:              0.00141739,
-		ExecutorL5InsertRows:    0.00472572,
-		PlanCnt:                 0.15392217,
-		PlanDeriveStatsPaths:    0.24968182,
-		ResourceManagerReadCnt:  0.02072003,
-		ResourceManagerWriteCnt: 0.07179779,
-		WriteKeys:               0.330760861554226,
-		SessionParserTotal:      0.19230499,
-		TxnCnt:                  0.03013709,
-
-		StatementCPUWork:              1.0,
-		StatementScanBytes:            1.0,
-		StatementNetBytes:             1.0,
-		StatementFrontendCompileBytes: 1.0,
-		StatementHashStateRows:        1.0,
-		StatementJoinOutputRows:       1.0,
-		StatementWriteStatement:       1.0,
-		StatementOperatorNum:          1.0,
-		StatementWriteKeys:            1.0,
-		StatementWriteBytes:           1.0,
+		StmtWeights: ruv2.DefaultWeights(),
+		DDLWeights:  ruv2.DefaultDDLWeights(),
 	}
-}
-
-func (c *RUV2Config) validStatementWeights() error {
-	for _, weight := range []struct {
-		name  string
-		value float64
-	}{
-		{"statement-cpu-work", c.StatementCPUWork},
-		{"statement-scan-bytes", c.StatementScanBytes},
-		{"statement-net-bytes", c.StatementNetBytes},
-		{"statement-frontend-compile-bytes", c.StatementFrontendCompileBytes},
-		{"statement-hash-state-rows", c.StatementHashStateRows},
-		{"statement-join-output-rows", c.StatementJoinOutputRows},
-		{"statement-write-statement", c.StatementWriteStatement},
-		{"statement-operator-num", c.StatementOperatorNum},
-		{"statement-write-keys", c.StatementWriteKeys},
-		{"statement-write-bytes", c.StatementWriteBytes},
-	} {
-		if weight.value < 0 || math.IsNaN(weight.value) || math.IsInf(weight.value, 0) {
-			return fmt.Errorf("ru-v2.%s must be finite and non-negative, got %v", weight.name, weight.value)
-		}
-	}
-	return nil
 }
 
 // CSE is the config collection for the cloud storage engine.
@@ -1793,8 +1715,11 @@ func (c *Config) Valid() error {
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
 	}
-	if err := c.RUV2.validStatementWeights(); err != nil {
-		return err
+	if err := c.RUV2.StmtWeights.Validate(); err != nil {
+		return fmt.Errorf("ru-v2.stmt-weights.%w", err)
+	}
+	if err := c.RUV2.DDLWeights.Validate(); err != nil {
+		return fmt.Errorf("ru-v2.ddl-weights.%w", err)
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))

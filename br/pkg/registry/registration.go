@@ -292,7 +292,7 @@ func hasRestoreRegistryRouteSchema(tableInfo *model.TableInfo) bool {
 		}
 	}
 
-	// During v287 both indexes coexist briefly. The legacy index does not
+	// During v318 both indexes coexist briefly. The legacy index does not
 	// include route_hash and would reject independent routes with the same
 	// source filter, so keep rename disabled until it is fully removed.
 	if tableInfo.FindIndexByName(restoreRegistryLegacyIndexName) != nil {

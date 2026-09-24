@@ -152,9 +152,10 @@ func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	err := tk.ExecToErr("create materialized view mv_bad_next (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
-	require.ErrorContains(t, err, "REFRESH NEXT expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "REFRESH NEXT expression must return DATE/DATETIME/TIMESTAMP")
 	err = tk.ExecToErr("create materialized view mv_bad_start (a, s, cnt) refresh fast start with 1 next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
-	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATE/DATETIME/TIMESTAMP")
+	tk.MustExec("create materialized view mv_date_schedule (a, s, cnt) refresh fast next cast('2030-01-02' as date) as select a, sum(b), count(1) from t group by a")
 	tk.MustExec("create materialized view mv_ok (a, s, cnt) refresh fast start with now() next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 }
 
@@ -216,11 +217,12 @@ func TestAlterMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 
 	err := tk.ExecToErr("alter materialized view mv refresh next 300")
-	require.ErrorContains(t, err, "REFRESH NEXT expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "REFRESH NEXT expression must return DATE/DATETIME/TIMESTAMP")
 
 	err = tk.ExecToErr("alter materialized view mv refresh start with 1 next date_add(now(), interval 1 hour)")
-	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATE/DATETIME/TIMESTAMP")
 
+	tk.MustExec("alter materialized view mv refresh next cast('2030-01-02' as date)")
 	tk.MustExec("alter materialized view mv refresh start with now() next date_add(now(), interval 1 hour)")
 }
 

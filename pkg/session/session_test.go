@@ -30,19 +30,26 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestGetStartMode(t *testing.T) {
@@ -50,6 +57,57 @@ func TestGetStartMode(t *testing.T) {
 	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion+1))
 	require.Equal(t, ddl.Upgrade, getStartMode(currentBootstrapVersion-1))
 	require.Equal(t, ddl.Bootstrap, getStartMode(0))
+}
+
+func TestNormalizeStmtCancellationError(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	require.NoError(t, handlePendingSQLKillerSignal(vars))
+	require.ErrorIs(t, executor.NormalizeStmtCancellationError(vars, context.Canceled), context.Canceled)
+	vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(handlePendingSQLKillerSignal(vars)))
+
+	// A successful or undetermined commit result takes priority over a timeout signal.
+	require.NoError(t, executor.NormalizeStmtCancellationError(vars, nil))
+	require.True(t, terror.ErrResultUndetermined.Equal(
+		executor.NormalizeStmtCancellationError(vars, terror.ErrResultUndetermined),
+	))
+
+	otherErr := errors.New("other error")
+	require.ErrorIs(t, executor.NormalizeStmtCancellationError(vars, otherErr), otherErr)
+
+	err := executor.NormalizeStmtCancellationError(vars, context.Canceled)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, context.DeadlineExceeded)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, fmt.Errorf("request canceled: %w", context.Canceled))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, fmt.Errorf("request deadline exceeded: %w", context.DeadlineExceeded))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, status.Error(codes.Canceled, "canceled"))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = executor.NormalizeStmtCancellationError(vars, status.Error(codes.DeadlineExceeded, "deadline exceeded"))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+
+	vars.SQLKiller.Reset()
+	vars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(handlePendingSQLKillerSignal(vars)))
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(executor.NormalizeStmtCancellationError(vars, context.Canceled)))
+}
+
+func TestSetProcessInfoDuringRetry(t *testing.T) {
+	se := &session{sessionVars: variable.NewSessionVars(nil)}
+	start := time.Unix(1, 0)
+	se.SetProcessInfo("commit", start, mysql.ComQuery, 0)
+
+	// Transaction replay can publish different SQL while retaining the outer statement's start time.
+	se.sessionVars.RetryInfo.Retrying = true
+	se.SetProcessInfo("update t set a = 2", time.Unix(2, 0), mysql.ComQuery, 0)
+	require.Equal(t, start, se.ShowProcess().Time)
+
+	se.sessionVars.RetryInfo.Retrying = false
+	nextStart := time.Unix(3, 0)
+	se.SetProcessInfo("select 1", nextStart, mysql.ComQuery, 0)
+	require.Equal(t, nextStart, se.ShowProcess().Time)
 }
 
 func TestMustGetStoreBootstrapVersionRetriesTransaction(t *testing.T) {
@@ -290,21 +348,20 @@ func TestMemArbitratorSession(t *testing.T) {
 	require.Equal(t, int64(3), approxCompilePlanTokenCnt("select @@version @a", false))
 
 	normalizedSQL := "select * from `t` where `a` = ?"
-	db1DigestID := buildMemArbitratorDigestID(normalizedSQL, []stmtctx.TableEntry{{DB: "db1", Table: "t"}}, "db1")
-	db2DigestID := buildMemArbitratorDigestID(normalizedSQL, []stmtctx.TableEntry{{DB: "db2", Table: "t"}}, "db2")
+	db1DigestID := buildMemArbitratorDigestID(normalizedSQL, "db1")
+	db2DigestID := buildMemArbitratorDigestID(normalizedSQL, "db2")
 	require.NotEqual(t, db1DigestID, db2DigestID)
 
 	explicitDBSQL := "select * from `db3`.`t` where `a` = ?"
-	db3Table := []stmtctx.TableEntry{{DB: "db3", Table: "t"}}
+	require.NotEqual(t,
+		buildMemArbitratorDigestID(explicitDBSQL, "db1"),
+		buildMemArbitratorDigestID(explicitDBSQL, "db2"))
 	require.Equal(t,
-		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db1"),
-		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db2"))
-	require.Equal(t,
-		buildMemArbitratorDigestID(explicitDBSQL, db3Table, "db1"),
-		buildMemArbitratorDigestID(explicitDBSQL, []stmtctx.TableEntry{{DB: "DB3", Table: "T"}}, "db1"))
+		buildMemArbitratorDigestID(explicitDBSQL, "DB1"),
+		buildMemArbitratorDigestID(explicitDBSQL, "db1"))
 
 	require.NotEqual(t,
-		buildMemArbitratorDigestID(normalizedSQL, nil, "db1"),
-		buildMemArbitratorDigestID(normalizedSQL, nil, "db2"))
-	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", db3Table, "db1"))
+		buildMemArbitratorDigestID(normalizedSQL, "db1"),
+		buildMemArbitratorDigestID(normalizedSQL, "db2"))
+	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", "db1"))
 }

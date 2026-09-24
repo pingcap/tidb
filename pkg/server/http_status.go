@@ -283,6 +283,8 @@ func (s *Server) startHTTPServer() {
 
 	if kerneltype.IsNextGen() {
 		router.Handle("/ddl/check/{db}/{table}/{index}", tikvhandler.NewDDLCheckHandler(tikvHandlerTool)).Name("DDL_Check")
+		router.Handle("/variables/global", tikvhandler.NewGlobalVariablesHandler(tikvHandlerTool)).
+			Methods(http.MethodGet).Name("GlobalVariables")
 	}
 
 	// HTTP path for transaction GC states.

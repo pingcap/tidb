@@ -94,7 +94,7 @@ func TestUpgradeToVer279BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.NoError(t, res.Close())
 }
 
-func TestUpgradeToVer288AddsRestoreRouteIdentity(t *testing.T) {
+func TestUpgradeToVer318AddsRestoreRouteIdentity(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -103,22 +103,22 @@ func TestUpgradeToVer288AddsRestoreRouteIdentity(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	seV286 := CreateSessionAndSetID(t, store)
-	MustExec(t, seV286, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params_v2")
-	MustExec(t, seV286, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_hash")
-	MustExec(t, seV286, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_strings")
-	MustExec(t, seV286, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN source_filter_strings")
-	MustExec(t, seV286, `ALTER TABLE mysql.tidb_restore_registry ADD UNIQUE INDEX unique_registration_params (
+	seV317 := CreateSessionAndSetID(t, store)
+	MustExec(t, seV317, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params_v2")
+	MustExec(t, seV317, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_hash")
+	MustExec(t, seV317, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_strings")
+	MustExec(t, seV317, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN source_filter_strings")
+	MustExec(t, seV317, `ALTER TABLE mysql.tidb_restore_registry ADD UNIQUE INDEX unique_registration_params (
 		filter_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	require.NoError(t, m.FinishBootstrap(version286))
-	RevertVersionAndVariables(t, seV286, version286)
+	require.NoError(t, m.FinishBootstrap(version317))
+	RevertVersionAndVariables(t, seV317, version317)
 	require.NoError(t, txn.Commit(ctx))
 	store.SetOption(StoreBootstrappedKey, nil)
-	seV286.Close()
+	seV317.Close()
 	dom.Close()
 
 	domCurrent, err := BootstrapSession(store)
@@ -172,6 +172,58 @@ func TestUpgradeToVer288AddsRestoreRouteIdentity(t *testing.T) {
 		VALUES ('*.*', 'filter', 'db.t', ?, ?, 1, 2, 3, false, 'running', 'restore')`
 	MustExec(t, seCurrent, insert, "[\"`db`.`t`:`x`.`t`\"]", "route-1")
 	MustExec(t, seCurrent, insert, "[\"`db`.`t`:`y`.`t`\"]", "route-2")
+}
+
+func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := CreateSessionAndSetID(t, store)
+	assertValue := func(expected string) {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf(
+			"select variable_value, @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			vardef.TiDBEnableAdaptiveLimitScan,
+		))
+		defer func() { require.NoError(t, res.Close()) }()
+		chk := res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		require.Equal(t, expected, chk.GetRow(0).GetString(0))
+		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(1) == 1)
+		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(2) == 1)
+	}
+	// Initial bootstrap uses the new-cluster policy.
+	assertValue(vardef.On)
+	// The upgrade backfill must preserve an existing value.
+	upgradeToVer317(se, version316)
+	assertValue(vardef.On)
+
+	// Simulate an existing cluster before the version317 backfill.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version316)))
+	RevertVersionAndVariables(t, se, version316)
+	MustExec(t, se, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		vardef.TiDBEnableAdaptiveLimitScan,
+	))
+	require.NoError(t, txn.Commit(ctx))
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	dom.Close()
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+	se = CreateSessionAndSetID(t, store)
+
+	ver, err := GetBootstrapVersion(se)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	assertValue(vardef.Off)
 }
 
 func TestUpgradeToVer282RefreshesBindingDigest(t *testing.T) {

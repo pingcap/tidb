@@ -57,9 +57,9 @@ func TestDDLJobRU(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		totalRUBefore := testutil.ToFloat64(metrics.RUV3Total)
-		ddlRUBefore := testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)
-		tikvRUBefore := testutil.ToFloat64(metrics.RUV3ByEngineTiKV)
+		totalRUBefore := testutil.ToFloat64(metrics.RUV2Total)
+		ddlRUBefore := testutil.ToFloat64(metrics.RUV2BySQLTypeDDL)
+		tikvRUBefore := testutil.ToFloat64(metrics.RUV2ByEngineTiKV)
 
 		var mu sync.Mutex
 		var jobID int64
@@ -86,14 +86,14 @@ func TestDDLJobRU(t *testing.T) {
 		require.NotNil(t, historyJob)
 		require.Equal(t, capturedActiveRU, historyJob.RU)
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
-			testutil.ToFloat64(metrics.RUV3Total)-totalRUBefore, 1e-9)
+			testutil.ToFloat64(metrics.RUV2Total)-totalRUBefore, 1e-9)
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
-			testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)-ddlRUBefore, 1e-9)
+			testutil.ToFloat64(metrics.RUV2BySQLTypeDDL)-ddlRUBefore, 1e-9)
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
-			testutil.ToFloat64(metrics.RUV3ByEngineTiKV)-tikvRUBefore, 1e-9)
+			testutil.ToFloat64(metrics.RUV2ByEngineTiKV)-tikvRUBefore, 1e-9)
 	})
 
-	t.Run("reorg job is excluded", func(t *testing.T) {
+	t.Run("reorg job accounts transaction RU v2", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
@@ -119,7 +119,7 @@ func TestDDLJobRU(t *testing.T) {
 		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
 		require.NoError(t, err)
 		require.NotNil(t, historyJob)
-		require.Zero(t, historyJob.RU)
+		requireExpectedJobRU(t, historyJob.RU)
 	})
 
 	t.Run("commit retry reloads durable RU", func(t *testing.T) {
@@ -189,9 +189,9 @@ func TestDDLJobRU(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		totalRUBefore := testutil.ToFloat64(metrics.RUV3Total)
-		ddlRUBefore := testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)
-		tikvRUBefore := testutil.ToFloat64(metrics.RUV3ByEngineTiKV)
+		totalRUBefore := testutil.ToFloat64(metrics.RUV2Total)
+		ddlRUBefore := testutil.ToFloat64(metrics.RUV2BySQLTypeDDL)
+		tikvRUBefore := testutil.ToFloat64(metrics.RUV2ByEngineTiKV)
 
 		const commitFailpoint = "github.com/pingcap/tidb/pkg/session/mockCommitError8942"
 		var armOnce sync.Once
@@ -233,11 +233,11 @@ func TestDDLJobRU(t *testing.T) {
 		require.NotNil(t, historyJob)
 		requireExpectedJobRU(t, historyJob.RU)
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
-			testutil.ToFloat64(metrics.RUV3Total)-totalRUBefore, 1e-9)
+			testutil.ToFloat64(metrics.RUV2Total)-totalRUBefore, 1e-9)
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
-			testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)-ddlRUBefore, 1e-9)
+			testutil.ToFloat64(metrics.RUV2BySQLTypeDDL)-ddlRUBefore, 1e-9)
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
-			testutil.ToFloat64(metrics.RUV3ByEngineTiKV)-tikvRUBefore, 1e-9)
+			testutil.ToFloat64(metrics.RUV2ByEngineTiKV)-tikvRUBefore, 1e-9)
 	})
 }
 

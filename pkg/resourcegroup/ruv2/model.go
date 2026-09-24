@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package ruv3 defines the raw units and weighting model used to calculate RU v3.
-package ruv3
+// Package ruv2 defines the raw units and weighting model used to calculate RU v3.
+package ruv2
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // StmtUnits contains the raw work measured for one RU v3 calculation.
 type StmtUnits struct {
@@ -30,16 +33,21 @@ type StmtUnits struct {
 	// CPUWork is the sum of occurrence-local operator work from the supported
 	// root and coprocessor operators in the flat plan.
 	CPUWork float64
-	// ScanBytes is the sum of physical-byte estimates from supported Reader
-	// request components. Each contribution is collected once per request.
+	// ScanBytes combines TiKV physical-byte estimates with TiFlash user_read_bytes,
+	// preserving each producer's byte definition. Reader boundaries count each
+	// request component's contribution once.
 	ScanBytes float64
 	// NetBytes is statement transport evidence, not operator attribution. It is
-	// the finalized TiKV coprocessor response-body byte count.
+	// the finalized TiKV response-body and TiFlash remote connection byte counts.
 	NetBytes float64
-	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text.
+	// CrossAZNetBytes is the subset of NetBytes identified as cross-AZ TiFlash traffic.
+	CrossAZNetBytes float64
+	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text,
+	// or zero when the statement hits the plan cache.
 	FrontendCompileBytes float64
-	// HashStateRows counts entries admitted to completed, operator-owned hash
-	// lookup or group-state structures.
+	// HashStateRows measures constructed hash lookup or group state. TiFlash
+	// contributions retain their producer's size definition: distinct keys,
+	// build rows, or aggregation map entries, summed without normalization.
 	HashStateRows float64
 	// JoinOutputRows counts rows produced by supported Join occurrences after
 	// their join conditions and join-type semantics are applied.
@@ -48,16 +56,28 @@ type StmtUnits struct {
 
 // StmtWeights contains the coefficient for each RU v3 raw unit.
 type StmtWeights struct {
-	CPUWork             float64
-	ScanByte            float64
-	NetByte             float64
-	FrontendCompileByte float64
-	HashStateRow        float64
-	JoinOutputRow       float64
-	WriteStatement      float64
-	OperatorNum         float64
-	WriteKey            float64
-	WriteByte           float64
+	// CrossAZNetByte is reserved for an additional cross-AZ charge. Cross-AZ
+	// traffic is already included in NetBytes at the ordinary NetByte weight;
+	// current accounting does not price it differently, so this defaults to zero.
+	// The "-" tags deliberately exclude it from TOML/JSON until separate pricing
+	// is supported; raw CrossAZNetBytes remain available for observation.
+	CrossAZNetByte      float64 `toml:"-" json:"-"`
+	CPUWork             float64 `toml:"cpu-work" json:"cpu-work"`
+	ScanByte            float64 `toml:"scan-byte" json:"scan-byte"`
+	NetByte             float64 `toml:"net-byte" json:"net-byte"`
+	FrontendCompileByte float64 `toml:"frontend-compile-byte" json:"frontend-compile-byte"`
+	HashStateRow        float64 `toml:"hash-state-row" json:"hash-state-row"`
+	JoinOutputRow       float64 `toml:"join-output-row" json:"join-output-row"`
+	WriteStatement      float64 `toml:"write-statement" json:"write-statement"`
+	OperatorNum         float64 `toml:"operator-num" json:"operator-num"`
+	WriteKey            float64 `toml:"write-key" json:"write-key"`
+	WriteByte           float64 `toml:"write-byte" json:"write-byte"`
+}
+
+// DDLWeights contains the coefficient for each DDL RU v2 byte unit.
+type DDLWeights struct {
+	TxnKVBytes    float64 `toml:"txn-kv-bytes" json:"txn-kv-bytes"`
+	IngestKVBytes float64 `toml:"ingest-kv-bytes" json:"ingest-kv-bytes"`
 }
 
 // StmtResult contains the weighted RU v3 total.
@@ -82,9 +102,35 @@ func DefaultWeights() StmtWeights {
 	}
 }
 
+// DefaultDDLWeights returns the deliberately uncalibrated DDL weights used by
+// the current RU v2 model. They are placeholders, not billing values.
+func DefaultDDLWeights() DDLWeights {
+	return DDLWeights{
+		TxnKVBytes:    1,
+		IngestKVBytes: 1,
+	}
+}
+
+// Validate checks that every DDL weight is finite and nonnegative.
+func (weights DDLWeights) Validate() error {
+	for _, weight := range []struct {
+		name  string
+		value float64
+	}{
+		{"txn-kv-bytes", weights.TxnKVBytes},
+		{"ingest-kv-bytes", weights.IngestKVBytes},
+	} {
+		if !validValues(weight.value) {
+			return fmt.Errorf("%s must be finite and non-negative, got %v", weight.name, weight.value)
+		}
+	}
+	return nil
+}
+
 // Valid reports whether every raw unit is finite and nonnegative.
 func (units StmtUnits) Valid() bool {
-	return validValues(
+	return units.CrossAZNetBytes <= units.NetBytes && validValues(
+		units.CrossAZNetBytes,
 		units.CPUWork,
 		units.ScanBytes,
 		units.NetBytes,
@@ -100,6 +146,7 @@ func (units StmtUnits) Valid() bool {
 
 func (weights StmtWeights) valid() bool {
 	return validValues(
+		weights.CrossAZNetByte,
 		weights.CPUWork,
 		weights.ScanByte,
 		weights.NetByte,
@@ -111,6 +158,31 @@ func (weights StmtWeights) valid() bool {
 		weights.WriteKey,
 		weights.WriteByte,
 	)
+}
+
+// Validate checks that every weight is finite and nonnegative.
+func (weights StmtWeights) Validate() error {
+	for _, weight := range []struct {
+		name  string
+		value float64
+	}{
+		{"cpu-work", weights.CPUWork},
+		{"scan-byte", weights.ScanByte},
+		{"net-byte", weights.NetByte},
+		{"cross-az-net-byte", weights.CrossAZNetByte},
+		{"frontend-compile-byte", weights.FrontendCompileByte},
+		{"hash-state-row", weights.HashStateRow},
+		{"join-output-row", weights.JoinOutputRow},
+		{"write-statement", weights.WriteStatement},
+		{"operator-num", weights.OperatorNum},
+		{"write-key", weights.WriteKey},
+		{"write-byte", weights.WriteByte},
+	} {
+		if !validValues(weight.value) {
+			return fmt.Errorf("%s must be finite and non-negative, got %v", weight.name, weight.value)
+		}
+	}
+	return nil
 }
 
 func validValues(values ...float64) bool {
@@ -128,6 +200,7 @@ func (units StmtUnits) Add(other StmtUnits) StmtUnits {
 	units.CPUWork += other.CPUWork
 	units.ScanBytes += other.ScanBytes
 	units.NetBytes += other.NetBytes
+	units.CrossAZNetBytes += other.CrossAZNetBytes
 	units.FrontendCompileBytes += other.FrontendCompileBytes
 	units.HashStateRows += other.HashStateRows
 	units.JoinOutputRows += other.JoinOutputRows
@@ -144,6 +217,7 @@ func (units StmtUnits) Sub(other StmtUnits) StmtUnits {
 	units.CPUWork -= other.CPUWork
 	units.ScanBytes -= other.ScanBytes
 	units.NetBytes -= other.NetBytes
+	units.CrossAZNetBytes -= other.CrossAZNetBytes
 	units.FrontendCompileBytes -= other.FrontendCompileBytes
 	units.HashStateRows -= other.HashStateRows
 	units.JoinOutputRows -= other.JoinOutputRows
@@ -163,6 +237,7 @@ func Calculate(units StmtUnits, weights StmtWeights) (StmtResult, bool) {
 	totalRU := weights.CPUWork*units.CPUWork +
 		weights.ScanByte*units.ScanBytes +
 		weights.NetByte*units.NetBytes +
+		weights.CrossAZNetByte*units.CrossAZNetBytes +
 		weights.FrontendCompileByte*units.FrontendCompileBytes +
 		weights.HashStateRow*units.HashStateRows +
 		weights.JoinOutputRow*units.JoinOutputRows +
