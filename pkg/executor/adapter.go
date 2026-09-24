@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -1761,7 +1762,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 		// Include parsing before DurationParse is reset, and use one duration for all DB labels.
 		cost := sessVars.GetTotalCostDuration().Seconds()
-		for _, dbName := range sessVars.GetMetricDBNames() {
+		for _, dbName := range metricsutil.GetDBNames(sessVars) {
 			metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, sessVars.StmtCtx.ResourceGroupName).Observe(cost)
 		}
 	}

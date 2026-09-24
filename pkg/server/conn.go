@@ -107,6 +107,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -1217,7 +1218,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
 			vars := cc.getCtx().GetSessionVars()
-			for _, dbName := range session.GetDBNames(vars) {
+			for _, dbName := range metricsutil.GetDBNames(vars) {
 				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName, vars.ResourceGroupName).Inc()
 			}
 
@@ -1341,7 +1342,7 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 		commandSQLType = "MultiStmt"
 	}
 
-	for _, dbName := range session.GetDBNames(vars) {
+	for _, dbName := range metricsutil.GetDBNames(vars) {
 		metrics.CommandDurationHistogram.WithLabelValues(commandSQLType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
 		if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
