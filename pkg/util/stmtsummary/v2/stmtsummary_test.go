@@ -143,7 +143,7 @@ func TestStmtSummaryPersistEvicted(t *testing.T) {
 	}, 100*time.Millisecond, 10*time.Millisecond, "evicted count should remain 2 after disabling")
 }
 
-func TestStmtSummaryPersistEvictedPreservesHistoryAggregate(t *testing.T) {
+func TestStmtSummaryPersistEvictedDoesNotPersistLoggedRecordsAsAggregate(t *testing.T) {
 	var logBuf bytes.Buffer
 	storage := &stmtLogStorage{
 		logger: zap.New(zapcore.NewCore(&stmtLogEncoder{}, zapcore.AddSync(&logBuf), zapcore.InfoLevel)),
@@ -174,28 +174,21 @@ func TestStmtSummaryPersistEvictedPreservesHistoryAggregate(t *testing.T) {
 		Evicted   bool   `json:"evicted"`
 	}
 
+	var totalExecCount int64
 	evictedDigests := make([]string, 0, 2)
-	var aggregateExecCount int64
-	var activeExecCount int64
 	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
 		var record loggedRecord
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		totalExecCount += record.ExecCount
 		if record.Evicted {
 			evictedDigests = append(evictedDigests, record.Digest)
 			continue
 		}
-		if record.Digest == "" {
-			aggregateExecCount += record.ExecCount
-		} else {
-			activeExecCount += record.ExecCount
-		}
+		require.NotEmpty(t, record.Digest, "logged evicted records should not also be persisted as the aggregate row")
 	}
 
 	require.ElementsMatch(t, []string{"digest1", "digest2"}, evictedDigests)
-	// The history reader skips the individually logged evictions, so their
-	// executions must remain represented by the regular aggregate row.
-	require.Equal(t, int64(2), aggregateExecCount)
-	require.Equal(t, int64(2), activeExecCount)
+	require.Equal(t, int64(4), totalExecCount)
 }
 
 func TestStmtSummaryGroupByUser(t *testing.T) {
