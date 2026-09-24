@@ -388,9 +388,17 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			dbNames = append(dbNames, tbl.NewTable.Schema)
 		}
 	case *ast.AlterDatabaseStmt:
+		dbName := node.Name
+		if node.AlterDefaultDatabase {
+			// buildDDL writes the resolved CurrentDB back to Name, so a prepared
+			// AST may retain the database used by an earlier plan build.
+			dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+		}
 		for _, opt := range node.Options {
+			// Allow changing READ ONLY itself so a read-only database can be
+			// switched back to writable.
 			if opt.Tp != ast.DatabaseOptionReadOnly {
-				dbNames = append(dbNames, node.Name)
+				dbNames = append(dbNames, dbName)
 			}
 		}
 	case *ast.DropDatabaseStmt:

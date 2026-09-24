@@ -141,24 +141,32 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
 
-	// step 4: check schema version
-	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
-		// In order to avoid some correctness issues, we have to clear the
-		// cached plan once the schema version is changed.
-		// Cached plan in prepared struct does NOT have a "cache key" with
-		// schema version like prepared plan cache key
+	// An unnamed ALTER DATABASE is rebound to CurrentDB when its plan is built.
+	// Reprocess it on every execution because USE does not change the schema version.
+	alterDefaultDatabase := false
+	if alterDatabaseStmt, ok := stmtAst.Stmt.(*ast.AlterDatabaseStmt); ok {
+		alterDefaultDatabase = alterDatabaseStmt.AlterDefaultDatabase
+	}
+	schemaChanged := schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion()
+
+	// step 4: check schema version and session-dependent targets
+	if schemaChanged || alterDefaultDatabase {
+		// Clear reusable point-get state before preprocessing again. Schema
+		// changes may invalidate it; an unnamed ALTER DATABASE has no point-get
+		// plan but shares this reprocessing path because its target is CurrentDB.
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
-		// If the schema version has changed we need to preprocess it again,
-		// if this time it failed, the real reason for the error is schema changed.
-		// Example:
-		// When running update in prepared statement's schema version distinguished from the one of execute statement
-		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
-		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
+		// Reprocessing after a schema change refreshes resolved table references.
+		// For example, a prepared UPDATE must not retain column information for a
+		// column that is no longer public. Reprocessing an unnamed ALTER DATABASE
+		// instead refreshes its session-dependent target even without a schema change.
 		ret := &PreprocessorReturn{InfoSchema: is}
 		nodeW := resolve.NewNodeW(stmtAst.Stmt)
 		err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
+			if !schemaChanged || (alterDefaultDatabase && infoschema.ErrSchemaInReadOnlyMode.Equal(err)) {
+				return err
+			}
 			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		stmt.ResolveCtx = nodeW.GetResolveContext()
