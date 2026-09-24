@@ -618,6 +618,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddVectorIndex:
 		ver, err = rollingbackAddVectorIndex(w, jobCtx, job)
+	case model.ActionAddFullTextIndex:
+		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,

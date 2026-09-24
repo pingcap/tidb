@@ -214,8 +214,8 @@
           "  └─MaxOneRow(Probe) 3.00 root  ",
           "    └─IndexMerge 3.60 root partition:all type: intersection",
           "      ├─IndexRangeScan(Build) 6.00 cop[tikv] table:t1, index:ia(a) range:(10,+inf], keep order:false",
-          "      ├─Selection(Build) 7.20 cop[tikv]  gt(test.t1.c, test.t2.a)",
-          "      │ └─IndexRangeScan 9.00 cop[tikv] table:t1, index:ibc(b, c) range:[20,20], keep order:false",
+          "      ├─Selection(Build) 3.60 cop[tikv]  gt(test.t1.c, test.t2.a)",
+          "      │ └─IndexRangeScan 4.00 cop[tikv] table:t1, index:ibc(b, c) range: decided by [eq(test.t1.b, 20) gt(test.t1.c, test.t2.a)], keep order:false",
           "      └─TableRowIDScan(Probe) 3.60 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [

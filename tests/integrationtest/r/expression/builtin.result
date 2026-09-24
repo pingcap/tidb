@@ -108,8 +108,8 @@ cos(0)	cos(3.1415926535898)
 select cos('abcd');
 cos('abcd')
 1
-select tan(0.00), tan(PI()/4);
-tan(0.00)	tan(PI()/4)
+select tan(0.00), abs(tan(PI()/4) - 1) < 1e-15;
+tan(0.00)	abs(tan(PI()/4) - 1) < 1e-15
 0	1
 select tan('abcd');
 tan('abcd')

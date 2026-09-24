@@ -180,7 +180,23 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	var p base.Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+	// PREPARE builds output metadata without invoking the optimizer's round
+	// driver. When the default local candidate is disabled, validate metadata
+	// in a scoped ILIKE alternative build under the same opt-in gates.
+	canTryLike := vars.EnableAlternativeLogicalPlans && vars.EnableFTSLikeFallback && !vars.EnableLocalMatchAgainst
+	var initialBuildState stmtctx.LogicalPlanBuildState
+	if canTryLike {
+		initialBuildState = vars.StmtCtx.SaveLogicalPlanBuildState()
+	}
 	p, err = destBuilder.Build(ctx, nodeW)
+	if canTryLike && errors.Cause(err) == errors.Cause(ErrLocalMatchDisabled) {
+		vars.StmtCtx.RestoreLogicalPlanBuildState(initialBuildState)
+		destBuilder, _ = NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+		func() {
+			defer vars.StmtCtx.EnterFTSLikeFallbackRound()()
+			p, err = destBuilder.Build(ctx, nodeW)
+		}()
+	}
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -326,6 +342,18 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
+	// MATCH semantic modes must not reuse each other's prepared plans.
+	var ftsMode int64
+	if vars.EnableLocalMatchAgainst {
+		ftsMode |= 1
+	}
+	if vars.EnableFTSLikeFallback {
+		ftsMode |= 2
+	}
+	if vars.EnableAlternativeLogicalPlans {
+		ftsMode |= 4
+	}
+	hash = codec.EncodeInt(hash, ftsMode)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {

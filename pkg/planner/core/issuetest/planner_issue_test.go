@@ -64,6 +64,29 @@ func TestIssue43461(t *testing.T) {
 	require.NotEqual(t, is.Columns, ts.Columns)
 }
 
+func TestIssue70706(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table articles (
+		id int primary key,
+		title varchar(200),
+		fulltext index idx_title(title)
+	)`)
+	tk.MustExec(`insert into articles values
+		(1, 'MySQL Tutorial'),
+		(2, 'MySQL vs. PostgreSQL')`)
+	tk.MustExec("set @@tidb_enable_local_match_against = on")
+
+	tk.MustQuery("select id, title from articles where match(title) against('+PostgreSQL' in boolean mode)").
+		Check(testkit.Rows("2 MySQL vs. PostgreSQL"))
+	tk.MustQuery("explain format = 'brief' select id, title from articles group by id, title having match(title) against('+PostgreSQL' in boolean mode)")
+	tk.MustQuery("select id, title from articles group by id, title having match(title) against('+PostgreSQL' in boolean mode)").
+		Check(testkit.Rows("2 MySQL vs. PostgreSQL"))
+	tk.MustQuery("select id, title from articles having match(title) against('+PostgreSQL' in boolean mode)").
+		Check(testkit.Rows("2 MySQL vs. PostgreSQL"))
+}
+
 func Test53726(t *testing.T) {
 	// test for RemoveUnnecessaryFirstRow
 	store := testkit.CreateMockStore(t)

@@ -968,6 +968,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onCreateIndex(jobCtx, job, true)
 	case model.ActionAddVectorIndex:
 		ver, err = w.onCreateVectorIndex(jobCtx, job)
+	case model.ActionAddFullTextIndex:
+		ver, err = w.onCreateFullTextIndex(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(jobCtx, job)
 	case model.ActionRenameIndex:
