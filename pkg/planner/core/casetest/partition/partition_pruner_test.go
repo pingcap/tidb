@@ -685,6 +685,31 @@ func TestIssue61176Char(t *testing.T) {
 	}
 }
 
+func TestRangePartitionNullSafeEqualityReversed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_nulleq(a int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+	tk.MustExec("insert into t_nulleq values (1),(11),(null)")
+	for _, mode := range []string{"static", "dynamic"} {
+		t.Run(mode, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_partition_prune_mode='" + mode + "'")
+			tk.MustQuery("select a from t_nulleq where 1 <=> a").Check(testkit.Rows("1"))
+			tk.MustQuery("select a from t_nulleq where a <=> 1").Check(testkit.Rows("1"))
+			tk.MustQuery("select a from t_nulleq where 11 <=> a").Check(testkit.Rows("11"))
+			tk.MustQuery("select a from t_nulleq where null <=> a").Check(testkit.Rows("<nil>"))
+			tk.MustQuery("select a from t_nulleq where 12 <=> a").Check(testkit.Rows())
+			tk.MustExec("prepare s from 'select a from t_nulleq where ? <=> a'")
+			tk.MustExec("set @v=1")
+			tk.MustQuery("execute s using @v").Check(testkit.Rows("1"))
+			tk.MustExec("set @v=null")
+			tk.MustQuery("execute s using @v").Check(testkit.Rows("<nil>"))
+		})
+	}
+}
+
 func TestIssue61176Int(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
