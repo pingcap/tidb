@@ -538,6 +538,37 @@ fn scalar(name: &str, args: Vec<Expression>) -> Expression {
     ))
 }
 
+/// GO's hybrid-typed operands (hex/bit BinaryLiterals, Enum/Set) keep their
+/// raw-bytes arithmetic semantics; WrapWithCastAs* early-returns for them.
+/// Hex/bit literals are typed VarString (not IsHybrid), but GO's
+/// `expression.IsBinaryLiteral` still preserves the BinaryLiteral datum in
+/// these paths -- coercing one saturates instead of wrapping the raw bytes
+/// (`b'1111...' + 0` must stay INT:-1).
+fn is_hybrid_argument(expression: &Expression) -> bool {
+    if expression
+        .static_type()
+        .is_some_and(|field_type| field_type.is_hybrid())
+    {
+        return true;
+    }
+    matches!(
+        expression,
+        Expression::Constant(constant)
+            if matches!(constant.value, tidb_datatype::Datum::BinaryLiteral(_))
+    )
+}
+
+/// Whether the node is a cast scalar function that GO's BuildCastFunction
+/// would have folded at construction: only a freshly-built cast needs the
+/// construction-time fold.
+fn is_newly_built_cast(expression: &Expression) -> bool {
+    matches!(
+        expression,
+        Expression::ScalarFunction(function)
+            if function.func_name.lowercase().starts_with("cast_")
+    )
+}
+
 fn binary_expression(
     op: BinaryOp,
     left: Expression,
@@ -565,12 +596,22 @@ fn binary_expression(
                         }
                     }
                     // GO's arithmeticFunctionClass.getFunction coerces BOTH
-                    // operands to the real domain when either side is real
-                    // (argTps [ETReal, ETReal] through newBaseBuiltinFuncWithTp)
-                    // -- q17 renders `div(Column#, cast(Column#, double
-                    // BINARY))` because the decimal avg() operand is cast.
+                    // operands to the arithmetic domain through
+                    // newBaseBuiltinFuncWithTp: either real -> [ETReal,
+                    // ETReal] (q17 renders `div(Column#, cast(Column#,
+                    // double BINARY))`), either decimal -> [ETDecimal,
+                    // ETDecimal], else [ETInt, ETInt] -- which is why
+                    // q72's `d_date + 5` renders the date operand as
+                    // `cast(d_date, bigint BINARY)`.
                     tidb_datatype::EvalType::Real => {
                         for argument in &mut args {
+                            // GO's WrapWithCastAsReal early-returns for a
+                            // hybrid argument (hex/bit literals keep their
+                            // raw-bytes semantics in arithmetic), so a hybrid
+                            // operand never gets a cast node.
+                            if is_hybrid_argument(argument) {
+                                continue;
+                            }
                             // The placeholder is replaced by the wrap result
                             // before it can ever be read.
                             *argument = crate::aggregation::wrap_cast::wrap_with_cast_as_real(
@@ -583,11 +624,46 @@ fn binary_expression(
                             // cast over a strict constant at the same
                             // boundary; a wrap that early-returned leaves the
                             // argument untouched and needs no fold.
-                            if matches!(
-                                argument,
-                                Expression::ScalarFunction(function)
-                                    if function.func_name.lowercase().starts_with("cast_")
-                            ) {
+                            if is_newly_built_cast(argument) {
+                                resolver.fold_constant(
+                                    argument,
+                                    ConstantFoldMode::Normal,
+                                );
+                            }
+                        }
+                    }
+                    tidb_datatype::EvalType::Decimal => {
+                        for argument in &mut args {
+                            if is_hybrid_argument(argument) {
+                                continue;
+                            }
+                            *argument = crate::aggregation::wrap_cast::wrap_with_cast_as_decimal(
+                                std::mem::replace(
+                                    argument,
+                                    Expression::Constant(Constant::new_null()),
+                                ),
+                            )?;
+                            if is_newly_built_cast(argument) {
+                                resolver.fold_constant(
+                                    argument,
+                                    ConstantFoldMode::Normal,
+                                );
+                            }
+                        }
+                    }
+                    tidb_datatype::EvalType::Int => {
+                        for argument in &mut args {
+                            if is_hybrid_argument(argument) {
+                                continue;
+                            }
+                            *argument = crate::aggregation::wrap_cast::wrap_with_cast_as_int(
+                                std::mem::replace(
+                                    argument,
+                                    Expression::Constant(Constant::new_null()),
+                                ),
+                                None,
+                            )?;
+                            if is_newly_built_cast(argument) {
                                 resolver.fold_constant(
                                     argument,
                                     ConstantFoldMode::Normal,
