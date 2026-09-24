@@ -85,7 +85,6 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_max_chunk_size":                             {},
 	"tidb_min_paging_size":                            {},
 	"tidb_max_paging_size":                            {},
-	"tidb_enable_cascades_planner":                    {},
 	"tidb_merge_join_concurrency":                     {},
 	"tidb_index_merge_intersection_concurrency":       {},
 	"tidb_opt_projection_push_down":                   {},

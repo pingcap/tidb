@@ -2466,3 +2466,30 @@ func TestIssue58829(t *testing.T) {
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
 }
+
+func TestEnableCascadesPlannerIsDeprecated(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cover_offsets (a int not null, b decimal(10,4), c int not null, key idx(a,b,c))")
+	tk.MustExec("insert into cover_offsets values (1,1.0,1),(2,3.1250,99)")
+
+	// Setting the deprecated variable still succeeds, but only emits a warning and
+	// has no effect: the Cascades planner is gone.
+	tk.MustExec("set @@tidb_enable_cascades_planner = on")
+	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warns, 1)
+	require.Equal(t, "[variable:1681]tidb_enable_cascades_planner is deprecated and will be removed in a future release.", warns[0].Err.Error())
+	tk.MustQuery("select @@tidb_enable_cascades_planner").Check(testkit.Rows("0"))
+
+	// The query that the Cascades planner used to mis-plan (#68533) now always uses
+	// the default planner, so it returns the stored value instead of garbage.
+	tk.MustQuery("select c from cover_offsets order by a limit 1").Check(testkit.Rows("1"))
+
+	// USE_CASCADES() is still parsed for compatibility, and ignored.
+	tk.MustExec("select /*+ USE_CASCADES(true) */ c from cover_offsets")
+
+	// Global scope behaves the same way.
+	tk.MustExec("set global tidb_enable_cascades_planner = on")
+	tk.MustQuery("select @@global.tidb_enable_cascades_planner").Check(testkit.Rows("0"))
+}
