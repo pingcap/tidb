@@ -260,7 +260,7 @@ func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsDerivation(t *testing.
 	tk.MustExec("create materialized view log on t_purge_date (a) purge next cast('2030-01-02' as date)")
 	mlogDateID := getMLogID("t_purge_date")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_PURGE_UNIX_SECONDS = UNIX_TIMESTAMP('2030-01-02 00:00:00') from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		"select NEXT_PURGE_UNIX_SECONDS = TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', '2030-01-02 00:00:00') from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogDateID,
 	)).Check(testkit.Rows("1"))
 }
