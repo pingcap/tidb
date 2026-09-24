@@ -3085,11 +3085,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// current FROM plan is itself a `LogicalJoin`/`LogicalApply`; an inner
     /// join with an `ON` clause is wrapped in a `LogicalSelection`, which is a
     /// deliberate boundary and therefore exposes only the visible schema.
-    #[must_use]
-    pub fn expand_fields_for_plan(
+    ///
+    /// Go `unfoldWildStar`'s error half: a wildcard that expands to no
+    /// column is `ErrBadTable` (1051) naming the wildcard's table portion
+    /// (`SELECT * FROM DUAL` answers "Unknown table ''").
+    pub fn expand_fields_for_plan_checked(
         fields: &tidb_ast::SelectFieldList,
         plan: &LogicalPlan,
-    ) -> Vec<ProjectionField> {
+    ) -> Result<Vec<ProjectionField>, PlanError> {
         let (schema, names) = snapshot_schema_and_names(plan);
         let full = match plan {
             LogicalPlan::Join(join) => join
@@ -3114,11 +3117,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     } else {
                         (&schema, names.as_slice())
                     };
-                    expanded.extend(Self::unfold_wild_star(
-                        path,
-                        wildcard_schema,
-                        wildcard_names,
-                    ));
+                    let list = Self::unfold_wild_star(path, wildcard_schema, wildcard_names);
+                    if list.is_empty() {
+                        return Err(PlanError::bad_table(
+                            path.last().map(String::as_str).unwrap_or(""),
+                        ));
+                    }
+                    expanded.extend(list);
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
                 window_spec_column: false,
@@ -3137,7 +3142,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }),
             }
         }
-        expanded
+        Ok(expanded)
     }
 
     /// Go `resolveHavingAndOrderBy`'s ORDER BY half
@@ -3946,7 +3951,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:4348` `unfoldWildStar`, then `:4360` `resolveGbyExprs` — GROUP BY
         // is resolved against the SOURCE scope and the written select list,
         // both of which exist before any operator above the FROM.
-        let mut fields = Self::expand_fields_for_plan(&select.fields, &plan);
+        let mut fields = Self::expand_fields_for_plan_checked(&select.fields, &plan)?;
         // Go `buildSelect` calls `resolveGbyExprs` only under
         // `if sel.GroupBy != nil` (`logical_plan_builder.go:4361`). The call
         // sets `b.curClause = groupByClause`, so invoking it for a query with

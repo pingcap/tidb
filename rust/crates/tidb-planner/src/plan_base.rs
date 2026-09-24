@@ -362,6 +362,8 @@ pub enum PlanErrorKind {
     UnknownDatabase(String),
     /// Go `infoschema.ErrTableNotExists`.
     UnknownTable(String),
+    /// Go `plannererrors.ErrBadTable` (1051).
+    BadTable(String),
     /// Go ErrUnknownTable (1109), with the clause owning name resolution.
     UnknownTableInClause(String, String),
     /// Go `table.ErrUnknownPartition` (1735).
@@ -580,6 +582,17 @@ impl PlanError {
         Self {
             message: format!("Table '{table}' doesn't exist"),
             kind: PlanErrorKind::UnknownTable(table),
+        }
+    }
+
+    /// Go `plannererrors.ErrBadTable` (1051): a wildcard that expands to no
+    /// column names the table portion it carried (empty for a bare `*`).
+    #[must_use]
+    pub fn bad_table(table: impl Into<String>) -> Self {
+        let table = table.into();
+        Self {
+            message: format!("Unknown table '{table}'"),
+            kind: PlanErrorKind::BadTable(table),
         }
     }
 
