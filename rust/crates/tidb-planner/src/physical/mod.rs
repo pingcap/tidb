@@ -3053,11 +3053,10 @@ pub fn get_hash_aggs_with_mpp_options(
         // Go's index-join inner side is CONSTRUCTED, not enumerated:
         // `constructIndexJoinInnerSideTaskWithAggCheck` attaches the
         // bottom-most aggregation straight onto the constructed cop task
-        // (`Attach2Task` -> `attach2Task4PhysicalHashAgg`), so the
-        // two-phase form is the only one Go prices. Enumerate only the cop
-        // child properties here; `attach_agg_over_cop` still falls back to
-        // a root aggregate when the split is impossible.
-        &[TaskType::CopSingleRead, TaskType::CopMultiRead]
+        // (`Attach2Task` -> `attach2Task4PhysicalHashAgg`). Go does NOT
+        // call getHashAggs for this property — return empty so the
+        // plan-id allocation matches go.
+        return Vec::new();
     } else if prop.no_cop_push_down {
         &[TaskType::Root]
     } else {
