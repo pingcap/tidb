@@ -3294,10 +3294,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }) {
             return Some(index);
         }
-        // 2. a select-list field that IS that column.
+        // 2. a select-list field that IS that column. GO's
+        // resolveFromSelectFields matches the field's ColumnExpr regardless of
+        // its AsName -- `select i_brand_id brand_id ... order by i_brand_id`
+        // (q19/q71) must bind the pass-through field, not append a duplicate
+        // auxiliary column.
         fields.iter().position(|field| {
-            field.alias.is_none()
-                && matches!(&field.expr, Expr::Column(p) if p.last().is_some_and(|c| c.eq_ignore_ascii_case(name)))
+            matches!(&field.expr, Expr::Column(p) if p.last().is_some_and(|c| c.eq_ignore_ascii_case(name)))
         })
     }
 
