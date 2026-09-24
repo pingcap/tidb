@@ -518,4 +518,15 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tk.MustExec("delete from kt")
 	entries, _ = fullTextEntries(t, tk, ktInfo, ktIdx)
 	require.Empty(t, entries)
+
+	// A string key column is stored whole, as an ordinary index stores it;
+	// only the last column is tokenized.
+	tk.MustExec("create table ks (id int primary key, tenant varchar(32), body text, fulltext index idx (tenant, body))")
+	tk.MustExec("insert into ks values (1, 'acme corp', 'hello world')")
+	ksInfo, ksIdx := tikvFullTextIndex(t, dom, "ks", "idx")
+	entries, keys = fullTextEntries(t, tk, ksInfo, ksIdx)
+	require.Equal(t, map[int64]map[string][]int{1: {"hello": {0}, "world": {1}}}, entries)
+	require.Len(t, keys[1], 1)
+	require.Equal(t, "acme corp", string(keys[1][0].GetBytes()))
+	tk.MustExec("admin check table ks")
 }
