@@ -100,6 +100,7 @@ go_library(
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/metricsutil",
         "//pkg/util/printer",
         "//pkg/util/redact",
         "//pkg/util/sqlexec",
@@ -200,6 +201,11 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/context",
         "//pkg/util/dbterror/exeerrors",
+<<<<<<< HEAD
+=======
+        "//pkg/util/execdetails",
+        "//pkg/util/metricsutil",
+>>>>>>> 633a9e37f1c (metrics, server: fix multi-statement latency attribution (#71584))
         "//pkg/util/plancodec",
         "//pkg/util/replayer",
         "//pkg/util/sqlkiller",
@@ -209,7 +215,9 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/testutil",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//oracle",
