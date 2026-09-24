@@ -500,19 +500,6 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         {
             continue;
         }
-        // Go's tryToGetIndexJoin enumerates candidates only for inner paths
-        // whose access columns can cover the join keys; an inner side with
-        // no such index yields zero candidates for this outer side. The
-        // child's possible column orders (from its indexes) are the proxy.
-        let inner_properties = if outer_idx == 0 { &join.right_properties } else { &join.left_properties };
-        let inner_keys = if outer_idx == 0 { &join.right_keys } else { &join.left_keys };
-        let has_matching_index = inner_properties.iter().any(|order| {
-            order.len() >= inner_keys.len()
-                && order.iter().zip(inner_keys.iter()).all(|(col, key)| col == key)
-        });
-        if !has_matching_index {
-            continue;
-        }
         let mut child_props = [PhysicalProperty::default(), PhysicalProperty::default()];
         // The OUTER side is re-planned under the SAME property. This is the
         // line that keeps a parent merge join alive above an index join.
