@@ -1992,8 +1992,10 @@ fn staged_mutations_from_entries(
 }
 
 /// Finds the table/index text that Go retained when a deferred insert marked a
-/// record key presumed absent. Only an `AlreadyExists` outcome can consume it;
-/// all other transaction failures keep their normal typed mapping.
+/// record key presumed absent. Both an `AlreadyExists` verdict and a
+/// `NotExist`-direction assertion the store refuted consume it: go reports
+/// each as `ErrDupEntry` (1062); all other transaction failures keep their
+/// normal typed mapping.
 fn deferred_duplicate_hint(
     outcome: &OptimisticCommitOutcome,
     buffer: &MutationBuffer,
@@ -2003,10 +2005,15 @@ fn deferred_duplicate_hint(
         OptimisticCommitOutcome::CleanupFailed(result) => &result.cause,
         _ => return None,
     };
-    let TransactionCause::AlreadyExists { key, .. } = key else {
-        return None;
-    };
-    buffer.duplicate_key_hint_for(key)
+    match key {
+        TransactionCause::AlreadyExists { key, .. } => buffer.duplicate_key_hint_for(key),
+        TransactionCause::AssertionFailed {
+            key,
+            not_exist: true,
+            ..
+        } => buffer.duplicate_key_hint_for(key),
+        _ => None,
+    }
 }
 
 /// Publishes every staged write of one autocommit statement as its own
