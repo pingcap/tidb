@@ -2665,40 +2665,34 @@ func TestIndexScanSeekCost(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
-
-	// Insert data where column `a` has high NDV (many distinct values) while `b` and `c` have
-	// low NDV (few distinct values). This ensures the NDV safeguard allows pruning: the IN-list
-	// column being dropped (b or c) has lower NDV than the preceding column (a).
-	for i := range 100 {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d, %d)", i, i%3+1, i%2+1, i))
-	}
+	// Column `a` has high NDV while `b` and `c` have low NDV, so the NDV safeguard allows
+	// pruning the IN-list columns `b` and `c` from range construction.
+	tk.MustExec("set @@cte_max_recursion_depth = 100000")
+	tk.MustExec(`insert into t with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
+		select n % 200, n % 3 + 1, n % 2 + 1, n from cte`)
 	tk.MustExec("analyze table t")
 	tk.MustExec("set @@tidb_cost_model_version = 2")
 
-	// Query with equality on high-NDV column `a`, IN-lists on low-NDV columns `b` and `c`.
-	// This produces 3*2=6 ranges. With fix control ON and seek cost, the optimizer may
-	// prune to fewer ranges by dropping the IN-list on `c` (cutoff at b only).
-	query := "select * from t where a = 1 and b in (1,2,3) and c in (1,2) order by d"
+	// Without an ordering requirement the seek cost of 6 ranges outweighs scanning the extra
+	// rows under a = 1, so the IN-lists are pruned from the ranges and applied as filters.
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2)").Check(testkit.Rows(
+		"IndexReader 728.24 root  index:Selection",
+		"└─Selection 728.24 cop[tikv]  in(test.t.b, 1, 2, 3), in(test.t.c, 1, 2)",
+		"  └─IndexRangeScan 250.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1,1], keep order:false"))
 
-	// Without fix control: standard plan.
-	tk.MustExec(`set @@tidb_opt_fix_control = ""`)
-	planOff := tk.MustQuery("explain format='brief' " + query).Rows()
+	// With ORDER BY d the full point ranges satisfy the order through a per-range merge sort,
+	// so pruning must not be chosen: it would force a Sort on top of the pruned scan.
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d").Check(testkit.Rows(
+		"IndexReader 728.24 root  index:IndexRangeScan",
+		"└─IndexRangeScan 728.24 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1 1,1 1 1], [1 1 2,1 1 2], [1 2 1,1 2 1], [1 2 2,1 2 2], [1 3 1,1 3 1], [1 3 2,1 3 2], keep order:true"))
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d limit 5").Check(testkit.Rows(
+		"Limit 5.00 root  offset:0, count:5",
+		"└─IndexReader 5.00 root  index:Limit",
+		"  └─Limit 5.00 cop[tikv]  offset:0, count:5",
+		"    └─IndexRangeScan 5.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1 1,1 1 1], [1 1 2,1 1 2], [1 2 1,1 2 1], [1 2 2,1 2 2], [1 3 1,1 3 1], [1 3 2,1 3 2], keep order:true"))
 
-	// With fix control enabled: seek cost may lead to a pruned-range alternative.
-	tk.MustExec(`set @@tidb_opt_fix_control = "65465:ON"`)
-	planOn := tk.MustQuery("explain format='brief' " + query).Rows()
-
-	// We don't assert a specific plan shape since it depends on cost estimation,
-	// but we verify the query returns correct results in both modes.
-	_ = planOff
-	_ = planOn
-
-	// Verify correctness: results must be identical regardless of fix control.
-	tk.MustExec(`set @@tidb_opt_fix_control = ""`)
-	resultOff := tk.MustQuery(query).Sort().Rows()
-	tk.MustExec(`set @@tidb_opt_fix_control = "65465:ON"`)
-	resultOn := tk.MustQuery(query).Sort().Rows()
-	require.Equal(t, resultOff, resultOn)
+	// The pruned plan must return the same rows as the ordered, unpruned plan.
+	tk.MustQuery("select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2)").Sort().Check(
+		tk.MustQuery("select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d").Sort().Rows())
 }

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -141,9 +140,10 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
-	if fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix65465, false) {
-		numRanges := float64(len(p.Ranges))
-		seekCost := indexScanSeekCostVer2(option, numRanges, scanFactor)
+	// Each range is a separate seek in TiKV; charge it so that many-range scans (typically from
+	// IN-lists) are not costed as if they were one contiguous scan.
+	if len(p.Ranges) > 1 {
+		seekCost := indexScanSeekCostVer2(option, float64(len(p.Ranges)), scanFactor)
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, seekCost)
 	}
 
@@ -1115,9 +1115,6 @@ func indexJoinSeekingCostVer2(option *costusage.PlanCostOption, buildRows, numRa
 }
 
 func indexScanSeekCostVer2(option *costusage.PlanCostOption, numRanges float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
-	if numRanges <= 1 {
-		return costusage.ZeroCostVer2
-	}
 	// Each seek ≈ scanning 10 rows of 8-byte width (from experiments in #62499).
 	// Same model as indexJoinSeekingCostVer2 but without the buildRows multiplier.
 	return costusage.NewCostVer2(option, scanFactor,

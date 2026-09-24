@@ -2417,9 +2417,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			t = idxTask
 		}
 
-		// When fix control 65465 is enabled, try pruned-range alternatives that use fewer
-		// index columns for range construction. This reduces the number of ranges (seeks) at
-		// the cost of scanning more rows, which can be beneficial when IN-lists produce many ranges.
+		// Try pruned-range alternatives that use fewer index columns for range construction.
+		// This reduces the number of ranges (seeks) at the cost of scanning more rows, which can
+		// be beneficial when IN-lists produce many ranges.
 		// Eligibility: need a strong equality prefix (EqCondCount > 1) or at least 2 IN-list columns.
 		// Count actual IN-list columns using ConstCols: a column in the EqOrIn prefix that is not
 		// constant (i.e. ConstCols[i] == false) is an IN-list column. This correctly handles cases
@@ -2430,8 +2430,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 				inListCount++
 			}
 		}
-		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix65465, false) &&
-			!path.IsDNFCond &&
+		if !path.IsDNFCond &&
 			path.Index != nil && !path.Index.MVIndex &&
 			path.EqOrInCondCount > path.EqCondCount &&
 			(path.EqCondCount > 1 || inListCount >= 2) &&
