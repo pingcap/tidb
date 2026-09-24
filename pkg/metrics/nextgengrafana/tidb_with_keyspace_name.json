@@ -2208,101 +2208,9 @@
       "panels": [
         {
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Duration quantiles of completed non-restricted statements, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
-          "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 3},
-          "id": 23763575001,
-          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "pluginVersion": "7.5.17",
-          "points": false,
-          "renderer": "flot",
-          "stack": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(0.999, sum(rate(tidb_session_statement_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "P999",
-              "refId": "A"
-            },
-            {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_statement_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "P99",
-              "refId": "B"
-            },
-            {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_statement_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "P95",
-              "refId": "C"
-            },
-            {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_statement_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "P80",
-              "refId": "D"
-            }
-          ],
-          "title": "Statement Duration",
-          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
-          "type": "graph",
-          "xaxis": {"mode": "time", "show": true, "values": []},
-          "yaxes": [
-            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
-            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
-          ]
-        },
-        {
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Executions per second of completed non-restricted statements by SQL type and in total. Counts SQL statements rather than MySQL commands. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
-          "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 3},
-          "id": 23763575002,
-          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "pluginVersion": "7.5.17",
-          "points": false,
-          "renderer": "flot",
-          "stack": false,
-          "targets": [
-            {
-              "expr": "sum(rate(tidb_session_statement_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (sql_type)",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{sql_type}}",
-              "refId": "A"
-            },
-            {
-              "expr": "sum(rate(tidb_session_statement_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m]))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "Total",
-              "refId": "B"
-            }
-          ],
-          "title": "Statement Executions Per Second",
-          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
-          "type": "graph",
-          "xaxis": {"mode": "time", "show": true, "values": []},
-          "yaxes": [
-            {"format": "ops", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
-            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
-          ]
-        },
-        {
-          "datasource": "${DS_TEST-CLUSTER}",
           "description": "Average duration of completed non-restricted statements by SQL type, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
           "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 10},
+          "gridPos": {"h": 7, "w": 24, "x": 0, "y": 3},
           "id": 23763575003,
           "legend": {"show": true, "hideEmpty": false, "hideZero": false},
           "lines": true,
@@ -2332,41 +2240,9 @@
         },
         {
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Wall seconds summed over completed non-restricted statement executions per second by SQL type; this is not CPU time and may exceed 1 with concurrency. Measures SQL statements rather than MySQL commands. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
-          "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 10},
-          "id": 23763575004,
-          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "pluginVersion": "7.5.17",
-          "points": false,
-          "renderer": "flot",
-          "stack": false,
-          "targets": [
-            {
-              "expr": "sum(rate(tidb_session_statement_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (sql_type)",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{sql_type}}",
-              "refId": "A"
-            }
-          ],
-          "title": "Statement Time Per Second By Type",
-          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
-          "type": "graph",
-          "xaxis": {"mode": "time", "show": true, "values": []},
-          "yaxes": [
-            {"format": "short", "label": "Wall Time (s/s)", "logBase": 1, "min": 0, "max": null, "show": true},
-            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
-          ]
-        },
-        {
-          "datasource": "${DS_TEST-CLUSTER}",
           "description": "P999 duration of completed non-restricted statements by SQL type, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
           "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 17},
+          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 10},
           "id": 23763575005,
           "legend": {"show": true, "hideEmpty": false, "hideZero": false},
           "lines": true,
@@ -2398,7 +2274,7 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "P99 duration of completed non-restricted statements by SQL type, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
           "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 17},
+          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 10},
           "id": 23763575006,
           "legend": {"show": true, "hideEmpty": false, "hideZero": false},
           "lines": true,
@@ -2430,7 +2306,7 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "P95 duration of completed non-restricted statements by SQL type, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
           "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 24},
+          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 17},
           "id": 23763575007,
           "legend": {"show": true, "hideEmpty": false, "hideZero": false},
           "lines": true,
@@ -2462,7 +2338,7 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "P80 duration of completed non-restricted statements by SQL type, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
           "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 24},
+          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 17},
           "id": 23763575008,
           "legend": {"show": true, "hideEmpty": false, "hideZero": false},
           "lines": true,
@@ -2482,134 +2358,6 @@
             }
           ],
           "title": "Statement Duration P80 By Type",
-          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
-          "type": "graph",
-          "xaxis": {"mode": "time", "show": true, "values": []},
-          "yaxes": [
-            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
-            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
-          ]
-        },
-        {
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "P999 duration of completed non-restricted statements by instance, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
-          "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 31},
-          "id": 23763575009,
-          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "pluginVersion": "7.5.17",
-          "points": false,
-          "renderer": "flot",
-          "stack": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(0.999, sum(rate(tidb_session_statement_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le, instance))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
-              "refId": "A"
-            }
-          ],
-          "title": "Statement Duration P999 By Instance",
-          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
-          "type": "graph",
-          "xaxis": {"mode": "time", "show": true, "values": []},
-          "yaxes": [
-            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
-            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
-          ]
-        },
-        {
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "P99 duration of completed non-restricted statements by instance, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
-          "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 31},
-          "id": 23763575010,
-          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "pluginVersion": "7.5.17",
-          "points": false,
-          "renderer": "flot",
-          "stack": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_statement_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le, instance))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
-              "refId": "A"
-            }
-          ],
-          "title": "Statement Duration P99 By Instance",
-          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
-          "type": "graph",
-          "xaxis": {"mode": "time", "show": true, "values": []},
-          "yaxes": [
-            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
-            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
-          ]
-        },
-        {
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "P95 duration of completed non-restricted statements by instance, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
-          "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 38},
-          "id": 23763575011,
-          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "pluginVersion": "7.5.17",
-          "points": false,
-          "renderer": "flot",
-          "stack": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_statement_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le, instance))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
-              "refId": "A"
-            }
-          ],
-          "title": "Statement Duration P95 By Instance",
-          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
-          "type": "graph",
-          "xaxis": {"mode": "time", "show": true, "values": []},
-          "yaxes": [
-            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
-            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
-          ]
-        },
-        {
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "P80 duration of completed non-restricted statements by instance, measured per SQL statement rather than per MySQL command. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
-          "fill": 0,
-          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 38},
-          "id": 23763575012,
-          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "pluginVersion": "7.5.17",
-          "points": false,
-          "renderer": "flot",
-          "stack": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_statement_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le, instance))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
-              "refId": "A"
-            }
-          ],
-          "title": "Statement Duration P80 By Instance",
           "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
           "type": "graph",
           "xaxis": {"mode": "time", "show": true, "values": []},
