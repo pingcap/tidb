@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -151,6 +152,7 @@ type backfillTaskContext struct {
 	done          bool
 	addedCount    int
 	scanCount     int
+	writtenBytes  int
 	warnings      map[errors.ErrorID]*terror.Error
 	warningsCount map[errors.ErrorID]int64
 	finishTS      uint64
@@ -250,6 +252,17 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 			Total: kv.TxnTotalSizeLimit.Load(),
 		})
 	}
+}
+
+// accountBackfillTxnRU converts the bytes written by one committed reorg
+// backfill transaction into RU and accumulates it with the other per-task
+// statistics on the job's reorg context.
+func accountBackfillTxnRU(rc *reorgCtx, jobID int64, writtenBytes int) {
+	failpoint.InjectCall("accountBackfillTxnRU", jobID, writtenBytes)
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	rc.increaseRU(float64(writtenBytes) * currentDDLRUWeights().TxnKVBytes)
 }
 
 type backfiller interface {
@@ -383,6 +396,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// successfully committed small ranges rather than fetching it in the total result.
 		rc.increaseRowCount(int64(taskCtx.addedCount))
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+		accountBackfillTxnRU(rc, jobID, taskCtx.writtenBytes)
 
 		if num := result.scanCount - lastLogCount; num >= 90000 {
 			lastLogCount = result.scanCount

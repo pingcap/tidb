@@ -255,6 +255,7 @@ go_test(
         "attributes_sql_test.go",
         "backfill_metrics_test.go",
         "backfilling_dist_scheduler_test.go",
+        "backfilling_ru_nokit_test.go",
         "backfilling_test.go",
         "backfilling_txn_executor_test.go",
         "bench_test.go",
