@@ -41,7 +41,6 @@ use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{compose_cnf_condition, extract_columns};
 
 use crate::base_arms;
-use crate::cardinality::ndv::GroupNdv;
 use crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len;
 use crate::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
@@ -2753,23 +2752,6 @@ pub fn split_cnf(predicates: &[Expression]) -> Vec<Expression> {
 /// * `SessionVars.TiDBOptJoinReorderThreshold` arrives as a parameter;
 ///   `DefTiDBOptJoinReorderThreshold` is `0`, which is what
 ///   [`LogicalPlan::recursive_derive_stats`] passes.
-/// The NDV debug sink: the server's stdout redirect truncates on restart and
-/// its write offset clobbers appended lines, so derive-time diagnostics go to
-/// their own append-only file.
-fn ndv_debug(msg: &str) {
-    if std::env::var("TIDB_DEBUG_NDV").is_err() {
-        return;
-    }
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/ndv_debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(file, "{msg}");
-    }
-}
-
 struct DeriveStatsFold<'a> {
     builder: &'a dyn tidb_expr::expr_util::FunctionBuilder,
     /// The first failure, per the module header's first-failure discipline.
@@ -2781,11 +2763,6 @@ struct DeriveStatsFold<'a> {
     range_max_size: i64,
     selectivity_factor: f64,
     range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
-    /// The column groups arriving at the DataSource being derived. GO's
-    /// `getGroupNDVs` only builds GroupNDVs for groups the planner ASKED for
-    /// (`ds.AskedColumnGroup`, registered by join key construction and handed
-    /// down through the recursive derive as `colGroups`).
-    data_source_asked_groups: Vec<Vec<tidb_expr::column::Column>>,
 }
 
 /// What one `ascend` arm decided.
@@ -2853,17 +2830,6 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
             // ascend below short-circuits.
             return Descend::Children(Vec::new());
         }
-        if matches!(node, LogicalPlan::DataSource(_)) {
-            self.data_source_asked_groups = down.clone();
-        }
-        ndv_debug(&format!(
-            "ASKDBG ds={} down_groups={}",
-            match node {
-                LogicalPlan::DataSource(op) => op.table_name.clone(),
-                _ => String::new(),
-            },
-            down.len()
-        ));
         // Go: `cumColGroups := p.self.ExtractColGroups(colGroups)`, handed to
         // EVERY child.
         let cum = node.extract_col_groups(&down);
@@ -2913,9 +2879,9 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                      Go's initStats attaches at least the pseudo table first",
                 ))),
                 Some(table_stats) => {
-                    let mut stats = match op.base.base.stats_info().cloned() {
-                        Some(stats) => stats,
-                        None => {
+                    if let Some(stats) = op.base.base.stats_info().cloned() {
+                        StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                    } else {
                         // Go preprocesses pushed predicates before deriving
                         // ranges and selectivity, retaining casts in projections.
                         for condition in &mut op.pushed_down_conds {
@@ -2952,7 +2918,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         } else {
                             analyzed_filter_selectivity(&table_stats, &op.pushed_down_conds)
                         };
-                        let mut stats = range_selectivity.map_or_else(
+                        let stats = range_selectivity.map_or_else(
                             || {
                                 crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
                                     &table_stats,
@@ -2970,44 +2936,6 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 )
                             },
                         );
-                        // GO `getGroupNDVs` (stats.go:491): an index whose
-                        // column list EXACTLY matches an asked column group
-                        // carries the index's composite NDV into the profile,
-                        // so a join keyed on that group estimates with it
-                        // (q24_1's (sr_ticket_number, sr_item_sk) unique-index
-                        // probe makes the join output the outer count).
-                        if !self.data_source_asked_groups.is_empty() {
-                            let index_groups = table_stats
-                                .hist_coll()
-                                .map(|hist_coll| hist_coll.index_ndvs().clone())
-                                .unwrap_or_default();
-                            let mut group_ndvs: Vec<GroupNdv> = Vec::new();
-                            for group in &self.data_source_asked_groups {
-                                let mut ids: Vec<i64> =
-                                    group.iter().map(|column| column.unique_id).collect();
-                                ids.sort_unstable();
-                                for (_index_id, (columns, ndv)) in &index_groups {
-                                    let mut index_columns = columns.clone();
-                                    index_columns.sort_unstable();
-                                    if index_columns == ids {
-                                        group_ndvs.push(GroupNdv {
-                                            columns: ids.clone(),
-                                            ndv: *ndv,
-                                        });
-                                        break;
-                                    }
-                                }
-                            }
-                            ndv_debug(&format!(
-                                "GRPDFilter asked={} index_groups={} matched={}",
-                                self.data_source_asked_groups.len(),
-                                index_groups.len(),
-                                group_ndvs.len()
-                            ));
-                            if !group_ndvs.is_empty() {
-                                stats.set_group_ndvs(group_ndvs);
-                            }
-                        }
                         // Go derivePathStatsAndTryHeuristics fixes IsSingleScan
                         // with the first stats profile. Join reorder can derive
                         // this before the final column-pruning pass.
@@ -3023,49 +2951,9 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 )
                             })
                             .collect();
-                        stats
-                        }
-                    };
-                    // GO's datasource profile carries GroupNDVs for the asked
-                    // groups; the cached-profile short-circuit must carry them
-                    // too (the earlier pass may predate the join-key
-                    // registration).
-                    if !self.data_source_asked_groups.is_empty() {
-                        let index_groups = table_stats
-                            .hist_coll()
-                            .map(|hist_coll| hist_coll.index_ndvs().clone())
-                            .unwrap_or_default();
-                        let mut group_ndvs: Vec<GroupNdv> = Vec::new();
-                        for group in &self.data_source_asked_groups {
-                            let mut ids: Vec<i64> =
-                                group.iter().map(|column| column.unique_id).collect();
-                            ids.sort_unstable();
-                            for (_index_id, (columns, ndv)) in &index_groups {
-                                let mut index_columns = columns.clone();
-                                index_columns.sort_unstable();
-                                if index_columns == ids {
-                                    group_ndvs.push(GroupNdv {
-                                        columns: ids.clone(),
-                                        ndv: *ndv,
-                                    });
-                                    break;
-                                }
-                            }
-                        }
-                        if !group_ndvs.is_empty() {
-                            stats.set_group_ndvs(group_ndvs);
-                        }
+                        op.base.base.set_stats(Some(stats.clone()));
+                        StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
                     }
-                    ndv_debug(&format!(
-                        "DSDBG table={} rows={} conds={} asked={} groups_in_profile={}",
-                        op.table_name,
-                        stats.row_count(),
-                        op.pushed_down_conds.len(),
-                        self.data_source_asked_groups.len(),
-                        stats.group_ndvs().len()
-                    ));
-                    op.base.base.set_stats(Some(stats.clone()));
-                    StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
                 }
             },
             LogicalPlan::Selection(op) => StatsOutcome::Done(
@@ -3096,28 +2984,6 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             join_reorder_threshold: self.join_reorder_threshold,
                         };
                         let equal_cond_out_cnt = estimate_full_join_row_count(&input);
-                        ndv_debug(&format!(
-                            "NDVDBG lkeys_ndv={} rkeys_ndv={} lrows={} rrows={} lgroups={:?} rgroups={:?} out={}",
-                            input.left_join_keys.ndv,
-                            input.right_join_keys.ndv,
-                            left.row_count(),
-                            right.row_count(),
-                            left.group_ndvs(),
-                            right.group_ndvs(),
-                            equal_cond_out_cnt
-                        ));
-                        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-                            eprintln!(
-                                "NDVDBG lkeys_ndv={} rkeys_ndv={} lrows={} rrows={} lgroups={:?} rgroups={:?} out={}",
-                                input.left_join_keys.ndv,
-                                input.right_join_keys.ndv,
-                                left.row_count(),
-                                right.row_count(),
-                                left.group_ndvs(),
-                                right.group_ndvs(),
-                                equal_cond_out_cnt
-                            );
-                        }
                         StatsOutcome::Done(
                             op.derive_stats(
                                 &child_stats,
@@ -3387,7 +3253,6 @@ fn recursive_derive_stats_with_range_quota(
         range_max_size,
         selectivity_factor,
         range_fallback_handler,
-        data_source_asked_groups: Vec::new(),
     };
     let (plan, (stats, reload, _schema)) = fold_owned(&mut fold, plan, col_groups);
     match fold.failure.take() {
