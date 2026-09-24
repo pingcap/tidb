@@ -432,16 +432,30 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 		}
 	}
 	clearResult()
-	r.mockLocalData = map[string]string{
+	localData := map[string]string{
 		"digest1": "text1",
 		"digest2": "text2",
 		"digest6": "text6",
 	}
-	r.mockGlobalData = map[string]string{
+	globalData := map[string]string{
 		"digest2": "text2",
 		"digest3": "text3",
 		"digest4": "text4",
 		"digest7": "text7",
+	}
+	localHistoryData := map[string]string{}
+	globalHistoryData := map[string]string{"digest5": "text5"}
+	r.mockQuery = func(queryGlobal, history bool, inValues []any) (map[string]string, error) {
+		if history {
+			if queryGlobal {
+				return r.runMockQuery(globalHistoryData, inValues)
+			}
+			return r.runMockQuery(localHistoryData, inValues)
+		}
+		if queryGlobal {
+			return r.runMockQuery(globalData, inValues)
+		}
+		return r.runMockQuery(localData, inValues)
 	}
 
 	expectedLocalResult := map[string]string{
@@ -456,7 +470,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 		"digest2": "text2",
 		"digest3": "text3",
 		"digest4": "text4",
-		"digest5": "",
+		"digest5": "text5",
 	}
 
 	err := r.RetrieveLocal(context.Background(), nil)
@@ -478,6 +492,108 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	err = r.RetrieveGlobal(context.Background(), nil)
 	require.NoError(t, err)
 	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
+
+	t.Run("current summary hit skips history", func(t *testing.T) {
+		r := NewSQLDigestTextRetriever()
+		r.SQLDigestsMap = map[string]string{"digest1": ""}
+		historyQueries := 0
+		r.mockQuery = func(_, history bool, _ []any) (map[string]string, error) {
+			if history {
+				historyQueries++
+				return nil, nil
+			}
+			return map[string]string{"digest1": "text1"}, nil
+		}
+
+		err := r.RetrieveLocal(context.Background(), nil)
+		require.NoError(t, err)
+		require.Zero(t, historyQueries)
+		require.Equal(t, map[string]string{"digest1": "text1"}, r.SQLDigestsMap)
+	})
+
+	t.Run("cluster current hit precedes local history", func(t *testing.T) {
+		type queryCall struct {
+			queryGlobal bool
+			history     bool
+			digests     []string
+		}
+		r := NewSQLDigestTextRetriever()
+		r.SQLDigestsMap = map[string]string{"digest1": "", "digest2": "", "digest3": ""}
+		var calls []queryCall
+		r.mockQuery = func(queryGlobal, history bool, inValues []any) (map[string]string, error) {
+			digests := make([]string, len(inValues))
+			for i, value := range inValues {
+				digests[i] = value.(string)
+			}
+			calls = append(calls, queryCall{queryGlobal: queryGlobal, history: history, digests: digests})
+			switch {
+			case queryGlobal && !history:
+				return map[string]string{"digest3": "text3"}, nil
+			case !queryGlobal && !history:
+				return map[string]string{"digest1": "text1"}, nil
+			case !queryGlobal && history:
+				return map[string]string{"digest2": "text2"}, nil
+			default:
+				return nil, nil
+			}
+		}
+
+		err := r.RetrieveGlobal(context.Background(), nil)
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{
+			"digest1": "text1",
+			"digest2": "text2",
+			"digest3": "text3",
+		}, r.SQLDigestsMap)
+		require.Equal(t, []queryCall{
+			{queryGlobal: false, history: false, digests: []string{"digest1", "digest2", "digest3"}},
+			{queryGlobal: true, history: false, digests: []string{"digest2", "digest3"}},
+			{queryGlobal: false, history: true, digests: []string{"digest2"}},
+		}, calls)
+	})
+
+	t.Run("unrequested results do not replace requested digests", func(t *testing.T) {
+		r := NewSQLDigestTextRetriever()
+		r.SQLDigestsMap = map[string]string{"requested": ""}
+		r.mockQuery = func(_, _ bool, _ []any) (map[string]string, error) {
+			return map[string]string{"unrequested": "some SQL"}, nil
+		}
+
+		err := r.RetrieveLocal(context.Background(), nil)
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{"requested": ""}, r.SQLDigestsMap)
+	})
+
+	t.Run("large history lookup is batched", func(t *testing.T) {
+		r := NewSQLDigestTextRetriever()
+		r.fetchAllLimit = 2
+		r.SQLDigestsMap = map[string]string{
+			"digest1": "",
+			"digest2": "",
+			"digest3": "",
+			"digest4": "",
+			"digest5": "",
+		}
+		var historyBatches [][]string
+		r.mockQuery = func(_, history bool, inValues []any) (map[string]string, error) {
+			if history {
+				batch := make([]string, len(inValues))
+				for i, value := range inValues {
+					batch[i] = value.(string)
+				}
+				historyBatches = append(historyBatches, batch)
+			}
+			return nil, nil
+		}
+
+		err := r.RetrieveLocal(context.Background(), nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{
+			{"digest1", "digest2"},
+			{"digest3", "digest4"},
+			{"digest5"},
+		}, historyBatches)
+	})
 }
 
 func TestProjectionBenefitsFromPushedDown(t *testing.T) {
