@@ -660,36 +660,36 @@ func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 }
 
 func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
-	nextTime := "2026-03-24 12:34:56.123456"
+	nextRefreshUnixSeconds := int64(1_774_355_696)
 	expectedOldMViewRevision := uint64(505)
 	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 		{
-			OldMViewID:                     101,
-			ShadowTableID:                  202,
-			BuildReadTSO:                   303,
-			ExpectedOldMViewRevision:       &expectedOldMViewRevision,
-			ExpectedLastSuccessReadTSO:     404,
-			ExpectedLastSuccessReadTSONull: false,
-			NextTime:                       &nextTime,
-			ShouldUpdateNextTime:           true,
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedOldMViewRevision:           &expectedOldMViewRevision,
+			ExpectedLastSuccessReadTSO:         404,
+			ExpectedLastSuccessReadTSONull:     false,
+			NextRefreshUnixSeconds:             &nextRefreshUnixSeconds,
+			ShouldUpdateNextRefreshUnixSeconds: true,
 		},
 		{
-			OldMViewID:                     101,
-			ShadowTableID:                  202,
-			BuildReadTSO:                   303,
-			ExpectedLastSuccessReadTSO:     0,
-			ExpectedLastSuccessReadTSONull: true,
-			NextTime:                       nil,
-			ShouldUpdateNextTime:           true,
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedLastSuccessReadTSO:         0,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: true,
 		},
 		{
-			OldMViewID:                     101,
-			ShadowTableID:                  202,
-			BuildReadTSO:                   303,
-			ExpectedLastSuccessReadTSO:     0,
-			ExpectedLastSuccessReadTSONull: true,
-			NextTime:                       nil,
-			ShouldUpdateNextTime:           false,
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedLastSuccessReadTSO:         0,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: false,
 		},
 	}
 

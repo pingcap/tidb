@@ -578,24 +578,24 @@ func buildMaterializedViewRelatedTableInfoForModifyColumn(
 		}
 		// baseInfo only stores the MLog table ID. Resolve its schema ID from InfoSchema,
 		// then load the mutable TableInfo from meta so the metadata change can be persisted.
-		mlogTblInfo, err := getTableInfo(jobCtx.metaMut, baseInfo.MLogID, mlogDB.ID)
+		mlogTableInfo, err := getTableInfo(jobCtx.metaMut, baseInfo.MLogID, mlogDB.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err := validateMaterializedViewLogInfoForModifyColumn(baseTblInfo, mlogTblInfo); err != nil {
+		if err := validateMaterializedViewLogInfoForModifyColumn(baseTblInfo, mlogTableInfo); err != nil {
 			return nil, err
 		}
-		mlogCol, columnIsTracked, err := trackedMaterializedViewLogColumnForModifyColumn(mlogTblInfo, oldCol.Name.L)
+		mlogCol, columnIsTracked, err := trackedMaterializedViewLogColumnForModifyColumn(mlogTableInfo, oldCol.Name.L)
 		if err != nil {
 			return nil, err
 		}
 		if columnIsTracked {
-			newFieldType, err := validateMaterializedViewLogColumnTypeForModifyColumn("MODIFY COLUMN", mlogTblInfo, mlogCol, newCol)
+			newFieldType, err := validateMaterializedViewLogColumnTypeForModifyColumn("MODIFY COLUMN", mlogTableInfo, mlogCol, newCol)
 			if err != nil {
 				return nil, err
 			}
 			mlogCol.FieldType = newFieldType
-			relatedInfos = append(relatedInfos, schemaIDAndTableInfo{schemaID: mlogDB.ID, tblInfo: mlogTblInfo})
+			relatedInfos = append(relatedInfos, schemaIDAndTableInfo{schemaID: mlogDB.ID, tblInfo: mlogTableInfo})
 		}
 	}
 
@@ -603,20 +603,20 @@ func buildMaterializedViewRelatedTableInfoForModifyColumn(
 	if len(baseInfo.MViewIDs) == 0 {
 		return relatedInfos, nil
 	}
-	for _, mvID := range baseInfo.MViewIDs {
-		mvInfoFromIS, ok := is.TableInfoByID(mvID)
+	for _, mviewID := range baseInfo.MViewIDs {
+		mviewInfoFromIS, ok := is.TableInfoByID(mviewID)
 		if !ok {
 			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view table not found")
 		}
-		mvDB, ok := infoschema.SchemaByTable(is, mvInfoFromIS)
+		mviewDB, ok := infoschema.SchemaByTable(is, mviewInfoFromIS)
 		if !ok {
 			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view schema not found")
 		}
-		mvTblInfo, err := getTableInfo(jobCtx.metaMut, mvID, mvDB.ID)
+		mviewTableInfo, err := getTableInfo(jobCtx.metaMut, mviewID, mviewDB.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		usage, err := validateDependentMaterializedViewModifyColumn("MODIFY COLUMN", baseTblInfo, mvTblInfo, oldCol, newCol)
+		usage, err := validateDependentMaterializedViewModifyColumn("MODIFY COLUMN", baseTblInfo, mviewTableInfo, oldCol, newCol)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -626,30 +626,30 @@ func buildMaterializedViewRelatedTableInfoForModifyColumn(
 
 		changed := false
 		for _, off := range usage.directOutputOffsets {
-			mvOldCol := mvTblInfo.Columns[off]
-			mvOldCol.FieldType = fieldTypeForMVRelatedColumn(mvOldCol, newCol)
+			mviewOldCol := mviewTableInfo.Columns[off]
+			mviewOldCol.FieldType = fieldTypeForMVRelatedColumn(mviewOldCol, newCol)
 			changed = true
 		}
 		if changed {
-			relatedInfos = append(relatedInfos, schemaIDAndTableInfo{schemaID: mvDB.ID, tblInfo: mvTblInfo})
+			relatedInfos = append(relatedInfos, schemaIDAndTableInfo{schemaID: mviewDB.ID, tblInfo: mviewTableInfo})
 		}
 	}
 	return relatedInfos, nil
 }
 
-func validateMaterializedViewLogInfoForModifyColumn(baseTblInfo, mlogTblInfo *model.TableInfo) error {
-	if mlogTblInfo.MaterializedViewLog == nil || mlogTblInfo.MaterializedViewLog.BaseTableID != baseTblInfo.ID {
+func validateMaterializedViewLogInfoForModifyColumn(baseTblInfo, mlogTableInfo *model.TableInfo) error {
+	if mlogTableInfo.MaterializedViewLog == nil || mlogTableInfo.MaterializedViewLog.BaseTableID != baseTblInfo.ID {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: invalid materialized view log metadata")
 	}
 	return nil
 }
 
 func trackedMaterializedViewLogColumnForModifyColumn(
-	mlogTblInfo *model.TableInfo,
+	mlogTableInfo *model.TableInfo,
 	colNameL string,
 ) (*model.ColumnInfo, bool, error) {
 	columnIsTracked := false
-	for _, c := range mlogTblInfo.MaterializedViewLog.Columns {
+	for _, c := range mlogTableInfo.MaterializedViewLog.Columns {
 		if c.L == colNameL {
 			columnIsTracked = true
 			break
@@ -659,7 +659,7 @@ func trackedMaterializedViewLogColumnForModifyColumn(
 		return nil, false, nil
 	}
 
-	mlogCol := model.FindColumnInfo(mlogTblInfo.Columns, colNameL)
+	mlogCol := model.FindColumnInfo(mlogTableInfo.Columns, colNameL)
 	if mlogCol == nil {
 		return nil, true, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log column not found")
 	}
@@ -668,14 +668,14 @@ func trackedMaterializedViewLogColumnForModifyColumn(
 
 func validateMaterializedViewLogColumnTypeForModifyColumn(
 	op string,
-	mlogTblInfo *model.TableInfo,
+	mlogTableInfo *model.TableInfo,
 	mlogCol *model.ColumnInfo,
 	newCol *model.ColumnInfo,
 ) (parser_types.FieldType, error) {
 	newFieldType := fieldTypeForMVRelatedColumn(mlogCol, newCol)
 	mlogNewCol := mlogCol.Clone()
 	mlogNewCol.FieldType = newFieldType
-	if !noReorgDataStrict(mlogTblInfo, mlogCol, mlogNewCol) {
+	if !noReorgDataStrict(mlogTableInfo, mlogCol, mlogNewCol) {
 		return newFieldType, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			fmt.Sprintf("%s on base table with materialized view log only supports no-reorg compatible type changes", op),
 		)
@@ -686,22 +686,22 @@ func validateMaterializedViewLogColumnTypeForModifyColumn(
 func validateDependentMaterializedViewModifyColumn(
 	op string,
 	baseTblInfo *model.TableInfo,
-	mvTblInfo *model.TableInfo,
+	mviewTableInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
 	newCol *model.ColumnInfo,
 ) (*mvColumnUsage, error) {
-	if mvTblInfo.MaterializedView == nil || len(mvTblInfo.MaterializedView.SQLContent) == 0 {
+	if mviewTableInfo.MaterializedView == nil || len(mviewTableInfo.MaterializedView.SQLContent) == 0 {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: invalid materialized view metadata")
 	}
-	if len(mvTblInfo.MaterializedView.BaseTableIDs) != 1 || mvTblInfo.MaterializedView.BaseTableIDs[0] != baseTblInfo.ID {
+	if len(mviewTableInfo.MaterializedView.BaseTableIDs) != 1 || mviewTableInfo.MaterializedView.BaseTableIDs[0] != baseTblInfo.ID {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view base table mismatch")
 	}
 
-	mvSel, err := parseSelectFromSQL(mvTblInfo.MaterializedView.SQLContent)
+	mviewSelect, err := parseSelectFromSQL(mviewTableInfo.MaterializedView.SQLContent)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	usage, err := analyzeMVColumnUsage(mvSel, oldCol.Name.L)
+	usage, err := analyzeMVColumnUsage(mviewSelect, oldCol.Name.L)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -718,7 +718,7 @@ func validateDependentMaterializedViewModifyColumn(
 		}
 		return usage, nil
 	}
-	if mvSel.Fields == nil || len(mvTblInfo.Columns) != len(mvSel.Fields.Fields) {
+	if mviewSelect.Fields == nil || len(mviewTableInfo.Columns) != len(mviewSelect.Fields.Fields) {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view output schema mismatch")
 	}
 
@@ -731,10 +731,10 @@ func validateDependentMaterializedViewModifyColumn(
 	}
 
 	for _, off := range usage.directOutputOffsets {
-		mvOldCol := mvTblInfo.Columns[off]
-		mvNewCol := mvOldCol.Clone()
-		mvNewCol.FieldType = fieldTypeForMVRelatedColumn(mvOldCol, newCol)
-		if !noReorgDataStrict(mvTblInfo, mvOldCol, mvNewCol) {
+		mviewOldCol := mviewTableInfo.Columns[off]
+		mviewNewCol := mviewOldCol.Clone()
+		mviewNewCol.FieldType = fieldTypeForMVRelatedColumn(mviewOldCol, newCol)
+		if !noReorgDataStrict(mviewTableInfo, mviewOldCol, mviewNewCol) {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes for direct output columns", op),
 			)
@@ -2038,19 +2038,19 @@ func buildInvolvingSchemaInfoForMaterializedViewBaseModifyColumn(
 		}
 	}
 
-	for _, mvID := range baseInfo.MViewIDs {
-		if mvID == 0 {
+	for _, mviewID := range baseInfo.MViewIDs {
+		if mviewID == 0 {
 			continue
 		}
-		mvMeta, ok := is.TableInfoByID(mvID)
+		mviewMeta, ok := is.TableInfoByID(mviewID)
 		if !ok {
 			continue
 		}
-		mvDB, ok := infoschema.SchemaByTable(is, mvMeta)
+		mviewDB, ok := infoschema.SchemaByTable(is, mviewMeta)
 		if !ok {
 			continue
 		}
-		addTable(mvDB.Name.L, mvMeta.Name.L)
+		addTable(mviewDB.Name.L, mviewMeta.Name.L)
 	}
 	return involving
 }
@@ -2092,20 +2092,20 @@ func validateMaterializedViewBaseModifyColumn(
 		op = "CHANGE COLUMN"
 	}
 
-	var mlogTblInfo *model.TableInfo
+	var mlogTableInfo *model.TableInfo
 	var mlogCol *model.ColumnInfo
 	var err error
 	columnIsTrackedByMLog := false
 	if hasMLog {
-		mlogTbl, ok := is.TableByID(ctx, baseInfo.MLogID)
+		mlogTable, ok := is.TableByID(ctx, baseInfo.MLogID)
 		if !ok {
 			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log table not found")
 		}
-		mlogTblInfo = mlogTbl.Meta()
-		if err := validateMaterializedViewLogInfoForModifyColumn(baseTbl.Meta(), mlogTblInfo); err != nil {
+		mlogTableInfo = mlogTable.Meta()
+		if err := validateMaterializedViewLogInfoForModifyColumn(baseTbl.Meta(), mlogTableInfo); err != nil {
 			return err
 		}
-		mlogCol, columnIsTrackedByMLog, err = trackedMaterializedViewLogColumnForModifyColumn(mlogTblInfo, oldCol.Name.L)
+		mlogCol, columnIsTrackedByMLog, err = trackedMaterializedViewLogColumnForModifyColumn(mlogTableInfo, oldCol.Name.L)
 		if err != nil {
 			return err
 		}
@@ -2154,7 +2154,7 @@ func validateMaterializedViewBaseModifyColumn(
 
 	// MLog tracked column: validate the MLog physical column can also be updated in a no-reorg compatible way.
 	if columnIsTrackedByMLog {
-		if _, err := validateMaterializedViewLogColumnTypeForModifyColumn(op, mlogTblInfo, mlogCol, newCol); err != nil {
+		if _, err := validateMaterializedViewLogColumnTypeForModifyColumn(op, mlogTableInfo, mlogCol, newCol); err != nil {
 			return err
 		}
 	}
@@ -2165,13 +2165,13 @@ func validateMaterializedViewBaseModifyColumn(
 	}
 
 	// Dependent MV: validate each dependent MV SQL can tolerate the base column metadata change.
-	for _, mvID := range baseInfo.MViewIDs {
-		mvTbl, ok := is.TableByID(ctx, mvID)
+	for _, mviewID := range baseInfo.MViewIDs {
+		mviewTable, ok := is.TableByID(ctx, mviewID)
 		if !ok {
 			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view table not found")
 		}
-		mvTblInfo := mvTbl.Meta()
-		if _, err := validateDependentMaterializedViewModifyColumn(op, baseTbl.Meta(), mvTblInfo, oldCol, newCol); err != nil {
+		mviewTableInfo := mviewTable.Meta()
+		if _, err := validateDependentMaterializedViewModifyColumn(op, baseTbl.Meta(), mviewTableInfo, oldCol, newCol); err != nil {
 			return errors.Trace(err)
 		}
 	}

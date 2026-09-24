@@ -8,6 +8,5 @@ go_library(
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/mysql",
-        "//pkg/types",
     ],
 )

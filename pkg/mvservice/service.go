@@ -29,8 +29,8 @@ import (
 	"go.uber.org/zap"
 )
 
-type mvLogItem = Item[*mvLog]
-type mvItem = Item[*mv]
+type mlogPurgeTaskItem = Item[*mlogPurgeTask]
+type mviewTaskItem = Item[*mviewTask]
 
 // MVMetricsReporter reports MV service runtime metrics.
 type MVMetricsReporter interface {
@@ -94,19 +94,19 @@ type MVService struct {
 		mvLogAnalyzeTaskCount    atomic.Int64
 	}
 
-	mvRefreshMu struct {
+	mviewRefreshMu struct {
 		sync.Mutex
-		pending map[int64]mvItem
-		prio    PriorityQueue[*mv]
+		pending map[int64]mviewTaskItem
+		prio    PriorityQueue[*mviewTask]
 	}
-	mvRefreshAlertMu struct {
+	mviewRefreshAlertMu struct {
 		sync.Mutex
-		pending map[int64]*mv
+		pending map[int64]*mviewTask
 	}
-	mvLogPurgeMu struct {
+	mlogPurgeMu struct {
 		sync.Mutex
-		pending map[int64]mvLogItem
-		prio    PriorityQueue[*mvLog]
+		pending map[int64]mlogPurgeTaskItem
+		prio    PriorityQueue[*mlogPurgeTask]
 	}
 	mlogAnalyzeTasks struct {
 		sync.Mutex
@@ -172,7 +172,7 @@ const (
 	mvRefreshAlertTaskStateUnknown = "unknown"
 )
 
-type mv struct {
+type mviewTask struct {
 	ID          int64
 	nextRefresh time.Time
 	schemaName  string
@@ -195,8 +195,8 @@ type mv struct {
 	retryCount atomic.Int64
 }
 
-// mvLog tracks scheduling state for one MV log purge task.
-type mvLog struct {
+// mlogPurgeTask tracks scheduling state for one MV log purge task.
+type mlogPurgeTask struct {
 	ID        int64
 	nextPurge time.Time
 
@@ -257,11 +257,11 @@ func (m taskExecutorMetricsSnapshot) add(other taskExecutorMetricsSnapshot) task
 	}
 }
 
-func (m *mv) Less(other *mv) bool {
+func (m *mviewTask) Less(other *mviewTask) bool {
 	return m.orderTs < other.orderTs
 }
 
-func (m *mvLog) Less(other *mvLog) bool {
+func (m *mlogPurgeTask) Less(other *mlogPurgeTask) bool {
 	return m.orderTs < other.orderTs
 }
 
@@ -303,12 +303,12 @@ func (t *MVService) closeTaskExecutors() {
 }
 
 // fetchExecTasks collects due tasks from both queues and marks them as running.
-func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRefresh []*mv) {
+func (t *MVService) fetchExecTasks(now time.Time) (mlogsToPurge []*mlogPurgeTask, mviewsToRefresh []*mviewTask) {
 	nowTs := now.UnixMilli()
 	{
-		t.mvLogPurgeMu.Lock() // guard mvlog purge queue
-		for t.mvLogPurgeMu.prio.Len() > 0 {
-			it := t.mvLogPurgeMu.prio.Front()
+		t.mlogPurgeMu.Lock() // guard mvlog purge queue
+		for t.mlogPurgeMu.prio.Len() > 0 {
+			it := t.mlogPurgeMu.prio.Front()
 			l := it.Value
 			if l.orderTs == maxNextScheduleTs {
 				break
@@ -316,16 +316,16 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 			if l.orderTs > nowTs {
 				break
 			}
-			mvLogToPurge = append(mvLogToPurge, l)
+			mlogsToPurge = append(mlogsToPurge, l)
 			l.orderTs = maxNextScheduleTs // set to max to avoid being picked again before reschedule
-			t.mvLogPurgeMu.prio.Update(it, l)
+			t.mlogPurgeMu.prio.Update(it, l)
 		}
-		t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
+		t.mlogPurgeMu.Unlock() // release mvlog purge queue guard
 	}
 	{
-		t.mvRefreshMu.Lock() // guard mv refresh queue
-		for t.mvRefreshMu.prio.Len() > 0 {
-			it := t.mvRefreshMu.prio.Front()
+		t.mviewRefreshMu.Lock() // guard mv refresh queue
+		for t.mviewRefreshMu.prio.Len() > 0 {
+			it := t.mviewRefreshMu.prio.Front()
 			m := it.Value
 			if m.orderTs == maxNextScheduleTs {
 				break
@@ -333,21 +333,21 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 			if m.orderTs > nowTs {
 				break
 			}
-			mvToRefresh = append(mvToRefresh, m)
+			mviewsToRefresh = append(mviewsToRefresh, m)
 			m.orderTs = maxNextScheduleTs // set to max to avoid being picked again before reschedule
-			t.mvRefreshMu.prio.Update(it, m)
+			t.mviewRefreshMu.prio.Update(it, m)
 		}
-		t.mvRefreshMu.Unlock() // release mv refresh queue guard
+		t.mviewRefreshMu.Unlock() // release mv refresh queue guard
 	}
 	return
 }
 
-// refreshMV submits due refresh tasks to the task executor.
-func (t *MVService) refreshMV(mvToRefresh []*mv) {
-	if len(mvToRefresh) == 0 {
+// refreshMViews submits due refresh tasks to the task executor.
+func (t *MVService) refreshMViews(mviewsToRefresh []*mviewTask) {
+	if len(mviewsToRefresh) == 0 {
 		return
 	}
-	for _, task := range mvToRefresh {
+	for _, task := range mviewsToRefresh {
 		mvTask := task
 		mviewID := mvTask.ID
 		t.refreshExecutor.Submit("mv-refresh/"+strconv.FormatInt(mviewID, 10), func() error {
@@ -421,18 +421,18 @@ func (t *MVService) refreshAllMVRefreshAlertTasks() error {
 		logutil.BgLogger().Warn("fetch all materialized view refresh alert tasks failed", fields...)
 		return err
 	}
-	t.buildMVRefreshAlertTasks(newPending)
+	t.buildMViewRefreshAlertTasks(newPending)
 	return nil
 }
 
 func (t *MVService) snapshotMVRefreshExecutionStates() map[int64]refreshAlertExecutionState {
-	t.mvRefreshMu.Lock()
-	defer t.mvRefreshMu.Unlock()
-	if len(t.mvRefreshMu.pending) == 0 {
+	t.mviewRefreshMu.Lock()
+	defer t.mviewRefreshMu.Unlock()
+	if len(t.mviewRefreshMu.pending) == 0 {
 		return nil
 	}
-	states := make(map[int64]refreshAlertExecutionState, len(t.mvRefreshMu.pending))
-	for id, item := range t.mvRefreshMu.pending {
+	states := make(map[int64]refreshAlertExecutionState, len(t.mviewRefreshMu.pending))
+	for id, item := range t.mviewRefreshMu.pending {
 		if item.Value == nil {
 			continue
 		}
@@ -518,13 +518,13 @@ func (t *MVService) runMLogAnalyzeScan() {
 func (t *MVService) collectRefreshAlertStates(now time.Time) ([]refreshAlertTask, int64, int64) {
 	execStates := t.snapshotMVRefreshExecutionStates()
 
-	t.mvRefreshAlertMu.Lock()
-	defer t.mvRefreshAlertMu.Unlock()
+	t.mviewRefreshAlertMu.Lock()
+	defer t.mviewRefreshAlertMu.Unlock()
 
-	alertStates := make([]refreshAlertTask, 0, len(t.mvRefreshAlertMu.pending))
+	alertStates := make([]refreshAlertTask, 0, len(t.mviewRefreshAlertMu.pending))
 	var warningCount int64
 	var overdueCount int64
-	for mviewID, task := range t.mvRefreshAlertMu.pending {
+	for mviewID, task := range t.mviewRefreshAlertMu.pending {
 		if task == nil || task.nextRefresh.IsZero() || task.metadataUnresolved {
 			continue
 		}
@@ -563,10 +563,10 @@ func (t *MVService) markRefreshAlertStatesSynced(states []refreshAlertTask) {
 	if len(states) == 0 {
 		return
 	}
-	t.mvRefreshAlertMu.Lock()
-	defer t.mvRefreshAlertMu.Unlock()
+	t.mviewRefreshAlertMu.Lock()
+	defer t.mviewRefreshAlertMu.Unlock()
 	for _, state := range states {
-		task, ok := t.mvRefreshAlertMu.pending[state.mviewID]
+		task, ok := t.mviewRefreshAlertMu.pending[state.mviewID]
 		if !ok || task == nil {
 			continue
 		}
@@ -579,13 +579,13 @@ func (t *MVService) markRefreshAlertStatesSynced(states []refreshAlertTask) {
 func (t *MVService) collectRefreshAlertTasks(now time.Time) ([]refreshAlertTask, int64, int64) {
 	execStates := t.snapshotMVRefreshExecutionStates()
 
-	t.mvRefreshAlertMu.Lock()
-	defer t.mvRefreshAlertMu.Unlock()
+	t.mviewRefreshAlertMu.Lock()
+	defer t.mviewRefreshAlertMu.Unlock()
 
 	alertTasks := make([]refreshAlertTask, 0)
 	var warningCount int64
 	var overdueCount int64
-	for mviewID, task := range t.mvRefreshAlertMu.pending {
+	for mviewID, task := range t.mviewRefreshAlertMu.pending {
 		if task == nil || task.nextRefresh.IsZero() || task.metadataUnresolved {
 			continue
 		}
@@ -755,20 +755,20 @@ func (t *MVService) logMVRefreshAlerts(alertTasks []refreshAlertTask) {
 	}
 }
 
-// purgeMVLog submits purge jobs to the task executor.
-func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
-	if len(mvLogToPurge) == 0 {
+// purgeMLogs submits purge jobs to the task executor.
+func (t *MVService) purgeMLogs(mlogsToPurge []*mlogPurgeTask) {
+	if len(mlogsToPurge) == 0 {
 		return
 	}
-	for _, l := range mvLogToPurge {
+	for _, l := range mlogsToPurge {
 		t.purgeExecutor.Submit("mvlog-purge/"+strconv.FormatInt(l.ID, 10), func() error {
 			return t.executePurgeTask(l)
 		})
 	}
 }
 
-func (t *MVService) executeRefreshTask(m *mv) (err error) {
-	if !t.hasPendingMVTask(m) {
+func (t *MVService) executeRefreshTask(m *mviewTask) (err error) {
+	if !t.hasPendingMViewTask(m) {
 		return nil
 	}
 
@@ -795,8 +795,8 @@ func (t *MVService) executeRefreshTask(m *mv) (err error) {
 	return err
 }
 
-func (t *MVService) executePurgeTask(l *mvLog) (err error) {
-	if !t.hasPendingMVLogTask(l) {
+func (t *MVService) executePurgeTask(l *mlogPurgeTask) (err error) {
+	if !t.hasPendingMLogPurgeTask(l) {
 		return nil
 	}
 
@@ -829,30 +829,30 @@ func (t *MVService) analyzeMVLog(mlogIDs []int64) {
 		return
 	}
 	for _, id := range mlogIDs {
-		mvLogID := id
-		if !t.markMLogAnalyzeTaskSubmitted(mvLogID) {
+		mlogID := id
+		if !t.markMLogAnalyzeTaskSubmitted(mlogID) {
 			continue
 		}
-		submitted := t.mlogAnalyzeExecutor.Submit("mvlog-analyze/"+strconv.FormatInt(mvLogID, 10), func() error {
-			return t.executeMLogAnalyzeTask(mvLogID)
+		submitted := t.mlogAnalyzeExecutor.Submit("mvlog-analyze/"+strconv.FormatInt(mlogID, 10), func() error {
+			return t.executeMLogAnalyzeTask(mlogID)
 		})
 		if !submitted {
-			t.unmarkMLogAnalyzeTaskSubmitted(mvLogID)
+			t.unmarkMLogAnalyzeTaskSubmitted(mlogID)
 		}
 	}
 }
 
-func (t *MVService) executeMLogAnalyzeTask(mvLogID int64) (err error) {
+func (t *MVService) executeMLogAnalyzeTask(mlogID int64) (err error) {
 	t.metrics.runningMVLogAnalyzeCount.Add(1)
 	defer t.metrics.runningMVLogAnalyzeCount.Add(-1)
-	defer t.unmarkMLogAnalyzeTaskSubmitted(mvLogID)
+	defer t.unmarkMLogAnalyzeTaskSubmitted(mlogID)
 
 	taskStart := mvsNow()
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error(
 				"analyze MV log task panicked",
-				zap.Int64("mvlog_id", mvLogID),
+				zap.Int64("mvlog_id", mlogID),
 				zap.Any("panic", r),
 				zap.ByteString("stack", debug.Stack()),
 			)
@@ -860,51 +860,51 @@ func (t *MVService) executeMLogAnalyzeTask(mvLogID int64) (err error) {
 		}
 		t.observeTaskDuration(mvTaskDurationTypeMLogAnalyze, taskStart, err)
 		if err != nil {
-			fields := append(t.runtimeLogFields(), zap.Int64("mvlog_id", mvLogID), zap.Error(err))
+			fields := append(t.runtimeLogFields(), zap.Int64("mvlog_id", mlogID), zap.Error(err))
 			logutil.BgLogger().Warn("analyze MV log task failed", fields...)
 		}
 	}()
 
-	err = t.mh.AnalyzeMVLog(t.ctx, t.sysSessionPool, mvLogID)
+	err = t.mh.AnalyzeMVLog(t.ctx, t.sysSessionPool, mlogID)
 	return err
 }
 
-// hasPendingMVTask reports whether this exact refresh task is still tracked.
-func (t *MVService) hasPendingMVTask(m *mv) bool {
-	t.mvRefreshMu.Lock()
-	defer t.mvRefreshMu.Unlock()
+// hasPendingMViewTask reports whether this exact refresh task is still tracked.
+func (t *MVService) hasPendingMViewTask(m *mviewTask) bool {
+	t.mviewRefreshMu.Lock()
+	defer t.mviewRefreshMu.Unlock()
 
-	it, ok := t.mvRefreshMu.pending[m.ID]
+	it, ok := t.mviewRefreshMu.pending[m.ID]
 	return ok && it.Value == m
 }
 
-// hasPendingMVLogTask reports whether this exact purge task is still tracked.
-func (t *MVService) hasPendingMVLogTask(l *mvLog) bool {
-	t.mvLogPurgeMu.Lock()
-	defer t.mvLogPurgeMu.Unlock()
+// hasPendingMLogPurgeTask reports whether this exact purge task is still tracked.
+func (t *MVService) hasPendingMLogPurgeTask(l *mlogPurgeTask) bool {
+	t.mlogPurgeMu.Lock()
+	defer t.mlogPurgeMu.Unlock()
 
-	it, ok := t.mvLogPurgeMu.pending[l.ID]
+	it, ok := t.mlogPurgeMu.pending[l.ID]
 	return ok && it.Value == l
 }
 
-func (t *MVService) markMLogAnalyzeTaskSubmitted(mvLogID int64) bool {
+func (t *MVService) markMLogAnalyzeTaskSubmitted(mlogID int64) bool {
 	t.mlogAnalyzeTasks.Lock()
 	defer t.mlogAnalyzeTasks.Unlock()
 	if t.mlogAnalyzeTasks.running == nil {
 		t.mlogAnalyzeTasks.running = make(map[int64]struct{})
 	}
-	if _, ok := t.mlogAnalyzeTasks.running[mvLogID]; ok {
+	if _, ok := t.mlogAnalyzeTasks.running[mlogID]; ok {
 		return false
 	}
-	t.mlogAnalyzeTasks.running[mvLogID] = struct{}{}
+	t.mlogAnalyzeTasks.running[mlogID] = struct{}{}
 	t.metrics.mvLogAnalyzeTaskCount.Store(int64(len(t.mlogAnalyzeTasks.running)))
 	return true
 }
 
-func (t *MVService) unmarkMLogAnalyzeTaskSubmitted(mvLogID int64) {
+func (t *MVService) unmarkMLogAnalyzeTaskSubmitted(mlogID int64) {
 	t.mlogAnalyzeTasks.Lock()
 	defer t.mlogAnalyzeTasks.Unlock()
-	delete(t.mlogAnalyzeTasks.running, mvLogID)
+	delete(t.mlogAnalyzeTasks.running, mlogID)
 	t.metrics.mvLogAnalyzeTaskCount.Store(int64(len(t.mlogAnalyzeTasks.running)))
 }
 
@@ -929,7 +929,7 @@ func (t *MVService) runtimeLogFields() []zap.Field {
 	return fields
 }
 
-func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err error) {
+func (t *MVService) handleRefreshTaskResult(m *mviewTask, nextRefresh time.Time, err error) {
 	defer t.notifier.Wake()
 	if err != nil {
 		if isMVTaskCanceledManually(err) {
@@ -946,19 +946,19 @@ func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err er
 			}
 			if applied {
 				if appliedNext.IsZero() {
-					t.removeMVTask(m)
+					t.removeMViewTask(m)
 					return
 				}
-				t.rescheduleMVSuccess(m, appliedNext)
+				t.rescheduleMViewSuccess(m, appliedNext)
 				return
 			}
-			t.rescheduleMV(m, nextRetryAt.UnixMilli())
+			t.rescheduleMView(m, nextRetryAt.UnixMilli())
 			return
 		}
 		retryCount := m.retryCount.Add(1)
 		retryDelay := t.retryDelay(retryCount)
 		nextRetryAt := mvsNow().Add(retryDelay)
-		t.rescheduleMV(m, nextRetryAt.UnixMilli())
+		t.rescheduleMView(m, nextRetryAt.UnixMilli())
 		fields := append(t.runtimeLogFields(),
 			zap.Int64("mview_id", m.ID),
 			zap.Int64("failed_retry_count", retryCount),
@@ -971,14 +971,14 @@ func (t *MVService) handleRefreshTaskResult(m *mv, nextRefresh time.Time, err er
 	}
 	if nextRefresh.IsZero() {
 		m.retryCount.Store(0)
-		t.removeMVTask(m)
+		t.removeMViewTask(m)
 		return
 	}
 	m.retryCount.Store(0)
-	t.rescheduleMVSuccess(m, nextRefresh)
+	t.rescheduleMViewSuccess(m, nextRefresh)
 }
 
-func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err error) {
+func (t *MVService) handlePurgeTaskResult(l *mlogPurgeTask, nextPurge time.Time, err error) {
 	defer t.notifier.Wake()
 	if err != nil {
 		if isMVTaskCanceledManually(err) {
@@ -995,19 +995,19 @@ func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err err
 			}
 			if applied {
 				if appliedNext.IsZero() {
-					t.removeMVLogTask(l)
+					t.removeMLogPurgeTask(l)
 					return
 				}
-				t.rescheduleMVLogSuccess(l, appliedNext)
+				t.rescheduleMLogPurgeSuccess(l, appliedNext)
 				return
 			}
-			t.rescheduleMVLog(l, nextRetryAt.UnixMilli())
+			t.rescheduleMLogPurge(l, nextRetryAt.UnixMilli())
 			return
 		}
 		retryCount := l.retryCount.Add(1)
 		retryDelay := t.retryDelay(retryCount)
 		nextRetryAt := mvsNow().Add(retryDelay)
-		t.rescheduleMVLog(l, nextRetryAt.UnixMilli())
+		t.rescheduleMLogPurge(l, nextRetryAt.UnixMilli())
 		fields := append(t.runtimeLogFields(),
 			zap.Int64("mvlog_id", l.ID),
 			zap.Int64("failed_retry_count", retryCount),
@@ -1020,129 +1020,129 @@ func (t *MVService) handlePurgeTaskResult(l *mvLog, nextPurge time.Time, err err
 	}
 	if nextPurge.IsZero() {
 		l.retryCount.Store(0)
-		t.removeMVLogTask(l)
+		t.removeMLogPurgeTask(l)
 		return
 	}
 	l.retryCount.Store(0)
-	t.rescheduleMVLogSuccess(l, nextPurge)
+	t.rescheduleMLogPurgeSuccess(l, nextPurge)
 }
 
-// removeMVLogTask removes a purge task from the scheduler after completion.
-func (t *MVService) removeMVLogTask(l *mvLog) {
-	t.mvLogPurgeMu.Lock() // guard mvlog purge queue
-	if it, ok := t.mvLogPurgeMu.pending[l.ID]; ok && it.Value == l {
-		delete(t.mvLogPurgeMu.pending, l.ID)
-		t.mvLogPurgeMu.prio.Remove(it)
+// removeMLogPurgeTask removes a purge task from the scheduler after completion.
+func (t *MVService) removeMLogPurgeTask(l *mlogPurgeTask) {
+	t.mlogPurgeMu.Lock() // guard mvlog purge queue
+	if it, ok := t.mlogPurgeMu.pending[l.ID]; ok && it.Value == l {
+		delete(t.mlogPurgeMu.pending, l.ID)
+		t.mlogPurgeMu.prio.Remove(it)
 	}
-	t.metrics.mvLogCount.Store(int64(len(t.mvLogPurgeMu.pending)))
-	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
+	t.metrics.mvLogCount.Store(int64(len(t.mlogPurgeMu.pending)))
+	t.mlogPurgeMu.Unlock() // release mvlog purge queue guard
 }
 
-// removeMVTask removes a refresh task from the scheduler after completion.
-func (t *MVService) removeMVTask(m *mv) {
-	t.mvRefreshMu.Lock() // guard mv refresh queue
-	if it, ok := t.mvRefreshMu.pending[m.ID]; ok && it.Value == m {
-		delete(t.mvRefreshMu.pending, m.ID)
-		t.mvRefreshMu.prio.Remove(it)
+// removeMViewTask removes a refresh task from the scheduler after completion.
+func (t *MVService) removeMViewTask(m *mviewTask) {
+	t.mviewRefreshMu.Lock() // guard mv refresh queue
+	if it, ok := t.mviewRefreshMu.pending[m.ID]; ok && it.Value == m {
+		delete(t.mviewRefreshMu.pending, m.ID)
+		t.mviewRefreshMu.prio.Remove(it)
 	}
-	t.metrics.mvCount.Store(int64(len(t.mvRefreshMu.pending)))
-	t.mvRefreshMu.Unlock() // release mv refresh queue guard
+	t.metrics.mvCount.Store(int64(len(t.mviewRefreshMu.pending)))
+	t.mviewRefreshMu.Unlock() // release mv refresh queue guard
 }
 
-// rescheduleMV reschedules a refresh task using a millisecond unix timestamp.
-func (t *MVService) rescheduleMV(m *mv, next int64) {
-	t.mvRefreshMu.Lock() // guard mv refresh queue
-	if it, ok := t.mvRefreshMu.pending[m.ID]; ok && it.Value == m {
+// rescheduleMView reschedules a refresh task using a millisecond unix timestamp.
+func (t *MVService) rescheduleMView(m *mviewTask, next int64) {
+	t.mviewRefreshMu.Lock() // guard mv refresh queue
+	if it, ok := t.mviewRefreshMu.pending[m.ID]; ok && it.Value == m {
 		m.orderTs = next
-		t.mvRefreshMu.prio.Update(it, m)
+		t.mviewRefreshMu.prio.Update(it, m)
 	}
-	t.mvRefreshMu.Unlock() // release mv refresh queue guard
+	t.mviewRefreshMu.Unlock() // release mv refresh queue guard
 }
 
-// rescheduleMVSuccess applies the next refresh time from a successful execution.
-func (t *MVService) rescheduleMVSuccess(m *mv, nextRefresh time.Time) {
+// rescheduleMViewSuccess applies the next refresh time from a successful execution.
+func (t *MVService) rescheduleMViewSuccess(m *mviewTask, nextRefresh time.Time) {
 	orderTs := nextRefresh.UnixMilli()
 
-	t.mvRefreshMu.Lock() // guard mv refresh queue
-	if it, ok := t.mvRefreshMu.pending[m.ID]; ok && it.Value == m {
+	t.mviewRefreshMu.Lock() // guard mv refresh queue
+	if it, ok := t.mviewRefreshMu.pending[m.ID]; ok && it.Value == m {
 		m.nextRefresh = nextRefresh
 		m.orderTs = orderTs
-		t.mvRefreshMu.prio.Update(it, m)
+		t.mviewRefreshMu.prio.Update(it, m)
 	}
-	t.mvRefreshMu.Unlock() // release mv refresh queue guard
+	t.mviewRefreshMu.Unlock() // release mv refresh queue guard
 }
 
-// rescheduleMVLog reschedules a purge task using a millisecond unix timestamp.
-func (t *MVService) rescheduleMVLog(l *mvLog, next int64) {
-	t.mvLogPurgeMu.Lock() // guard mvlog purge queue
-	if it, ok := t.mvLogPurgeMu.pending[l.ID]; ok && it.Value == l {
+// rescheduleMLogPurge reschedules a purge task using a millisecond unix timestamp.
+func (t *MVService) rescheduleMLogPurge(l *mlogPurgeTask, next int64) {
+	t.mlogPurgeMu.Lock() // guard mvlog purge queue
+	if it, ok := t.mlogPurgeMu.pending[l.ID]; ok && it.Value == l {
 		l.orderTs = next
-		t.mvLogPurgeMu.prio.Update(it, l)
+		t.mlogPurgeMu.prio.Update(it, l)
 	}
-	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
+	t.mlogPurgeMu.Unlock() // release mvlog purge queue guard
 }
 
-// rescheduleMVLogSuccess applies the next purge time from a successful execution.
-func (t *MVService) rescheduleMVLogSuccess(l *mvLog, nextPurge time.Time) {
+// rescheduleMLogPurgeSuccess applies the next purge time from a successful execution.
+func (t *MVService) rescheduleMLogPurgeSuccess(l *mlogPurgeTask, nextPurge time.Time) {
 	orderTs := nextPurge.UnixMilli()
 
-	t.mvLogPurgeMu.Lock() // guard mvlog purge queue
-	if it, ok := t.mvLogPurgeMu.pending[l.ID]; ok && it.Value == l {
+	t.mlogPurgeMu.Lock() // guard mvlog purge queue
+	if it, ok := t.mlogPurgeMu.pending[l.ID]; ok && it.Value == l {
 		l.nextPurge = nextPurge
 		l.orderTs = orderTs
-		t.mvLogPurgeMu.prio.Update(it, l)
+		t.mlogPurgeMu.prio.Update(it, l)
 	}
-	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
+	t.mlogPurgeMu.Unlock() // release mvlog purge queue guard
 }
 
-// buildMVLogPurgeTasks rebuilds purge task states from fetched metadata.
+// buildMLogPurgeTasks rebuilds purge task states from fetched metadata.
 //
 // For each item in newPending:
 // 1. Update mutable metadata fields (nextPurge).
 // 2. If nextPurge changed and the task is not currently running, update orderTs and heap position.
 // 3. If the task is currently running (orderTs == maxNextScheduleTs), defer heap adjustment until task completion.
-func (t *MVService) buildMVLogPurgeTasks(newPending map[int64]*mvLog) {
-	t.mvLogPurgeMu.Lock()         // guard mvlog purge queue
-	defer t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
+func (t *MVService) buildMLogPurgeTasks(newPending map[int64]*mlogPurgeTask) {
+	t.mlogPurgeMu.Lock()         // guard mvlog purge queue
+	defer t.mlogPurgeMu.Unlock() // release mvlog purge queue guard
 
-	if t.mvLogPurgeMu.pending == nil {
-		t.mvLogPurgeMu.pending = make(map[int64]mvLogItem, len(newPending))
+	if t.mlogPurgeMu.pending == nil {
+		t.mlogPurgeMu.pending = make(map[int64]mlogPurgeTaskItem, len(newPending))
 	}
 	for id, nl := range newPending {
-		if ol, ok := t.mvLogPurgeMu.pending[id]; ok {
+		if ol, ok := t.mlogPurgeMu.pending[id]; ok {
 			changed := ol.Value.nextPurge != nl.nextPurge
 			ol.Value.nextPurge = nl.nextPurge
 			if ol.Value.orderTs != maxNextScheduleTs { // not running
 				if changed {
 					ol.Value.orderTs = ol.Value.nextPurge.UnixMilli()
-					t.mvLogPurgeMu.prio.Update(ol, ol.Value)
+					t.mlogPurgeMu.prio.Update(ol, ol.Value)
 				}
 			}
 			continue
 		}
-		t.mvLogPurgeMu.pending[id] = t.mvLogPurgeMu.prio.Push(nl)
+		t.mlogPurgeMu.pending[id] = t.mlogPurgeMu.prio.Push(nl)
 	}
-	for id, item := range t.mvLogPurgeMu.pending {
+	for id, item := range t.mlogPurgeMu.pending {
 		if _, ok := newPending[id]; ok {
 			continue
 		}
-		delete(t.mvLogPurgeMu.pending, id)
-		t.mvLogPurgeMu.prio.Remove(item)
+		delete(t.mlogPurgeMu.pending, id)
+		t.mlogPurgeMu.prio.Remove(item)
 	}
 
-	t.metrics.mvLogCount.Store(int64(len(t.mvLogPurgeMu.pending)))
+	t.metrics.mvLogCount.Store(int64(len(t.mlogPurgeMu.pending)))
 }
 
-// buildMVRefreshTasks rebuilds refresh task states from fetched metadata.
-func (t *MVService) buildMVRefreshTasks(newPending map[int64]*mv) {
-	t.mvRefreshMu.Lock()         // guard mv refresh queue
-	defer t.mvRefreshMu.Unlock() // release mv refresh queue guard
+// buildMViewRefreshTasks rebuilds refresh task states from fetched metadata.
+func (t *MVService) buildMViewRefreshTasks(newPending map[int64]*mviewTask) {
+	t.mviewRefreshMu.Lock()         // guard mv refresh queue
+	defer t.mviewRefreshMu.Unlock() // release mv refresh queue guard
 
-	if t.mvRefreshMu.pending == nil {
-		t.mvRefreshMu.pending = make(map[int64]mvItem, len(newPending))
+	if t.mviewRefreshMu.pending == nil {
+		t.mviewRefreshMu.pending = make(map[int64]mviewTaskItem, len(newPending))
 	}
 	for id, nm := range newPending {
-		if om, ok := t.mvRefreshMu.pending[id]; ok {
+		if om, ok := t.mviewRefreshMu.pending[id]; ok {
 			om.Value.metadataUnresolved = nm.metadataUnresolved
 			if !nm.metadataUnresolved {
 				om.Value.schemaName = nm.schemaName
@@ -1157,31 +1157,31 @@ func (t *MVService) buildMVRefreshTasks(newPending map[int64]*mv) {
 			if om.Value.orderTs != maxNextScheduleTs { // not running
 				if changed {
 					om.Value.orderTs = om.Value.nextRefresh.UnixMilli()
-					t.mvRefreshMu.prio.Update(om, om.Value)
+					t.mviewRefreshMu.prio.Update(om, om.Value)
 				}
 			}
 		} else {
-			t.mvRefreshMu.pending[id] = t.mvRefreshMu.prio.Push(nm)
+			t.mviewRefreshMu.pending[id] = t.mviewRefreshMu.prio.Push(nm)
 		}
 	}
-	for id, item := range t.mvRefreshMu.pending {
+	for id, item := range t.mviewRefreshMu.pending {
 		if _, ok := newPending[id]; ok {
 			continue
 		}
-		delete(t.mvRefreshMu.pending, id)
-		t.mvRefreshMu.prio.Remove(item)
+		delete(t.mviewRefreshMu.pending, id)
+		t.mviewRefreshMu.prio.Remove(item)
 	}
 
-	t.metrics.mvCount.Store(int64(len(t.mvRefreshMu.pending)))
+	t.metrics.mvCount.Store(int64(len(t.mviewRefreshMu.pending)))
 }
 
-// buildMVRefreshAlertTasks rebuilds global refresh alert state from fetched metadata.
-func (t *MVService) buildMVRefreshAlertTasks(newPending map[int64]*mv) {
-	t.mvRefreshAlertMu.Lock()
-	defer t.mvRefreshAlertMu.Unlock()
+// buildMViewRefreshAlertTasks rebuilds global refresh alert state from fetched metadata.
+func (t *MVService) buildMViewRefreshAlertTasks(newPending map[int64]*mviewTask) {
+	t.mviewRefreshAlertMu.Lock()
+	defer t.mviewRefreshAlertMu.Unlock()
 
-	if t.mvRefreshAlertMu.pending == nil {
-		t.mvRefreshAlertMu.pending = make(map[int64]*mv, len(newPending))
+	if t.mviewRefreshAlertMu.pending == nil {
+		t.mviewRefreshAlertMu.pending = make(map[int64]*mviewTask, len(newPending))
 	}
 	for id, nm := range newPending {
 		if nm == nil {
@@ -1190,7 +1190,7 @@ func (t *MVService) buildMVRefreshAlertTasks(newPending map[int64]*mv) {
 		if nm.orderTs == 0 && !nm.nextRefresh.IsZero() {
 			nm.orderTs = nm.nextRefresh.UnixMilli()
 		}
-		if om, ok := t.mvRefreshAlertMu.pending[id]; ok && om != nil {
+		if om, ok := t.mviewRefreshAlertMu.pending[id]; ok && om != nil {
 			om.metadataUnresolved = nm.metadataUnresolved
 			if !nm.metadataUnresolved {
 				om.schemaName = nm.schemaName
@@ -1204,19 +1204,19 @@ func (t *MVService) buildMVRefreshAlertTasks(newPending map[int64]*mv) {
 			om.orderTs = nm.orderTs
 			continue
 		}
-		t.mvRefreshAlertMu.pending[id] = nm
+		t.mviewRefreshAlertMu.pending[id] = nm
 	}
-	for id := range t.mvRefreshAlertMu.pending {
+	for id := range t.mviewRefreshAlertMu.pending {
 		if _, ok := newPending[id]; !ok {
-			delete(t.mvRefreshAlertMu.pending, id)
+			delete(t.mviewRefreshAlertMu.pending, id)
 		}
 	}
 }
 
 func (t *MVService) clearRefreshAlertTasks() {
-	t.mvRefreshAlertMu.Lock()
-	t.mvRefreshAlertMu.pending = nil
-	t.mvRefreshAlertMu.Unlock()
+	t.mviewRefreshAlertMu.Lock()
+	t.mviewRefreshAlertMu.pending = nil
+	t.mviewRefreshAlertMu.Unlock()
 }
 
 // filterUnownedTasks removes tasks that are not owned by this server.
@@ -1235,7 +1235,7 @@ func filterUnownedTasks[T any](sch *ServerConsistentHash, newPending map[int64]T
 }
 
 // fetchAllTiDBMVLogPurge fetches purge metadata and filters out tasks not owned by this node.
-func (t *MVService) fetchAllTiDBMVLogPurge() (map[int64]*mvLog, error) {
+func (t *MVService) fetchAllTiDBMVLogPurge() (map[int64]*mlogPurgeTask, error) {
 	start := mvsNow()
 	result := mvDurationResultSuccess
 	defer func() {
@@ -1274,8 +1274,8 @@ func (t *MVService) fetchAllMVLogAccumulationAlerts() (int, error) {
 		return 0, err
 	}
 	alertedCount := 0
-	for mvLogID, rowCount := range rowCounts {
-		task, ok := candidates[mvLogID]
+	for mlogID, rowCount := range rowCounts {
+		task, ok := candidates[mlogID]
 		if !ok || task == nil {
 			continue
 		}
@@ -1287,7 +1287,7 @@ func (t *MVService) fetchAllMVLogAccumulationAlerts() (int, error) {
 }
 
 // fetchAllTiDBMVLogAccumulationTasks fetches accumulation metadata and filters out tasks not owned by this node.
-func (t *MVService) fetchAllTiDBMVLogAccumulationTasks() (map[int64]*mvLogAccumulationTask, error) {
+func (t *MVService) fetchAllTiDBMVLogAccumulationTasks() (map[int64]*mlogAccumulationTask, error) {
 	newPending, err := t.mh.LoadAllTiDBMVLogAccumulationTasks(t.ctx, t.sysSessionPool)
 	if err != nil {
 		fields := append(t.runtimeLogFields(), zap.Error(err))
@@ -1315,14 +1315,14 @@ func (t *MVService) fetchMLogAnalyzeTasks() ([]int64, error) {
 	}
 	filterUnownedTasks(t.sch, candidates)
 	mlogIDs := make([]int64, 0, len(candidates))
-	for mvLogID := range candidates {
-		mlogIDs = append(mlogIDs, mvLogID)
+	for mlogID := range candidates {
+		mlogIDs = append(mlogIDs, mlogID)
 	}
 	return mlogIDs, nil
 }
 
 // fetchAllTiDBMVRefresh fetches refresh metadata and filters out tasks not owned by this node.
-func (t *MVService) fetchAllTiDBMVRefresh() (map[int64]*mv, error) {
+func (t *MVService) fetchAllTiDBMVRefresh() (map[int64]*mviewTask, error) {
 	start := mvsNow()
 	result := mvDurationResultSuccess
 	defer func() {
@@ -1350,8 +1350,8 @@ func (t *MVService) fetchAllMVMeta() error {
 	if err != nil {
 		return fmt.Errorf("fetch mview refresh metadata failed: %w", err)
 	}
-	t.buildMVLogPurgeTasks(newMLogPending)
-	t.buildMVRefreshTasks(newMViewPending)
+	t.buildMLogPurgeTasks(newMLogPending)
+	t.buildMViewRefreshTasks(newMViewPending)
 
 	t.lastMetaFetchMillis.Store(mvsNow().UnixMilli())
 	return nil
@@ -1585,9 +1585,9 @@ func (t *MVService) Run() {
 			}
 		}
 
-		mvLogToPurge, mvToRefresh := t.fetchExecTasks(now)
-		t.purgeMVLog(mvLogToPurge)
-		t.refreshMV(mvToRefresh)
+		mlogsToPurge, mviewsToRefresh := t.fetchExecTasks(now)
+		t.purgeMLogs(mlogsToPurge)
+		t.refreshMViews(mviewsToRefresh)
 
 		next := t.nextScheduleTime(now)
 		resetTimer(timer, mvsUntil(next))
@@ -1641,24 +1641,24 @@ func (t *MVService) nextDueTime() (time.Time, bool) {
 	next := time.Time{}
 	has := false
 	{
-		t.mvRefreshMu.Lock()
-		if item := t.mvRefreshMu.prio.Front(); item != nil {
+		t.mviewRefreshMu.Lock()
+		if item := t.mviewRefreshMu.prio.Front(); item != nil {
 			next = mvsUnixMilli(item.Value.orderTs)
 			has = true
 		}
-		t.mvRefreshMu.Unlock()
+		t.mviewRefreshMu.Unlock()
 	}
 
 	{
-		t.mvLogPurgeMu.Lock()
-		if item := t.mvLogPurgeMu.prio.Front(); item != nil {
+		t.mlogPurgeMu.Lock()
+		if item := t.mlogPurgeMu.prio.Front(); item != nil {
 			due := mvsUnixMilli(item.Value.orderTs)
 			if !has || due.Before(next) {
 				next = due
 				has = true
 			}
 		}
-		t.mvLogPurgeMu.Unlock()
+		t.mlogPurgeMu.Unlock()
 	}
 	return next, has
 }

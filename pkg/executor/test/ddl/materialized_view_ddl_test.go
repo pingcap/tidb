@@ -153,7 +153,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 
 	require.NotNil(t, mvTable.Meta().MaterializedView)
 	require.Equal(t, []int64{baseTable.Meta().ID}, mvTable.Meta().MaterializedView.BaseTableIDs)
-	require.Equal(t, model.MVInitBuildReady, mvTable.Meta().MaterializedView.GetInitBuildState())
+	require.Equal(t, model.MViewInitBuildReady, mvTable.Meta().MaterializedView.GetInitBuildState())
 	require.Equal(t, "FAST", mvTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "", mvTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 1 HOUR)", mvTable.Meta().MaterializedView.RefreshNext)
@@ -1120,7 +1120,7 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_show_mv (a int, b int not null)")
 	tk.MustExec("create materialized view log on t_show_mv (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv_show_mv (a, s, cnt) comment = 'c1' refresh fast next date_add(now(), interval 1 hour) shard_row_id_bits = 2 pre_split_regions = 2 as select a, sum(b), count(1) from t_show_mv group by a")
+	tk.MustExec("create materialized view mv_show_mv (a, s, cnt) comment = 'c1' shard_row_id_bits = 2 pre_split_regions = 2 refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_show_mv group by a")
 
 	rows := tk.MustQuery("show create materialized view mv_show_mv").Rows()
 	require.Len(t, rows, 1)
@@ -1129,8 +1129,8 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	require.True(t, ok)
 	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW `mv_show_mv` (`a`, `s`, `cnt`)")
 	require.Contains(t, showCreate, "COMMENT = 'c1'")
-	require.Contains(t, showCreate, "REFRESH FAST NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)")
 	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
+	require.Contains(t, showCreate, "REFRESH FAST NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)")
 	require.NotContains(t, showCreate, "ATTRIBUTES='")
 	require.Contains(t, showCreate, "AS SELECT `a`,SUM(`b`),COUNT(1) FROM `test`.`t_show_mv` GROUP BY `a`")
 	_, err := parser.New().ParseOneStmt(showCreate, "", "")
@@ -1285,7 +1285,7 @@ func TestAlterMaterializedViewAttributesUpdatesAlertThresholds(t *testing.T) {
 	require.ErrorContains(t, err, "must be less than or equal")
 }
 
-func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {
+func TestAlterMaterializedViewRefreshUpdatesMetaAndNextUnixSeconds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1313,7 +1313,7 @@ func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 40 MINUTE)", mvInfo.RefreshStartWith)
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 20 MINUTE)", mvInfo.RefreshNext)
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 30 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 30 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 2 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mviewID,
 	)).Check(testkit.Rows("1 1 1"))
 
@@ -1323,7 +1323,7 @@ func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {
 	require.Equal(t, "", mvInfo.RefreshStartWith)
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvInfo.RefreshNext)
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 15 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 15 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 1 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mviewID,
 	)).Check(testkit.Rows("1 1 1"))
 
@@ -1333,7 +1333,7 @@ func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {
 	require.Equal(t, "", mvInfo.RefreshStartWith)
 	require.Equal(t, "", mvInfo.RefreshNext)
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mviewID,
 	)).Check(testkit.Rows("1"))
 
@@ -1341,7 +1341,7 @@ func TestAlterMaterializedViewRefreshUpdatesMetaAndNextTime(t *testing.T) {
 	tk.MustExec("drop materialized view log on t")
 }
 
-func TestAlterMaterializedViewRefreshUpdatesNextTimeWithAlterPrivilegeOnly(t *testing.T) {
+func TestAlterMaterializedViewRefreshUpdatesNextUnixSecondsWithAlterPrivilegeOnly(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1370,7 +1370,7 @@ func TestAlterMaterializedViewRefreshUpdatesNextTimeWithAlterPrivilegeOnly(t *te
 	require.Equal(t, "", mvInfo.RefreshStartWith)
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvInfo.RefreshNext)
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 15 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 15 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 1 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mviewID,
 	)).Check(testkit.Rows("1 1 1"))
 }
@@ -1390,7 +1390,7 @@ func TestAlterMaterializedViewRefreshDisableScheduleClearsAlert(t *testing.T) {
 	mviewID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_TIME, UPDATED_AT) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mviewID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", mviewID)).
@@ -1398,7 +1398,7 @@ func TestAlterMaterializedViewRefreshDisableScheduleClearsAlert(t *testing.T) {
 
 	tk.MustExec("alter materialized view mv refresh")
 
-	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("0"))
@@ -1419,13 +1419,13 @@ func TestAlterMaterializedViewRefreshDisableSchedulePreservesRefreshFailedAlert(
 	mviewID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, REFRESH_FAILED, LAST_SUCCESS_TIME, UPDATED_AT) values (%d, 'test', 'mv', 'warning', 'YES', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, REFRESH_FAILED, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', 'YES', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mviewID,
 	))
 
 	tk.MustExec("alter materialized view mv refresh")
 
-	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select ALERT_LEVEL is null, REFRESH_FAILED from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1 YES"))
@@ -1446,7 +1446,7 @@ func TestAlterMaterializedViewRefreshDisableScheduleIgnoresAlertDeleteFailure(t 
 	mviewID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_TIME, UPDATED_AT) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mviewID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", mviewID)).
@@ -1459,7 +1459,7 @@ func TestAlterMaterializedViewRefreshDisableScheduleIgnoresAlertDeleteFailure(t 
 
 	tk.MustExec("alter materialized view mv refresh")
 
-	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 }
 
@@ -1485,34 +1485,34 @@ func TestAlterMaterializedViewRefreshBestEffortInfoUpdateWarning(t *testing.T) {
 	mviewID, mvInfo := getMViewMeta()
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 2 HOUR)", mvInfo.RefreshNext)
 
-	const expectedNextTime = "2031-01-02 03:04:05"
+	const expectedNextUnixSeconds int64 = 1_925_089_445
 	tk.MustExec(fmt.Sprintf(
-		"update mysql.tidb_mview_refresh_info set NEXT_TIME = cast('%s' as datetime) where MVIEW_ID = %d",
-		expectedNextTime,
+		"update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = %d where MVIEW_ID = %d",
+		expectedNextUnixSeconds,
 		mviewID,
 	))
 	tkLock.MustExec("begin pessimistic")
 	defer tkLock.MustExec("rollback")
 	tkLock.MustExec(fmt.Sprintf(
-		"update mysql.tidb_mview_refresh_info set NEXT_TIME = NEXT_TIME where MVIEW_ID = %d",
+		"update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = NEXT_REFRESH_UNIX_SECONDS where MVIEW_ID = %d",
 		mviewID,
 	))
 
 	tk.MustExec("alter materialized view mv refresh next date_add(now(), interval 25 minute)")
 	tk.MustQuery("show warnings").CheckContain(
-		"alter materialized view refresh: metadata updated but failed to update mysql.tidb_mview_refresh_info.NEXT_TIME within 10s due to row lock contention",
+		"alter materialized view refresh: metadata updated but failed to update mysql.tidb_mview_refresh_info.NEXT_REFRESH_UNIX_SECONDS within 10s due to row lock contention",
 	)
 
 	_, mvInfo = getMViewMeta()
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", mvInfo.RefreshNext)
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME = cast('%s' as datetime) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
-		expectedNextTime,
+		"select NEXT_REFRESH_UNIX_SECONDS = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		expectedNextUnixSeconds,
 		mviewID,
 	)).Check(testkit.Rows("1"))
 }
 
-func TestCreateMaterializedViewRefreshInfoNextTimeDerivation(t *testing.T) {
+func TestCreateMaterializedViewRefreshInfoNextUnixSecondsDerivation(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1527,35 +1527,35 @@ func TestCreateMaterializedViewRefreshInfoNextTimeDerivation(t *testing.T) {
 		return mvTable.Meta().ID
 	}
 
-	// START WITH and NEXT both present, START WITH is not near-now: NEXT_TIME should use START WITH.
+	// START WITH and NEXT both present, START WITH is not near-now: NEXT_REFRESH_UNIX_SECONDS should use START WITH.
 	tk.MustExec("create materialized view mv_start_only (a, s, cnt) refresh fast start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute) as select a, sum(b), count(1) from t group by a")
 	mvStartOnlyID := getMViewID("mv_start_only")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 30 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 30 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 2 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mvStartOnlyID,
 	)).Check(testkit.Rows("1 1 1"))
 
-	// NEXT only: NEXT_TIME should use evaluated NEXT.
+	// NEXT only: NEXT_REFRESH_UNIX_SECONDS should use evaluated NEXT.
 	tk.MustExec("create materialized view mv_next_only (a, s, cnt) refresh fast next date_add(now(), interval 20 minute) as select a, sum(b), count(1) from t group by a")
 	mvNextOnlyID := getMViewID("mv_next_only")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 10 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 1 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 10 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 1 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mvNextOnlyID,
 	)).Check(testkit.Rows("1 1 1"))
 
-	// Neither START WITH nor NEXT: NEXT_TIME should stay unchanged (create path: NULL).
+	// Neither START WITH nor NEXT: NEXT_REFRESH_UNIX_SECONDS should stay unchanged (create path: NULL).
 	tk.MustExec("create materialized view mv_no_schedule (a, s, cnt) refresh fast as select a, sum(b), count(1) from t group by a")
 	mvNoScheduleID := getMViewID("mv_no_schedule")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mvNoScheduleID,
 	)).Check(testkit.Rows("1"))
 
-	// START WITH near-now and NEXT present: NEXT_TIME should use NEXT.
+	// START WITH near-now and NEXT present: NEXT_REFRESH_UNIX_SECONDS should use NEXT.
 	tk.MustExec("create materialized view mv_near_now (a, s, cnt) refresh fast start with now() next date_add(now(), interval 40 minute) as select a, sum(b), count(1) from t group by a")
 	mvNearNowID := getMViewID("mv_near_now")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 20 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 2 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mvNearNowID,
 	)).Check(testkit.Rows("1 1 1"))
 
@@ -1566,7 +1566,7 @@ func TestCreateMaterializedViewRefreshInfoNextTimeDerivation(t *testing.T) {
 	tk.MustExec("drop materialized view log on t")
 }
 
-func TestCreateMaterializedViewRefreshInfoNextTimeUsesUTC(t *testing.T) {
+func TestCreateMaterializedViewRefreshInfoNextUnixSecondsUsesScheduleTimeZone(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1582,33 +1582,70 @@ func TestCreateMaterializedViewRefreshInfoNextTimeUsesUTC(t *testing.T) {
 		return mvTable.Meta().ID
 	}
 
-	tk.MustExec("create materialized view mv_utc_next (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
-	mvID := getMViewID("mv_utc_next")
+	tk.MustExec("create materialized view mv_schedule_next (a, s, cnt) refresh fast next cast('2030-01-02 10:00:00' as datetime) as select a, sum(b), count(1) from t group by a")
+	mvID := getMViewID("mv_schedule_next")
 
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, "+
-			"NEXT_TIME > UTC_TIMESTAMP(6) + interval 50 minute, "+
-			"NEXT_TIME < UTC_TIMESTAMP(6) + interval 2 hour, "+
-			"NEXT_TIME < NOW(6) - interval 6 hour "+
+		"select NEXT_REFRESH_UNIX_SECONDS = 1893549600, "+
+			"NEXT_REFRESH_UNIX_SECONDS = 1893578400 "+
 			"from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mvID,
-	)).Check(testkit.Rows("1 1 1 1"))
+	)).Check(testkit.Rows("1 0"))
 
-	// START WITH should also be evaluated in UTC even when session timezone is +08:00.
-	tk.MustExec("create materialized view mv_utc_start (a, s, cnt) refresh fast start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute) as select a, sum(b), count(1) from t group by a")
-	mvStartID := getMViewID("mv_utc_start")
+	// START WITH and NEXT use the session timezone captured when the schedule is defined.
+	tk.MustExec("create materialized view mv_schedule_start (a, s, cnt) refresh fast start with cast('2030-01-02 10:00:00' as datetime) next cast('2030-01-03 10:00:00' as datetime) as select a, sum(b), count(1) from t group by a")
+	mvStartID := getMViewID("mv_schedule_start")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, "+
-			"NEXT_TIME > UTC_TIMESTAMP(6) + interval 20 minute, "+
-			"NEXT_TIME < UTC_TIMESTAMP(6) + interval 2 hour, "+
-			"NEXT_TIME < NOW(6) - interval 7 hour "+
+		"select NEXT_REFRESH_UNIX_SECONDS = 1893549600, "+
+			"NEXT_REFRESH_UNIX_SECONDS = 1893636000 "+
 			"from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mvStartID,
-	)).Check(testkit.Rows("1 1 1 1"))
+	)).Check(testkit.Rows("1 0"))
 
-	tk.MustExec("drop materialized view mv_utc_next")
-	tk.MustExec("drop materialized view mv_utc_start")
+	tk.MustExec("drop materialized view mv_schedule_next")
+	tk.MustExec("drop materialized view mv_schedule_start")
 	tk.MustExec("drop materialized view log on t")
+}
+
+func TestAlterMaterializedViewRefreshScheduleTimeZone(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t (a, b)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next cast('2030-01-01 10:00:00' as datetime) as select a, sum(b), count(1) from t group by a")
+
+	getMViewID := func() int64 {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+		require.NoError(t, err)
+		return mvTable.Meta().ID
+	}
+
+	getMViewInfo := func() *model.MaterializedViewInfo {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+		require.NoError(t, err)
+		require.NotNil(t, mvTable.Meta().MaterializedView)
+		return mvTable.Meta().MaterializedView
+	}
+
+	initialTimeZone := getMViewInfo().RefreshScheduleTimeZone
+	require.Equal(t, 0, initialTimeZone.Offset)
+
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec("alter materialized view mv refresh")
+	info := getMViewInfo()
+	require.Equal(t, initialTimeZone.Name, info.RefreshScheduleTimeZone.Name)
+	require.Equal(t, initialTimeZone.Offset, info.RefreshScheduleTimeZone.Offset)
+	require.Empty(t, info.RefreshNext)
+
+	tk.MustExec("alter materialized view mv refresh next cast('2030-01-02 10:00:00' as datetime)")
+	info = getMViewInfo()
+	require.Equal(t, 8*60*60, info.RefreshScheduleTimeZone.Offset)
+	tk.MustQuery("select NEXT_REFRESH_UNIX_SECONDS = 1893549600 from mysql.tidb_mview_refresh_info where MVIEW_ID = " + strconv.FormatInt(getMViewID(), 10)).
+		Check(testkit.Rows("1"))
 }
 
 func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
@@ -1785,7 +1822,7 @@ func TestCreateMaterializedViewBlocksReadAndRefreshBeforeReady(t *testing.T) {
 			return false
 		}
 		return mvTable.Meta().MaterializedView != nil &&
-			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MVInitBuildBuilding
+			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MViewInitBuildBuilding
 	}, 30*time.Second, 100*time.Millisecond)
 
 	tk.MustQuery("show tables like 'mv_not_ready'").Check(testkit.Rows("mv_not_ready"))
@@ -1822,7 +1859,7 @@ func TestCreateMaterializedViewBlocksReadAndRefreshBeforeReady(t *testing.T) {
 			return false
 		}
 		return mvTable.Meta().MaterializedView != nil &&
-			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MVInitBuildReady
+			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MViewInitBuildReady
 	}, 30*time.Second, 100*time.Millisecond)
 }
 
@@ -2187,7 +2224,7 @@ func TestDropDatabaseCleansMaterializedViewAndLogInfo(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).
 		Check(testkit.Rows("1"))
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_TIME, UPDATED_AT) values (%d, '%s', 'mv', 'overdue', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, '%s', 'mv', 'overdue', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mvID,
 		dbName,
 	))
@@ -2218,7 +2255,7 @@ func TestDropMaterializedViewCleansRefreshAlert(t *testing.T) {
 	mvID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_TIME, UPDATED_AT) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mvID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", mvID)).
@@ -2253,7 +2290,7 @@ func TestDropDatabaseIgnoresRefreshAlertDeleteFailure(t *testing.T) {
 	mvID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_TIME, UPDATED_AT) values (%d, '%s', 'mv', 'overdue', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, '%s', 'mv', 'overdue', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mvID,
 		dbName,
 	))
@@ -2287,7 +2324,7 @@ func TestDropMaterializedViewIgnoresRefreshAlertDeleteFailure(t *testing.T) {
 	mvID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_TIME, UPDATED_AT) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mvID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", mvID)).

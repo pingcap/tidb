@@ -80,14 +80,14 @@ type taskExecutorReportCache struct {
 	backpressureCount int64
 }
 
-type mvMetricTypeResultKey struct {
+type mviewMetricTypeResultKey struct {
 	typ    string
 	result string
 }
 
 type durationObserverCache struct {
 	mu   sync.RWMutex
-	data map[mvMetricTypeResultKey]prometheus.Observer
+	data map[mviewMetricTypeResultKey]prometheus.Observer
 }
 
 func newDurationObserverCache(capacity int) durationObserverCache {
@@ -95,13 +95,13 @@ func newDurationObserverCache(capacity int) durationObserverCache {
 		capacity = 0
 	}
 	return durationObserverCache{
-		data: make(map[mvMetricTypeResultKey]prometheus.Observer, capacity),
+		data: make(map[mviewMetricTypeResultKey]prometheus.Observer, capacity),
 	}
 }
 
 type runEventCounterCache struct {
 	mu   sync.RWMutex
-	data map[mvMetricComponentTypeKey]prometheus.Counter
+	data map[mviewMetricComponentTypeKey]prometheus.Counter
 }
 
 func newRunEventCounterCache(capacity int) runEventCounterCache {
@@ -109,11 +109,11 @@ func newRunEventCounterCache(capacity int) runEventCounterCache {
 		capacity = 0
 	}
 	return runEventCounterCache{
-		data: make(map[mvMetricComponentTypeKey]prometheus.Counter, capacity),
+		data: make(map[mviewMetricComponentTypeKey]prometheus.Counter, capacity),
 	}
 }
 
-type mvMetricComponentTypeKey struct {
+type mviewMetricComponentTypeKey struct {
 	component string
 	typ       string
 }
@@ -153,7 +153,7 @@ func buildDeleteResolvedMVRefreshAlertSQL(mviewIDs []int64) string {
 
 func buildClearResolvedMVRefreshAlertLevelSQL(updatedAt time.Time, mviewIDs []int64) string {
 	var sql strings.Builder
-	sqlescape.MustFormatSQL(&sql, "UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATED_AT = %? WHERE MVIEW_ID IN ", updatedAt.Round(0))
+	sqlescape.MustFormatSQL(&sql, "UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATE_TIME = %? WHERE MVIEW_ID IN ", updatedAt.Round(0))
 	appendMViewIDInCondition(&sql, mviewIDs)
 	sql.WriteString(" AND REFRESH_FAILED IS NOT NULL AND ALERT_LEVEL IS NOT NULL")
 	return sql.String()
@@ -163,11 +163,11 @@ func buildUpsertMVRefreshAlertSQL(updatedAt time.Time, states []refreshAlertTask
 	var sql strings.Builder
 	sql.WriteString(`INSERT INTO mysql.tidb_mview_refresh_alert (
 MVIEW_ID,
-MV_SCHEMA,
-MV_NAME,
+MVIEW_SCHEMA,
+MVIEW_NAME,
 ALERT_LEVEL,
-LAST_SUCCESS_TIME,
-UPDATED_AT
+LAST_SUCCESS_SNAPSHOT_TIME,
+UPDATE_TIME
 ) VALUES `)
 	for i, state := range states {
 		if i > 0 {
@@ -189,11 +189,11 @@ UPDATED_AT
 		)
 	}
 	sql.WriteString(` ON DUPLICATE KEY UPDATE
-MV_SCHEMA = VALUES(MV_SCHEMA),
-MV_NAME = VALUES(MV_NAME),
+MVIEW_SCHEMA = VALUES(MVIEW_SCHEMA),
+MVIEW_NAME = VALUES(MVIEW_NAME),
 ALERT_LEVEL = VALUES(ALERT_LEVEL),
-LAST_SUCCESS_TIME = VALUES(LAST_SUCCESS_TIME),
-UPDATED_AT = VALUES(UPDATED_AT)`)
+LAST_SUCCESS_SNAPSHOT_TIME = VALUES(LAST_SUCCESS_SNAPSHOT_TIME),
+UPDATE_TIME = VALUES(UPDATE_TIME)`)
 	return sql.String()
 }
 
@@ -207,8 +207,8 @@ WHERE i.MVIEW_ID IS NULL OR (a.ALERT_LEVEL IS NULL AND a.REFRESH_FAILED IS NULL)
 func buildClearDisabledMVRefreshAlertLevelSQL() string {
 	return `UPDATE mysql.tidb_mview_refresh_alert AS a
 JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
-SET a.ALERT_LEVEL = NULL, a.UPDATED_AT = NOW(6)
-WHERE i.NEXT_TIME IS NULL AND a.ALERT_LEVEL IS NOT NULL`
+SET a.ALERT_LEVEL = NULL, a.UPDATE_TIME = NOW(6)
+WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NULL AND a.ALERT_LEVEL IS NOT NULL`
 }
 
 func (*serviceHelper) SyncMVRefreshAlertStates(
@@ -329,30 +329,30 @@ func latestServerInfosByInstance(allServers map[string]*infosync.ServerInfo) map
 func resolveMVIdentityByID(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	mvID int64,
+	mviewID int64,
 ) (schemaName, mviewName string, alertWarningSec, alertOverdueSec int64, found bool, err error) {
-	if mvID <= 0 {
+	if mviewID <= 0 {
 		return "", "", 0, 0, false, errors.New("mview id is invalid")
 	}
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mvTable, ok := infoSchema.TableByID(ctx, mvID)
+	mviewTable, ok := infoSchema.TableByID(ctx, mviewID)
 	if !ok {
 		return "", "", 0, 0, false, nil
 	}
-	mvMeta := mvTable.Meta()
-	if mvMeta == nil {
+	mviewMeta := mviewTable.Meta()
+	if mviewMeta == nil {
 		return "", "", 0, 0, false, errors.New("mview metadata is invalid")
 	}
-	if mvMeta.MaterializedView != nil {
-		alertWarningSec = max(0, mvMeta.MaterializedView.AlertWarningSec)
-		alertOverdueSec = max(0, mvMeta.MaterializedView.AlertOverdueSec)
+	if mviewMeta.MaterializedView != nil {
+		alertWarningSec = max(0, mviewMeta.MaterializedView.AlertWarningSec)
+		alertOverdueSec = max(0, mviewMeta.MaterializedView.AlertOverdueSec)
 	}
-	dbInfo, ok := infoSchema.SchemaByID(mvMeta.DBID)
+	dbInfo, ok := infoSchema.SchemaByID(mviewMeta.DBID)
 	if !ok || dbInfo == nil {
 		return "", "", 0, 0, false, errors.New("mview metadata is invalid")
 	}
 	schemaName = dbInfo.Name.L
-	mviewName = mvMeta.Name.L
+	mviewName = mviewMeta.Name.L
 	if schemaName == "" || mviewName == "" {
 		return "", "", 0, 0, false, errors.New("mview metadata is invalid")
 	}
@@ -362,13 +362,13 @@ func resolveMVIdentityByID(
 func resolveMVLogMetaByID(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	mvLogID int64,
+	mlogID int64,
 ) (infoSchema infoschema.InfoSchema, mLogMeta *meta.TableInfo, mLogInfo *meta.MaterializedViewLogInfo, found bool, err error) {
-	if mvLogID <= 0 {
+	if mlogID <= 0 {
 		return nil, nil, nil, false, errors.New("materialized view log id is invalid")
 	}
 	infoSchema = sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
+	mLogTbl, ok := infoSchema.TableByID(ctx, mlogID)
 	if !ok {
 		return nil, nil, nil, false, nil
 	}
@@ -395,9 +395,9 @@ func resolveMVLogIdentityFromMeta(infoSchema infoschema.InfoSchema, mLogMeta *me
 func resolveMVLogAccumulationAlertByID(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	mvLogID int64,
+	mlogID int64,
 ) (schemaName, mlogName string, alertRows uint64, enabled bool, found bool, err error) {
-	infoSchema, mLogMeta, mLogInfo, found, err := resolveMVLogMetaByID(ctx, sctx, mvLogID)
+	infoSchema, mLogMeta, mLogInfo, found, err := resolveMVLogMetaByID(ctx, sctx, mlogID)
 	if err != nil || !found {
 		return "", "", 0, false, false, err
 	}
@@ -415,9 +415,9 @@ func resolveMVLogAccumulationAlertByID(
 func resolveMVLogIdentityByID(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	mvLogID int64,
+	mlogID int64,
 ) (schemaName, mlogName string, found bool, err error) {
-	infoSchema, mLogMeta, _, found, err := resolveMVLogMetaByID(ctx, sctx, mvLogID)
+	infoSchema, mLogMeta, _, found, err := resolveMVLogMetaByID(ctx, sctx, mlogID)
 	if err != nil || !found {
 		return "", "", false, err
 	}
@@ -434,14 +434,14 @@ func resolveMVLogIdentityByID(
 // 1. Gets a system session from the pool.
 // 2. Resolves schema/table names from MVIEW_ID.
 // 3. Executes `REFRESH MATERIALIZED VIEW ... FAST`.
-// 4. Reads NEXT_TIME from mysql.tidb_mview_refresh_info.
+// 4. Reads NEXT_REFRESH_UNIX_SECONDS from mysql.tidb_mview_refresh_info.
 //
 // The returned error only represents execution failures. A zero nextRefresh means
 // no further scheduling is needed (for example, the MV metadata was removed).
-func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
+func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mviewID int64) (nextRefresh time.Time, err error) {
 	const (
 		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n FAST`
-		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+		findNextTimeSQL = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	)
 	startAt := mvsNow()
 	var schemaName, mviewName string
@@ -451,7 +451,7 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 		}
 		logutil.BgLogger().Warn(
 			"refresh materialized view failed",
-			zap.Int64("mview_id", mvID),
+			zap.Int64("mview_id", mviewID),
 			zap.String("schema", schemaName),
 			zap.String("mview", mviewName),
 			zap.Duration("elapsed", mvsSince(startAt)),
@@ -467,7 +467,7 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	sctx := se.(sessionctx.Context)
-	schemaName, mviewName, _, _, found, err := resolveMVIdentityByID(ctx, sctx, mvID)
+	schemaName, mviewName, _, _, found, err := resolveMVIdentityByID(ctx, sctx, mviewID)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -488,7 +488,7 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 		return time.Time{}, err
 	}
 
-	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, findNextTimeSQL, []any{mvID})
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, findNextTimeSQL, []any{mviewID})
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -567,7 +567,7 @@ func applyMVRefreshSessionVarsFromGlobal(ctx context.Context, sessVars *variable
 	return applyRefreshSessionVars(sessVars, target)
 }
 
-type mvMaintenanceSessionVarApplySpec struct {
+type mviewMaintenanceSessionVarApplySpec struct {
 	varName        string
 	originValue    string
 	targetValue    string
@@ -577,7 +577,7 @@ type mvMaintenanceSessionVarApplySpec struct {
 
 func applyMVMaintenanceSessionVarBestEffort(
 	sessVars *variable.SessionVars,
-	spec mvMaintenanceSessionVarApplySpec,
+	spec mviewMaintenanceSessionVarApplySpec,
 ) (func(), error) {
 	if sessVars == nil {
 		return nil, errors.New("mv service: session vars is nil")
@@ -611,7 +611,7 @@ func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *vari
 	}
 	restoreMaintainMemQuota, err := applyMVMaintenanceSessionVarBestEffort(
 		sessVars,
-		mvMaintenanceSessionVarApplySpec{
+		mviewMaintenanceSessionVarApplySpec{
 			varName:     variable.TiDBMVMaintainMemQuota,
 			originValue: strconv.FormatInt(originMaintainMemQuota, 10),
 			targetValue: strconv.FormatInt(targetMaintainMemQuota, 10),
@@ -644,7 +644,7 @@ func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *vari
 	}
 	restoreIsolationReadEngines, err := applyMVMaintenanceSessionVarBestEffort(
 		sessVars,
-		mvMaintenanceSessionVarApplySpec{
+		mviewMaintenanceSessionVarApplySpec{
 			varName:     variable.TiDBMVMaintainIsolationReadEngines,
 			originValue: originIsolationReadEngines,
 			targetValue: targetIsolationReadEngines,
@@ -678,7 +678,7 @@ func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *vari
 	}
 	restorePurgeBatchSize, err := applyMVMaintenanceSessionVarBestEffort(
 		sessVars,
-		mvMaintenanceSessionVarApplySpec{
+		mviewMaintenanceSessionVarApplySpec{
 			varName:     variable.TiDBMLogPurgeBatchSize,
 			originValue: strconv.Itoa(originPurgeBatchSize),
 			targetValue: strconv.Itoa(targetPurgeBatchSize),
@@ -713,7 +713,7 @@ func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *vari
 	}
 	restorePurgeMinRate, err := applyMVMaintenanceSessionVarBestEffort(
 		sessVars,
-		mvMaintenanceSessionVarApplySpec{
+		mviewMaintenanceSessionVarApplySpec{
 			varName:     variable.TiDBMLogPurgeMinRate,
 			originValue: strconv.Itoa(originPurgeMinRate),
 			targetValue: strconv.Itoa(targetPurgeMinRate),
@@ -759,7 +759,7 @@ func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *vari
 	}
 	restorePurgeRateBudgetRatio, err := applyMVMaintenanceSessionVarBestEffort(
 		sessVars,
-		mvMaintenanceSessionVarApplySpec{
+		mviewMaintenanceSessionVarApplySpec{
 			varName:     variable.TiDBMLogPurgeRateBudgetRatio,
 			originValue: strconv.FormatFloat(originPurgeRateBudgetRatio, 'f', -1, 64),
 			targetValue: strconv.FormatFloat(targetPurgeRateBudgetRatio, 'f', -1, 64),
@@ -796,7 +796,7 @@ func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *vari
 	}
 	restorePurgeDeleteTiFlashThreads, err := applyMVMaintenanceSessionVarBestEffort(
 		sessVars,
-		mvMaintenanceSessionVarApplySpec{
+		mviewMaintenanceSessionVarApplySpec{
 			varName:     variable.TiDBMLogPurgeDeleteTiFlashThreads,
 			originValue: strconv.FormatInt(originPurgeDeleteTiFlashThreads, 10),
 			targetValue: strconv.FormatInt(targetPurgeDeleteTiFlashThreads, 10),
@@ -871,13 +871,13 @@ func applyRefreshSessionVars(sessVars *variable.SessionVars, target variable.MVi
 //
 // Behavior overview:
 // 1. Gets a system session from the pool.
-// 2. Resolves schema/table names from mvLogID.
+// 2. Resolves schema/table names from mlogID.
 // 3. Executes `purge materialized view log on <schema>.<table>`.
-// 4. Reads NEXT_TIME from mysql.tidb_mlog_purge_info.
-func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error) {
+// 4. Reads NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info.
+func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mlogID int64) (nextPurge time.Time, err error) {
 	const (
 		purgeMVLogSQL   = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+		findNextTimeSQL = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
 	)
 	var (
 		baseSchema string
@@ -890,7 +890,7 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 		}
 		logutil.BgLogger().Warn(
 			"purge materialized view log failed",
-			zap.Int64("mvlog_id", mvLogID),
+			zap.Int64("mvlog_id", mlogID),
 			zap.String("base_table_schema", baseSchema),
 			zap.String("base_table_name", baseTable),
 			zap.Duration("elapsed", mvsSince(startAt)),
@@ -899,18 +899,18 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	}()
 	se, err := sysSessionPool.Get()
 	if err != nil {
-		logutil.BgLogger().Warn("get system session failed for mvlog purge", zap.Int64("mvlog_id", mvLogID), zap.Error(err))
+		logutil.BgLogger().Warn("get system session failed for mvlog purge", zap.Int64("mvlog_id", mlogID), zap.Error(err))
 		return time.Time{}, err
 	}
 	defer sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
-	if mvLogID <= 0 {
+	if mlogID <= 0 {
 		return time.Time{}, errors.New("materialized view log id is invalid")
 	}
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mLogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
+	mLogTbl, ok := infoSchema.TableByID(ctx, mlogID)
 	if !ok {
 		return time.Time{}, nil
 	}
@@ -956,7 +956,7 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 		return time.Time{}, err
 	}
 
-	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, findNextTimeSQL, []any{mvLogID})
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, findNextTimeSQL, []any{mlogID})
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -970,15 +970,15 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 func (*serviceHelper) TryBackoffRefreshManualCancel(
 	ctx context.Context,
 	sysSessionPool basic.SessionPool,
-	mvID int64,
+	mviewID int64,
 	nextRefresh time.Time,
 ) (bool, time.Time, error) {
 	return tryBackoffMVTaskManualCancel(
 		ctx,
 		sysSessionPool,
-		`SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`,
-		`UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?`,
-		mvID,
+		`SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`,
+		`UPDATE mysql.tidb_mview_refresh_info SET NEXT_REFRESH_UNIX_SECONDS = %? WHERE MVIEW_ID = %?`,
+		mviewID,
 		nextRefresh,
 		deriveMVRefreshManualCancelNextTime,
 	)
@@ -987,51 +987,56 @@ func (*serviceHelper) TryBackoffRefreshManualCancel(
 func (*serviceHelper) TryBackoffPurgeManualCancel(
 	ctx context.Context,
 	sysSessionPool basic.SessionPool,
-	mvLogID int64,
+	mlogID int64,
 	nextPurge time.Time,
 ) (bool, time.Time, error) {
 	return tryBackoffMVTaskManualCancel(
 		ctx,
 		sysSessionPool,
-		`SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`,
-		`UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`,
-		mvLogID,
+		`SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`,
+		`UPDATE mysql.tidb_mlog_purge_info SET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?`,
+		mlogID,
 		nextPurge,
 		deriveMLogPurgeManualCancelNextTime,
 	)
 }
 
-type mvTaskManualCancelNextResolver func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error)
+type mviewTaskManualCancelNextResolver func(context.Context, sessionctx.Context, int64) (*time.Time, bool, error)
 
 func deriveMVRefreshManualCancelNextTime(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	mvID int64,
+	mviewID int64,
 ) (*time.Time, bool, error) {
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mvTbl, ok := infoSchema.TableByID(ctx, mvID)
+	mviewTable, ok := infoSchema.TableByID(ctx, mviewID)
 	if !ok {
 		return nil, false, nil
 	}
-	mvMeta := mvTbl.Meta()
-	if mvMeta == nil || mvMeta.MaterializedView == nil {
+	mviewMeta := mviewTable.Meta()
+	if mviewMeta == nil || mviewMeta.MaterializedView == nil {
 		return nil, false, errors.New("materialized view metadata is invalid")
+	}
+	scheduleTimeZone, err := mviewMeta.MaterializedView.RefreshScheduleTimeZone.GetLocation()
+	if err != nil {
+		return nil, false, err
 	}
 	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
 		ctx,
 		sctx,
-		mvMeta.MaterializedView.RefreshStartWith,
-		mvMeta.MaterializedView.RefreshNext,
-		mvMeta.MaterializedView.DefinitionSQLMode,
+		mviewMeta.MaterializedView.RefreshStartWith,
+		mviewMeta.MaterializedView.RefreshNext,
+		mviewMeta.MaterializedView.DefinitionSQLMode,
+		scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err
 	}
 	if shouldUpdate && nextTime == nil {
-		if dbInfo, ok := infoschema.SchemaByTable(infoSchema, mvMeta); ok && dbInfo != nil {
-			logManualCancelMaterializedViewRefreshNextTimeUpdateNull(dbInfo.Name.O, mvMeta.Name.O, mvMeta.MaterializedView.RefreshNext)
+		if dbInfo, ok := infoschema.SchemaByTable(infoSchema, mviewMeta); ok && dbInfo != nil {
+			logManualCancelMaterializedViewRefreshNextTimeUpdateNull(dbInfo.Name.O, mviewMeta.Name.O, mviewMeta.MaterializedView.RefreshNext)
 		} else {
-			logManualCancelMaterializedViewRefreshNextTimeUpdateNull("", mvMeta.Name.O, mvMeta.MaterializedView.RefreshNext)
+			logManualCancelMaterializedViewRefreshNextTimeUpdateNull("", mviewMeta.Name.O, mviewMeta.MaterializedView.RefreshNext)
 		}
 	}
 	return nextTime, shouldUpdate, nil
@@ -1040,10 +1045,10 @@ func deriveMVRefreshManualCancelNextTime(
 func deriveMLogPurgeManualCancelNextTime(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	mvLogID int64,
+	mlogID int64,
 ) (*time.Time, bool, error) {
 	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mlogTbl, ok := infoSchema.TableByID(ctx, mvLogID)
+	mlogTbl, ok := infoSchema.TableByID(ctx, mlogID)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1051,12 +1056,17 @@ func deriveMLogPurgeManualCancelNextTime(
 	if mlogMeta == nil || mlogMeta.MaterializedViewLog == nil {
 		return nil, false, errors.New("materialized view log metadata is invalid")
 	}
+	scheduleTimeZone, err := mlogMeta.MaterializedViewLog.PurgeScheduleTimeZone.GetLocation()
+	if err != nil {
+		return nil, false, err
+	}
 	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
 		ctx,
 		sctx,
 		mlogMeta.MaterializedViewLog.PurgeStartWith,
 		mlogMeta.MaterializedViewLog.PurgeNext,
 		mlogMeta.MaterializedViewLog.DefinitionSQLMode,
+		scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1077,14 +1087,15 @@ func deriveMaterializedScheduleNextTimeForManualCancel(
 	startExpr string,
 	nextExpr string,
 	scheduleSQLMode mysql.SQLMode,
+	scheduleTimeZone *time.Location,
 ) (*time.Time, bool, error) {
-	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTimeUTC(
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
 		ctx,
-		sctx,
 		sctx,
 		startExpr,
 		nextExpr,
 		scheduleSQLMode,
+		scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1092,25 +1103,26 @@ func deriveMaterializedScheduleNextTimeForManualCancel(
 	if !shouldUpdate || nextAt == nil {
 		return nil, shouldUpdate, nil
 	}
-	goTime, err := nextAt.GoTime(time.UTC)
+	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
 	if err != nil {
 		return nil, false, err
 	}
-	return &goTime, true, nil
+	nextTime := mvsUnix(*nextUnixSeconds, 0)
+	return &nextTime, true, nil
 }
 
 func logManualCancelMaterializedViewRefreshNextTimeUpdateNull(
 	schemaName string,
-	mvName string,
+	mviewName string,
 	nextExpr string,
 ) {
 	if strings.TrimSpace(nextExpr) == "" {
 		return
 	}
 	logutil.BgLogger().Error(
-		"refresh MV manual cancel backoff: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		"refresh MV manual cancel backoff: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_REFRESH_UNIX_SECONDS to NULL",
 		zap.String("schemaName", schemaName),
-		zap.String("tableName", mvName),
+		zap.String("tableName", mviewName),
 		zap.String("refreshNext", nextExpr),
 	)
 }
@@ -1124,7 +1136,7 @@ func logManualCancelMaterializedViewLogPurgeNextTimeUpdateNull(
 		return
 	}
 	logutil.BgLogger().Error(
-		"purge MV log manual cancel backoff: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		"purge MV log manual cancel backoff: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL",
 		zap.String("schemaName", schemaName),
 		zap.String("tableName", mlogName),
 		zap.String("purgeNext", nextExpr),
@@ -1138,7 +1150,7 @@ func tryBackoffMVTaskManualCancel(
 	updateSQL string,
 	objectID int64,
 	nextTime time.Time,
-	resolveExpectedNext mvTaskManualCancelNextResolver,
+	resolveExpectedNext mviewTaskManualCancelNextResolver,
 ) (bool, time.Time, error) {
 	if objectID <= 0 {
 		return false, time.Time{}, errors.New("mv service manual cancel backoff target id is invalid")
@@ -1188,7 +1200,7 @@ func tryBackoffMVTaskManualCancel(
 	}
 
 	appliedNextUTC := nextTimeUTC
-	var appliedNextArg any = nextTimeUTC
+	var appliedNextArg any = nextTimeUTC.Unix()
 	clearAppliedNext := false
 	resolvedNext, shouldUpdate, err := resolveExpectedNext(ctx, sctx, objectID)
 	// If current metadata cannot provide a better schedule, keep the cooldown fallback
@@ -1203,7 +1215,7 @@ func tryBackoffMVTaskManualCancel(
 				if appliedNextUTC.Before(nextTimeUTC) {
 					appliedNextUTC = nextTimeUTC
 				}
-				appliedNextArg = appliedNextUTC
+				appliedNextArg = appliedNextUTC.Unix()
 			}
 		}
 	} else {
@@ -1254,13 +1266,13 @@ const countLogPurgeHistorySQL = `SELECT COUNT(*), MIN(PURGE_JOB_ID) FROM mysql.t
 
 func buildMarkRefreshHistoryRunningRowsOrphanedSQL() string {
 	return fmt.Sprintf(
-		`UPDATE mysql.tidb_mview_refresh_hist FORCE INDEX (idx_refresh_status)
+		`UPDATE mysql.tidb_mview_refresh_hist FORCE INDEX (idx_refresh_status_start_time)
 SET REFRESH_STATUS = '%s',
-	REFRESH_ENDTIME = IFNULL(REFRESH_ENDTIME, NOW(6)),
-	REFRESH_DURATION_SEC = IFNULL(REFRESH_DURATION_SEC, CASE WHEN REFRESH_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, REFRESH_TIME, NOW(6)) / 1000000.0 END),
+	REFRESH_END_TIME = IFNULL(REFRESH_END_TIME, NOW(6)),
+	REFRESH_DURATION_SEC = IFNULL(REFRESH_DURATION_SEC, CASE WHEN REFRESH_START_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, REFRESH_START_TIME, NOW(6)) / 1000000.0 END),
 	REFRESH_FAILED_REASON = IFNULL(REFRESH_FAILED_REASON, '%s')
 WHERE REFRESH_STATUS = 'running'
-  AND COALESCE(LAST_HEARTBEAT_AT, REFRESH_TIME) < %%?
+  AND COALESCE(LAST_HEARTBEAT_TIME, REFRESH_START_TIME) < %%?
 ORDER BY REFRESH_JOB_ID
 LIMIT %d`,
 		mvHistoryOrphanedStatus,
@@ -1271,13 +1283,13 @@ LIMIT %d`,
 
 func buildMarkLogPurgeHistoryRunningRowsOrphanedSQL() string {
 	return fmt.Sprintf(
-		`UPDATE mysql.tidb_mlog_purge_hist FORCE INDEX (idx_purge_status)
+		`UPDATE mysql.tidb_mlog_purge_hist FORCE INDEX (idx_purge_status_start_time)
 SET PURGE_STATUS = '%s',
-	PURGE_ENDTIME = IFNULL(PURGE_ENDTIME, NOW(6)),
-	PURGE_DURATION_SEC = IFNULL(PURGE_DURATION_SEC, CASE WHEN PURGE_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, PURGE_TIME, NOW(6)) / 1000000.0 END),
+	PURGE_END_TIME = IFNULL(PURGE_END_TIME, NOW(6)),
+	PURGE_DURATION_SEC = IFNULL(PURGE_DURATION_SEC, CASE WHEN PURGE_START_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, PURGE_START_TIME, NOW(6)) / 1000000.0 END),
 	PURGE_FAILED_REASON = IFNULL(PURGE_FAILED_REASON, '%s')
 WHERE PURGE_STATUS = 'running'
-  AND COALESCE(LAST_HEARTBEAT_AT, PURGE_TIME) < %%?
+  AND COALESCE(LAST_HEARTBEAT_TIME, PURGE_START_TIME) < %%?
 ORDER BY PURGE_JOB_ID
 LIMIT %d`,
 		mvHistoryOrphanedStatus,
@@ -1443,34 +1455,34 @@ func purgeMVHistoryByCountLimitInBatches(
 }
 
 // LoadAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
-func (*serviceHelper) LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
-	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+func (*serviceHelper) LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mlogPurgeTask, error) {
+	const sql = `SELECT NEXT_PURGE_UNIX_SECONDS, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
 		return nil, err
 	}
-	newPending := make(map[int64]*mvLog, len(rows))
+	newPending := make(map[int64]*mlogPurgeTask, len(rows))
 	for _, row := range rows {
 		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
-		mvLogID := row.GetInt64(1)
-		if mvLogID <= 0 {
+		mlogID := row.GetInt64(1)
+		if mlogID <= 0 {
 			continue
 		}
 		nextPurge := mvsUnix(row.GetInt64(0), 0)
-		l := &mvLog{
-			ID:        mvLogID,
+		l := &mlogPurgeTask{
+			ID:        mlogID,
 			nextPurge: nextPurge,
 		}
 		l.orderTs = l.nextPurge.UnixMilli()
-		newPending[mvLogID] = l
+		newPending[mlogID] = l
 	}
 	return newPending, nil
 }
 
 // LoadAllTiDBMVLogAccumulationTasks loads all MV logs that have accumulation alerting enabled.
-func (*serviceHelper) LoadAllTiDBMVLogAccumulationTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLogAccumulationTask, error) {
+func (*serviceHelper) LoadAllTiDBMVLogAccumulationTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mlogAccumulationTask, error) {
 	const fetchSQL = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
 	se, err := sysSessionPool.Get()
 	if err != nil {
@@ -1484,23 +1496,23 @@ func (*serviceHelper) LoadAllTiDBMVLogAccumulationTasks(ctx context.Context, sys
 	if err != nil {
 		return nil, err
 	}
-	tasks := make(map[int64]*mvLogAccumulationTask)
+	tasks := make(map[int64]*mlogAccumulationTask)
 	for _, row := range rows {
 		if row.IsNull(0) {
 			continue
 		}
-		mvLogID := row.GetInt64(0)
-		if mvLogID <= 0 {
+		mlogID := row.GetInt64(0)
+		if mlogID <= 0 {
 			continue
 		}
-		schemaName, mlogName, alertRows, enabled, found, err := resolveMVLogAccumulationAlertByID(ctx, sctx, mvLogID)
+		schemaName, mlogName, alertRows, enabled, found, err := resolveMVLogAccumulationAlertByID(ctx, sctx, mlogID)
 		if err != nil {
 			return nil, err
 		}
 		if !found || !enabled {
 			continue
 		}
-		tasks[mvLogID] = &mvLogAccumulationTask{
+		tasks[mlogID] = &mlogAccumulationTask{
 			schemaName: schemaName,
 			mlogName:   mlogName,
 			alertRows:  alertRows,
@@ -1513,7 +1525,7 @@ func (*serviceHelper) LoadAllTiDBMVLogAccumulationTasks(ctx context.Context, sys
 func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 	ctx context.Context,
 	sysSessionPool basic.SessionPool,
-	tasks map[int64]*mvLogAccumulationTask,
+	tasks map[int64]*mlogAccumulationTask,
 ) (map[int64]uint64, error) {
 	const countSQL = `SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n`
 	if len(tasks) == 0 {
@@ -1531,7 +1543,7 @@ func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 	defer sctx.GetSessionVars().SetDistSQLScanConcurrency(origDistSQLScanConcurrency)
 
 	rowCounts := make(map[int64]uint64, len(tasks))
-	for mvLogID, task := range tasks {
+	for mlogID, task := range tasks {
 		if task == nil {
 			continue
 		}
@@ -1557,7 +1569,7 @@ func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 		if rowCount < 0 {
 			return nil, fmt.Errorf("unexpected negative COUNT(*) result for mvlog accumulation: %d", rowCount)
 		}
-		rowCounts[mvLogID] = uint64(rowCount)
+		rowCounts[mlogID] = uint64(rowCount)
 	}
 	return rowCounts, nil
 }
@@ -1615,7 +1627,7 @@ func needAnalyzeMLog(statsTbl *statistics.Table, ratio float64) (bool, string) {
 }
 
 // LoadAllTiDBMVLogAnalyzeTasks loads MV logs that currently need analyze.
-func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLogAnalyzeTask, error) {
+func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mlogAnalyzeTask, error) {
 	const fetchSQL = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
 	statsHandle, err := h.getStatsHandle()
 	if err != nil {
@@ -1634,23 +1646,23 @@ func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSes
 		return nil, err
 	}
 	ratio := h.readMLogAutoAnalyzeRatio(ctx, sctx)
-	tasks := make(map[int64]*mvLogAnalyzeTask)
+	tasks := make(map[int64]*mlogAnalyzeTask)
 	for _, row := range rows {
 		if row.IsNull(0) {
 			continue
 		}
-		mvLogID := row.GetInt64(0)
-		if mvLogID <= 0 {
+		mlogID := row.GetInt64(0)
+		if mlogID <= 0 {
 			continue
 		}
-		schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mvLogID)
+		schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mlogID)
 		if err != nil {
 			return nil, err
 		}
 		if !found {
 			continue
 		}
-		statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mvLogID)
+		statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mlogID)
 		if !found {
 			continue
 		}
@@ -1660,13 +1672,13 @@ func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSes
 		}
 		logutil.BgLogger().Info(
 			"mv service: mlog analyze needed",
-			zap.Int64("mvlog_id", mvLogID),
+			zap.Int64("mvlog_id", mlogID),
 			zap.String("schema", schemaName),
 			zap.String("mlog", mlogName),
 			zap.String("reason", reason),
 			zap.Float64("ratio", ratio),
 		)
-		tasks[mvLogID] = &mvLogAnalyzeTask{
+		tasks[mlogID] = &mlogAnalyzeTask{
 			schemaName: schemaName,
 			mlogName:   mlogName,
 		}
@@ -1675,7 +1687,7 @@ func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSes
 }
 
 // AnalyzeMVLog runs analyze for the specified MV log table once.
-func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) error {
+func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mlogID int64) error {
 	const analyzeMLogSQL = `ANALYZE TABLE %n.%n`
 	statsHandle, err := h.getStatsHandle()
 	if err != nil {
@@ -1697,14 +1709,14 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 	}
 	defer restoreStatsVars()
 
-	schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mvLogID)
+	schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mlogID)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return nil
 	}
-	statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mvLogID)
+	statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mlogID)
 	if !found {
 		return nil
 	}
@@ -1723,8 +1735,8 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 }
 
 // LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
-func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
-	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mviewTask, error) {
+	const sql = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	se, err := sysSessionPool.Get()
 	if err != nil {
 		return nil, err
@@ -1736,13 +1748,13 @@ func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 	if err != nil {
 		return nil, err
 	}
-	newPending := make(map[int64]*mv, len(rows))
+	newPending := make(map[int64]*mviewTask, len(rows))
 	for _, row := range rows {
 		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
-		mvID := row.GetInt64(1)
-		if mvID <= 0 {
+		mviewID := row.GetInt64(1)
+		if mviewID <= 0 {
 			continue
 		}
 		nextRefresh := mvsUnix(row.GetInt64(0), 0)
@@ -1755,13 +1767,13 @@ func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 				lastSuccessTime = mvsUnixMilli(oracle.ExtractPhysical(lastSuccessReadTSO))
 			}
 		}
-		m := &mv{
-			ID:                 mvID,
+		m := &mviewTask{
+			ID:                 mviewID,
 			nextRefresh:        nextRefresh,
 			lastSuccessReadTSO: lastSuccessReadTSO,
 			lastSuccessTime:    lastSuccessTime,
 		}
-		schemaName, mviewName, alertWarningSec, alertOverdueSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mvID)
+		schemaName, mviewName, alertWarningSec, alertOverdueSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mviewID)
 		if resolveErr == nil && found {
 			m.schemaName = schemaName
 			m.mviewName = mviewName
@@ -1771,7 +1783,7 @@ func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 			m.metadataUnresolved = true
 		}
 		m.orderTs = m.nextRefresh.UnixMilli()
-		newPending[mvID] = m
+		newPending[mviewID] = m
 	}
 	return newPending, nil
 }

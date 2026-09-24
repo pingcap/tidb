@@ -99,7 +99,7 @@ func (h *serviceHelper) getDurationObserver(metricType, result string) prometheu
 	if h == nil {
 		return tidbmetrics.MVServiceOperationDurationHistogramVec.WithLabelValues(metricType, result)
 	}
-	key := mvMetricTypeResultKey{typ: metricType, result: result}
+	key := mviewMetricTypeResultKey{typ: metricType, result: result}
 	h.durationObserverCache.mu.RLock()
 	if observer, ok := h.durationObserverCache.data[key]; ok {
 		h.durationObserverCache.mu.RUnlock()
@@ -122,7 +122,7 @@ func (h *serviceHelper) getRunEventCounter(component, eventType string) promethe
 	if h == nil {
 		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(component, eventType)
 	}
-	key := mvMetricComponentTypeKey{component: component, typ: eventType}
+	key := mviewMetricComponentTypeKey{component: component, typ: eventType}
 	h.runEventCounterCache.mu.RLock()
 	if counter, ok := h.runEventCounterCache.data[key]; ok {
 		h.runEventCounterCache.mu.RUnlock()

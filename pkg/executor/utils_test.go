@@ -228,7 +228,7 @@ func (m *mockSQLExecutor) ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.Re
 func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testing.T) {
 	exec := &mockSQLExecutor{}
 	lastPurgedTSO := uint64(200)
-	nextTime := "2026-03-08 00:00:00"
+	nextPurgeUnixSeconds := int64(1_772_928_000)
 
 	require.NoError(
 		t,
@@ -237,7 +237,7 @@ func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testi
 			exec,
 			int64(123),
 			&lastPurgedTSO,
-			&nextTime,
+			&nextPurgeUnixSeconds,
 			true,
 		),
 	)
@@ -248,8 +248,8 @@ func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testi
 	require.Contains(t, exec.calls[0].sql, "LAST_PURGED_TSO IS NULL OR LAST_PURGED_TSO < %?")
 	require.Equal(t, []any{uint64(200), int64(123), uint64(200)}, exec.calls[0].args)
 
-	require.Contains(t, exec.calls[1].sql, "NEXT_TIME = %?")
-	require.Equal(t, []any{"2026-03-08 00:00:00", int64(123)}, exec.calls[1].args)
+	require.Contains(t, exec.calls[1].sql, "NEXT_PURGE_UNIX_SECONDS = %?")
+	require.Equal(t, []any{int64(1_772_928_000), int64(123)}, exec.calls[1].args)
 }
 
 func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
@@ -364,7 +364,6 @@ func TestDeriveMLogPurgeThrottleDeadline(t *testing.T) {
 			context.Background(),
 			nil,
 			nil,
-			nil,
 			false,
 			"test",
 			"t",
@@ -377,20 +376,19 @@ func TestDeriveMLogPurgeThrottleDeadline(t *testing.T) {
 
 	t.Run("pick earlier between next time and hardcoded purge planning budget", func(t *testing.T) {
 		baseNow := time.Now().UTC()
-		nextTime := baseNow.Add(90 * time.Second)
+		nextPurgeUnixSeconds := baseNow.Add(90 * time.Second)
 
 		deadline, err := deriveMLogPurgeThrottleDeadline(
 			context.Background(),
 			nil,
 			nil,
-			nil,
 			false,
 			"test",
 			"t",
-			&nextTime,
+			&nextPurgeUnixSeconds,
 		)
 		require.NoError(t, err)
 		require.NotNil(t, deadline)
-		require.WithinDuration(t, nextTime, *deadline, time.Second)
+		require.WithinDuration(t, nextPurgeUnixSeconds, *deadline, time.Second)
 	})
 }

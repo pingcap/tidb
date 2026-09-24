@@ -43,20 +43,20 @@ Introduce an explicit MV initial-build state in `TableInfo.MaterializedView`.
 Suggested shape:
 
 ```go
-type MVInitBuildState byte
+type MViewInitBuildState byte
 
 const (
-    // MVInitBuildReady is zero for backward compatibility:
+    // MViewInitBuildReady is zero for backward compatibility:
     // existing clusters have persisted MV metadata without this field,
     // and their MVs are already built — they default to Ready.
-    MVInitBuildReady MVInitBuildState = iota
-    MVInitBuildDeferred
-    MVInitBuildBuilding
+    MViewInitBuildReady MViewInitBuildState = iota
+    MViewInitBuildDeferred
+    MViewInitBuildBuilding
 )
 
 type MaterializedViewInfo struct {
     ...
-    InitBuildState MVInitBuildState `json:"init_build_state,omitempty"`
+    InitBuildState MViewInitBuildState `json:"init_build_state,omitempty"`
 }
 ```
 
@@ -147,7 +147,7 @@ During this phase:
 After the initial build succeeds:
 
 - update `mysql.tidb_mview_refresh_info` with the final build read tso and
-  create-time `NEXT_TIME`
+  create-time `NEXT_REFRESH_UNIX_SECONDS`
 - update `MaterializedView.InitBuildState` from `Building` to `Ready`
 - update schema version again
 - finish the DDL job
