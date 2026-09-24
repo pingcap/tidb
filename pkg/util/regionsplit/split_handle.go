@@ -42,6 +42,44 @@ type SplitHandleCols interface {
 	IsInt() bool
 }
 
+// GetHandleColumnInfos returns the columns used to encode a table handle.
+func GetHandleColumnInfos(tbInfo *model.TableInfo) []*model.ColumnInfo {
+	switch {
+	case tbInfo.PKIsHandle:
+		if col := tbInfo.GetPkColInfo(); col != nil {
+			return []*model.ColumnInfo{col}
+		}
+	case tbInfo.IsCommonHandle:
+		if pkIdx := tables.FindPrimaryIndex(tbInfo); pkIdx != nil {
+			cols := make([]*model.ColumnInfo, 0, len(pkIdx.Columns))
+			for _, idxCol := range pkIdx.Columns {
+				cols = append(cols, tbInfo.Columns[idxCol.Offset])
+			}
+			return cols
+		}
+	default:
+		return []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+	}
+	return nil
+}
+
+// ConvertValueToColumnType converts value to the target column type and
+// normalizes conversion errors used by region split statements and policies.
+func ConvertValueToColumnType(value types.Datum, col *model.ColumnInfo, typeCtx types.Context) (types.Datum, error) {
+	d, err := value.ConvertTo(typeCtx, &col.FieldType)
+	if err != nil {
+		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
+			return d, err
+		}
+		valStr, err1 := value.ToString()
+		if err1 != nil {
+			return d, err
+		}
+		return d, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
+	}
+	return d, nil
+}
+
 // calculateIntBoundValue calculates the lower value and step for int handle split.
 // This function strictly follows the logic from SplitTableRegionExec.calculateIntBoundValue.
 // The splitRangeError parameter should be a terror.Error like exeerrors.ErrInvalidSplitRegionRanges.

@@ -330,6 +330,47 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 		require.True(t, types.ErrTruncated.Equal(err), "unexpected error: %v", err)
 	})
 
+	// Policies written by an older TiDB version may contain bounds that cannot
+	// be converted. Reapplying such metadata must skip the entire policy before
+	// issuing any split request.
+	t.Run("pre-fix unconvertible persisted policy is skipped", func(t *testing.T) {
+		for _, test := range []struct {
+			name      string
+			createSQL string
+			indexName string
+		}{
+			{
+				name:      "table policy",
+				createSQL: "create table t (id bigint primary key)",
+			},
+			{
+				name:      "index policy",
+				createSQL: "create table t (id bigint primary key, v bigint, index idx_v(v))",
+				indexName: "idx_v",
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				tblInfo, _ := buildSplitPolicyTestTableInfo(t, test.createSQL)
+				policy := &model.RegionSplitPolicy{
+					Lower:   []string{"'not-an-integer'"},
+					Upper:   []string{"10000"},
+					Regions: 4,
+				}
+				if test.indexName == "" {
+					tblInfo.TableSplitPolicy = policy
+				} else {
+					idxInfo := tblInfo.FindIndexByName(test.indexName)
+					require.NotNil(t, idxInfo)
+					idxInfo.RegionSplitPolicy = policy
+				}
+
+				store := &fakeAutoPreSplitStore{}
+				splitTableRegion(mock.NewContext(), store, tblInfo, vardef.ScatterOff)
+				require.Empty(t, store.calls)
+			})
+		}
+	})
+
 	// CREATE and ALTER both set TruncateAsWarning when sql_mode is non-strict,
 	// then call normalizeSplitPolicy. The invalid bound must still fail.
 	t.Run("non-strict sql mode rejects unconvertible bound", func(t *testing.T) {
@@ -455,7 +496,7 @@ func oneShotCommonHandleSplitKeys(t *testing.T, createSQL string, sctx sessionct
 	pk := tables.FindPrimaryIndex(tblInfo)
 	require.NotNil(t, pk)
 	sc := sctx.GetSessionVars().StmtCtx
-	cols := splitPolicyHandleColumns(tblInfo)
+	cols := regionsplit.GetHandleColumnInfos(tblInfo)
 	lower, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Lower), cols, sc.TypeCtx())
 	require.NoError(t, err)
 	upper, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Upper), cols, sc.TypeCtx())
