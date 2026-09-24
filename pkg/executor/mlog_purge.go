@@ -524,11 +524,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	var nextUnixSeconds *int64
 	shouldUpdateNext := false
 	if isInternalSQL {
-		tz, tzErr := mlogInfo.PurgeScheduleTimeZone.GetLocation()
-		if tzErr != nil {
-			return finalizeFailure(tzErr)
-		}
-		nextUnixSeconds, shouldUpdateNext, err = deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo, tz)
+		nextUnixSeconds, shouldUpdateNext, err = deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo)
 		if err != nil {
 			return finalizeFailure(err)
 		}
@@ -1085,11 +1081,7 @@ func deriveMLogPurgeThrottleDeadline(
 		if mlogInfo == nil || evalSctx == nil {
 			return nil, errors.New("purge materialized view log: schedule evaluation metadata is unavailable")
 		}
-		tz, err := mlogInfo.PurgeScheduleTimeZone.GetLocation()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		next, shouldUpdate, err := deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo, tz)
+		next, shouldUpdate, err := deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1378,14 +1370,13 @@ func deriveMLogPurgeNextUnixSeconds(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
 	mlogInfo *model.MaterializedViewLogInfo,
-	scheduleTimeZone *time.Location,
 ) (*int64, bool, error) {
 	if strings.TrimSpace(mlogInfo.PurgeNext) == "" {
 		return nil, true, nil
 	}
 	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
 		kctx, evalSctx, mlogInfo.PurgeNext,
-		mlogInfo.PurgeScheduleSQLMode, scheduleTimeZone,
+		mlogInfo.PurgeScheduleSQLMode,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1393,7 +1384,7 @@ func deriveMLogPurgeNextUnixSeconds(
 	if nextAt == nil {
 		return nil, shouldUpdate, nil
 	}
-	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt)
 	return nextUnixSeconds, shouldUpdate, errors.Trace(err)
 }
 

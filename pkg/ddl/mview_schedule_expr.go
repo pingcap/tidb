@@ -68,7 +68,6 @@ func deriveMaterializedScheduleNextUnixSecondsForDDL(
 	startExpr string,
 	nextExpr string,
 	scheduleSQLMode mysql.SQLMode,
-	scheduleTimeZone *time.Location,
 	logNullUpdate func(schemaName string, tableName string, nullExprClause string, startExpr string, nextExpr string),
 ) (nextUnixSeconds *int64, shouldUpdate bool, err error) {
 	// shouldUpdate reports whether the persisted NEXT_* value should be overwritten.
@@ -77,7 +76,7 @@ func deriveMaterializedScheduleNextUnixSecondsForDDL(
 	if startExpr == "" && nextExpr == "" {
 		return nil, true, nil
 	}
-	restore := expression.SetMaterializedScheduleEvalSession(ddlSess.Session(), scheduleSQLMode, scheduleTimeZone)
+	restore := expression.SetMaterializedScheduleEvalSession(ddlSess.Session(), scheduleSQLMode)
 	defer restore()
 
 	nowTime, err := loadCreateMaterializedViewScheduleNow(ctx, ddlSess)
@@ -96,11 +95,11 @@ func deriveMaterializedScheduleNextUnixSecondsForDDL(
 			return nil, true, nil
 		}
 		if nextExpr == "" {
-			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt, scheduleTimeZone)
+			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt)
 			return nextUnixSeconds, true, errors.Trace(err)
 		}
 
-		goNow, err := nowTime.GoTime(scheduleTimeZone)
+		goNow, err := nowTime.GoTime(time.UTC)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -114,10 +113,10 @@ func deriveMaterializedScheduleNextUnixSecondsForDDL(
 				logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
 				return nil, true, nil
 			}
-			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt)
 			return nextUnixSeconds, true, errors.Trace(err)
 		}
-		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt, scheduleTimeZone)
+		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt)
 		return nextUnixSeconds, true, errors.Trace(err)
 	}
 
@@ -130,7 +129,7 @@ func deriveMaterializedScheduleNextUnixSecondsForDDL(
 			logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
 			return nil, true, nil
 		}
-		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt)
 		return nextUnixSeconds, true, errors.Trace(err)
 	}
 	return
@@ -213,11 +212,7 @@ func deriveCreateMaterializedViewNextUnixSeconds(
 	if mviewInfo == nil {
 		return nil, false, nil
 	}
-	tz, err := mviewInfo.RefreshScheduleTimeZone.GetLocation()
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	return deriveMaterializedScheduleNextUnixSecondsForDDL(ctx, ddlSess, mviewSchemaName, mvTableName, mviewInfo.RefreshStartWith, mviewInfo.RefreshNext, mviewInfo.RefreshScheduleSQLMode, tz, logCreateMaterializedViewNextUnixSecondsUpdateNull)
+	return deriveMaterializedScheduleNextUnixSecondsForDDL(ctx, ddlSess, mviewSchemaName, mvTableName, mviewInfo.RefreshStartWith, mviewInfo.RefreshNext, mviewInfo.RefreshScheduleSQLMode, logCreateMaterializedViewNextUnixSecondsUpdateNull)
 }
 
 func deriveCreateMaterializedViewLogNextUnixSeconds(
@@ -230,9 +225,5 @@ func deriveCreateMaterializedViewLogNextUnixSeconds(
 	if mlogInfo == nil {
 		return nil, false, nil
 	}
-	tz, err := mlogInfo.PurgeScheduleTimeZone.GetLocation()
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	return deriveMaterializedScheduleNextUnixSecondsForDDL(ctx, ddlSess, mlogSchemaName, mlogTableName, mlogInfo.PurgeStartWith, mlogInfo.PurgeNext, mlogInfo.PurgeScheduleSQLMode, tz, logCreateMaterializedViewLogNextUnixSecondsUpdateNull)
+	return deriveMaterializedScheduleNextUnixSecondsForDDL(ctx, ddlSess, mlogSchemaName, mlogTableName, mlogInfo.PurgeStartWith, mlogInfo.PurgeNext, mlogInfo.PurgeScheduleSQLMode, logCreateMaterializedViewLogNextUnixSecondsUpdateNull)
 }

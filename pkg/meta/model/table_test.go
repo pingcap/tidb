@@ -255,7 +255,6 @@ func TestMaterializedViewInfoClone(t *testing.T) {
 		RefreshScheduleSQLMode:          mysql.ModePipesAsConcat,
 		DefinitionDivPrecisionIncrement: 4,
 		DefinitionTimeZone:              TimeZoneLocation{Name: "UTC"},
-		RefreshScheduleTimeZone:         TimeZoneLocation{Name: "Asia/Shanghai"},
 	}
 	_, err := info.DefinitionTimeZone.GetLocation()
 	require.NoError(t, err)
@@ -267,7 +266,6 @@ func TestMaterializedViewInfoClone(t *testing.T) {
 	require.Equal(t, info.RefreshScheduleSQLMode, clone.RefreshScheduleSQLMode)
 	require.Equal(t, info.DefinitionDivPrecisionIncrement, clone.DefinitionDivPrecisionIncrement)
 	require.Equal(t, info.DefinitionTimeZone.Name, clone.DefinitionTimeZone.Name)
-	require.Equal(t, info.RefreshScheduleTimeZone.Name, clone.RefreshScheduleTimeZone.Name)
 	location, err := clone.DefinitionTimeZone.GetLocation()
 	require.NoError(t, err)
 	require.Equal(t, "UTC", location.String())
