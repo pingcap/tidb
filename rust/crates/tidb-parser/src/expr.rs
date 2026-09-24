@@ -382,13 +382,19 @@ impl Parser {
                     .parse::<f64>()
                     .map_err(|_| self.err_here("invalid float literal"))?;
                 // Rust's own float parser saturates an overflowing literal
-                // (e.g. `1e400`) to infinity rather than erroring, but real
-                // TiDB rejects it at PARSE time (confirmed via `godump
-                // restore`, not assumed — the boundary is exactly
-                // `f64::MAX`, `1.7976931348623157e308` parses, `1.8e308`
-                // doesn't), so this must too.
+                // (e.g. `1e400`) to infinity rather than erroring. Real TiDB
+                // rejects it at PARSE time through the typed
+                // `ErrIllegalValueForType` (1367, SQLSTATE 22007) —
+                // `insert into t values (1e400)` answers `Illegal double
+                // '1e400' value found during parsing`, not yacc's 1064 — so
+                // the refusal must carry the errno, not the grammar error
+                // (the boundary is exactly `f64::MAX`, `1.7976931348623157e308`
+                // parses, `1.8e308` doesn't).
                 if !f.is_finite() {
-                    return Err(self.err_here("float literal out of range"));
+                    return Err(self.err_coded(
+                        1367,
+                        &format!("Illegal double '{}' value found during parsing", t.text),
+                    ));
                 }
                 Ok(Expr::Float(f))
             }
