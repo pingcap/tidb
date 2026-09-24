@@ -2992,6 +2992,16 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 )
                             })
                             .collect();
+                        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                            eprintln!(
+                                "DSDBG table={} rows={} conds={} asked={} stats_rows={}",
+                                op.table_name,
+                                stats.row_count(),
+                                op.pushed_down_conds.len(),
+                                self.data_source_asked_groups.len(),
+                                stats.row_count()
+                            );
+                        }
                         op.base.base.set_stats(Some(stats.clone()));
                         StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
                     }
@@ -3025,6 +3035,18 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             join_reorder_threshold: self.join_reorder_threshold,
                         };
                         let equal_cond_out_cnt = estimate_full_join_row_count(&input);
+                        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                            eprintln!(
+                                "NDVDBG lkeys_ndv={} rkeys_ndv={} lrows={} rrows={} lgroups={:?} rgroups={:?} out={}",
+                                input.left_join_keys.ndv,
+                                input.right_join_keys.ndv,
+                                left.row_count(),
+                                right.row_count(),
+                                left.group_ndvs(),
+                                right.group_ndvs(),
+                                equal_cond_out_cnt
+                            );
+                        }
                         StatsOutcome::Done(
                             op.derive_stats(
                                 &child_stats,

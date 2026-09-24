@@ -1081,21 +1081,16 @@ impl LogicalPlan {
                     extracted.push(left_keys);
                     extracted.push(right_keys);
                 }
-                // Go indexes the outer child unconditionally
-                // (`p.Children()[0].Schema()` / `p.Children()[1].Schema()`);
-                // only the schema itself may be absent.
-                let outer_schema = match op.join_type {
-                    crate::find_best_task::LogicalJoinType::LeftOuter
-                    | crate::find_best_task::LogicalJoinType::LeftOuterSemi
-                    | crate::find_best_task::LogicalJoinType::AntiLeftOuterSemi => {
-                        self.children()[0].schema()
-                    }
-                    crate::find_best_task::LogicalJoinType::RightOuter => {
-                        self.children()[1].schema()
-                    }
-                    _ => None,
-                };
-                if let Some(schema) = outer_schema {
+                // GO hands the translated groups to BOTH children through
+                // their own schemas, indexing Children()[0] and [1]
+                // unconditionally (a malformed tree panics; only a nil SCHEMA
+                // is tolerated). Dropping them at inner joins starved the
+                // datasources of asked groups, which silenced the index
+                // GroupNDVs for joins like q24_1's composite-key probe.
+                for position in [0usize, 1usize] {
+                    let Some(schema) = self.children()[position].schema() else {
+                        continue;
+                    };
                     let (_, offsets) = schema.extract_col_groups(col_groups);
                     extracted.extend(offsets.into_iter().map(|offset| col_groups[offset].clone()));
                 }
