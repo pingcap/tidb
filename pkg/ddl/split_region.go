@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -263,11 +264,12 @@ func prepareSplitPolicy(sctx sessionctx.Context, policy *model.RegionSplitPolicy
 	if err != nil {
 		return nil, errors.Annotate(err, "resolve time zone")
 	}
-	lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower, boundCols, policyCtx.TypeCtx())
+	exprCtx := splitPolicyExprCtx(policyCtx.TimeZone())
+	lower, err := parseValuesToDatums(exprCtx, policy.Lower, boundCols)
 	if err != nil {
 		return nil, errors.Annotate(err, "parse lower bound")
 	}
-	upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper, boundCols, policyCtx.TypeCtx())
+	upper, err := parseValuesToDatums(exprCtx, policy.Upper, boundCols)
 	if err != nil {
 		return nil, errors.Annotate(err, "parse upper bound")
 	}
@@ -279,11 +281,30 @@ func prepareSplitPolicy(sctx sessionctx.Context, policy *model.RegionSplitPolicy
 	}, nil
 }
 
+func prepareTableSplitPolicy(sctx sessionctx.Context, tbInfo *model.TableInfo, policy *model.RegionSplitPolicy) (*preparedSplitPolicy, error) {
+	boundCols := regionsplit.GetHandleColumnInfos(tbInfo)
+	prepared, err := prepareSplitPolicy(sctx, policy, boundCols)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSplitPolicyBoundsNotNull(prepared.lower, boundCols); err != nil {
+		return nil, err
+	}
+	if err := checkSplitPolicyBoundsNotNull(prepared.upper, boundCols); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func prepareIndexSplitPolicy(sctx sessionctx.Context, tbInfo *model.TableInfo, idx *model.IndexInfo, policy *model.RegionSplitPolicy) (*preparedSplitPolicy, error) {
+	return prepareSplitPolicy(sctx, policy, splitPolicyIndexColumns(tbInfo, idx))
+}
+
 func prepareSplitPoliciesForTable(sctx sessionctx.Context, tbInfo *model.TableInfo) *preparedSplitPolicies {
 	prepared := &preparedSplitPolicies{}
 	if policy := tbInfo.TableSplitPolicy; policy != nil {
 		var err error
-		prepared.table, err = prepareSplitPolicy(sctx, policy, regionsplit.GetHandleColumnInfos(tbInfo))
+		prepared.table, err = prepareTableSplitPolicy(sctx, tbInfo, policy)
 		if err != nil {
 			// Metadata written by an older TiDB version can contain a time zone
 			// or bound that is no longer valid. Skip only that policy.
@@ -299,7 +320,7 @@ func prepareSplitPoliciesForTable(sctx sessionctx.Context, tbInfo *model.TableIn
 		if policy == nil || (tbInfo.HasClusteredIndex() && idx.Primary) {
 			continue
 		}
-		values, err := prepareSplitPolicy(sctx, policy, splitPolicyIndexColumns(tbInfo, idx))
+		values, err := prepareIndexSplitPolicy(sctx, tbInfo, idx, policy)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to prepare index split policy",
 				zap.String("table", tbInfo.Name.O),
@@ -384,11 +405,10 @@ index:
 // handle column is converted to an integer value instead of retaining its
 // untyped string form. See https://github.com/pingcap/tidb/issues/71395.
 //
-// typeCtx is a detached context. It does not inherit the applying session's
-// SQL mode, so a non-strict worker cannot turn an invalid bound into a warning
-// and a zero value. Policies stored before this validation existed can still
-// fail conversion; callers log that error and skip the policy.
-func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string, cols []*model.ColumnInfo, typeCtx types.Context) ([]types.Datum, error) {
+// exprCtx is detached from the applying session's SQL mode and time zone.
+// Policies stored before this validation existed can still fail conversion;
+// callers log that error and skip the policy.
+func parseValuesToDatums(exprCtx expression.BuildContext, values []string, cols []*model.ColumnInfo) ([]types.Datum, error) {
 	datums := make([]types.Datum, len(values))
 	// Only convert when the bound count matches the target columns. A mismatch
 	// means the persisted policy is malformed, keep the previous best-effort
@@ -404,7 +424,7 @@ func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string, cols []*m
 			return nil, err
 		}
 		if convert {
-			datum, err = regionsplit.ConvertValueToColumnType(datum, cols[i], typeCtx)
+			datum, err = regionsplit.ConvertValueToColumnType(datum, cols[i], exprCtx.GetEvalCtx().TypeCtx())
 			if err != nil {
 				return nil, err
 			}
@@ -412,6 +432,32 @@ func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string, cols []*m
 		datums[i] = datum
 	}
 	return datums, nil
+}
+
+func checkSplitPolicyBoundsNotNull(values []types.Datum, boundCols []*model.ColumnInfo) error {
+	for i, value := range values {
+		if !value.IsNull() {
+			continue
+		}
+		columnName := ""
+		if i < len(boundCols) {
+			columnName = boundCols[i].Name.O
+		}
+		return plannererrors.ErrBadNull.GenWithStackByArgs(columnName)
+	}
+	return nil
+}
+
+// splitPolicyExprCtx evaluates a policy with deterministic defaults in its
+// persisted time zone, independent of the applying session.
+func splitPolicyExprCtx(loc *time.Location) expression.BuildContext {
+	if loc == nil {
+		loc = time.UTC
+	}
+	evalCtx := exprstatic.NewEvalContext(
+		exprstatic.WithLocation(loc),
+	)
+	return exprstatic.NewExprContext(exprstatic.WithEvalCtx(evalCtx))
 }
 
 // splitPolicyApplyCtx returns a detached statement context for converting and
@@ -435,16 +481,6 @@ func splitPolicyApplyCtx(sctx sessionctx.Context, timeZone string) (*stmtctx.Sta
 		loc = time.UTC
 	}
 	return stmtctx.NewStmtCtxWithTimeZone(loc), nil
-}
-
-// splitPolicyTypeCtx returns the detached conversion context used when a policy
-// is defined. It uses the defining session's time zone and default statement
-// flags, so non-strict sql_mode cannot persist a bound that later fails to convert.
-func splitPolicyTypeCtx(loc *time.Location) types.Context {
-	if loc == nil {
-		loc = time.UTC
-	}
-	return stmtctx.NewStmtCtxWithTimeZone(loc).TypeCtx()
 }
 
 // splitPolicyIndexColumns returns the columns an index split policy bound is
@@ -503,17 +539,17 @@ func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexO
 	if loc == nil {
 		loc = time.UTC
 	}
-	typeCtx := splitPolicyTypeCtx(loc)
+	exprCtx := splitPolicyExprCtx(loc)
 	policy := &model.RegionSplitPolicy{
 		Regions:  splitOpt.SplitOpt.Num,
 		TimeZone: timeutil.ZoneName(loc),
 	}
 	var err error
-	policy.Lower, err = normalizeSplitPolicyBounds(ctx, splitOpt.SplitOpt.Lower, boundCols, typeCtx)
+	policy.Lower, err = normalizeSplitPolicyBounds(exprCtx, splitOpt.SplitOpt.Lower, boundCols, splitOpt.TableLevel)
 	if err != nil {
 		return nil, "", err
 	}
-	policy.Upper, err = normalizeSplitPolicyBounds(ctx, splitOpt.SplitOpt.Upper, boundCols, typeCtx)
+	policy.Upper, err = normalizeSplitPolicyBounds(exprCtx, splitOpt.SplitOpt.Upper, boundCols, splitOpt.TableLevel)
 	if err != nil {
 		return nil, "", err
 	}
@@ -523,7 +559,7 @@ func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexO
 
 // normalizeSplitPolicyBounds validates each bound expression, converts it to the
 // matching column type, and returns the restored SQL text.
-func normalizeSplitPolicyBounds(ctx expression.BuildContext, exprs []ast.ExprNode, boundCols []*model.ColumnInfo, typeCtx types.Context) ([]string, error) {
+func normalizeSplitPolicyBounds(ctx expression.BuildContext, exprs []ast.ExprNode, boundCols []*model.ColumnInfo, rejectNull bool) ([]string, error) {
 	var buf strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 	bounds := make([]string, len(exprs))
@@ -540,8 +576,12 @@ func normalizeSplitPolicyBounds(ctx expression.BuildContext, exprs []ast.ExprNod
 		// Convert with a detached strict context so an unconvertible bound is
 		// rejected here instead of being stored and skipped when the policy is
 		// applied later.
-		if _, err := regionsplit.ConvertValueToColumnType(value, boundCols[i], typeCtx); err != nil {
+		converted, err := regionsplit.ConvertValueToColumnType(value, boundCols[i], ctx.GetEvalCtx().TypeCtx())
+		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if rejectNull && converted.IsNull() {
+			return nil, plannererrors.ErrBadNull.GenWithStackByArgs(boundCols[i].Name.O)
 		}
 		if err := expr.Restore(restoreCtx); err != nil {
 			return nil, errors.Trace(err)

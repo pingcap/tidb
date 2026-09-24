@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -330,6 +331,14 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 		require.True(t, types.ErrTruncated.Equal(err), "unexpected error: %v", err)
 	})
 
+	t.Run("null table bound is rejected", func(t *testing.T) {
+		tblInfo, createStmt := buildSplitPolicyTestTableInfo(t,
+			"create table t (id bigint primary key) split between (null) and (10000) regions 4")
+		_, _, err := normalizeSplitPolicy(mock.NewContext().GetExprCtx(), createStmt.SplitIndex[0], tblInfo)
+		require.Error(t, err)
+		require.True(t, plannererrors.ErrBadNull.Equal(err), "unexpected error: %v", err)
+	})
+
 	// Policies written by an older TiDB version may contain bounds that cannot
 	// be converted. Reapplying such metadata must skip the entire policy before
 	// issuing any split request.
@@ -369,6 +378,35 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 				require.Empty(t, store.calls)
 			})
 		}
+	})
+
+	t.Run("pre-fix null table bound is skipped", func(t *testing.T) {
+		tblInfo, _ := buildSplitPolicyTestTableInfo(t, "create table t (id bigint primary key)")
+		tblInfo.TableSplitPolicy = &model.RegionSplitPolicy{
+			Lower:   []string{"NULL"},
+			Upper:   []string{"10000"},
+			Regions: 4,
+		}
+
+		store := &fakeAutoPreSplitStore{}
+		splitTableRegion(mock.NewContext(), store, tblInfo, vardef.ScatterOff)
+		require.Empty(t, store.calls)
+	})
+
+	t.Run("null index bound remains valid", func(t *testing.T) {
+		tblInfo, _ := buildSplitPolicyTestTableInfo(t,
+			"create table t (id bigint primary key, v bigint, index idx_v(v))")
+		idxInfo := tblInfo.FindIndexByName("idx_v")
+		require.NotNil(t, idxInfo)
+		idxInfo.RegionSplitPolicy = &model.RegionSplitPolicy{
+			Lower:   []string{"NULL"},
+			Upper:   []string{"10000"},
+			Regions: 4,
+		}
+
+		store := &fakeAutoPreSplitStore{}
+		splitTableRegion(mock.NewContext(), store, tblInfo, vardef.ScatterOff)
+		require.Len(t, store.calls, 1)
 	})
 
 	// CREATE and ALTER both set TruncateAsWarning when sql_mode is non-strict,
@@ -424,6 +462,23 @@ func TestSplitPolicyConvertsBoundsToColumnType(t *testing.T) {
 		require.NotEqual(t, reappliedAsUTC, keys)
 	})
 
+	t.Run("timestamp expression keeps defining time zone", func(t *testing.T) {
+		const createSQL = "create table t (id bigint primary key, ts timestamp, index idx_ts(ts)) split index idx_ts between (from_unixtime(1577836800)) and (from_unixtime(1577923200)) regions 4"
+		defineCtx := mock.NewContext()
+		defineLoc, err := timeutil.ParseTimeZone("+08:00")
+		require.NoError(t, err)
+		defineCtx.ResetSessionAndStmtTimeZone(defineLoc)
+		applyCtx := mock.NewContext()
+		utc, err := timeutil.ParseTimeZone("+00:00")
+		require.NoError(t, err)
+		applyCtx.ResetSessionAndStmtTimeZone(utc)
+
+		keys := splitKeysForPersistedPolicy(t, createSQL, defineCtx, applyCtx)
+		defined := timestampIndexSplitKeys(t, createSQL, defineLoc)
+		require.NotEmpty(t, keys)
+		require.Equal(t, defined, keys)
+	})
+
 	t.Run("clustered prefix primary key matches one-shot keys", func(t *testing.T) {
 		const createSQL = "create table t (a varchar(20), b int, primary key (a(3), b) clustered) split between ('abcdef', 0) and ('uvwxyz', 10000) regions 4"
 		sctx := mock.NewContext()
@@ -463,12 +518,11 @@ func timestampIndexSplitKeys(t *testing.T, createSQL string, loc *time.Location)
 	idx := tblInfo.FindIndexByName("idx_ts")
 	require.NotNil(t, idx)
 	tblInfo.ID = 100
-	sctx := mock.NewContext()
-	sctx.ResetSessionAndStmtTimeZone(loc)
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
-	lower, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Lower), splitPolicyIndexColumns(tblInfo, idx), sc.TypeCtx())
+	exprCtx := splitPolicyExprCtx(loc)
+	lower, err := parseValuesToDatums(exprCtx, restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Lower), splitPolicyIndexColumns(tblInfo, idx))
 	require.NoError(t, err)
-	upper, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Upper), splitPolicyIndexColumns(tblInfo, idx), sc.TypeCtx())
+	upper, err := parseValuesToDatums(exprCtx, restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Upper), splitPolicyIndexColumns(tblInfo, idx))
 	require.NoError(t, err)
 	keys, err := regionsplit.GetSplitIndexKeys(sc, tblInfo, idx, tblInfo.ID, lower, upper, int(createStmt.SplitIndex[0].SplitOpt.Num), nil, dbterror.ErrInvalidSplitRegionRanges)
 	require.NoError(t, err)
@@ -497,9 +551,10 @@ func oneShotCommonHandleSplitKeys(t *testing.T, createSQL string, sctx sessionct
 	require.NotNil(t, pk)
 	sc := sctx.GetSessionVars().StmtCtx
 	cols := regionsplit.GetHandleColumnInfos(tblInfo)
-	lower, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Lower), cols, sc.TypeCtx())
+	exprCtx := splitPolicyExprCtx(sc.TimeZone())
+	lower, err := parseValuesToDatums(exprCtx, restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Lower), cols)
 	require.NoError(t, err)
-	upper, err := parseValuesToDatums(sctx.GetExprCtx(), restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Upper), cols, sc.TypeCtx())
+	upper, err := parseValuesToDatums(exprCtx, restoreBounds(t, createStmt.SplitIndex[0].SplitOpt.Upper), cols)
 	require.NoError(t, err)
 
 	tableCols := make([]*expression.Column, len(tblInfo.Columns))
