@@ -1421,6 +1421,35 @@ fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<
 /// column when `PKIsHandle`, ELSE the schema's extra-handle column — so a
 /// no-PK table's implicit `_tidb_rowid` walk satisfies
 /// `ORDER BY _tidb_rowid` for free. Verified live (Go master fdfadb96b2):
+/// Whether `condition` is an `eq`/`in` scalar function whose FIRST argument
+/// is the column with `unique_id` and whose remaining arguments are
+/// constants — the shape of a point range. Used by the table-path skyline
+/// prune: only point-range predicates prove index dominance.
+fn is_eq_or_in_on_column(condition: &tidb_expr::expression::Expression, unique_id: i64) -> bool {
+    let tidb_expr::expression::Expression::ScalarFunction(function) = condition else {
+        return false;
+    };
+    let name = function.func_name.lowercase();
+    if name != "eq" && name != "in" {
+        return false;
+    }
+    let Some(first) = function.args.first() else {
+        return false;
+    };
+    let tidb_expr::expression::Expression::Column(column) = first else {
+        return false;
+    };
+    if column.unique_id != unique_id {
+        return false;
+    }
+    function.args[1..].iter().all(|argument| {
+        matches!(
+            argument,
+            tidb_expr::expression::Expression::Constant(_)
+        )
+    })
+}
+
 /// `where a > 10 order by _tidb_rowid` on a no-PK table reads
 /// `TableFullScan ... keep order:true`. [`DataSource::handle_is_int`] only
 /// stays true while that handle column survives pruning, so the liveness
@@ -2414,6 +2443,30 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 }
                 let keep_order = ordered;
                 if keep_order && !table_path_matches_order(ds, prop) {
+                    continue 'paths;
+                }
+                // Go `skylinePruning`'s pairwise `compareCandidates` fold runs
+                // BEFORE the candidate loop, so a table path strictly
+                // dominated by an index candidate never reaches
+                // `convertToTableScan` and does not consume a plan id. Port
+                // the dominance case that decides R22: an index whose
+                // leading column carries an EQ/IN access predicate strictly
+                // beats the table scan on access coverage while everything
+                // else ties, so the table path is dropped before its plan id
+                // burns. Column-comparison predicates (R25's
+                // `next_block_number <= block_number`) cannot become point
+                // ranges, so they must NOT trigger this prune.
+                if ds.indexes.iter().any(|source_index| {
+                    source_index.is_public
+                        && !source_index.is_multi_valued
+                        && source_index.columns.first().is_some_and(|first| {
+                            ds.table_columns.get(first.offset).is_some_and(|table_column| {
+                                ds.pushed_down_conds.iter().any(|condition| {
+                                    is_eq_or_in_on_column(condition, table_column.unique_id)
+                                })
+                            })
+                        })
+                }) {
                     continue 'paths;
                 }
                 let mut base = crate::physical::BasePhysicalPlan::new(
