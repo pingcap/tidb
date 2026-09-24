@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
@@ -2857,7 +2858,7 @@ func TestStatementDurationMetrics(t *testing.T) {
 		require.LessOrEqual(t, update.GetSampleSum()-updateBefore.GetSampleSum(), elapsed)
 
 		// The server histogram still measures one whole command, labeled as MultiStmt.
-		dbNames := session.GetDBNames(vars)
+		dbNames := metricsutil.GetDBNames(vars)
 		require.Len(t, dbNames, 1)
 		query := metrics.CommandDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
 		lastStmtQuery := metrics.CommandDurationHistogram.WithLabelValues("Update", dbNames[0], vars.ResourceGroupName)
@@ -2924,7 +2925,7 @@ func TestStatementDurationMetrics(t *testing.T) {
 
 	t.Run("command label boundaries", func(t *testing.T) {
 		checkCommand := func(cmd byte, err error, label string) {
-			dbNames := session.GetDBNames(vars)
+			dbNames := metricsutil.GetDBNames(vars)
 			require.Len(t, dbNames, 1)
 			multi := metrics.CommandDurationHistogram.WithLabelValues("MultiStmt", dbNames[0], vars.ResourceGroupName)
 			single := metrics.CommandDurationHistogram.WithLabelValues("Select", dbNames[0], vars.ResourceGroupName)
