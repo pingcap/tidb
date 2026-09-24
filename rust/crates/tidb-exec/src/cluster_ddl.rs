@@ -2675,8 +2675,8 @@ impl fmt::Display for DdlPlanError {
                 formatter,
                 "global id:{wanted} exceeds the limit:{MAX_USER_GLOBAL_ID}"
             ),
-            Self::Encode(detail) => write!(formatter, "catalog encode failed: {detail}"),
-            Self::Mutations(error) => write!(formatter, "catalog mutations: {error}"),
+            Self::Encode(detail) => write!(formatter, "{detail}"),
+            Self::Mutations(error) => write!(formatter, "{error}"),
         }
     }
 }
