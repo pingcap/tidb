@@ -48,9 +48,9 @@ func TestSelectConstantRequiresTablePrivilege(t *testing.T) {
 	userTk.MustGetErrCode("SELECT 1 FROM leakdb.t LIMIT 1", errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode("SELECT COUNT(*) FROM leakdb.t", errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode("SELECT * FROM leakdb.t", errno.ErrTableaccessDenied)
-	// The fallback is checked first when the user has no SELECT privilege.
-	userTk.MustGetErrCode("SELECT a FROM leakdb.t", errno.ErrTableaccessDenied)
-	userTk.MustGetErrCode("SELECT 1 FROM leakdb.t WHERE a > 0", errno.ErrTableaccessDenied)
+	// A referenced column keeps reporting a column-level error.
+	userTk.MustGetErrCode("SELECT a FROM leakdb.t", errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode("SELECT 1 FROM leakdb.t WHERE a > 0", errno.ErrColumnaccessDenied)
 	// The keyword case must not matter for COUNT, and the point-get fast path
 	// must not bypass the check either.
 	userTk.MustGetErrCode("select count(*) from leakdb.t", errno.ErrTableaccessDenied)
