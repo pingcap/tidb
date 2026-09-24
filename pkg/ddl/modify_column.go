@@ -1020,6 +1020,9 @@ func (w *worker) doModifyColumnTypeWithData(
 				if !done {
 					return ver, err
 				}
+				// The row reorg persists only a job-stage change, so account the
+				// RU staged by its backfill transactions here.
+				accountPendingReorgRU(jobCtx, job, err)
 				if len(changingIdxs) > 0 {
 					job.SnapshotVer = 0
 					job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
