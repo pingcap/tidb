@@ -79,13 +79,10 @@ fn compress(arg: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::new_string(Vec::new()));
     }
 
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    if encoder.write_all(&payload).is_err() {
-        return Ok(Datum::Null);
-    }
-    let Ok(compressed) = encoder.finish() else {
-        return Ok(Datum::Null);
-    };
+    // go's `deflate()` helper: zlib.NewWriter (level 6) + Write + Close —
+    // transcribed bit-exactly in [`go_flate`]; a generic rust zlib backend
+    // makes different encoder choices and diverges on the wire.
+    let compressed = crate::go_flate::go_zlib_deflate(&payload);
     Ok(Datum::new_string(frame_compressed(
         payload.len() as u32,
         compressed,
