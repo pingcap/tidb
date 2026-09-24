@@ -28,9 +28,9 @@
 use serde_json::{Number, Value as Json};
 
 use super::path::{extract, parse_path};
-use super::text::format_json;
 use super::value::{
-    json_document_string, json_sql_string, parse_json, parse_json_document_argument,
+    binary_json_datum, json_document_string, json_sql_string, parse_json,
+    parse_json_document_argument,
 };
 use crate::builtin_ext::BuiltinFuncCache;
 use crate::coerce::coerce_str;
@@ -318,7 +318,7 @@ pub(super) fn json_keys(vals: &[Datum]) -> Result<Datum, EvalError> {
             .map(|key| Json::String(key.to_owned()))
             .collect(),
     );
-    Ok(Datum::new_string(format_json(&keys)))
+    binary_json_datum(keys)
 }
 
 /// `JSON_SUM_CRC32(json_doc)`, port of `builtinJSONSumCRC32Sig.evalInt` in

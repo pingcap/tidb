@@ -27,8 +27,7 @@ use std::collections::HashSet;
 
 use serde_json::Value as Json;
 
-use super::text::format_json;
-use super::value::parse_json_document_argument;
+use super::value::{binary_json_datum, parse_json_document_argument};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 
@@ -46,7 +45,7 @@ pub(super) fn json_extract(vals: &[Datum]) -> Result<Datum, EvalError> {
         paths.push(parse_path(&path)?);
     }
     match extract(&document, &paths) {
-        Some(value) => Ok(Datum::new_string(format_json(&value))),
+        Some(value) => binary_json_datum(value),
         None => Ok(Datum::Null),
     }
 }

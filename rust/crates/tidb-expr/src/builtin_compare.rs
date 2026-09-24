@@ -67,6 +67,14 @@ pub fn infer_compare_type(name: &str) -> Option<FieldType> {
 /// JSON comparison signature when either operand has MySQL type JSON. The
 /// signature then clears `ParseToJSONFlag` on constants and scalar functions,
 /// but deliberately leaves columns and correlated columns unchanged.
+///
+/// A syntactic `CAST(... AS JSON)` is the one function whose flag SURVIVES:
+/// Go's `WrapWithCastAsJSON` wraps it again (`CastJsonAsJson`, whose own
+/// ret type the disable strips), so the disable never reaches the inner
+/// string-source signature that reads the flag (`builtin_cast.go:795` adds
+/// it there). Measured on the oracle: `CAST('123' AS JSON) = CAST(123 AS JSON)`
+/// is TRUE — both sides PARSE — while `JSON_EXTRACT('123', '$') = '123'` is
+/// FALSE — the bare string stays value-semantics.
 pub(crate) fn prepare_json_comparison_args(args: &mut [Expression]) {
     if !args
         .iter()
@@ -78,7 +86,14 @@ pub(crate) fn prepare_json_comparison_args(args: &mut [Expression]) {
         let ret_type = match arg {
             Expression::Column(_) | Expression::CorrelatedColumn(_) => continue,
             Expression::Constant(constant) => constant.ret_type.as_mut(),
-            Expression::ScalarFunction(function) => function.ret_type.as_mut(),
+            Expression::ScalarFunction(function) => {
+                // The syntactic JSON cast keeps its parse semantics in
+                // comparisons; Go's disable strips only the wrapper cast.
+                if function.func_name.lowercase() == "cast_json" {
+                    continue;
+                }
+                function.ret_type.as_mut()
+            }
         };
         if let Some(ret_type) = ret_type {
             ret_type.and_flags(!FieldTypeFlags::PARSE_TO_JSON);

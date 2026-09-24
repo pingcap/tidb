@@ -128,8 +128,10 @@ fn canonical(expected: &str) -> String {
 fn assert_document_or_nil(datum: Datum, expected: Option<&str>, context: &str) {
     let rendered = match datum {
         Datum::Null => None,
-        Datum::String(value) => Some(value.as_utf8().expect("utf8 document").to_owned()),
-        other => panic!("{context}: merge patch should answer text or NULL, got {other:?}"),
+        // The value-slice builtins carry native BinaryJSON cells (go's own
+        // shape), so the canonical rendering happens on the cell.
+        Datum::Json(value) => Some(value.to_string()),
+        other => panic!("{context}: merge patch should answer JSON or NULL, got {other:?}"),
     };
     match (expected, rendered) {
         (None, None) => {}

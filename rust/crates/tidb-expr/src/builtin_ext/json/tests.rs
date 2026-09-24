@@ -31,6 +31,24 @@ fn s(value: &str) -> Datum {
     Datum::new_string(value.to_string())
 }
 
+/// The expected result of a JSON-returning builtin: a native BinaryJSON cell
+/// (go master's own value shape), parsed from the same canonical text the
+/// old text-shaped answers rendered.
+fn j(value: &str) -> Datum {
+    Datum::Json(tidb_datatype::BinaryJSON::parse(value).expect("fixture parses"))
+}
+
+/// The canonical JSON TEXT a produced datum renders as. The value-slice
+/// builtins now carry native BinaryJSON cells, so a JSON document result
+/// renders through `BinaryJSON`'s MarshalJSON spelling; the tests that pin
+/// the printed format assert this rendering.
+fn rendered(datum: Datum) -> String {
+    match datum {
+        Datum::Json(value) => value.to_string(),
+        other => panic!("expected a native JSON datum, got {other:?}"),
+    }
+}
+
 fn call_result(name: &str, vals: &[Datum]) -> Result<Datum, crate::EvalError> {
     dispatch(name, vals).expect("JSON family should own name/arity")
 }
@@ -83,27 +101,27 @@ fn json_scalar_source_wave_boundaries() {
 /// explicit value-domain boundaries.
 #[test]
 fn json_array_object_go_vectors() {
-    assert_eq!(call("JSON_ARRAY", &[]), s("[]"));
-    assert_eq!(call("JSON_ARRAY", &[Datum::Int(1)]), s("[1]"));
+    assert_eq!(call("JSON_ARRAY", &[]), j("[]"));
+    assert_eq!(call("JSON_ARRAY", &[Datum::Int(1)]), j("[1]"));
     assert_eq!(
         call(
             "JSON_ARRAY",
             &[Datum::Null, s("a"), Datum::Int(3), s(r#"{"a": "b"}"#),],
         ),
-        s(r#"[null, "a", 3, "{\"a\": \"b\"}"]"#),
+        j(r#"[null, "a", 3, "{\"a\": \"b\"}"]"#),
     );
-    assert_eq!(call("JSON_ARRAY", &[Datum::UInt(2)]), s("[2]"));
-    assert_eq!(call("JSON_ARRAY", &[Datum::Real(1.5)]), s("[1.5]"));
+    assert_eq!(call("JSON_ARRAY", &[Datum::UInt(2)]), j("[2]"));
+    assert_eq!(call("JSON_ARRAY", &[Datum::Real(1.5)]), j("[1.5]"));
     // A `Datum::Bytes` is the chunk rewriter's spelling of the SAME SQL
     // string literal the row evaluator spells `Datum::String`, so it is
     // the JSON string "x" -- see [`json_sql_string`] for the named
     // binary-charset boundary this collapses.
     assert_eq!(
         call("JSON_ARRAY", &[Datum::new_bytes(b"x".to_vec())]),
-        s(r#"["x"]"#)
+        j(r#"["x"]"#)
     );
 
-    assert_eq!(call("JSON_OBJECT", &[]), s("{}"));
+    assert_eq!(call("JSON_OBJECT", &[]), j("{}"));
     assert!(call_result(
         "JSON_OBJECT",
         &[Datum::Int(1), Datum::Int(2), Datum::Int(3)]
@@ -114,12 +132,12 @@ fn json_array_object_go_vectors() {
             "JSON_OBJECT",
             &[Datum::Int(1), Datum::Int(2), s("hello"), Datum::Null],
         ),
-        s(r#"{"1": 2, "hello": null}"#),
+        j(r#"{"1": 2, "hello": null}"#),
     );
     assert!(call_result("JSON_OBJECT", &[Datum::Null, Datum::Int(2)]).is_err());
     assert_eq!(
         call("JSON_OBJECT", &[Datum::new_bytes(b"k"), Datum::Int(2)]),
-        s(r#"{"k": 2}"#),
+        j(r#"{"k": 2}"#),
     );
 }
 
@@ -393,14 +411,14 @@ fn containers_paths_and_binary_json_format_match_go() {
                 s("$.a[*].aa")
             ]
         ),
-        s("[\"bb\", \"cc\"]")
+        j("[\"bb\", \"cc\"]")
     );
     assert_eq!(
         call(
             "JSON_EXTRACT",
             &[s("[[0,1],[2,3],[4,[5,6]]]"), s("$[1 to last][1 to last]")]
         ),
-        s("[3, [5, 6]]")
+        j("[3, [5, 6]]")
     );
     assert_eq!(
         format_json(&json!({"b": 2, "a": 1})),
@@ -430,7 +448,7 @@ fn json_extract_go_vectors() {
             "JSON_EXTRACT",
             &[s(document), s("$.a[0].aa[0].aaa"), s("$.aaa")]
         ),
-        s("[1, 2]")
+        j("[1, 2]")
     );
     assert!(call_result(
         "JSON_EXTRACT",
@@ -731,7 +749,7 @@ fn json_keys_go_vectors() {
         (r#"{"a": 1, "b": 2}"#, r#"["a", "b"]"#),
         (r#"{"a": {"c": 3}, "b": 2}"#, r#"["a", "b"]"#),
     ] {
-        assert_eq!(call("JSON_KEYS", &[s(document)]), s(want));
+        assert_eq!(call("JSON_KEYS", &[s(document)]), j(want));
     }
     for (document, path, want) in [
         (r#"{"a": 1}"#, "$.a", None),
@@ -758,7 +776,7 @@ fn json_keys_go_vectors() {
     ] {
         let result = call("JSON_KEYS", &[s(document), s(path)]);
         match want {
-            Some(want) => assert_eq!(result, s(want), "JSON_KEYS path {path:?}"),
+            Some(want) => assert_eq!(result, j(want), "JSON_KEYS path {path:?}"),
             None => assert_eq!(result, Datum::Null, "JSON_KEYS path {path:?}"),
         }
     }
@@ -799,14 +817,14 @@ fn json_remove_go_vectors() {
             "JSON_REMOVE",
             &[s(r#"{"a": [1, 2, {"aa": "xx"}]}"#), s("$.a[2].aa")]
         ),
-        s(r#"{"a": [1, 2, {}]}"#)
+        j(r#"{"a": [1, 2, {}]}"#)
     );
     assert_eq!(
         call(
             "JSON_REMOVE",
             &[s(r#"{"a": [1, 2, {"aa": "xx"}]}"#), s("$.a[1]")]
         ),
-        s(r#"{"a": [1, {"aa": "xx"}]}"#)
+        j(r#"{"a": [1, {"aa": "xx"}]}"#)
     );
     for (paths, want) in [
         (vec!["$.a[2].aa", "$.a[1]"], r#"{"a": [1, {}]}"#),
@@ -817,7 +835,7 @@ fn json_remove_go_vectors() {
     ] {
         let mut args = vec![s(r#"{"a": [1, 2, {"aa": "xx"}]}"#)];
         args.extend(paths.into_iter().map(s));
-        assert_eq!(call("JSON_REMOVE", &args), s(want), "paths {args:?}");
+        assert_eq!(call("JSON_REMOVE", &args), j(want), "paths {args:?}");
     }
     assert_eq!(
         call("JSON_REMOVE", &[s(r#"{"a": 1}"#), Datum::Null]),
@@ -906,7 +924,7 @@ fn json_array_append_go_vectors() {
             r#"[1, 2, 3, {"a": [4, 5, 6]}, 7]"#,
         ),
     ] {
-        assert_eq!(call("JSON_ARRAY_APPEND", &args), s(want), "args {args:?}");
+        assert_eq!(call("JSON_ARRAY_APPEND", &args), j(want), "args {args:?}");
     }
     for args in [
         vec![Datum::Null, s("$"), Datum::Null],
@@ -996,7 +1014,7 @@ fn json_array_insert_go_vectors() {
             r#"["y", "x", "a", {"b": [1, 2]}, [3, 4]]"#,
         ),
     ] {
-        assert_eq!(call("JSON_ARRAY_INSERT", &args), s(want), "args {args:?}");
+        assert_eq!(call("JSON_ARRAY_INSERT", &args), j(want), "args {args:?}");
     }
     for args in [
         vec![Datum::Null, s("$"), Datum::Null],
@@ -1009,9 +1027,9 @@ fn json_array_insert_go_vectors() {
         if args[0] == Datum::Null || args[1] == Datum::Null {
             assert_eq!(result, Ok(Datum::Null));
         } else if args[0] == s("[]") {
-            assert_eq!(result, Ok(s("[null]")));
+            assert_eq!(result, Ok(j("[null]")));
         } else {
-            assert_eq!(result, Ok(s("{}")));
+            assert_eq!(result, Ok(j("{}")));
         }
     }
     for args in [
@@ -1046,7 +1064,7 @@ fn json_array_insert_go_vectors() {
             "JSON_ARRAY_INSERT",
             &[s(r#"{"a":1}"#), s("$.a[0]"), Datum::Null]
         ),
-        s(r#"{"a": 1}"#)
+        j(r#"{"a": 1}"#)
     );
 }
 
@@ -1268,29 +1286,29 @@ fn json_set_insert_replace_go_vectors() {
     );
     assert_eq!(
         call("JSON_SET", &[s("{}"), s("$.a"), Datum::Int(3)]),
-        s(r#"{"a": 3}"#)
+        j(r#"{"a": 3}"#)
     );
     assert_eq!(
         call("JSON_INSERT", &[s("{}"), s("$.a"), Datum::Int(3)]),
-        s(r#"{"a": 3}"#)
+        j(r#"{"a": 3}"#)
     );
     assert_eq!(
         call("JSON_REPLACE", &[s("{}"), s("$.a"), Datum::Int(3)]),
-        s("{}")
+        j("{}")
     );
     assert_eq!(
         call(
             "JSON_SET",
             &[s("{}"), s("$.a"), Datum::Int(3), s("$.b"), s("3"),],
         ),
-        s(r#"{"a": 3, "b": "3"}"#)
+        j(r#"{"a": 3, "b": "3"}"#)
     );
     assert_eq!(
         call(
             "JSON_SET",
             &[s("{}"), s("$.a"), Datum::Null, s("$.b"), s("nil"),],
         ),
-        s(r#"{"a": null, "b": "nil"}"#)
+        j(r#"{"a": null, "b": "nil"}"#)
     );
     // `[0]` selects a NON-ARRAY value itself, but an ARRAY's `[0]` is
     // its FIRST ELEMENT. Reading the shortcut as unconditional made
@@ -1307,15 +1325,15 @@ fn json_set_insert_replace_go_vectors() {
                 Datum::Int(8)
             ],
         ),
-        s("[8, 2]")
+        j("[8, 2]")
     );
     assert_eq!(
         call("JSON_SET", &[s("[1,2]"), s("$[1]"), Datum::Int(9)]),
-        s("[1, 9]")
+        j("[1, 9]")
     );
     assert_eq!(
         call("JSON_SET", &[s("1"), s("$[0]"), Datum::Int(2)]),
-        s("2")
+        j("2")
     );
     assert!(dispatch("JSON_SET", &[s("{}"), s("$.a")]).is_none());
     assert!(call_result("JSON_SET", &[s("{}"), s("$InvalidPath"), Datum::Int(3)]).is_err());
@@ -1339,16 +1357,16 @@ fn json_set_insert_replace_go_vectors() {
 fn json_merge_go_vectors() {
     for name in ["JSON_MERGE", "JSON_MERGE_PRESERVE"] {
         assert_eq!(call(name, &[Datum::Null, Datum::Null]), Datum::Null);
-        assert_eq!(call(name, &[s("{}"), s("[]")]), s("[{}]"));
-        assert_eq!(call(name, &[s("1"), s("2")]), s("[1, 2]"));
-        assert_eq!(call(name, &[s(r#""a""#), s(r#""b""#)]), s(r#"["a", "b"]"#));
+        assert_eq!(call(name, &[s("{}"), s("[]")]), j("[{}]"));
+        assert_eq!(call(name, &[s("1"), s("2")]), j("[1, 2]"));
+        assert_eq!(call(name, &[s(r#""a""#), s(r#""b""#)]), j(r#"["a", "b"]"#));
         assert_eq!(
             call(name, &[s(r#"{"a":1}"#), s(r#"{"a":2}"#)]),
-            s(r#"{"a": [1, 2]}"#)
+            j(r#"{"a": [1, 2]}"#)
         );
         assert_eq!(
             call(name, &[s("{}"), s("[]"), s("3"), s(r#""4""#)]),
-            s(r#"[{}, 3, "4"]"#)
+            j(r#"[{}, 3, "4"]"#)
         );
         assert!(call_result(name, &[s("{}"), s("not-json")]).is_err());
         assert!(dispatch(name, &[s("{}")]).is_none());
@@ -1475,14 +1493,14 @@ fn json_merge_patch_go_vectors() {
         (vec![s(r#"{"a":1}"#), s("null")], "null"),
     ] {
         let got = call_result("JSON_MERGE_PATCH", &args).expect("valid merge patch");
-        assert_eq!(got, s(want), "args {args:?}");
+        assert_eq!(got, j(want), "args {args:?}");
     }
     assert_eq!(
         call(
             "JSON_MERGE_PATCH",
             &[Datum::Null, s("null"), s(r#"{"a":1}"#)]
         ),
-        s(r#"{"a": 1}"#)
+        j(r#"{"a": 1}"#)
     );
     assert_eq!(
         call("JSON_MERGE_PATCH", &[s("null"), s("[1,2,3]"), Datum::Null]),
@@ -1673,20 +1691,23 @@ fn json_length_go_vectors() {
 #[test]
 fn object_keys_print_in_plain_byte_order() {
     assert_eq!(
-        call(
+        rendered(call(
             "JSON_EXTRACT",
             &[s(r#"{"z":1,"B":2,"a":3,"A":4,"_":5,"0":6}"#), s("$")]
-        ),
-        s(r#"{"0": 6, "A": 4, "B": 2, "_": 5, "a": 3, "z": 1}"#)
+        )),
+        r#"{"0": 6, "A": 4, "B": 2, "_": 5, "a": 3, "z": 1}"#
     );
     assert_eq!(
-        call("JSON_KEYS", &[s(r#"{"bb":1,"a":2,"ccc":3,"dd":4}"#)]),
-        s(r#"["a", "bb", "ccc", "dd"]"#)
+        rendered(call(
+            "JSON_KEYS",
+            &[s(r#"{"bb":1,"a":2,"ccc":3,"dd":4}"#)]
+        )),
+        r#"["a", "bb", "ccc", "dd"]"#
     );
     // The separators are `, ` and `: `, not serde's compact form.
     assert_eq!(
-        call("JSON_EXTRACT", &[s(r#"{"b":1,"aa":2}"#), s("$")]),
-        s(r#"{"aa": 2, "b": 1}"#)
+        rendered(call("JSON_EXTRACT", &[s(r#"{"b":1,"aa":2}"#), s("$")])),
+        r#"{"aa": 2, "b": 1}"#
     );
 }
 
@@ -1697,18 +1718,18 @@ fn object_keys_print_in_plain_byte_order() {
 #[test]
 fn json_numbers_print_as_binary_json_does() {
     assert_eq!(
-        call(
+        rendered(call(
             "JSON_EXTRACT",
             &[s("[1.0, 1.5, 1e3, 100000000000000000000, -0.0]"), s("$")]
-        ),
-        s("[1.0, 1.5, 1000.0, 1e20, -0.0]")
+        )),
+        "[1.0, 1.5, 1000.0, 1e20, -0.0]"
     );
     assert_eq!(
-        call(
+        rendered(call(
             "JSON_EXTRACT",
             &[s("[0.1,2.5e-10,1e100,3,-3,1.7976931348623157e308]"), s("$")]
-        ),
-        s("[0.1, 0.00000000025, 1e100, 3, -3, 1.7976931348623157e308]")
+        )),
+        "[0.1, 0.00000000025, 1e100, 3, -3, 1.7976931348623157e308]"
     );
     // Beyond int64: `JSON_TYPE` reports the unsigned kind and the value
     // prints without a decimal point.
@@ -1727,7 +1748,7 @@ fn json_object_duplicate_key_keeps_last() {
             "JSON_OBJECT",
             &[s("k"), Datum::Int(1), s("k"), Datum::Int(2)]
         ),
-        s(r#"{"k": 2}"#)
+        j(r#"{"k": 2}"#)
     );
     assert_eq!(
         call(
@@ -1741,7 +1762,7 @@ fn json_object_duplicate_key_keeps_last() {
                 Datum::Int(3)
             ]
         ),
-        s(r#"{"k": 3}"#)
+        j(r#"{"k": 3}"#)
     );
 }
 
@@ -1858,7 +1879,7 @@ fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
         )
         .expect("JSON_ARRAY is owned")
         .expect("valid vector");
-        assert_eq!(got, s(expected));
+        assert_eq!(got, j(expected));
     }
     // An ordinary (non-binary-charset) STRING datum is unaffected.
     let plain = dispatch_typed(
@@ -1868,7 +1889,7 @@ fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
     )
     .expect("JSON_ARRAY is owned")
     .expect("valid vector");
-    assert_eq!(plain, s(r#"["ab"]"#));
+    assert_eq!(plain, j(r#"["ab"]"#));
 
     // `JSON_OBJECT('k', vb)`.
     let object = dispatch_typed(
@@ -1878,7 +1899,7 @@ fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
     )
     .expect("JSON_OBJECT is owned")
     .expect("valid vector");
-    assert_eq!(object, s(r#"{"k": "base64:type15:YWI="}"#));
+    assert_eq!(object, j(r#"{"k": "base64:type15:YWI="}"#));
 
     // `JSON_INSERT('{}', '$.a', vb)`.
     let inserted = dispatch_typed(
@@ -1888,7 +1909,7 @@ fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
     )
     .expect("JSON_INSERT is owned")
     .expect("valid vector");
-    assert_eq!(inserted, s(r#"{"a": "base64:type15:YWI="}"#));
+    assert_eq!(inserted, j(r#"{"a": "base64:type15:YWI="}"#));
 }
 
 /// [`cast_as_json_typed`]'s BINARY-charset rendering, the same capture as

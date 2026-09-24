@@ -32,7 +32,7 @@ fn compare_source_vector_promotes_real_and_decimal() {
 }
 
 #[test]
-fn json_comparison_treats_an_explicit_cast_string_as_a_json_value() {
+fn json_comparison_parses_an_explicit_cast_string_as_a_document() {
     // pkg/expression/builtin_compare.go::generateCmpSigs clears
     // ParseToJSONFlag on non-column JSON operands. Therefore the explicit
     // cast contributes the JSON string "1", not the JSON number 1.
@@ -69,9 +69,18 @@ fn json_comparison_treats_an_explicit_cast_string_as_a_json_value() {
     let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[field_type], 1);
     chunk.append_json(0, &BinaryJSON::parse(r#""1""#).expect("JSON string"));
 
+    // The syntactic `CAST('1' AS JSON)` PARSES its operand in a comparison
+    // (go shields the inner string-source signature from
+    // `DisableParseJSONFlag4Expr` behind the CastJsonAsJson wrapper), so the
+    // column's JSON string "1" meets the JSON NUMBER 1 and the answer is
+    // FALSE. Captured on the oracle:
+    // `JSON_EXTRACT('"1"', '$') = CAST('1' AS JSON)` -> 0, while
+    // `CAST('1' AS JSON) = CAST('1' AS JSON)` -> 1 and
+    // `JSON_EXTRACT('"1"', '$') = '1'` -> 1 (a bare string stays
+    // value-semantics).
     assert_eq!(
         rewritten.eval(&NoColumns, chunk.get_row(0)),
-        Ok(Datum::Int(1))
+        Ok(Datum::Int(0))
     );
 }
 

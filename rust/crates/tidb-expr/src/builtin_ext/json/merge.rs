@@ -29,8 +29,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value as Json;
 
-use super::text::format_json;
-use super::value::{json_document_string, parse_json};
+use super::value::{binary_json_datum, json_document_string, parse_json};
 use crate::{Datum, EvalError, JsonError};
 
 /// `JSON_MERGE` and `JSON_MERGE_PRESERVE`, ports of `types.MergeBinaryJSON`.
@@ -46,7 +45,7 @@ pub(super) fn json_merge(vals: &[Datum], function: &'static str) -> Result<Datum
         };
         values.push(value);
     }
-    Ok(Datum::new_string(format_json(&merge_json_values(values))))
+    binary_json_datum(merge_json_values(values))
 }
 
 /// One document argument of the `JSON_MERGE*` family.
@@ -146,7 +145,7 @@ pub(super) fn json_merge_patch(vals: &[Datum]) -> Result<Datum, EvalError> {
         target = merge_patch_value(target.as_ref(), patch.as_ref());
     }
     match target {
-        Some(value) => Ok(Datum::new_string(format_json(&value))),
+        Some(value) => binary_json_datum(value),
         None => Ok(Datum::Null),
     }
 }

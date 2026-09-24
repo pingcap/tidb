@@ -74,18 +74,11 @@ pub(super) fn restore_char_result_charset(func: &mut ScalarFunction) -> Result<(
 /// builtins where [`builtin_return_type`] deliberately reports something
 /// else.
 ///
-/// There is exactly one such family today, and its divergence is stated in
-/// full at its arm in [`builtin_return_type`]: this crate has no BinaryJSON
-/// cell, so a JSON-returning builtin is typed `VarString` and evaluates to
-/// the canonical JSON TEXT. That keeps the VALUES byte-identical to TiDB's,
-/// and it is the right trade for evaluation -- but it also ERASES a fact some
-/// callers need, which is what TiDB itself would call the result.
-///
-/// `pkg/ddl/index.go`'s `checkIndexColumn` is such a caller. It refuses an
-/// expression index whose result type is JSON (3753) or BLOB/TEXT (3757), so
-/// the refusal it computes depends on the Go type and not on the cell type
-/// this crate stores the value in. Reading `static_type()` there would answer
-/// `VarString` for `json_extract` and accept an index TiDB refuses.
+/// The only such family left is `json_search`: its Go result is `json`
+/// (MysqlJson) while the value-slice builtins now carry the same JSON cell
+/// type Go does, so their static type IS Go's answer. `pkg/ddl/index.go`'s
+/// `checkIndexColumn` (JSON 3753 / BLOB-TEXT 3757 refusals) reads this code
+/// rather than the cell type, so keep it exact for whatever remains.
 ///
 /// `None` means Go and this crate agree, and the expression's own
 /// `static_type()` is Go's answer too.
@@ -1507,25 +1500,27 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // The JSON family's value slice: JSON evaluated as VALUES. Go types
         // the first group `MysqlJson` and the second group as strings/ints.
         //
-        // DOCUMENTED DIVERGENCE, the same one the temporal casts carry: this
-        // crate has no BinaryJSON value, so a JSON-returning builtin produces
-        // its canonical JSON TEXT (`format_json`, which is
-        // `BinaryJSON.MarshalJSON`'s exact spelling -- byte-sorted keys,
-        // `, ` / `: ` separators). The VALUE therefore matches TiDB
-        // byte for byte; the reported column type is `VarString` where TiDB
-        // says `JSON`. Typing it as Go does would put a string into a JSON
-        // cell, which panics rather than mistyping.
+        // The ETJson group is a native JSON value here too: the JSON builtins
+        // evaluate to `Datum::Json` (Go's BinaryJSON), so a JSON cell stores
+        // a JSON value and the old string-in-JSON-cell panic cannot happen.
+        // Measured against TiDB (`gorun`): `json_extract(j,'$.a')` answers
+        // `json BINARY` tp=245 flen=16777216.
+        //
+        // `json_quote`/`json_unquote`/`json_type`/`json_pretty` are ETString
+        // in Go and stay string-typed here.
         //
         // `JSON_TABLE` is deliberately NOT listed: it is a table function,
         // not a scalar, so it keeps falling through to the refusal below.
-        //
-        // The type Go would have reported is not thrown away with the
-        // divergence: [`go_result_type_code`] keeps it, for the one caller
-        // that needs Go's ANSWER rather than this crate's cell type.
-        "json_extract" | "json_object" | "json_array" | "json_keys" | "json_quote"
-        | "json_unquote" | "json_type" | "json_set" | "json_insert" | "json_replace"
-        | "json_remove" | "json_array_append" | "json_array_insert" | "json_merge"
-        | "json_merge_preserve" | "json_merge_patch" | "json_pretty" => text(),
+        "json_extract" | "json_object" | "json_array" | "json_keys" | "json_set"
+        | "json_insert" | "json_replace" | "json_remove" | "json_array_append"
+        | "json_array_insert" | "json_merge" | "json_merge_preserve"
+        | "json_merge_patch" => {
+            let mut ft = FieldType::new(FieldTypeCode::Json);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            ft.set_flen(16_777_216);
+            ft
+        }
+        "json_quote" | "json_unquote" | "json_type" | "json_pretty" => text(),
         "json_contains"
         | "json_contains_path"
         | "json_length"

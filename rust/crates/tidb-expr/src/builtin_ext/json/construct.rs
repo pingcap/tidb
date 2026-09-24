@@ -27,7 +27,7 @@
 use serde_json::Value as Json;
 
 use super::text::format_json;
-use super::value::{json_argument, json_sql_string, parse_json, StringArgument};
+use super::value::{binary_json_datum, json_argument, json_sql_string, parse_json, StringArgument};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;
@@ -55,6 +55,18 @@ pub(super) fn json_quote(v: &Datum) -> Result<Datum, EvalError> {
 /// a double-quoted value followed by another root value is an error, not an
 /// almost-unquoted string (`TestJSONUnquote`).
 pub(super) fn json_unquote(v: &Datum) -> Result<Datum, EvalError> {
+    // Go's `builtinJSONUnquoteSig` reads a BinaryJSON argument: a JSON
+    // string scalar unquotes to its content, and any other document
+    // unquotes to its own canonical text.
+    if let Datum::Json(document) = v {
+        return match document.as_string() {
+            Some(bytes) => match std::str::from_utf8(bytes) {
+                Ok(text) => Ok(Datum::new_string(text)),
+                Err(_) => Err(EvalError::Unsupported("invalid UTF-8 JSON string")),
+            },
+            None => Ok(Datum::new_string(document.to_string())),
+        };
+    }
     let Some(text) = json_sql_string(v)? else {
         return if *v == Datum::Null {
             Ok(Datum::Null)
@@ -85,7 +97,7 @@ pub(super) fn json_array(
         .zip(arg_types.iter())
         .map(|(v, ft)| json_argument(v, StringArgument::Value, ft.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Datum::new_string(format_json(&Json::Array(values))))
+    binary_json_datum(Json::Array(values))
 }
 
 /// `JSON_OBJECT(key, value [, key, value] ...)`, port of
@@ -115,7 +127,7 @@ pub(super) fn json_object(
         let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
         object.insert(key, value);
     }
-    Ok(Datum::new_string(format_json(&Json::Object(object))))
+    binary_json_datum(Json::Object(object))
 }
 
 #[cfg(test)]
@@ -146,7 +158,9 @@ mod tests {
                 &[Some(boolean_int()), Some(boolean_int())],
             )
             .unwrap(),
-            Datum::new_string("[true, false]".to_owned()),
+            Datum::Json(
+                tidb_datatype::BinaryJSON::parse("[true, false]").expect("fixture parses"),
+            ),
         );
         // Same values, no boolean flag: the numeric rendering is unchanged.
         assert_eq!(
@@ -158,12 +172,14 @@ mod tests {
                 ],
             )
             .unwrap(),
-            Datum::new_string("[1, 0]".to_owned()),
+            Datum::Json(
+                tidb_datatype::BinaryJSON::parse("[1, 0]").expect("fixture parses"),
+            ),
         );
         // The untyped row/AST path (no field type) also keeps the number.
         assert_eq!(
             json_array(&[one], &[None]).unwrap(),
-            Datum::new_string("[1]".to_owned()),
+            Datum::Json(tidb_datatype::BinaryJSON::parse("[1]").expect("fixture parses")),
         );
         // JSON_OBJECT threads the same value coercion for its values.
         assert_eq!(
@@ -172,7 +188,9 @@ mod tests {
                 &[None, Some(boolean_int())],
             )
             .unwrap(),
-            Datum::new_string("{\"k\": false}".to_owned()),
+            Datum::Json(
+                tidb_datatype::BinaryJSON::parse("{\"k\": false}").expect("fixture parses"),
+            ),
         );
     }
 }

@@ -26,7 +26,7 @@ use serde_json::{Number, Value as Json};
 
 use super::text::format_json;
 use crate::{Datum, EvalError, JsonError};
-use tidb_datatype::{BinaryJSON, FieldType, FieldTypeFlags};
+use tidb_datatype::{BinaryJSON, EvalType, FieldType, FieldTypeFlags};
 
 /// The integer an argument carries when it is a boolean-flagged INT, so
 /// [`json_argument`] and [`cast_as_json`] can render it as a JSON `true`/`false`
@@ -230,7 +230,7 @@ fn typed_cast_json(value: &Datum) -> Option<Result<Datum, EvalError>> {
     }
 }
 
-fn binary_json_datum(json: Json) -> Result<Datum, EvalError> {
+pub(super) fn binary_json_datum(json: Json) -> Result<Datum, EvalError> {
     BinaryJSON::parse(&format_json(&json))
         .map(Datum::Json)
         .map_err(|_| EvalError::Json(JsonError::InvalidText))
@@ -342,6 +342,13 @@ pub(super) fn json_argument(
         return Ok(Json::Bool(int != 0));
     }
     if let Some(text) = json_sql_string(value)? {
+        // Go's `EvalJSON` returns an `ETJson`-typed expression's BinaryJSON
+        // directly: a nested JSON function's result re-enters the modify as
+        // a real document, while string-typed arguments stay JSON strings
+        // (the source disables `ParseToJSONFlag4Expr` for value arguments).
+        if field_type.is_some_and(|ft| ft.eval_type() == EvalType::Json) {
+            return parse_json(text);
+        }
         return match string {
             StringArgument::Document => parse_json(text),
             StringArgument::Value => Ok(Json::String(text.to_owned())),

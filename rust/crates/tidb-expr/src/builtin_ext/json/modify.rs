@@ -29,8 +29,7 @@
 use serde_json::Value as Json;
 
 use super::path::{parse_path, ArraySelection, PathLeg};
-use super::text::format_json;
-use super::value::{json_argument, parse_json_document_argument, StringArgument};
+use super::value::{binary_json_datum, json_argument, parse_json_document_argument, StringArgument};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;
@@ -64,7 +63,7 @@ pub(super) fn json_remove(vals: &[Datum]) -> Result<Datum, EvalError> {
         }
         remove_path(&mut document, &path.legs);
     }
-    Ok(Datum::new_string(format_json(&document)))
+    binary_json_datum(document)
 }
 
 /// `JSON_ARRAY_APPEND(json_doc, path, value [, path, value] ...)`, port of
@@ -102,7 +101,7 @@ pub(super) fn json_array_append(
         let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
         append_at_path(&mut document, &path.legs, &value);
     }
-    Ok(Datum::new_string(format_json(&document)))
+    binary_json_datum(document)
 }
 
 /// `JSON_ARRAY_INSERT(json_doc, path, value [, path, value] ...)`, port of
@@ -151,7 +150,7 @@ pub(super) fn json_array_insert(
         let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
         insert_at_path(&mut document, &path.legs, *index, &value);
     }
-    Ok(Datum::new_string(format_json(&document)))
+    binary_json_datum(document)
 }
 
 /// The three `JSON_{SET,INSERT,REPLACE}` modifiers share Go's
@@ -258,7 +257,7 @@ pub(super) fn json_modify_with_document(
             JsonModifyMode::Insert | JsonModifyMode::Replace => {}
         }
     }
-    Ok(Datum::new_string(format_json(&document)))
+    binary_json_datum(document)
 }
 
 pub(super) fn json_modify(
