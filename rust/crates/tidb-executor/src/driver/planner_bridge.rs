@@ -30,6 +30,7 @@ use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::compose_dnf_condition;
+use tidb_planner::cardinality::ndv::GroupNdv;
 use tidb_planner::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::find_best_task::coster::Ver2Coster;
@@ -1271,8 +1272,23 @@ impl OwnedRewrite for InitStats<'_> {
                     .then(|| (index.id, (columns, loaded.histogram.ndv as f64)))
             })
             .collect::<Vec<_>>();
+        // GO's datasource profile carries `GroupNDVs` built from the table's
+        // index NDVs (property.StatsInfo.GroupNDVs / getGroupNDVs). A join
+        // whose equality keys exactly match an index's column list then
+        // estimates with the index's composite NDV -- q24_1's
+        // (sr_ticket_number, sr_item_sk) probe of store_returns' unique index
+        // makes the join output the OUTER side's count (74091.89), not the
+        // conservative single-column-max formula's 1.69x inflation.
+        let group_ndvs = index_ndvs
+            .iter()
+            .map(|(_index_id, (columns, ndv))| GroupNdv {
+                columns: columns.clone(),
+                ndv: *ndv,
+            })
+            .collect();
         source.table_stats = Some(
             StatsInfo::new(row_count, ndvs)
+                .with_group_ndvs(group_ndvs)
                 .with_hist_coll(
                     HistColl::new(
                         statistics.is_none_or(|statistics| statistics.pseudo),
