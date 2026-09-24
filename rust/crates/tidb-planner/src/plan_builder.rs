@@ -4208,20 +4208,20 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Some(limit) = &select.limit {
             plan = self.build_limit(plan, limit)?;
         }
-        // Go `:4531`/`:4620`: aggregate queries with ORDER BY allocate the
-        // freezing/trim projection after the LIMIT (the second
-        // LogicalProjection in the R34 receipt, id 6); its plan id is
-        // consumed even when optimize eliminates the node. This tier folds
-        // the order-by into the main projection; burn the id.
-        if has_agg && !select.order_by.is_empty() {
-            let _ = self.base(crate::logical::LogicalProjection::TYPE);
-        }
         // `:4620` trim the hidden ORDER BY / HAVING columns back off. A HAVING
         // scalar subquery is lowered into an Apply by `build_selection`, which
         // widens the plan schema WITHOUT appending a select field, so the
         // `fields` length alone is not enough: compare the plan width too.
+        // Go's `:4531`/:4620` also builds the trim projection for aggregate
+        // queries with ORDER BY (the R34 receipt's second LogicalProjection);
+        // its node allocates fresh plan-column ids for the kept columns even
+        // when optimize eliminates the node, so the predicate folds in that
+        // case instead of relying on a bare id burn.
         let plan_width = plan.schema().map_or(0, |schema| schema.columns.len());
-        if fields.len() != old_len || plan_width > old_len {
+        let trim_needed = fields.len() != old_len
+            || plan_width > old_len
+            || (has_agg && !select.order_by.is_empty());
+        if trim_needed {
             plan = self.build_trim_projection(plan, old_len);
         }
         self.all_names.pop();
