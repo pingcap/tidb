@@ -3096,6 +3096,25 @@ func TestStatementDurationMetrics(t *testing.T) {
 		require.Equal(t, before+1, statementMetric("Insert").GetHistogram().GetSampleCount())
 	})
 
+	t.Run("nested restricted SQL", func(t *testing.T) {
+		showBefore := statementMetric("Show").GetHistogram().GetSampleCount()
+		selectBefore := statementMetric("Select").GetHistogram().GetSampleCount()
+		internalBefore := statementMetric(metrics.LblInternal).GetHistogram().GetSampleCount()
+		command := metrics.CommandDurationHistogram.WithLabelValues(metrics.LblInternal, "", vars.ResourceGroupName)
+		commandBefore := readHistogram(command).GetHistogram().GetSampleCount()
+
+		// SHOW TABLE STATUS runs restricted SQL on the current session. Its inner
+		// result set must remain internal, without hiding the outer user statement.
+		require.NoError(t, cc.handleQuery(ctx, "show table status from test"))
+		require.Equal(t, showBefore+1, statementMetric("Show").GetHistogram().GetSampleCount())
+		require.Equal(t, selectBefore, statementMetric("Select").GetHistogram().GetSampleCount())
+		require.Equal(t, internalBefore+1, statementMetric(metrics.LblInternal).GetHistogram().GetSampleCount())
+		require.Equal(t, commandBefore+1, readHistogram(command).GetHistogram().GetSampleCount())
+		require.False(t, vars.InRestrictedSQL)
+		require.False(t, vars.StmtCtx.InRestrictedSQL)
+		require.Equal(t, "Show", vars.StmtCtx.StmtType)
+	})
+
 	t.Run("internal result set close", func(t *testing.T) {
 		before := statementMetric("Select").GetHistogram().GetSampleCount()
 		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
