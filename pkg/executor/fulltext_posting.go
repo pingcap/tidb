@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -28,16 +29,21 @@ import (
 )
 
 // tikvPostingSource opens the posting lists of a FULLTEXT index built in TiKV.
-// A term's posting list is the key range of that term's entries, read from
-// the statement's snapshot. Like a coprocessor index scan it does not see the
-// transaction's own writes; the UnionScan the planner places above a reader
-// of a table the transaction has changed merges those in, re-evaluating the
-// MATCH on each changed row. That is also why the index need not rewrite
-// untouched entries when another column of a row is updated.
+// A term's posting list is the key range of that term's entries under the
+// key-column values the scan is confined to, read from the statement's
+// snapshot. Like a coprocessor index scan it does not see the transaction's
+// own writes; the UnionScan the planner places above a reader of a table the
+// transaction has changed merges those in, re-evaluating the MATCH on each
+// changed row. That is also why the index need not rewrite untouched entries
+// when another column of a row is updated.
 type tikvPostingSource struct {
 	snapshot        kv.Snapshot
 	physicalTableID int64
-	indexID         int64
+	index           *model.IndexInfo
+	// keyPrefix is the encoded values of the index's key columns, which
+	// every entry of the index carries ahead of its term; empty when the
+	// index has none.
+	keyPrefix []byte
 }
 
 // Term implements fulltext.PostingSource.
@@ -49,26 +55,28 @@ func (s *tikvPostingSource) Term(term string) (fulltext.PostingCursor, error) {
 	return s.open(start, start.PrefixNext(), "")
 }
 
-// Prefix implements fulltext.PostingSource. Terms are stored in byte order,
-// so every term with the prefix sits in one contiguous range starting at the
-// prefix itself; the cursor stops at the first term outside it.
+// Prefix implements fulltext.PostingSource. Terms are stored in byte order
+// under the key-column values, so every term with the prefix sits in one
+// contiguous range starting at the prefix itself; the cursor stops at the
+// first term outside it, and the range ends with the key-column values.
 func (s *tikvPostingSource) Prefix(prefix string) (fulltext.PostingCursor, error) {
 	start, err := s.termKey(prefix)
 	if err != nil {
 		return nil, err
 	}
-	end := tablecodec.EncodeTableIndexPrefix(s.physicalTableID, s.indexID).PrefixNext()
+	end := tablecodec.EncodeIndexSeekKey(s.physicalTableID, s.index.ID, s.keyPrefix).PrefixNext()
 	return s.open(start, end, prefix)
 }
 
-// termKey is the key prefix shared by every entry of a term: the index prefix
-// followed by the term encoded exactly as the write path encodes it.
+// termKey is the key prefix shared by every entry of a term: the index
+// prefix, the key-column values, and the term, encoded exactly as the write
+// path encodes them.
 func (s *tikvPostingSource) termKey(term string) (kv.Key, error) {
-	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum([]byte(term)))
+	encoded, err := codec.EncodeKey(time.UTC, append([]byte(nil), s.keyPrefix...), types.NewBytesDatum([]byte(term)))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return tablecodec.EncodeIndexSeekKey(s.physicalTableID, s.indexID, encoded), nil
+	return tablecodec.EncodeIndexSeekKey(s.physicalTableID, s.index.ID, encoded), nil
 }
 
 func (s *tikvPostingSource) open(start, end kv.Key, prefix string) (fulltext.PostingCursor, error) {
@@ -76,11 +84,12 @@ func (s *tikvPostingSource) open(start, end kv.Key, prefix string) (fulltext.Pos
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &tikvPostingCursor{iter: iter, prefix: prefix}, nil
+	return &tikvPostingCursor{iter: iter, index: s.index, prefix: prefix}, nil
 }
 
 type tikvPostingCursor struct {
 	iter   kv.Iterator
+	index  *model.IndexInfo
 	prefix string
 	done   bool
 }
@@ -96,7 +105,7 @@ func (c *tikvPostingCursor) Next() (fulltext.Posting, bool, error) {
 			continue
 		}
 		if c.prefix != "" {
-			term, err := tables.DecodeTiKVFullTextIndexKey(key)
+			_, term, err := tables.DecodeTiKVFullTextIndexKey(c.index, key)
 			if err != nil {
 				return fulltext.Posting{}, false, errors.Trace(err)
 			}
@@ -105,7 +114,7 @@ func (c *tikvPostingCursor) Next() (fulltext.Posting, bool, error) {
 				break
 			}
 		}
-		handle, err := tablecodec.DecodeIndexHandle(key, value, 1)
+		handle, err := tablecodec.DecodeIndexHandle(key, value, len(c.index.Columns))
 		if err != nil {
 			return fulltext.Posting{}, false, errors.Trace(err)
 		}

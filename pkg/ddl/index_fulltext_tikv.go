@@ -30,9 +30,11 @@ import (
 
 // On the classic kernel a FULLTEXT index is materialised in TiKV as a positional
 // inverted index. To the DDL machinery it is an ordinary non-unique KV index
-// over one column that carries IndexInfo.TiKVFullText, and the ordinary ADD
-// INDEX job builds it; the marker is what makes the storage layer tokenize the
-// column instead of indexing its value.
+// that carries IndexInfo.TiKVFullText, and the ordinary ADD INDEX job builds
+// it; the marker is what makes the storage layer tokenize the last column
+// instead of indexing its value. Any column before the last is an ordinary
+// key column, encoded ahead of the term, so that the entries of one value of
+// it, such as one tenant, form a contiguous range a search can be confined to.
 //
 // The next-gen kernel never reaches this code: its preprocessor rewrites a
 // FULLTEXT index into a columnar index, which is held by the columnar engine.
@@ -74,23 +76,24 @@ func NormalizeTiKVFullTextIndexOption(option *ast.IndexOption) *ast.IndexOption 
 // buildTiKVFullTextInfoWithCheck validates a FULLTEXT index definition and
 // resolves the analyzer it is built with: the parser named by the definition,
 // and the settings snapshot carried by the meta-build context.
+//
+// columns are the columns the index is built over: the table's, plus any
+// hidden column an expression key part has been given, which the index
+// refuses.
 func buildTiKVFullTextInfoWithCheck(
 	ctx *metabuild.Context,
+	columns []*model.ColumnInfo,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	tblInfo *model.TableInfo,
 ) (*model.TiKVFullTextIndexInfo, error) {
-	// A positional inverted index tokenizes one column; the key holds a term
-	// of that column, so there is no second column to add to it.
-	if len(indexPartSpecifications) != 1 || indexPartSpecifications[0].Column == nil {
-		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index must specify one column name")
-	}
-	idxPart := indexPartSpecifications[0]
-	if idxPart.Length != types.UnspecifiedLength {
-		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index does not support prefix length")
-	}
-	if idxPart.Desc {
-		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index does not support DESC order")
+	// The last column is the one tokenized; the key holds a term of it. The
+	// columns before it are key columns, encoded ahead of the term as they
+	// would be in an ordinary index, which is why they keep the ordinary
+	// column rules (buildIndexColumns applies them) while the tokenized
+	// column is exempt from the key-length rule.
+	if len(indexPartSpecifications) == 0 {
+		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index must specify a column name")
 	}
 	if indexOption != nil && indexOption.Global {
 		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index does not support GLOBAL")
@@ -98,13 +101,36 @@ func buildTiKVFullTextInfoWithCheck(
 	if indexOption != nil && indexOption.Condition != nil {
 		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index does not support a partial condition")
 	}
-
-	colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
-	if colInfo == nil {
-		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name, tblInfo.Name)
-	}
-	if err := checkTiKVFullTextColumn(colInfo); err != nil {
-		return nil, err
+	var textCol *model.ColumnInfo
+	for i, idxPart := range indexPartSpecifications {
+		if idxPart.Column == nil {
+			return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index must specify column names")
+		}
+		// A prefix length would make the key of a key column a prefix of its
+		// value, so an equality on it could no longer be answered by the key
+		// alone, and a DESC key column would put a term's entries in the
+		// wrong order for the posting-list merge.
+		if idxPart.Length != types.UnspecifiedLength {
+			return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index does not support prefix length")
+		}
+		if idxPart.Desc {
+			return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index does not support DESC order")
+		}
+		colInfo := model.FindColumnInfo(columns, idxPart.Column.Name.L)
+		if colInfo == nil {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name, tblInfo.Name)
+		}
+		// An expression key part has been given a hidden column by now; the
+		// index tokenizes and keys table columns.
+		if colInfo.Hidden {
+			return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index does not support an expression key part")
+		}
+		if i == len(indexPartSpecifications)-1 {
+			textCol = colInfo
+			if err := checkTiKVFullTextColumn(colInfo); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	parserType := model.FullTextParserTypeStandardV1
@@ -125,6 +151,19 @@ func buildTiKVFullTextInfoWithCheck(
 	info.ParserType = parserType
 	if err := fulltext.ValidateTiKVFullTextIndex(&info); err != nil {
 		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(fmt.Sprintf("FULLTEXT index with %s", err))
+	}
+	// A MATCH over the column compiles its search string with the analyzer
+	// of one index over that column, and the terms it looks up must be the
+	// terms every such index stores; so every FULLTEXT index over a column
+	// is built with the same analyzer, and which one serves a query never
+	// depends on the order the indexes were created in.
+	for _, existing := range tblInfo.Indices {
+		other := existing.TiKVFullTextColumn()
+		if other == nil || other.Name.L != textCol.Name.L || *existing.TiKVFullText == info {
+			continue
+		}
+		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(
+			"FULLTEXT index over %s must use the parser and analyzer settings of the existing FULLTEXT index %s", textCol.Name, existing.Name)
 	}
 	return &info, nil
 }

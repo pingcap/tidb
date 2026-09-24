@@ -85,3 +85,40 @@ id
 1
 3
 drop table articles;
+create table tenant_docs (id int primary key, tenant_id int, body text, fulltext index idx_body (tenant_id, body));
+insert into tenant_docs values
+(1, 1, 'distributed sql for the first tenant'),
+(2, 1, 'another document of the first tenant'),
+(3, 2, 'distributed sql for the second tenant'),
+(4, 2, 'the second tenant again'),
+(5, null, 'distributed sql without a tenant');
+explain format = 'brief' select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__fulltext_index_tikv.tenant_docs.id
+└─IndexMerge	1.00	root		type: union
+  ├─FullTextIndexScan(Build)	1.00	root	table:tenant_docs, index:idx_body(tenant_id, body)	fulltext:"+distributed", range:[2,2], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tenant_docs	keep order:false, stats:pseudo
+select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode) order by id;
+id
+3
+select id from tenant_docs where tenant_id is null and match(body) against('+distributed' in boolean mode) order by id;
+id
+5
+explain format = 'brief' select id from tenant_docs where match(body) against('+distributed' in boolean mode);
+id	estRows	task	access object	operator info
+Projection	1000.00	root		planner__core__fulltext_index_tikv.tenant_docs.id
+└─Selection	1000.00	root		match_against("+distributed", planner__core__fulltext_index_tikv.tenant_docs.body)
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:tenant_docs	keep order:false, stats:pseudo
+explain format = 'brief' select id from tenant_docs where tenant_id in (1, 2) and match(body) against('+distributed' in boolean mode);
+id	estRows	task	access object	operator info
+Projection	2.00	root		planner__core__fulltext_index_tikv.tenant_docs.id
+└─Selection	2.00	root		match_against("+distributed", planner__core__fulltext_index_tikv.tenant_docs.body)
+  └─TableReader	20.00	root		data:Selection
+    └─Selection	20.00	cop[tikv]		in(planner__core__fulltext_index_tikv.tenant_docs.tenant_id, 1, 2)
+      └─TableFullScan	10000.00	cop[tikv]	table:tenant_docs	keep order:false, stats:pseudo
+select id from tenant_docs where tenant_id in (1, 2) and match(body) against('+distributed' in boolean mode) order by id;
+id
+1
+3
+drop table tenant_docs;

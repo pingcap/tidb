@@ -405,6 +405,18 @@ func (index *IndexInfo) IsTiKVFullTextIndex() bool {
 	return index.TiKVFullText != nil
 }
 
+// TiKVFullTextColumn returns the column a FULLTEXT index materialised in TiKV
+// tokenizes, which is the last of its columns. The columns before it are
+// ordinary key columns: their values are encoded ahead of the term in every
+// entry, so the entries of one value of them, such as one tenant, form a
+// contiguous range a search can be confined to.
+func (index *IndexInfo) TiKVFullTextColumn() *IndexColumn {
+	if index.TiKVFullText == nil || len(index.Columns) == 0 {
+		return nil
+	}
+	return index.Columns[len(index.Columns)-1]
+}
+
 // IsChanging checks if the index is a new index added in modify column.
 func (index *IndexInfo) IsChanging() bool {
 	return strings.HasPrefix(index.Name.O, changingIndexPrefix)

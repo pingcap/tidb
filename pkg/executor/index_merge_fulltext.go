@@ -23,14 +23,42 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 )
+
+// fullTextScan describes a partial plan that reads a FULLTEXT index built in
+// TiKV: the search string, and the value of each key column of the index,
+// the columns before the tokenized one, that the scan is confined to.
+type fullTextScan struct {
+	search    string
+	keyValues []types.Datum
+}
+
+// newFullTextScan takes the search and the key-column values from the
+// partial plan. The planner offers the plan only when its conditions pin
+// every key column to one value, which it records as a single point range.
+func newFullTextScan(is *physicalop.PhysicalIndexScan) (*fullTextScan, error) {
+	scan := &fullTextScan{search: is.FullText.Search}
+	keyColumnCount := len(is.Index.Columns) - 1
+	if keyColumnCount == 0 {
+		return scan, nil
+	}
+	if len(is.Ranges) != 1 || len(is.Ranges[0].LowVal) != keyColumnCount {
+		return nil, errors.Errorf("fulltext index %s has %d key columns but the scan pins %d ranges", is.Index.Name.O, keyColumnCount, len(is.Ranges))
+	}
+	scan.keyValues = is.Ranges[0].LowVal
+	return scan, nil
+}
 
 // isFullTextPartial reports whether partial plan i reads a FULLTEXT index
 // built in TiKV.
 func (e *IndexMergeReaderExecutor) isFullTextPartial(i int) bool {
-	return i < len(e.fullTextSearches) && e.fullTextSearches[i] != ""
+	return i < len(e.fullTextScans) && e.fullTextScans[i] != nil
 }
 
 // fullTextUnionScanRange is the record range of a physical table, within
@@ -53,15 +81,27 @@ func (e *IndexMergeReaderExecutor) startPartialFullTextWorker(ctx context.Contex
 	if idx == nil || idx.TiKVFullText == nil {
 		return errors.Errorf("partial plan %d is not a fulltext index scan", workID)
 	}
-	query, err := fulltext.CompileBooleanQuery(e.fullTextSearches[workID], fulltext.AnalyzerConfigFromTiKVFullTextIndex(idx.TiKVFullText))
+	scan := e.fullTextScans[workID]
+	query, err := fulltext.CompileBooleanQuery(scan.search, fulltext.AnalyzerConfigFromTiKVFullTextIndex(idx.TiKVFullText))
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// The key-column values are encoded once, the way the index encodes them
+	// ahead of every term, and prefix every term's range.
+	var keyPrefix []byte
+	if len(scan.keyValues) > 0 {
+		sc := e.Ctx().GetSessionVars().StmtCtx
+		keyPrefix, err = codec.EncodeKey(sc.TimeZone(), nil, scan.keyValues...)
+		if err = sc.HandleError(err); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	worker := &partialFullTextWorker{
 		indexMerge: e,
 		workID:     workID,
 		query:      query,
-		indexID:    idx.ID,
+		index:      idx,
+		keyPrefix:  keyPrefix,
 		batchSize:  e.MaxChunkSize(),
 		maxBatch:   e.Ctx().GetSessionVars().IndexLookupSize,
 	}
@@ -85,9 +125,12 @@ type partialFullTextWorker struct {
 	indexMerge *IndexMergeReaderExecutor
 	workID     int
 	query      *fulltext.Query
-	indexID    int64
-	batchSize  int
-	maxBatch   int
+	index      *model.IndexInfo
+	// keyPrefix is the encoded key-column values the scan is confined to,
+	// empty for an index without key columns.
+	keyPrefix []byte
+	batchSize int
+	maxBatch  int
 }
 
 // run scans each physical table's index in turn. Handles are batched into
@@ -124,7 +167,8 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 	source := &tikvPostingSource{
 		snapshot:        e.fullTextSnapshot,
 		physicalTableID: physicalID,
-		indexID:         w.indexID,
+		index:           w.index,
+		keyPrefix:       w.keyPrefix,
 	}
 	iter, err := w.query.OpenPostings(source)
 	if err != nil {

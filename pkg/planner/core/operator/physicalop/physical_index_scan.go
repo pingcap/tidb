@@ -283,7 +283,9 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
 	if p.FullText != nil {
-		// The index is read by terms of the search string, not by ranges.
+		// The index is read by terms of the search string; the ranges that
+		// follow, if any, are the key-column values the search is confined
+		// to.
 		if normalized {
 			buffer.WriteString("fulltext:?, ")
 		} else {
@@ -291,7 +293,8 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(strconv.Quote(p.FullText.Search))
 			buffer.WriteString(", ")
 		}
-	} else if len(p.RangeInfo) > 0 {
+	}
+	if len(p.RangeInfo) > 0 {
 		if !normalized {
 			buffer.WriteString("range: decided by ")
 			buffer.WriteString(p.RangeInfo)

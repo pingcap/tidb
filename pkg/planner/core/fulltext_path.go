@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
 // generateFullTextIndexPaths offers an access path for each MATCH ... AGAINST
@@ -46,6 +47,14 @@ import (
 // must not be dropped. The search string must be a constant the plan can bake
 // in: a parameter would compile to a different set of terms per execution.
 //
+// An index with key columns ahead of the tokenized one holds each row's
+// entries under the row's key-column values, so it answers a search only
+// within one value of every key column: the conditions must pin each of them,
+// as one equality per column, which ranger turns into a single point range.
+// The equalities are then served by the index, like access conditions of an
+// ordinary index scan, and dropped from the table filters. Without such a
+// point the index cannot serve the query and the scan stays.
+//
 // When such a path exists it replaces every other path, as the columnar
 // full-text path does. The alternative is to tokenize every document of the
 // table to evaluate the MATCH, which the cost model does not see: it charges a
@@ -59,7 +68,8 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 	sessVars := ds.SCtx().GetSessionVars()
 	var paths []*util.AccessPath
 	for _, idx := range ds.TableInfo.Indices {
-		if !idx.IsTiKVFullTextIndex() || idx.State != model.StatePublic || len(idx.Columns) != 1 {
+		textCol := idx.TiKVFullTextColumn()
+		if textCol == nil || idx.State != model.StatePublic {
 			continue
 		}
 		if idx.Invisible && !sessVars.OptimizerUseInvisibleIndexes {
@@ -68,7 +78,7 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 		if !fullTextIndexAllowedByHints(ds, idx) {
 			continue
 		}
-		colInfo := ds.TableInfo.Columns[idx.Columns[0].Offset]
+		colInfo := ds.TableInfo.Columns[textCol.Offset]
 		config := fulltext.AnalyzerConfigFromTiKVFullTextIndex(idx.TiKVFullText)
 		for _, cond := range ds.AllConds {
 			match, search, ok := fullTextMatchOnColumn(ds, cond, colInfo, config)
@@ -79,7 +89,9 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 			if err != nil {
 				return err
 			}
-			paths = append(paths, path)
+			if path != nil {
+				paths = append(paths, path)
+			}
 		}
 	}
 	if len(paths) > 0 {
@@ -169,21 +181,14 @@ func fullTextMatchOnColumn(ds *logicalop.DataSource, cond expression.Expression,
 	return sf, search, true
 }
 
+// buildFullTextIndexPath builds the IndexMerge path that answers match with
+// idx, or returns nil when the index has key columns the conditions do not
+// pin to one value.
 func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, match *expression.ScalarFunction, search string) (*util.AccessPath, error) {
-	// The MATCH's own selectivity estimate is the best available guess for
-	// how many rows the index will yield; the index has no statistics of its
-	// own, since its entries are terms rather than column values.
-	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, []expression.Expression{match}, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	count := ds.TableStats.RowCount * selectivity
 	partial := &util.AccessPath{
-		Index:            idx,
-		FullText:         &util.FullTextAccessInfo{Match: match, Search: search},
-		CountAfterAccess: count,
-		CountAfterIndex:  count,
-		StoreType:        kv.TiKV,
+		Index:     idx,
+		FullText:  &util.FullTextAccessInfo{Match: match, Search: search},
+		StoreType: kv.TiKV,
 	}
 	partial.IdxCols, partial.IdxColLens, partial.FullIdxCols, partial.FullIdxColLens =
 		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, idx)
@@ -193,6 +198,42 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 			tableFilters = append(tableFilters, cond)
 		}
 	}
+	keyColumnCount := len(idx.Columns) - 1
+	if keyColumnCount > 0 {
+		if len(partial.IdxCols) < keyColumnCount {
+			return nil, nil
+		}
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx().GetRangerCtx(), tableFilters,
+			partial.IdxCols[:keyColumnCount], partial.IdxColLens[:keyColumnCount], 0)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
+		if len(res.Ranges) != 1 || len(res.Ranges[0].LowVal) != keyColumnCount || !res.Ranges[0].IsPointNullable(tc) {
+			return nil, nil
+		}
+		partial.Ranges = res.Ranges
+		partial.AccessConds = res.AccessConds
+		partial.EqCondCount = res.EqCondCount
+		partial.EqOrInCondCount = res.EqOrInCount
+		partial.IsDNFCond = res.IsDNFCond
+		tableFilters = res.RemainedConds
+	}
+
+	// The MATCH's own selectivity estimate, with that of the equalities on
+	// the key columns, is the best available guess for how many rows the
+	// index will yield; the index has no statistics of its own, since its
+	// entries are terms rather than column values.
+	accessConds := make([]expression.Expression, 0, 1+len(partial.AccessConds))
+	accessConds = append(accessConds, match)
+	accessConds = append(accessConds, partial.AccessConds...)
+	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, accessConds, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	count := ds.TableStats.RowCount * selectivity
+	partial.CountAfterAccess = count
+	partial.CountAfterIndex = count
 	return &util.AccessPath{
 		PartialIndexPaths: []*util.AccessPath{partial},
 		TableFilters:      tableFilters,
