@@ -41,6 +41,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{compose_cnf_condition, extract_columns};
 
 use crate::base_arms;
+use crate::cardinality::ndv::GroupNdv;
 use crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len;
 use crate::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
@@ -2763,6 +2764,11 @@ struct DeriveStatsFold<'a> {
     range_max_size: i64,
     selectivity_factor: f64,
     range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    /// The column groups arriving at the DataSource being derived. GO's
+    /// `getGroupNDVs` only builds GroupNDVs for groups the planner ASKED for
+    /// (`ds.AskedColumnGroup`, registered by join key construction and handed
+    /// down through the recursive derive as `colGroups`).
+    data_source_asked_groups: Vec<Vec<tidb_expr::column::Column>>,
 }
 
 /// What one `ascend` arm decided.
@@ -2829,6 +2835,9 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
             // Dead walk: the fold pads missing downs with Default, and every
             // ascend below short-circuits.
             return Descend::Children(Vec::new());
+        }
+        if matches!(node, LogicalPlan::DataSource(_)) {
+            self.data_source_asked_groups = down.clone();
         }
         // Go: `cumColGroups := p.self.ExtractColGroups(colGroups)`, handed to
         // EVERY child.
@@ -2918,7 +2927,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         } else {
                             analyzed_filter_selectivity(&table_stats, &op.pushed_down_conds)
                         };
-                        let stats = range_selectivity.map_or_else(
+                        let mut stats = range_selectivity.map_or_else(
                             || {
                                 crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
                                     &table_stats,
@@ -2936,6 +2945,38 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 )
                             },
                         );
+                        // GO `getGroupNDVs` (stats.go:491): an index whose
+                        // column list EXACTLY matches an asked column group
+                        // carries the index's composite NDV into the profile,
+                        // so a join keyed on that group estimates with it
+                        // (q24_1's (sr_ticket_number, sr_item_sk) unique-index
+                        // probe makes the join output the outer count).
+                        if !self.data_source_asked_groups.is_empty() {
+                            let index_groups = table_stats
+                                .hist_coll()
+                                .map(|hist_coll| hist_coll.index_ndvs().clone())
+                                .unwrap_or_default();
+                            let mut group_ndvs: Vec<GroupNdv> = Vec::new();
+                            for group in &self.data_source_asked_groups {
+                                let mut ids: Vec<i64> =
+                                    group.iter().map(|column| column.unique_id).collect();
+                                ids.sort_unstable();
+                                for (_index_id, (columns, ndv)) in &index_groups {
+                                    let mut index_columns = columns.clone();
+                                    index_columns.sort_unstable();
+                                    if index_columns == ids {
+                                        group_ndvs.push(GroupNdv {
+                                            columns: ids.clone(),
+                                            ndv: *ndv,
+                                        });
+                                        break;
+                                    }
+                                }
+                            }
+                            if !group_ndvs.is_empty() {
+                                stats.set_group_ndvs(group_ndvs);
+                            }
+                        }
                         // Go derivePathStatsAndTryHeuristics fixes IsSingleScan
                         // with the first stats profile. Join reorder can derive
                         // this before the final column-pruning pass.
@@ -3253,6 +3294,7 @@ fn recursive_derive_stats_with_range_quota(
         range_max_size,
         selectivity_factor,
         range_fallback_handler,
+        data_source_asked_groups: Vec::new(),
     };
     let (plan, (stats, reload, _schema)) = fold_owned(&mut fold, plan, col_groups);
     match fold.failure.take() {
