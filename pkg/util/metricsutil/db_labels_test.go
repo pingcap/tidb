@@ -75,6 +75,11 @@ func TestGetDBNamesLabels(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(originCfg)
 
+	newStmtCtx := func(tables ...stmtctx.TableEntry) *stmtctx.StatementContext {
+		sc := stmtctx.NewStmtCtx()
+		sc.Tables = tables
+		return sc
+	}
 	cases := []struct {
 		name          string
 		recordDBLabel bool
@@ -90,9 +95,7 @@ func TestGetDBNamesLabels(t *testing.T) {
 			name: "record DB label disabled",
 			vars: &variable.SessionVars{
 				CurrentDB: "DatabaseA",
-				StmtCtx: &stmtctx.StatementContext{
-					Tables: []stmtctx.TableEntry{{DB: "databaseb", Table: "t1"}},
-				},
+				StmtCtx:   newStmtCtx(stmtctx.TableEntry{DB: "databaseb", Table: "t1"}),
 			},
 			want: []string{""},
 		},
@@ -107,7 +110,7 @@ func TestGetDBNamesLabels(t *testing.T) {
 			recordDBLabel: true,
 			vars: &variable.SessionVars{
 				CurrentDB: "DatabaseA",
-				StmtCtx:   &stmtctx.StatementContext{},
+				StmtCtx:   newStmtCtx(),
 			},
 			want: []string{"databasea"},
 		},
@@ -122,13 +125,11 @@ func TestGetDBNamesLabels(t *testing.T) {
 			recordDBLabel: true,
 			vars: &variable.SessionVars{
 				CurrentDB: "UnusedDB",
-				StmtCtx: &stmtctx.StatementContext{
-					Tables: []stmtctx.TableEntry{
-						{DB: "databasea", Table: "t1"},
-						{DB: "databaseb", Table: "t2"},
-						{DB: "databasea", Table: "t3"},
-					},
-				},
+				StmtCtx: newStmtCtx(
+					stmtctx.TableEntry{DB: "databasea", Table: "t1"},
+					stmtctx.TableEntry{DB: "databaseb", Table: "t2"},
+					stmtctx.TableEntry{DB: "databasea", Table: "t3"},
+				),
 			},
 			want: []string{"databasea", "databaseb"},
 		},
