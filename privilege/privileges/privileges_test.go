@@ -1189,6 +1189,84 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec(`SHOW CREATE TABLE mysql.user`)
 }
 
+func TestExchangePartitionChecksTargetTablePrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE exchange_src`)
+	rootTk.MustExec(`CREATE DATABASE exchange_dst`)
+	rootTk.MustExec(`CREATE TABLE exchange_src.pt (a int primary key) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+	rootTk.MustExec(`CREATE TABLE exchange_dst.nt (a int primary key)`)
+	rootTk.MustExec(`CREATE USER 'exchange_low'@'%'`)
+	rootTk.MustExec(`GRANT ALTER, DROP ON exchange_src.* TO 'exchange_low'@'%'`)
+
+	tk := testkit.NewTestKit(t, store)
+	authLow := func() {
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+			Username: "exchange_low", Hostname: "%", AuthUsername: "exchange_low", AuthHostname: "%",
+		}, nil, nil, nil))
+	}
+	exchange := func() error {
+		authLow()
+		return tk.ExecToErr(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+	}
+
+	// EXCHANGE PARTITION swaps the data of both tables, so to match MySQL it requires
+	// ALTER, INSERT, CREATE and DROP on BOTH the partitioned table (pt) and the
+	// non-partitioned table (nt). Grant them one missing privilege at a time and assert
+	// each is enforced; in particular DROP on nt guards against destroying/replacing nt's
+	// existing data without the DROP privilege.
+
+	// Missing CREATE on the target table nt.
+	err := exchange()
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "CREATE command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has CREATE+INSERT, but the partitioned table pt still lacks INSERT.
+	rootTk.MustExec(`GRANT CREATE, INSERT ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "INSERT command denied")
+	require.Contains(t, err.Error(), "'pt'")
+
+	// pt now has INSERT+CREATE, but the target table nt still lacks ALTER.
+	rootTk.MustExec(`GRANT INSERT, CREATE ON exchange_src.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "ALTER command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has ALTER, but still lacks DROP: exchanging replaces nt's existing data, which
+	// MySQL gates behind DROP on nt. Without DROP the statement must still be denied.
+	rootTk.MustExec(`GRANT ALTER ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "DROP command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// Full MySQL-aligned privilege set on both tables -> allowed.
+	rootTk.MustExec(`GRANT DROP ON exchange_dst.* TO 'exchange_low'@'%'`)
+	authLow()
+	tk.MustExec(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+}
+
+func TestExchangePartitionRejectsReservedSystemTableTarget(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE DATABASE exchange_reserved`)
+	tk.MustExec(`CREATE TABLE exchange_reserved.pt (a int primary key) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+
+	err := tk.ExecToErr(`ALTER TABLE exchange_reserved.pt EXCHANGE PARTITION p0 WITH TABLE mysql.tidb_ddl_job`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Exchange partition on system table 'mysql.tidb_ddl_job'")
+}
+
 func TestRenameTablesChecksAllPairsPrivileges(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
