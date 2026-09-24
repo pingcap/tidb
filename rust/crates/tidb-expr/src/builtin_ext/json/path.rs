@@ -27,13 +27,18 @@ use std::collections::HashSet;
 
 use serde_json::Value as Json;
 
-use super::value::{binary_json_datum, parse_json_document_argument};
+use super::value::{
+    binary_json_datum, parse_json_document_argument, parse_json_document_argument_strict,
+};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 
 /// `JSON_EXTRACT(json_doc, path [, path] ...)`, port of
 /// `builtinJSONExtractSig.evalJSON` and `types.BinaryJSON.Extract`.
 pub(super) fn json_extract(vals: &[Datum]) -> Result<Datum, EvalError> {
+    // A NUMERIC scalar document argument is go's ErrInvalidTypeForJSON
+    // (3146, argument 1, json_extract), captured on the oracle.
+    parse_json_document_argument_strict(&vals[0], 1, "json_extract")?;
     let Some(document) = parse_json_document_argument(&vals[0])? else {
         return Ok(Datum::Null);
     };

@@ -132,6 +132,11 @@ pub enum EvalError {
     IntOverflow,
     /// A floating-point arithmetic result overflowed to infinity.
     FloatOverflow,
+    /// go `types.ErrOverflow`'s FLOAT-cast spelling: a TEXT value beyond the
+    /// float32 range cast `AS FLOAT` errors `constant 1e+300 overflows
+    /// float` (1690 / 22003, captured on the oracle). Carries the
+    /// go-rendered (`%v`) value text.
+    ConstantFloatCastOverflow { value: String },
     /// A fixed-point decimal operation exceeded MyDecimal's source buffer.
     DecimalOverflow,
     /// A `NEXTVAL`/`LASTVAL`/`SETVAL` failed at runtime. Both cases carry the

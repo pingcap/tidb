@@ -67,7 +67,7 @@ fn coprocessor_cot_error_matches_go() {
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
     match error {
         ExecError::Mysql(error) => error,
-        ExecError::Eval(eval) => eval_to_mysql_error(eval),
+        ExecError::Eval(eval) => eval_to_mysql_error(eval).from_evaluation(),
         // An internal invariant error carries the exact message Go returns
         // through its generic error path.
         ExecError::Internal(message) => MysqlError::unknown(message),
@@ -208,6 +208,10 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // DECIMAL one. See [`out_of_range`] for the one part still missing.
         EvalError::IntOverflow => out_of_range("BIGINT"),
         EvalError::FloatOverflow => out_of_range("DOUBLE"),
+        EvalError::ConstantFloatCastOverflow { value } => MysqlError::new(
+            ER_DATA_OUT_OF_RANGE,
+            format!("constant {value} overflows float"),
+        ),
         EvalError::DecimalOverflow => out_of_range("DECIMAL"),
         // Porting boundaries with no TiDB answer to match: TiDB evaluates
         // these, so there is no Go message for "not ported yet". The carried

@@ -31,7 +31,8 @@ use std::cmp::Ordering;
 use serde_json::{Number, Value as Json};
 
 use super::path::{extract, parse_path};
-use super::value::{json_argument, parse_json_document_argument, StringArgument};
+use super::value::{json_argument, parse_json_document_argument, parse_json_document_argument_strict,
+                    StringArgument};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 
@@ -48,6 +49,10 @@ pub(super) fn json_member_of(vals: &[Datum]) -> Result<Datum, EvalError> {
     if candidate.is_null() || document.is_null() {
         return Ok(Datum::Null);
     }
+    // Go's MEMBER OF errors on a NUMERIC scalar document argument (3146,
+    // argument 2, function spelled "member of"); the candidate keeps value
+    // semantics and coerces.
+    parse_json_document_argument_strict(document, 2, "member of")?;
     let candidate = json_argument(candidate, StringArgument::Value, None)?;
     let document = json_argument(document, StringArgument::Document, None)?;
     let result = match document {
@@ -66,7 +71,10 @@ pub(super) fn json_contains(vals: &[Datum]) -> Result<Datum, EvalError> {
     if document.is_null() || candidate.is_null() {
         return Ok(Datum::Null);
     }
-    let mut document = json_argument(document, StringArgument::Document, None)?;
+    // A NUMERIC scalar document argument is go's ErrInvalidTypeForJSON
+    // (3146, argument 1, json_contains), not a silent coercion.
+    parse_json_document_argument_strict(document, 1, "json_contains")?;
+    let mut document = json_argument(document, StringArgument::Document, None)?;;
     // Document, not Value: `JSON_CONTAINS`'s candidate keeps `ParseToJSONFlag`,
     // so `JSON_CONTAINS('[1]', '1')` is TRUE. Only `MEMBER OF` (above)
     // disables it for its candidate.
@@ -98,7 +106,9 @@ pub(super) fn json_overlaps(vals: &[Datum]) -> Result<Datum, EvalError> {
     if left.is_null() || right.is_null() {
         return Ok(Datum::Null);
     }
-    let left = json_argument(left, StringArgument::Document, None)?;
+    parse_json_document_argument_strict(left, 1, "json_overlaps")?;
+    parse_json_document_argument_strict(right, 2, "json_overlaps")?;
+    let left = json_argument(left, StringArgument::Document, None)?;;
     let right = json_argument(right, StringArgument::Document, None)?;
     Ok(Datum::Int(i64::from(json_overlaps_value(&left, &right))))
 }

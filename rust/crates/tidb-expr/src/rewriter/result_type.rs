@@ -221,7 +221,8 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
         CastType::DateTime { .. } => "cast_datetime",
         CastType::Time { .. } => "cast_time",
         CastType::Year => "cast_year",
-        CastType::Double | CastType::Float => "cast_double",
+        CastType::Double => "cast_double",
+        CastType::Float => "cast_float",
         CastType::Json => "cast_json",
         CastType::Vector { .. } => "cast_vector",
     };
@@ -1163,19 +1164,26 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
         return Some(ft);
     }
-    // The bit families and integer division return a plain Longlong.
+    // The bit families and integer division return a plain Longlong —
+    // except `bitneg`: go `bitNegFunctionClass.getFunction` adds
+    // `mysql.UnsignedFlag` in EVERY call form, so `BITNEG(1)` is the
+    // unsigned 18446744073709551614 on the wire, not the signed -2.
     if matches!(
         name,
         "bitand"
             | "bitor"
             | "bitxor"
-            | "bitneg"
             | "leftshift"
             | "rightshift"
             | "intdiv"
             | "div"
     ) {
         return Some(FieldType::new(FieldTypeCode::LongLong));
+    }
+    if name == "bitneg" {
+        let mut ft = FieldType::new(FieldTypeCode::LongLong);
+        ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        return Some(ft);
     }
     if matches!(name, "minus" | "mod") {
         let any_decimal = args
@@ -1526,6 +1534,7 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         | "json_length"
         | "json_depth"
         | "json_member_of"
+        | "json_memberof"
         | "json_overlaps"
         | "json_storage_free"
         | "json_storage_size" => int(),

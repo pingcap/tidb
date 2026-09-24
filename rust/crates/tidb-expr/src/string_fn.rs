@@ -1841,6 +1841,16 @@ pub(crate) fn char_func_with_context(
     for v in nums {
         match v {
             Datum::Null => {} // skipped, matching TiDB's EvalInt NULL path
+            // Go's `WrapWithCastAsInt` over a JSON operand re-reads the
+            // document's text as an integer (StrToInt), raising go's 1292
+            // truncation warning when the text is not a clean integer —
+            // captured: `CHAR(65, j)` over `{}` warns
+            // "Truncated incorrect INTEGER value: '{}'".
+            Datum::Json(value) => {
+                let as_text = Datum::new_string(value.to_string());
+                crate::cast::report_int_truncation(&as_text, ctx)?;
+                append_char_integer(&mut bytes, crate::cast::to_i64_signed(&as_text));
+            }
             _ => append_char_integer(&mut bytes, crate::cast::to_i64_signed(v)),
         }
     }

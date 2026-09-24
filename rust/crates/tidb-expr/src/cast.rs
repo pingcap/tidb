@@ -210,9 +210,33 @@ pub(crate) fn eval_cast(
             i64::from(fsp.unwrap_or(0)),
         ),
         CastType::Year => cast_to_year(&v, ctx),
-        CastType::Double | CastType::Float => {
+        CastType::Double => {
             let converted = str_to_real_for_cast(&v, ctx)?;
             Ok(Datum::Real(converted))
+        }
+        // go's FLOAT cast narrows through float32, and the two operand kinds
+        // diverge (captured on the oracle): a TEXT value beyond the float32
+        // range is `types.ErrOverflow`'s "constant 1e+300 overflows float"
+        // (1690 / 22003), while a REAL constant's conversion answers 0
+        // (`CAST(1e300 AS FLOAT)` -> 0). Within range both answer the value.
+        CastType::Float => match v {
+            Datum::Real(x) | Datum::Float32(x) => {
+                let narrowed = x as f32;
+                if narrowed.is_infinite() {
+                    Ok(Datum::Real(0.0))
+                } else {
+                    Ok(Datum::Real(f64::from(narrowed)))
+                }
+            }
+            other => {
+                let converted = str_to_real_for_cast(&other, ctx)?;
+                if converted.abs() > f64::from(f32::MAX) {
+                    return Err(EvalError::ConstantFloatCastOverflow {
+                        value: tidb_datatype::format_float_g_shortest(converted),
+                    });
+                }
+                Ok(Datum::Real(converted))
+            }
         }
         CastType::Vector { dimensions } => {
             let mut target = FieldType::new(FieldTypeCode::VectorFloat32);
@@ -1394,6 +1418,16 @@ pub(crate) fn cast_arg_as_int(
 ) -> Result<Datum, EvalError> {
     if matches!(v, Datum::Int(_) | Datum::UInt(_) | Datum::Null) {
         return Ok(v.clone());
+    }
+    // go's WrapWithCastAsInt over a JSON operand is `builtinCastJSONAsIntSig`:
+    // the document's MarshalJSON text re-reads as an integer (StrToInt), with
+    // go's 1292 truncation warning when the text is not a clean integer —
+    // captured: `bitand(j, j)` over `{}` warns twice and answers 0, while
+    // JSON `3` coerces silently.
+    if let Datum::Json(value) = v {
+        let as_text = Datum::new_string(value.to_string());
+        report_int_truncation(&as_text, ctx)?;
+        return Ok(Datum::Int(to_i64_signed(&as_text)));
     }
     let cast = if source.is_some_and(tidb_datatype::FieldType::is_unsigned) {
         CastType::Unsigned

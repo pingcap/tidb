@@ -228,8 +228,8 @@ fn string_operand_text(d: &Datum) -> String {
 
 pub(crate) fn eval_binary_full(
     op: BinaryOp,
-    l: Datum,
-    r: Datum,
+    mut l: Datum,
+    mut r: Datum,
     div_precision_increment: u32,
     collation: tidb_datatype::Collation,
     operands: Operands<'_>,
@@ -250,8 +250,8 @@ pub(crate) fn eval_binary_full(
     // plain `Datum::Int`. Reinterpreting the bits HERE, once, is exactly Go's
     // `uval := uint64(val)` and leaves every operator below reading one fact
     // (`Integer::Unsigned`) instead of two.
-    let l = unsigned_operand(l, operands.lhs);
-    let r = unsigned_operand(r, operands.rhs);
+    let mut l = unsigned_operand(l, operands.lhs);
+    let mut r = unsigned_operand(r, operands.rhs);
     // Go's `intDivideFunctionClass` stamps its result `UnsignedFlag` when
     // EITHER argument carries it and `builtinArithmeticIntDivideDecimalSig`
     // then reads the quotient back through `ToUint`, which REJECTS a negative
@@ -345,11 +345,27 @@ pub(crate) fn eval_binary_full(
     // everything; they covered Str/Float/Decimal and NOT Json.
     if matches!(l, Datum::Json(_)) || matches!(r, Datum::Json(_)) {
         if !matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
-            return Err(EvalError::Unsupported("JSON operand"));
-        }
-        if l == Datum::Null || r == Datum::Null {
-            return Ok(Datum::Null);
-        }
+            if !matches!(op, BitAnd | BitOr | BitXor | LeftShift | RightShift) {
+                return Err(EvalError::Unsupported("JSON operand"));
+            }
+            // go's bit signatures declare ETInt arguments, so a JSON operand
+            // reaches them through `WrapWithCastAsInt`:
+            // `builtinCastJSONAsIntSig` re-reads the document's MarshalJSON
+            // text as an integer -- StrToInt, go's 1292 truncation warning
+            // included -- so `bitand(j, j)` over `{}` answers 0 (warned) and
+            // over the JSON number `3` it answers 3. Rewriting both sides to
+            // their text here hands them to the string-operand arm below,
+            // which is exactly that cast.
+            let to_text = |value: Datum| match value {
+                Datum::Json(value) => Datum::new_string(value.to_string()),
+                other => other,
+            };
+            l = to_text(l);
+            r = to_text(r);
+        } else {
+            if l == Datum::Null || r == Datum::Null {
+                return Ok(Datum::Null);
+            }
         // The STRING side of a JSON comparison is PARSED as a JSON document,
         // not wrapped as a JSON string scalar: Go's `GetCmpFunction` wraps
         // both operands with `WrapWithCastAsJSON`, and EVERY string-to-JSON
@@ -381,6 +397,7 @@ pub(crate) fn eval_binary_full(
             .compare(&r, collation)
             .map_err(|_| EvalError::Unsupported("JSON comparison"))?;
         return Ok(ordering_to_bool(op, ordering));
+        }
     }
     // Two strings compare under the collation the expression derivation
     // aggregated for THIS comparison (byte order and PAD SPACE for

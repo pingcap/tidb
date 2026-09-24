@@ -66,6 +66,12 @@ pub struct MysqlError {
     pub state: [u8; 5],
     /// The rendered message.
     pub message: String,
+    /// Whether this failure ORIGINATED in expression evaluation. Go's
+    /// statement-error wire behavior is asymmetric: parse/plan/executor
+    /// failures land in the statement warning buffer (`driver_tidb.go`
+    /// `StmtCtx.AppendError`) while expression-evaluation failures do not,
+    /// so the warning-buffer seam needs to tell the two apart.
+    pub(crate) from_evaluation: bool,
 }
 
 impl MysqlError {
@@ -91,7 +97,32 @@ impl MysqlError {
             code,
             state,
             message: message.into(),
+            from_evaluation: false,
         }
+    }
+
+    /// Rebuilds an already-classified `(code, state, message)` triple from
+    /// outside this crate — the stored-wire-error case [`Self::with_state`]
+    /// serves internally, which struct literals outside the crate cannot
+    /// spell (the evaluation-origin field is crate-private by design).
+    pub fn from_parts(code: u16, state: [u8; 5], message: impl Into<String>) -> Self {
+        Self::with_state(code, state, message)
+    }
+
+    /// Marks this error as raised by expression evaluation, the class go's
+    /// warning buffer never records (`SELECT CAST('str' AS JSON)` errors
+    /// 3140 with an EMPTY `SHOW WARNINGS`, while a 1054/1062 failure shows
+    /// its own error row there).
+    #[must_use]
+    pub fn from_evaluation(mut self) -> Self {
+        self.from_evaluation = true;
+        self
+    }
+
+    /// Whether [`Self::from_evaluation`] marked this error.
+    #[must_use]
+    pub fn is_from_evaluation(&self) -> bool {
+        self.from_evaluation
     }
 
     /// Alias of [`MysqlError::new`]; kept so the historical raise-site name

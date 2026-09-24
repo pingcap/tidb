@@ -22,6 +22,7 @@
 //! this dispatch; RAND additionally receives the original argument AST so its
 //! constant-versus-row-dependent generator identity remains unchanged.
 
+mod go_exp_log;
 mod go_trig;
 
 use std::cmp::Ordering;
@@ -508,8 +509,13 @@ fn log10(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     Ok(match numeric_arg(v, ctx)? {
-        Some(x) if x <= 0.0 => Datum::Null,
-        Some(x) => Datum::Real(x.log10()),
+        // go `builtinLog10Sig.evalReal`: a non-positive argument warns
+        // `ErrInvalidArgumentForLogarithm` (3020) on its way to NULL.
+        Some(x) if x <= 0.0 => {
+            ctx.append_warning(3020, "Invalid argument for logarithm");
+            Datum::Null
+        }
+        Some(x) => Datum::Real(go_exp_log::go_log10(x)),
         None => Datum::Null,
     })
 }
@@ -529,7 +535,7 @@ fn exp(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     match numeric_arg(v, ctx)? {
-        Some(x) => finite_float(x.exp()),
+        Some(x) => finite_float(go_exp_log::go_exp(x)),
         None => Ok(Datum::Null),
     }
 }
@@ -617,7 +623,7 @@ fn acos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
 /// x)` — same argument order, confirmed via `goeval`, not assumed).
 fn atan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     match vals {
-        [_] => unary_finite(vals, ctx, f64::atan),
+        [_] => unary_finite(vals, ctx, go_trig::go_atan),
         [_, _] => atan2(vals, ctx),
         _ => Err(EvalError::Unsupported("bad function arity")),
     }
@@ -630,7 +636,7 @@ fn atan2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let (Some(y), Some(x)) = (numeric_arg(y, ctx)?, numeric_arg(x, ctx)?) else {
         return Ok(Datum::Null);
     };
-    finite_float(y.atan2(x))
+    finite_float(go_trig::go_atan2(y, x))
 }
 
 /// `randFunctionClass` / `builtinRandSig` / `builtinRandWithSeedFirstGenSig`

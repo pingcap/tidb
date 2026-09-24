@@ -87,7 +87,7 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("JSON_OBJECT", 0..) => Some(json_object(vals, &no_arg_types(vals.len()))),
         ("JSON_LENGTH", 1 | 2) => Some(json_length(vals)),
         ("JSON_EXTRACT", 2..) => Some(json_extract(vals)),
-        ("JSON_MEMBER_OF", 2) => Some(json_member_of(vals)),
+        ("JSON_MEMBER_OF" | "json_member_of", 2) => Some(json_member_of(vals)),
         ("JSON_CONTAINS", 2 | 3) => Some(json_contains(vals)),
         ("JSON_CONTAINS_PATH", 3..) => Some(json_contains_path(vals)),
         ("JSON_KEYS", 1 | 2) => Some(json_keys(vals)),

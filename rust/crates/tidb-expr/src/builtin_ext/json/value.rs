@@ -385,13 +385,16 @@ pub(crate) fn parse_json_document_argument(v: &Datum) -> Result<Option<Json>, Ev
         Datum::String(_) | Datum::Bytes(_) => {
             parse_json(json_sql_string(v)?.unwrap_or_default()).map(Some)
         }
+        // Go `WrapWithCastAsJSON`'s numeric arm: a numeric scalar becomes the
+        // JSON number it spells (`JSON_LENGTH(1)` is 1, `JSON_DEPTH(1)` is
+        // 1, `JSON_PRETTY(1)` is '1'), captured on the oracle.
         Datum::Int(_)
         | Datum::UInt(_)
         | Datum::Decimal(_)
-        | Datum::Real(_)
-        | Datum::MinNotNull
-        | Datum::MaxValue => Err(EvalError::Unsupported("JSON document requires string")),
+        | Datum::Real(_) => datum_json_scalar(v).map(Some),
         Datum::Json(value) => parse_json(&value.to_string()).map(Some),
+        Datum::MinNotNull
+        | Datum::MaxValue => Err(EvalError::Unsupported("JSON document requires string")),
         Datum::Float32(_)
         | Datum::BinaryLiteral(_)
         | Datum::Duration(_)
@@ -404,6 +407,31 @@ pub(crate) fn parse_json_document_argument(v: &Datum) -> Result<Option<Json>, Ev
             "JSON document requires JSON or string",
         )),
     }
+}
+
+/// The STRICT document coercion go's `JSON_CONTAINS` / `JSON_OVERLAPS` /
+/// `JSON_EXTRACT` / `JSON_MEMBER OF` signatures observe: a NUMERIC scalar in
+/// a JSON position is `ErrInvalidTypeForJSON` (3146) naming the 1-based
+/// argument and the function — captured on the oracle:
+/// `JSON_CONTAINS(1, 2)` errors on argument 1 to `json_contains`,
+/// `JSON_EXTRACT(1, 2)` on argument 1 to `json_extract`, and
+/// `JSON_MEMBER OF(1, 2)` on argument 2 to `member of` (space spelled).
+/// Strings still parse as documents and a JSON cell passes through.
+pub(crate) fn parse_json_document_argument_strict(
+    v: &Datum,
+    argument: usize,
+    function: &'static str,
+) -> Result<Option<Json>, EvalError> {
+    if matches!(
+        v,
+        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_)
+    ) {
+        return Err(EvalError::Json(JsonError::InvalidTypeForJson {
+            argument,
+            function,
+        }));
+    }
+    parse_json_document_argument(v)
 }
 
 fn datum_json_scalar(value: &Datum) -> Result<Json, EvalError> {

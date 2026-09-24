@@ -86,7 +86,7 @@ fn format_local(local: NaiveDateTime, fsp: usize) -> String {
 /// `MyDecimal.FromFloat64`'s shortest `%g` spelling. The nanoseconds keep the
 /// full written fraction so rounding at fsp happens on the complete value, as
 /// in `evalFromUnixTime`.
-fn unix_arg_nanos(value: &Datum) -> Result<Option<(i128, usize)>, EvalError> {
+fn unix_arg_nanos(value: &Datum, cols: &dyn Columns) -> Result<Option<(i128, usize)>, EvalError> {
     let (text, fsp) = match value {
         Datum::Null => return Ok(None),
         Datum::Int(v) => (v.to_string(), 0),
@@ -113,6 +113,14 @@ fn unix_arg_nanos(value: &Datum) -> Result<Option<(i128, usize)>, EvalError> {
             let trimmed = text.trim();
             let (int_part, _) = trimmed.split_once('.').unwrap_or((trimmed, ""));
             if int_part.parse::<i64>().is_err() {
+                // go's ETDecimal argument cast runs `StrToDecimal` through
+                // `HandleTruncate`: a wholly non-numeric string warns
+                // "Truncated incorrect DECIMAL value: 'a'" on its way to the
+                // epoch answer (captured on the oracle).
+                cols.handle_truncate(&format!(
+                    "Truncated incorrect DECIMAL value: '{}'",
+                    tidb_datatype::warning_subject_byte_cap(trimmed)
+                ))?;
                 return Ok(Some((0_i128, 0)));
             }
             (text, 6)
@@ -147,7 +155,7 @@ pub(super) fn from_unixtime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
     if !(1..=2).contains(&vals.len()) {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let Some((total_nanos, fsp)) = unix_arg_nanos(&vals[0])? else {
+    let Some((total_nanos, fsp)) = unix_arg_nanos(&vals[0], cols)? else {
         return Ok(Datum::Null);
     };
     let integral = total_nanos / 1_000_000_000;

@@ -220,9 +220,12 @@ fn bin_to_uuid(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> 
     };
     if input.len() != 16 {
         // go `builtinBinToUUIDSig.evalString`:
-        // `types.ErrWrongValueForType("uuid", str, "bin_to_uuid")` (1411).
+        // `types.ErrWrongValueForType("string", str, "bin_to_uuid")` (1411) —
+        // the message word is the WIRE class "string" even though the check
+        // is the 16-byte payload length (captured on the oracle:
+        // "Incorrect string value: '1' for function bin_to_uuid").
         return Err(EvalError::WrongValueForType {
-            value_class: "uuid",
+            value_class: "string",
             value: String::from_utf8_lossy(&input).into_owned(),
             function: "bin_to_uuid",
         });

@@ -3080,6 +3080,7 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
         },
         "year" => CastType::Year,
         "double" => CastType::Double,
+        "float" => CastType::Float,
         "json" => CastType::Json,
         "vector" => CastType::Vector { dimensions: len() },
         _ => return Err(EvalError::Unsupported("this cast target is not ported")),
@@ -3574,6 +3575,16 @@ fn cast_numeric_argument_in_mode(
                 }
             }
             return Ok(Datum::Real(converted.value));
+        }
+        if target == EvalType::Int {
+            // go `builtinCastJSONAsIntSig`: the document's text re-reads as
+            // an integer (StrToInt), raising go's 1292 truncation warning
+            // when the text is not a clean integer — captured:
+            // `bitand(j, j)` over `{}` warns twice and answers 0, while the
+            // JSON number `3` coerces silently.
+            let as_text = Datum::new_string(json.to_string());
+            crate::cast::report_int_truncation(&as_text, ctx)?;
+            return Ok(Datum::Int(crate::cast::to_i64_signed(&as_text)));
         }
     }
     let value = if target == EvalType::Decimal
