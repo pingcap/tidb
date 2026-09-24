@@ -4102,6 +4102,7 @@ dependencies = [
  "prometheus 0.14.0",
  "serde",
  "serde_json",
+ "signal-hook",
  "tidb-ast",
  "tidb-chunk",
  "tidb-config",

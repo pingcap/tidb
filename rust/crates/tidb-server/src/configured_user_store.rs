@@ -52,6 +52,10 @@ pub struct AuthenticatedIdentity {
     identity: MatchedIdentity,
     in_sandbox_mode: bool,
     privilege_bypassed: bool,
+    /// Domain's internal system-session pool admission. Go's internal
+    /// sessions never enter the server's client list, so they never appear
+    /// in `SHOW PROCESSLIST`.
+    internal: bool,
 }
 
 /// Proof that the process-wide secure-transport gate admitted this socket.
@@ -105,7 +109,15 @@ impl AuthenticatedIdentity {
             identity: MatchedIdentity::new("root", "%"),
             in_sandbox_mode: false,
             privilege_bypassed: true,
+            internal: true,
         }
+    }
+
+    /// Whether this admission came from Domain's internal system-session
+    /// pool rather than a client login.
+    #[must_use]
+    pub fn is_internal(&self) -> bool {
+        self.internal
     }
 
     /// Canonical matched username for ordinary authentication, or the
@@ -481,6 +493,7 @@ impl ConfiguredUserStore {
                 identity,
                 in_sandbox_mode: false,
                 privilege_bypassed: true,
+                internal: false,
             });
         }
         // The source bypass returned above without taking any account-table
@@ -619,6 +632,7 @@ impl ConfiguredUserStore {
             identity,
             in_sandbox_mode,
             privilege_bypassed: false,
+            internal: false,
         })
     }
 }

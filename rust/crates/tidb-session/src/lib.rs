@@ -1496,6 +1496,20 @@ impl Session {
         Ok(())
     }
 
+    /// Refreshes the process-list row's status snapshot after a transaction
+    /// control statement. The control path bypasses the ordinary statement
+    /// pipeline, so the row would otherwise keep the PREVIOUS statement's
+    /// `State` text (`in transaction; autocommit` after a `ROLLBACK`) — Go's
+    /// `clientConn` writes the live `SessionVars.Status` word on the control
+    /// statement's own OK packet.
+    pub fn refresh_process_status(&self) {
+        if let Some(guard) = &self.process {
+            guard
+                .registry()
+                .statement_finished(guard.id(), &self.current_db, &self.status_text());
+        }
+    }
+
     /// Selects NO schema, which is the state a connection that authenticated
     /// without an initial database is in: Go's `SessionVars.CurrentDB` is
     /// empty and every unqualified name is `ErrNoDB` (`Error 1046`) until a

@@ -1763,6 +1763,21 @@ impl Session {
                 };
                 Ok(Some(StmtOutput::Rows { columns, rows }))
             }
+            // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
+            // (pkg/executor/simple.go:3584-3611): the statement answers
+            // success immediately, and a 1-second-delayed task SIGTERMs this
+            // very process, whose installed handler performs the graceful
+            // stop. `RESTART`/`HELP` keep their unsupported report.
+            tidb_ast::AdminStmt::ServerControl(control) => match &**control {
+                tidb_ast::ServerControlStmt::Shutdown => {
+                    std::thread::spawn(|| {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        signal_hook::low_level::raise(signal_hook::consts::SIGTERM);
+                    });
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
+                _ => Ok(None),
+            },
             _ => Ok(None),
         }
     }

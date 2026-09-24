@@ -3034,17 +3034,24 @@ impl QuerySessionFactory for ClusterSessionFactory {
         if identity.privilege_bypassed() {
             session.enable_privilege_bypass();
         }
-        let guard = self.processes.register(
-            context.connection_id,
-            identity.username().to_owned(),
-            context.peer_addr.to_string(),
-            session.current_database().to_owned(),
-            Some(Arc::new(ConnectionKillTarget::new(
-                context.cancellation.clone(),
-                context.close.clone(),
-            ))),
-        );
-        session.attach_process(context.connection_id, guard);
+        // Go's Domain-internal sessions never enter the server's client
+        // list (`Server.clients` holds connections, the sys-session pool is
+        // separate), so they never appear in SHOW PROCESSLIST. Registering
+        // them here leaked every pooled internal session as a permanent
+        // `Sleep` row.
+        if !identity.is_internal() {
+            let guard = self.processes.register(
+                context.connection_id,
+                identity.username().to_owned(),
+                context.peer_addr.to_string(),
+                session.current_database().to_owned(),
+                Some(Arc::new(ConnectionKillTarget::new(
+                    context.cancellation.clone(),
+                    context.close.clone(),
+                ))),
+            );
+            session.attach_process(context.connection_id, guard);
+        }
         session.attach_privileges(self.privileges.clone());
         if let Some(bindings) = &self.bindings {
             session.set_global_binding_cache(bindings.cache());
@@ -6720,6 +6727,11 @@ impl QuerySession for ClusterServerSession {
             // Refused above, before the session was touched.
             Some(TransactionControl::Unsupported(_)) | None => {}
         }
+        // The control path bypasses the ordinary statement pipeline's finish
+        // publish, so the process row still carried the previous statement's
+        // status (`in transaction; autocommit` after a `ROLLBACK`). Refresh it
+        // from the live session state, Go's OK-packet status word.
+        self.session.refresh_process_status();
         Ok(Some(in_transaction))
     }
 

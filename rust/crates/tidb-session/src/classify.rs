@@ -322,14 +322,21 @@ impl Session {
                     .map_or(StmtKind::Query, |inner| self.statement_kind_parsed(&inner)),
                 _ => StmtKind::Write,
             },
-            // `KILL` and `FLUSH` are the admin statements that answer with an
-            // OK packet rather than a result set, as they do in Go: both are
-            // `SimpleExec` there, which produces no rows.
+            // `KILL`, `FLUSH` and `SHUTDOWN`/`RESTART` are the admin
+            // statements that answer with an OK packet rather than a result
+            // set, as they do in Go: all are `SimpleExec` there, which
+            // produces no rows (`executeShutdown` answers before the
+            // 1-second-delayed stop). `HELP` keeps the result-set shape.
             Stmt::Admin(admin)
-                if matches!(
-                    &**admin,
-                    tidb_ast::AdminStmt::Kill(_) | tidb_ast::AdminStmt::Flush(_)
-                ) =>
+                if match &**admin {
+                    tidb_ast::AdminStmt::Kill(_) | tidb_ast::AdminStmt::Flush(_) => true,
+                    tidb_ast::AdminStmt::ServerControl(control) => matches!(
+                        &**control,
+                        tidb_ast::ServerControlStmt::Shutdown
+                            | tidb_ast::ServerControlStmt::Restart
+                    ),
+                    _ => false,
+                } =>
             {
                 StmtKind::Write
             }
