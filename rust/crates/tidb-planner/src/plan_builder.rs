@@ -3193,18 +3193,43 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // columns so an alias's expression is not evaluated a second time.
             aggregation::visit_exprs(&mut expr, &mut |node| {
                 if let Expr::Column(path) = node {
+                    // GO resolves an order-by expression's columns from the
+                    // SOURCE plan first (`resolveFieldsFirst` is false inside
+                    // an order-by expression); a source column that is also a
+                    // select field passes through the projection identically,
+                    // so binding the field's marker is equivalent. A source
+                    // column the select list does not project becomes an
+                    // auxiliary field (GO :2841 resolveFromPlan) -- that is
+                    // what widens the schema for q99's order-by substr.
                     if find_field_name(source_names, path).is_none() {
-                        if let Some(index) = Self::find_in_select_fields(node, &fields[..old_len]) {
-                            marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
-                            return true;
-                        }
+                        return true;
                     }
-                } else if !aggregation::is_aggregate_call(node)
+                    if let Some(index) = Self::find_in_select_fields(node, &fields[..old_len]) {
+                        marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
+                        return true;
+                    }
+                    let index = fields.len();
+                    fields.push(ProjectionField {
+                window_spec_column: false,
+                        expr: node.clone(),
+                        column_reference: true,
+                        alias: None,
+                        text: None,
+                        hidden: true,
+                    });
+                    marker::substitute(node, PlanMarker::new(MarkerKind::OrderBy, index));
+                    return true;
+                }
+                if !aggregation::is_aggregate_call(node)
                     && !matches!(
                         node,
                         Expr::Window { .. } | Expr::Subquery(_) | Expr::Exists { .. }
                     )
                 {
+                    // GO's buildSort keeps a plain-function order-by term as an
+                    // EXPRESSION over the projection's columns (q89's
+                    // `sum_sales - avg_monthly_sales` sorts bare): it never
+                    // widens the field list with the expression itself.
                     return false;
                 }
                 // Go `resolveHavingAndOrderBy`'s AggregateFuncExpr case
@@ -3250,30 +3275,30 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     fn find_in_select_fields(expr: &Expr, fields: &[ProjectionField]) -> Option<usize> {
-        if let Expr::Column(path) = expr {
-            if let [name] = path.as_slice() {
-                // 1. the alias.
-                if let Some(index) = fields.iter().position(|field| {
-                    field
-                        .alias
-                        .as_deref()
-                        .is_some_and(|a| a.eq_ignore_ascii_case(name))
-                }) {
-                    return Some(index);
-                }
-                // 2. a select-list field that IS that column.
-                if let Some(index) = fields.iter().position(|field| {
-                    field.alias.is_none()
-                        && matches!(&field.expr, Expr::Column(p) if p.last().is_some_and(|c| c.eq_ignore_ascii_case(name)))
-                }) {
-                    return Some(index);
-                }
-                return None;
-            }
+        // GO matches ONLY ColumnNameExprs against the select list
+        // (`resolveFromSelectFields`, logical_plan_builder.go:2610): an
+        // expression order-by term never reuses a select field by textual
+        // equality -- it stays a sort-item expression whose operands resolve
+        // to projection columns or appended auxiliary fields (q99 trims,
+        // q89 does not).
+        let Expr::Column(path) = expr else {
+            return None;
+        };
+        let name = path.last()?;
+        // 1. the alias.
+        if let Some(index) = fields.iter().position(|field| {
+            field
+                .alias
+                .as_deref()
+                .is_some_and(|a| a.eq_ignore_ascii_case(name))
+        }) {
+            return Some(index);
         }
-        // A non-column ORDER BY term that is textually the same expression as
-        // a select field reuses that field's column instead of recomputing it.
-        fields.iter().position(|field| &field.expr == expr)
+        // 2. a select-list field that IS that column.
+        fields.iter().position(|field| {
+            field.alias.is_none()
+                && matches!(&field.expr, Expr::Column(p) if p.last().is_some_and(|c| c.eq_ignore_ascii_case(name)))
+        })
     }
 
     /// Go `buildProjection(ctx, p, fields, mapper, windowMapper, ...)`
