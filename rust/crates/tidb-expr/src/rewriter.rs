@@ -557,11 +557,45 @@ fn binary_expression(
     match ret_type {
         Some(ret_type) => {
             let mut args = vec![left, right];
-            if matches!(name, "plus" | "minus" | "mul" | "div" | "mod")
-                && ret_type.eval_type() == tidb_datatype::EvalType::Decimal
-            {
-                for argument in &mut args {
-                    crate::builtin_compare::wrap_integer_operand_as_decimal(argument);
+            if matches!(name, "plus" | "minus" | "mul" | "div" | "mod") {
+                match ret_type.eval_type() {
+                    tidb_datatype::EvalType::Decimal => {
+                        for argument in &mut args {
+                            crate::builtin_compare::wrap_integer_operand_as_decimal(argument);
+                        }
+                    }
+                    // GO's arithmeticFunctionClass.getFunction coerces BOTH
+                    // operands to the real domain when either side is real
+                    // (argTps [ETReal, ETReal] through newBaseBuiltinFuncWithTp)
+                    // -- q17 renders `div(Column#, cast(Column#, double
+                    // BINARY))` because the decimal avg() operand is cast.
+                    tidb_datatype::EvalType::Real => {
+                        for argument in &mut args {
+                            // The placeholder is replaced by the wrap result
+                            // before it can ever be read.
+                            *argument = crate::aggregation::wrap_cast::wrap_with_cast_as_real(
+                                std::mem::replace(
+                                    argument,
+                                    Expression::Constant(Constant::new_null()),
+                                ),
+                            )?;
+                            // GO's BuildCastFunction folds its newly-built
+                            // cast over a strict constant at the same
+                            // boundary; a wrap that early-returned leaves the
+                            // argument untouched and needs no fold.
+                            if matches!(
+                                argument,
+                                Expression::ScalarFunction(function)
+                                    if function.func_name.lowercase().starts_with("cast_")
+                            ) {
+                                resolver.fold_constant(
+                                    argument,
+                                    ConstantFoldMode::Normal,
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
