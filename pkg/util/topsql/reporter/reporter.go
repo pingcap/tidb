@@ -30,8 +30,9 @@ import (
 )
 
 const (
-	reportTimeout         = 40 * time.Second
-	collectChanBufferSize = 2
+	reportTimeout               = 40 * time.Second
+	collectChanBufferSize       = 2
+	reportCollectedDataChanSize = 2
 )
 
 var nowFunc = time.Now
@@ -97,7 +98,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planB
 		cancel:                    cancel,
 		collectCPUTimeChan:        make(chan []collector.SQLCPUTimeRecord, collectChanBufferSize),
 		collectStmtStatsChan:      make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
-		reportCollectedDataChan:   make(chan collectedData, 1),
+		reportCollectedDataChan:   make(chan collectedData, reportCollectedDataChanSize),
 		collecting:                newCollecting(),
 		normalizedSQLMap:          newNormalizedSQLMap(),
 		normalizedPlanMap:         newNormalizedPlanMap(),
@@ -292,16 +293,21 @@ func findKthNetworkBytes(data stmtstats.StatementStatsMap, k int, u64Slice []uin
 
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan() {
-	// Send to report channel. When channel is full, data will be dropped.
-	select {
-	case tsr.reportCollectedDataChan <- collectedData{
+	// collectWorker is the only sender, so the channel cannot become full
+	// between this check and the send below.
+	if len(tsr.reportCollectedDataChan) == cap(tsr.reportCollectedDataChan) {
+		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
+		// SQL/plan metadata remains on the reporter side because it is bounded by
+		// MaxCollect and can decode records collected after backpressure recovers.
+		tsr.collecting = newCollecting()
+		reporter_metrics.IgnoreReportDataByBackpressureCounter.Inc()
+		return
+	}
+
+	tsr.reportCollectedDataChan <- collectedData{
 		collected:         tsr.collecting.take(),
 		normalizedSQLMap:  tsr.normalizedSQLMap.take(),
 		normalizedPlanMap: tsr.normalizedPlanMap.take(),
-	}:
-	default:
-		// ignore if chan blocked
-		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
 	}
 }
 
