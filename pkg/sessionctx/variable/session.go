@@ -261,34 +261,6 @@ type TxnCtxNoNeedToRestore struct {
 	CurrentStmtPessimisticLockCache map[string][]byte
 }
 
-// RUV2Weights returns the active TiDB-side RU v2 weights for the current
-// session. The weights come from the global config, but the conversion is kept
-// in the session layer so lower-level utility packages remain config-free.
-func (s *SessionVars) RUV2Weights() execdetails.RUV2Weights {
-	if cfg := config.GetGlobalConfig(); cfg != nil {
-		return ruv2WeightsFromConfig(cfg.RUV2)
-	}
-	return ruv2WeightsFromConfig(config.DefaultRUV2Config())
-}
-
-func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
-	return execdetails.RUV2Weights{
-		RUScale:                 cfg.RUScale,
-		ResultChunkCells:        cfg.ResultChunkCells,
-		ExecutorL1:              cfg.ExecutorL1,
-		ExecutorL2:              cfg.ExecutorL2,
-		ExecutorL3:              cfg.ExecutorL3,
-		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
-		PlanCnt:                 cfg.PlanCnt,
-		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
-		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
-		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
-		WriteKeys:               cfg.WriteKeys,
-		SessionParserTotal:      cfg.SessionParserTotal,
-		TxnCnt:                  cfg.TxnCnt,
-	}
-}
-
 // SavepointRecord indicates a transaction's savepoint record.
 type SavepointRecord struct {
 	// name is the name of the savepoint
@@ -823,8 +795,17 @@ type SessionVars struct {
 	MViewMaintainImportThreads int
 	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
 	MViewMaintainImportDiskQuota string
-	RetryLimit                   int64
-	DisableTxnAutoRetry          bool
+	// MLogPurgeBatchSize indicates the maximum number of MLog rows deleted by one purge batch.
+	MLogPurgeBatchSize int
+	// MLogPurgeMinRate indicates the minimum target delete rate for adaptive MLog purge throttling.
+	MLogPurgeMinRate int
+	// MLogPurgeRateBudgetRatio indicates the fraction of the scheduling window that purge may spend deleting.
+	MLogPurgeRateBudgetRatio float64
+	// MLogPurgeDeleteTiFlashThreads controls TiFlash threads used by MLog purge DELETE statements.
+	// Zero means that the current tidb_max_tiflash_threads value is inherited.
+	MLogPurgeDeleteTiFlashThreads int64
+	RetryLimit                    int64
+	DisableTxnAutoRetry           bool
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -953,8 +934,6 @@ type SessionVars struct {
 	StmtCtx *stmtctx.StatementContext
 	// RUV2Metrics stores statement-level RU v2 metrics for current statement.
 	RUV2Metrics *execdetails.RUV2Metrics
-	// RUV2PendingSessionParserTotal stores session parser count before statement context reset.
-	RUV2PendingSessionParserTotal atomic.Int64
 
 	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
 	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
@@ -1249,6 +1228,9 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableTiKVShortCircuitExpression enables short-circuit expression evaluation in TiKV.
+	EnableTiKVShortCircuitExpression bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -1315,6 +1297,9 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+	// DMLMaxExecutionTime is the timeout for transactional DML statements and COMMIT, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	DMLMaxExecutionTime uint64
 
 	// MaxKeysRead is the maximum number of storage engine keys that a SELECT statement
 	// may examine. 0 means unlimited. Only applies to SELECT statements.
@@ -1490,6 +1475,9 @@ type SessionVars struct {
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
 
+	// EnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+	EnableAdaptiveLimitScan bool
+
 	// EnableAsyncCommit indicates whether to enable the async commit feature.
 	EnableAsyncCommit bool
 
@@ -1603,6 +1591,8 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
+	// InNonTransactionalDML marks non-transactional DML execution and its internal statements.
+	InNonTransactionalDML bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
@@ -1780,10 +1770,6 @@ type SessionVars struct {
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
 
-	// PagingSizeBytes is the byte budget per page.
-	// 0 means disabled.
-	PagingSizeBytes int
-
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
 	PessimisticTransactionFairLocking bool
@@ -1919,6 +1905,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+	// TTLJobID attributes a user-table scan/delete transaction to a TTL job. Empty means
+	// no scan/delete attribution; TTL sessions restore it after draining the result.
+	TTLJobID string
 
 	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
 	MemArbitrator struct {
@@ -2445,6 +2434,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		EnableTiKVShortCircuitExpression: vardef.DefTiDBEnableTiKVShortCircuitExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
@@ -2481,6 +2471,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                         kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAdaptiveLimitScan:          vardef.DefTiDBEnableAdaptiveLimitScan,
 		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
@@ -2511,7 +2502,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
-		PagingSizeBytes:                  vardef.DefPagingSizeBytes,
 		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
 		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:                  vardef.DefTiDBRedactLog,
@@ -2530,6 +2520,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
@@ -2555,6 +2546,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MViewMaintainIsolationReadEngines = defaultIsolationReadEnginesValue()
 	vars.MViewMaintainImportThreads = vardef.DefTiDBMViewMaintainImportThreads
 	vars.MViewMaintainImportDiskQuota = vardef.DefTiDBMViewMaintainImportDiskQuota
+	vars.MLogPurgeBatchSize = vardef.DefTiDBMLogPurgeBatchSize
+	vars.MLogPurgeMinRate = vardef.DefTiDBMLogPurgeMinRate
+	vars.MLogPurgeRateBudgetRatio = vardef.DefTiDBMLogPurgeRateBudgetRatio
+	vars.MLogPurgeDeleteTiFlashThreads = vardef.DefTiDBMLogPurgeDeleteTiFlashThreads
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: vardef.DefIndexJoinBatchSize,
 		IndexLookupSize:    vardef.DefIndexLookupSize,

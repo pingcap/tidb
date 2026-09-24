@@ -927,6 +927,19 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table t")
 	require.Error(t, err)
+
+	// MV indexes always use the slow checker, even when fast checking is enabled.
+	tk.MustExec("create table t_partial(a json, flag set('a','b'), index idx((cast(a as signed array))) where flag = 1)")
+	for _, withRows := range []bool{false, true} {
+		if withRows {
+			tk.MustExec("insert into t_partial values ('[1,2]', 'a'), ('[3,4]', 'b'), ('[5]', null)")
+		}
+		for _, fastCheck := range []string{"off", "on"} {
+			tk.MustExec("set tidb_enable_fast_table_check = " + fastCheck)
+			tk.MustGetErrCode("admin check table t_partial", mysql.ErrCheckPartialIndexWithoutFastCheck)
+			tk.MustGetErrCode("admin check index t_partial idx", mysql.ErrCheckPartialIndexWithoutFastCheck)
+		}
+	}
 }
 
 func TestAdminCheckPartitionTableFailed(t *testing.T) {

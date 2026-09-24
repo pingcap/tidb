@@ -251,6 +251,8 @@ func TestMaterializedViewInfoClone(t *testing.T) {
 	info := &MaterializedViewInfo{
 		BaseTableIDs:                    []int64{1, 2},
 		SQLContent:                      "select 1",
+		DefinitionSQLMode:               mysql.ModeANSIQuotes,
+		RefreshScheduleSQLMode:          mysql.ModePipesAsConcat,
 		DefinitionDivPrecisionIncrement: 4,
 		DefinitionTimeZone:              TimeZoneLocation{Name: "UTC"},
 		RefreshScheduleTimeZone:         TimeZoneLocation{Name: "Asia/Shanghai"},
@@ -261,6 +263,8 @@ func TestMaterializedViewInfoClone(t *testing.T) {
 	clone := info.Clone()
 	require.Equal(t, info.BaseTableIDs, clone.BaseTableIDs)
 	require.Equal(t, info.SQLContent, clone.SQLContent)
+	require.Equal(t, info.DefinitionSQLMode, clone.DefinitionSQLMode)
+	require.Equal(t, info.RefreshScheduleSQLMode, clone.RefreshScheduleSQLMode)
 	require.Equal(t, info.DefinitionDivPrecisionIncrement, clone.DefinitionDivPrecisionIncrement)
 	require.Equal(t, info.DefinitionTimeZone.Name, clone.DefinitionTimeZone.Name)
 	require.Equal(t, info.RefreshScheduleTimeZone.Name, clone.RefreshScheduleTimeZone.Name)
@@ -300,6 +304,10 @@ func TestTTLDefaultJobInterval(t *testing.T) {
 	d, err := duration.ParseDuration(DefaultTTLJobInterval)
 	require.NoError(t, err)
 	require.Equal(t, 24*time.Hour, d)
+	// test default value of `StarterDefaultTTLJobInterval` is valid.
+	d, err = duration.ParseDuration(StarterDefaultTTLJobInterval)
+	require.NoError(t, err)
+	require.Equal(t, 15*time.Minute, d)
 	// test default value of `OldDefaultTTLJobInterval` is valid.
 	d, err = duration.ParseDuration(OldDefaultTTLJobInterval)
 	require.NoError(t, err)

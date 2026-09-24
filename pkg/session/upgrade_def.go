@@ -525,14 +525,18 @@ const (
 	// version284 migrate tidb_disable_txn_file (from TiDB-CSE) to tidb_enable_txn_file and inverts its value.
 	version284 = 284
 
-	// version285 creates materialized view maintenance system tables.
+	// version285 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
 	version285 = 285
 
-	// version286 adds the OPERATE VIEW static privilege.
-	version286 = 286
+	// ...
+	// [version286, version315] is the version range reserved for release-nextgen-202609.
+	// ...
 
-	// version287 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
-	version287 = 287
+	// version316 creates materialized view maintenance system tables.
+	version316 = 316
+
+	// version317 adds the OPERATE VIEW static privilege.
+	version317 = 317
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -546,7 +550,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version287
+var currentBootstrapVersion int64 = version317
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -736,8 +740,8 @@ var (
 		{version: version283, fn: upgradeToVer283},
 		{version: version284, fn: upgradeToVer284},
 		{version: version285, fn: upgradeToVer285},
-		{version: version286, fn: upgradeToVer286},
-		{version: version287, fn: upgradeToVer287},
+		{version: version316, fn: upgradeToVer316},
+		{version: version317, fn: upgradeToVer317},
 	}
 )
 
@@ -2336,18 +2340,20 @@ func upgradeToVer284(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer285(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
+}
+
+func upgradeToVer316(s sessionapi.Session, _ int64) {
 	for _, tbl := range systemTablesOfMaterializedViewNextGenVersion {
 		doReentrantDDL(s, tbl.SQL)
 	}
 }
 
-func upgradeToVer286(s sessionapi.Session, _ int64) {
+func upgradeToVer317(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
-}
-
-func upgradeToVer287(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
+	// Preserve the old behavior for upgraded clusters that do not have a persisted value.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)
 }

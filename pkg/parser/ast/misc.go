@@ -59,6 +59,10 @@ var (
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
+	_ StmtNode = &PurgeMaterializedViewLogStmt{}
+	_ StmtNode = &CancelMaterializedViewJobStmt{}
+	_ StmtNode = &RefreshMaterializedViewStmt{}
+	_ StmtNode = &RefreshMaterializedViewImplementStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 	_ StmtNode = &TrafficStmt{}
 	_ StmtNode = &RecommendIndexStmt{}
@@ -649,6 +653,299 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
+	return v.Leave(n)
+}
+
+// PurgeMaterializedViewLogStmt is a statement to purge a materialized view log on a base table.
+type PurgeMaterializedViewLogStmt struct {
+	stmtNode
+
+	Table *TableName
+}
+
+// CancelMaterializedViewJobType identifies the materialized-view job targeted by CANCEL.
+type CancelMaterializedViewJobType uint8
+
+const (
+	// CancelMaterializedViewJobTypeLogPurge targets materialized view log purge jobs.
+	CancelMaterializedViewJobTypeLogPurge CancelMaterializedViewJobType = iota + 1
+	// CancelMaterializedViewJobTypeRefresh targets materialized view refresh jobs.
+	CancelMaterializedViewJobTypeRefresh
+)
+
+// CancelMaterializedViewJobStmt represents CANCEL MATERIALIZED VIEW JOB, include materialized view log purge and materialized view refresh jobs.
+type CancelMaterializedViewJobStmt struct {
+	stmtNode
+
+	Tp    CancelMaterializedViewJobType
+	JobID int64
+}
+
+// Restore implements Node interface.
+func (n *CancelMaterializedViewJobStmt) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case CancelMaterializedViewJobTypeRefresh:
+		ctx.WriteKeyWord(CancelMaterializedViewRefreshJobCommand + " ")
+	case CancelMaterializedViewJobTypeLogPurge:
+		ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW LOG PURGE JOB ")
+	default:
+		return errors.Errorf("invalid materialized view job cancel type: %d", n.Tp)
+	}
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// Accept implements Node interface.
+func (n *CancelMaterializedViewJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+// Restore implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PURGE MATERIALIZED VIEW LOG ON ")
+	return n.Table.Restore(ctx)
+}
+
+// Accept implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PurgeMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// RefreshMaterializedViewStmt is a statement to trigger a refresh on a materialized view.
+type RefreshMaterializedViewStmt struct {
+	stmtNode
+
+	ViewName      *TableName
+	WithAsyncMode bool
+	Type          RefreshMaterializedViewType
+	CompleteType  RefreshMaterializedViewCompleteType
+	ObserveType   RefreshMaterializedViewObserveType
+	AsOf          *AsOfClause
+}
+
+// RefreshMaterializedViewImplementStmt is an internal-only statement used by refresh planning.
+type RefreshMaterializedViewImplementStmt struct {
+	stmtNode
+
+	RefreshStmt                  *RefreshMaterializedViewStmt
+	LastSuccessfulRefreshReadTSO uint64
+	TargetRefreshReadTSO         uint64
+	MLogRetainedLowerTSO         uint64
+}
+
+// Restore implements Node interface.
+func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("IMPLEMENT FOR ")
+	if n.RefreshStmt == nil {
+		return errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt")
+	}
+	if err := n.RefreshStmt.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewImplementStmt.RefreshStmt")
+	}
+	ctx.WriteKeyWord(" USING TIMESTAMP ")
+	ctx.WritePlain(strconv.FormatUint(n.LastSuccessfulRefreshReadTSO, 10))
+	if n.TargetRefreshReadTSO > 0 {
+		ctx.WriteKeyWord(" UP TO TIMESTAMP ")
+		ctx.WritePlain(strconv.FormatUint(n.TargetRefreshReadTSO, 10))
+	}
+	if n.MLogRetainedLowerTSO > 0 {
+		ctx.WriteKeyWord(" MLOG RETAINED LOWER TIMESTAMP ")
+		ctx.WritePlain(strconv.FormatUint(n.MLogRetainedLowerTSO, 10))
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RefreshMaterializedViewImplementStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshMaterializedViewImplementStmt)
+	if n.RefreshStmt != nil {
+		node, ok := n.RefreshStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.RefreshStmt = node.(*RefreshMaterializedViewStmt)
+	}
+	return v.Leave(n)
+}
+
+// RefreshMaterializedViewType identifies the refresh strategy.
+type RefreshMaterializedViewType int
+
+const (
+	// RefreshMaterializedViewTypeFast uses materialized-view logs to apply changes.
+	RefreshMaterializedViewTypeFast RefreshMaterializedViewType = iota
+	// RefreshMaterializedViewTypeComplete rebuilds the materialized view.
+	RefreshMaterializedViewTypeComplete
+)
+
+func (t RefreshMaterializedViewType) String() string {
+	switch t {
+	case RefreshMaterializedViewTypeFast:
+		return "FAST"
+	case RefreshMaterializedViewTypeComplete:
+		return "COMPLETE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// RefreshMaterializedViewCompleteType identifies a complete refresh implementation.
+type RefreshMaterializedViewCompleteType int
+
+const (
+	_ RefreshMaterializedViewCompleteType = iota
+	RefreshMaterializedViewCompleteTypeInPlace
+	RefreshMaterializedViewCompleteTypeOutOfPlace
+	RefreshMaterializedViewCompleteTypeDeltaApply
+)
+
+func (t RefreshMaterializedViewCompleteType) String() string {
+	switch t {
+	case RefreshMaterializedViewCompleteTypeInPlace:
+		return "IN PLACE"
+	case RefreshMaterializedViewCompleteTypeOutOfPlace:
+		return "OUT OF PLACE"
+	case RefreshMaterializedViewCompleteTypeDeltaApply:
+		return "DELTA APPLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// RefreshMaterializedViewMode is the concrete refresh execution mode.
+type RefreshMaterializedViewMode int
+
+const (
+	RefreshMaterializedViewModeFast RefreshMaterializedViewMode = iota
+	RefreshMaterializedViewModeCompleteInPlace
+	RefreshMaterializedViewModeCompleteOutOfPlace
+	RefreshMaterializedViewModeCompleteDeltaApply
+)
+
+func (m RefreshMaterializedViewMode) String() string {
+	switch m {
+	case RefreshMaterializedViewModeFast:
+		return "FAST"
+	case RefreshMaterializedViewModeCompleteInPlace:
+		return "COMPLETE IN PLACE"
+	case RefreshMaterializedViewModeCompleteOutOfPlace:
+		return "COMPLETE OUT OF PLACE"
+	case RefreshMaterializedViewModeCompleteDeltaApply:
+		return "COMPLETE DELTA APPLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Mode derives the concrete refresh execution mode.
+func (n *RefreshMaterializedViewStmt) Mode() (RefreshMaterializedViewMode, error) {
+	if n == nil {
+		return 0, errors.New("RefreshMaterializedViewStmt: nil statement")
+	}
+	switch n.Type {
+	case RefreshMaterializedViewTypeFast:
+		return RefreshMaterializedViewModeFast, nil
+	case RefreshMaterializedViewTypeComplete:
+		switch n.CompleteType {
+		case RefreshMaterializedViewCompleteTypeInPlace:
+			return RefreshMaterializedViewModeCompleteInPlace, nil
+		case RefreshMaterializedViewCompleteTypeOutOfPlace:
+			return RefreshMaterializedViewModeCompleteOutOfPlace, nil
+		case RefreshMaterializedViewCompleteTypeDeltaApply:
+			return RefreshMaterializedViewModeCompleteDeltaApply, nil
+		default:
+			return 0, errors.New("RefreshMaterializedViewStmt: COMPLETE refresh mode must be specified explicitly")
+		}
+	default:
+		return 0, errors.New("RefreshMaterializedViewStmt: unknown REFRESH MATERIALIZED VIEW type")
+	}
+}
+
+// RefreshMaterializedViewObserveType identifies an optional statement output mode.
+type RefreshMaterializedViewObserveType int
+
+const (
+	RefreshMaterializedViewObserveNone RefreshMaterializedViewObserveType = iota
+	RefreshMaterializedViewObserveDryRun
+	RefreshMaterializedViewObserveProfile
+)
+
+// Restore implements Node interface.
+func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("REFRESH MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.ViewName")
+	}
+	if n.WithAsyncMode {
+		ctx.WriteKeyWord(" WITH ASYNC MODE")
+	}
+	ctx.WritePlain(" ")
+	ctx.WriteKeyWord(n.Type.String())
+	if n.Type == RefreshMaterializedViewTypeComplete {
+		switch n.CompleteType {
+		case RefreshMaterializedViewCompleteTypeInPlace:
+			ctx.WriteKeyWord(" IN PLACE")
+		case RefreshMaterializedViewCompleteTypeOutOfPlace:
+			ctx.WriteKeyWord(" OUT OF PLACE")
+		case RefreshMaterializedViewCompleteTypeDeltaApply:
+			ctx.WriteKeyWord(" DELTA APPLY")
+		default:
+			return errors.New("RefreshMaterializedViewStmt: COMPLETE refresh mode must be specified explicitly")
+		}
+	}
+	if n.AsOf != nil {
+		ctx.WritePlain(" ")
+		if err := n.AsOf.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.AsOf")
+		}
+	}
+	switch n.ObserveType {
+	case RefreshMaterializedViewObserveDryRun:
+		ctx.WriteKeyWord(" DRY RUN")
+	case RefreshMaterializedViewObserveProfile:
+		ctx.WriteKeyWord(" WITH PROFILE")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RefreshMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
+	}
 	return v.Leave(n)
 }
 
@@ -3926,8 +4223,8 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
-// if the url is not a valid url, return the original string.
+// RedactURL redacts sensitive query parameters in supported storage URLs.
+// If the URL is not valid, it returns the original string.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
 	u, err := url.Parse(str)
@@ -3952,6 +4249,9 @@ func RedactURL(str string) string {
 			"account-key":    {},
 			"encryption-key": {},
 			"sas-token":      {},
+			// Azure endpoints can contain SAS tokens used directly by the storage
+			// client, so masking only the separate sas-token parameter is insufficient.
+			"endpoint": {},
 		}
 	}
 

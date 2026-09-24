@@ -138,17 +138,18 @@ func TestTiFlashManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Count)
 
-	t.Run("circuitBreakerCancelsProgressCollection", func(t *testing.T) {
+	t.Run("circuitBreakerReturnsOnTimeout", func(t *testing.T) {
 		restore := config.RestoreFunc()
 		defer restore()
 		config.UpdateGlobal(func(conf *config.Config) {
+			// Set a short columnar collect timeout to trigger the circuit breaker quickly.
 			conf.CSE.ColumnarCollectTimeout = 50 * time.Millisecond
 		})
 
-		requestCanceled := make(chan struct{}, 1)
+		// Block forever so progress collection can only finish via the circuit-breaker timeout.
+		// Cancellation propagation is covered separately in helper.CollectColumnarStatusWithCtx tests.
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			<-r.Context().Done()
-			requestCanceled <- struct{}{}
 		}))
 		defer server.Close()
 
@@ -162,16 +163,11 @@ func TestTiFlashManager(t *testing.T) {
 			},
 		}
 
+		// Must trigger the circuit breaker due to the short timeout.
 		progress, circuitBreakerTriggered, err := MustGetTiFlashProgressWithCircuitBreaker(context.Background(), 1024, 1, nil, tikvStores)
 		require.NoError(t, err)
 		require.True(t, circuitBreakerTriggered)
 		require.Equal(t, 1.0, progress)
-
-		select {
-		case <-requestCanceled:
-		case <-time.After(time.Second):
-			t.Fatal("expected progress collection request to be canceled")
-		}
 	})
 
 	t.Run("storageClassStatusCollectsCounters", func(t *testing.T) {

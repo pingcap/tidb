@@ -1,17 +1,17 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_test(
-    name = "ruv3_test",
+    name = "ruv2_test",
     timeout = "short",
     srcs = ["model_test.go"],
-    embed = [":ruv3"],
+    embed = [":ruv2"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
 )
 
 go_library(
-    name = "ruv3",
+    name = "ruv2",
     srcs = ["model.go"],
-    importpath = "github.com/pingcap/tidb/pkg/resourcegroup/ruv3",
+    importpath = "github.com/pingcap/tidb/pkg/resourcegroup/ruv2",
     visibility = ["//visibility:public"],
 )

@@ -15,16 +15,20 @@
 package tests
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -32,6 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
+	clientutil "github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func TestStmtSummaryIndexAdvisor(t *testing.T) {
@@ -268,36 +275,90 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
 }
 
-func TestStmtSummaryRUV3(t *testing.T) {
+func TestStmtSummaryRUVersion(t *testing.T) {
+	defer config.RestoreFunc()()
 	setupStmtSummary()
 	defer closeStmtSummary()
-
 	originalCollectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
 	defer config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(originalCollectExecutionInfo)
-
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newTestKitWithRoot(t, store)
-	tk.MustExec("drop table if exists stmt_summary_ru")
-	tk.MustExec("create table stmt_summary_ru(a int primary key, b int)")
-	tk.MustExec("insert into stmt_summary_ru values(1, 10), (2, 20), (3, 30)")
+	tk.MustExec("create table stmt_summary_ru_version (id int primary key, v int)")
+	tk.MustExec("insert into stmt_summary_ru_version values (1, 10), (2, 20), (3, 30)")
 
-	// Clear summaries after preparing data so only the target statement is checked.
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	for _, version := range []rmclient.RUVersion{rmclient.RUVersionV1, rmclient.RUVersionV2} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			baseProvider, ok := infosync.NewMockResourceManagerClient(1).(rmclient.ResourceGroupProvider)
+			require.True(t, ok)
+			provider := &stmtSummaryRUVersionProvider{ResourceGroupProvider: baseProvider, version: version}
+			controller, err := rmclient.NewResourceGroupController(context.Background(), 1, provider, nil, 1)
+			require.NoError(t, err)
+			originalController := dom.ResourceGroupsController()
+			dom.SetResourceGroupsController(controller)
+			t.Cleanup(func() { dom.SetResourceGroupsController(originalController) })
+			require.Equal(t, version, dom.GetRUVersion())
 
-	tk = newTestKitWithRoot(t, store)
-	tk.MustQuery("select * from stmt_summary_ru where a >= 1").Sort().Check(testkit.Rows(
-		"1 10",
-		"2 20",
-		"3 30",
-	))
+			for _, tc := range []struct {
+				name  string
+				sql   string
+				write bool
+			}{
+				{"read", "select * from stmt_summary_ru_version order by id", false},
+				{"write", "update stmt_summary_ru_version set v = v + 1 where id = 1", true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					// Keep each digest at one execution and avoid mixing RU versions.
+					tk.MustExec("set global tidb_enable_stmt_summary=0")
+					tk.MustExec("set global tidb_enable_stmt_summary=1")
+					ruDetails := clientutil.NewRUDetailsWith(11, 7, 20*time.Millisecond)
+					ctx := context.WithValue(context.Background(), clientutil.RUDetailsCtxKey, ruDetails)
+					if tc.write {
+						tk.MustExecWithContext(ctx, tc.sql)
+					} else {
+						tk.MustQueryWithContext(ctx, tc.sql)
+					}
+					_, digest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+					// Read the finalized total before the assertion query replaces LastQueryInfo.
+					totalRUV2 := tk.Session().GetSessionVars().LastQueryInfo.RUV2Consumption
+					require.Positive(t, totalRUV2)
+					wantRead, wantWrite := ruDetails.RRU(), ruDetails.WRU()
+					require.GreaterOrEqual(t, wantRead, float64(11))
+					require.GreaterOrEqual(t, wantWrite, float64(7))
+					require.NotEqual(t, wantRead, totalRUV2)
+					require.NotEqual(t, wantWrite, totalRUV2)
+					if version == rmclient.RUVersionV2 {
+						wantRead, wantWrite = totalRUV2, 0
+						if tc.write {
+							wantRead, wantWrite = 0, totalRUV2
+						}
+					}
 
-	// Statement summary still exposes statement RU v3 through the legacy V2
-	// column names.
-	tk.MustQuery("select exec_count, avg_request_unit_v2>0, max_request_unit_v2>0 " +
-		"from information_schema.statements_summary " +
-		"where digest_text = 'select * from `stmt_summary_ru` where `a` >= ?'").Check(testkit.Rows("1 1 1"))
+					rows := tk.MustQuery("select exec_count, avg_request_unit_read, max_request_unit_read, "+
+						"avg_request_unit_write, max_request_unit_write, avg_queued_rc_time, max_queued_rc_time "+
+						"from information_schema.statements_summary where digest = ?", digest.String()).Rows()
+					require.Len(t, rows, 1)
+					require.Equal(t, "1", fmt.Sprint(rows[0][0]))
+					waitNanos := float64(ruDetails.RUWaitDuration().Nanoseconds())
+					for i, want := range []float64{wantRead, wantRead, wantWrite, wantWrite, waitNanos, waitNanos} {
+						got, err := strconv.ParseFloat(fmt.Sprint(rows[0][i+1]), 64)
+						require.NoError(t, err)
+						require.InDelta(t, want, got, 1e-9)
+					}
+				})
+			}
+		})
+	}
+}
+
+type stmtSummaryRUVersionProvider struct {
+	rmclient.ResourceGroupProvider
+	version rmclient.RUVersion
+}
+
+func (p *stmtSummaryRUVersionProvider) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+	config := fmt.Sprintf(`{"ru-version-policy":{"default":%d}}`, p.version)
+	return &meta_storagepb.GetResponse{Kvs: []*meta_storagepb.KeyValue{{Value: []byte(config)}}}, nil
 }
 
 func TestStmtSummaryTablePrivilege(t *testing.T) {

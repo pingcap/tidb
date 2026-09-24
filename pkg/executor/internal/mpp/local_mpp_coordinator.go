@@ -744,33 +744,59 @@ func (c *localMppCoordinator) handleAllReports() error {
 		select {
 		case <-c.reportStatusCh:
 			metrics.MppCoordinatorLatencyRcvReport.Observe(float64(time.Since(startTime).Milliseconds()))
-			var recordedPlanIDs = make(map[int]int)
-			for _, report := range c.reqMap {
-				for _, detail := range report.executionSummaries {
-					if detail != nil && detail.TimeProcessedNs != nil &&
-						detail.NumProducedRows != nil && detail.NumIterations != nil {
-						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-							RecordOneCopTask(-1, kv.TiFlash, detail)] = 0
-					}
+		case <-time.After(receiveReportTimeout):
+			metrics.MppCoordinatorStatsReportNotReceived.Inc()
+		}
+
+		failpoint.InjectCall("beforeMPPReportSnapshot")
+
+		// ReportStatus may still arrive after timeout. Copy only received, immutable
+		// summary slices while holding its lock; late reports cannot change this freeze.
+		c.mu.Lock()
+		reports := make([][]*tipb.ExecutorExecutionSummary, 0, c.reportedReqCount)
+		for _, report := range c.reqMap {
+			if report.receivedReport {
+				reports = append(reports, report.executionSummaries)
+			}
+		}
+		received := c.reportedReqCount
+		// The final report can arrive after timeout but before this snapshot.
+		// Use the frozen count so complete reports still contribute legacy stats and RU.
+		allReceived := received == len(c.mppReqs)
+		c.mu.Unlock()
+		if !allReceived {
+			logutil.BgLogger().Info(fmt.Sprintf("Mpp coordinator not received all reports within %d ms", int(receiveReportTimeout.Milliseconds())),
+				zap.Uint64("txnStartTS", c.startTS), zap.Uint64("gatherID", c.gatherID),
+				zap.Int("expectCount", len(c.mppReqs)), zap.Int("actualCount", received))
+		}
+		stats := c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		// Statement RU accepts partial raw evidence independently of legacy RU consumption.
+		if stats != nil {
+			for _, summaries := range reports {
+				stats.RecordTiFlashExecutionSummaries(c.planIDs, summaries)
+			}
+		}
+		if !allReceived {
+			return nil
+		}
+		var recordedPlanIDs = make(map[int]int)
+		for _, summaries := range reports {
+			for _, detail := range summaries {
+				if detail != nil && detail.TimeProcessedNs != nil &&
+					detail.NumProducedRows != nil && detail.NumIterations != nil {
+					recordedPlanIDs[stats.RecordOneCopTask(-1, kv.TiFlash, detail)] = 0
 				}
-				ruv2Metrics := execdetails.RUV2MetricsFromContext(c.ctx)
-				if ruv2Metrics == nil || !ruv2Metrics.Bypass() {
-					if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
-						if err := execdetails.MergeTiFlashRUConsumption(report.executionSummaries, ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
-							return err
-						}
+			}
+			ruv2Metrics := execdetails.RUV2MetricsFromContext(c.ctx)
+			if ruv2Metrics == nil || !ruv2Metrics.Bypass() {
+				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
+					if err := execdetails.MergeTiFlashRUConsumption(summaries, ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
+						return err
 					}
 				}
 			}
-			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, kv.TiFlash, c.planIDs, recordedPlanIDs)
-		case <-time.After(receiveReportTimeout):
-			metrics.MppCoordinatorStatsReportNotReceived.Inc()
-			logutil.BgLogger().Info(fmt.Sprintf("Mpp coordinator not received all reports within %d ms", int(receiveReportTimeout.Milliseconds())),
-				zap.Uint64("txnStartTS", c.startTS),
-				zap.Uint64("gatherID", c.gatherID),
-				zap.Int("expectCount", len(c.mppReqs)),
-				zap.Int("actualCount", c.reportedReqCount))
 		}
+		distsql.FillDummySummariesForTiFlashTasks(stats, kv.TiFlash, c.planIDs, recordedPlanIDs)
 	}
 	return nil
 }
