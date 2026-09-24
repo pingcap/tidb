@@ -2970,6 +2970,58 @@ func TestStatementDurationMetrics(t *testing.T) {
 		require.Equal(t, before, statementMetric("Select").GetHistogram().GetSampleCount())
 	})
 
+	for _, withParseError := range []bool{false, true} {
+		name := "compile error then binary execute"
+		if withParseError {
+			name = "compile error then parse error then binary execute"
+		}
+		t.Run(name, func(t *testing.T) {
+			// Prepare first: preparing after the error could hide stale parse timing.
+			stmt, _, _, err := tc.Prepare("select 1")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, stmt.Close()) })
+			t.Cleanup(func() { vars.DurationParse = 0 })
+			before := statementMetric("Select").GetHistogram()
+			stmts, err := tk.Session().Parse(ctx, "select * from test.statement_duration_missing")
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			// Deterministically model an expensive successful parse followed by an early
+			// compile error, which does not reach FinishExecuteStmt.
+			vars.DurationParse = time.Hour
+			rs, err := tk.Session().ExecuteStmt(ctx, stmts[0])
+			require.EqualError(t, err, "[schema:1146]Table 'test.statement_duration_missing' doesn't exist")
+			require.Nil(t, rs)
+			if withParseError {
+				_, err = tk.Session().Parse(ctx, "select from")
+				require.Error(t, err)
+				// Keep going on failure so the same red run also exposes the metric leak.
+				if vars.DurationParse != 0 {
+					t.Errorf("Parse error retained stale DurationParse: %s", vars.DurationParse)
+				}
+			}
+			require.Equal(t, before.GetSampleCount(), statementMetric("Select").GetHistogram().GetSampleCount())
+			require.Equal(t, before.GetSampleSum(), statementMetric("Select").GetHistogram().GetSampleSum())
+
+			start := time.Now()
+			preparedRS, err := stmt.Execute(ctx, nil)
+			require.NoError(t, err)
+			require.NotNil(t, preparedRS)
+			t.Cleanup(func() { preparedRS.Close() })
+			// Check before Close resets timing: binary execution has no parse cost.
+			if vars.DurationParse != 0 {
+				t.Errorf("binary execution inherited stale DurationParse: %s", vars.DurationParse)
+			}
+			require.Equal(t, before.GetSampleCount(), statementMetric("Select").GetHistogram().GetSampleCount())
+			preparedRS.Close()
+			elapsed := time.Since(start).Seconds()
+			after := statementMetric("Select").GetHistogram()
+			require.Equal(t, before.GetSampleCount()+1, after.GetSampleCount())
+			require.Zero(t, vars.DurationParse)
+			// Use the whole measured execution interval rather than a fixed CI latency limit.
+			require.LessOrEqual(t, after.GetSampleSum()-before.GetSampleSum(), elapsed)
+		})
+	}
+
 	t.Run("execution error", func(t *testing.T) {
 		require.NoError(t, cc.handleQuery(ctx, "insert into statement_duration values (2, 0)"))
 		before := statementMetric("Insert").GetHistogram().GetSampleCount()

@@ -1970,6 +1970,8 @@ func (s sqlRegexp) sqlRegexpDumpTriggerCheck(cfg *traceevent.DumpTriggerConfig) 
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	// A failed parse must not retain timing from a previous statement.
+	s.sessionVars.DurationParse = 0
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
 
@@ -3431,6 +3433,8 @@ func (s *session) rebuildFromPrepareCache(
 
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params []expression.Expression) (sqlexec.RecordSet, error) {
+	// Binary execution does not parse SQL, even if the previous statement failed before clearing its timing.
+	s.sessionVars.DurationParse = 0
 	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
 	if err != nil {
 		err = plannererrors.ErrStmtNotFound
