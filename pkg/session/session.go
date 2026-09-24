@@ -2217,8 +2217,10 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}
 
 	vars := se.GetSessionVars()
+	cost := time.Since(startTime).Seconds()
 	for _, dbName := range GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(time.Since(startTime).Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost)
+		metrics.CommandDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost)
 	}
 	return rows, rs.Fields(), err
 }
@@ -2404,8 +2406,10 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		}
 
 		vars := se.GetSessionVars()
+		cost := time.Since(startTime).Seconds()
 		for _, dbName := range GetDBNames(vars) {
-			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(time.Since(startTime).Seconds())
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost)
+			metrics.CommandDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost)
 		}
 		return rows, rs.Fields(), err
 	})
@@ -6016,23 +6020,7 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 
 // GetDBNames gets the sql layer database names from the session.
 func GetDBNames(seVar *variable.SessionVars) []string {
-	dbNames := make(map[string]struct{})
-	if seVar == nil || !config.GetGlobalConfig().Status.RecordDBLabel {
-		return []string{""}
-	}
-	if seVar.StmtCtx != nil {
-		for _, t := range seVar.StmtCtx.Tables {
-			dbNames[t.DB] = struct{}{}
-		}
-	}
-	if len(dbNames) == 0 {
-		dbNames[strings.ToLower(seVar.CurrentDB)] = struct{}{}
-	}
-	ns := make([]string, 0, len(dbNames))
-	for n := range dbNames {
-		ns = append(ns, n)
-	}
-	return ns
+	return seVar.GetMetricDBNames()
 }
 
 // GetCursorTracker returns the internal `cursor.Tracker`

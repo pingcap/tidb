@@ -2174,6 +2174,27 @@ func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
 }
 
+// GetMetricDBNames returns the database labels for SQL metrics, honoring RecordDBLabel.
+func (s *SessionVars) GetMetricDBNames() []string {
+	if s == nil || !config.GetGlobalConfig().Status.RecordDBLabel {
+		return []string{""}
+	}
+	dbNames := make(map[string]struct{})
+	if s.StmtCtx != nil {
+		for _, table := range s.StmtCtx.Tables {
+			dbNames[table.DB] = struct{}{}
+		}
+	}
+	if len(dbNames) == 0 {
+		dbNames[strings.ToLower(s.CurrentDB)] = struct{}{}
+	}
+	names := make([]string, 0, len(dbNames))
+	for name := range dbNames {
+		names = append(names, name)
+	}
+	return names
+}
+
 // GetTotalCostDuration returns the total cost duration of the last statement in the current session.
 func (s *SessionVars) GetTotalCostDuration() time.Duration {
 	return time.Since(s.StartTime) + s.DurationParse
