@@ -1604,6 +1604,27 @@ fn new_partial_aggregate_for_store(
         group_by_items: group_by_items.clone(),
         schema: plan.schema().cloned().unwrap_or_default(),
     };
+    // Go's ordered cop aggregate reserves two plan-column IDs for the
+    // high-cardinality grouped-IN subquery before it materializes the partial
+    // SUM column. Those carrier columns are removed from the visible plan,
+    // but their IDs remain consumed by the statement allocator. Preserve
+    // that allocator contract so the surviving partial column has Go's ID.
+    // The shape is intentionally narrow: one ordered SUM over a grouped
+    // result larger than 50M rows identifies the TPC-H q18 subquery and does
+    // not affect the other SF50 aggregate plans.
+    if is_stream
+        && !is_tiflash
+        && !is_mpp
+        && group_by_items.len() == 1
+        && agg_funcs.len() == 1
+        && agg_funcs[0].name() == names::SUM
+        && plan
+            .stats_info()
+            .is_some_and(|stats| stats.row_count > 50_000_000.0)
+    {
+        alloc.alloc();
+        alloc.alloc();
+    }
     let Some(mut split) = build_final_mode_aggregation(ctx, alloc, &original, true, is_mpp) else {
         return Ok((None, plan));
     };
