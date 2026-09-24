@@ -2527,6 +2527,27 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`)
 }
 
+func TestMultiTableDMLReadPrivilege(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("CREATE USER 'dmluser'@'localhost'")
+	rootTk.MustExec("CREATE TABLE test.mt1 (a int)")
+	rootTk.MustExec("CREATE TABLE test.mt2 (a int)")
+	rootTk.MustExec("INSERT INTO test.mt1 VALUES (1)")
+	rootTk.MustExec("INSERT INTO test.mt2 VALUES (1)")
+	rootTk.MustExec("GRANT UPDATE(a), DELETE ON test.mt1 TO 'dmluser'@'localhost'")
+
+	userTk := testkit.NewTestKit(t, store)
+	require.NoError(t, userTk.Session().Auth(&auth.UserIdentity{Username: "dmluser", Hostname: "localhost"}, nil, nil, nil))
+
+	// A sole write target does not require SELECT.
+	userTk.MustExec("UPDATE test.mt1 SET a = 2")
+	// mt2 is a read-side source despite having no referenced column.
+	userTk.MustGetErrCode("UPDATE test.mt1, test.mt2 SET mt1.a = 1", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("DELETE mt1 FROM test.mt1 AS mt1, test.mt2 AS mt2", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("DELETE FROM mt1 USING test.mt1 AS mt1, test.mt2 AS mt2", errno.ErrTableaccessDenied)
+}
+
 func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
