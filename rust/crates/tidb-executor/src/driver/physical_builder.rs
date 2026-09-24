@@ -5341,6 +5341,7 @@ mod tests {
             table_id: 43,
             partition: None,
             index_id: None,
+            lock: false,
             access_cols: None,
             ranges: vec![tidb_planner::ranger::types::Range {
                 low_val: vec![Datum::Int(2)],
@@ -5406,6 +5407,7 @@ mod tests {
             table_id: 46,
             partition: None,
             index_id: Some(8),
+            lock: false,
             access_cols: None,
             ranges: vec![tidb_planner::ranger::types::Range {
                 low_val: vec![Datum::Int(20)],

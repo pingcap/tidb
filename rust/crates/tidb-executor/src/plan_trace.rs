@@ -176,11 +176,12 @@ fn string_with_ctx_constant(
     } else {
         &constant.value
     };
-    // Go `Constant.StringWithCtx` renders through `dt.String()`: a NULL
-    // constant prints `NULL` (`constant.go:188`), never the empty stringify
-    // output.
+    // Go `Constant.StringWithCtx` renders through `fmt.Sprintf("%v", ...)`,
+    // which prints a NULL value as `<nil>` (q43's case-else:
+    // `case(eq(...), val, <nil>)`). The quoted "NULL" spelling belongs to
+    // `Constant.Format`/`ExplainInfo` (Selection conditions), not here.
     if value.is_null() {
-        return Some("NULL".to_owned());
+        return Some("<nil>".to_owned());
     }
     let value = value
         .truncated_stringify()
