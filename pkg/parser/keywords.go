@@ -273,6 +273,7 @@ var Keywords = []KeywordsType{
 	{"ASCII", false, "unreserved"},
 	{"ATTRIBUTE", false, "unreserved"},
 	{"ATTRIBUTES", false, "unreserved"},
+	{"AUTO", false, "unreserved"},
 	{"AUTOEXTEND_SIZE", false, "unreserved"},
 	{"AUTO_ID_CACHE", false, "unreserved"},
 	{"AUTO_INCREMENT", false, "unreserved"},
