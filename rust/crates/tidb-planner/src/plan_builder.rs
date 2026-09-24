@@ -3199,18 +3199,38 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 {
                     return false;
                 }
-                let index = match fields.iter().position(|field| field.expr == *node) {
-                    Some(index) => index,
-                    None => {
-                        fields.push(ProjectionField {
+                // Go `resolveHavingAndOrderBy`'s AggregateFuncExpr case
+                // (`logical_plan_builder.go:2789`) appends EVERY aggregate
+                // order-by term as a hidden auxiliary field without consulting
+                // the select list; the aggregate itself is deduplicated later
+                // (Go's aggIndexMap), so the extra field re-exports the same
+                // agg output column. Reusing the select field here would keep
+                // the schema 4-wide and the :4620 trim would never fire --
+                // that trim is what renders q42's `Column#77->Column#81`.
+                let index = if aggregation::is_aggregate_call(node) {
+                    fields.push(ProjectionField {
                 window_spec_column: false,
-                            expr: node.clone(),
-                            column_reference: matches!(node, Expr::Column(_)),
-                            alias: None,
-                            text: None,
-                            hidden: true,
-                        });
-                        fields.len() - 1
+                        expr: node.clone(),
+                        column_reference: matches!(node, Expr::Column(_)),
+                        alias: None,
+                        text: None,
+                        hidden: true,
+                    });
+                    fields.len() - 1
+                } else {
+                    match fields.iter().position(|field| field.expr == *node) {
+                        Some(index) => index,
+                        None => {
+                            fields.push(ProjectionField {
+                window_spec_column: false,
+                                expr: node.clone(),
+                                column_reference: matches!(node, Expr::Column(_)),
+                                alias: None,
+                                text: None,
+                                hidden: true,
+                            });
+                            fields.len() - 1
+                        }
                     }
                 };
                 marker::substitute(node, PlanMarker::new(MarkerKind::OrderBy, index));
@@ -4212,15 +4232,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // scalar subquery is lowered into an Apply by `build_selection`, which
         // widens the plan schema WITHOUT appending a select field, so the
         // `fields` length alone is not enough: compare the plan width too.
-        // Go's `:4531`/:4620` also builds the trim projection for aggregate
-        // queries with ORDER BY (the R34 receipt's second LogicalProjection);
-        // its node allocates fresh plan-column ids for the kept columns even
-        // when optimize eliminates the node, so the predicate folds in that
-        // case instead of relying on a bare id burn.
+        // Go's ONLY trim condition is `oldLen != p.Schema().Len()`
+        // (`logical_plan_builder.go:4612`): aggregate queries with ORDER BY do
+        // NOT trim unless an order-by term widened the schema. A plain
+        // column/alias term resolves against the select fields (q7 keeps the
+        // bare main projection), while an aggregate term is appended as a
+        // hidden auxiliary field by resolveHavingAndOrderBy, which is what
+        // fires the trim and renders q42's `Column#77->Column#81`.
         let plan_width = plan.schema().map_or(0, |schema| schema.columns.len());
-        let trim_needed = fields.len() != old_len
-            || plan_width > old_len
-            || (has_agg && !select.order_by.is_empty());
+        let trim_needed = fields.len() != old_len || plan_width > old_len;
         if trim_needed {
             plan = self.build_trim_projection(plan, old_len);
         }
