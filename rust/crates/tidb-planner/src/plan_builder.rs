@@ -3175,10 +3175,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 resolved.push(expr);
                 continue;
             }
-            if let Some(index) = Self::find_in_select_fields(&expr, &fields[..old_len]) {
-                marker::substitute(&mut expr, PlanMarker::new(MarkerKind::Column, index));
-                resolved.push(expr);
-                continue;
+            // GO never resolves an aggregate order-by term against the select
+            // list (resolveFromSelectFields only takes a ColumnNameExpr), so
+            // the term must not reuse a select field here either: the
+            // Aggregate case of resolveHavingAndOrderBy (:2789) appends its
+            // own hidden auxiliary field, and that widening is what fires the
+            // :4620 trim (q42's `Column#77->Column#81`).
+            if !aggregation::is_aggregate_call(&expr) {
+                if let Some(index) = Self::find_in_select_fields(&expr, &fields[..old_len]) {
+                    marker::substitute(&mut expr, PlanMarker::new(MarkerKind::Column, index));
+                    resolved.push(expr);
+                    continue;
+                }
             }
             // Go's resolver prefers the source inside an expression, then
             // falls back to SELECT fields. Bind those fields to projection

@@ -1081,3 +1081,42 @@ fn aggregation_hints_reach_the_logical_aggregation() {
         assert_eq!(found, Some(expected), "{hint} must reach physical search");
     }
 }
+
+#[test]
+fn test_an_aggregate_order_by_term_is_appended_as_a_hidden_field() {
+    // Go `resolveHavingAndOrderBy`'s AggregateFuncExpr case
+    // (`logical_plan_builder.go:2789`) appends EVERY aggregate order-by term
+    // as a hidden auxiliary select field — even when the same aggregate
+    // already appears in the select list (q42's
+    // `select ... sum(x) ... order by sum(x) desc`). The widened field list
+    // is what later fires the :4620 trim, whose fresh-id schema renders the
+    // agg output as `Column#77->Column#81`. Reusing the select field here
+    // keeps the schema narrow and the trim never fires.
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let select = parse_select("SELECT a, SUM(b) FROM t GROUP BY a ORDER BY SUM(b) DESC");
+    let plan = builder
+        .build_table_refs(select.from.as_ref())
+        .expect("FROM");
+    let (schema, names) = super::snapshot_schema_and_names(&plan);
+    let mut fields =
+        PlanBuilder::<TestCatalog, ZonedNoColumns>::expand_fields(&select.fields, &schema, &names);
+    assert_eq!(fields.len(), 2, "two select fields before ORDER BY");
+    PlanBuilder::<TestCatalog, ZonedNoColumns>::resolve_order_by(
+        &select.order_by,
+        &mut fields,
+        &names,
+    );
+    assert_eq!(
+        fields.len(),
+        3,
+        "the aggregate order-by term is appended as a hidden field"
+    );
+    let appended = &fields[2];
+    assert!(appended.hidden, "the appended aggregate field is hidden");
+    assert!(
+        matches!(&appended.expr, Expr::Aggregate { .. }),
+        "the appended field holds the aggregate expression, got {:?}",
+        appended.expr
+    );
+}
