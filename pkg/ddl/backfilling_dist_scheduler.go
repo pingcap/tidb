@@ -339,12 +339,12 @@ func generatePlanForPhysicalTable(
 	}
 
 	startKey, endKey, err := getTableRange(reorgCtx, store, tbl, ver.Ver, job.Priority)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	var subTaskMetas [][]byte
