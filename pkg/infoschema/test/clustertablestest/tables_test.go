@@ -506,6 +506,9 @@ func TestSlowQuery(t *testing.T) {
 			"update t set i = 2;",
 			"null",
 			"select * from t_slim;",
+			"",
+			"",
+			"",
 		},
 		{"2021-09-08 14:39:54.506967",
 			"427578666238083075",
@@ -604,6 +607,9 @@ func TestSlowQuery(t *testing.T) {
 			"",
 			"null",
 			"INSERT INTO ...;",
+			"",
+			"",
+			"",
 		},
 	}
 
