@@ -445,6 +445,10 @@ fn merge_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
     if join.keys_contain_enum_or_set || join.has_null_eq {
         return Vec::new();
     }
+    // Go only enumerates merge join when the property carries sort items.
+    if prop.is_sort_item_empty() {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     for lhs_property in &join.left_properties {
         let offsets = max_sort_prefix(lhs_property, &join.left_keys);
@@ -498,6 +502,17 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
             .iter()
             .all(|item| outer_schema.contains(&item.col.unique_id))
         {
+            continue;
+        }
+        // Go's tryToGetIndexJoin enumerates candidates only for inner paths
+        // whose access columns can cover the join keys.
+        let inner_properties = if outer_idx == 0 { &join.right_properties } else { &join.left_properties };
+        let inner_keys = if outer_idx == 0 { &join.right_keys } else { &join.left_keys };
+        let has_matching_index = inner_properties.iter().any(|order| {
+            order.len() >= inner_keys.len()
+                && order.iter().zip(inner_keys.iter()).all(|(col, key)| col == key)
+        });
+        if !has_matching_index {
             continue;
         }
         let mut child_props = [PhysicalProperty::default(), PhysicalProperty::default()];
