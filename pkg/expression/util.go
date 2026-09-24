@@ -1929,7 +1929,10 @@ func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec e
 	if history {
 		table += "_history"
 	}
-	stmt := "select digest, digest_text from " + table
+	// DISTINCT restores the deduplication the old UNION DISTINCT provided: the same
+	// (digest, digest_text) pair appears once per summary window, so a plain SELECT
+	// would materialize and size the result by the total history row count.
+	stmt := "select distinct digest, digest_text from " + table
 	// Add the where clause when a digest batch is specified.
 	if len(inValues) > 0 {
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
