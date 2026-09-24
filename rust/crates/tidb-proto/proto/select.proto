@@ -191,6 +191,31 @@ enum ScalarFuncSig {
   JsonArrayAppendSig = 5013;
   JsonMergePatchSig = 5015;
 
+  // GO's conditional family, chosen by the RESULT type of
+  // inferType4ControlFuncs; real upstream tipb numbers
+  // (expression.proto:380-393, 393-401).
+  IfNullInt = 4101;
+  IfNullReal = 4102;
+  IfNullDecimal = 4103;
+  IfNullString = 4104;
+  IfNullTime = 4105;
+  IfNullDuration = 4106;
+  IfInt = 4107;
+  IfReal = 4108;
+  IfDecimal = 4109;
+  IfString = 4110;
+  IfTime = 4111;
+  IfDuration = 4112;
+  IfNullJson = 4113;
+  IfJson = 4114;
+  CaseWhenInt = 4208;
+  CaseWhenReal = 4209;
+  CaseWhenDecimal = 4210;
+  CaseWhenString = 4211;
+  CaseWhenTime = 4212;
+  CaseWhenDuration = 4213;
+  CaseWhenJson = 4214;
+
   // Time functions admitted by Go's scalarExprSupportedByTiKV.
   DateFormatSig = 6001;
   DateDiff = 6003;

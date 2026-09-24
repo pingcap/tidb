@@ -1626,6 +1626,35 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::JsonMergePatchSig,
         false,
     ),
+    //
+    // GO's conditional family (inferType4ControlFuncs picks the signature by
+    // the RESULT type; real upstream tipb numbers). `case` has a variable
+    // arity (cond/value pairs + an optional else), so these rows carry an
+    // EMPTY selector: the generic matcher above can never select them, and
+    // [`resolve_conditional`] answers for this family instead.
+    // The STRING variants are deliberately absent: GO derives their collation
+    // by aggregating the VALUE branches (not the condition), which this
+    // catalog's per-row collation sources cannot express — a string-resulting
+    // case/if/ifnull therefore stays in the root task, exactly where the
+    // refused pushdown leaves it.
+    signature("case", &[], &[], EvalType::Int, ScalarFuncSig::CaseWhenInt, false),
+    signature("case", &[], &[], EvalType::Real, ScalarFuncSig::CaseWhenReal, false),
+    signature("case", &[], &[], EvalType::Decimal, ScalarFuncSig::CaseWhenDecimal, false),
+    signature("case", &[], &[], EvalType::Datetime, ScalarFuncSig::CaseWhenTime, false),
+    signature("case", &[], &[], EvalType::Duration, ScalarFuncSig::CaseWhenDuration, false),
+    signature("case", &[], &[], EvalType::Json, ScalarFuncSig::CaseWhenJson, false),
+    signature("if", &[], &[], EvalType::Int, ScalarFuncSig::IfInt, false),
+    signature("if", &[], &[], EvalType::Real, ScalarFuncSig::IfReal, false),
+    signature("if", &[], &[], EvalType::Decimal, ScalarFuncSig::IfDecimal, false),
+    signature("if", &[], &[], EvalType::Datetime, ScalarFuncSig::IfTime, false),
+    signature("if", &[], &[], EvalType::Duration, ScalarFuncSig::IfDuration, false),
+    signature("if", &[], &[], EvalType::Json, ScalarFuncSig::IfJson, false),
+    signature("ifnull", &[], &[], EvalType::Int, ScalarFuncSig::IfNullInt, false),
+    signature("ifnull", &[], &[], EvalType::Real, ScalarFuncSig::IfNullReal, false),
+    signature("ifnull", &[], &[], EvalType::Decimal, ScalarFuncSig::IfNullDecimal, false),
+    signature("ifnull", &[], &[], EvalType::Datetime, ScalarFuncSig::IfNullTime, false),
+    signature("ifnull", &[], &[], EvalType::Duration, ScalarFuncSig::IfNullDuration, false),
+    signature("ifnull", &[], &[], EvalType::Json, ScalarFuncSig::IfNullJson, false),
 ];
 
 /// A `const fn` row constructor for a numeric-returning family, so the table
@@ -2023,6 +2052,59 @@ impl PbScalar {
     }
 }
 
+/// Resolves GO's conditional family (`case`/`if`/`ifnull`).
+///
+/// GO records each conditional's PbCode from the RESULT type that
+/// `inferType4ControlFuncs` derives; the first VALUE branch's own type stands
+/// in for that here. `case` takes a variable arity (flattened cond/value
+/// pairs with an optional trailing else, exactly GO's PB argument order), so
+/// the static matcher cannot answer for it.
+fn resolve_conditional(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    match (name, args.len()) {
+        ("case", n) if n >= 2 => {}
+        ("if", 3) => {}
+        ("ifnull", 2) => {}
+        _ => return None,
+    }
+    let suffix = match args[1].eval_type() {
+        EvalType::Int => "Int",
+        EvalType::Real => "Real",
+        EvalType::Decimal => "Decimal",
+        EvalType::String => "String",
+        EvalType::Datetime | EvalType::Timestamp => "Time",
+        EvalType::Duration => "Duration",
+        EvalType::Json => "Json",
+        _ => return None,
+    };
+    let sig = match (name, suffix) {
+        ("case", "Int") => ScalarFuncSig::CaseWhenInt,
+        ("case", "Real") => ScalarFuncSig::CaseWhenReal,
+        ("case", "Decimal") => ScalarFuncSig::CaseWhenDecimal,
+        ("case", "String") => ScalarFuncSig::CaseWhenString,
+        ("case", "Time") => ScalarFuncSig::CaseWhenTime,
+        ("case", "Duration") => ScalarFuncSig::CaseWhenDuration,
+        ("case", "Json") => ScalarFuncSig::CaseWhenJson,
+        ("if", "Int") => ScalarFuncSig::IfInt,
+        ("if", "Real") => ScalarFuncSig::IfReal,
+        ("if", "Decimal") => ScalarFuncSig::IfDecimal,
+        ("if", "String") => ScalarFuncSig::IfString,
+        ("if", "Time") => ScalarFuncSig::IfTime,
+        ("if", "Duration") => ScalarFuncSig::IfDuration,
+        ("if", "Json") => ScalarFuncSig::IfJson,
+        ("ifnull", "Int") => ScalarFuncSig::IfNullInt,
+        ("ifnull", "Real") => ScalarFuncSig::IfNullReal,
+        ("ifnull", "Decimal") => ScalarFuncSig::IfNullDecimal,
+        ("ifnull", "String") => ScalarFuncSig::IfNullString,
+        ("ifnull", "Time") => ScalarFuncSig::IfNullTime,
+        ("ifnull", "Duration") => ScalarFuncSig::IfNullDuration,
+        ("ifnull", "Json") => ScalarFuncSig::IfNullJson,
+        _ => return None,
+    };
+    CATALOG
+        .iter()
+        .find(|candidate| candidate.name == name && candidate.sig == sig)
+}
+
 /// The catalog row for a call of `name` over `args`, when TiKV evaluates it.
 ///
 /// This is Go's per-family `getFunction` signature choice and
@@ -2033,6 +2115,9 @@ impl PbScalar {
 /// returns nil for both.
 #[must_use]
 pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    if let Some(signature) = resolve_conditional(name, args) {
+        return Some(signature);
+    }
     if let Some(signature) = resolve_date_arithmetic(name, args) {
         return Some(signature);
     }
