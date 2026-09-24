@@ -734,6 +734,23 @@ struct KeyPart {
 
 fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     let TableConstraint::Index(index) = constraint else {
+        if let TableConstraint::ForeignKey(fk) = constraint {
+            // go `CreateNewForeignKey`/`SetAutoIncrement` tries to open the
+            // referenced table and fails with ErrFKIncompatibleTables
+            // (1824, "Failed to open the referenced table '...'") when the
+            // referenced table is absent.
+            let referenced = fk
+                .reference
+                .table
+                .as_ref()
+                .and_then(|path| path.last())
+                .map(|t| t.as_str())
+                .unwrap_or("?");
+            return Err(DdlAdmissionError::with_code(
+                1824,
+                format!("Failed to open the referenced table '{referenced}'"),
+            ));
+        }
         return Err(DdlAdmissionError::with_code(
             GENERIC_ERROR_CODE,
             "CREATE TABLE FOREIGN KEY constraints are not supported by this node",
