@@ -2513,8 +2513,10 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 }
 
 // tikvFullTextIndexForMatch returns the public FULLTEXT index built in TiKV
-// over the single column a MATCH names, or nil when the MATCH names several
-// columns, a column of no base table, or a column without such an index.
+// that tokenizes the single column a MATCH names, or nil when the MATCH names
+// several columns, a column of no base table, or a column without such an
+// index. Every such index over a column is built with the same analyzer, so
+// the first one found stands for all of them.
 func (er *expressionRewriter) tikvFullTextIndexForMatch(numCols, stackLen int) *model.IndexInfo {
 	nameStart := stackLen - numCols - 1
 	if numCols != 1 || nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil || er.planCtx.builder.is == nil {
@@ -2544,8 +2546,8 @@ func (er *expressionRewriter) tikvFullTextIndexForMatch(numCols, stackLen int) *
 		colName = name.ColName
 	}
 	for _, idx := range tblInfo.Indices {
-		if idx.IsTiKVFullTextIndex() && idx.State == model.StatePublic &&
-			len(idx.Columns) == 1 && idx.Columns[0].Name.L == colName.L {
+		textCol := idx.TiKVFullTextColumn()
+		if textCol != nil && idx.State == model.StatePublic && textCol.Name.L == colName.L {
 			return idx
 		}
 	}

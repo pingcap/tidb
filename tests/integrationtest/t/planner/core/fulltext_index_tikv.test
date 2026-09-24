@@ -37,3 +37,20 @@ explain format = 'brief' select id from articles ignore index (idx_body) where m
 select id from articles ignore index (idx_body) where match(body) against('+distributed' in boolean mode) order by id;
 
 drop table articles;
+
+# Key columns ahead of the tokenized column confine a search to one value of them, such as a tenant.
+create table tenant_docs (id int primary key, tenant_id int, body text, fulltext index idx_body (tenant_id, body));
+insert into tenant_docs values
+  (1, 1, 'distributed sql for the first tenant'),
+  (2, 1, 'another document of the first tenant'),
+  (3, 2, 'distributed sql for the second tenant'),
+  (4, 2, 'the second tenant again'),
+  (5, null, 'distributed sql without a tenant');
+explain format = 'brief' select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
+select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode) order by id;
+select id from tenant_docs where tenant_id is null and match(body) against('+distributed' in boolean mode) order by id;
+# Without one value for every key column the index cannot serve the search.
+explain format = 'brief' select id from tenant_docs where match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select id from tenant_docs where tenant_id in (1, 2) and match(body) against('+distributed' in boolean mode);
+select id from tenant_docs where tenant_id in (1, 2) and match(body) against('+distributed' in boolean mode) order by id;
+drop table tenant_docs;

@@ -96,6 +96,34 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_use_invisible_indexes = 0")
 	tk.MustExec("alter table t alter index idx_body visible")
 
+	// Key columns ahead of the tokenized column: the path exists only when
+	// every key column is pinned to one value, which the index then serves
+	// in place of the table filter.
+	tk.MustExec("create table tc (id int primary key, tenant_id int, region varchar(8), body text, fulltext index idx_tenant (tenant_id, body), fulltext index idx_region (tenant_id, region, body))")
+	// Statistics let the index pinning more columns estimate fewer rows.
+	tk.MustExec("insert into tc values (1, 7, 'eu', 'hello'), (2, 7, 'us', 'hello'), (3, 8, 'eu', 'hello'), (4, 8, 'us', 'hello'), (5, 9, 'eu', 'world'), (6, 9, 'us', 'world')")
+	tk.MustExec("analyze table tc")
+	usesIndex("select id from tc where tenant_id = 7 and match(body) against('+hello' in boolean mode)", "idx_tenant(tenant_id, body)")
+	plan = explain("select id from tc where tenant_id = 7 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:[7,7]", plan)
+	require.NotContains(t, plan, "eq(test.tc.tenant_id", plan)
+	usesIndex("select id from tc where tenant_id is null and match(body) against('+hello' in boolean mode)", "idx_tenant(tenant_id, body)")
+	usesIndex("select id from tc where tenant_id = 7 and region = 'eu' and match(body) against('+hello' in boolean mode)", "idx_region(tenant_id, region, body)")
+	plan = explain("select id from tc where tenant_id = 7 and region = 'eu' and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, `range:[7 "eu",7 "eu"]`, plan)
+	require.Equal(t, 1, strings.Count(plan, "FullTextIndexScan"), plan)
+	// A key column left unpinned, or pinned to several values, keeps the
+	// scan; the index still authorises the MATCH.
+	tk.MustQuery("select @@tidb_enable_local_match_against").Check(testkit.Rows("0"))
+	scans("select id from tc where match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where region = 'eu' and match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where tenant_id in (7, 8) and match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where (tenant_id = 7 or tenant_id = 8) and match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where tenant_id > 7 and match(body) against('+hello' in boolean mode)")
+	scans("select id from tc where tenant_id = 7 or match(body) against('+hello' in boolean mode)")
+	usesIndex("select id from tc use index (idx_tenant) where tenant_id = 7 and region = 'eu' and match(body) against('+hello' in boolean mode)", "idx_tenant(tenant_id, body)")
+	scans("select id from tc ignore index (idx_tenant, idx_region) where tenant_id = 7 and match(body) against('+hello' in boolean mode)")
+
 	// A plan with the index is never cached: the search string is baked in.
 	tk.MustExec("prepare stmt from 'select id from t where match(body) against(''+hello'' in boolean mode)'")
 	tk.MustQuery("execute stmt")

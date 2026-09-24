@@ -201,3 +201,94 @@ func TestFullTextIndexMatchAgainstPartitioned(t *testing.T) {
 		tk.MustQuery(sql).Check(testkit.Rows("97", "194", "291"))
 	}
 }
+
+// TestFullTextIndexMatchAgainstKeyColumns covers an index with key columns
+// ahead of the tokenized one, the multi-tenant shape: a search is answered
+// by the index only within one value of every key column, which the query
+// pins with an equality, and every result equals the scan's.
+func TestFullTextIndexMatchAgainstKeyColumns(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tn (id int primary key, tenant int, body text, fulltext index idx (tenant, body))")
+	fullTextCorpus(t, tk, "tn", 1500, 4)
+	tk.MustExec("update tn set tenant = null where id % 50 = 0")
+	tk.MustExec("analyze table tn")
+
+	scanOf := func(sql string) string {
+		return strings.Replace(sql, "from tn where", "from tn ignore index (idx) where", 1)
+	}
+	for _, search := range []string{"+rareword", "+rareword -alpha", "rareword theta", `"distributed storage"`, "rare*", "+of"} {
+		for _, tenantCond := range []string{"tenant = 3", "tenant is null", "3 = tenant", "tenant = '3'"} {
+			sql := fmt.Sprintf("select id from tn where %s and match(body) against('%s' in boolean mode) order by id", tenantCond, search)
+			mustUseFullTextIndex(t, tk, sql, "idx(tenant, body)", search)
+			plan := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+			var text strings.Builder
+			for _, row := range plan {
+				text.WriteString(fmt.Sprintln(row...))
+			}
+			// The equality is served by the index, not re-evaluated on the
+			// table side.
+			require.Regexp(t, `range:\[(3,3|NULL,NULL)\]`, text.String())
+			require.NotContains(t, text.String(), "eq(test.tn.tenant", text.String())
+			require.NotContains(t, text.String(), "isnull(test.tn.tenant", text.String())
+			tk.MustQuery(sql).Check(tk.MustQuery(scanOf(sql)).Rows())
+		}
+	}
+	tk.MustQuery("select count(*) from tn where tenant = 3 and match(body) against('+rareword' in boolean mode)").
+		Check(tk.MustQuery("select count(*) from tn ignore index (idx) where tenant = 3 and match(body) against('+rareword' in boolean mode)").Rows())
+
+	// Without one value for the key column the index cannot confine the
+	// search, so the scan stays; the index still authorises the MATCH.
+	tk.MustQuery("select @@tidb_enable_local_match_against").Check(testkit.Rows("0"))
+	for _, sql := range []string{
+		"select id from tn where match(body) against('+rareword' in boolean mode)",
+		"select id from tn where tenant in (2, 3) and match(body) against('+rareword' in boolean mode)",
+		"select id from tn where (tenant = 2 or tenant = 3) and match(body) against('+rareword' in boolean mode)",
+		"select id from tn where tenant > 2 and match(body) against('+rareword' in boolean mode)",
+		"select id from tn where tenant = 3 or match(body) against('+rareword' in boolean mode)",
+	} {
+		mustScan(t, tk, sql)
+		tk.MustQuery(sql + " order by id").Check(tk.MustQuery(scanOf(sql) + " order by id").Rows())
+	}
+
+	// Changes made earlier in the same transaction are visible through the
+	// index, including a row that moves between tenants.
+	tk.MustExec("begin")
+	tk.MustExec("insert into tn values (100001, 3, 'rareword freshly inserted'), (100002, 4, 'rareword elsewhere')")
+	tk.MustExec("update tn set tenant = 3 where id = 97")
+	tk.MustExec("update tn set tenant = 4 where id = 194")
+	tk.MustExec("delete from tn where id = 291")
+	sql := "select id from tn where tenant = 3 and match(body) against('+rareword' in boolean mode) order by id"
+	mustUseFullTextIndex(t, tk, sql, "idx(tenant, body)", "+rareword")
+	tk.MustQuery(sql).Check(tk.MustQuery(scanOf(sql)).Rows())
+	tk.MustQuery("select id from tn where tenant = 3 and match(body) against('+rareword' in boolean mode) and id in (97, 194, 100001, 100002) order by id").Check(testkit.Rows("97", "100001"))
+	tk.MustExec("rollback")
+	tk.MustExec("admin check table tn")
+
+	// A string key column under a case-insensitive collation: the key holds
+	// the sort key, so an equality finds every spelling, as the scan does.
+	tk.MustExec("create table ts (id int primary key, tenant varchar(16) collate utf8mb4_general_ci, body text, fulltext index idx (tenant, body))")
+	tk.MustExec("insert into ts values (1, 'acme', 'rareword one'), (2, 'Acme', 'rareword two'), (3, 'ACME ', 'rareword three'), (4, 'globex', 'rareword four'), (5, 'acme', 'nothing here')")
+	sql = "select id from ts where tenant = 'ACME' and match(body) against('+rareword' in boolean mode) order by id"
+	mustUseFullTextIndex(t, tk, sql, "idx(tenant, body)", "+rareword")
+	tk.MustQuery(sql).Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from ts where", "from ts ignore index (idx) where", 1)).Rows())
+	tk.MustExec("admin check table ts")
+
+	// Several key columns, and a partitioned table.
+	tk.MustExec("create table tp (id int primary key, tenant int, region varchar(8), body text, fulltext index idx (tenant, region, body)) partition by hash(id) partitions 4")
+	tk.MustExec("insert into tp select id, tenant, if(id % 2 = 0, 'eu', 'us'), body from tn")
+	tk.MustExec("analyze table tp")
+	for _, mode := range []string{"dynamic", "static"} {
+		tk.MustExec("set @@tidb_partition_prune_mode = '" + mode + "'")
+		sql = "select id from tp where tenant = 3 and region = 'eu' and match(body) against('+rareword' in boolean mode) order by id"
+		mustUseFullTextIndex(t, tk, sql, "idx(tenant, region, body)", "+rareword")
+		tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from tp where", "from tp ignore index (idx) where", 1)).Rows())
+		mustScan(t, tk, "select id from tp where tenant = 3 and match(body) against('+rareword' in boolean mode)")
+	}
+	tk.MustExec("admin check table tp")
+}

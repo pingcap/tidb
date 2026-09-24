@@ -1291,7 +1291,11 @@ func checkIndexSpecs(indexOptions *ast.IndexOption, partSpecs []*ast.IndexPartSp
 			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("COLUMNAR INDEX of INVERTED type must specify one column name")
 		}
 	case ast.IndexTypeFulltext:
-		if len(partSpecs) != 1 || partSpecs[0].Column == nil {
+		// The columnar index of the next-gen kernel tokenizes one column. On
+		// the classic kernel the index is built in TiKV, where the last
+		// column is tokenized and the columns before it are key columns,
+		// which the DDL layer checks.
+		if kerneltype.IsNextGen() && (len(partSpecs) != 1 || partSpecs[0].Column == nil) {
 			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index must specify one column name")
 		}
 	}

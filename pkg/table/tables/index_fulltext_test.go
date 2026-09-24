@@ -31,9 +31,22 @@ import (
 )
 
 func fullTextTestTable(t *testing.T, parser model.FullTextParserType) (*TableCommon, *index) {
+	return fullTextTestTableWithKeyColumns(t, parser, false)
+}
+
+// fullTextTestTableWithKeyColumns builds a table with a FULLTEXT index over
+// body, preceded by the tenant key column when withTenant is set.
+func fullTextTestTableWithKeyColumns(t *testing.T, parser model.FullTextParserType, withTenant bool) (*TableCommon, *index) {
 	bodyType := types.NewFieldType(mysql.TypeBlob)
 	bodyType.SetCharset(charset.CharsetUTF8MB4)
 	bodyType.SetCollate(charset.CollationUTF8MB4)
+	indexColumns := []*model.IndexColumn{{Name: ast.NewCIStr("body"), Offset: 1, Length: types.UnspecifiedLength}}
+	if withTenant {
+		indexColumns = []*model.IndexColumn{
+			{Name: ast.NewCIStr("tenant"), Offset: 2, Length: types.UnspecifiedLength},
+			{Name: ast.NewCIStr("body"), Offset: 1, Length: types.UnspecifiedLength},
+		}
+	}
 	tableInfo := &model.TableInfo{
 		ID:    1,
 		Name:  ast.NewCIStr("t"),
@@ -41,13 +54,14 @@ func fullTextTestTable(t *testing.T, parser model.FullTextParserType) (*TableCom
 		Columns: []*model.ColumnInfo{
 			{ID: 1, Name: ast.NewCIStr("id"), Offset: 0, State: model.StatePublic, FieldType: *types.NewFieldType(mysql.TypeLong)},
 			{ID: 2, Name: ast.NewCIStr("body"), Offset: 1, State: model.StatePublic, FieldType: *bodyType},
+			{ID: 3, Name: ast.NewCIStr("tenant"), Offset: 2, State: model.StatePublic, FieldType: *types.NewFieldType(mysql.TypeLong)},
 		},
 		Indices: []*model.IndexInfo{{
 			ID:      1,
 			Name:    ast.NewCIStr("idx"),
 			State:   model.StatePublic,
 			Tp:      ast.IndexTypeFulltext,
-			Columns: []*model.IndexColumn{{Name: ast.NewCIStr("body"), Offset: 1, Length: types.UnspecifiedLength}},
+			Columns: indexColumns,
 			TiKVFullText: &model.TiKVFullTextIndexInfo{
 				ParserType:     parser,
 				MinTokenSize:   3,
@@ -79,7 +93,7 @@ func TestFullTextIndexKVGeneration(t *testing.T) {
 		key, value, distinct, err := iter.Next(nil, nil)
 		require.NoError(t, err)
 		require.False(t, distinct)
-		term, err := DecodeTiKVFullTextIndexKey(key)
+		_, term, err := DecodeTiKVFullTextIndexKey(idx.idxInfo, key)
 		require.NoError(t, err)
 		h, err := tablecodec.DecodeIndexHandle(key, value, 1)
 		require.NoError(t, err)
@@ -134,13 +148,71 @@ func TestFullTextIndexMutationCheck(t *testing.T) {
 		return key
 	}
 	cache := make(map[fullTextTermsKey]map[string]struct{})
-	require.NoError(t, checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("hello"), row, nil, cache))
-	require.NoError(t, checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("world"), row, nil, cache))
+	require.NoError(t, checkFullTextIndexKey(tbl, time.UTC, idx.idxInfo, keyFor("hello"), row, nil, cache))
+	require.NoError(t, checkFullTextIndexKey(tbl, time.UTC, idx.idxInfo, keyFor("world"), row, nil, cache))
 	// The row was tokenized once for both entries.
 	require.Len(t, cache, 1)
-	err := checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("absent"), row, nil, cache)
+	err := checkFullTextIndexKey(tbl, time.UTC, idx.idxInfo, keyFor("absent"), row, nil, cache)
 	require.ErrorContains(t, err, "inconsistent")
 	// An entry for a row whose document is NULL cannot be right either.
-	err = checkFullTextIndexKey(tbl, idx.idxInfo, keyFor("hello"), []types.Datum{types.NewIntDatum(1), types.NewDatum(nil)}, nil, cache)
+	err = checkFullTextIndexKey(tbl, time.UTC, idx.idxInfo, keyFor("hello"), []types.Datum{types.NewIntDatum(1), types.NewDatum(nil)}, nil, cache)
 	require.ErrorContains(t, err, "inconsistent")
+}
+
+// TestFullTextIndexKeyColumns covers an index with a key column ahead of the
+// tokenized one: every entry of a row carries the row's key value before the
+// term, and an entry under another key value does not belong to the row.
+func TestFullTextIndexKeyColumns(t *testing.T) {
+	tbl, idx := fullTextTestTableWithKeyColumns(t, model.FullTextParserTypeStandardV1, true)
+	ec := errctx.StrictNoWarningContext
+	handle := kv.IntHandle(7)
+	tenant := types.NewIntDatum(42)
+	expectedKeyValue, err := idx.encoder.EncodeKey(time.UTC, nil, tenant)
+	require.NoError(t, err)
+
+	iter := idx.GenIndexKVIter(ec, time.UTC, []types.Datum{tenant, types.NewStringDatum("Hello world, hello SQL")}, handle, nil)
+	got := make(map[string][]int)
+	for iter.Valid() {
+		key, value, _, err := iter.Next(nil, nil)
+		require.NoError(t, err)
+		keyValues, term, err := DecodeTiKVFullTextIndexKey(idx.idxInfo, key)
+		require.NoError(t, err)
+		require.Equal(t, [][]byte{expectedKeyValue}, keyValues)
+		h, err := tablecodec.DecodeIndexHandle(key, value, 2)
+		require.NoError(t, err)
+		require.Equal(t, int64(7), h.IntValue())
+		positions, err := tablecodec.DecodeTiKVFullTextIndexValue(value)
+		require.NoError(t, err)
+		got[string(term)] = positions
+	}
+	require.Equal(t, map[string][]int{"hello": {0, 2}, "world": {1}, "sql": {3}}, got)
+
+	// The key value is compared in its encoded form.
+	mismatch, err := idx.fullTextKeyColumnMismatch(time.UTC, [][]byte{expectedKeyValue}, []types.Datum{types.NewIntDatum(42)})
+	require.NoError(t, err)
+	require.Equal(t, -1, mismatch)
+	mismatch, err = idx.fullTextKeyColumnMismatch(time.UTC, [][]byte{expectedKeyValue}, []types.Datum{types.NewIntDatum(43)})
+	require.NoError(t, err)
+	require.Equal(t, 0, mismatch)
+
+	// The mutation checker accepts the row's entries and rejects an entry
+	// written under another tenant, naming the key column.
+	row := []types.Datum{types.NewIntDatum(1), types.NewStringDatum("hello world"), types.NewIntDatum(42)}
+	keyFor := func(tenant int64, term string) []byte {
+		key, _, err := idx.GenIndexKey(ec, time.UTC, []types.Datum{
+			types.NewIntDatum(tenant),
+			types.NewBytesDatum([]byte(term)),
+			types.NewBytesDatum(tablecodec.EncodeTiKVFullTextPositions(nil, []int{0})),
+		}, kv.IntHandle(1), nil)
+		require.NoError(t, err)
+		return key
+	}
+	cache := make(map[fullTextTermsKey]map[string]struct{})
+	require.NoError(t, checkFullTextIndexKey(tbl, time.UTC, idx.idxInfo, keyFor(42, "hello"), row, nil, cache))
+	err = checkFullTextIndexKey(tbl, time.UTC, idx.idxInfo, keyFor(43, "hello"), row, nil, cache)
+	require.ErrorContains(t, err, "inconsistent")
+	require.ErrorContains(t, err, "tenant")
+	err = checkFullTextIndexKey(tbl, time.UTC, idx.idxInfo, keyFor(42, "absent"), row, nil, cache)
+	require.ErrorContains(t, err, "inconsistent")
+	require.ErrorContains(t, err, "body")
 }

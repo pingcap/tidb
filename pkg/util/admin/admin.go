@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
@@ -196,20 +197,24 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 
 // CheckFullTextIndexAndRecord is the index-to-record direction of ADMIN CHECK
 // for a FULLTEXT index built in TiKV: every entry must belong to a row that
-// exists, and its term must be one the row's document analyzes to. The
-// record-to-index direction is CheckRecordAndIndex, which for this index
-// checks each row for an entry per term.
+// exists, its key-column values must be the ones the row encodes to, and its
+// term must be one the row's document analyzes to. The record-to-index
+// direction is CheckRecordAndIndex, which for this index checks each row for
+// an entry per term.
 func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	idxInfo := idx.Meta()
-	if len(idxInfo.Columns) != 1 {
-		return errors.Errorf("fulltext index %s must index one column", idxInfo.Name.O)
+	textCol := idxInfo.TiKVFullTextColumn()
+	if textCol == nil {
+		return errors.Errorf("index %s is not a fulltext index built in TiKV", idxInfo.Name.O)
 	}
-	col := t.Cols()[idxInfo.Columns[0].Offset]
+	keyColumnCount := len(idxInfo.Columns) - 1
+	cols := t.Cols()
 	rowDecoder, err := makeRowDecoder(t, sessCtx)
 	if err != nil {
 		return err
 	}
-	report := func(handle kv.Handle, term string, row *consistency.RecordData) error {
+	loc := sessCtx.GetSessionVars().Location()
+	report := func(handle kv.Handle, keyValues [][]byte, term string, row *consistency.RecordData) error {
 		reporter := &consistency.Reporter{
 			HandleEncode:    func(handle kv.Handle) kv.Key { return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle) },
 			IndexEncode:     func(*consistency.RecordData) kv.Key { return nil },
@@ -218,7 +223,18 @@ func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context
 			EnableRedactLog: sessCtx.GetSessionVars().EnableRedactLog,
 			Storage:         sessCtx.GetStore(),
 		}
-		entry := &consistency.RecordData{Handle: handle, Values: []types.Datum{types.NewStringDatum(term)}}
+		values := make([]types.Datum, 0, keyColumnCount+1)
+		for _, encoded := range keyValues {
+			// The key holds the encoded form; under a collation that is the
+			// sort key, which is still what identifies the entry.
+			_, value, err := codec.DecodeOne(encoded)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			values = append(values, value)
+		}
+		values = append(values, types.NewStringDatum(term))
+		entry := &consistency.RecordData{Handle: handle, Values: values}
 		return reporter.ReportAdminCheckInconsistent(ctx, handle, entry, row)
 	}
 
@@ -230,13 +246,17 @@ func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context
 	defer it.Close()
 	// Entries of one row are spread over its terms, so rows are fetched and
 	// tokenized once and remembered while their entries keep appearing.
-	rowTerms := make(map[string]map[string]struct{})
+	type rowEntries struct {
+		keyValues []types.Datum
+		terms     map[string]struct{}
+	}
+	rows := make(map[string]rowEntries)
 	for it.Valid() {
-		term, err := tables.DecodeTiKVFullTextIndexKey(it.Key())
+		keyValues, term, err := tables.DecodeTiKVFullTextIndexKey(idxInfo, it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		handle, err := tablecodec.DecodeIndexHandle(it.Key(), it.Value(), 1)
+		handle, err := tablecodec.DecodeIndexHandle(it.Key(), it.Value(), len(idxInfo.Columns))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -244,27 +264,35 @@ func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context
 			return errors.Trace(err)
 		}
 		handleKey := string(handle.Encoded())
-		terms, seen := rowTerms[handleKey]
+		entries, seen := rows[handleKey]
 		if !seen {
 			rowValue, err := kv.GetValue(ctx, txn, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
 			if kv.ErrNotExist.Equal(err) {
-				return report(handle, string(term), nil)
+				return report(handle, keyValues, string(term), nil)
 			}
 			if err != nil {
 				return errors.Trace(err)
 			}
-			rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx.GetExprCtx(), handle, rowValue, sessCtx.GetSessionVars().Location(), nil)
+			rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx.GetExprCtx(), handle, rowValue, loc, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if terms, err = tables.FullTextIndexTerms(idx, rowMap[col.ID]); err != nil {
+			entries.keyValues = make([]types.Datum, 0, keyColumnCount)
+			for _, idxCol := range idxInfo.Columns[:keyColumnCount] {
+				entries.keyValues = append(entries.keyValues, rowMap[cols[idxCol.Offset].ID])
+			}
+			if entries.terms, err = tables.FullTextIndexTerms(idx, rowMap[cols[textCol.Offset].ID]); err != nil {
 				return errors.Trace(err)
 			}
-			rowTerms[handleKey] = terms
+			rows[handleKey] = entries
 		}
-		if _, ok := terms[string(term)]; !ok {
-			row := &consistency.RecordData{Handle: handle}
-			return report(handle, string(term), row)
+		mismatch, err := tables.FullTextIndexKeyColumnMismatch(idx, loc, keyValues, entries.keyValues)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if _, ok := entries.terms[string(term)]; mismatch >= 0 || !ok {
+			row := &consistency.RecordData{Handle: handle, Values: entries.keyValues}
+			return report(handle, keyValues, string(term), row)
 		}
 	}
 	return nil

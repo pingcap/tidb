@@ -136,11 +136,12 @@ type IndexMergeReaderExecutor struct {
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
 
-	// fullTextSearches holds, per partial plan, the search string of a
-	// FULLTEXT index scan, or "" for an ordinary partial plan. Such a scan is
-	// answered by TiDB's posting-list engine over fullTextSnapshot rather
-	// than by a coprocessor request; see startPartialFullTextWorker.
-	fullTextSearches []string
+	// fullTextScans holds, per partial plan, the search of a FULLTEXT index
+	// built in TiKV, or nil for a partial plan that is a coprocessor scan.
+	// Such a partial plan is answered by TiDB's posting-list engine over
+	// fullTextSnapshot rather than by a coprocessor request; see
+	// startPartialFullTextWorker.
+	fullTextScans    []*fullTextScan
 	fullTextSnapshot kv.Snapshot
 
 	partialPlans        [][]base.PhysicalPlan

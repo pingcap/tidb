@@ -4658,7 +4658,7 @@ func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toColla
 	}
 
 	for _, indexInfo := range tblInfo.Indices {
-		err := checkIndexPrefixLength(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
+		err := checkIndexPrefixLength(columns, indexInfo)
 		if err != nil {
 			return err
 		}
@@ -5768,7 +5768,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 	var tikvFullTextInfo *model.TiKVFullTextIndexInfo
 	if tikvFullText {
-		if tikvFullTextInfo, err = buildTiKVFullTextInfoWithCheck(metaBuildCtx, indexPartSpecifications, indexOption, tblInfo); err != nil {
+		if tikvFullTextInfo, err = buildTiKVFullTextInfoWithCheck(metaBuildCtx, finalColumns, indexPartSpecifications, indexOption, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}

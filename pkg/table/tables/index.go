@@ -149,6 +149,11 @@ func (c *index) TableMeta() *model.TableInfo {
 func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) error {
 	var err error
 	for i, idxCol := range c.idxInfo.Columns {
+		if i >= len(indexedValues) {
+			// A FULLTEXT index built in TiKV casts only the values of its
+			// key columns, which come first.
+			break
+		}
 		tblCol := c.tblInfo.Columns[idxCol.Offset]
 		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
 			continue
@@ -220,7 +225,7 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 // 2. (i1, [m1,m2], i2, ...) ==> [(i1, m1, i2, ...), (i1, m2, i2, ...)]
 // 3. (i1, null, i2, ...) ==> [(i1, null, i2, ...)]
 // 4. (i1, [], i2, ...) ==> nothing.
-// 5. For a FULLTEXT index built in TiKV, (doc) ==> [(term1, positions1), (term2, positions2), ...].
+// 5. For a FULLTEXT index built in TiKV, (k1, ..., doc) ==> [(k1, ..., term1, positions1), (k1, ..., term2, positions2), ...].
 func (c *index) getIndexedValue(indexedValues []types.Datum) ([][]types.Datum, error) {
 	if c.fullText != nil {
 		return c.fullTextIndexedValues(indexedValues)

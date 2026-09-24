@@ -842,10 +842,15 @@ func TestFullTextIndexMirrorsExecutor(t *testing.T) {
 		return nil
 	}
 
-	for _, tc := range []struct{ name, create, add string }{
+	for _, tc := range []struct{ name, create, add, columns string }{
 		{
 			name:   "create table",
 			create: "create table test.t (id int primary key, body varchar(255), fulltext index idx(body) with parser ngram)",
+		},
+		{
+			name:    "key columns",
+			create:  "create table test.t (id int primary key, tenant int, body varchar(255), fulltext index idx(tenant, body) with parser ngram)",
+			columns: "`tenant`,`body`",
 		},
 		{
 			name:   "create index",
@@ -873,11 +878,14 @@ func TestFullTextIndexMirrorsExecutor(t *testing.T) {
 			require.Equal(t, model.FullTextParserTypeNgramV1, idx.TiKVFullText.ParserType)
 			require.Nil(t, idx.FullTextInfo)
 			require.False(t, idx.MVIndex)
-			require.Len(t, idx.Columns, 1)
-			require.Equal(t, "body", idx.Columns[0].Name.L)
+			require.Equal(t, "body", idx.TiKVFullTextColumn().Name.L)
+			columns := tc.columns
+			if columns == "" {
+				columns = "`body`"
+			}
 			result := bytes.NewBuffer(make([]byte, 0, 512))
 			require.NoError(t, executor.ConstructResultOfShowCreateTable(sctx, info, autoid.Allocators{}, result))
-			require.Contains(t, result.String(), "FULLTEXT INDEX `idx`(`body`) WITH PARSER NGRAM")
+			require.Contains(t, result.String(), "FULLTEXT INDEX `idx`("+columns+") WITH PARSER NGRAM")
 		})
 	}
 }

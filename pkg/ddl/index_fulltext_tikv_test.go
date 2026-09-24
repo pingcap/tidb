@@ -83,6 +83,35 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 	require.Equal(t, 2, ngram.TiKVFullText.NgramTokenSize)
 	require.Equal(t, "notes", ngram.Comment)
 
+	// Key columns ahead of the tokenized column: ordinary columns of any
+	// indexable type, rendered and copied like the rest of the definition.
+	tk.MustExec("create table t_tenant (id int primary key, tenant_id bigint, region varchar(16), body text, fulltext index idx (tenant_id, body), fulltext index idx_region (tenant_id, region, body))")
+	_, tenant := tikvFullTextIndex(t, dom, "t_tenant", "idx")
+	require.Equal(t, []string{"tenant_id", "body"}, []string{tenant.Columns[0].Name.L, tenant.Columns[1].Name.L})
+	require.Equal(t, "body", tenant.TiKVFullTextColumn().Name.L)
+	require.NotNil(t, tenant.TiKVFullText)
+	_, region := tikvFullTextIndex(t, dom, "t_tenant", "idx_region")
+	require.Len(t, region.Columns, 3)
+	require.Equal(t, "body", region.TiKVFullTextColumn().Name.L)
+	tk.MustQuery("show create table t_tenant").CheckContain("FULLTEXT INDEX `idx`(`tenant_id`,`body`)")
+	tk.MustQuery("show create table t_tenant").CheckContain("FULLTEXT INDEX `idx_region`(`tenant_id`,`region`,`body`)")
+	tk.MustExec("create table t_tenant_like like t_tenant")
+	_, tenantLike := tikvFullTextIndex(t, dom, "t_tenant_like", "idx_region")
+	require.Len(t, tenantLike.Columns, 3)
+	tk.MustExec("alter table t_tenant add fulltext index idx_added (region, body)")
+	_, added := tikvFullTextIndex(t, dom, "t_tenant", "idx_added")
+	require.Equal(t, "body", added.TiKVFullTextColumn().Name.L)
+	tk.MustExec("insert into t_tenant values (1, 10, 'eu', 'distributed sql database')")
+	tk.MustExec("update t_tenant set tenant_id = 11 where id = 1")
+	tk.MustExec("alter table t_tenant modify column tenant_id int")
+	tk.MustExec("admin check table t_tenant")
+	// A key column is covered by the index like any composite index column.
+	tk.MustContainErrMsg("alter table t_tenant drop column region", "can't drop column region with composite index covered")
+	tk.MustExec("alter table t_tenant drop index idx_region, drop index idx_added")
+	tk.MustExec("alter table t_tenant drop column region")
+	tenantTbl, _ := tikvFullTextIndex(t, dom, "t_tenant", "idx")
+	require.Len(t, tenantTbl.Indices, 1)
+
 	// The analyzer snapshot is the session's settings at creation time.
 	require.Equal(t, 3, inline.TiKVFullText.MinTokenSize)
 	require.Equal(t, 84, inline.TiKVFullText.MaxTokenSize)
@@ -106,6 +135,7 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 	// The declared form round-trips through SHOW CREATE TABLE, and the copy
 	// keeps the marker.
 	tk.MustQuery("show create table t_alter").CheckContain("FULLTEXT INDEX `idx`(`body`) WITH PARSER NGRAM COMMENT 'notes'")
+
 	tk.MustQuery("show index from t_alter where Key_name = 'idx'").CheckContain("FULLTEXT")
 	tk.MustExec("create table t_like like t_alter")
 	like := check("t_like", "idx", model.FullTextParserTypeNgramV1)
@@ -155,7 +185,7 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, n int, b blob, body text, title varchar(100))")
+	tk.MustExec("create table t (id int primary key, n int, b blob, body text, title varchar(100), j json)")
 	tk.MustExec("create table pt (id int, body text) partition by hash(id) partitions 2")
 
 	for _, tc := range []struct{ sql, err string }{
@@ -165,16 +195,39 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 		{"create fulltext index idx on t (body) with parser multilingual", "has no analyzer in TiDB"},
 		{"create fulltext index idx on t (body(10))", "FULLTEXT index does not support prefix length"},
 		{"create fulltext index idx on t (body desc)", "FULLTEXT index does not support DESC order"},
-		{"create fulltext index idx on t (body, title)", "FULLTEXT index must specify one column name"},
+		// Only the last column is tokenized; the ones before it are key
+		// columns under the ordinary rules.
+		{"create fulltext index idx on t (body, title)", "BLOB/TEXT column 'body' used in key specification without a key length"},
+		{"create fulltext index idx on t (title, n)", "FULLTEXT index requires a string column"},
+		{"create fulltext index idx on t (n, b)", "FULLTEXT index requires a non-binary string column"},
+		{"create fulltext index idx on t (title(3), body)", "FULLTEXT index does not support prefix length"},
+		{"create fulltext index idx on t (n desc, body)", "FULLTEXT index does not support DESC order"},
+		{"create fulltext index idx on t (j, body)", "JSON column 'j' cannot be used in key specification"},
+		{"create fulltext index idx on t ((cast(j as signed array)), body)", "FULLTEXT index does not support an expression key part"},
+		{"create fulltext index idx on t ((lower(title)), body)", "FULLTEXT index does not support an expression key part"},
+		{"create table bad (j json, body text, fulltext index idx ((cast(j as signed array)), body))", "FULLTEXT index does not support an expression key part"},
 		{"create fulltext index idx on t (body) using hash", "'USING HASH' is not supported for FULLTEXT INDEX"},
 		{"create fulltext index idx on t (body) where id > 0", "FULLTEXT index does not support a partial condition"},
 		{"create fulltext index idx on pt (body) global", "FULLTEXT index does not support GLOBAL"},
 		{"create table bad (n int, fulltext index idx (n))", "FULLTEXT index requires a string column"},
-		{"create table bad (body text, title text, fulltext index idx (body, title))", "FULLTEXT index must specify one column name"},
+		{"create table bad (body text, title text, fulltext index idx (body, title))", "BLOB/TEXT column 'body' used in key specification without a key length"},
 		{"alter table t add fulltext index idx (body) with parser unknown", "Unsupported parser 'unknown'"},
 	} {
 		tk.MustContainErrMsg(tc.sql, tc.err)
 	}
+
+	// Every FULLTEXT index over a column is built with one analyzer, so a
+	// MATCH compiles its search string the same way whichever index serves
+	// it; a second index with another parser or other settings is refused.
+	tk.MustExec("create fulltext index idx_body on t (body)")
+	tk.MustContainErrMsg("create fulltext index idx_tenant_body on t (n, body) with parser ngram", "FULLTEXT index over body must use the parser and analyzer settings of the existing FULLTEXT index idx_body")
+	tk.MustExec("set global innodb_ft_min_token_size = 4")
+	tk.MustContainErrMsg("create fulltext index idx_tenant_body on t (n, body)", "must use the parser and analyzer settings of the existing FULLTEXT index idx_body")
+	tk.MustExec("set global innodb_ft_min_token_size = 3")
+	tk.MustExec("create fulltext index idx_tenant_body on t (n, body)")
+	tk.MustExec("create fulltext index idx_title on t (title) with parser ngram")
+	tk.MustContainErrMsg("create table bad (n int, body text, fulltext index a (body), fulltext index b (n, body) with parser ngram)", "must use the parser and analyzer settings of the existing FULLTEXT index a")
+	tk.MustExec("alter table t drop index idx_body, drop index idx_tenant_body, drop index idx_title")
 
 	// An existing name under IF NOT EXISTS is a note, as for an ordinary
 	// index, and wins over any complaint about the definition.
@@ -203,9 +256,11 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 }
 
 // fullTextEntries reads every entry of a FULLTEXT index built in TiKV as
-// handle -> term -> positions.
-func fullTextEntries(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) map[int64]map[string][]int {
+// handle -> term -> positions, and the decoded key-column values each
+// handle's entries were written under, which must agree across its terms.
+func fullTextEntries(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (map[int64]map[string][]int, map[int64][]types.Datum) {
 	entries := make(map[int64]map[string][]int)
+	keys := make(map[int64][]types.Datum)
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
@@ -222,9 +277,9 @@ func fullTextEntries(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo
 		iter, err := txn.Iter(prefix, prefix.PrefixNext())
 		require.NoError(t, err)
 		for iter.Valid() {
-			term, err := tables.DecodeTiKVFullTextIndexKey(iter.Key())
+			keyValues, term, err := tables.DecodeTiKVFullTextIndexKey(idxInfo, iter.Key())
 			require.NoError(t, err)
-			handle, err := tablecodec.DecodeIndexHandle(iter.Key(), iter.Value(), 1)
+			handle, err := tablecodec.DecodeIndexHandle(iter.Key(), iter.Value(), len(idxInfo.Columns))
 			require.NoError(t, err)
 			positions, err := tablecodec.DecodeTiKVFullTextIndexValue(iter.Value())
 			require.NoError(t, err)
@@ -232,11 +287,21 @@ func fullTextEntries(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo
 				entries[handle.IntValue()] = make(map[string][]int)
 			}
 			entries[handle.IntValue()][string(term)] = positions
+			decoded := make([]types.Datum, 0, len(keyValues))
+			for _, encoded := range keyValues {
+				_, value, err := codec.DecodeOne(encoded)
+				require.NoError(t, err)
+				decoded = append(decoded, value)
+			}
+			if seen, ok := keys[handle.IntValue()]; ok {
+				require.Equal(t, seen, decoded, "handle %d", handle.IntValue())
+			}
+			keys[handle.IntValue()] = decoded
 			require.NoError(t, iter.Next())
 		}
 		iter.Close()
 	}
-	return entries
+	return entries, keys
 }
 
 // TestFullTextIndexBuiltInTiKVEntries covers the entries a FULLTEXT index
@@ -259,10 +324,11 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tblInfo, idxInfo := tikvFullTextIndex(t, dom, "t", "idx")
 	// "of" is shorter than innodb_ft_min_token_size and drops out, but the
 	// positions of the tokens around it are their ordinals in the stream.
+	entries, _ := fullTextEntries(t, tk, tblInfo, idxInfo)
 	require.Equal(t, map[int64]map[string][]int{
 		1: {"hello": {0}, "world": {1}, "distributed": {3}, "sql": {4}},
 		2: {"sql": {0, 1, 2}},
-	}, fullTextEntries(t, tk, tblInfo, idxInfo))
+	}, entries)
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin check index t idx")
 
@@ -336,10 +402,11 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tk.MustExec("update t set body = 'now indexed' where id = 3")
 	tk.MustExec("update t set body = null where id = 2")
 	tk.MustExec("delete from t where id = 5")
+	entries, _ = fullTextEntries(t, tk, tblInfo, idxInfo)
 	require.Equal(t, map[int64]map[string][]int{
 		1: {"relational": {0}, "storage": {1}},
 		3: {"now": {0}, "indexed": {1}},
-	}, fullTextEntries(t, tk, tblInfo, idxInfo))
+	}, entries)
 	tk.MustExec("admin check table t")
 
 	// The same within one transaction, including a row that is inserted,
@@ -351,11 +418,12 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tk.MustExec("delete from t where id = 6")
 	tk.MustExec("update t set body = 'relational engine' where id = 1")
 	tk.MustExec("commit")
+	entries, _ = fullTextEntries(t, tk, tblInfo, idxInfo)
 	require.Equal(t, map[int64]map[string][]int{
 		1: {"relational": {0}, "engine": {1}},
 		3: {"now": {0}, "indexed": {1}},
 		7: {"kept": {0}, "words": {1}},
-	}, fullTextEntries(t, tk, tblInfo, idxInfo))
+	}, entries)
 	tk.MustExec("admin check table t")
 	tk.MustExec("rollback")
 
@@ -363,10 +431,11 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tk.MustExec("create table ng (id int primary key, body varchar(100), fulltext index idx (body) with parser ngram)")
 	tk.MustExec("insert into ng values (1, 'abcab'), (2, '数据库')")
 	ngInfo, ngIdx := tikvFullTextIndex(t, dom, "ng", "idx")
+	entries, _ = fullTextEntries(t, tk, ngInfo, ngIdx)
 	require.Equal(t, map[int64]map[string][]int{
 		1: {"ab": {0, 3}, "bc": {1}, "ca": {2}},
 		2: {"数据": {0}, "据库": {1}},
-	}, fullTextEntries(t, tk, ngInfo, ngIdx))
+	}, entries)
 	tk.MustExec("admin check table ng")
 
 	// Adding the index to a populated table backfills it, and a long NGRAM
@@ -377,7 +446,7 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tk.MustExec("insert into backfilled values (1, 'distributed sql database'), (2, null), (3, ?)", long)
 	tk.MustExec("alter table backfilled add fulltext index idx (body) with parser ngram")
 	bfInfo, bfIdx := tikvFullTextIndex(t, dom, "backfilled", "idx")
-	entries := fullTextEntries(t, tk, bfInfo, bfIdx)
+	entries, _ = fullTextEntries(t, tk, bfInfo, bfIdx)
 	require.Len(t, entries, 2)
 	require.Equal(t, []int{0}, entries[1]["di"])
 	// Grams are positioned densely across the token stream: "the" is the
@@ -392,10 +461,11 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tk.MustExec("create table pt (id int primary key, body text, fulltext index idx (body)) partition by hash(id) partitions 2")
 	tk.MustExec("insert into pt values (1, 'first partition'), (2, 'second partition')")
 	ptInfo, ptIdx := tikvFullTextIndex(t, dom, "pt", "idx")
+	entries, _ = fullTextEntries(t, tk, ptInfo, ptIdx)
 	require.Equal(t, map[int64]map[string][]int{
 		1: {"first": {0}, "partition": {1}},
 		2: {"second": {0}, "partition": {1}},
-	}, fullTextEntries(t, tk, ptInfo, ptIdx))
+	}, entries)
 	tk.MustExec("admin check table pt")
 	tk.MustExec("delete from pt where id = 1")
 	tk.MustExec("admin check table pt")
@@ -410,4 +480,42 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tk.MustExec("alter table t modify column body varchar(500)")
 	tk.MustExec("admin check table t")
 	tk.MustContainErrMsg("create table bad_charset (body text charset gbk, fulltext index idx (body))", "FULLTEXT index requires a utf8mb4, utf8, ascii or latin1 column")
+
+	// Key columns ahead of the tokenized column: each entry of a row carries
+	// the row's key values before the term, follows the row when they
+	// change, and an entry under another tenant is reported by the check.
+	tk.MustExec("create table kt (id int primary key, tenant int, body text, fulltext index idx (tenant, body))")
+	tk.MustExec("insert into kt values (1, 10, 'hello world'), (2, 20, 'hello sql'), (3, null, 'hello null')")
+	ktInfo, ktIdx := tikvFullTextIndex(t, dom, "kt", "idx")
+	entries, keys := fullTextEntries(t, tk, ktInfo, ktIdx)
+	require.Equal(t, map[int64]map[string][]int{
+		1: {"hello": {0}, "world": {1}},
+		2: {"hello": {0}, "sql": {1}},
+		3: {"hello": {0}, "null": {1}},
+	}, entries)
+	require.Equal(t, map[int64][]types.Datum{
+		1: {types.NewIntDatum(10)}, 2: {types.NewIntDatum(20)}, 3: {types.NewDatum(nil)},
+	}, keys)
+	tk.MustExec("update kt set tenant = 30 where id = 1")
+	tk.MustExec("update kt set body = 'moved along' where id = 2")
+	_, keys = fullTextEntries(t, tk, ktInfo, ktIdx)
+	require.Equal(t, []types.Datum{types.NewIntDatum(30)}, keys[1])
+	require.Equal(t, []types.Datum{types.NewIntDatum(20)}, keys[2])
+	tk.MustExec("admin check table kt")
+	tk.MustExec("admin check index kt idx")
+	// An entry with the right term under the wrong tenant does not belong
+	// to the row.
+	strayKey := tablecodec.EncodeIndexSeekKey(ktInfo.ID, ktIdx.ID, nil)
+	encodedStray, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(99), types.NewBytesDatum([]byte("hello")), types.NewIntDatum(1))
+	require.NoError(t, err)
+	strayKey = append(strayKey, encodedStray...)
+	mutate(func(txn kv.Transaction) {
+		require.NoError(t, txn.Set(strayKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPositions(nil, []int{0}), false)))
+	})
+	tk.MustContainErrMsg("admin check table kt", "data inconsistency in table: kt, index: idx, handle: 1")
+	mutate(func(txn kv.Transaction) { require.NoError(t, txn.Delete(strayKey)) })
+	tk.MustExec("admin check table kt")
+	tk.MustExec("delete from kt")
+	entries, _ = fullTextEntries(t, tk, ktInfo, ktIdx)
+	require.Empty(t, entries)
 }

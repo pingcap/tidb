@@ -219,7 +219,10 @@ func (ds *DataSource) absorbFullTextPredicates(predicates []expression.Expressio
 }
 
 // fullTextIndexServes reports whether pred is a locally evaluated boolean
-// MATCH over one column that a public FULLTEXT index built in TiKV covers.
+// MATCH over one column that a public FULLTEXT index built in TiKV tokenizes.
+// Whether the index can actually answer the query, which for an index with
+// key columns needs them pinned, is decided when access paths are built; a
+// MATCH claimed here and not served by a path is evaluated on the scan.
 func (ds *DataSource) fullTextIndexServes(pred expression.Expression) bool {
 	sf, ok := pred.(*expression.ScalarFunction)
 	if !ok || sf.FuncName.L != ast.FTSMysqlMatchAgainst || len(sf.GetArgs()) != 2 {
@@ -233,8 +236,8 @@ func (ds *DataSource) fullTextIndexServes(pred expression.Expression) bool {
 		return false
 	}
 	for _, idx := range ds.TableInfo.Indices {
-		if idx.IsTiKVFullTextIndex() && idx.State == model.StatePublic && len(idx.Columns) == 1 &&
-			ds.TableInfo.Columns[idx.Columns[0].Offset].ID == col.ID {
+		textCol := idx.TiKVFullTextColumn()
+		if textCol != nil && idx.State == model.StatePublic && ds.TableInfo.Columns[textCol.Offset].ID == col.ID {
 			return true
 		}
 	}
