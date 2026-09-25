@@ -1015,6 +1015,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .as_ref()
                 .expect("just created"),
         );
+        // The seed's schema is available here: populate the column_map for
+        // the consumer predicates' column translation.
+        {
+            let mut class = class.borrow_mut();
+            let schema_columns: Vec<Column> = class
+                .seed_part_logical_plan
+                .as_ref()
+                .and_then(|seed_plan| seed_plan.schema())
+                .map(|schema| schema.columns.clone())
+                .unwrap_or_default();
+            for column in &schema_columns {
+                let mut col = column.clone();
+                let hash = col.hash_code().to_vec();
+                class.column_map.insert(hash, col);
+            }
+        }
 
         // "Use cteClass.SeedPartLogicalPlan.Schema() (not cte.seedLP.Schema())
         // to ensure all references to the same CTE use a consistent schema.
