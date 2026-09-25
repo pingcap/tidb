@@ -317,8 +317,7 @@ func (p *preprocessor) schemasForMatchingTables(
 
 func updateAssignmentTargetsTable(tableInfo *model.TableInfo, columnName string) bool {
 	if columnName == model.ExtraHandleName.L {
-		// _tidb_rowid is a synthesized handle rather than a public column and is
-		// only assignable when the table uses an implicit row ID.
+		// _tidb_rowid is a synthesized handle, only assignable with an implicit row ID.
 		return !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle
 	}
 	for _, column := range tableInfo.Columns {
@@ -339,8 +338,8 @@ func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []pmodel.CIStr
 			continue
 		}
 
-		// Check every matching schema so name-resolution ambiguity cannot bypass
-		// the read-only guard. The planner reports invalid ambiguous assignments later.
+		// Check every matching schema so name-resolution ambiguity cannot bypass the
+		// read-only/archive guard; the planner reports ambiguous assignments later.
 		dbNames = append(dbNames, p.schemasForMatchingTables(tables, func(tbl *ast.TableName, tblW *resolve.TableNameW) bool {
 			if tblW.TableInfo == nil || !updateAssignmentTargetsTable(tblW.TableInfo, column.Name.L) {
 				return false
@@ -375,9 +374,11 @@ func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []pmodel.
 	return dbNames
 }
 
-// extractSchema extracts the schemas modified by the statement for database read-only checks.
-func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
+// extractSchema collects the schemas a statement writes (or, under forArchive, also reads),
+// for the read-only/archived checks.
+func (p *preprocessor) extractSchema(in ast.Node, forArchive bool) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0, 1)
+	currentDBName := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
@@ -394,10 +395,19 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			dbNames = append(dbNames, tbl.NewTable.Schema)
 		}
 	case *ast.AlterDatabaseStmt:
-		for _, opt := range node.Options {
-			if opt.Tp != ast.DatabaseOptionReadOnly {
-				dbNames = append(dbNames, node.Name)
+		// A bare READ ONLY toggle must still be blocked by archive; only ARCHIVE=0 escapes it.
+		isStateToggle := len(node.Options) == 1 &&
+			(node.Options[0].Tp == ast.DatabaseOptionReadOnly || node.Options[0].Tp == ast.DatabaseOptionArchive)
+		if forArchive {
+			isStateToggle = len(node.Options) == 1 && node.Options[0].Tp == ast.DatabaseOptionArchive
+		}
+		if !isStateToggle && len(node.Options) > 0 {
+			// Nameless "ALTER DATABASE <options>" means the current database.
+			dbName := node.Name
+			if node.AlterDefaultDatabase {
+				dbName = currentDBName
 			}
+			dbNames = append(dbNames, dbName)
 		}
 	case *ast.DropDatabaseStmt:
 		dbNames = append(dbNames, node.Name)
@@ -405,6 +415,15 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.AlterTableStmt:
 		dbNames = append(dbNames, node.Table.Schema)
+		// EXCHANGE PARTITION's other table (NewTable) swaps rows both ways, so archive must
+		// check it too.
+		if forArchive {
+			for _, spec := range node.Specs {
+				if spec.NewTable != nil {
+					dbNames = append(dbNames, spec.NewTable.Schema)
+				}
+			}
+		}
 	case *ast.ImportIntoStmt:
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.TruncateTableStmt:
@@ -424,16 +443,57 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	case *ast.InsertStmt:
 		dbNames = append(dbNames, getAllDBNames(node.Table)...)
 	case *ast.DeleteStmt:
-		if node.Tables != nil {
+		switch {
+		case forArchive:
+			// archive also blocks reads, and TableRefs is a superset of whatever's deleted.
+			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
+		case node.Tables != nil:
 			dbNames = append(dbNames, p.extractMultiDeleteSchemas(node)...)
-		} else {
+		default:
 			// single table delete statement
 			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
 		}
 	case *ast.UpdateStmt:
-		dbNames = append(dbNames, p.extractUpdateSchemas(node)...)
+		if forArchive {
+			// archive also blocks reads, and TableRefs is a superset of whatever's updated.
+			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
+		} else {
+			dbNames = append(dbNames, p.extractUpdateSchemas(node)...)
+		}
+	case *ast.BRIEStmt:
+		// BACKUP/RESTORE read and write rows directly, bypassing normal execution; archive checks them explicitly.
+		if forArchive {
+			for _, s := range node.Schemas {
+				dbNames = append(dbNames, pmodel.NewCIStr(s))
+			}
+			for _, tbl := range node.Tables {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.AnalyzeTableStmt:
+		// ANALYZE scans full table contents; archive blocks that read like any other.
+		if forArchive {
+			for _, tbl := range node.TableNames {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.AdminStmt:
+		// ADMIN CHECKSUM/CHECK TABLE/RECOVER INDEX read or write table data directly.
+		if forArchive {
+			for _, tbl := range node.Tables {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.SplitRegionStmt:
+		if forArchive && node.Table != nil {
+			dbNames = append(dbNames, node.Table.Schema)
+		}
 	case *ast.SelectStmt:
-		if node.LockInfo != nil {
+		if forArchive {
+			if node.From != nil {
+				dbNames = append(dbNames, getAllDBNames(node.From)...)
+			}
+		} else if node.LockInfo != nil {
 			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
 				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
 				dbNames = append(dbNames, getAllDBNames(node.From)...)
@@ -444,10 +504,42 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 }
 
 func (p *preprocessor) checkSchemaReadOnlyInStmt(in ast.Node) {
-	dbNames := p.extractSchema(in)
+	dbNames := p.extractSchema(in, false)
 	for _, dbName := range dbNames {
 		p.checkSchemaReadOnly(dbName)
 	}
+}
+
+func (p *preprocessor) checkSchemaArchivedInStmt(in ast.Node) {
+	dbNames := p.extractSchema(in, true)
+	// The InRestrictedSQL exemption is safe only for statements that can't write (e.g. a TTL
+	// delete must still be blocked); SelectStmt is the only extractSchema case that never writes.
+	_, isSelect := in.(*ast.SelectStmt)
+	exemptRestrictedSQL := isSelect && p.sctx.GetSessionVars().InRestrictedSQL
+	for _, dbName := range dbNames {
+		p.checkSchemaArchived(dbName, exemptRestrictedSQL)
+	}
+}
+
+// replicaWriterBypassContext is the minimal interface hasReplicaWriterBypass needs, so it can be
+// shared between sessionctx.Context and base.PlanContext (foreign_key.go) callers.
+type replicaWriterBypassContext interface {
+	GetSessionVars() *variable.SessionVars
+	Value(key fmt.Stringer) any
+}
+
+// hasReplicaWriterBypass reports whether RESTRICTED_REPLICA_WRITER_ADMIN lets a replication
+// applier bypass a database's lockdown state (read-only or archived).
+func hasReplicaWriterBypass(sctx replicaWriterBypassContext) bool {
+	vars := sctx.GetSessionVars()
+	if vars.User == nil {
+		return false
+	}
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return false
+	}
+	return pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, "RESTRICTED_REPLICA_WRITER_ADMIN", false)
 }
 
 func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
@@ -456,20 +548,30 @@ func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
 	}
 
 	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
-	if exists && dbInfo.ReadOnly {
-		// Allow replication threads with RESTRICTED_REPLICA_WRITER_ADMIN to bypass.
-		// Gate on User != nil so that internal/unauthenticated sessions (including
-		// mock-store test sessions where SkipWithGrant is true) are still blocked.
-		vars := p.sctx.GetSessionVars()
-		if vars.User != nil {
-			pm := privilege.GetPrivilegeManager(p.sctx)
-			if pm != nil {
-				if pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
-					return
-				}
-			}
-		}
+	if exists && dbInfo.ReadOnly && !hasReplicaWriterBypass(p.sctx) {
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
+	}
+}
+
+// checkSchemaArchived rejects any statement against an archived database (same
+// RESTRICTED_REPLICA_WRITER_ADMIN bypass as read-only), marking the session to disconnect after
+// the error response so the client reconnects instead of retrying forever. exemptRestrictedSQL
+// exempts internal read-only housekeeping, but only when the caller has confirmed the statement
+// can't write.
+func (p *preprocessor) checkSchemaArchived(dbName pmodel.CIStr, exemptRestrictedSQL bool) {
+	if p.err != nil {
+		return
+	}
+	if exemptRestrictedSQL {
+		return
+	}
+
+	// Must use the current schema, not p.ensureInfoSchema(): a stale-read snapshot from before
+	// the database was archived would otherwise bypass the block for the whole GC window.
+	dbInfo, exists := p.sctx.GetDomainInfoSchema().SchemaByName(dbName)
+	if exists && dbInfo.Archived && !hasReplicaWriterBypass(p.sctx) {
+		p.err = errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(dbName.O))
+		p.sctx.GetSessionVars().DisconnectAfterResponse = true
 	}
 }
 
@@ -937,6 +1039,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	}
 
+	// Archive is checked first: it's the stronger restriction, so its error wins if both apply.
+	p.checkSchemaArchivedInStmt(in)
 	p.checkSchemaReadOnlyInStmt(in)
 
 	return in, p.err == nil
@@ -2341,6 +2445,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		dbInfoLatest, _ := domainSchema.SchemaByName(dbName)
 		if dbInfo.ReadOnly != dbInfoLatest.ReadOnly {
 			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
+		}
+		if dbInfo.Archived != dbInfoLatest.Archived {
+			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s archived state has changed", dbInfo.Name.L)
 		}
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)

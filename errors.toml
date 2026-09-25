@@ -2921,6 +2921,11 @@ error = '''
 Schema '%s' is in read only mode.
 '''
 
+["schema:3990"]
+error = '''
+Schema '%s' is in archived mode.
+'''
+
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'

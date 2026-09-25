@@ -944,6 +944,7 @@ const (
 	ErrDependentByCheckConstraint                            = 3959
 	ErrJSONInBooleanContext                                  = 3986
 	ErrSchemaInReadOnlyMode                                  = 3989
+	ErrSchemaInArchivedMode                                  = 3990
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030

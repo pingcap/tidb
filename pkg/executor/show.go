@@ -1660,6 +1660,9 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if dbInfo.ReadOnly {
 		fmt.Fprint(buf, " /* READ ONLY = 1 */")
 	}
+	if dbInfo.Archived {
+		fmt.Fprint(buf, " /* ARCHIVE = 1 */")
+	}
 	return nil
 }
 

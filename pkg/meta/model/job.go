@@ -117,6 +117,7 @@ const (
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
+	ActionModifySchemaArchive                   ActionType = 81
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -195,6 +196,7 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTableAffinity:                    "alter table affinity",
 	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
 	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
+	ActionModifySchemaArchive:                   "modify schema archive",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -273,6 +275,8 @@ const (
 	StateGlobalTxnOnly
 	// StatePendingReadOnly means this database is pending to be read-only.
 	StatePendingReadOnly
+	// StatePendingArchive means this database is pending to be archived.
+	StatePendingArchive
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -295,6 +299,10 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StatePendingReadOnly:
+		return "pending read only"
+	case StatePendingArchive:
+		return "pending archive"
 	default:
 		return "none"
 	}

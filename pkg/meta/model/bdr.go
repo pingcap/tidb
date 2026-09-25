@@ -108,6 +108,7 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionModifySchemaSoftDeleteAndActiveActive,
 		ActionAlterTableSoftDeleteInfo,
 		ActionModifySchemaReadOnly,
+		ActionModifySchemaArchive,
 	},
 	UnmanagementDDL: {
 		ActionCreatePlacementPolicy,

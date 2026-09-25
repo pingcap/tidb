@@ -5139,6 +5139,25 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 		failpoint.Inject("BuildDataSourceFailed", func() {})
 		return nil, err
 	}
+	// A view body bypasses core.Preprocess's archive check entirely, so a view over an
+	// archived table would otherwise serve its rows to anyone with SELECT on the view.
+	// b.visitInfo here holds only this view invocation's own tables (nested views recurse).
+	if !hasReplicaWriterBypass(b.ctx) {
+		checkedDBs := make(map[string]struct{}, len(b.visitInfo))
+		for _, v := range b.visitInfo {
+			if v.db == "" {
+				continue
+			}
+			if _, ok := checkedDBs[v.db]; ok {
+				continue
+			}
+			checkedDBs[v.db] = struct{}{}
+			if viewDBInfo, exists := b.ctx.GetDomainInfoSchema().SchemaByName(pmodel.NewCIStr(v.db)); exists && viewDBInfo.Archived {
+				b.ctx.GetSessionVars().DisconnectAfterResponse = true
+				return nil, errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(viewDBInfo.Name.O))
+			}
+		}
+	}
 	pm := privilege.GetPrivilegeManager(b.ctx)
 	if viewDepth > 0 &&
 		stmtCtx.InExplainStmt &&

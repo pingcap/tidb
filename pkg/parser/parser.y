@@ -322,6 +322,7 @@ import (
 	always                "ALWAYS"
 	any                   "ANY"
 	apply                 "APPLY"
+	archive               "ARCHIVE"
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
@@ -4426,6 +4427,32 @@ AlterDatabaseOptionList:
 			Value: $4.(string),
 		}}
 	}
+|	"ARCHIVE" eq DatabaseReadOnlyOpt
+	{
+		$$ = []*ast.DatabaseOption{{
+			Tp:    ast.DatabaseOptionArchive,
+			Value: $3.(string),
+		}}
+	}
+|	"ARCHIVE" NUM
+	{
+		// ARCHIVE is unreserved, so it's also a valid DBName; DEFAULT is ambiguous with that
+		// (unlike a bare NUM) and only accepted via the "eq DatabaseReadOnlyOpt" alternative.
+		var val string
+		switch getUint64FromNUM($2) {
+		case 0:
+			val = "0"
+		case 1:
+			val = "1"
+		default:
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = []*ast.DatabaseOption{{
+			Tp:    ast.DatabaseOptionArchive,
+			Value: val,
+		}}
+	}
 
 DatabaseReadOnlyOpt:
 	"DEFAULT"
@@ -6812,6 +6839,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"APPLY"
+|	"ARCHIVE"
 |	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
