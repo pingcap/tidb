@@ -684,6 +684,20 @@ impl SysVarDef {
         // and the two range guards are dead (an `&&` over contradictory
         // predicates) plus a runtime-tuner comparison whose tuner reads 0
         // until startup sets it, so neither can reject here.
+        // go `ValidateSnapshot` parses the value as a datetime and answers
+        // ErrTruncatedWrongValue (1292) for anything unparseable — an
+        // invalid `SET tidb_snapshot` leaves the previous (empty) value.
+        if self.name == "tidb_snapshot" && !value.is_empty() {
+            let zone = tidb_datatype::SessionTimeZone::utc();
+            if tidb_datatype::parse_datetime(value, &zone, false, false).is_err() {
+                return Err(ValidationError::SqlError(SqlError::new_f(
+                    tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                    "Incorrect datetime value: '%s'",
+                    &[],
+                    &[FormatArg::from(value)],
+                )));
+            }
+        }
         // go's ddl-owner sync refuses DISABLING the owner
         // (ErrDDLSetting, 8246) for either scope.
         if self.name == "tidb_enable_ddl" && (value.eq_ignore_ascii_case("OFF") || value == "0") {
