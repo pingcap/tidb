@@ -790,7 +790,7 @@ impl DriverError {
         // Go: "Unknown column '%-.192s' in '%-.192s'".
         DriverError::UnknownColumnInTable { column, table } => MysqlError::new(
             1054,
-            format!("Unknown column '{column}' in '{table}'"),
+            format!("Unknown column '{}' in '{table}'", column.to_lowercase()),
         ),
         // Go `ErrNoReferencedTable`.
         DriverError::ForeignKeyReferencedTableMissing(table) => MysqlError::new(
@@ -1438,7 +1438,7 @@ impl DriverError {
         // Go: "Unknown column '%-.192s' in '%-.192s'".
         DriverError::UnknownColumnInClause { column, clause } => MysqlError::new(
             1054,
-            format!("Unknown column '{column}' in '{clause}'"),
+            format!("Unknown column '{}' in '{clause}'", column.to_lowercase()),
         ),
         // Go: "The value specified for generated column '%s' in table '%s' is
         // not allowed."

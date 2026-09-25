@@ -1365,7 +1365,24 @@ fn build_column(
                 }
             },
             ColumnOption::Default(expr) => {
-                staged_default = Some(stage_column_default(name, &field_type, expr, context)?);
+                let preceding_names: Vec<String> = generated_preceding
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|column| column.name.original().to_owned())
+                    .collect();
+                let preceding_types: Vec<FieldType> = generated_preceding
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|column| column.field_type.clone())
+                    .collect();
+                staged_default = Some(stage_column_default(
+                    name,
+                    &field_type,
+                    expr,
+                    context,
+                    &preceding_names,
+                    &preceding_types,
+                )?);
                 remove_on_update_now(&mut field_type);
             }
             ColumnOption::OnUpdate(expr) => {
@@ -1600,7 +1617,7 @@ pub(crate) fn set_column_default(
         return Ok(());
     };
     let field_type = info.field_type.clone();
-    let staged = stage_column_default(name, &field_type, expr, context)?;
+    let staged = stage_column_default(name, &field_type, expr, context, &[], &[])?;
     // Go `updateColumnDefaultValue` turns a staged value that carries no
     // default at all into `ErrInvalidDefaultValue`, which is why
     // `sql_mode=''` plus `SET DEFAULT ''` on TEXT is 1067 here even though
@@ -1989,20 +2006,28 @@ fn stage_column_default(
     field_type: &FieldType,
     expr: &Expr,
     context: &tidb_executor::StmtContext,
+    preceding_names: &[String],
+    preceding_types: &[FieldType],
 ) -> Refusal<StagedColumnDefault> {
     let built = tidb_executor::column_default::build(expr, field_type, |expr| {
-        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
-            expr,
-            &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+        // go resolves a DEFAULT expression against the table's own columns
+        // (`getDefaultValue` runs the expression resolver over them), so an
+        // unknown name fails with ErrBadField (1054) 'expression'.
+        let resolver =
+            tidb_executor::generated_column::TableColumnResolver::with_like_default_escape(
+                preceding_names,
+                preceding_types,
                 context.session_zone(),
                 context.like_default_escape(),
-            ),
-        )
-        .map_err(|_| {
-            tidb_executor::column_default::DefaultError::Unsupported(
-                "a DEFAULT this node cannot evaluate",
-            )
-        })?;
+            );
+        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(
+            |_| match resolver.missing_name() {
+                Some(name) => tidb_executor::column_default::DefaultError::UnknownColumn(name),
+                None => tidb_executor::column_default::DefaultError::Unsupported(
+                    "a DEFAULT this node cannot evaluate",
+                ),
+            },
+        )?;
         tidb_expr::eval_expression_once(&rewritten, context).map_err(|_| {
             tidb_executor::column_default::DefaultError::Unsupported(
                 "a DEFAULT this node cannot evaluate",

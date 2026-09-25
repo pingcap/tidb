@@ -6478,6 +6478,14 @@ impl ClusterServerSession {
                 }
             }
         }
+        // Go `dropSchema` invalidates the session's current database when the
+        // DROP removes it: the next unqualified statement answers 1046
+        // (`ErrNoDB`) until a fresh `USE`.
+        if let DdlStatement::DropDatabase { name, .. } = statement {
+            if self.session.current_database().eq_ignore_ascii_case(name) {
+                self.session.deselect_database();
+            }
+        }
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
         Ok(WriteOutcome {

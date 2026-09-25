@@ -2243,9 +2243,7 @@ fn apply_drop_column(
             )));
         }
         // Go 1091 ErrCantDropFieldOrKey.
-        return Err(DdlPlanError::Encode(format!(
-            "Can't DROP '{column}'; check that column/key exists"
-        )));
+        return Err(DdlPlanError::CantDropFieldOrKey(column.to_owned()));
     };
     if info.columns.len() == 1 {
         // Go 1090 ErrCantRemoveAllFields.
@@ -2611,6 +2609,9 @@ pub enum DdlPlanError {
     /// `DROP TABLE a, b` naming tables that are not in the catalog (Go
     /// `ErrBadTable` 1051, every missing name comma-joined).
     UnknownTables(Vec<String>),
+    /// Go `ErrCantDropFieldOrKey` (1091): DROP COLUMN/INDEX names something
+    /// the table does not have.
+    CantDropFieldOrKey(String),
     /// Distinct from [`Self::UnknownTable`], which is Go's `ErrBadTable`
     /// (1051): `DROP TABLE` answers that one, and Go's own
     /// `TestDropTableWithoutIfExists` pins the difference. Every other
@@ -2700,6 +2701,12 @@ impl fmt::Display for DdlPlanError {
             }
             Self::UnknownTables(names) => {
                 write!(formatter, "Unknown table '{}'", names.join(","))
+            }
+            Self::CantDropFieldOrKey(name) => {
+                write!(
+                    formatter,
+                    "Can't DROP '{name}'; check that column/key exists"
+                )
             }
             Self::TableNotExists { schema, table } => {
                 write!(formatter, "Table '{schema}.{table}' doesn't exist")
@@ -7415,12 +7422,23 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     format!("Unknown table '{}'", missing.join(",")),
                 )));
             }
+            // go files one `Note | 1051` per missing view under IF EXISTS —
+            // alongside the drops when the list mixes existing and missing
+            // names.
+            let notes = missing
+                .iter()
+                .map(|name| {
+                    let (schema, view) = name.rsplit_once('.').unwrap_or(("", name.as_str()));
+                    missing_table_note(schema, view)
+                })
+                .collect::<Vec<_>>();
             if !dropped_any {
-                return Ok(already(format!(
-                    "no named view exists: {}",
-                    missing.join(",")
-                )));
+                return Ok(already_with_warnings(
+                    format!("no named view exists: {}", missing.join(",")),
+                    notes,
+                ));
             }
+            warnings.extend(notes);
         }
         DdlStatement::RebaseAutoRandom {
             schema,
@@ -9203,69 +9221,55 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     ) {
                         Ok(normalized) => column.length = normalized,
                         Err(PrefixError::IncorrectPrefixKey) => {
-                            return Err(DdlPlanError::Admission(
-                                DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrWrongSubKey,
-                                    "Incorrect prefix key; the used key part isn't a string, \
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrWrongSubKey,
+                                "Incorrect prefix key; the used key part isn't a string, \
                                      the used length is longer than the key part, or the storage \
                                      engine doesn't support unique prefix keys",
-                                ),
-                            ));
+                            )));
                         }
                         Err(PrefixError::BlobKeyWithoutLength(name)) => {
-                            return Err(DdlPlanError::Admission(
-                                DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrBlobKeyWithoutLength,
-                                    format!(
-                                        "BLOB/TEXT column '{name}' used in key specification \
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrBlobKeyWithoutLength,
+                                format!(
+                                    "BLOB/TEXT column '{name}' used in key specification \
                                          without a key length"
-                                    ),
                                 ),
-                            ));
+                            )));
                         }
                         Err(PrefixError::KeyPart0(name)) => {
-                            return Err(DdlPlanError::Admission(
-                                DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrKeyPart0,
-                                    format!("Key part '{name}' length cannot be 0"),
-                                ),
-                            ));
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrKeyPart0,
+                                format!("Key part '{name}' length cannot be 0"),
+                            )));
                         }
                         Err(PrefixError::WrongKeyColumn(name)) => {
-                            return Err(DdlPlanError::Admission(
-                                DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrWrongKeyColumn,
-                                    format!(
-                                        "The used storage engine can't index column '{name}'"
-                                    ),
-                                ),
-                            ));
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrWrongKeyColumn,
+                                format!("The used storage engine can't index column '{name}'"),
+                            )));
                         }
                         Err(PrefixError::JsonUsedAsKey(name)) => {
-                            return Err(DdlPlanError::Admission(
-                                DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrJSONUsedAsKey,
-                                    format!(
-                                        "JSON column '{name}' cannot be used in key specification."
-                                    ),
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrJSONUsedAsKey,
+                                format!(
+                                    "JSON column '{name}' cannot be used in key specification."
                                 ),
-                            ));
+                            )));
                         }
                         Err(PrefixError::TooLongKey { length, max }) => {
-                            return Err(DdlPlanError::Admission(
-                                DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrTooLongKey,
-                                    format!(
-                                        "Specified key was too long ({length} bytes); \
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrTooLongKey,
+                                format!(
+                                    "Specified key was too long ({length} bytes); \
                                          max key length is {max} bytes"
-                                    ),
                                 ),
-                            ));
+                            )));
                         }
                         Err(other) => {
-                            return Err(DdlPlanError::Admission(
-                                DdlAdmissionError::unsupported(format!("{other:?}")),
-                            ));
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                                format!("{other:?}"),
+                            )));
                         }
                     }
                 }

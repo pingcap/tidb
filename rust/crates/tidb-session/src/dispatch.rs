@@ -2432,6 +2432,15 @@ impl Session {
                         }
                         Ok(StmtOutput::Affected(imported))
                     }
+                    DmlStmt::Call(_) => {
+                        // go's unsupported-statement wall names the AST node:
+                        // `executor/executor.go`'s `Unsupported type
+                        // *ast.CallStmt` (8108), not a generic 1105.
+                        Err(DriverError::DdlCoded {
+                            errno: 8108,
+                            message: "Unsupported type *ast.CallStmt".to_owned(),
+                        })
+                    }
                     other => Err(DriverError::unsupported(format!(
                         "this DML statement kind ({}) is not supported yet",
                         variant_name(other)

@@ -393,6 +393,9 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         }
         // Go `ErrCantDropFieldOrKey` (1091, 42000): DROP INDEX and
         // DROP PRIMARY KEY naming something the table does not have.
+        ClusterDdlError::Plan(error @ DdlPlanError::CantDropFieldOrKey(_)) => {
+            SqlQueryError::new(1091, *b"42000", error.to_string())
+        }
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownIndex(_)) => {
             SqlQueryError::new(1091, *b"42000", error.to_string())
         }

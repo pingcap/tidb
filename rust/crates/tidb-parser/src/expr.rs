@@ -468,10 +468,13 @@ impl Parser {
                 // narrower parser boundary: GBK/UJIS/other registered legacy
                 // names are lexer tokens but unsupported introducers.
                 let charset = canonical_legacy_charset(&t.text).ok_or_else(|| {
-                    self.err_here(&format!(
-                        "[parser:1115]Unsupported character introducer: '{}'",
-                        t.text
-                    ))
+                    // go raises the unsupported introducer as the CLASSED
+                    // terror `ErrUnknownCharacterSet` (1115), not as a 1064
+                    // syntax error wrapping the coded text.
+                    self.err_coded(
+                        1115,
+                        &format!("Unsupported character introducer: '{}'", t.text),
+                    )
                 })?;
                 // Go preserves the canonical lowercase name for an explicit
                 // `_charset` introducer, while national strings (`N'...'`)
