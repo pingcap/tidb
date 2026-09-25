@@ -771,7 +771,16 @@ pub(crate) fn date_add_with_result_fsp(
         // go `builtinAddDateAndDurationSig`'s arg0 cast: an unparseable
         // datetime text warns `Incorrect datetime value: '<text>'` (1292)
         // and answers NULL.
-        ctx.append_warning(1292, &format!("Incorrect datetime value: '{s}'"));
+        // go's numeric sources parse the INT64 reinterpretation through
+        // ParseTimeFromNum: a u64 overflow reads -1 and the failure warns
+        // `Incorrect time value: '-1'` (1292). The string sources keep the
+        // datetime-typed warning.
+        let subject = match date {
+            Datum::Int(n) => format!("{n}"),
+            Datum::UInt(n) => format!("{}", *n as i64),
+            _ => format!("Incorrect datetime value: '{s}'"),
+        };
+        ctx.append_warning(1292, &format!("Incorrect time value: '{subject}'"));
         return Ok(Datum::Null);
     };
     if unit.eq_ignore_ascii_case("HOUR") || unit.eq_ignore_ascii_case("MINUTE") {
@@ -1236,7 +1245,16 @@ fn date_add_composite(
         // go `builtinAddDateAndDurationSig`'s arg0 cast: an unparseable
         // datetime text warns `Incorrect datetime value: '<text>'` (1292)
         // and answers NULL.
-        ctx.append_warning(1292, &format!("Incorrect datetime value: '{s}'"));
+        // go's numeric sources parse the INT64 reinterpretation through
+        // ParseTimeFromNum: a u64 overflow reads -1 and the failure warns
+        // `Incorrect time value: '-1'` (1292). The string sources keep the
+        // datetime-typed warning.
+        let subject = match date {
+            Datum::Int(n) => format!("{n}"),
+            Datum::UInt(n) => format!("{}", *n as i64),
+            _ => format!("Incorrect datetime value: '{s}'"),
+        };
+        ctx.append_warning(1292, &format!("Incorrect time value: '{subject}'"));
         return Ok(Datum::Null);
     };
     let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {

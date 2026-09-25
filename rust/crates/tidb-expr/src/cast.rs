@@ -1262,7 +1262,16 @@ fn cast_to_time_value(
         &ctx.time_zone(),
     );
     let Ok((time, truncated, dst_adjusted)) = parsed else {
-        invalid_time_warning(ctx, &s);
+        // go routes each source TYPE to its own parser and its own warning:
+        // the STRING sources warn `Incorrect datetime value: '<text>'`; the
+        // numeric sources parse the INT64/FLOAT reinterpretations and warn
+        // `Incorrect time value: '<int64>'` (a u64 overflow reads -1).
+        if matches!(v, Datum::String(_) | Datum::Bytes(_)) {
+            invalid_time_warning(ctx, &s);
+        } else {
+            let signed = v.to_i64().map(|converted| format!("{}", converted.value)).unwrap_or_else(|_| s.clone());
+            ctx.append_warning(1292, &format!("Incorrect time value: '{signed}'"));
+        }
         return Ok(None);
     };
     if truncated {
