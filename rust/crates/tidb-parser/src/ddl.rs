@@ -946,6 +946,7 @@ impl Parser {
     /// {PARTITIONS count | (typed definitions)}` — the only actions modelled; every other
     /// form (`ADD [CONSTRAINT] FOREIGN KEY`, ...) is an honest
     /// `ParseError`.
+
     pub(crate) fn parse_alter_table_statement(&mut self) -> PResult<Stmt> {
         self.expect_kw("ALTER")?;
         if self.is_kw("IGNORE") {

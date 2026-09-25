@@ -107,6 +107,50 @@ impl CreateViewStmt {
 
 // BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
 
+/// `ALTER VIEW name [(cols)] AS query` — the view-definition modification.
+///
+/// go `ast.AlterViewStmt` carries the same shape minus the CREATE-time
+/// algorithm/definer/security clauses, which `ALTER VIEW` does not take.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlterViewStmt {
+    /// The view name path.
+    pub name: Vec<String>,
+    /// Optional output column names, in written order.
+    pub columns: Vec<String>,
+    /// The replacement view query.
+    pub query: crate::NodeBox<QueryStmt>,
+}
+
+impl AlterViewStmt {
+    /// Restores `ALTER VIEW name [(cols)] AS query`, matching go's
+    /// `AlterViewStmt.Restore`.
+    pub fn restore_into(&self, out: &mut String) {
+        out.push_str("ALTER VIEW ");
+        push_name_path(out, &self.name);
+        if !self.columns.is_empty() {
+            out.push_str(" (");
+            for (index, column) in self.columns.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&back_quote(column));
+            }
+            out.push(')');
+        }
+        out.push_str(" AS ");
+        self.query.restore_into(out);
+    }
+}
+
+impl crate::Visitable for AlterViewStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        self.query.accept(visitor)
+    }
+}
+
 impl crate::Visitable for CreateViewStmt {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {

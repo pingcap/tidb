@@ -444,6 +444,13 @@ impl Parser {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterRange(
                 Box::new(self.parse_alter_range()?),
             ))))
+        } else if self.is_kw("ALTER") {
+            // go's yacc grammar: ALTER only continues with the productions
+            // dispatched above; anything else fails AT the offending token,
+            // which the alter-table parser's own `expect_kw("TABLE")` should
+            // reproduce (captured: `ALTER VIEW v` answers column 10 near
+            // "VIEW v" on go).
+            self.parse_alter_table_statement()
         } else if self.is_kw("RENAME") && self.is_kw_at(1, "TABLE") {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::RenameTable(
                 Box::new(self.parse_rename_table()?),

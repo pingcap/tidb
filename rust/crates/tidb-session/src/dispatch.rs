@@ -2702,6 +2702,20 @@ impl Session {
                         Ok(StmtOutput::Affected(0))
                     })
                 }
+                DdlStmt::AlterView(alter) => {
+                    let current_db = self.current_db.clone();
+                    let ctx = self.statement_context(false);
+                    let alter = alter.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_alter_view_in(
+                            &alter,
+                            catalog,
+                            &current_db,
+                            &ctx,
+                        )?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
                 // Go answers every sequence DDL with a zero affected-row
                 // count, as it does every other DDL.
                 DdlStmt::CreateSequence(create) => {

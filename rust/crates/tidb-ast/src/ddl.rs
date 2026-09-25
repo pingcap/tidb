@@ -164,7 +164,7 @@ pub use index::{
 // source family can evolve without reopening this shared DDL root.
 #[path = "ddl/create_view.rs"]
 mod create_view;
-pub use create_view::CreateViewStmt;
+pub use create_view::{AlterViewStmt, CreateViewStmt};
 
 #[path = "ddl/materialized_view.rs"]
 mod materialized_view;

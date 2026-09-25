@@ -65,6 +65,7 @@ impl DdlStmt {
         match self {
             Self::CreateTable(_) => "CREATE TABLE",
             Self::CreateView(_) => "CREATE VIEW",
+            Self::AlterView(_) => "ALTER VIEW",
             Self::CreateMaterializedView(_) => "CREATE MATERIALIZED VIEW",
             Self::CreateMaterializedViewLog(_) => "CREATE MATERIALIZED VIEW LOG",
             Self::CreateIndex(_) => "CREATE INDEX",
