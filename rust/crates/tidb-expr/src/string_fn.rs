@@ -1907,13 +1907,12 @@ pub(crate) fn char_func_with_context(
         return Ok(Datum::new_bytes(bytes));
     }
 
-    let charset = std::str::from_utf8(
-        charset
-            .as_raw_bytes()
-            .ok_or(EvalError::Unsupported("CHAR charset argument"))?,
-    )
-    .map_err(|_| EvalError::Unsupported("CHAR charset argument"))?
-    .to_ascii_lowercase();
+    // go `GetCharsetInfo` over the charset's TEXT: a numeric trailing
+    // argument (say `-3.75`) is not a charset and answers bare 1105
+    // "Unknown charset -3.75" — the same answer a string spelling gets.
+    let charset_text = crate::coerce::coerce_str(charset)?
+        .ok_or_else(|| { eprintln!("[DBG-CC1] coerce none"); EvalError::Unsupported("CHAR charset argument") })?;
+    let charset = charset_text.to_ascii_lowercase();
     let (decoded, error) = find_encoding(&charset)
         .transform(&bytes, TransformOp::DECODE)
         .into_parts();
@@ -1923,10 +1922,14 @@ pub(crate) fn char_func_with_context(
             return Ok(Datum::Null);
         }
     }
-    let collation_name = get_default_collation(&charset)
-        .map_err(|_| EvalError::Unsupported("CHAR charset argument"))?;
+    // go `charFunctionClass` GetCharsetInfo: an unknown charset answers
+    // bare 1105 "Unknown charset <name>".
+    let collation_name = get_default_collation(&charset).map_err(|_| {
+        eprintln!("[DBG-CC2] collation lookup fail {charset}");
+        EvalError::Unsupported(Box::leak(format!("Unknown charset {charset}").into_boxed_str()))
+    })?;
     let collation = Collation::from_name(&collation_name)
-        .ok_or(EvalError::Unsupported("CHAR charset argument"))?;
+        .ok_or_else(|| { eprintln!("[DBG-CC3] collation from_name fail {collation_name}"); EvalError::Unsupported("CHAR charset argument") })?;
     Ok(Datum::new_collation_string(decoded, collation))
 }
 

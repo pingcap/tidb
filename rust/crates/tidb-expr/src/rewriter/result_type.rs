@@ -1316,13 +1316,21 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
                     ft.set_collation_name("binary");
                     ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
                 }
-                Some(Expression::Constant(constant)) => {
+                // The USING charset travels as a STRING constant; the numeric
+                // trailing arguments are CODE POINTS (go counts them out of
+                // len(args) - 1) and keep the default charset.
+                Some(Expression::Constant(constant))
+                    if matches!(
+                        constant.value,
+                        Datum::String(_) | Datum::Bytes(_)
+                    ) =>
+                {
                     let charset = constant.value.sql_string().ok()?;
                     let collation = tidb_datatype::get_default_collation(&charset).ok()?;
                     ft.set_charset_name(charset);
                     ft.set_collation_name(collation);
                 }
-                _ => return None,
+                _ => {}
             }
             ft
         }
