@@ -1670,6 +1670,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 use super::cte::CtePredicatePushDown;
 
                 let decision = op.predicate_push_down(&predicates);
+                let mut seed_predicates: Option<Vec<Expression>> = None;
                 if let Some(class) = &op.cte {
                     let mut class = class.borrow_mut();
                     let recorded = match decision {
@@ -1690,10 +1691,22 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                         ),
                     };
                     if let Some(recorded) = recorded {
+                        // The seed's subtree receives the translated copy: GO
+                        // pushes the consumer predicates THROUGH the CTE
+                        // boundary into the seed (q1's seed-scan Selection
+                        // with not(isnull(sr_store_sk)) at the seed's own row
+                        // count), while the predicates also remain above this
+                        // reference (q1's consumer-level Selections).
+                        seed_predicates = Some(vec![recorded.clone()]);
                         class.push_down_predicates.push(recorded);
                     }
                 }
-                Descend::Stop(predicates)
+                match seed_predicates {
+                    // Descend into the seed so its operators push the copied
+                    // predicates down to the datasources.
+                    Some(translated) => Descend::Children(vec![translated]),
+                    None => Descend::Stop(predicates),
+                }
             }
             // Go's base body: everything goes to `children[0]`, nothing comes
             // back up.
