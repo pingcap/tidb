@@ -504,28 +504,11 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         {
             continue;
         }
-        // Go's tryToGetIndexJoin enumerates candidates only for inner paths
-        // whose access columns can cover the join keys.
-        let inner_properties = if outer_idx == 0 {
-            &join.right_properties
-        } else {
-            &join.left_properties
-        };
-        let inner_keys = if outer_idx == 0 {
-            &join.right_keys
-        } else {
-            &join.left_keys
-        };
-        let has_matching_index = inner_properties.iter().any(|order| {
-            order.len() >= inner_keys.len()
-                && order
-                    .iter()
-                    .zip(inner_keys.iter())
-                    .all(|(col, key)| col == key)
-        });
-        if !has_matching_index {
-            continue;
-        }
+        // Go `enumerateIndexJoinByOuterIdx` defers index matching to the
+        // inner builder (`getBestIndexJoinPathResultByProp` runs when the
+        // inner task is built), so every outerIdx enumerates the full family:
+        // IJ-TS, IJ-IS, IHJ-TS, IHJ-IS — each consuming plan ids even when
+        // the inner later rejects (R35's ledger counts them).
         let mut child_props = [PhysicalProperty::default(), PhysicalProperty::default()];
         // The OUTER side is re-planned under the SAME property. This is the
         // line that keeps a parent merge join alive above an index join.
@@ -552,32 +535,28 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
         // `table_range_scan` flag rather than as a property field.
-        for table_range_scan in [true] {
-            for kind in [IndexJoinKind::IndexJoin] {
-                let mut child_roles = [LeafRole::Plain, LeafRole::Plain];
-                child_roles[1 - outer_idx] = LeafRole::IndexJoinProbe { table_range_scan };
-                out.push(EnumeratedJoin {
-                    strategy: JoinStrategy::Index {
-                        outer_idx,
-                        table_range_scan,
-                        kind,
-                        keep_outer_order: !prop.is_sort_item_empty(),
-                    },
-                    child_props: child_props.clone(),
-                    child_roles,
-                });
-            }
+        // Go order (`enumerateIndexJoinByOuterIdx`): IJ-TS, IJ-IS, IHJ-TS,
+        // IHJ-IS — each a separate static candidate.
+        for (table_range_scan, kind) in [
+            (true, IndexJoinKind::IndexJoin),
+            (false, IndexJoinKind::IndexJoin),
+            (true, IndexJoinKind::IndexHashJoin),
+            (false, IndexJoinKind::IndexHashJoin),
+        ] {
+            let mut child_roles = [LeafRole::Plain, LeafRole::Plain];
+            child_roles[1 - outer_idx] = LeafRole::IndexJoinProbe { table_range_scan };
+            out.push(EnumeratedJoin {
+                strategy: JoinStrategy::Index {
+                    outer_idx,
+                    table_range_scan,
+                    kind,
+                    keep_outer_order: !prop.is_sort_item_empty(),
+                },
+                child_props: child_props.clone(),
+                child_roles,
+            });
         }
     }
-    // Go emits both `IndexJoin` variants before both `IndexHashJoin` variants;
-    // reorder to match, since the enumeration order breaks exact ties.
-    out.sort_by_key(|candidate| match &candidate.strategy {
-        JoinStrategy::Index {
-            kind: IndexJoinKind::IndexHashJoin,
-            ..
-        } => 1,
-        _ => 0,
-    });
     out
 }
 

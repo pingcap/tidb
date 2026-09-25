@@ -1772,6 +1772,7 @@ pub fn exhaust_physical_plans_4_logical_union_all(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
+    mpp_allowed: bool,
 ) -> Vec<PhysicalPlan> {
     if !prop.is_sort_item_empty() || prop.task_tp == TaskType::Mpp {
         return Vec::new();
@@ -1796,13 +1797,43 @@ pub fn exhaust_physical_plans_4_logical_union_all(
         crate::logical::LogicalUnionAll::TYPE,
         p.base.base.query_block_offset(),
     );
-    base.base.set_stats(stats);
+    base.base.set_stats(stats.clone());
     base.base.set_schema(p.base.base.schema().cloned());
     base.set_children_req_props(ch_req_props);
-    vec![PhysicalPlan::UnionAll(PhysicalUnionAll {
+    let mut plans = vec![PhysicalPlan::UnionAll(PhysicalUnionAll {
         base,
         mpp: false,
-    })]
+    })];
+    // Go `ExhaustPhysicalPlans4LogicalUnionAll`: with MPP allowed and a root
+    // requirement, a second `PhysicalUnionAll{Mpp: true}` candidate is
+    // constructed right after the root one (its children are then refused by
+    // the non-root early return, consuming no further plan ids).
+    if mpp_allowed && prop.task_tp == TaskType::Root {
+        let mpp_ch_req_props: Vec<Option<PhysicalProperty>> = (0..p.base.child_len())
+            .map(|_| {
+                Some(PhysicalProperty {
+                    expected_cnt: prop.expected_cnt,
+                    task_tp: TaskType::Mpp,
+                    cte_producer_status: prop.cte_producer_status,
+                    no_cop_push_down: prop.no_cop_push_down,
+                    ..PhysicalProperty::default()
+                })
+            })
+            .collect();
+        let mut mpp_base = BasePhysicalPlan::new(
+            allocator,
+            crate::logical::LogicalUnionAll::TYPE,
+            p.base.base.query_block_offset(),
+        );
+        mpp_base.base.set_stats(stats);
+        mpp_base.base.set_schema(p.base.base.schema().cloned());
+        mpp_base.set_children_req_props(mpp_ch_req_props);
+        plans.push(PhysicalPlan::UnionAll(PhysicalUnionAll {
+            base: mpp_base,
+            mpp: true,
+        }));
+    }
+    plans
 }
 
 /// Go `ExhaustPhysicalPlans4LogicalPartitionUnionAll`
@@ -1816,7 +1847,7 @@ pub fn exhaust_physical_plans_4_logical_partition_union_all(
     skew_ratio: f64,
 ) -> Vec<PhysicalPlan> {
     let mut plans =
-        exhaust_physical_plans_4_logical_union_all(&p.union_all, prop, allocator, skew_ratio);
+        exhaust_physical_plans_4_logical_union_all(&p.union_all, prop, allocator, skew_ratio, false);
     for plan in &mut plans {
         plan.base_mut()
             .base

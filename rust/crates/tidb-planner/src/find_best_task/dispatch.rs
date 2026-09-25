@@ -549,6 +549,7 @@ fn exhaust_physical_plans(
             prop,
             ctx.allocator,
             ctx.skew_ratio,
+            ctx.mpp_allowed,
         ))),
         LogicalPlan::PartitionUnionAll(op) => Ok(one(
             physical::exhaust_physical_plans_4_logical_partition_union_all(
@@ -656,8 +657,14 @@ fn exhaust_physical_plans(
                     .cloned()
             };
             let mut joins = Vec::new();
-            for candidate in
-                crate::find_best_task::exhaust_join(&reduced, prop, ctx.use_hash_join_v2)
+            // Burn/construct hash candidates first (`getHashJoins` runs before
+            // `tryToEnumerateIndexJoin` in Go), then the merge/index family.
+            let all_join_candidates =
+                crate::find_best_task::exhaust_join(&reduced, prop, ctx.use_hash_join_v2);
+            let (hash_candidates, other_candidates): (Vec<_>, Vec<_>) = all_join_candidates
+                .into_iter()
+                .partition(|candidate| matches!(candidate.strategy, JoinStrategy::Hash(_)));
+            for candidate in hash_candidates.into_iter().chain(other_candidates.into_iter())
             {
                 let strategy = candidate.strategy.clone();
                 // Go's INL_JOIN/INL_HASH_JOIN/INL_MERGE_JOIN hints are
@@ -757,6 +764,24 @@ fn exhaust_physical_plans(
                             },
                             table_range_scan: *table_range_scan,
                         });
+                }
+                // Go `constructIndexHashJoinStatic`: the embedded
+                // `PhysicalIndexJoin` is constructed first and then re-wrapped
+                // as an `IndexHashJoin` whose `Init` consumes another plan id
+                // without the traced constructor. Burn the embedded id so the
+                // ledger matches (R35: two ids per IHJ candidate).
+                if matches!(
+                    &strategy,
+                    JoinStrategy::Index {
+                        kind: crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin,
+                        ..
+                    }
+                ) {
+                    let _embedded = physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        "IndexJoin",
+                        op.base.base.query_block_offset(),
+                    );
                 }
                 let mut base = physical::BasePhysicalPlan::new(
                     ctx.allocator,
@@ -860,6 +885,18 @@ fn exhaust_physical_plans(
                 };
                 joins.push(physical);
             }
+            // Go constructs the hash-join candidates BEFORE the index-join
+            // family (`getHashJoins` runs first in
+            // `exhaustPhysicalPlans4LogicalJoin`), so their plan ids are lower;
+            // the returned list still processes merge/index candidates first
+            // (`joins = append(joins, mergeJoins/indexJoins...)` then hash).
+            // Partition the constructed plans the same way: hashes burned
+            // first above, processing order non-hash first here.
+            let (hashes, others): (Vec<_>, Vec<_>) = joins
+                .into_iter()
+                .partition(|candidate| matches!(candidate, PhysicalPlan::HashJoin(_)));
+            let mut joins = others;
+            joins.extend(hashes);
             // Go returns a forced HashJoin/MergeJoin family immediately.
             // IndexJoin hints remain undecided until the inner task builds.
             for hash in [true, false] {
