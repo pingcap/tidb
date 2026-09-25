@@ -2024,13 +2024,13 @@ mod bit_count_tests {
             (Datum::Decimal(Decimal::from_literal("3.1")), 2),
         ];
         for (input, want) in cases {
-            assert_eq!(bit_count(&[input]), Ok(Datum::Int(want)));
+            assert_eq!(bit_count(&[input], &crate::context::NoColumns), Ok(Datum::Int(want)));
         }
-        assert_eq!(bit_count(&[Datum::Null]), Ok(Datum::Null));
+        assert_eq!(bit_count(&[Datum::Null], &crate::context::NoColumns), Ok(Datum::Null));
         // Go's string conversion is byte-prefix based, so malformed UTF-8
         // after an ASCII number must not erase the numeric prefix.
         assert_eq!(
-            bit_count(&[Datum::new_bytes(vec![b'1', 0xff])]),
+            bit_count(&[Datum::new_bytes(vec![b'1', 0xff])], &crate::context::NoColumns),
             Ok(Datum::Int(1))
         );
     }

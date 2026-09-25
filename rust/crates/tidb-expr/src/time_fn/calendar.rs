@@ -2396,14 +2396,16 @@ mod composite_extract_tests {
         // DAY_MICROSECOND over a datetime: day 1 + 01:02:03.456700.
         let date = Datum::new_string("2023-03-14 01:02:03.4567".to_string());
         assert_eq!(
-            extract_composite("DAY_MICROSECOND", &[date]).unwrap(),
+            extract_composite("DAY_MICROSECOND", &[date], &crate::context::NoColumns).unwrap(),
             Datum::Int(14_010_203_456_700)
         );
         // HOUR_MICROSECOND over a duration string.
         assert_eq!(
             extract_composite(
                 "HOUR_MICROSECOND",
-                &[Datum::new_string("01:02:03.4567".to_string())],
+                &[
+                Datum::new_string("01:02:03.4567".to_string())],
+            &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(102_034_567_00)
@@ -2416,7 +2418,9 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "MINUTE_MICROSECOND",
-                &[Datum::new_string("02:03.4567".to_string())],
+                &[
+                Datum::new_string("02:03.4567".to_string())],
+            &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(20_345_670_0)
@@ -2425,7 +2429,9 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "SECOND_MICROSECOND",
-                &[Datum::new_string("03.4567".to_string())],
+                &[
+                Datum::new_string("03.4567".to_string())],
+            &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(3_456_700)
@@ -2434,7 +2440,9 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "HOUR_MICROSECOND",
-                &[Datum::new_string("02:03.4567".to_string())],
+                &[
+                Datum::new_string("02:03.4567".to_string())],
+            &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(20_345_670_0)
@@ -2442,7 +2450,7 @@ mod composite_extract_tests {
         // A negative duration applies its sign to the WHOLE composite result.
         let dur = Datum::new_string("-01:02:03.4567".to_string());
         assert_eq!(
-            extract_composite("DAY_MICROSECOND", &[dur]).unwrap(),
+            extract_composite("DAY_MICROSECOND", &[dur], &crate::context::NoColumns).unwrap(),
             // A Duration has no day field: DAY_MICROSECOND degenerates to the
             // h/mi/s/us composite, sign applied to the whole result.
             Datum::Int(-10_203_456_700)

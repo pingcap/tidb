@@ -1770,3 +1770,4 @@ fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool) -> String {
 
 #[cfg(test)]
 mod tests;
+mod pipes_probe_test;
