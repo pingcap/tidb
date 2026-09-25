@@ -1414,11 +1414,9 @@ struct PredicatePushDown<'a, 'ctx> {
     ctx: &'a RuleContext<'ctx>,
     failure: RewriteFailure,
     stash: Vec<PendingPredicates>,
-    /// The CTE classes encountered during the walk: the deferred seed
-    /// predicate pushdown folds each seed's logical plan with the consumer
-    /// predicates accumulated on the class (GO's deferred CTE seed
-    /// optimization consumes `cteClass.PushDownPredicates`).
-    cte_classes: Vec<std::rc::Rc<std::cell::RefCell<crate::logical::cte::CteClass>>>,
+    /// The predicates above each CTE reference, keyed by storage id:
+    /// the deferred seed predicate pushdown's input.
+    cte_table_preds: Vec<(i32, Vec<Expression>)>,
 }
 
 impl OwnedRewrite for PredicatePushDown<'_, '_> {
@@ -1677,7 +1675,6 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 let decision = op.predicate_push_down(&predicates);
                 let mut seed_predicates: Option<Vec<Expression>> = None;
                 if let Some(class) = &op.cte {
-                    self.cte_classes.push(class.clone());
                     let mut class = class.borrow_mut();
                     let recorded = match decision {
                         CtePredicatePushDown::Unsupported => None,
@@ -1707,18 +1704,17 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                         class.push_down_predicates.push(recorded);
                     }
                 }
-                match &seed_predicates {
-                    // Descend into the seed so its operators push the copied
-                    // predicates down to the datasources.
-                    Some(translated) => {
-                        eprintln!("CTEPUSH boundary: {} preds into seed", translated.len());
-                        Descend::Children(vec![translated.clone()])
-                    }
-                    None => {
-                        eprintln!("CTEPUSH boundary skipped");
-                        Descend::Stop(predicates)
-                    }
-                }
+                // Go returns `predicates` unchanged in EVERY branch of
+                // `LogicalCTE.PredicatePushDown`: the predicates remain above
+                // the reference, and the copy recorded on the shared class is
+                // consumed later by `LogicalCTE.DeriveStats`, which attaches
+                // the DNF-extracted Selection above the seed and re-optimises
+                // it (planner_bridge `optimize_cte_class`). Descending here
+                // is impossible anyway: a reference node has no children, so
+                // the fold would resize the child predicates away and drop
+                // both the copy and the parent's Selection.
+                let _ = seed_predicates;
+                Descend::Stop(predicates)
             }
             // Go's base body: everything goes to `children[0]`, nothing comes
             // back up.
@@ -1843,28 +1839,9 @@ pub fn predicate_push_down(
         ctx,
         failure: RewriteFailure::default(),
         stash: Vec::new(),
-        cte_classes: Vec::new(),
+        cte_table_preds: Vec::new(),
     };
     let (plan, remaining) = fold_owned(&mut rewrite, plan, predicates);
-    // The deferred CTE seed predicate pushdown: the consumer predicates
-    // above the CTE references are folded INTO the seed subtrees (GO's
-    // deferred CTE seed optimization consumes the accumulated consumer
-    // predicates -- q1's seed-scan Selection carries the consumer
-    // not(isnull()) conditions).
-    for class_rc in &rewrite.cte_classes {
-        let (predicates, seed_plan) = {
-            let class = class_rc.borrow();
-            if class.push_down_predicates.is_empty() {
-                continue;
-            }
-            let Some(seed_plan) = class.seed_part_logical_plan.as_deref().cloned() else {
-                continue;
-            };
-            (class.push_down_predicates.clone(), seed_plan)
-        };
-        let (pushed_seed, _, _) = predicate_push_down(ctx, seed_plan, predicates);
-        class_rc.borrow_mut().seed_part_logical_plan = Some(Box::new(pushed_seed));
-    }
     (plan, remaining, rewrite.failure.take())
 }
 

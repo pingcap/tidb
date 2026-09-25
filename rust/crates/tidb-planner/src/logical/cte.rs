@@ -113,6 +113,14 @@ pub struct CteClass {
     pub column_map: std::collections::BTreeMap<Vec<u8>, Column>,
     /// Go `IsOuterMostCTE`.
     pub is_outer_most_cte: bool,
+    /// Length of [`Self::push_down_predicates`] at the moment the seed's
+    /// physical plan was built. Go's `LogicalCTE.DeriveStats` optimises the
+    /// seed exactly once, in the physical phase, when every reference has
+    /// already recorded its predicates. The executor optimises seeds EAGERLY
+    /// (before the rule list, so join reorder sees their stats), so a class
+    /// whose predicate set grew during the rule list must be re-optimised;
+    /// this counter detects that growth.
+    pub optimized_predicate_count: usize,
 }
 
 /// What [`LogicalCTE::predicate_push_down`] resolved.
@@ -476,4 +484,60 @@ pub fn extract_correlated_cols_for_plan(plan: &LogicalPlan) -> Vec<CorrelatedCol
 #[must_use]
 pub fn get_has_tiflash(plan: Option<&LogicalPlan>) -> bool {
     plan.is_some_and(|plan| plan.base().has_tiflash())
+}
+
+/// Go `RecheckCTE` (`recheck_cte.go:17`): "fills the IsOuterMostCTE field for
+/// CTEs. It's a temp solution to before we fully use the Sequence to optimize
+/// the CTEs. This func checks whether the CTE is referenced only by the main
+/// query or not."
+///
+/// `LogicalCTE::predicate_push_down` refuses to record predicates for a
+/// non-outermost CTE, so a class whose flag was never filled silently loses
+/// every consumer predicate (q1's seed never saw `not(isnull(sr_store_sk))`).
+pub fn recheck_cte(plan: &mut LogicalPlan) {
+    let mut visited = std::collections::HashSet::new();
+    find_ctes(plan, &mut visited, true);
+}
+
+/// Go `findCTEs` (`recheck_cte.go:27`).
+fn find_ctes(
+    plan: &mut LogicalPlan,
+    visited: &mut std::collections::HashSet<i32>,
+    is_root_tree: bool,
+) {
+    if let LogicalPlan::CTE(op) = plan {
+        let Some(class) = op.cte.clone() else {
+            return;
+        };
+        {
+            let mut class = class.borrow_mut();
+            if !is_root_tree {
+                // Go `recheck_cte.go:39`: "Set it to false since it's
+                // referenced by other CTEs."
+                class.is_outer_most_cte = false;
+            }
+            if !visited.insert(class.id_for_storage) {
+                return;
+            }
+            // Go `recheck_cte.go:45`: "Set it when we meet it first time."
+            class.is_outer_most_cte = is_root_tree;
+        }
+        // Go descends into the seed (and the recursive part, when present)
+        // with `isRootTree = false` on the first visit only. The seed is a
+        // separate tree root here, so the walk goes through the class.
+        let mut seed = class.borrow_mut().seed_part_logical_plan.take();
+        if let Some(seed) = seed.as_deref_mut() {
+            find_ctes(seed, visited, false);
+        }
+        class.borrow_mut().seed_part_logical_plan = seed;
+        let mut recursive = class.borrow_mut().recursive_part_logical_plan.take();
+        if let Some(recursive) = recursive.as_deref_mut() {
+            find_ctes(recursive, visited, false);
+        }
+        class.borrow_mut().recursive_part_logical_plan = recursive;
+        return;
+    }
+    for child in plan.base_mut().children_mut() {
+        find_ctes(child, visited, is_root_tree);
+    }
 }

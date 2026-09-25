@@ -402,6 +402,14 @@ impl DataSource {
     /// Returns the predicates the PARENT must still apply, which is Go's first
     /// return value.
     pub fn predicate_push_down_local(&mut self, predicates: Vec<Expression>) -> Vec<Expression> {
+        if predicates.is_empty() && !self.pushed_down_conds.is_empty() {
+            // The deferred CTE seed re-optimisation re-runs the pushdown over
+            // an already-optimised tree; such a re-visit carries no new
+            // predicates and must NOT wipe the conditions an earlier pass
+            // absorbed — they back this DataSource's row estimates (q30's
+            // d_year filter showed full-table numbers when they were lost).
+            return Vec::new();
+        }
         self.all_conds = predicates;
         let (pushable, not_pushable): (Vec<_>, Vec<_>) =
             self.all_conds.iter().cloned().partition(|predicate| {
