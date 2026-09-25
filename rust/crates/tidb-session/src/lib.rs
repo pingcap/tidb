@@ -2126,6 +2126,15 @@ impl Session {
     /// warning buffer (DDL 1050/1007/1008/1051/1146 et al reach SHOW
     /// WARNINGS exactly as the query door's errors do).
     pub fn record_ddl_failure(&mut self, code: u16, message: String) {
+        // go `driver_tidb.go:376` appends the error, but the DDL execution
+        // path may have already recorded it (HandleStatusErr in the
+        // executor's own error handling). Skip the duplicate so SHOW
+        // WARNINGS matches go's single row.
+        if self.warnings.last().map_or(false, |w| {
+            w.code == code && w.message == message
+        }) {
+            return;
+        }
         self.append_warning(WarningLevel::Error, code, message);
     }
 
