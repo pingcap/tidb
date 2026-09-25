@@ -524,6 +524,9 @@ impl Session {
                         host: host.to_owned(),
                     });
                 }
+                // go `executeCreateUser` demotes the duplicate to
+                // ErrUserAlreadyExists (3163) as a NOTE under IF NOT EXISTS.
+                self.append_routed_note(3163, format!("User '{user}'@'{host}' already exists."));
                 continue;
             }
             let (validation_plugin, validation_text) = match spec.auth.as_ref() {
@@ -627,6 +630,10 @@ impl Session {
                     operation: "CREATE ROLE",
                     target: format!("'{role}'@'{host}'"),
                 });
+            } else {
+                // go demotes the duplicate to Note 3163 under IF NOT
+                // EXISTS, same as CREATE USER.
+                self.append_routed_note(3163, format!("User '{role}'@'{host}' already exists."));
             }
         }
         Ok(StmtOutput::Affected(0))
@@ -1638,7 +1645,15 @@ impl Session {
         let mut dynamic = Vec::new();
         for privilege in privileges {
             if privilege.name == "ALL" {
-                mask |= privilege::all_privs_mask();
+                // go master carries CREATE ROLE/DROP ROLE as DYNAMIC
+                // privileges (`mysql.global_grants`), and `ALL PRIVILEGES`
+                // expands to the STATIC set only — `GRANT ALL ON *.*` as
+                // root succeeds without touching them. The loader mirrors
+                // that by leaving those two columns out of the registry
+                // mask, so the ALL expansion must not demand them.
+                mask |= privilege::all_privs_mask()
+                    & !privilege::GlobalPriv::CreateRole.bit()
+                    & !privilege::GlobalPriv::DropRole.bit();
                 continue;
             }
             if !privilege.columns.is_empty() {

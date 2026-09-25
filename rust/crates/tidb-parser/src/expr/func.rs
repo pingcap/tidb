@@ -788,6 +788,14 @@ impl Parser {
             "LASTVAL" | "NEXTVAL" if args.len() != 1 => {
                 return Err(self.err_here("sequence function requires one argument"));
             }
+            // The datetime-arithmetic functions have a dedicated grammar
+            // production whose second operand MUST be INTERVAL: go's yacc
+            // rejects the empty-argument spelling at the `)` boundary.
+            "DATE_ADD" | "DATE_SUB"
+                if args.len() != 2 || !matches!(args[1], Expr::Interval { .. }) =>
+            {
+                return Err(self.err_here("DATE_ADD/DATE_SUB requires an INTERVAL argument"));
+            }
             _ => {}
         }
         self.expect_op(")")?;
@@ -798,11 +806,6 @@ impl Parser {
         // `INTERVAL(value)` so those calls remain syntax errors like Go.
         if name.eq_ignore_ascii_case("INTERVAL") && args.len() < 2 {
             return Err(self.err_here("INTERVAL requires at least two arguments"));
-        }
-        if matches!(name.to_ascii_uppercase().as_str(), "DATE_ADD" | "DATE_SUB")
-            && (args.len() != 2 || !matches!(args[1], Expr::Interval { .. }))
-        {
-            return Err(self.err_here("DATE_ADD/DATE_SUB requires an INTERVAL argument"));
         }
         Ok(Expr::Func {
             name,

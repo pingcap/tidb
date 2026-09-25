@@ -1707,6 +1707,17 @@ fn lower_alter_table_catalog(
         }
         tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            if let Some(name) = charset {
+                // go's CONVERT TO accepts any identifier at the grammar and
+                // answers `ErrUnknownCharacterSet` (1115) when the name is
+                // not a charset — a collation name, say.
+                if tidb_datatype::get_charset_info(name).is_err() {
+                    return Err(DdlAdmissionError::with_code(
+                        1115,
+                        format!("Unknown character set: '{name}'"),
+                    ));
+                }
+            }
             Ok(Some(DdlStatement::ModifyTableCharsetAndCollate {
                 schema,
                 table,
