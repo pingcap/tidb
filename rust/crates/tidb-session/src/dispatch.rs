@@ -246,9 +246,13 @@ fn information_schema_tables_in_query(
                 match &term.body {
                     tidb_ast::SetOprTermBody::Select(select) => {
                         if let Some(join) = &select.from {
-                            information_schema_tables_in_join(&join.left, current_db, out, written_db);
+                            information_schema_tables_in_join(
+                                &join.left, current_db, out, written_db,
+                            );
                             if let Some(right) = &join.right {
-                                information_schema_tables_in_join(right, current_db, out, written_db);
+                                information_schema_tables_in_join(
+                                    right, current_db, out, written_db,
+                                );
                             }
                         }
                     }
@@ -547,9 +551,10 @@ impl Session {
                 let db = written_db
                     .clone()
                     .unwrap_or_else(|| infoschema::INFORMATION_SCHEMA.to_owned());
-                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(
-                    format!("{}.{}", db, table_name),
-                )));
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{}.{}",
+                    db, table_name
+                ))));
             };
             schemas.push((table_name.clone(), columns));
         }
@@ -2025,7 +2030,12 @@ impl Session {
                 let ctx = self.statement_context_for_stmt(&stmt, false);
                 let mut table_names = Vec::new();
                 let mut written_db = None;
-                information_schema_tables_in_query(query, &current_db, &mut table_names, &mut written_db);
+                information_schema_tables_in_query(
+                    query,
+                    &current_db,
+                    &mut table_names,
+                    &mut written_db,
+                );
                 if !table_names.is_empty() {
                     let record_set = self.open_information_schema_query(
                         query,
