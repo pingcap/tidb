@@ -1689,7 +1689,9 @@ pub(crate) fn physical_plan_for_logical(
     dispatch.shuffle_options = ctx.optimizer_cost_env().session.shuffle_options;
     let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)?;
     let mut physical = task.plan().cloned().ok_or_else(|| {
-        tidb_planner::plan_base::PlanError::internal("physical planning produced no plan")
+        tidb_planner::plan_base::PlanError::internal_coded(
+            "Can't find a proper physical plan for this query",
+        )
     })?;
     // Go physicalOptimize binds positions before postOptimize removes aliases.
     physical.resolve_indices()?;
