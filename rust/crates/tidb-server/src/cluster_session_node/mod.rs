@@ -5819,6 +5819,13 @@ impl ClusterServerSession {
         // session-scoped assignment mixed into the same `SET` must still
         // land on the connection's own live-seeded copies.
         self.session.swap_globals(live);
+        // go's SetExecutor routes every failure through `handleErr`, which
+        // appends it to the statement context: after a failed SET both
+        // error_count and warning_count read 1 (captured: `SET bogus_var=1`).
+        if let Err(error) = &applied {
+            self.session
+                .record_ddl_failure(error.code, error.message.clone());
+        }
         applied?;
         let changed = pending.commit()?;
         if !changed.is_empty() {

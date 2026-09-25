@@ -578,6 +578,7 @@ impl Session {
         self.statement_context(is_dml)
             .with_statement_priority(crate::statement_priority_of(stmt))
             .with_not_fill_cache(crate::statement_not_fill_cache(stmt))
+            .with_client_warning_counts(self.sys_error_count(), self.sys_warning_count())
     }
 
     fn latest_index_schema_snapshot(

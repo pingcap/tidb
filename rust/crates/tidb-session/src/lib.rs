@@ -728,6 +728,11 @@ pub struct Session {
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
+    /// Whether the front end's parse already opened THIS statement's warning
+    /// boundary (go `ResetContextOfStmt` runs once per statement): a second
+    /// boundary for the same statement would reset the counts the first one
+    /// snapshotted.
+    statement_boundary_open: bool,
     /// Privilege requests derived once per prepared text -- Go's
     /// `PlanCacheStmt.VisitInfos`, checked on every EXECUTE without
     /// re-walking the statement.
@@ -909,6 +914,7 @@ impl Session {
             user_vars: Arc::default(),
             sequence_last_values: Arc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
+            statement_boundary_open: false,
             process: None,
             has_process_priv: false,
             privileges: None,

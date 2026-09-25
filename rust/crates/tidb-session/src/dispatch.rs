@@ -1908,8 +1908,20 @@ impl Session {
         if self.control_transaction_stmt(&stmt)?.is_some() {
             return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
         }
-        if self.apply_set_stmt(&stmt)?.is_some() {
-            return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
+        match self.apply_set_stmt(&stmt) {
+            Ok(Some(_)) => {
+                return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
+            }
+            // go's SetExecutor routes every failure through `handleErr`,
+            // which appends it to the statement context: after a failed SET
+            // both error_count and warning_count read 1 and SHOW WARNINGS
+            // carries the row (captured: `SET bogus_var=1`).
+            Err(error) => {
+                let reported = error.clone().to_mysql_error();
+                self.append_warning(WarningLevel::Error, reported.code, reported.message);
+                return Err(error);
+            }
+            Ok(None) => {}
         }
         // A pinned historical read must not silently answer from the present.
         // The check sits BELOW the `SET` and transaction-control doors so the
