@@ -2593,6 +2593,29 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 }) {
                     continue 'paths;
                 }
+                // Go `compareCandidates`' fix-45132 rule
+                // (`find_best_task.go:911`): with an unlimited expected
+                // count, a candidate whose CountAfterAccess is more than the
+                // fix-control threshold times narrower than the competitor's
+                // wins the pairwise skyline fold and prunes the competitor
+                // before its plan id burns. The full table scan's
+                // CountAfterAccess is the whole table; when a public index's
+                // access range is more than the threshold times narrower,
+                // every max-expected exploration round drops the table path
+                // here (R23).
+                if prop.expected_cnt == f64::MAX
+                    && ctx.index_join_skyline_threshold > 0.0
+                    && ds.table_path_count_after_access.is_some_and(|table_count| {
+                        table_count > 100.0
+                            && ds.index_path_count_after_access.values().any(|index_count| {
+                                *index_count > 100.0
+                                    && table_count / *index_count
+                                        > ctx.index_join_skyline_threshold
+                            })
+                    })
+                {
+                    continue 'paths;
+                }
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
                     "TableScan",
