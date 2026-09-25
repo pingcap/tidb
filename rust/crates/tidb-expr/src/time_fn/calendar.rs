@@ -760,7 +760,7 @@ pub(crate) fn date_add_with_result_fsp(
     if let Some((index, cnt)) = composite_spec(unit) {
         return date_add_composite(unit, date, amount, sign, index, cnt, result_fsp, ctx);
     }
-    let Some(s) = interval_date_text(date)? else {
+    let Some(s) = interval_date_text(date, ctx)? else {
         return Ok(Datum::Null);
     };
     let trimmed = s.trim();
@@ -943,15 +943,18 @@ pub(crate) fn date_add_with_result_fsp(
 ///
 /// REAL and DECIMAL operands (Go's `getDateFromReal`/`getDateFromDecimal`)
 /// keep the pre-existing text coercion; no recorded row measures them.
-fn interval_date_text(date: &Datum) -> Result<Option<String>, EvalError> {
+fn interval_date_text(date: &Datum, cols: &dyn Columns) -> Result<Option<String>, EvalError> {
     let number = match date {
         Datum::Int(value) => *value,
         Datum::UInt(value) => match i64::try_from(*value) {
             Ok(value) => value,
-            // Beyond `i64` there is no packed date at all; Go's `EvalInt`
-            // hands `ParseTimeFromInt64` a wrapped value that fails the same
-            // way this NULL does.
-            Err(_) => return Ok(None),
+            // Beyond `i64` the packed read fails, but go still WARNS: the
+            // wrapped value (-1) names the failure
+            // (`Incorrect time value: '-1'`, 1292) before the NULL.
+            Err(_) => {
+                cols.append_warning(1292, "Incorrect time value: '-1'");
+                return Ok(None);
+            }
         },
         _ => return coerce_str(date),
     };
@@ -1239,7 +1242,7 @@ fn date_add_composite(
         },
         _ => return Err(EvalError::Unsupported("composite INTERVAL amount")),
     };
-    let Some(s) = interval_date_text(date)? else {
+    let Some(s) = interval_date_text(date, ctx)? else {
         return Ok(Datum::Null);
     };
     let trimmed = s.trim();
