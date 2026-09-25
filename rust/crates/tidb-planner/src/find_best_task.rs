@@ -445,10 +445,6 @@ fn merge_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
     if join.keys_contain_enum_or_set || join.has_null_eq {
         return Vec::new();
     }
-    // Go only enumerates merge join when the property carries sort items.
-    if prop.is_sort_item_empty() {
-        return Vec::new();
-    }
     let mut out = Vec::new();
     for lhs_property in &join.left_properties {
         let offsets = max_sort_prefix(lhs_property, &join.left_keys);
@@ -504,11 +500,6 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         {
             continue;
         }
-        // Go `enumerateIndexJoinByOuterIdx` defers index matching to the
-        // inner builder (`getBestIndexJoinPathResultByProp` runs when the
-        // inner task is built), so every outerIdx enumerates the full family:
-        // IJ-TS, IJ-IS, IHJ-TS, IHJ-IS — each consuming plan ids even when
-        // the inner later rejects (R35's ledger counts them).
         let mut child_props = [PhysicalProperty::default(), PhysicalProperty::default()];
         // The OUTER side is re-planned under the SAME property. This is the
         // line that keeps a parent merge join alive above an index join.
@@ -535,26 +526,21 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
         // `table_range_scan` flag rather than as a property field.
-        // Go order (`enumerateIndexJoinByOuterIdx`): IJ-TS, IJ-IS, IHJ-TS,
-        // IHJ-IS — each a separate static candidate.
-        for (table_range_scan, kind) in [
-            (true, IndexJoinKind::IndexJoin),
-            (false, IndexJoinKind::IndexJoin),
-            (true, IndexJoinKind::IndexHashJoin),
-            (false, IndexJoinKind::IndexHashJoin),
-        ] {
-            let mut child_roles = [LeafRole::Plain, LeafRole::Plain];
-            child_roles[1 - outer_idx] = LeafRole::IndexJoinProbe { table_range_scan };
-            out.push(EnumeratedJoin {
-                strategy: JoinStrategy::Index {
-                    outer_idx,
-                    table_range_scan,
-                    kind,
-                    keep_outer_order: !prop.is_sort_item_empty(),
-                },
-                child_props: child_props.clone(),
-                child_roles,
-            });
+        for table_range_scan in [true, false] {
+            for kind in [IndexJoinKind::IndexJoin, IndexJoinKind::IndexHashJoin] {
+                let mut child_roles = [LeafRole::Plain, LeafRole::Plain];
+                child_roles[1 - outer_idx] = LeafRole::IndexJoinProbe { table_range_scan };
+                out.push(EnumeratedJoin {
+                    strategy: JoinStrategy::Index {
+                        outer_idx,
+                        table_range_scan,
+                        kind,
+                        keep_outer_order: !prop.is_sort_item_empty(),
+                    },
+                    child_props: child_props.clone(),
+                    child_roles,
+                });
+            }
         }
     }
     out
