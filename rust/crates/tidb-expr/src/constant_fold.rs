@@ -780,7 +780,6 @@ mod deferred_function_tests {
     }
 }
 
-
 /// Warnings the constant-fold evaluation raised, stashed for the caller that
 /// owns the statement's warning buffer. The fold evaluates column-free
 /// expressions against a sessionless context whose `append_warning` would

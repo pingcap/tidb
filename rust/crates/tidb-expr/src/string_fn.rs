@@ -1573,10 +1573,7 @@ pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// value); `NULL` propagates. This follows the function's ETInt input
 /// signature: decimal/real/string values first take their MySQL integer
 /// coercion, whose statement warnings are outside this value-only domain.
-pub(crate) fn bit_count(
-    vals: &[Datum],
-    ctx: &dyn crate::Columns,
-) -> Result<Datum, EvalError> {
+pub(crate) fn bit_count(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let raw: Option<&[u8]> = match &vals[0] {
         Datum::String(text) => Some(text.bytes()),
         Datum::Bytes(text) => Some(text),

@@ -261,6 +261,7 @@ pub(crate) fn bytes_to_f64(
     let text = String::from_utf8_lossy(bytes);
     let converted = tidb_datatype::str_to_float(&text, true);
     if converted.event.is_some() {
+        eprintln!("[DBG-RAISE] raise_truncated_double firing");
         raise_truncated_double(ctx, tidb_datatype::float_warning_input(&text))?;
     }
     Ok(converted.value)

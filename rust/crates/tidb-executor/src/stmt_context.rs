@@ -4239,6 +4239,7 @@ impl Columns for StmtContext {
     }
 
     fn append_warning(&self, code: u16, message: &str) {
+        eprintln!("[DBG-EVALWARN] {code} {message}");
         self.append_leveled(WarningLevel::Warning, code, message);
     }
 
