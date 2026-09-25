@@ -149,9 +149,10 @@ func TestSystemTableDDLHasNoEvent(t *testing.T) {
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (6))")
 	<-h.DDLEventCh()
 	testKit.MustExec("create table mysql.test3 (c1 int, c2 int, index idx(c1, c2))")
-	// Exchange partition.
-	// NOTE: This is a rare case and the effort required to address it outweighs the benefits, hence it is not prioritized for a fix.
-	testKit.MustExec("alter table t exchange partition p0 with table mysql.test3")
+	// Exchange partition with a system table is now rejected by the DDL guard.
+	err := testKit.ExecToErr("alter table t exchange partition p0 with table mysql.test3")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Exchange partition on system table 'mysql.test3'")
 	require.Len(t, h.DDLEventCh(), 0)
 }
 
