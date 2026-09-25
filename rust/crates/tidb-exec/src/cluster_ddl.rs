@@ -2445,31 +2445,11 @@ fn lower_create_table(
             if_not_exists: create.if_not_exists,
         });
     }
-    // The same gate [`lower_create_index`] applies, for the same reason and
-    // with the same words: a prefix-length index in the INLINE list would be
-    // published into a `TableInfo` that this node's own catalog loader then
-    // refuses, so the CREATE would report success and the table would not
-    // exist. `CREATE INDEX` and `ALTER TABLE ... ADD INDEX` have always
-    // refused it; without this, only the inline spelling slipped through.
-    for constraint in &create.table_constraints {
-        let tidb_ast::TableConstraint::Index(index) = constraint else {
-            continue;
-        };
-        for part in &index.parts {
-            if matches!(
-                part,
-                tidb_ast::IndexPart::Column {
-                    prefix_len: Some(_),
-                    ..
-                }
-            ) {
-                return Err(DdlAdmissionError::unsupported(
-                    "a prefix-length index is not supported by this node, which neither \
-                     reads nor writes entries cut to a prefix",
-                ));
-            }
-        }
-    }
+    // Prefix-length key parts (`INDEX(b(2))`) are admitted: the builder
+    // stores the length on the `IndexColumn`, the write path cuts entries
+    // (`index_prefix_cut::cut_index_value`), and the read path treats cut
+    // endpoints as inclusive ranges. The catalog loader never validated the
+    // length away — the old refusal here predated that support.
     // The server default `tidb_enable_clustered_index = ON`, which is what a
     // real TiDB builds a user table under. Bootstrap is the one caller that
     // uses a different mode, and it says so at its own call site.
@@ -2522,17 +2502,13 @@ fn lower_create_index(
                  hidden GENERATED column, which this node's catalog loader refuses",
             ));
         };
-        if prefix_len.is_some() {
-            return Err(DdlAdmissionError::unsupported(
-                "a prefix-length index is not supported by this node, which neither \
-                 reads nor writes entries cut to a prefix",
-            ));
-        }
         columns.push(IndexColumn {
             name: CiString::new(name.clone()),
-            // Resolved against the stored table when the change is planned.
+            // Resolved against the stored table when the change is planned;
+            // the declared prefix travels in `length` and is validated (and
+            // normalized) there, where the column's type is known.
             offset: 0,
-            length: -1,
+            length: prefix_len.unwrap_or(-1),
             ..IndexColumn::default()
         });
     }
@@ -9208,6 +9184,91 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 let stored_column = stored_column.read();
                 column.name = stored_column.name.clone();
                 column.offset = stored_column.offset;
+                if column.length != -1 {
+                    // go `buildIndexColumns` -> `checkIndexColumn`: the
+                    // declared prefix is validated against the column's type
+                    // and normalized (a prefix covering the whole column is
+                    // the same as no prefix). The WRITE path cuts entries by
+                    // this length, so it must be the declared one that
+                    // survived the checks.
+                    use tidb_executor::ddl::index_prefix::{
+                        stored_index_length, IndexedColumn, PrefixError,
+                    };
+                    let declared = (column.length != -1).then_some(column.length);
+                    match stored_index_length(
+                        &stored_column.field_type,
+                        IndexedColumn::Named(column.name.original()),
+                        declared,
+                        true,
+                    ) {
+                        Ok(normalized) => column.length = normalized,
+                        Err(PrefixError::IncorrectPrefixKey) => {
+                            return Err(DdlPlanError::Admission(
+                                DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrWrongSubKey,
+                                    "Incorrect prefix key; the used key part isn't a string, \
+                                     the used length is longer than the key part, or the storage \
+                                     engine doesn't support unique prefix keys",
+                                ),
+                            ));
+                        }
+                        Err(PrefixError::BlobKeyWithoutLength(name)) => {
+                            return Err(DdlPlanError::Admission(
+                                DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrBlobKeyWithoutLength,
+                                    format!(
+                                        "BLOB/TEXT column '{name}' used in key specification \
+                                         without a key length"
+                                    ),
+                                ),
+                            ));
+                        }
+                        Err(PrefixError::KeyPart0(name)) => {
+                            return Err(DdlPlanError::Admission(
+                                DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrKeyPart0,
+                                    format!("Key part '{name}' length cannot be 0"),
+                                ),
+                            ));
+                        }
+                        Err(PrefixError::WrongKeyColumn(name)) => {
+                            return Err(DdlPlanError::Admission(
+                                DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrWrongKeyColumn,
+                                    format!(
+                                        "The used storage engine can't index column '{name}'"
+                                    ),
+                                ),
+                            ));
+                        }
+                        Err(PrefixError::JsonUsedAsKey(name)) => {
+                            return Err(DdlPlanError::Admission(
+                                DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrJSONUsedAsKey,
+                                    format!(
+                                        "JSON column '{name}' cannot be used in key specification."
+                                    ),
+                                ),
+                            ));
+                        }
+                        Err(PrefixError::TooLongKey { length, max }) => {
+                            return Err(DdlPlanError::Admission(
+                                DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrTooLongKey,
+                                    format!(
+                                        "Specified key was too long ({length} bytes); \
+                                         max key length is {max} bytes"
+                                    ),
+                                ),
+                            ));
+                        }
+                        Err(other) => {
+                            return Err(DdlPlanError::Admission(
+                                DdlAdmissionError::unsupported(format!("{other:?}")),
+                            ));
+                        }
+                    }
+                }
             }
             let mut info = stored.clone_like_go();
             info.max_index_id += 1;
