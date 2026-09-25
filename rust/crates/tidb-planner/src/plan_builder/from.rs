@@ -427,7 +427,13 @@ pub fn set_preferred_join_type_and_order(
         // side, the X() hint is invalid` (Warning 1815) and ignores the
         // hint entirely.
         if matches!(flag, f::BC_JOIN | f::SHUFFLE_JOIN) {
-            if hints.prefers(lhs.as_ref(), flag) || hints.prefers(rhs.as_ref(), flag) {
+            // Run the table-name matching FIRST (go MatchTableName marks the
+            // hinted entries), so a MATCHED MPP hint warns the invalid-
+            // push-down warning while an unmatched name keeps its own
+            // no-matching-table warning.
+            let matched_any =
+                hints.prefers(lhs.as_ref(), flag) || hints.prefers(rhs.as_ref(), flag);
+            if matched_any {
                 tidb_expr::constant_fold::record_fold_warning(
                     1815,
                     &format!(
