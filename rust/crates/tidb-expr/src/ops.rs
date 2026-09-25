@@ -1336,7 +1336,6 @@ fn string_compare(
 /// `Truncated incorrect DOUBLE value` when the text is not fully numeric;
 /// the logical operators' truthiness coercion carries that warning.
 fn warn_string_double_truncation(values: &[&Datum], ctx: &dyn crate::context::Columns) {
-    eprintln!("[DBG-PREWARN] enter");
     for value in values {
         if matches!(value, Datum::String(_) | Datum::Bytes(_)) {
             let _ = crate::math_fn::numeric_arg(value, ctx);
