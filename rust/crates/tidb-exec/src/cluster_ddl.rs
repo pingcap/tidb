@@ -6775,7 +6775,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             if let Some(existing) = find_database(&catalog, name) {
                 if *if_not_exists {
                     return Ok(DdlPlan::AlreadySatisfied {
-                        detail: format!("database `{}` already exists", existing.info.name.original()),
+                        detail: format!(
+                            "database `{}` already exists",
+                            existing.info.name.original()
+                        ),
                         warning: Some(format!("Can't create database '{}'; database exists", name)),
                         warning_code: 1007,
                     });
@@ -6933,7 +6936,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 detail: "ALTER MATERIALIZED VIEW changes nothing".to_owned(),
                 warning: None,
                 warning_code: 1105,
-});
+            });
         }
         DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
             let _ = (schema, table);
@@ -6941,7 +6944,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 detail: "ALTER MATERIALIZED VIEW LOG changes nothing".to_owned(),
                 warning: None,
                 warning_code: 1105,
-});
+            });
         }
         DdlStatement::DropMaterializedViewNoOp { schema, view } => {
             let _ = (schema, view);
@@ -6949,7 +6952,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 detail: "DROP MATERIALIZED VIEW changes nothing".to_owned(),
                 warning: None,
                 warning_code: 1105,
-});
+            });
         }
         DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
             let _ = (schema, table);
@@ -6957,7 +6960,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 detail: "DROP MATERIALIZED VIEW LOG changes nothing".to_owned(),
                 warning: None,
                 warning_code: 1105,
-});
+            });
         }
         DdlStatement::CreateTableLike {
             schema,
@@ -7526,7 +7529,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     detail: "TiFlash replica status already matches".to_owned(),
                     warning: None,
                     warning_code: 1105,
-});
+                });
             }
             replica.write().available = *available;
             writes.push(OptimisticMutation::meta_put(
@@ -9787,7 +9790,7 @@ fn already(detail: String) -> DdlPlan {
         detail,
         warning: None,
         warning_code: 1105,
-}
+    }
 }
 
 #[derive(Clone)]

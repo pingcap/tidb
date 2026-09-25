@@ -477,9 +477,17 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         plan_ddl(&mut snapshot, statement, start_ts)?
     };
     let write = match plan {
-        DdlPlan::AlreadySatisfied { detail, warning, warning_code } => {
+        DdlPlan::AlreadySatisfied {
+            detail,
+            warning,
+            warning_code,
+        } => {
             transaction.finish_without_writes()?;
-            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warning, warning_code });
+            return Ok(ClusterDdlReport::AlreadySatisfied {
+                detail,
+                warning,
+                warning_code,
+            });
         }
         DdlPlan::Write(write) => write,
     };
@@ -1621,12 +1629,20 @@ fn commit_cluster_ddl_with_backfill_once<
         }
     };
     let write = match plan {
-        DdlPlan::AlreadySatisfied { detail, warning, warning_code } => {
+        DdlPlan::AlreadySatisfied {
+            detail,
+            warning,
+            warning_code,
+        } => {
             transaction
                 .rollback()
                 .map_err(ClusterDdlError::NotCommitted)?;
             return Ok(DdlPhaseOutcome::AlreadySatisfied(
-                ClusterDdlReport::AlreadySatisfied { detail, warning, warning_code },
+                ClusterDdlReport::AlreadySatisfied {
+                    detail,
+                    warning,
+                    warning_code,
+                },
             ));
         }
         DdlPlan::Write(write) => *write,

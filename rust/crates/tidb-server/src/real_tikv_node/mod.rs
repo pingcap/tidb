@@ -1064,7 +1064,11 @@ pub(crate) fn execute_cluster_ddl<
             created_id.map_or_else(|| "null".to_owned(), |id| id.to_string())
             );
         }
-        ClusterDdlReport::AlreadySatisfied { detail, warning, warning_code } => {
+        ClusterDdlReport::AlreadySatisfied {
+            detail,
+            warning,
+            warning_code,
+        } => {
             if let Some(warning) = warning {
                 context.append_warning_parts(warning_code, &warning);
             }
