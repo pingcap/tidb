@@ -756,12 +756,16 @@ impl Parser {
 
     /// Parses `name ( arg, ... )` where the current token is the function name.
     pub(crate) fn parse_named_func(&mut self) -> PResult<Expr> {
-        // `IN` is a reserved keyword in go's grammar — it NEVER starts a
-        // function call, so `in(1)` is yacc's 1064 at the `in` token
-        // itself (captured: line 1 column 9 near "in(1)"), not the
-        // binder's 1582.
-        if self.peek().text.eq_ignore_ascii_case("in") && self.peek().kind == TokenKind::Keyword {
-            return Err(self.err_here("IN is a reserved keyword and cannot be a function name"));
+        // `IN`/`AND`/`OR`/`XOR` are reserved keywords in go's grammar — they
+        // NEVER start a function call, so `in(1)`/`and(-1)` are yacc's 1064
+        // at the keyword token itself (captured: line 1 column 9 near
+        // "in(1)"), not the binder's 1582.
+        if matches!(
+            self.peek().text.to_ascii_lowercase().as_str(),
+            "in" | "and" | "or" | "xor"
+        ) && self.peek().kind == TokenKind::Keyword
+        {
+            return Err(self.err_here("reserved keyword cannot be used as a function name"));
         }
         let origin_position = self.peek().offset;
         let name = self.bump().text;
