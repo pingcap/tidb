@@ -287,7 +287,17 @@ pub(crate) fn add_sub_time(
                     // fsp comes from `getFsp4TimeAddSub`, not `GetFsp`.
                     match parse_duration(&right, fsp_for_time_add_sub(&right)) {
                         Ok(delta) => delta,
-                        Err(Truncated) => return Ok(truncated_time_warning(cols, &right)),
+                        Err(Truncated) => {
+                            // go's binary-literal arguments parse as
+                            // durations natively; a non-duration payload
+                            // answers NULL without the truncation warning
+                            // (captured: ADDTIME(b'1', x'41') answers NULL
+                            // silently).
+                            if !matches!(vals[1], Datum::BinaryLiteral(_) | Datum::Bit(_)) {
+                                return Ok(truncated_time_warning(cols, &right));
+                            }
+                            return Ok(Datum::Null);
+                        }
                     }
                 }
             };
