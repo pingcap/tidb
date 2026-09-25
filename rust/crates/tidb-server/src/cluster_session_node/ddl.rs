@@ -707,11 +707,17 @@ where
                     return Ok(ClusterDdlReport::Applied {
                         schema_version: job.last_schema_version,
                         created_id: None,
-                        warning_code: 1105,
-                        warning: job
+                        warnings: job
                             .warning
                             .as_ref()
-                            .map(|warning| warning.read().message().to_owned()),
+                            .map(|warning| {
+                                vec![(
+                                    tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning,
+                                    1105_u16,
+                                    warning.read().message().to_owned(),
+                                )]
+                            })
+                            .unwrap_or_default(),
                     });
                 }
                 return Err(SqlQueryError::unknown(format!(

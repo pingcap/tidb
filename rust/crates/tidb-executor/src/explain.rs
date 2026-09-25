@@ -1216,15 +1216,9 @@ fn physical_operator_info(
                     format!("handle:{}", point_handle_text(range))
                 })
             };
-            // Go `PointGetPlan.ExplainInfo` appends `lock` for the
-            // UPDATE/DELETE read.
-            if point.lock {
-                if info.is_empty() {
-                    info = "lock".to_owned();
-                } else {
-                    info.push_str(", lock");
-                }
-            }
+            // go `PointGetPlan.ExplainInfo` does not render the read's
+            // locking at all: `EXPLAIN UPDATE ... WHERE pk=1` prints the
+            // bare `handle:1`, with no `lock` suffix on any tier.
             info
         }
         PhysicalPlan::BatchPointGet(batch) => {

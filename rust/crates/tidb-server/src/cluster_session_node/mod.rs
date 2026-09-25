@@ -6445,17 +6445,30 @@ impl ClusterServerSession {
         // `IF [NOT] EXISTS` suppression via `AppendNote`; the level follows
         // the variant.
         match report {
-            ClusterDdlReport::Applied {
-                warning: Some(warning),
-                warning_code,
-                ..
-            } => self.session.append_routed_warning(warning_code, warning),
-            ClusterDdlReport::AlreadySatisfied {
-                warning: Some(warning),
-                warning_code,
-                ..
-            } => self.session.append_routed_note(warning_code, warning),
-            _ => {}
+            ClusterDdlReport::Applied { warnings, .. } => {
+                for (level, code, warning) in warnings {
+                    match level {
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Note => {
+                            self.session.append_routed_note(code, warning)
+                        }
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning => {
+                            self.session.append_routed_warning(code, warning)
+                        }
+                    }
+                }
+            }
+            ClusterDdlReport::AlreadySatisfied { warnings, .. } => {
+                for (level, code, warning) in warnings {
+                    match level {
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Note => {
+                            self.session.append_routed_note(code, warning)
+                        }
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning => {
+                            self.session.append_routed_warning(code, warning)
+                        }
+                    }
+                }
+            }
         }
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.

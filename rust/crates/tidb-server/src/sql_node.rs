@@ -366,6 +366,9 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownTable { .. }) => {
             SqlQueryError::new(1051, *b"42S02", error.to_string())
         }
+        ClusterDdlError::Plan(error @ DdlPlanError::UnknownTables(_)) => {
+            SqlQueryError::new(1051, *b"42S02", error.to_string())
+        }
         // Go `infoschema.ErrTableNotExists` (1146): every other statement
         // resolves its table through `getSchemaAndTableByIdent`.
         ClusterDdlError::Plan(error @ DdlPlanError::TableNotExists { .. }) => {

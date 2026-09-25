@@ -379,6 +379,19 @@ pub fn build_table_info_with_context(
         db_charset,
         db_collate,
     )?;
+    // go `CheckCharsetCollation` under new collation: latin1's DEFAULT
+    // collation is latin1_swedish_ci, which new collation does not carry, so
+    // a TABLE declaring the latin1 charset — or naming that collation
+    // explicitly — answers `ErrUnsupportedCollation` (1273). A COLUMN may
+    // still declare latin1: it resolves to latin1_bin, which exists.
+    if table_charset.eq_ignore_ascii_case("latin1")
+        || table_collate.eq_ignore_ascii_case("latin1_swedish_ci")
+    {
+        return Err(DdlAdmissionError::with_code(
+            1273,
+            "Unsupported collation when new collation is enabled: 'latin1_swedish_ci'",
+        ));
+    }
 
     // Go `buildColumnsAndConstraints`: the table-level PRIMARY KEY is located
     // first because every column needs to know whether it is one of its keys.
@@ -1440,6 +1453,12 @@ fn build_column(
                     context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
                 }
             }
+            // go `columnDefToCol` parses an inline `REFERENCES` clause and
+            // never reads it (MySQL compatibility): the referenced table is
+            // not opened and nothing is stored, whether or not the table
+            // exists. Only the table-level `CONSTRAINT ... FOREIGN KEY`
+            // spelling is honored.
+            ColumnOption::Reference(_) => {}
             other => {
                 return Err(DdlAdmissionError::with_code(
                     GENERIC_ERROR_CODE,

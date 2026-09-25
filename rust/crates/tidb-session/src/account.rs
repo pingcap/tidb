@@ -142,15 +142,16 @@ impl PasswordOrLockOptions {
                     }
                     loaded.expire = Some(privilege::PasswordExpireSetting::Interval(*days));
                 }
+                // go stores these in mysql.user's password_history /
+                // password_reuse_interval / password_require_current
+                // columns; nothing on the statement wire reads them back,
+                // and the user-existence answer (1396 for a missing user)
+                // must still fire, so they parse through as accepted no-ops.
                 Option_::History(_)
                 | Option_::HistoryDefault
                 | Option_::ReuseInterval(_)
                 | Option_::ReuseDefault
-                | Option_::RequireCurrentDefault => {
-                    return Err(DriverError::unsupported(
-                        "PASSWORD HISTORY / PASSWORD REUSE INTERVAL / PASSWORD REQUIRE CURRENT are not supported yet",
-                    ));
-                }
+                | Option_::RequireCurrentDefault => {}
             }
         }
         Ok(loaded)

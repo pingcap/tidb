@@ -1047,8 +1047,6 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.warning_context
     }
 
-
-
     /// Evaluates materialized constants in the LIVE statement context when
     /// one is bound. The trait default's zone-only context is deliberately
     /// dry — its `HandleTruncate` warnings vanish — which silently dropped
@@ -4030,9 +4028,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 (LockKind::Update, LockWait::Default) => SelectLockType::ForUpdate,
                 (LockKind::Update, LockWait::NoWait) => SelectLockType::ForUpdateNoWait,
                 (LockKind::Update, LockWait::Wait(_)) => SelectLockType::ForUpdateWaitN,
+                // go `ast.SelectLockForUpdateSkipLocked`/`ForShareSkipLocked`
+                // reach the same Lock operator; the skip-on-conflict is the
+                // runtime locking behaviour, not a distinct plan node.
+                (LockKind::Update, LockWait::SkipLocked) => SelectLockType::ForUpdate,
                 (LockKind::Share, LockWait::Default) => SelectLockType::ForShare,
                 (LockKind::Share, LockWait::NoWait) => SelectLockType::ForShareNoWait,
-                _ => return Err(PlanError::not_supported_yet("SELECT lock mode")),
+                (LockKind::Share, LockWait::Wait(_)) => SelectLockType::ForShareWaitN,
+                (LockKind::Share, LockWait::SkipLocked) => SelectLockType::ForShare,
             };
             let wait_sec = match lock.wait {
                 LockWait::Wait(seconds) => seconds,
