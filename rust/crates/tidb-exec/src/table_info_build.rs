@@ -388,6 +388,12 @@ pub fn build_table_info_with_context(
     } else {
         Vec::new()
     };
+    // go `BuildHiddenColumnInfo` runs per table-level index constraint: an
+    // expression key part becomes one hidden VIRTUAL generated column, so
+    // the AST of each part is captured here and synthesized once every real
+    // column exists (the hidden column's dependencies and the anonymous
+    // index's name resolve against the completed column list).
+    let mut constraint_exprs: Vec<Vec<Option<tidb_ast::Expr>>> = Vec::new();
     for constraint in &create.table_constraints {
         // Go `ast.ConstraintCheck` with the flag off — the DEFAULT — warns
         // and skips (`ddl/create_table.go:1470`), exactly like the
@@ -398,6 +404,7 @@ pub fn build_table_info_with_context(
             }
             continue;
         }
+        constraint_exprs.push(table_constraint_expr_parts(constraint));
         constraints.push(lower_table_constraint(constraint)?);
     }
     let out_primary_key: Option<Constraint> = constraints
@@ -420,10 +427,26 @@ pub fn build_table_info_with_context(
             Some(&columns),
         )?;
         // An inline PRIMARY KEY / UNIQUE becomes a constraint of its own, in
-        // the position Go appends it: after every table-level one.
+        // the position Go appends it: after every table-level one. Inline
+        // constraints carry no key parts, so they contribute no expression
+        // parts to the hidden-column synthesis.
         constraints.extend(inline);
+        constraint_exprs.push(Vec::new());
         columns.push(info);
     }
+
+    // go `BuildHiddenColumnInfo` (pkg/ddl/create_table.go:1590): every
+    // expression index part is lowered to a hidden VIRTUAL generated column
+    // `_V$_<index>_<part-position>` and the key part points at it. Runs now
+    // — after every declared column exists — because the hidden column's
+    // dependency check and the anonymous index's name both resolve against
+    // the completed column list, exactly as go interleaves them.
+    synthesize_expression_index_columns(
+        &mut columns,
+        &mut constraints,
+        &constraint_exprs,
+        context,
+    )?;
 
     let mut seen: Vec<String> = Vec::with_capacity(columns.len());
     for column in &columns {
@@ -786,11 +809,16 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
                     desc: *desc,
                 });
             }
-            IndexPart::Expr { .. } => {
-                return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    "CREATE TABLE expression index parts are not supported by this node",
-                ))
+            IndexPart::Expr { desc, .. } => {
+                // go `BuildHiddenColumnInfo`: the expression part becomes a
+                // hidden generated column; the placeholder name is filled
+                // by `synthesize_expression_index_columns` once every
+                // declared column exists. Position is what matters here.
+                parts.push(KeyPart {
+                    name: String::new(),
+                    prefix_len: UNSPECIFIED_LENGTH,
+                    desc: *desc,
+                });
             }
         }
     }
@@ -826,6 +854,136 @@ fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
         IndexType::INVALID => IndexType::BTREE,
         other => other,
     })
+}
+
+/// The expression payload of each index part, position-aligned with the
+/// lowered constraint's parts: `Some` for an `IndexPart::Expr`, `None` for a
+/// named column. This is the AST go hands to `BuildHiddenColumnInfo`.
+fn table_constraint_expr_parts(constraint: &TableConstraint) -> Vec<Option<Expr>> {
+    let TableConstraint::Index(index) = constraint else {
+        return Vec::new();
+    };
+    index
+        .parts
+        .iter()
+        .map(|part| match part {
+            IndexPart::Column { .. } => None,
+            IndexPart::Expr { expr, .. } => Some(expr.clone()),
+        })
+        .collect()
+}
+
+/// go `BuildHiddenColumnInfo` (pkg/ddl/create_table.go:1590) plus
+/// `getAnonymousIndexPrefix`/`GetName4AnonymousIndex` (executor.go:4709):
+/// every expression key part of every table-level index becomes one hidden
+/// VIRTUAL generated column `_V$_<index>_<part-position>`, and the key part
+/// is rewritten to point at it. `SHOW CREATE TABLE` and `SHOW INDEX` render
+/// the stored expression back from that column; the column itself never
+/// appears in the column list.
+fn synthesize_expression_index_columns(
+    columns: &mut Vec<ColumnInfo>,
+    constraints: &mut [Constraint],
+    constraint_exprs: &[Vec<Option<Expr>>],
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    let names: Vec<String> = columns
+        .iter()
+        .map(|column| column.name.original().to_owned())
+        .collect();
+    let types: Vec<FieldType> = columns.iter().map(|c| c.field_type.clone()).collect();
+    // go `GetName4AnonymousIndex` dedups the anonymous name against the
+    // index names already in the statement, suffixing `_2`, `_3`, ... .
+    let mut taken: Vec<String> = constraints
+        .iter()
+        .filter(|constraint| !constraint.name.is_empty())
+        .map(|constraint| constraint.name.to_lowercase())
+        .collect();
+    for (constraint, exprs) in constraints.iter_mut().zip(constraint_exprs) {
+        if exprs.is_empty() {
+            // Inline constraints carry no key parts.
+            continue;
+        }
+        if constraint.name.is_empty() && exprs.iter().any(|expr| expr.is_some()) {
+            let mut id = 2;
+            let mut candidate = "expression_index".to_owned();
+            while taken.contains(&candidate) || candidate.eq_ignore_ascii_case("PRIMARY") {
+                candidate = format!("expression_index_{id}");
+                id += 1;
+            }
+            taken.push(candidate.to_lowercase());
+            constraint.name = candidate;
+        }
+        if constraint.kind == ConstraintKind::PrimaryKey && exprs.iter().any(|expr| expr.is_some())
+        {
+            // go `CheckPKOnGeneratedColumn` -> `ErrUnsupportedOnGeneratedColumn`
+            // (3756): the primary key cannot be an expression index.
+            return Err(DdlAdmissionError::with_code(
+                3756,
+                "The primary key cannot be an expression index",
+            ));
+        }
+        for (position, expr) in exprs.iter().enumerate() {
+            let Some(expr) = expr else { continue };
+            // go `BuildHiddenColumnInfo`: a part whose built expression is
+            // just a column is rejected (`ErrFunctionalIndexOnField`, 3762).
+            if let Expr::Column(_) = expr {
+                return Err(DdlAdmissionError::with_code(
+                    3762,
+                    "Expression index on a column is not supported. Consider using a regular index instead",
+                ));
+            }
+            let hidden_name = format!("_V$_{}_{}", constraint.name, position);
+            // The same builder a declared generated column goes through:
+            // it resolves dependencies (go `checkDependedColExist`),
+            // rejects disallowed functions (go `checkIllegalFn4Generated`)
+            // and restores the expression in go's own `GeneratedExprString`
+            // spelling.
+            let generated =
+                tidb_executor::generated_column::build_added_generated_column_with_like_default_escape(
+                    &hidden_name,
+                    expr,
+                    false,
+                    &names,
+                    &types,
+                    &context.session_zone(),
+                    context.like_default_escape(),
+                )
+                .map_err(generated_column_admission_error)?;
+            let mut dependences = GoStringSet::default();
+            for dependency in generated.dependencies {
+                dependences.insert(dependency);
+            }
+            columns.push(ColumnInfo {
+                id: 0,
+                name: CiString::new(hidden_name.clone()),
+                offset: i64::try_from(columns.len()).expect("a column offset fits in i64"),
+                origin_default_value: GoAny::nil(),
+                origin_default_value_bit: Default::default(),
+                default_value: GoAny::nil(),
+                default_value_bit: Default::default(),
+                default_is_expr: false,
+                generated_expr_string: generated.expr_text,
+                generated_stored: false,
+                dependences,
+                // go infers the type from the built expression; this tier
+                // has no inference entry point yet, so the key-length math
+                // sees a bigint — the type `a + 1` infers to anyway. Only
+                // `SHOW EXTENDED COLUMNS` can observe a wider type.
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                changing_field_type: None,
+                state: SchemaState::PUBLIC,
+                comment: String::new(),
+                hidden: true,
+                change_state_info: None,
+                version: CURR_LATEST_COLUMN_INFO_VERSION,
+            });
+            let part = &mut constraint.parts[position];
+            part.name = hidden_name;
+            // go resets the length of an expression part to Unspecified.
+            part.prefix_len = UNSPECIFIED_LENGTH;
+        }
+    }
+    Ok(())
 }
 
 /// Builds the one column an `ALTER TABLE ... ADD COLUMN` appends, against the
@@ -1136,7 +1294,8 @@ fn build_column(
                         name: name.clone(),
                         parts: vec![KeyPart {
                             name: name.clone(),
-                            prefix_len: UNSPECIFIED_LENGTH, desc: false,
+                            prefix_len: UNSPECIFIED_LENGTH,
+                            desc: false,
                         }],
                         clustered: storage,
                         comment: String::new(),
@@ -1155,7 +1314,8 @@ fn build_column(
                         name: name.clone(),
                         parts: vec![KeyPart {
                             name: name.clone(),
-                            prefix_len: UNSPECIFIED_LENGTH, desc: false,
+                            prefix_len: UNSPECIFIED_LENGTH,
+                            desc: false,
                         }],
                         clustered: None,
                         comment: String::new(),

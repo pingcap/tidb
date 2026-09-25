@@ -907,9 +907,12 @@ impl Session {
                     }
                     Some(tidb_ast::ShowIndexFilter::Where(expr)) => (None, Some(expr)),
                 };
-                let current = self.require_current_database()?.to_owned();
                 let (database, table_name) = match show.table.as_slice() {
-                    [table] => (current, table.clone()),
+                    // go resolves a QUALIFIED name without consulting the
+                    // session database: `SHOW INDEX FROM d3p.t2` answers with
+                    // no `USE` in sight. Only the bare form needs one, and go
+                    // answers 1046 (`ErrNoDB`) for it.
+                    [table] => (self.require_current_database()?.to_owned(), table.clone()),
                     [database, table] => (database.clone(), table.clone()),
                     _ => return Err(DriverError::unsupported("empty table name")),
                 };
@@ -1492,9 +1495,12 @@ impl Session {
                     _ => return Ok(None),
                 };
                 let want_sequence = matches!(kind, tidb_ast::ShowCreateKind::Sequence);
-                let current = self.require_current_database()?.to_owned();
                 let (database, table_name) = match name.as_slice() {
-                    [table] => (current, table.clone()),
+                    // go resolves a QUALIFIED name without consulting the
+                    // session database: `SHOW INDEX FROM d3p.t2` answers with
+                    // no `USE` in sight. Only the bare form needs one, and go
+                    // answers 1046 (`ErrNoDB`) for it.
+                    [table] => (self.require_current_database()?.to_owned(), table.clone()),
                     [database, table] => (database.clone(), table.clone()),
                     _ => return Err(DriverError::unsupported("empty table name")),
                 };
@@ -1586,9 +1592,12 @@ impl Session {
                 }))
             }
             tidb_ast::AdminStmt::ShowTableNextRowId(show) => {
-                let current = self.require_current_database()?.to_owned();
                 let (database, table_name) = match show.table.as_slice() {
-                    [table] => (current, table.clone()),
+                    // go resolves a QUALIFIED name without consulting the
+                    // session database: `SHOW INDEX FROM d3p.t2` answers with
+                    // no `USE` in sight. Only the bare form needs one, and go
+                    // answers 1046 (`ErrNoDB`) for it.
+                    [table] => (self.require_current_database()?.to_owned(), table.clone()),
                     [database, table] => (database.clone(), table.clone()),
                     _ => return Err(DriverError::unsupported("empty table name")),
                 };
