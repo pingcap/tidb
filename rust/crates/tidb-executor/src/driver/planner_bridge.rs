@@ -2318,6 +2318,35 @@ pub(crate) fn physical_dml_source_plan_explained(
     // W51 receipt) before the physical `SelectLock` — reproducing Go's
     // exact id sequence without a filler.
     let root = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, operator, 0);
+    // Go burns three logical plan ids AFTER buildUpdate's own ctor and
+    // BEFORE the read plan is optimized: the conflict-detector's two join
+    // rewrites and the join-order projection (`find_best_task` W52 ledger:
+    // ids 10, 11, 12). The port folds those constructions into the
+    // in-subquery rewrite, so mirror the ledger here whenever the DML read
+    // actually contains such a join.
+    fn logical_contains_join(plan: &tidb_planner::logical::LogicalPlan) -> bool {
+        if matches!(plan, tidb_planner::logical::LogicalPlan::Join(_)) {
+            return true;
+        }
+        plan.children().iter().any(logical_contains_join)
+    }
+    if logical_contains_join(&plan) {
+        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+            plan_ids,
+            tidb_planner::logical::LogicalJoin::TYPE,
+            0,
+        );
+        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+            plan_ids,
+            tidb_planner::logical::LogicalJoin::TYPE,
+            0,
+        );
+        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+            plan_ids,
+            tidb_planner::logical::LogicalProjection::TYPE,
+            0,
+        );
+    }
     let logical = optimize_built_logical(
         plan,
         plan_flags,

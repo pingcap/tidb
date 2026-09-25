@@ -1732,6 +1732,29 @@ pub fn exhaust_physical_plans_4_logical_lock(
     let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalLock::TYPE, 0);
     base.base.set_stats(stats);
     base.set_children_req_props(vec![Some(child_prop)]);
+    // Go plans the UPDATE/DELETE read as Project(Lock-child): the logical
+    // Projection above the join enumerates its (identity, later-eliminated)
+    // physical candidate between the SelectLock ctor and the join's own
+    // candidates (W52 ledger: 14 lock, 15 projection, 16 hash join). The
+    // port folds that projection away, so burn the candidate id here —
+    // but only when the read actually contains a join, matching the
+    // projection's existence (W51's plain read burns none).
+    let read_has_join = p
+        .base
+        .children()
+        .first()
+        .is_some_and(|child| {
+            fn contains_join(plan: &crate::logical::LogicalPlan) -> bool {
+                if matches!(plan, crate::logical::LogicalPlan::Join(_)) {
+                    return true;
+                }
+                plan.children().iter().any(contains_join)
+            }
+            contains_join(child)
+        });
+    if read_has_join {
+        let _ = BasePhysicalPlan::new(allocator, crate::logical::LogicalProjection::TYPE, 0);
+    }
     vec![PhysicalPlan::Lock(PhysicalLock {
         base,
         lock_type: p.lock_type,
@@ -3078,15 +3101,12 @@ pub fn get_hash_aggs_with_mpp_options(
     }
     let task_types: &[TaskType] = if prop.is_flash_prop() {
         &[TaskType::Mpp]
-    } else if prop.index_join_prop.is_some() {
-        // Go's index-join inner side is CONSTRUCTED, not enumerated:
-        // `constructIndexJoinInnerSideTaskWithAggCheck` attaches the
-        // bottom-most aggregation straight onto the constructed cop task
-        // (`Attach2Task` -> `attach2Task4PhysicalHashAgg`). Go does NOT
-        // call getHashAggs for this property — return empty so the
-        // plan-id allocation matches go.
-        return Vec::new();
     } else if prop.no_cop_push_down {
+        // Go `admitIndexJoinTypes` (base_physical_plan.go:412): with an
+        // index-join runtime prop the Mpp task type is dropped but CSR, CMR
+        // and Root are all still enumerated — getHashAggs RUNS for the
+        // index-join inner agg (nightly W52 ledger: three ctor burns per
+        // prop variant).
         &[TaskType::Root]
     } else {
         &[

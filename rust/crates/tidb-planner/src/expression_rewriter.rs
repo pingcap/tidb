@@ -1839,12 +1839,11 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<LogicalPlan, RewriteError> {
         let np_schema = np.schema().ok_or(RewriteError::MissingSchema)?.clone();
         // Go: buildSubqueryJoin allocates Selection + Agg output Projection
-        // + Join wrapper before the inner join is built. This port folds
-        // them into build_distinct and the join construction below; burn
-        // the plan ids so downstream numbering matches go.
-        let _ = self.env.base(LogicalProjection::TYPE);
-        let _ = self.env.base(LogicalProjection::TYPE);
-        let _ = self.env.base(LogicalProjection::TYPE);
+        // + Join wrapper around the inner join. This port folds them into
+        // build_distinct and the join construction below; the plan ids go's
+        // conflict-detector and join-order passes burn AFTER buildUpdate's
+        // own ctor are burned by the DML bridge instead (see
+        // planner_bridge::physical_dml_source_plan_explained).
         let mut distinct_child = np;
         let mut distinct_len = np_schema.len();
         let mut join_condition = check_condition.clone();
