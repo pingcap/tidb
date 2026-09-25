@@ -323,9 +323,9 @@ pub(crate) fn eval_binary_full(
     // string comparison branch: string-vs-string is a binary collation
     // comparison for `=`, `<`, etc., but never for a logical operator.
     match op {
-        LogicAnd => return logic_and(l, r),
-        LogicOr => return logic_or(l, r),
-        LogicXor => return logic_xor(l, r),
+        LogicAnd => return logic_and(l, r, ctx),
+        LogicOr => return logic_or(l, r, ctx),
+        LogicXor => return logic_xor(l, r, ctx),
         _ => {}
     }
     // A JSON operand compares in the JSON domain, and it has to be intercepted
@@ -1332,7 +1332,26 @@ fn string_compare(
 /// FALSE dominates; otherwise NULL propagates if either side is unknown.
 /// Also called directly from `crate::eval_in`'s `BETWEEN` handling (`x >= lo
 /// AND x <= hi`), not just from `eval_binary`'s `LogicAnd` arm.
-pub(crate) fn logic_and(l: Datum, r: Datum) -> Result<Datum, EvalError> {
+/// go `ToBool`'s string path parses the leading float and raises
+/// `Truncated incorrect DOUBLE value` when the text is not fully numeric;
+/// the logical operators' truthiness coercion carries that warning.
+fn warn_string_double_truncation(
+    values: &[&Datum],
+    ctx: &dyn crate::context::Columns,
+) {
+    for value in values {
+        if matches!(value, Datum::String(_) | Datum::Bytes(_)) {
+            let _ = crate::math_fn::numeric_arg(value, ctx);
+        }
+    }
+}
+
+pub(crate) fn logic_and(
+    l: Datum,
+    r: Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
+    warn_string_double_truncation(&[&l, &r], ctx);
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(false), _) | (_, Some(false)) => Datum::Int(0),
         (Some(true), Some(true)) => Datum::Int(1),
@@ -1340,7 +1359,8 @@ pub(crate) fn logic_and(l: Datum, r: Datum) -> Result<Datum, EvalError> {
     })
 }
 
-fn logic_or(l: Datum, r: Datum) -> Result<Datum, EvalError> {
+fn logic_or(l: Datum, r: Datum, ctx: &dyn crate::context::Columns) -> Result<Datum, EvalError> {
+    warn_string_double_truncation(&[&l, &r], ctx);
     // TRUE dominates; otherwise NULL propagates if either side is unknown.
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(true), _) | (_, Some(true)) => Datum::Int(1),
@@ -1349,7 +1369,8 @@ fn logic_or(l: Datum, r: Datum) -> Result<Datum, EvalError> {
     })
 }
 
-fn logic_xor(l: Datum, r: Datum) -> Result<Datum, EvalError> {
+fn logic_xor(l: Datum, r: Datum, ctx: &dyn crate::context::Columns) -> Result<Datum, EvalError> {
+    warn_string_double_truncation(&[&l, &r], ctx);
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(a), Some(b)) => bool_int(a ^ b),
         _ => Datum::Null,

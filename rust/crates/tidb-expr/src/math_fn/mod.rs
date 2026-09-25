@@ -469,6 +469,12 @@ fn ln(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     Ok(match numeric_arg(v, ctx)? {
+        // go `builtinLog1ArgSig`: a non-positive argument warns
+        // `ErrInvalidArgumentForLogarithm` (3020) on its way to NULL.
+        Some(x) if x <= 0.0 => {
+            ctx.append_warning(3020, "Invalid argument for logarithm");
+            Datum::Null
+        }
         Some(x) => checked_ln(x),
         None => Datum::Null,
     })
@@ -483,11 +489,13 @@ fn log(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
             let (Some(base), Some(x)) = (numeric_arg(b, ctx)?, numeric_arg(x, ctx)?) else {
                 return Ok(Datum::Null);
             };
-            Ok(if base <= 0.0 || base == 1.0 || x <= 0.0 {
-                Datum::Null
-            } else {
-                Datum::Real(x.log(base))
-            })
+            if base <= 0.0 || base == 1.0 || x <= 0.0 {
+                // go `builtinLog2ArgSig`: the invalid base/argument warns
+                // ErrInvalidArgumentForLogarithm (3020) on its way to NULL.
+                ctx.append_warning(3020, "Invalid argument for logarithm");
+                return Ok(Datum::Null);
+            }
+            Ok(Datum::Real(x.log(base)))
         }
         _ => Err(EvalError::Unsupported("bad function arity")),
     }

@@ -803,7 +803,8 @@ pub fn record_fold_warning(code: u16, message: &str) {
 /// so `SHOW WARNINGS` and the OK packet's count see them.
 #[must_use]
 pub fn take_fold_warnings() -> Vec<(u16, String)> {
-    FOLD_WARNINGS.with(std::cell::RefCell::take)
+    let taken = FOLD_WARNINGS.with(std::cell::RefCell::take);
+    taken
 }
 
 /// The columns context the fold evaluates against: reads like

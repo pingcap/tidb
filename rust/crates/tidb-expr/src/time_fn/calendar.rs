@@ -768,6 +768,10 @@ pub(crate) fn date_add_with_result_fsp(
         .split_once(char::is_whitespace)
         .map_or((trimmed, None), |(d, t)| (d, Some(t)));
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
+        // go `builtinAddDateAndDurationSig`'s arg0 cast: an unparseable
+        // datetime text warns `Incorrect datetime value: '<text>'` (1292)
+        // and answers NULL.
+        ctx.append_warning(1292, &format!("Incorrect datetime value: '{s}'"));
         return Ok(Datum::Null);
     };
     if unit.eq_ignore_ascii_case("HOUR") || unit.eq_ignore_ascii_case("MINUTE") {
@@ -1229,6 +1233,10 @@ fn date_add_composite(
         .split_once(char::is_whitespace)
         .map_or((trimmed, None), |(d, t)| (d, Some(t)));
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
+        // go `builtinAddDateAndDurationSig`'s arg0 cast: an unparseable
+        // datetime text warns `Incorrect datetime value: '<text>'` (1292)
+        // and answers NULL.
+        ctx.append_warning(1292, &format!("Incorrect datetime value: '{s}'"));
         return Ok(Datum::Null);
     };
     let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {

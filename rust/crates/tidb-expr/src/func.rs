@@ -784,7 +784,7 @@ pub(crate) fn eval_func_values(
         }
         "HEX" if vals.len() == 1 => hex(vals),
         "UNHEX" if vals.len() == 1 => unhex(vals),
-        "BIN" if vals.len() == 1 => bin(vals),
+        "BIN" if vals.len() == 1 => bin(vals, ctx),
         "OCT" if vals.len() == 1 => oct(vals),
         "BIT_LENGTH" => bit_length(vals),
         "FIELD" if vals.len() >= 2 => field(vals, ctx),
@@ -813,7 +813,7 @@ pub(crate) fn eval_func_values(
         "DATE_FORMAT" if vals.len() == 2 => date_format(&vals[0], &vals[1]),
         "ORD" if vals.len() == 1 => ord(vals),
         "QUOTE" if vals.len() == 1 => quote(vals),
-        "BIT_COUNT" if vals.len() == 1 => bit_count(vals),
+        "BIT_COUNT" if vals.len() == 1 => bit_count(vals, ctx),
         "FORMAT" if vals.len() == 2 => format_num(vals, ctx),
         "CHAR_FUNC" if !vals.is_empty() => char_func_with_context(vals, ctx),
         "TO_BASE64" if vals.len() == 1 => to_base64(vals, ctx),

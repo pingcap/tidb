@@ -694,9 +694,25 @@ pub(crate) fn unhex(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// 64-bit value.  TiDB's `binFunctionClass` requests `ETInt`, so strings use
 /// their leading integer run, decimals round half-up, and reals round
 /// ties-to-even before their resulting two's-complement bits are formatted.
-pub(crate) fn bin(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn bin(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad BIN arity"));
+    }
+    let raw: Option<&[u8]> = match &vals[0] {
+        Datum::String(text) => Some(text.bytes()),
+        Datum::Bytes(text) => Some(text),
+        _ => None,
+    };
+    if let Some(text) = raw {
+        if radix_truncated(text) {
+            ctx.append_warning(
+                1292,
+                &format!(
+                    "Truncated incorrect INTEGER value: '{}'",
+                    String::from_utf8_lossy(text)
+                ),
+            );
+        }
     }
     Ok(radix_integer_bits(&vals[0])?
         .map_or(Datum::Null, |bits| Datum::new_string(format!("{bits:b}"))))
@@ -858,6 +874,23 @@ fn radix_integer_bits(value: &Datum) -> Result<Option<u64>, EvalError> {
 /// optional `+`, parses the leading ASCII digits, and preserves all `u64`
 /// bits.  Invalid/trailing text only emits a warning in TiDB's test context,
 /// so it leaves the valid prefix (or zero) intact.
+/// go `StrToInt`/`StrToUint`: the cast warns `Truncated incorrect INTEGER
+/// value` when the text carries anything the numeric parse could not
+/// consume — a remainder after the digit run, or no digits at all.
+fn radix_truncated(value: &[u8]) -> bool {
+    let value = trim_go_space(value);
+    let digits = if value.len() > 1 && value.starts_with(b"-") {
+        &value[1..]
+    } else {
+        value.strip_prefix(b"+").unwrap_or(value)
+    };
+    let digit_len = digits
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    digit_len < digits.len()
+}
+
 fn radix_string_bits_bytes(value: &[u8]) -> u64 {
     let value = trim_go_space(value);
     let negative = value.len() > 1 && value.starts_with(b"-");
@@ -1540,7 +1573,26 @@ pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// value); `NULL` propagates. This follows the function's ETInt input
 /// signature: decimal/real/string values first take their MySQL integer
 /// coercion, whose statement warnings are outside this value-only domain.
-pub(crate) fn bit_count(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn bit_count(
+    vals: &[Datum],
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    let raw: Option<&[u8]> = match &vals[0] {
+        Datum::String(text) => Some(text.bytes()),
+        Datum::Bytes(text) => Some(text),
+        _ => None,
+    };
+    if let Some(text) = raw {
+        if radix_truncated(text) {
+            ctx.append_warning(
+                1292,
+                &format!(
+                    "Truncated incorrect INTEGER value: '{}'",
+                    String::from_utf8_lossy(text)
+                ),
+            );
+        }
+    }
     let bits = match &vals[0] {
         Datum::Null => return Ok(Datum::Null),
         Datum::Int(n) => *n as u64,

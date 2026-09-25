@@ -53,7 +53,7 @@ pub(crate) fn dispatch(
         ("SM3", 1) => Some(sm3_hash(&vals[0])),
         ("RANDOM_BYTES", 1) => Some(random_bytes(&vals[0])),
         ("RANDOM_BYTES", _) => Some(Err(EvalError::WrongParameterCount("random_bytes"))),
-        ("PASSWORD", 1) => Some(password_hash(&vals[0])),
+        ("PASSWORD", 1) => Some(password_hash(&vals[0], ctx)),
         ("VALIDATE_PASSWORD_STRENGTH", 1) => Some(validate_password_strength(&vals[0], ctx)),
         ("ENCODE", 2) => Some(sql_encode(&vals[0], &vals[1])),
         ("DECODE", 2) => Some(sql_decode(&vals[0], &vals[1])),
@@ -362,7 +362,13 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// `errDeprecatedSyntaxNoReplacement`; warning propagation belongs to the
 /// statement context and is intentionally not fabricated in this value-only
 /// dispatch.
-fn password_hash(value: &Datum) -> Result<Datum, EvalError> {
+fn password_hash(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    // go `builtinPasswordSig`: the deprecated spelling warns
+    // ErrDeprecatedSyntaxNoReplacement (1681) and still hashes.
+    ctx.append_warning(
+        1681,
+        "PASSWORD is deprecated and will be removed in a future release.",
+    );
     let Some(bytes) = hash_input(value)? else {
         return Ok(Datum::Null);
     };
