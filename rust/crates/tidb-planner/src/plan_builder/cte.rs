@@ -1015,6 +1015,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .as_ref()
                 .expect("just created"),
         );
+        // GO's cteClass.ColumnMap maps the SEED's column hashes to the SEED's
+        // columns, letting resolve_expr_and_replace translate consumer
+        // predicates that reference the CTE's output columns.
+        {
+            let mut class = class.borrow_mut();
+            let schema_columns: Vec<Column> = class
+                .seed_part_logical_plan
+                .as_ref()
+                .and_then(|seed_plan| seed_plan.schema())
+                .map(|schema| schema.columns.clone())
+                .unwrap_or_default();
+            for column in &schema_columns {
+                let mut col = column.clone();
+                let hash = col.hash_code().to_vec();
+                class.column_map.insert(hash, col);
+            }
+        }
         // The seed's schema is available here: populate the column_map for
         // the consumer predicates' column translation.
         {
