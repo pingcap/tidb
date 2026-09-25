@@ -1278,7 +1278,11 @@ fn date_add_composite(
 /// WHOLE composite result rather than per-field. Fractional seconds on string
 /// inputs are retained as six-digit microseconds, matching the source's
 /// `ExtractDatetimeNum`/`ExtractDurationNum` behavior.
-pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn extract_composite(
+    unit: &str,
+    vals: &[Datum],
+    cols: &dyn Columns,
+) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1294,6 +1298,10 @@ pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, Eva
         .split_once(char::is_whitespace)
         .map_or((trimmed, None), |(d, t)| (d, Some(t)));
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
+        // go `builtinExtractDatetimeSig` converts the unparseable text to the
+        // ZERO datetime first and warns `Incorrect datetime value:
+        // '0000-00-00 00:00:00'` (1292) on its way to NULL.
+        cols.append_warning(1292, "Incorrect datetime value: '0000-00-00 00:00:00'");
         return Ok(Datum::Null);
     };
     let (h, mi, sec, microsecond) = time_parts_with_micros(time_suffix).unwrap_or((0, 0, 0, 0));
@@ -1550,6 +1558,20 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
+    // A NULL operand answers NULL silently; go's StrToDate FAILURE lands on
+    // the zero time whose cast warns `Incorrect datetime value:
+    // '0000-00-00 00:00:00'` (1292) — handled by the wrapper below.
+    if matches!(vals[0], Datum::Null) || matches!(vals[1], Datum::Null) {
+        return Ok(Datum::Null);
+    }
+    let result = str_to_date_inner(vals, cols)?;
+    if matches!(result, Datum::Null) {
+        cols.append_warning(1292, "Incorrect datetime value: '0000-00-00 00:00:00'");
+    }
+    Ok(result)
+}
+
+fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let (Some(date), Some(format)) = (coerce_str(&vals[0])?, coerce_str(&vals[1])?) else {
         return Ok(Datum::Null);
     };
