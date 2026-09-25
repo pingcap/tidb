@@ -1034,7 +1034,14 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             Datum::Int(0),
             Datum::UInt(index_length),
             Datum::Int(0),
-            Datum::Int(0),
+            // go's AUTO_INCREMENT cell reads the STORED `AutoIncID` (the
+            // allocator high-water), not the id the next insert would take:
+            // a freshly created table reads 0, and a table without an
+            // auto-increment column reads NULL.
+            match table.next_auto_increment() {
+                Some(next) => Datum::Int(next.saturating_sub(1)),
+                None => Datum::Null,
+            },
             // CREATE_TIME is NULL rather than a fabricated timestamp.
             Datum::Null,
             Datum::Null,
