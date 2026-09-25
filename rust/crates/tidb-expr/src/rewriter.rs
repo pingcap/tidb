@@ -672,6 +672,57 @@ fn binary_expression(
                     _ => {}
                 }
             }
+            // GO `logicAnd/logicOr/logicXorFunctionClass.getFunction`
+            // (builtin_op.go:65/128/191): every argument runs through
+            // `wrapWithIsTrue(ctx, true, arg, false)` — an ETInt argument
+            // passes through unwrapped (wrapForInt=false); anything else is
+            // wrapped in `istrue_with_null`, whose getFunction prices a
+            // string/time/json argument through ETReal — the base builder
+            // emits `cast(arg, double BINARY)` (q84's `||` chains render
+            // `or(istrue_with_null(cast(coalesce(..), double BINARY)), 0)`).
+            if matches!(name, "and" | "or" | "xor") {
+                for argument in &mut args {
+                    let eval_type = argument
+                        .static_type()
+                        .map(|t| t.eval_type())
+                        .unwrap_or(tidb_datatype::EvalType::Int);
+                    if eval_type == tidb_datatype::EvalType::Int {
+                        continue;
+                    }
+                    let wrapped = if matches!(
+                        eval_type,
+                        tidb_datatype::EvalType::String
+                            | tidb_datatype::EvalType::Timestamp
+                            | tidb_datatype::EvalType::Datetime
+                            | tidb_datatype::EvalType::Duration
+                            | tidb_datatype::EvalType::Json
+                    ) {
+                        // GO folds the wrap-time cast bottom-up
+                        // (WrapWithCastAsReal evaluates a constant argument
+                        // eagerly), so `istrue_with_null(cast(', ', double))`
+                        // collapses to `0`. Fold the cast first: the wrapper
+                        // fold requires all-constant arguments.
+                        let mut cast = crate::simple_expr::build_cast_function(
+                            std::mem::replace(
+                                argument,
+                                Expression::Constant(Constant::new_null()),
+                            ),
+                            crate::expr_util::builder::double_field_type(),
+                            false,
+                        )?;
+                        resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
+                        cast
+                    } else {
+                        std::mem::replace(argument, Expression::Constant(Constant::new_null()))
+                    };
+                    *argument = Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new("istrue_with_null"),
+                        crate::expr_util::builder::tiny_int_type(),
+                        vec![wrapped],
+                    ));
+                    resolver.fold_constant(argument, ConstantFoldMode::Normal);
+                }
+            }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
                 if let Some(ctx) = resolver.comparison_context() {
                     let mut expression = Expression::ScalarFunction(ScalarFunction::new(

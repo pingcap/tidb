@@ -159,6 +159,14 @@ pub fn tiny_int_type() -> FieldType {
     FieldType::new(FieldTypeCode::Tiny)
 }
 
+/// GO `types.NewFieldType(mysql.TypeDouble)` — the cast target
+/// `isTrueOrFalseFunctionClass.getFunction` prices a string/time/json
+/// argument through (ETReal), rendering `cast(x, double BINARY)`.
+#[must_use]
+pub fn double_field_type() -> FieldType {
+    FieldType::new(FieldTypeCode::Double)
+}
+
 /// The narrow default [`FunctionBuilder`]: builds the node Go's rewrite asks
 /// for while KEEPING the caller-supplied result type verbatim.
 ///
