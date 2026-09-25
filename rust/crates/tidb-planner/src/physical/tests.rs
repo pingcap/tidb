@@ -1813,7 +1813,7 @@ fn a_union_all_fans_one_child_property_per_child() {
 
     let sorted = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
     assert!(
-        exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0).is_empty()
+        exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0, false).is_empty()
     );
 
     let prop = PhysicalProperty {
@@ -1822,7 +1822,7 @@ fn a_union_all_fans_one_child_property_per_child() {
         no_cop_push_down: true,
         ..PhysicalProperty::default()
     };
-    let plans = exhaust_physical_plans_4_logical_union_all(&union, &prop, &allocator, 1.0);
+    let plans = exhaust_physical_plans_4_logical_union_all(&union, &prop, &allocator, 1.0, false);
     assert_eq!(plans.len(), 1);
     let PhysicalPlan::UnionAll(built) = &plans[0] else {
         panic!("a UnionAll, got {:?}", plans[0]);

@@ -2713,13 +2713,21 @@ fn cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat() {
     // A LogicalCTETable on the same storage adopts it.
     let mut table = LogicalCTETable::new(
         BaseLogicalPlan::with_id(5, LogicalCTETable::TYPE, 0),
-        seed_stat,
+        std::rc::Rc::clone(&seed_stat),
     );
     let (table_stats, derived) = table.derive_stats(&[true]).unwrap();
     assert!(derived);
     assert!((table_stats.row_count() - 300.0).abs() < 1e-9);
-    // Memoised without a reload.
-    assert!(!table.derive_stats(&[false]).unwrap().1);
+    // GO's LogicalCTETable stores SeedStat BY POINTER: even without a reload
+    // flag, the derive publishes the seed's CURRENT content -- and if the
+    // seed's stats change, the next derive publishes that (the consumers
+    // share the seed's stats object).
+    *seed_stat.borrow_mut() = StatsInfo::new(500.0, [(10_i64, 50.0), (11, 9.0)]);
+    let (table_stats2, derived2) = table.derive_stats(&[false]).unwrap();
+    assert!(derived2);
+    // The published profile is the seed's own (the seed ids, not the
+    // consumer ids) with the new content.
+    assert!((table_stats2.row_count() - 500.0).abs() < 1e-9);
 }
 
 /// The recursive half (`logical_cte.go:203`): NDVs ADD, and `DISTINCT` takes
