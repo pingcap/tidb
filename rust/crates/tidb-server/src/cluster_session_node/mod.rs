@@ -6441,16 +6441,21 @@ impl ClusterServerSession {
         // `SHOW WARNINGS` reports what the change did differently from what
         // was written. `toTError` gives a plain `fmt.Errorf` the generic
         // 1105 code.
-        if let ClusterDdlReport::Applied {
-            warning: Some(warning),
-            ..
-        }
-        | ClusterDdlReport::AlreadySatisfied {
-            warning: Some(warning),
-            ..
-        } = report
-        {
-            self.session.append_routed_warning(1105, warning);
+        // go raises an applied job's `job.Warning` via `AppendWarning` and an
+        // `IF [NOT] EXISTS` suppression via `AppendNote`; the level follows
+        // the variant.
+        match report {
+            ClusterDdlReport::Applied {
+                warning: Some(warning),
+                warning_code,
+                ..
+            } => self.session.append_routed_warning(warning_code, warning),
+            ClusterDdlReport::AlreadySatisfied {
+                warning: Some(warning),
+                warning_code,
+                ..
+            } => self.session.append_routed_note(warning_code, warning),
+            _ => {}
         }
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.

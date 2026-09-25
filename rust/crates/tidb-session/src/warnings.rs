@@ -222,6 +222,14 @@ impl Session {
         self.append_warning(WarningLevel::Warning, code, message);
     }
 
+    /// Records a NOTE raised by a cluster-routed statement: go raises every
+    /// `IF [NOT] EXISTS` suppression with `StmtCtx.AppendNote`, so
+    /// `CREATE DATABASE IF NOT EXISTS db` on an existing db leaves
+    /// `Note | 1007 | Can't create database 'db'; database exists`.
+    pub fn append_routed_note(&mut self, code: u16, message: String) {
+        self.append_warning(WarningLevel::Note, code, message);
+    }
+
     /// The warnings the last statement produced.
     #[must_use]
     pub fn warnings(&self) -> &[SqlWarning] {

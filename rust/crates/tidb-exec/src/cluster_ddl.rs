@@ -2729,6 +2729,8 @@ pub enum DdlPlan {
         /// The warning the statement raises even though it changed nothing.
         /// Go's `OrderByColumns` is the case that has one.
         warning: Option<String>,
+        /// The MySQL code the warning reports (go notes 1007/1051, errors 1105).
+        warning_code: u16,
     },
     /// The mutations to publish in one transaction.
     Write(Box<DdlWrite>),
@@ -6772,10 +6774,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         } => {
             if let Some(existing) = find_database(&catalog, name) {
                 if *if_not_exists {
-                    return Ok(already(format!(
-                        "database `{}` already exists",
-                        existing.info.name.original()
-                    )));
+                    return Ok(DdlPlan::AlreadySatisfied {
+                        detail: format!("database `{}` already exists", existing.info.name.original()),
+                        warning: Some(format!("Can't create database '{}'; database exists", name)),
+                        warning_code: 1007,
+                    });
                 }
                 return Err(DdlPlanError::DatabaseExists(name.clone()));
             }
@@ -6929,28 +6932,32 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: "ALTER MATERIALIZED VIEW changes nothing".to_owned(),
                 warning: None,
-            });
+                warning_code: 1105,
+});
         }
         DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
             let _ = (schema, table);
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: "ALTER MATERIALIZED VIEW LOG changes nothing".to_owned(),
                 warning: None,
-            });
+                warning_code: 1105,
+});
         }
         DdlStatement::DropMaterializedViewNoOp { schema, view } => {
             let _ = (schema, view);
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: "DROP MATERIALIZED VIEW changes nothing".to_owned(),
                 warning: None,
-            });
+                warning_code: 1105,
+});
         }
         DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
             let _ = (schema, table);
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: "DROP MATERIALIZED VIEW LOG changes nothing".to_owned(),
                 warning: None,
-            });
+                warning_code: 1105,
+});
         }
         DdlStatement::CreateTableLike {
             schema,
@@ -7518,7 +7525,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 return Ok(DdlPlan::AlreadySatisfied {
                     detail: "TiFlash replica status already matches".to_owned(),
                     warning: None,
-                });
+                    warning_code: 1105,
+});
             }
             replica.write().available = *available;
             writes.push(OptimisticMutation::meta_put(
@@ -9465,6 +9473,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: format!("ORDER BY on `{schema}`.`{table}` changes nothing"),
                 warning,
+                warning_code: 1105,
             });
         }
         DdlStatement::RebaseAutoIncrementId {
@@ -9777,7 +9786,8 @@ fn already(detail: String) -> DdlPlan {
     DdlPlan::AlreadySatisfied {
         detail,
         warning: None,
-    }
+        warning_code: 1105,
+}
 }
 
 #[derive(Clone)]

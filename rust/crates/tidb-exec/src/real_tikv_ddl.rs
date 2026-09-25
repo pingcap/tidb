@@ -381,6 +381,8 @@ pub enum ClusterDdlReport {
         /// Go `job.Warning`: what the change did differently from what was
         /// written, for the caller to raise as a statement warning.
         warning: Option<String>,
+        /// The MySQL code the warning reports (job warnings are errors, 1105).
+        warning_code: u16,
     },
     /// `IF [NOT] EXISTS` was already satisfied, so nothing was written.
     AlreadySatisfied {
@@ -388,6 +390,8 @@ pub enum ClusterDdlReport {
         detail: String,
         /// The warning the statement raises even though it changed nothing.
         warning: Option<String>,
+        /// The MySQL code the warning reports (go notes 1007/1051, errors 1105).
+        warning_code: u16,
     },
 }
 
@@ -473,9 +477,9 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         plan_ddl(&mut snapshot, statement, start_ts)?
     };
     let write = match plan {
-        DdlPlan::AlreadySatisfied { detail, warning } => {
+        DdlPlan::AlreadySatisfied { detail, warning, warning_code } => {
             transaction.finish_without_writes()?;
-            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warning });
+            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warning, warning_code });
         }
         DdlPlan::Write(write) => write,
     };
@@ -564,6 +568,7 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                 schema_version: planned_version,
                 created_id: write.created_id,
                 warning: write.warning,
+                warning_code: 1105,
             })
         }
         OptimisticCommitOutcome::RolledBack(rolled_back) => Err(compensate_external_delivery(
@@ -1616,12 +1621,12 @@ fn commit_cluster_ddl_with_backfill_once<
         }
     };
     let write = match plan {
-        DdlPlan::AlreadySatisfied { detail, warning } => {
+        DdlPlan::AlreadySatisfied { detail, warning, warning_code } => {
             transaction
                 .rollback()
                 .map_err(ClusterDdlError::NotCommitted)?;
             return Ok(DdlPhaseOutcome::AlreadySatisfied(
-                ClusterDdlReport::AlreadySatisfied { detail, warning },
+                ClusterDdlReport::AlreadySatisfied { detail, warning, warning_code },
             ));
         }
         DdlPlan::Write(write) => *write,
@@ -1718,6 +1723,7 @@ fn commit_cluster_ddl_with_backfill_once<
                     schema_version: planned_version,
                     created_id: write.created_id,
                     warning: write.warning,
+                    warning_code: 1105,
                 },
                 ddl_job_id: write.ddl_job_id,
                 schema_version: planned_version,

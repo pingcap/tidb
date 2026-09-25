@@ -707,6 +707,7 @@ where
                     return Ok(ClusterDdlReport::Applied {
                         schema_version: job.last_schema_version,
                         created_id: None,
+                        warning_code: 1105,
                         warning: job
                             .warning
                             .as_ref()
