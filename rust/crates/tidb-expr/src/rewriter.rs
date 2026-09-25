@@ -222,7 +222,13 @@ pub trait ColumnResolver {
     /// Session-backed resolvers override this; the standalone default carries
     /// only the explicitly supplied timezone.
     fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
-        crate::eval_expression_once(expression, &crate::ZonedNoColumns(self.time_zone()))
+        // The fold context COLLECTS the warnings the expression raises
+        // (go appends them to StmtCtx.warnings): ADDDATE('abc', INTERVAL 1
+        // DAY) warns `Incorrect datetime value: 'abc'` even on an empty
+        // table. The statement driver drains the stash into the warning
+        // buffer right after planning.
+        let ctx = crate::constant_fold::FoldWarningContext::new(self.time_zone());
+        crate::eval_expression_once(expression, &ctx)
     }
 }
 

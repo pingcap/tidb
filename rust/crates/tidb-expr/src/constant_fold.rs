@@ -15,6 +15,7 @@
 //! Go `pkg/expression/constant_fold.go`, reduced to the part this tier can
 //! observe.
 
+use crate::context::Columns;
 use crate::expression::Expression;
 use tidb_datatype::Datum;
 
@@ -776,5 +777,61 @@ mod deferred_function_tests {
             first.contains("00:16:40"),
             "clock 1000 must render 00:16:40, got {first}"
         );
+    }
+}
+
+
+/// Warnings the constant-fold evaluation raised, stashed for the caller that
+/// owns the statement's warning buffer. The fold evaluates column-free
+/// expressions against a sessionless context whose `append_warning` would
+/// otherwise drop go's per-statement warnings (`ADDDATE('abc', INTERVAL 1
+/// DAY)` warns `Incorrect datetime value: 'abc'` on an empty table).
+thread_local! {
+    static FOLD_WARNINGS: std::cell::RefCell<Vec<(u16, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Records one fold-time warning into this thread's stash.
+pub fn record_fold_warning(code: u16, message: &str) {
+    FOLD_WARNINGS.with(|warnings| {
+        warnings.borrow_mut().push((code, message.to_owned()));
+    });
+}
+
+/// Drains this thread's fold warnings. The statement driver calls this right
+/// after planning, forwarding the pairs into the statement's warning buffer
+/// so `SHOW WARNINGS` and the OK packet's count see them.
+#[must_use]
+pub fn take_fold_warnings() -> Vec<(u16, String)> {
+    FOLD_WARNINGS.with(std::cell::RefCell::take)
+}
+
+/// The columns context the fold evaluates against: reads like
+/// [`ZonedNoColumns`](crate::ZonedNoColumns) but every warning the evaluated
+/// expression raises lands in [`record_fold_warning`] instead of being
+/// dropped.
+pub struct FoldWarningContext {
+    zone: tidb_datatype::SessionTimeZone,
+}
+
+impl FoldWarningContext {
+    /// Builds one folding context for the given statement time zone.
+    #[must_use]
+    pub fn new(zone: tidb_datatype::SessionTimeZone) -> Self {
+        Self { zone }
+    }
+}
+
+impl Columns for FoldWarningContext {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        self.zone.clone()
+    }
+
+    fn append_warning(&self, code: u16, message: &str) {
+        record_fold_warning(code, message);
     }
 }

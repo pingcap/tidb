@@ -3433,6 +3433,18 @@ impl StmtContext {
         self.append_warning(code, message);
     }
 
+    /// Moves the warnings the CONSTANT-FOLD evaluation stashed on this
+    /// thread into this context's warning list. go appends a fold-time
+    /// warning to `StmtCtx.warnings` while planning
+    /// (`ADDDATE('abc', INTERVAL 1 DAY)` on an empty table warns `Incorrect
+    /// datetime value: 'abc'`), and the OK packet's count and `SHOW
+    /// WARNINGS` both read them.
+    pub fn drain_fold_warnings(&self) {
+        for (code, message) in tidb_expr::constant_fold::take_fold_warnings() {
+            self.append_warning_parts(code, &message);
+        }
+    }
+
     /// Records a warning in Go's extra-warning handler. Extra warnings are
     /// retained for diagnostics and slow-log consumers, not SHOW WARNINGS.
     pub fn append_extra_warning_parts(&self, code: u16, message: &str) {
