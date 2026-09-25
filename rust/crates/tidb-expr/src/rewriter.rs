@@ -22,6 +22,7 @@ use crate::aggregation::wrap_cast::{
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::constant_fold::ConstantFoldMode;
+use crate::context::JsonError;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
@@ -1929,6 +1930,45 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 args.len()
             };
             crate::builtin_registry::verify_args_by_count(&lowered, arity_count)?;
+            // go's JSON signature classes validate the DOCUMENT argument's
+            // TYPE at build time (`ETJson` or `ETString` required); anything
+            // else — an INT column, say — answers ErrInvalidJSONData as
+            // "Invalid data type for JSON data in argument 1 to function
+            // json_extract; a JSON string or JSON type is required." even
+            // before a row is read.
+            if matches!(
+                lowered.as_str(),
+                "json_extract"
+                    | "json_set"
+                    | "json_insert"
+                    | "json_replace"
+                    | "json_remove"
+                    | "json_merge"
+                    | "json_merge_preserve"
+                    | "json_merge_patch"
+            ) {
+                if let Some(Expr::Column(path)) = args.first() {
+                    if let Some((_, doc_type, _)) = resolver.resolve(path) {
+                        let code = doc_type.code();
+                        if code != FieldTypeCode::Json && !code.is_string() {
+                            let function: &'static str = match lowered.as_str() {
+                                "json_extract" => "json_extract",
+                                "json_set" => "json_set",
+                                "json_insert" => "json_insert",
+                                "json_replace" => "json_replace",
+                                "json_remove" => "json_remove",
+                                "json_merge" => "json_merge",
+                                "json_merge_preserve" => "json_merge_preserve",
+                                _ => "json_merge_patch",
+                            };
+                            return Err(EvalError::Json(JsonError::InvalidTypeForJson {
+                                argument: 1,
+                                function,
+                            }));
+                        }
+                    }
+                }
+            }
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             if lowered == "name_const" {
                 validate_name_const_args(args)?;
