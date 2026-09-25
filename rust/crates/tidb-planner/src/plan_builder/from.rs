@@ -421,6 +421,27 @@ pub fn set_preferred_join_type_and_order(
         f::NO_INDEX_MERGE_JOIN,
     ];
     for flag in symmetric {
+        // go `addMPPHintCalls`-era semantics: the broadcast/shuffle join
+        // hints request MPP pushdown, which a tier without the MPP engine
+        // cannot serve — go warns `The join can not push down to the MPP
+        // side, the X() hint is invalid` (Warning 1815) and ignores the
+        // hint entirely.
+        if matches!(flag, f::BC_JOIN | f::SHUFFLE_JOIN) {
+            if hints.prefers(lhs.as_ref(), flag) || hints.prefers(rhs.as_ref(), flag) {
+                tidb_expr::constant_fold::record_fold_warning(
+                    1815,
+                    &format!(
+                        "The join can not push down to the MPP side, the {}() hint is invalid",
+                        if flag == f::BC_JOIN {
+                            "broadcast_join"
+                        } else {
+                            "shuffle_join"
+                        }
+                    ),
+                );
+            }
+            continue;
+        }
         if hints.prefers(lhs.as_ref(), flag) {
             join.prefer_join_type |= flag;
             join.left_prefer_join_type |= flag;
