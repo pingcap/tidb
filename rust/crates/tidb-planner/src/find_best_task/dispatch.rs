@@ -788,7 +788,21 @@ fn exhaust_physical_plans(
                     op.base.base.tp(),
                     op.base.base.query_block_offset(),
                 );
-                base.base.set_stats(op.base.base.stats_info().cloned());
+                // GO prices every join candidate with the parent's expected
+                // count folded in: GetMergeJoin/GetMergeJoin callers and the
+                // hash/index-join static constructors all Init with
+                // `statsInfo.ScaleByExpectCnt(vars, prop.ExpectedCnt)`
+                // (exhaust_physical_plans.go:223/340, physical_merge_join.go:62).
+                // Without the scaling an anti-semi join's ×0.8 logical stats
+                // stayed unscaled and the displayed rows diverged from GO's
+                // expectation-scaled ones (q78: 115203811.2 vs 144004764).
+                base.base.set_stats(
+                    op.base
+                        .base
+                        .stats_info()
+                        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio))
+                        .or_else(|| op.base.base.stats_info().cloned()),
+                );
                 base.base.set_schema(op.base.base.schema().cloned());
                 base.set_children_req_props(child_props.into_iter().map(Some).collect());
                 let physical = match strategy {
