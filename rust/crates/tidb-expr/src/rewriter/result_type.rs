@@ -221,8 +221,7 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
         CastType::DateTime { .. } => "cast_datetime",
         CastType::Time { .. } => "cast_time",
         CastType::Year => "cast_year",
-        CastType::Double => "cast_double",
-        CastType::Float => "cast_float",
+        CastType::Double | CastType::Float => "cast_double",
         CastType::Json => "cast_json",
         CastType::Vector { .. } => "cast_vector",
     };

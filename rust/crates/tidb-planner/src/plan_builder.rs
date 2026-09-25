@@ -1047,18 +1047,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.warning_context
     }
 
-    fn eval_constant(&self, expression: &Expression) -> Result<tidb_datatype::Datum, EvalError> {
-        match self.warning_context {
-            // The live statement context: constant-materialization warnings
-            // reach the client exactly as go's statement-context evaluation
-            // emits them.
-            Some(context) => tidb_expr::eval_expression_once(expression, context),
-            None => tidb_expr::eval_expression_once(
-                expression,
-                &tidb_expr::ZonedNoColumns(self.time_zone.clone()),
-            ),
-        }
-    }
+
 
     /// Evaluates materialized constants in the LIVE statement context when
     /// one is bound. The trait default's zone-only context is deliberately

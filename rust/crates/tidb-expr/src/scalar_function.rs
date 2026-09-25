@@ -3080,7 +3080,6 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
         },
         "year" => CastType::Year,
         "double" => CastType::Double,
-        "float" => CastType::Float,
         "json" => CastType::Json,
         "vector" => CastType::Vector { dimensions: len() },
         _ => return Err(EvalError::Unsupported("this cast target is not ported")),
