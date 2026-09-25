@@ -409,8 +409,9 @@ func TestRefreshStatsConcurrently(t *testing.T) {
 }
 
 func TestFlushStatsDelta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
 	t.Run("full scope", func(t *testing.T) {
-		store, dom := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -440,7 +441,6 @@ func TestFlushStatsDelta(t *testing.T) {
 	})
 
 	t.Run("scoped behavior", func(t *testing.T) {
-		store, dom := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t1, t2, tp")
@@ -495,7 +495,6 @@ func TestFlushStatsDelta(t *testing.T) {
 	})
 
 	t.Run("privilege checks", func(t *testing.T) {
-		store, _ := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_flush_priv")
@@ -539,7 +538,6 @@ func TestFlushStatsDelta(t *testing.T) {
 	})
 
 	t.Run("requires default db for bare table", func(t *testing.T) {
-		store, _ := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustGetDBError("flush stats_delta t1", plannererrors.ErrNoDB)
 	})
