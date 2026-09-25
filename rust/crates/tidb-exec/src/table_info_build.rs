@@ -414,7 +414,10 @@ pub fn build_table_info_with_context(
             &table_charset,
             &table_collate,
             context,
-            None,
+            // go `columnDefToCol` resolves generated expressions against the
+            // columns PRECEDING this one in the CREATE TABLE (all columns
+            // already processed by this loop iteration).
+            Some(&columns),
         )?;
         // An inline PRIMARY KEY / UNIQUE becomes a constraint of its own, in
         // the position Go appends it: after every table-level one.
