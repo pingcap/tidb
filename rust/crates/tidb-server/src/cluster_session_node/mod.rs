@@ -6506,9 +6506,14 @@ impl QuerySession for ClusterServerSession {
 
     /// Go `handleQuery`'s one `ParseSQL`: the connection parses each
     /// statement of the command here and every door below reads that node.
+    /// The parse sits on the statement boundary (go `ResetContextOfStmt`):
+    /// the previous statement's warnings go, unless this statement is the
+    /// one that reports them. Parsing through the bare `&self` door left
+    /// the buffer uncleared, so a failed DDL's error rows leaked into every
+    /// later `SHOW WARNINGS`.
     fn parse_statement(&mut self, sql: &str) -> Result<Option<Stmt>, SqlQueryError> {
         self.session
-            .parse_statement(sql)
+            .parse_at_statement_boundary(sql)
             .map(Some)
             .map_err(map_error)
     }
