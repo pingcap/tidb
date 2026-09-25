@@ -431,8 +431,13 @@ pub fn set_preferred_join_type_and_order(
             // hinted entries), so a MATCHED MPP hint warns the invalid-
             // push-down warning while an unmatched name keeps its own
             // no-matching-table warning.
-            let matched_any =
-                hints.prefers(lhs.as_ref(), flag) || hints.prefers(rhs.as_ref(), flag);
+            // BOTH sides must run their matching: the || short-circuit
+            // would skip the rhs pass when the lhs matched, leaving the
+            // rhs hint entry unmarked and firing go's no-matching-table
+            // warning beside the MPP warning.
+            let matched_lhs = hints.prefers(lhs.as_ref(), flag);
+            let matched_rhs = hints.prefers(rhs.as_ref(), flag);
+            let matched_any = matched_lhs || matched_rhs;
             if matched_any {
                 tidb_expr::constant_fold::record_fold_warning(
                     1815,
