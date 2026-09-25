@@ -263,6 +263,9 @@ impl LogicalCTE {
         }
         if let Some(seed_stat) = &self.seed_stat {
             *seed_stat.borrow_mut() = seed.clone();
+            if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                eprintln!("CTEPROD rows={} name={}", seed.row_count(), self.cte_name);
+            }
         }
         let mut row_count = seed.row_count();
         let mut ndvs: Vec<(i64, f64)> = self_schema
@@ -427,13 +430,13 @@ impl LogicalCTETable {
     /// There is no arithmetic: this operator READS the storage the producing
     /// CTE wrote, so its profile IS the seed's. `None` means the seed has not
     /// been derived yet, which is Go's nil `SeedStat` and would set nil stats.
-    pub fn derive_stats(&mut self, reloads: &[bool]) -> Option<(StatsInfo, bool)> {
-        let reload = reloads.len() == 1 && reloads[0];
-        if !reload {
-            if let Some(existing) = self.base.base.stats_info() {
-                return Some((existing.clone(), false));
-            }
-        }
+    pub fn derive_stats(&mut self, _reloads: &[bool]) -> Option<(StatsInfo, bool)> {
+        // GO's LogicalCTETable stores `p.SeedStat` BY POINTER and SetStats
+        // re-reads it on every derive: the consumers share the seed's stats
+        // object, so they observe the seed's current row count even when the
+        // seed's subtree derives after them. Caching the first read left the
+        // consumers at the initial one-row seed_stat forever (q30's CTE
+        // showed 1.00 while go showed the seed's real 603125.46).
         let stats = self.seed_stat.as_ref()?.borrow().clone();
         self.base.base.set_stats(Some(stats.clone()));
         Some((stats, true))
