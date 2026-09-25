@@ -543,7 +543,9 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     SysVarDef {
         name: "plugin_audit_log_buffer_size",
         scope: 4,
-        value: "30",
+        // go `DefPluginAuditLogBufferSize` (pkg/config/config.go:117) is 0 —
+        // the audit-log buffer is disabled unless a plugin turns it on.
+        value: "0",
         var_type: VarType::Str,
         read_only: true,
         allow_auto_value: false,

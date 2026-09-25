@@ -1944,6 +1944,22 @@ pub enum VarError {
 /// [`crate::Session`] lends to every statement context -- because `@x := expr`
 /// writes them from inside expression evaluation, mid-row; see
 /// `tidb_executor::StmtContext`'s `user_vars` field.
+/// go `GetSessionVar`'s SysTimestamp hook: an explicit override that is not
+/// the default (`'0'`, empty) reads back verbatim; anything else reads the
+/// STATEMENT time, formatted like strconv.FormatFloat(v, 'f', -1, 64).
+fn timestamp_hook_value(override_value: Option<&str>) -> String {
+    if let Some(value) = override_value {
+        if !value.is_empty() && value != "0" {
+            return value.to_owned();
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let seconds = now.as_secs() as f64 + now.subsec_nanos() as f64 / 1e9;
+    seconds.to_string()
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionVars {
     systems: HashMap<String, String>,
@@ -2714,11 +2730,21 @@ impl SessionVars {
             if self.session_resolved.values.len() == crate::sysvar::SYS_VARS.len() {
                 // A full-length image is current by construction -- every
                 // `systems` mutation republishes it before returning.
+                if def.name == "timestamp" {
+                    return Ok(Cow::Owned(timestamp_hook_value(
+                        self.systems.get(def.name).map(String::as_str),
+                    )));
+                }
                 return Ok(crate::sysvar::effective_default_value(def));
             }
         }
         // The registry name is the lowercase key `systems` is written under,
         // so the caller's spelling needs no second lowercasing here.
+        if def.name == "timestamp" {
+            return Ok(Cow::Owned(timestamp_hook_value(
+                self.systems.get(def.name).map(String::as_str),
+            )));
+        }
         self.systems.get(def.name).map_or_else(
             || Ok(crate::sysvar::effective_default_value(def)),
             |value| Ok(Cow::Borrowed(value.as_str())),
