@@ -211,6 +211,8 @@ func (b *builtinLeftUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
+	// when len > MaxInt64, returns the whole string.
+	unsignedLen := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -218,6 +220,10 @@ func (b *builtinLeftUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		}
 
 		str := buf.GetString(i)
+		if nums[i] < 0 && unsignedLen {
+			result.AppendString(str)
+			continue
+		}
 		runes, leftLength := []rune(str), int(nums[i])
 		if runeLength := len(runes); leftLength > runeLength {
 			leftLength = runeLength
@@ -256,6 +262,8 @@ func (b *builtinRightUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
+	// when len > MaxInt64, returns the whole string.
+	unsignedLen := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -263,6 +271,10 @@ func (b *builtinRightUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		}
 
 		str := buf.GetString(i)
+		if nums[i] < 0 && unsignedLen {
+			result.AppendString(str)
+			continue
+		}
 		runes := []rune(str)
 		strLength, rightLength := len(runes), int(nums[i])
 		if rightLength > strLength {
@@ -1199,9 +1211,15 @@ func (b *builtinLeftSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	left := buf2.Int64s()
 	result.ReserveString(n)
+	// when len > MaxInt64, returns the whole string.
+	unsignedLen := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
+			continue
+		}
+		if left[i] < 0 && unsignedLen {
+			result.AppendString(buf.GetString(i))
 			continue
 		}
 		leftLength, str := int(left[i]), buf.GetString(i)
@@ -1608,6 +1626,8 @@ func (b *builtinSubstring2ArgsSig) vecEvalString(ctx EvalContext, input *chunk.C
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
+	// when pos > MaxInt64, it is past the end of the string.
+	unsignedPos := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -1616,6 +1636,10 @@ func (b *builtinSubstring2ArgsSig) vecEvalString(ctx EvalContext, input *chunk.C
 
 		str := buf.GetString(i)
 		pos := nums[i]
+		if pos < 0 && unsignedPos {
+			result.AppendString("")
+			continue
+		}
 		length := int64(len(str))
 		if pos < 0 {
 			pos += length
@@ -1658,6 +1682,8 @@ func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
+	// when pos > MaxInt64, it is past the end of the string.
+	unsignedPos := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -1666,6 +1692,10 @@ func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 
 		str := buf.GetString(i)
 		pos := nums[i]
+		if pos < 0 && unsignedPos {
+			result.AppendString("")
+			continue
+		}
 
 		runes := []rune(str)
 		length := int64(len(runes))
@@ -2060,6 +2090,10 @@ func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 	result.ReserveString(n)
 	positions := buf1.Int64s()
 	lengths := buf2.Int64s()
+	// when pos > MaxInt64 it is past the end of the string, and when len > MaxInt64
+	// the result runs to the end of the string.
+	unsignedPos := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
+	unsignedLen := mysql.HasUnsignedFlag(b.args[2].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -2069,6 +2103,10 @@ func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 		str := buf.GetString(i)
 		pos := positions[i]
 		length := lengths[i]
+		if pos < 0 && unsignedPos {
+			result.AppendString("")
+			continue
+		}
 		runes := []rune(str)
 		numRunes := int64(len(runes))
 		if pos < 0 {
@@ -2079,8 +2117,17 @@ func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chu
 		if pos > numRunes || pos < 0 {
 			pos = numRunes
 		}
+		if length < 0 && unsignedLen {
+			result.AppendString(string(runes[pos:]))
+			continue
+		}
 		end := pos + length
 		if end < pos {
+			if length > 0 {
+				// pos+len overflows max int64, so it runs to the end of the string.
+				result.AppendString(string(runes[pos:]))
+				continue
+			}
 			result.AppendString("")
 			continue
 		} else if end < numRunes {
@@ -2799,9 +2846,15 @@ func (b *builtinRightSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 	}
 	right := buf2.Int64s()
 	result.ReserveString(n)
+	// when len > MaxInt64, returns the whole string.
+	unsignedLen := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
+			continue
+		}
+		if right[i] < 0 && unsignedLen {
+			result.AppendString(buf.GetString(i))
 			continue
 		}
 		str, rightLength := buf.GetString(i), int(right[i])
@@ -2854,6 +2907,10 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(ctx EvalContext, input *chunk.C
 	result.ReserveString(n)
 	positions := buf1.Int64s()
 	lengths := buf2.Int64s()
+	// when pos > MaxInt64 it is past the end of the string, and when len > MaxInt64
+	// the result runs to the end of the string.
+	unsignedPos := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
+	unsignedLen := mysql.HasUnsignedFlag(b.args[2].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -2864,6 +2921,10 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(ctx EvalContext, input *chunk.C
 		pos := positions[i]
 		length := lengths[i]
 
+		if pos < 0 && unsignedPos {
+			result.AppendString("")
+			continue
+		}
 		byteLen := int64(len(str))
 		if pos < 0 {
 			pos += byteLen
@@ -2873,8 +2934,17 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(ctx EvalContext, input *chunk.C
 		if pos > byteLen || pos < 0 {
 			pos = byteLen
 		}
+		if length < 0 && unsignedLen {
+			result.AppendString(str[pos:])
+			continue
+		}
 		end := pos + length
 		if end < pos {
+			if length > 0 {
+				// pos+len overflows max int64, so it runs to the end of the string.
+				result.AppendString(str[pos:])
+				continue
+			}
 			result.AppendString("")
 			continue
 		} else if end < byteLen {
