@@ -7336,9 +7336,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 dropped_any = true;
             }
             if !missing.is_empty() && !if_exists {
-                return Err(DdlPlanError::Unsupported(format!(
-                    "Unknown table '{}'",
-                    missing.join(",")
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    1051,
+                    format!("Unknown table '{}'", missing.join(",")),
                 )));
             }
             if !dropped_any {
