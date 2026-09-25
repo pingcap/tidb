@@ -1406,11 +1406,8 @@ fn lower_alter_table_catalog(
             let (from_schema, from_table) =
                 split_name(&alter.name, default_schema, "renamed table")?;
             let (to_schema, to_table) = split_name(new_name, default_schema, "new table name")?;
-            if from_schema.eq_ignore_ascii_case(&to_schema)
-                && from_table.eq_ignore_ascii_case(&to_table)
-            {
-                return Ok(None);
-            }
+            // go accepts a same-name rename as a no-op DDL job; returning
+            // Ok(None) here made the session node reject it as unrecognized.
             Ok(Some(DdlStatement::RenameTable {
                 from_schema,
                 from_table,
@@ -8933,19 +8930,26 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             to_schema,
             to_table,
         } => {
-            let pair = RenameTablePair {
-                from_schema: from_schema.clone(),
-                from_table: from_table.clone(),
-                to_schema: to_schema.clone(),
-                to_table: to_table.clone(),
-            };
-            plan_rename_tables(
-                &catalog,
-                std::slice::from_ref(&pair),
-                start_ts,
-                &mut writes,
-                &mut diff,
-            )?;
+            if from_schema.eq_ignore_ascii_case(&to_schema)
+                && from_table.eq_ignore_ascii_case(&to_table)
+            {
+                // go accepts a same-name rename as a no-op DDL job: the
+                // table is renamed to itself, no catalog writes needed.
+            } else {
+                let pair = RenameTablePair {
+                    from_schema: from_schema.clone(),
+                    from_table: from_table.clone(),
+                    to_schema: to_schema.clone(),
+                    to_table: to_table.clone(),
+                };
+                plan_rename_tables(
+                    &catalog,
+                    std::slice::from_ref(&pair),
+                    start_ts,
+                    &mut writes,
+                    &mut diff,
+                )?;
+            }
         }
         DdlStatement::RenameTables { pairs } => {
             plan_rename_tables(&catalog, pairs, start_ts, &mut writes, &mut diff)?;
