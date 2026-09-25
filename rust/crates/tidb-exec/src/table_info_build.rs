@@ -1246,6 +1246,31 @@ fn build_column(
     // `build_field_type` is what actually stamps `binary`/`binary` on a type
     // that carries no charset, so the resolved pair above is only an input.
     let mut field_type = build_field_type(name, &column.ty, &charset, &collate)?;
+    // go deprecates an EXPLICIT integer display width
+    // (`ErrIntegerDisplayWidthDeprecated`, 1681), warned even when the width
+    // equals the type's default (`int(11)`); the `tinyint(1)` boolean
+    // convention is the one exemption.
+    if matches!(
+        field_type.code(),
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+    ) {
+        let declared_width = match column.ty.args.as_slice() {
+            [tidb_ast::ColumnTypeArg::Text(text)] => text.parse::<i64>().ok(),
+            _ => None,
+        };
+        let boolean_convention =
+            field_type.code() == FieldTypeCode::Tiny && declared_width == Some(1);
+        if declared_width.is_some() && !boolean_convention {
+            context.append_warning_parts(
+                1681,
+                "Integer display width is deprecated and will be removed in a future release.",
+            );
+        }
+    }
     // Go `checkColumnAttributes` -- each refusal carries go's own errno and
     // text (1426/1427/1291/3505); flattening them to a generic 1105 turned
     // `ENUM('x','x')` into a Rust Debug leak on the wire.

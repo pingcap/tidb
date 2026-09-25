@@ -1047,6 +1047,7 @@ fn run_insert_with_physical(
                     name,
                     new_rows.len(),
                     ctx,
+                    insert.ignore,
                 )?;
             }
             // The generated columns are computed from the finished row, so
@@ -3073,9 +3074,14 @@ fn run_update_with_physical(
     };
     let mut assignments = Vec::with_capacity(update.assignments.len());
     for (assignment_index, assignment) in update.assignments.iter().enumerate() {
-        let (offset, _, _) = resolver
-            .resolve(&assignment.col)
-            .ok_or(DriverError::unsupported("unknown column in SET"))?;
+        let (offset, _, _) = resolver.resolve(&assignment.col).ok_or_else(|| {
+            // go `getColumns` answers the assignment's unknown target with
+            // the ordinary `ErrBadField` (1054) 'field list' form.
+            DriverError::UnknownColumnInClause {
+                column: assignment.col.join("."),
+                clause: "field list".to_owned(),
+            }
+        })?;
         // `_tidb_rowid` READS as an ordinary column but is not a stored one,
         // so it cannot be an assignment target here. Go gates writing it
         // behind `tidb_opt_write_row_id` (`executor/builder.go:3025`), and

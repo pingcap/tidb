@@ -5732,11 +5732,19 @@ impl ClusterServerSession {
                     // The refusal carries Go's own errno where it has one
                     // (`Unsupported ...` is 8200), so a client can tell a
                     // shape this server will not do from an internal failure.
-                    Err(refusal) => Err(SqlQueryError::new(
-                        refusal.code,
-                        refusal.sql_state(),
-                        refusal.to_string(),
-                    )),
+                    // Warnings the lowering raised BEFORE the refusal (a
+                    // 1681 display-width warning beside an 8216 auto-random
+                    // refusal) survive it: go's failed DDL leaves both in
+                    // the warning buffer.
+                    Err(refusal) => {
+                        self.session.begin_routed_statement_warnings();
+                        self.session.drain_context_warnings(&context);
+                        Err(SqlQueryError::new(
+                            refusal.code,
+                            refusal.sql_state(),
+                            refusal.to_string(),
+                        ))
+                    }
                 }
             }
         }

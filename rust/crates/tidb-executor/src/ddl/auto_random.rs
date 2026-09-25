@@ -35,7 +35,7 @@ pub fn validate(
         if fields[offset].code() != FieldTypeCode::LongLong {
             return Err(DriverError::InvalidAutoRandom(format!(
                 "auto_random option must be defined on `bigint` column, but not on `{}` column",
-                fields[offset].compact_str(false)
+                fields[offset].compact_str(true)
             )));
         }
         if handle_offsets.first().copied() != Some(offset) {
