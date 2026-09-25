@@ -2929,23 +2929,22 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     if index_join_path_is_max_one_row(ds, path, runtime) {
                         runtime_rows = runtime_rows.min(1.0);
                     }
-                    stats = probe_access_rows_floor
-                        .and_then(|_| {
-                            table_stats.as_ref().map(|table_stats| {
-                                table_stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio)
-                            })
-                        })
-                        .or_else(|| {
-                            Some(
-                                crate::stats_info::StatsInfo::new(runtime_rows, [])
-                                    .with_stats_version(
-                                        ds.base
-                                            .base
-                                            .stats_info()
-                                            .map_or(0, |stats| stats.stats_version()),
-                                    ),
-                            )
-                        });
+                    // Go `constructDS2TableScanTask` (`exhaust_physical_plans.go:865`)
+                    // sets a FRESH StatsInfo: RowCount + StatsVersion only --
+                    // "NDV would not be used in cost computation of IndexJoin, set
+                    // leave it as default nil". No HistColl survives, so the v2
+                    // row size prices the probe reader from type widths; keeping
+                    // the scaled table stats here made probe_row_size diverge
+                    // (q50: 78.92 vs go's 40) and flipped IndexJoin to
+                    // IndexHashJoin.
+                    stats = Some(
+                        crate::stats_info::StatsInfo::new(runtime_rows, []).with_stats_version(
+                            ds.base
+                                .base
+                                .stats_info()
+                                .map_or(0, |stats| stats.stats_version()),
+                        ),
+                    );
                 }
                 base.base.set_stats(stats.clone());
                 let table_range_rebuild = if table_access_conds.is_empty() {
