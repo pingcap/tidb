@@ -6866,7 +6866,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                             existing.info.name.original()
                         ),
                         warnings: vec![(
-                            DdlWarningLevel::Warning,
+                            DdlWarningLevel::Note,
                             1007,
                             format!("Can't create database '{}'; database exists", name),
                         )],
