@@ -274,34 +274,21 @@ func TestDropPartitionOfASystemTable(t *testing.T) {
 }
 
 func TestExchangePartitionWithASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
-	h := do.StatsHandle()
 	testKit.MustExec("use test")
-	// Test exchange partition with a system table.
+	// Exchanging a partition with a system table is rejected by the EXCHANGE
+	// PARTITION system-table guard, so the stats path that used to follow this
+	// exchange is no longer reachable through a system table.
 	testKit.MustExec("create table t (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6))")
 	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
-	// Insert some data to table t.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
-	// Analyze table t.
 	testKit.MustExec("analyze table t")
-	// Insert some data to table mysql.test.
 	testKit.MustExec("insert into mysql.test values (1,2),(2,2)")
-	// Exchange partition.
-	testKit.MustExec("alter table t exchange partition p0 with table mysql.test")
-	// Find the exchange partition event.
-	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err := h.HandleDDLEvent(exchangePartitionEvent)
-	require.NoError(t, err)
-	is := do.InfoSchema()
-	require.Nil(t, h.Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	require.NoError(t, err)
-	statsTbl := h.GetTableStats(tableInfo)
-	// NOTE: This is a rare case and the effort required to address it outweighs the benefits, hence it is not prioritized for a fix.
-	require.False(t, statsTbl.Pseudo, "even we skip the DDL event, but the table ID is still changed, so we can see the stats")
+	// Exchange partition with a system table must be rejected.
+	err := testKit.ExecToErr("alter table t exchange partition p0 with table mysql.test")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Exchange partition on system table 'mysql.test'")
 }
 
 func TestRemovePartitioningOfASystemTable(t *testing.T) {
