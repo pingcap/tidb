@@ -1164,6 +1164,9 @@ func TestTraffic(t *testing.T) {
 	}
 }
 
+// TestBuildAdminAlterDDLJobPlan verifies that `admin alter ddl jobs` statements build an
+// AlterDDLJob plan carrying the requested job ID and options (thread, batch size and max write
+// speed, including several options in one statement), and that an unknown option is rejected.
 func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	parser := parser.New()
 	sctx := coretestsdk.MockContext()
@@ -1252,6 +1255,9 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	require.Equal(t, err.Error(), "unsupported admin alter ddl jobs config: aaa")
 }
 
+// TestBuildGrantProxyUnsupported verifies that building a GRANT PROXY statement reports
+// ErrNotSupportedYet with the standard "not supported" message, instead of leaking the internal
+// AST type through ErrUnsupportedType.
 func TestBuildGrantProxyUnsupported(t *testing.T) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt("GRANT PROXY ON 'proxy_base'@'%' TO 'proxy_target'@'%'", "", "")
@@ -1264,6 +1270,9 @@ func TestBuildGrantProxyUnsupported(t *testing.T) {
 	require.EqualError(t, err, "[planner:1235]This version of TiDB doesn't yet support 'GRANT PROXY'")
 }
 
+// TestGetMaxWriteSpeedFromExpression verifies that the max write speed option of an
+// `admin alter ddl jobs` plan is converted back to the byte size it was built from, and that a
+// value which is not a valid size returns an explicit parse error.
 func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	parser := parser.New()
 	sctx := coretestsdk.MockContext()
