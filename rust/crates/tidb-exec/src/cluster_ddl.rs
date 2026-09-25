@@ -1944,7 +1944,7 @@ fn lower_alter_add_index(
         }
         IndexConstraintKind::Fulltext => {
             return Err(DdlAdmissionError::unsupported(
-                "ALTER TABLE ADD FULLTEXT is not supported by this node",
+                "FULLTEXT index is only supported in starter deployment mode",
             ))
         }
         IndexConstraintKind::Vector => {
