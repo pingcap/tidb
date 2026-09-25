@@ -408,6 +408,9 @@ impl DataSource {
                 crate::pushdown::can_exprs_push_down_tikv(std::slice::from_ref(predicate))
             });
         self.pushed_down_conds = pushable;
+        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+            eprintln!("DSPUSH table={} conds={}", self.table_name, self.pushed_down_conds.len());
+        }
         not_pushable
     }
 

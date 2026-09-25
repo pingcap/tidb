@@ -1414,6 +1414,11 @@ struct PredicatePushDown<'a, 'ctx> {
     ctx: &'a RuleContext<'ctx>,
     failure: RewriteFailure,
     stash: Vec<PendingPredicates>,
+    /// The CTE classes encountered during the walk: the deferred seed
+    /// predicate pushdown folds each seed's logical plan with the consumer
+    /// predicates accumulated on the class (GO's deferred CTE seed
+    /// optimization consumes `cteClass.PushDownPredicates`).
+    cte_classes: Vec<std::rc::Rc<std::cell::RefCell<crate::logical::cte::CteClass>>>,
 }
 
 impl OwnedRewrite for PredicatePushDown<'_, '_> {
@@ -1672,6 +1677,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 let decision = op.predicate_push_down(&predicates);
                 let mut seed_predicates: Option<Vec<Expression>> = None;
                 if let Some(class) = &op.cte {
+                    self.cte_classes.push(class.clone());
                     let mut class = class.borrow_mut();
                     let recorded = match decision {
                         CtePredicatePushDown::Unsupported => None,
@@ -1701,11 +1707,17 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                         class.push_down_predicates.push(recorded);
                     }
                 }
-                match seed_predicates {
+                match &seed_predicates {
                     // Descend into the seed so its operators push the copied
                     // predicates down to the datasources.
-                    Some(translated) => Descend::Children(vec![translated]),
-                    None => Descend::Stop(predicates),
+                    Some(translated) => {
+                        eprintln!("CTEPUSH boundary: {} preds into seed", translated.len());
+                        Descend::Children(vec![translated.clone()])
+                    }
+                    None => {
+                        eprintln!("CTEPUSH boundary skipped");
+                        Descend::Stop(predicates)
+                    }
                 }
             }
             // Go's base body: everything goes to `children[0]`, nothing comes
@@ -1831,8 +1843,28 @@ pub fn predicate_push_down(
         ctx,
         failure: RewriteFailure::default(),
         stash: Vec::new(),
+        cte_classes: Vec::new(),
     };
     let (plan, remaining) = fold_owned(&mut rewrite, plan, predicates);
+    // The deferred CTE seed predicate pushdown: the consumer predicates
+    // above the CTE references are folded INTO the seed subtrees (GO's
+    // deferred CTE seed optimization consumes the accumulated consumer
+    // predicates -- q1's seed-scan Selection carries the consumer
+    // not(isnull()) conditions).
+    for class_rc in &rewrite.cte_classes {
+        let (predicates, seed_plan) = {
+            let class = class_rc.borrow();
+            if class.push_down_predicates.is_empty() {
+                continue;
+            }
+            let Some(seed_plan) = class.seed_part_logical_plan.as_deref().cloned() else {
+                continue;
+            };
+            (class.push_down_predicates.clone(), seed_plan)
+        };
+        let (pushed_seed, _, _) = predicate_push_down(ctx, seed_plan, predicates);
+        class_rc.borrow_mut().seed_part_logical_plan = Some(Box::new(pushed_seed));
+    }
     (plan, remaining, rewrite.failure.take())
 }
 
