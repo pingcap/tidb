@@ -1269,7 +1269,15 @@ fn cast_to_time_value(
         if matches!(v, Datum::String(_) | Datum::Bytes(_)) {
             invalid_time_warning(ctx, &s);
         } else {
-            let signed = v.to_i64().map(|converted| format!("{}", converted.value)).unwrap_or_else(|_| s.clone());
+            // go ParseTimeFromNum consumes the number's INT64 WRAP: a u64
+            // overflow wraps to -1 (not the saturating i64::MAX).
+            let signed = match v {
+                Datum::UInt(n) => format!("{}", *n as i64),
+                _ => v
+                    .to_i64()
+                    .map(|converted| format!("{}", converted.value))
+                    .unwrap_or_else(|_| s.clone()),
+            };
             ctx.append_warning(1292, &format!("Incorrect time value: '{signed}'"));
         }
         return Ok(None);
