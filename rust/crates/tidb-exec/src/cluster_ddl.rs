@@ -8945,7 +8945,18 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 && from_table.eq_ignore_ascii_case(&to_table)
             {
                 // go accepts a same-name rename as a no-op DDL job: the
-                // table is renamed to itself, no catalog writes needed.
+                // table is renamed to itself, no catalog writes needed. The
+                // table must still exist — go resolves through
+                // `getSchemaAndTableByIdent` and answers 1146 when it does
+                // not, even though nothing would be renamed.
+                let exists = find_database(&catalog, from_schema)
+                    .is_some_and(|database| find_table(database, from_table).is_some());
+                if !exists {
+                    return Err(DdlPlanError::TableNotExists {
+                        schema: from_schema.clone(),
+                        table: from_table.clone(),
+                    });
+                }
             } else {
                 let pair = RenameTablePair {
                     from_schema: from_schema.clone(),
