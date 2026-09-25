@@ -684,6 +684,30 @@ impl SysVarDef {
         // and the two range guards are dead (an `&&` over contradictory
         // predicates) plus a runtime-tuner comparison whose tuner reads 0
         // until startup sets it, so neither can reject here.
+        // go's ddl-owner sync refuses DISABLING the owner
+        // (ErrDDLSetting, 8246) for either scope.
+        if self.name == "tidb_enable_ddl" && (value.eq_ignore_ascii_case("OFF") || value == "0") {
+            return Err(ValidationError::SqlError(SqlError::new_f(
+                tidb_error::tidb::errcode::ErrDDLSetting,
+                "Error happened when disabling DDL: can not disable ddl owner when it is the only one tidb instance",
+                &[],
+                &[],
+            )));
+        }
+        // go: the trace-event pipeline is TiDB-X-only; a classic kernel
+        // answers bare 1105 for every assignment.
+        if self.name == "tidb_trace_event" {
+            return Err(ValidationError::Refused(
+                "can only be set for TiDB X kernel".to_owned(),
+            ));
+        }
+        // go `ValidateGetOriginValue` parses the trigger as a float and
+        // surfaces strconv's own error verbatim (1105).
+        if self.name == "tidb_server_memory_limit_gc_trigger" && value.parse::<f64>().is_err() {
+            return Err(ValidationError::Refused(format!(
+                "strconv.ParseFloat: parsing {value:?}: invalid syntax"
+            )));
+        }
         if self.name == "tidb_gogc_tuner_threshold" {
             let float_value = value.parse::<f64>().unwrap_or(0.6);
             return Ok(Validated {
