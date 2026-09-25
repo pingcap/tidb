@@ -2866,6 +2866,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .min(base_stats.row_count());
                     }
                 }
+                let mut runtime_probe_filtered_rows: Option<f64> = None;
                 let mut stats = table_stats.as_ref().map(|stats| {
                     stats.scale_by_expect_cnt(
                         count_after_access.unwrap_or_else(|| stats.row_count()),
@@ -2906,7 +2907,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     if prop.index_join_prop.is_none() || residual_table_filters.is_empty() {
                         1.0
                     } else {
-                        table_stats
+                        #[allow(unused_variables)]
+                        let probe_selectivity = table_stats
                             .as_ref()
                             .and_then(|stats| {
                                 if ds.table_scan_penalty.pseudo_stats {
@@ -2927,7 +2929,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 }
                             })
                             .filter(|value| *value > 0.0)
-                            .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
+                            .unwrap_or(crate::cost_factors::SELECTION_FACTOR);
+                    if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                        eprintln!(
+                            "Q91SEL table={} pseudo={} probe_selectivity={} residual={} expected_cnt={}",
+                            ds.table_name,
+                            ds.table_scan_penalty.pseudo_stats,
+                            probe_selectivity,
+                            residual_table_filters.len(),
+                            prop.expected_cnt
+                        );
+                    }
+                    probe_selectivity
                     };
                 if let Some(runtime) = &prop.index_join_prop {
                     // Go `constructDS2TableScanTask`: the runtime row count is
@@ -2943,6 +2956,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     if index_join_path_is_max_one_row(ds, path, runtime) {
                         runtime_rows = runtime_rows.min(1.0);
                     }
+                    // GO `constructDS2TableScanTask`'s tail:
+                    // `selStats := ts.StatsInfo().Scale(vars, selectivity)` —
+                    // the pushed-down Selection's profile is the scan's fresh
+                    // stats scaled by the SAME table-HistColl selectivity, and
+                    // `addPushedDownSelection4PhysicalTableScan` pins the
+                    // Selection to it. Re-deriving the conditions over the
+                    // hist-less fresh stats produced junk (q91: 0.03 vs go's
+                    // 1903.96 = 18176.52 × 0.10477).
+                    runtime_probe_filtered_rows =
+                        Some(runtime_rows * probe_selectivity);
                     // Go `constructDS2TableScanTask` (`exhaust_physical_plans.go:865`)
                     // sets a FRESH StatsInfo: RowCount + StatsVersion only --
                     // "NDV would not be used in cost computation of IndexJoin, set
@@ -3093,6 +3116,28 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         selection_base
                             .base
                             .set_schema(ds.base.base.schema().cloned());
+                        if let Some(filtered_rows) = runtime_probe_filtered_rows {
+                            // GO `constructDS2TableScanTask`'s tail pins the
+                            // probe-side Selection to
+                            // `ts.StatsInfo().Scale(vars, selectivity)` — the
+                            // fresh scan stats scaled by the SAME
+                            // table-HistColl selectivity used to build the
+                            // runtime row count. Re-deriving the conditions
+                            // over the hist-less fresh stats diverges (q91:
+                            // 0.03 vs go's 1903.96).
+                            selection_base.base.set_stats(Some(
+                                crate::stats_info::StatsInfo::new(
+                                    filtered_rows,
+                                    [],
+                                )
+                                .with_stats_version(
+                                    ds.base
+                                        .base
+                                        .stats_info()
+                                        .map_or(0, |stats| stats.stats_version()),
+                                ),
+                            ));
+                        } else {
                         selection_base
                             .base
                             .set_stats(ds.base.base.stats_info().cloned().map(|stats| {
@@ -3123,6 +3168,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                     scaled
                                 }
                             }));
+                        }
                         selection_base.set_children(vec![point]);
                         point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,

@@ -210,6 +210,25 @@ fn column_ranges_selectivity(
     Some((estimate.est / table_stats.row_count()).min(1.0))
 }
 
+/// GO `ranger.BuildColumnRange(accessConds, ..., cols[0].RetType, ...)`
+/// (`selectivity.go:821`): `Selectivity` prices eq/nulleq/in through column
+/// ranges whose constants the ranger has CONVERTED to the estimated column's
+/// type before encoding. A raw int `-7` against decimal(5,2) TopN keys misses
+/// the TopN and falls to the uniform 1/realtime estimate (q91:
+/// eq(ca_gmt_offset, -7) → 1.7e-6 vs go's 0.10477).
+fn convert_constant_to_column_type(
+    value: tidb_datatype::Datum,
+    column: &tidb_expr::column::Column,
+) -> tidb_datatype::Datum {
+    let Some(field_type) = column.ret_type.as_ref() else {
+        return value;
+    };
+    match value.convert_to(field_type, tidb_datatype::ConversionFlags::default()) {
+        Ok(converted) => converted.value,
+        Err(_) => value,
+    }
+}
+
 pub(crate) fn analyzed_filter_selectivity(
     table_stats: &StatsInfo,
     conditions: &[Expression],
@@ -328,10 +347,16 @@ pub(crate) fn analyzed_filter_selectivity(
         }
         let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
             ("eq" | "nulleq", [Expression::Column(column), Expression::Constant(value)]) => {
-                (column, vec![value.value.clone()])
+                (column, vec![convert_constant_to_column_type(
+                    value.value.clone(),
+                    column,
+                )])
             }
             ("eq" | "nulleq", [Expression::Constant(value), Expression::Column(column)]) => {
-                (column, vec![value.value.clone()])
+                (column, vec![convert_constant_to_column_type(
+                    value.value.clone(),
+                    column,
+                )])
             }
             ("in", [Expression::Column(column), values @ ..])
                 if !values.is_empty()
@@ -347,6 +372,7 @@ pub(crate) fn analyzed_filter_selectivity(
                             Expression::Constant(constant) => Some(constant.value.clone()),
                             _ => None,
                         })
+                        .map(|value| convert_constant_to_column_type(value, column))
                         .collect(),
                 )
             }
