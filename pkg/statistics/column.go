@@ -144,6 +144,7 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 		isNonInternalColumnID := cid > 0
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
+			!stmtctx.SkipStatsLoad &&
 			isNonInternalColumnID &&
 			!histColl.CanNotTriggerLoad {
 			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
