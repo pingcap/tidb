@@ -57,6 +57,36 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestRecoverStoredGeneratedIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table recover_generated (id int primary key, a int, b int, g int as (a+b) stored, e int as (a+b) virtual, key idx_g(g), key idx_e(e), key idx_mix(g,e))")
+	tk.MustQuery("admin recover index recover_generated idx_g").Check(testkit.Rows("0 0"))
+	tk.MustExec("insert into recover_generated(id,a,b) values (1,1,1),(2,null,2)")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("recover_generated"))
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	sctx.Store = store
+	for _, name := range []string{"idx_g", "idx_e", "idx_mix"} {
+		tk.MustQuery("admin recover index recover_generated " + name).Check(testkit.Rows("0 2"))
+		idx, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().FindIndexByName(name))
+		require.NoError(t, err)
+		values := types.MakeDatums(2)
+		if name == "idx_mix" {
+			values = types.MakeDatums(2, 2)
+		}
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, idx.Delete(sctx.GetTableCtx(), txn, values, kv.IntHandle(1)))
+		require.NoError(t, txn.Commit(context.Background()))
+		require.Error(t, tk.ExecToErr("admin check index recover_generated "+name))
+		tk.MustQuery("admin recover index recover_generated " + name).Check(testkit.Rows("1 2"))
+		tk.MustExec("admin check table recover_generated")
+		tk.MustQuery("admin recover index recover_generated " + name).Check(testkit.Rows("0 2"))
+	}
+}
+
 func TestAdminRecoverIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
