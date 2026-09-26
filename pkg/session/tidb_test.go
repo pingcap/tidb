@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
@@ -281,10 +284,55 @@ func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {
 	se, err := createSessionWithOpt(store, nil, nil, nil, nil)
 	require.NoError(t, err)
 
-	se.sessionVars.StmtCtx.ResourceGroupName = "default"
+	sc := se.sessionVars.StmtCtx
+	sc.ResourceGroupName = "default"
+	reporter, group := se.GetRUConsumptionReporter()
+	require.True(t, reporter == nil)
+	require.Equal(t, "default", group)
+	require.Nil(t, sc.GetDistSQLFromCache())
 
 	dctx := se.GetDistSQLCtx()
 	require.True(t, dctx.RUConsumptionReporter == nil)
+	sc.ResourceGroupName = "changed"
+	reporter, group = se.GetRUConsumptionReporter()
+	require.True(t, reporter == nil)
+	require.Equal(t, "default", group)
+
+	t.Run("session reporter binding", func(t *testing.T) {
+		reporterDomain := new(domain.Domain)
+		reportingSession := &session{sessionVars: se.sessionVars, dom: reporterDomain}
+		sc.ResetForRetry()
+		reporter, group := reportingSession.GetRUConsumptionReporter()
+		require.True(t, reporter == nil)
+		require.Equal(t, "changed", group)
+		require.Nil(t, sc.GetDistSQLFromCache())
+
+		controller := new(rmclient.ResourceGroupsController)
+		reporterDomain.SetResourceGroupsController(controller)
+		reporter, group = reportingSession.GetRUConsumptionReporter()
+		require.Same(t, controller, reporter)
+		require.Equal(t, "changed", group)
+		require.Nil(t, sc.GetDistSQLFromCache())
+
+		for _, cached := range []*distsqlctx.DistSQLContext{
+			{RUConsumptionReporter: controller, ResourceGroupName: "bound"},
+			{RUConsumptionReporter: controller},
+			{ResourceGroupName: "bound"},
+			{},
+		} {
+			sc.ResetForRetry()
+			sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext { return cached })
+			reporterDomain.SetResourceGroupsController(new(rmclient.ResourceGroupsController))
+			reporter, group = reportingSession.GetRUConsumptionReporter()
+			if cached.RUConsumptionReporter == nil {
+				require.True(t, reporter == nil)
+			} else {
+				require.Same(t, cached.RUConsumptionReporter, reporter)
+			}
+			require.Equal(t, cached.ResourceGroupName, group)
+			require.Same(t, cached, sc.GetDistSQLFromCache())
+		}
+	})
 }
 
 func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) {

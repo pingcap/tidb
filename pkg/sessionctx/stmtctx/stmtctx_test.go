@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -476,6 +477,35 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 }
 
 func TestResetStmtCtx(t *testing.T) {
+	t.Run("DistSQL cache lifecycle", func(t *testing.T) {
+		sc := stmtctx.NewStmtCtx()
+		require.Nil(t, sc.GetDistSQLFromCache())
+		created := 0
+		create := func() *distsqlctx.DistSQLContext {
+			created++
+			return &distsqlctx.DistSQLContext{TaskID: sc.TaskID}
+		}
+		first := sc.GetOrInitDistSQLFromCache(create)
+		require.Same(t, first, sc.GetDistSQLFromCache())
+		require.Same(t, first, sc.GetOrInitDistSQLFromCache(create))
+		require.Equal(t, 1, created)
+
+		sc.ResetForRetry()
+		require.Nil(t, sc.GetDistSQLFromCache())
+		second := sc.GetOrInitDistSQLFromCache(create)
+		require.NotSame(t, first, second)
+		require.Equal(t, sc.TaskID, second.TaskID)
+		require.Same(t, second, sc.GetDistSQLFromCache())
+		require.Equal(t, 2, created)
+
+		require.True(t, sc.Reset())
+		require.Nil(t, sc.GetDistSQLFromCache())
+		third := sc.GetOrInitDistSQLFromCache(create)
+		require.NotSame(t, second, third)
+		require.Same(t, third, sc.GetDistSQLFromCache())
+		require.Equal(t, 3, created)
+	})
+
 	sc := stmtctx.NewStmtCtx()
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -239,6 +240,11 @@ func (c *Context) GetExprCtx() exprctx.ExprContext {
 // GetTableCtx returns the table.MutateContext
 func (c *Context) GetTableCtx() tblctx.MutateContext {
 	return c.tblctx
+}
+
+// GetRUConsumptionReporter returns the statement's resource group without a reporter.
+func (c *Context) GetRUConsumptionReporter() (resourcegroup.ConsumptionReporter, string) {
+	return nil, c.GetSessionVars().StmtCtx.ResourceGroupName
 }
 
 // GetDistSQLCtx returns the distsql context of the session

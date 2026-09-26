@@ -13,6 +13,7 @@ go_library(
         "//pkg/kv",
         "//pkg/lock/context",
         "//pkg/planner/planctx",
+        "//pkg/resourcegroup",
         "//pkg/session/cursor",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx/sessionstates",
