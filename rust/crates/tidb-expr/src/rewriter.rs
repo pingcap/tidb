@@ -703,10 +703,7 @@ fn binary_expression(
                         // collapses to `0`. Fold the cast first: the wrapper
                         // fold requires all-constant arguments.
                         let mut cast = crate::simple_expr::build_cast_function(
-                            std::mem::replace(
-                                argument,
-                                Expression::Constant(Constant::new_null()),
-                            ),
+                            std::mem::replace(argument, Expression::Constant(Constant::new_null())),
                             crate::expr_util::builder::double_field_type(),
                             false,
                         )?;
@@ -2004,7 +2001,37 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     | "json_merge_preserve"
                     | "json_merge_patch"
             ) {
-                if let Some(Expr::Column(path)) = args.first() {
+                if matches!(
+                        args[0],
+                        Expr::Int(_)
+                            | Expr::Decimal(_)
+                            | Expr::Float(_)
+                            | Expr::String(_)
+                            | Expr::RawString(_)
+                            | Expr::Bit(_)
+                    ) {
+                        let numeric_doc = matches!(
+                            args[0],
+                            Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::Bit(_)
+                        );
+                        if numeric_doc {
+                            let function: &'static str = match lowered.as_str() {
+                                "json_extract" => "json_extract",
+                                "json_set" => "json_set",
+                                "json_insert" => "json_insert",
+                                "json_replace" => "json_replace",
+                                "json_remove" => "json_remove",
+                                "json_merge" => "json_merge",
+                                "json_merge_preserve" => "json_merge_preserve",
+                                _ => "json_merge_patch",
+                            };
+                            return Err(EvalError::Json(JsonError::InvalidTypeForJson {
+                                argument: 1,
+                                function,
+                            }));
+                        }
+                    }
+            if let Some(Expr::Column(path)) = args.first() {
                     if let Some((_, doc_type, _)) = resolver.resolve(path) {
                         let code = doc_type.code();
                         if code != FieldTypeCode::Json && !code.is_string() {
@@ -2026,7 +2053,62 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     }
                 }
             }
-            let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
+            // go's JSON signature classes validate a CONSTANT path argument
+                // at build time (`ParseJSONPathExpr` in `getFunction`): a constant
+                // document paired with a constant path fails the BUILD with the
+                // classed 3143 (`JSON_EXTRACT('[1,2,3]', '$[1 TO 2]')` errors
+                // before any row), while a column document defers the invalid
+                // path to the execution wrap (1105) -- the doc argument's kind
+                // decides the tier.
+                if matches!(
+                    lowered.as_str(),
+                    "json_extract" | "json_set" | "json_insert" | "json_replace" | "json_remove"
+                ) && args.len() >= 2
+                {
+                    eprintln!("[DBG-JSONEAGER] fired for {} args={}", lowered, args.len());
+                    let literal = |expression: &Expr| {
+                        matches!(
+                            expression,
+                            Expr::Int(_)
+                                | Expr::Decimal(_)
+                                | Expr::Float(_)
+                                | Expr::String(_)
+                                | Expr::RawString(_)
+                        )
+                    };
+                    if literal(&args[0]) && literal(&args[1]) {
+                        let path_text = match &args[1] {
+                            Expr::Int(text)
+                            | Expr::Decimal(text)
+                            | Expr::String(text)
+                            | Expr::RawString(text) => text.clone(),
+                            Expr::Float(f) => f.to_string(),
+                            _ => unreachable!("literal() gated the arm"),
+                        };
+                        if let Err(EvalError::Json(JsonError::InvalidPath(position))) =
+                            crate::builtin_ext::json::parse_path(&path_text)
+                        {
+                            // go's build-time path check surfaces the CLASSed
+                            // terror (3143) -- the statement fails before any
+                            // row -- while the execution wrap for a column doc
+                            // answers the generic 1105. The registered form
+                            // carries the types:3143 identity, so the wire keeps
+                            // 3143 instead of the shared JsonError mapping's
+                            // 1105.
+                            return Err(EvalError::Conversion(
+                                tidb_error::terror::TerrorError::registered(
+                                    tidb_error::terror::TerrorClass::Types,
+                                    tidb_error::terror::TerrorCode::new(3143),
+                                    format!(
+                                    "Invalid JSON path expression. The error is around character \
+                                     position {position}."
+                                ),
+                                ),
+                            ));
+                        }
+                    }
+                }
+                let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             if lowered == "name_const" {
                 validate_name_const_args(args)?;
             }
@@ -2143,6 +2225,43 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                         _ => rewrite_expr_resolved(arg, &child_resolver),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // go's charFunctionClass.getFunction validates the charset
+                // argument at build time: an unknown name fails the plan with
+                // the bare 1105 `Unknown charset <name>`, AFTER the argument
+                // casts' own truncation warnings reached the statement buffer
+                // (oracle: CHAR('中文测试', 'ünïcödé') keeps the 1292 row
+                // beside the 1105).
+                if let Some(Expression::Constant(constant)) = rewritten.last() {
+                    if !constant.value.is_null() {
+                        if let Ok(charset) = constant.value.sql_string() {
+                            let lowered_charset = charset.to_ascii_lowercase();
+                            if tidb_datatype::get_default_collation(&lowered_charset).is_err() {
+                                // go's build-time arg casts warn BEFORE the
+                                // charset check fails the plan (oracle:
+                                // CHAR('中文测试', 'ünïcödé') keeps the 1292
+                                // truncation row beside the 1105). The plan
+                                // fails here, so the constant code-point casts'
+                                // warnings stash for the error door's drain --
+                                // the successful path re-warns at evaluation,
+                                // which is why this branch stashes instead.
+                                let stash = crate::constant_fold::FoldWarningContext::new(
+                                    resolver.time_zone(),
+                                );
+                                for code_point in &rewritten[..rewritten.len() - 1] {
+                                    if let Expression::Constant(constant) = code_point {
+                                        let _ = crate::cast::report_int_truncation(
+                                            &constant.value,
+                                            &stash,
+                                        );
+                                    }
+                                }
+                                return Err(EvalError::Unsupported(Box::leak(
+                                    format!("Unknown charset {lowered_charset}").into_boxed_str(),
+                                )));
+                            }
+                        }
+                    }
+                }
                 let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
                     EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
                 )?;

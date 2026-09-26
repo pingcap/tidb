@@ -82,7 +82,7 @@ pub(super) enum ArraySelection {
 
 /// Parses TiDB's JSON path grammar.  The argument is already a Rust `str`,
 /// so its runes have the same Unicode-level behavior as Go's `[]rune` parser.
-pub(super) fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
+pub(crate) fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
     let chars: Vec<char> = input.chars().collect();
     let mut cursor = 0;
     skip_space(&chars, &mut cursor);

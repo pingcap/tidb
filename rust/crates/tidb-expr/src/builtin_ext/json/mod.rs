@@ -66,7 +66,7 @@ use crate::{Datum, EvalError};
 use tidb_datatype::FieldType;
 
 pub(crate) use modify::parse_json_modify_paths;
-pub(crate) use path::JsonPath;
+pub(crate) use path::{parse_path, JsonPath};
 pub(crate) use report::JsonSchemaCache;
 pub(crate) use value::{
     cast_as_json, cast_as_json_typed, cast_as_json_value_typed, parse_json_document_argument,
