@@ -1,0 +1,44 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "residual",
+    srcs = [
+        "monitor.go",
+        "scan.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ingestor/globalsort/residual",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ingestor/simplesst",
+        "//pkg/metrics",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "//pkg/parser/ast",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "residual_test",
+    timeout = "short",
+    srcs = [
+        "monitor_lifecycle_test.go",
+        "monitor_test.go",
+        "scan_test.go",
+    ],
+    embed = [":residual"],
+    flaky = True,
+    shard_count = 7,
+    deps = [
+        "//pkg/metrics",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
+    ],
+)

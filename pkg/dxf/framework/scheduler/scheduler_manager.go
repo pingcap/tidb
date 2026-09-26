@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort/residual"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -102,6 +103,11 @@ func (sm *Manager) getSchedulers() []Scheduler {
 	return slices.Clone(sm.mu.schedulers)
 }
 
+type residualMonitor interface {
+	Request()
+	Stop()
+}
+
 // Manager manage a bunch of schedulers.
 // Scheduler schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
@@ -119,6 +125,7 @@ type Manager struct {
 	// serverID, it's value is ip:port now.
 	serverID string
 	logger   *zap.Logger
+	residual residualMonitor
 
 	finishCh chan struct{}
 
@@ -157,6 +164,17 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			serverID: serverID,
 		}),
 		logger: logger,
+		residual: residual.NewMonitor(subCtx, residual.Config{
+			Enabled: kerneltype.IsNextGen(),
+			TaskCount: func(ctx context.Context) (int, error) {
+				tasks, err := taskMgr.GetAllTasks(ctx)
+				return len(tasks), err
+			},
+			StorageURI: func(ctx context.Context) string {
+				return handle.GetCloudStorageURI(ctx, store)
+			},
+			Logger: logger,
+		}),
 		// finishCh must be able to buffer finish signals for the largest runtime
 		// value of maxConcurrentTask. Otherwise, raising the limit after startup
 		// can make non-blocking sends drop signals until the cleanup ticker runs.
@@ -201,6 +219,7 @@ func (sm *Manager) Cancel() {
 // Stop the schedulerManager.
 func (sm *Manager) Stop() {
 	sm.cancel()
+	sm.residual.Stop()
 	sm.schedulerWG.Wait()
 	sm.wg.Wait()
 	sm.clearSchedulers()
@@ -411,6 +430,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 func (sm *Manager) cleanTaskLoop() {
 	sm.logger.Info("cleanup loop start")
 	sm.drainCleanTaskBatches()
+	sm.residual.Request()
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -422,6 +442,7 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
+			sm.residual.Request()
 		}
 	}
 }

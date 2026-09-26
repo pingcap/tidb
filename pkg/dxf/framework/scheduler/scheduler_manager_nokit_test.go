@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -528,11 +529,18 @@ func TestSchedulerCleanTask(t *testing.T) {
 		loopCtx, cancel := context.WithCancel(context.Background())
 		mgr := NewManager(loopCtx, nil, taskMgr, "1", proto.NodeResourceForTest)
 		cleanupStarted := make(chan struct{})
+		monitorStarted := make(chan struct{})
 		loopDone := make(chan struct{})
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).DoAndReturn(func(context.Context) ([]*proto.Task, error) {
 			close(cleanupStarted)
 			return nil, nil
 		})
+		if kerneltype.IsNextGen() {
+			taskMgr.EXPECT().GetAllTasks(mgr.ctx).DoAndReturn(func(context.Context) ([]*proto.TaskBase, error) {
+				close(monitorStarted)
+				return []*proto.TaskBase{{ID: 1}}, nil
+			})
+		}
 		go func() {
 			defer close(loopDone)
 			mgr.cleanTaskLoop()
@@ -543,14 +551,138 @@ func TestSchedulerCleanTask(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("cleanup task loop did not run immediately")
 		}
+		if kerneltype.IsNextGen() {
+			select {
+			case <-monitorStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("cleanup task loop did not request the residual monitor")
+			}
+		}
 		cancel()
 		select {
 		case <-loopDone:
 		case <-time.After(3 * time.Second):
 			t.Fatal("cleanup task loop did not stop")
 		}
+		mgr.wg.Wait()
 		require.True(t, ctrl.Satisfied())
 	})
+}
+
+type fakeResidualMonitor struct {
+	mu        sync.Mutex
+	requests  int
+	stopCount int
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func (m *fakeResidualMonitor) Request() {
+	m.mu.Lock()
+	m.requests++
+	if m.started != nil {
+		select {
+		case m.started <- struct{}{}:
+		default:
+		}
+	}
+	m.mu.Unlock()
+}
+
+func (m *fakeResidualMonitor) Stop() {
+	m.mu.Lock()
+	m.stopCount++
+	m.mu.Unlock()
+	if m.release != nil {
+		<-m.release
+	}
+}
+
+func (m *fakeResidualMonitor) requestCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.requests
+}
+
+func (m *fakeResidualMonitor) stopped() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stopCount
+}
+
+func TestManagerStopResidualMonitor(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("residual monitoring is only enabled in NextGen")
+	}
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	loopCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	mgr := NewManager(loopCtx, nil, taskMgr, "1", proto.NodeResourceForTest)
+	monitor := &fakeResidualMonitor{
+		started: make(chan struct{}, 8),
+		release: make(chan struct{}),
+	}
+	mgr.residual = monitor
+	taskMgr.EXPECT().GetCleanupTasks(gomock.Any()).Return(nil, nil).AnyTimes()
+
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		mgr.cleanTaskLoop()
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-monitor.release:
+		default:
+			close(monitor.release)
+		}
+		cancel()
+		select {
+		case <-loopDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("cleanup task loop did not stop")
+		}
+	})
+
+	select {
+	case <-monitor.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup task loop did not request the residual monitor")
+	}
+
+	stopDone := make(chan struct{})
+	go func() {
+		mgr.Stop()
+		close(stopDone)
+	}()
+	select {
+	case <-mgr.ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("manager was not canceled")
+	}
+	select {
+	case <-stopDone:
+		t.Fatal("manager stopped before residual monitor Stop returned")
+	case <-time.After(100 * time.Millisecond):
+	}
+	require.Equal(t, 1, monitor.stopped())
+
+	select {
+	case <-monitor.started:
+		t.Fatal("cleanup loop requested residual monitor after Stop")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(monitor.release)
+	select {
+	case <-stopDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("manager did not stop after residual monitor Stop returned")
+	}
+	require.Equal(t, 1, monitor.requestCount())
 }
 
 func TestSchedulerCleanFinishedTasks(t *testing.T) {

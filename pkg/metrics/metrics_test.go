@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	_ "github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,9 +30,26 @@ func TestMetrics(_ *testing.T) {
 	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
 }
 
-func TestRegisterMetrics(_ *testing.T) {
-	// Make sure it doesn't panic.
+func TestRegisterMetrics(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	defaultRegisterer := prometheus.DefaultRegisterer
+	defaultGatherer := prometheus.DefaultGatherer
+	prometheus.DefaultRegisterer = registry
+	prometheus.DefaultGatherer = registry
+	t.Cleanup(func() {
+		prometheus.DefaultRegisterer = defaultRegisterer
+		prometheus.DefaultGatherer = defaultGatherer
+	})
+
 	metrics.RegisterMetrics()
+	families, err := registry.Gather()
+	require.NoError(t, err)
+	for _, family := range families {
+		if family.GetName() == "tidb_global_sort_residual_data_size_bytes" {
+			return
+		}
+	}
+	require.Fail(t, "tidb_global_sort_residual_data_size_bytes is not registered")
 }
 
 func TestExecuteErrorToLabel(t *testing.T) {
