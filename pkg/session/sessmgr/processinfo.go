@@ -15,7 +15,6 @@
 package sessmgr
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net"
 	"strings"
@@ -276,7 +275,7 @@ type Manager interface {
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool)
 	KillAllConnections()
-	UpdateTLSConfig(cfg *tls.Config)
+	ReloadTLS(noRollbackOnError bool) error
 	ServerID() uint64
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
