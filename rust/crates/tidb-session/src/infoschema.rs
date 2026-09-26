@@ -297,6 +297,42 @@ pub fn table_rows(
     if name.eq_ignore_ascii_case("CHARACTER_SETS") {
         return Some(character_sets_rows());
     }
+    if name.eq_ignore_ascii_case("ENGINES") {
+        return Some(engines_rows());
+    }
+    if name.eq_ignore_ascii_case("TRIGGERS") {
+        return Some(triggers_rows());
+    }
+    if name.eq_ignore_ascii_case("ROUTINES") {
+        return Some(routines_rows());
+    }
+    if name.eq_ignore_ascii_case("EVENTS") {
+        return Some(events_rows());
+    }
+    if name.eq_ignore_ascii_case("INSPECTION_RESULT") {
+        return Some(inspection_result_rows());
+    }
+    if name.eq_ignore_ascii_case("PARAMETERS") {
+        return Some(parameters_rows());
+    }
+    if name.eq_ignore_ascii_case("PLUGINS") {
+        return Some(plugins_rows());
+    }
+    if name.eq_ignore_ascii_case("SEQUENCES") {
+        return Some(sequences_rows());
+    }
+    if name.eq_ignore_ascii_case("RUNAWAY_WATCHES") {
+        return Some(runaway_watches_rows());
+    }
+    if name.eq_ignore_ascii_case("TIFLASH_TABLES") {
+        return Some(tiflash_tables_rows());
+    }
+    if name.eq_ignore_ascii_case("TIFLASH_SEGMENTS") {
+        return Some(tiflash_segments_rows());
+    }
+    if name.eq_ignore_ascii_case("RESOURCE_GROUPS") {
+        return Some(resource_groups_rows());
+    }
     if name.eq_ignore_ascii_case("COLLATIONS") {
         return Some(collations_rows());
     }
@@ -1641,6 +1677,75 @@ fn character_sets_rows() -> Vec<Vec<Datum>> {
             vec![text(name), text(collation), text(desc), Datum::Int(maxlen)]
         })
         .collect()
+}
+
+fn engines_rows() -> Vec<Vec<Datum>> {
+    // go `setDataForEngines`: the single InnoDB engine row this tier serves.
+    vec![vec![
+        text("InnoDB"),
+        text("DEFAULT"),
+        text("Supports transactions, row-level locking, and foreign keys"),
+        text("YES"),
+        text("YES"),
+        text("YES"),
+    ]]
+}
+
+/// No triggers exist in this tier: the table serves its schema with zero
+/// rows, exactly as go's empty `infoschema.readerBuilder` result does.
+fn triggers_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+/// No stored routines exist in this tier.
+fn routines_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+/// No events exist in this tier.
+fn events_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+fn inspection_result_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+fn parameters_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+fn plugins_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+fn sequences_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+fn runaway_watches_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+fn tiflash_tables_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+fn tiflash_segments_rows() -> Vec<Vec<Datum>> {
+    Vec::new()
+}
+
+/// go `SetResourceGroups`: the single `default` resource group row this tier
+/// serves (RU_PER_SEC/QUERY_LIMIT render as the UNLIMITED spellings).
+fn resource_groups_rows() -> Vec<Vec<Datum>> {
+    vec![vec![
+        text("default"),
+        text("UNLIMITED"),
+        text("MEDIUM"),
+        text("UNLIMITED"),
+        Datum::Null,
+        Datum::Null,
+    ]]
 }
 
 /// Go `setDataFromCollations` (`infoschema_reader.go:1815`): IS_COMPILED is

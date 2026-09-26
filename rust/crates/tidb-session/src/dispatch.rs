@@ -674,6 +674,23 @@ impl Session {
                 memory_usage_table_rows()
             } else if table_name.eq_ignore_ascii_case("MEMORY_USAGE_OPS_HISTORY") {
                 tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
+            } else if table_name.eq_ignore_ascii_case("TIKV_STORE_STATUS") {
+                // go's `TiKVStoreStatusRetriever` fails its PD fetch without
+                // a PD endpoint: the statement errors 1105 'pd http client
+                // unavailable' (oracle-captured). The Eval wrap marks the
+                // error evaluation-origin, which the statement completion
+                // door treats as buffer-invisible.
+                return Err(DriverError::Exec(tidb_executor::ExecError::Eval(
+                    tidb_executor::EvalError::Unsupported("pd http client unavailable"),
+                )));
+            } else if table_name.eq_ignore_ascii_case("CLUSTER_LOG") {
+                // go `ClusterLogRetriever`: the log scan requires an explicit
+                // start time and errors 1105 without one (oracle-captured).
+                return Err(DriverError::Exec(tidb_executor::ExecError::Eval(
+                    tidb_executor::EvalError::Unsupported(
+                        "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`",
+                    ),
+                )));
             } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
                 if !self.has_process_privilege() {
                     return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
