@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1300,6 +1301,82 @@ func initRewriteRules() *restoreutils.RewriteRules {
 func keyWithTablePrefix(tableID int64, key string) []byte {
 	rawKey := append(tablecodec.GenTableRecordPrefix(tableID), []byte(key)...)
 	return codec.EncodeBytes([]byte{}, rawKey)
+}
+
+type pipelineScanFailureClient struct {
+	*FakeSplitClient
+	failFrom     []byte
+	splitStarted chan struct{}
+	splitExited  chan struct{}
+}
+
+func (c *pipelineScanFailureClient) ScanRegions(ctx context.Context, start, end []byte, limit int, opts ...opt.GetRegionOption) ([]*RegionInfo, error) {
+	if bytes.Compare(start, c.failFrom) >= 0 {
+		select {
+		case <-c.splitStarted:
+			return nil, errors.New("injected scan failure")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	regions, err := c.FakeSplitClient.ScanRegions(ctx, start, end, limit, opts...)
+	if len(regions) > 2 {
+		regions = regions[:2]
+	}
+	return regions, err
+}
+
+func (c *pipelineScanFailureClient) SplitWaitAndScatter(ctx context.Context, _ *RegionInfo, _ [][]byte) ([]*RegionInfo, error) {
+	close(c.splitStarted)
+	<-ctx.Done()
+	close(c.splitExited)
+	return nil, ctx.Err()
+}
+
+func TestPipelineRegionsSplitterScanErrorCleanup(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/hint-scan-region-backoff", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/hint-scan-region-backoff"))
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	client := &pipelineScanFailureClient{
+		FakeSplitClient: NewFakeSplitClient(),
+		failFrom:        keyWithTablePrefix(100, "j"),
+		splitStarted:    make(chan struct{}),
+		splitExited:     make(chan struct{}),
+	}
+	client.AppendRegion(keyWithTablePrefix(100, "a"), keyWithTablePrefix(100, "f"))
+	client.AppendRegion(keyWithTablePrefix(100, "f"), keyWithTablePrefix(100, "j"))
+	client.AppendRegion(keyWithTablePrefix(100, "j"), keyWithTablePrefix(100, "z"))
+	helper := NewSplitHelper()
+	for _, span := range [][2]string{{"b", "c"}, {"d", "e"}, {"g", "i"}, {"k", "l"}} {
+		helper.Merge(NewValued(keyWithTablePrefix(50, span[0]), keyWithTablePrefix(50, span[1]), Value{Size: 100, Number: 100}))
+	}
+	rules := &restoreutils.RewriteRules{Data: []*import_sstpb.RewriteRule{{
+		OldKeyPrefix: tablecodec.EncodeTablePrefix(50), NewKeyPrefix: tablecodec.EncodeTablePrefix(100),
+	}}}
+	splitter := NewPipelineRegionsSplitter(client, 50, 50).(*PipelineRegionsSplitterImpl)
+	splitter.pool = util.NewWorkerPool(1, "test-split-cleanup")
+	defer func() {
+		cancel()
+		_ = splitter.eg.Wait()
+	}()
+	err := splitter.ExecuteRegions(ctx, NewSplitHelperIterator([]*RewriteSplitter{{tableID: 100, rule: rules, splitter: helper}}))
+	require.ErrorContains(t, err, "injected scan failure")
+	select {
+	case <-client.splitExited:
+	default:
+		t.Fatal("ExecuteRegions returned before the split worker exited")
+	}
+	require.True(t, splitter.pool.HasWorker())
+	select {
+	case _, ok := <-splitter.regionsCh:
+		require.False(t, ok, "results channel must be closed")
+	default:
+		t.Fatal("results channel remains open")
+	}
+	// Reusing the splitter must not inherit pending tasks from the failed call.
+	require.NoError(t, splitter.ExecuteRegions(ctx, NewSplitHelperIterator(nil)))
 }
 
 func TestSplitPoint(t *testing.T) {
