@@ -747,8 +747,7 @@ impl PreparedSelectPlan {
                         // Go `plan_cache_lru.go` delete arm (`2pc`-style book):
                         // every dropped plan decrements the session plan-num
                         // gauge.
-                        tidb_planner::metrics::plan_cache_instance_num_counter(false)
-                            .sub(1.0);
+                        tidb_planner::metrics::plan_cache_instance_num_counter(false).sub(1.0);
                         return None;
                     }
                 }
@@ -1174,9 +1173,10 @@ pub fn build_prepared_point_get_plan(
     // Go tries the full primary/common handle first, then the first public
     // non-prefix UNIQUE index whose complete key is pinned. A partial key is
     // an ordinary range plan and belongs to the general cached physical tree.
-    let (target, pin_offsets) = if !handle_offsets.is_empty() && handle_offsets
-        .iter()
-        .all(|offset| column_pinned_once(*offset, &resolved))
+    let (target, pin_offsets) = if !handle_offsets.is_empty()
+        && handle_offsets
+            .iter()
+            .all(|offset| column_pinned_once(*offset, &resolved))
     {
         (PreparedPointTarget::RowHandle, handle_offsets.clone())
     } else {

@@ -290,6 +290,14 @@ impl ColumnResolver for ScopeResolver<'_> {
                 tidb_expr::derive_constant_null_flag(expression);
                 let minimal = crate::StmtContext::for_query();
                 tidb_expr::fold_constant_in_mode(expression, &minimal, mode);
+                // go appends the fold-time warnings to StmtCtx.warnings; the
+                // minimal context is otherwise discarded, so its warnings
+                // route through the fold stash the statement driver drains
+                // into the session buffer (captured: ADDDATE('abc', INTERVAL
+                // 1 DAY) warns `Incorrect datetime value: 'abc'`).
+                for (_level, code, message) in minimal.take_warnings() {
+                    tidb_expr::constant_fold::record_fold_warning(code, &message);
+                }
             }
             None => {}
         }

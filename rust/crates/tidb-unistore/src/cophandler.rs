@@ -4975,9 +4975,13 @@ mod tests {
     #[test]
     fn analyze_empty_ranges_return_empty_response_like_go() {
         let mut store = MvccStore::new();
-        let response = handle_cop_request(&mut store, &coprocessor::Request {
-            tp: REQ_TYPE_ANALYZE, ..Default::default()
-        });
+        let response = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_ANALYZE,
+                ..Default::default()
+            },
+        );
         assert!(response.other_error.is_empty());
         assert!(response.data.is_empty());
     }

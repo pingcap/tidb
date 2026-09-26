@@ -1476,44 +1476,77 @@ fn logical_range_quota_reaches_join_and_cte_statistics() {
 #[test]
 fn held_prepared_execution_reuses_published_digest() {
     let mut session = Session::new();
-    session.run("CREATE TABLE digest_reuse (id INT PRIMARY KEY, v INT)").unwrap();
-    session.run("INSERT INTO digest_reuse VALUES (1,10)").unwrap();
+    session
+        .run("CREATE TABLE digest_reuse (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO digest_reuse VALUES (1,10)")
+        .unwrap();
     let sql = "SELECT v FROM digest_reuse WHERE id=?";
     let prepared = session.prepare_ast(sql).unwrap();
     let registry = crate::process::ProcessRegistry::default();
-    session.attach_process(91, registry.register(91, "root".into(), "local".into(), "test".into(), None));
+    session.attach_process(
+        91,
+        registry.register(91, "root".into(), "local".into(), "test".into(), None),
+    );
     let digest = tidb_parser::normalize_digest(sql).1.to_string();
-    let hold = session.retain_process_statement_with_digest(sql, &digest).unwrap();
+    let hold = session
+        .retain_process_statement_with_digest(sql, &digest)
+        .unwrap();
     crate::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
-    let output = session.run_prepared_with_result_authority(&prepared, &[Datum::new_int(1)]).unwrap();
+    let output = session
+        .run_prepared_with_result_authority(&prepared, &[Datum::new_int(1)])
+        .unwrap();
     assert!(matches!(output.0, crate::StmtOutput::Rows { .. }));
-    assert_eq!(crate::STATEMENT_DIGEST_CALLS.with(|count| count.get()), 0,
-        "Go EXECUTE reuses the PREPARE digest already published by the server");
+    assert_eq!(
+        crate::STATEMENT_DIGEST_CALLS.with(|count| count.get()),
+        0,
+        "Go EXECUTE reuses the PREPARE digest already published by the server"
+    );
     assert_eq!(registry.snapshot()[0].info.as_deref(), Some(sql));
     drop(hold);
     assert_eq!(registry.snapshot()[0].info, None);
     crate::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
     session.run("SELECT 2").unwrap();
-    assert_eq!(crate::STATEMENT_DIGEST_CALLS.with(|count| count.get()), 1,
-        "an ordinary statement still derives its process digest exactly once");
+    assert_eq!(
+        crate::STATEMENT_DIGEST_CALLS.with(|count| count.get()),
+        1,
+        "an ordinary statement still derives its process digest exactly once"
+    );
 }
 
 #[test]
 fn nonclustered_primary_retains_prepared_point_plan() {
     let mut session = Session::new();
     session.run("CREATE TABLE ycsb_point (id VARCHAR(64) PRIMARY KEY NONCLUSTERED, v VARCHAR(100)) COLLATE utf8mb4_bin").unwrap();
-    session.run("INSERT INTO ycsb_point VALUES ('user1','one'),('user2','two')").unwrap();
+    session
+        .run("INSERT INTO ycsb_point VALUES ('user1','one'),('user2','two')")
+        .unwrap();
     let sql = "SELECT * FROM ycsb_point WHERE id=?";
     let prepared = session.prepare_ast(sql).unwrap();
-    let plan = prepared.point_get_plan().expect("Go retains PointGet for nonclustered unique primary keys");
-    assert_eq!(plan.statement_read_shape(), tidb_executor::access_path::StatementReadShape::Unknown);
+    let plan = prepared
+        .point_get_plan()
+        .expect("Go retains PointGet for nonclustered unique primary keys");
+    assert_eq!(
+        plan.statement_read_shape(),
+        tidb_executor::access_path::StatementReadShape::Unknown
+    );
     for (key, expected) in [("user1", "one"), ("user2", "two"), ("missing", "")] {
-        let execution = session.bind_cached_prepared_point_get(&plan, &[Datum::Bytes(key.as_bytes().to_vec())])
+        let execution = session
+            .bind_cached_prepared_point_get(&plan, &[Datum::Bytes(key.as_bytes().to_vec())])
             .expect("nonclustered point plan binds its unique index key");
-        let opened = session.open_prepared_point_get(execution, prepared.statement(), sql).unwrap().unwrap();
+        let opened = session
+            .open_prepared_point_get(execution, prepared.statement(), sql)
+            .unwrap()
+            .unwrap();
         let output = crate::tests_support::collect_record_set(opened.attach(&mut session));
-        let crate::StmtOutput::Rows { rows, .. } = output else { panic!("expected rows") };
-        let rows: Vec<Vec<String>> = rows.iter().map(|row| row.iter().map(crate::tests_support::cell_text).collect()).collect();
+        let crate::StmtOutput::Rows { rows, .. } = output else {
+            panic!("expected rows")
+        };
+        let rows: Vec<Vec<String>> = rows
+            .iter()
+            .map(|row| row.iter().map(crate::tests_support::cell_text).collect())
+            .collect();
         if expected.is_empty() {
             assert!(rows.is_empty());
         } else {
@@ -1525,22 +1558,53 @@ fn nonclustered_primary_retains_prepared_point_plan() {
 #[test]
 fn nonclustered_point_plan_requires_complete_visible_unique_key() {
     let mut session = Session::new();
-    session.run("CREATE TABLE heap_point (a INT, b INT, v INT, UNIQUE KEY uk(a,b), KEY iv(v))").unwrap();
-    session.run("INSERT INTO heap_point VALUES (1,2,9),(NULL,2,10)").unwrap();
-    assert!(session.prepare_ast("SELECT * FROM heap_point WHERE a=?").unwrap().point_get_plan().is_none());
-    assert!(session.prepare_ast("SELECT * FROM heap_point WHERE v=?").unwrap().point_get_plan().is_none());
+    session
+        .run("CREATE TABLE heap_point (a INT, b INT, v INT, UNIQUE KEY uk(a,b), KEY iv(v))")
+        .unwrap();
+    session
+        .run("INSERT INTO heap_point VALUES (1,2,9),(NULL,2,10)")
+        .unwrap();
+    assert!(session
+        .prepare_ast("SELECT * FROM heap_point WHERE a=?")
+        .unwrap()
+        .point_get_plan()
+        .is_none());
+    assert!(session
+        .prepare_ast("SELECT * FROM heap_point WHERE v=?")
+        .unwrap()
+        .point_get_plan()
+        .is_none());
     let sql = "SELECT * FROM heap_point WHERE a=? AND b=?";
     let prepared = session.prepare_ast(sql).unwrap();
-    let plan = prepared.point_get_plan().expect("complete unique key on a heap table");
-    for (a, expected) in [(Datum::Int(1), vec![vec!["1", "2", "9"]]), (Datum::Null, vec![])] {
-        let execution = session.bind_cached_prepared_point_get(&plan, &[a, Datum::Int(2)]).unwrap();
-        let opened = session.open_prepared_point_get(execution, prepared.statement(), sql).unwrap().unwrap();
+    let plan = prepared
+        .point_get_plan()
+        .expect("complete unique key on a heap table");
+    for (a, expected) in [
+        (Datum::Int(1), vec![vec!["1", "2", "9"]]),
+        (Datum::Null, vec![]),
+    ] {
+        let execution = session
+            .bind_cached_prepared_point_get(&plan, &[a, Datum::Int(2)])
+            .unwrap();
+        let opened = session
+            .open_prepared_point_get(execution, prepared.statement(), sql)
+            .unwrap()
+            .unwrap();
         let output = crate::tests_support::collect_record_set(opened.attach(&mut session));
-        let crate::StmtOutput::Rows { rows, .. } = output else { panic!("expected rows") };
-        let rows: Vec<Vec<String>> = rows.iter().map(|row| row.iter().map(crate::tests_support::cell_text).collect()).collect();
+        let crate::StmtOutput::Rows { rows, .. } = output else {
+            panic!("expected rows")
+        };
+        let rows: Vec<Vec<String>> = rows
+            .iter()
+            .map(|row| row.iter().map(crate::tests_support::cell_text).collect())
+            .collect();
         assert_eq!(rows, expected);
     }
-    session.run("ALTER TABLE heap_point ALTER INDEX uk INVISIBLE").unwrap();
-    assert!(session.bind_cached_prepared_point_get(&plan, &[Datum::Int(1), Datum::Int(2)]).is_none());
+    session
+        .run("ALTER TABLE heap_point ALTER INDEX uk INVISIBLE")
+        .unwrap();
+    assert!(session
+        .bind_cached_prepared_point_get(&plan, &[Datum::Int(1), Datum::Int(2)])
+        .is_none());
     assert!(session.prepare_ast(sql).unwrap().point_get_plan().is_none());
 }

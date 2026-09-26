@@ -480,3 +480,37 @@ other source mappings, package gates, lint, and workload checks pass.
 
 
 Checkpoint publication (2026-09-25): the user explicitly requested "commit and push code" after being told this package remains incomplete. Publish the accumulated Rust work on hparser-integration as a work-in-progress checkpoint. This supersedes earlier instructions in this plan to defer all commits until completion; it does not change the whole-package completion unit or close any source, validation, lifecycle, or workload gap. Latest focused evidence is 642 passing Rust tests, two Go-master oracle cases, make lint and git diff --check; broader limitations remain in the structural audit and receipts.
+
+
+Upstream integration (2026-09-25): the user clarified the publication target as
+pingcap/tidb hparser-integration. Merge its 76 newer commits through 0027620210
+with checkpoint 103e13a49e, retaining both histories. Conflict decisions preserve
+the shared candidate lifecycle, full statement resolver and statistics-error
+propagation while retaining upstream CTE recheck/deferred predicates, fresh
+IndexJoin probe statistics, expected-count scaling and constant conversion.
+The older separate table-pruning shortcuts are superseded by shared candidate
+comparison. TopSQL metrics remain in their shared owner; upstream's change to
+the deleted server-local copy was formatting only. Update new context/CTE fields
+and write-cast test calls for the combined APIs. This is integration evidence,
+not whole-package parity or workload completion.
+
+Validation from repository root (all pass):
+
+    cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-server
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --lib -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_explain -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib driver::physical_builder:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib index_range:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib access_cost:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_index_hints:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_recursive_cte -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib driver::write_cast::source_tests -- --test-threads=1
+    make lint
+    git diff --check
+
+Pass counts in that order: planner 1053, EXPLAIN 109, builder 27, ranges 27,
+costing 44, hints 26, recursive CTE 13, write casts 3: 1302 total. Logs are in
+/private/tmp/tidb-integration-{check,planner,explain,builder,ranges,cost,hints,cte,cast,lint}.log.
+No Go files, imports, module inputs or Bazel files changed; bazel_prepare is not
+triggered. Complete workspace tests, full package inventories and workload
+behavior/performance remain unverified.

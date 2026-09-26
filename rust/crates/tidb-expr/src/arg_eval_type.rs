@@ -394,13 +394,17 @@ pub(crate) fn wrap_string_args(
     arg_types: &[Option<FieldType>],
     ctx: &dyn Columns,
 ) -> Result<Vec<Datum>, EvalError> {
-    wrap(
-        string_arg_mask(name),
-        vals,
-        arg_types,
-        ctx,
-        crate::cast::cast_arg_as_string,
-    )
+    let mut mask = string_arg_mask(name);
+    if name.eq_ignore_ascii_case("export_set") {
+        // `exportSetFunctionClass.getFunction`: the on/off pair is ETString in
+        // every arity, and the separator (position 3) joins them when the
+        // 4/5-argument forms provide it; bits and number_of_bits stay ETInt.
+        mask |= (1 << 1) | (1 << 2);
+        if vals.len() >= 4 {
+            mask |= 1 << 3;
+        }
+    }
+    wrap(mask, vals, arg_types, ctx, crate::cast::cast_arg_as_string)
 }
 
 /// The `EvalString` a signature body reads out of an argument this layer has

@@ -192,7 +192,11 @@ enum FkTriggerType {
 impl FkTriggerType {
     /// The `FkAction` the refer option is read from, Go `FKCascadeOnDelete`
     /// reading `fk.OnDelete` and `FKCascadeOnUpdate` reading `fk.OnUpdate`.
-    fn action<'a>(&self, on_delete: &'a crate::kv_table::table_meta::FkAction, on_update: &'a crate::kv_table::table_meta::FkAction) -> &'a crate::kv_table::table_meta::FkAction {
+    fn action<'a>(
+        &self,
+        on_delete: &'a crate::kv_table::table_meta::FkAction,
+        on_update: &'a crate::kv_table::table_meta::FkAction,
+    ) -> &'a crate::kv_table::table_meta::FkAction {
         match self {
             Self::OnDelete => on_delete,
             Self::OnUpdate => on_update,
@@ -277,7 +281,8 @@ fn build_fk_check_on_modify_child_table(
     // Go: `referTable, err := is.TableByName(fk.RefSchema, fk.RefTable);
     // if err != nil { return nil, nil }` -- a missing parent renders nothing.
     catalog.get_in(&fk.ref_schema, &fk.ref_table)?;
-    let (access, _idx) = build_fk_check_access(catalog, &fk.ref_schema, &fk.ref_table, &fk.ref_cols)?;
+    let (access, _idx) =
+        build_fk_check_access(catalog, &fk.ref_schema, &fk.ref_table, &fk.ref_cols)?;
     Some(FkTriggerNode {
         id: plan_ids.alloc(),
         operator: FK_CHECK,
@@ -358,7 +363,10 @@ fn build_fk_check_access(
         return Some((format!("table:{table}"), None));
     }
     let index_name = index_covering(kv, cols)?;
-    Some((format!("table:{table}, index:{index_name}"), Some(index_name)))
+    Some((
+        format!("table:{table}, index:{index_name}"),
+        Some(index_name),
+    ))
 }
 
 /// Go `tblInfo.PKIsHandle && len(cols) == 1 &&
@@ -383,13 +391,9 @@ fn index_covering(kv: &crate::kv_table::KvTable, cols: &[String]) -> Option<Stri
         .filter(|index| index.visible)
         .find(|index| {
             index.column_offsets.len() == cols.len()
-                && index
-                    .column_offsets
-                    .iter()
-                    .zip(cols)
-                    .all(|(offset, col)| {
-                        name_at(*offset).is_some_and(|name| name.eq_ignore_ascii_case(col))
-                    })
+                && index.column_offsets.iter().zip(cols).all(|(offset, col)| {
+                    name_at(*offset).is_some_and(|name| name.eq_ignore_ascii_case(col))
+                })
         })
         .map(|index| index.name.clone())
 }

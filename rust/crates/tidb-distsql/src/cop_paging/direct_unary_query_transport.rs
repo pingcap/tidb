@@ -905,7 +905,8 @@ pub struct DirectUnaryQueryResponse<C, L> {
     /// Per-driver store-limiter cache: one RwLock read per store instead of
     /// one per request (the profile showed the global-map read lock
     /// contending across every tikv-query worker on multi-store scans).
-    store_limiter_cache: std::collections::HashMap<u64, Option<std::sync::Arc<tidb_txnkv::CoprRequestLimiter>>>,
+    store_limiter_cache:
+        std::collections::HashMap<u64, Option<std::sync::Arc<tidb_txnkv::CoprRequestLimiter>>>,
     independent_driver: bool,
     // The lite and concurrent Go workers both process split descendants
     // sequentially. Ordering across initial tasks belongs to CopIterator.
@@ -1067,9 +1068,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         {}
         // Backpressure on the window is handled where the current task is
         // dispatched below.
-        let _ = self
-            .prefetch_attempts()
-            .map_err(QueryResponseError::from)?;
+        let _ = self.prefetch_attempts().map_err(QueryResponseError::from)?;
         loop {
             let Some(&logical_task_id) = self.logical_order.get(self.logical_index) else {
                 self.closed = true;
@@ -1200,9 +1199,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             // reach the caller. This keeps the worker window bounded from the
             // consumer's perspective instead of dispatching a replacement
             // region before returning the completed page.
-            let backpressured = self
-                .prefetch_attempts()
-                .map_err(QueryResponseError::from)?;
+            let backpressured = self.prefetch_attempts().map_err(QueryResponseError::from)?;
 
             let completion = self
                 .completion_notifier

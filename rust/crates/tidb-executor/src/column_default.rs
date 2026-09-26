@@ -233,6 +233,9 @@ pub enum DefaultError {
     /// A form Go accepts that this tier does not model yet, named so a
     /// refusal says which.
     Unsupported(&'static str),
+    /// Go `plannererrors.ErrBadField` (1054): the DEFAULT expression names a
+    /// column the table does not have (`DEFAULT (a)` on a table without `a`).
+    UnknownColumn(String),
 }
 
 impl DefaultError {
@@ -251,6 +254,10 @@ impl DefaultError {
                 crate::DriverError::UnsupportedSequenceDefaultType(column.to_owned())
             }
             Self::Unsupported(reason) => crate::DriverError::unsupported(reason),
+            Self::UnknownColumn(name) => crate::DriverError::UnknownColumnInClause {
+                column: name,
+                clause: "expression".to_owned(),
+            },
         }
     }
 }

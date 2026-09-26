@@ -974,7 +974,7 @@ impl Ver2Coster {
                 let probe_filters = scalar_flags(probe_conditions);
                 let build_cost = self.price_with_scan_context(build, task_type, is_child_of_inl);
                 let probe_cost = self.price_with_scan_context(probe, task_type, is_child_of_inl);
-                index_join_cost(
+                let cost = index_join_cost(
                     self.cost_option(),
                     IndexJoinInput {
                         build_rows: Self::rows(build),
@@ -1005,7 +1005,30 @@ impl Ver2Coster {
                     &self.session,
                     task_type,
                     (&build_cost, &probe_cost),
-                )
+                );
+                if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                    let probe_cols: Vec<String> = probe
+                        .schema()
+                        .map(|schema| {
+                            schema
+                                .columns
+                                .iter()
+                                .map(|column| column.orig_name.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    eprintln!(
+                        "Q50COST kind={:?} build_rows={} build_row_size={} probe_rows_one={} probe_row_size={} cost={} probe_cols={:?}",
+                        join.kind,
+                        Self::rows(build),
+                        Self::row_size(build),
+                        Self::rows(probe),
+                        Self::row_size(probe),
+                        cost.value(),
+                        probe_cols
+                    );
+                }
+                cost
             }
             // Leaves with no work of their own.
             PhysicalPlan::TableDual(_)

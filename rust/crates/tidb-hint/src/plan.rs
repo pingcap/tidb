@@ -207,10 +207,21 @@ impl PlanHints {
     ) -> bool {
         let mut matched = false;
         for candidate in candidates.iter().copied().flatten() {
+            eprintln!(
+                "[DBG-MATCH] candidate db={:?} table={:?} offset={}",
+                candidate.database_name, candidate.table_name, candidate.select_offset
+            );
             if let Some(entry) = hinted.iter_mut().find(|entry| entry.matches(candidate)) {
+                eprintln!("[DBG-MATCH] matched entry {:?}/{:?}", entry.database_name, entry.table_name);
                 entry.matched = true;
                 matched = true;
             }
+        }
+        for entry in hinted.iter() {
+            eprintln!(
+                "[DBG-MATCH] entry {:?}/{:?} matched={}",
+                entry.database_name, entry.table_name, entry.matched
+            );
         }
         matched
     }
@@ -347,6 +358,13 @@ pub fn parse_plan_hints(
                 current_level,
                 &mut warnings,
             )),
+            // go `parser`'s SM_JOIN spelling is NOT supported by TiDB: the
+            // hint is ignored with ErrOptimizerHintUnsupported (8061).
+            "sm_join" => warnings.push(HintWarning {
+                code: 8061,
+                message: "Optimizer hint SM_JOIN is not supported by TiDB and is ignored"
+                    .to_owned(),
+            }),
             "tidb_bcj" | "broadcast_join" => plan.broadcast_join.extend(table_infos(
                 current_database,
                 &name,

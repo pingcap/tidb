@@ -37,7 +37,7 @@ pub(crate) fn dispatch(
         ("INTERVAL", n) if n >= 2 => Some(interval(vals, ctx)),
         ("ISNULL", 1) => Some(Ok(Datum::Int(i64::from(matches!(vals[0], Datum::Null))))),
         ("INET_ATON", 1) => Some(inet_aton(&vals[0])),
-        ("INET_NTOA", 1) => Some(inet_ntoa(&vals[0])),
+        ("INET_NTOA", 1) => Some(inet_ntoa(&vals[0], ctx)),
         ("INET6_ATON", 1) => Some(inet6_aton(&vals[0])),
         ("INET6_NTOA", 1) => Some(inet6_ntoa(&vals[0])),
         ("IS_IPV4", 1) => Some(is_ipv4_value(&vals[0])),
@@ -791,14 +791,19 @@ fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
 /// `pkg/expression/builtin_miscellaneous.go`. The scalar domain has no
 /// planning-time `ETInt` cast, so only its already-integer values are
 /// representable faithfully; other types remain honestly unsupported.
-fn inet_ntoa(value: &Datum) -> Result<Datum, EvalError> {
+fn inet_ntoa(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let value = match value {
         Datum::Null => return Ok(Datum::Null),
         Datum::Int(value) => *value as u64,
         Datum::UInt(value) => *value,
-        // go's ETInt argument casts any non-NULL value first; a non-numeric
-        // string truncates to 0, which answers "0.0.0.0".
-        other => crate::cast::to_i64_signed(other) as u64,
+        // go's ETInt argument casts any non-NULL value first; the cast is a
+        // real StrToInt, so a non-numeric string raises go's 1292 truncation
+        // warning on its way to 0 ("0.0.0.0") — captured on the oracle for
+        // `INET_NTOA('a')` inside a multi-function statement.
+        other => {
+            crate::cast::report_int_truncation(other, ctx)?;
+            crate::cast::to_i64_signed(other) as u64
+        }
     };
     let Ok(value) = u32::try_from(value) else {
         return Ok(Datum::Null);

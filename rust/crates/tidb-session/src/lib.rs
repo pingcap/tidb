@@ -728,6 +728,11 @@ pub struct Session {
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
+    /// Whether the front end's parse already opened THIS statement's warning
+    /// boundary (go `ResetContextOfStmt` runs once per statement): a second
+    /// boundary for the same statement would reset the counts the first one
+    /// snapshotted.
+    statement_boundary_open: bool,
     /// Privilege requests derived once per prepared text -- Go's
     /// `PlanCacheStmt.VisitInfos`, checked on every EXECUTE without
     /// re-walking the statement.
@@ -896,7 +901,7 @@ impl Session {
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
             last_txn_info: std::cell::RefCell::new(String::new()),
             last_query_info: std::cell::RefCell::new(
-                "{\"txn_scope\":\"\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
+                "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0,\"ru_v2_consumption\":0}"
                     .to_owned(),
             ),
             published_last_insert_id: Arc::default(),
@@ -909,6 +914,7 @@ impl Session {
             user_vars: Arc::default(),
             sequence_last_values: Arc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
+            statement_boundary_open: false,
             process: None,
             has_process_priv: false,
             privileges: None,
@@ -2110,6 +2116,60 @@ impl Session {
         result
     }
 
+    /// Go `session.go:1955-1968`'s parse-failure half, for front ends that
+    /// parse through the `&self` [`StmtCtx::parse_statement`] door and
+    /// surface the error without entering the statement lifecycle: the
+    /// statement boundary opens a FRESH warning context (the previous
+    /// statement's entries go — captured: after a failing `mid()` the next
+    /// failed parse reports ONLY its own 1064) and the syntax error is
+    /// appended into it, so `SHOW WARNINGS` after a failed parse reports the
+    /// error row. Evaluation-origin errors never reach here.
+    /// go `ResetContextOfStmt` opens every statement with a fresh warning
+    /// context: the previous statement's entries go unless this statement
+    /// reports them itself. Front-end doors that bypass the session's own
+    /// statement boundary (transaction control, global-variable sets) must
+    /// still open that fresh context or a parse-failure row lingers.
+    pub fn drop_previous_statement_warnings(&mut self) {
+        self.warnings.clear();
+    }
+
+    pub fn record_parse_failure(&mut self, error: &DriverError) {
+        let reported = error.clone().to_mysql_error();
+        self.record_parse_failure_coded(reported.code, reported.message);
+    }
+
+    /// [`Self::record_parse_failure`] for front ends whose parse door
+    /// surfaces an already-classified `(code, message)` error.
+    pub fn record_parse_failure_coded(&mut self, code: u16, message: String) {
+        self.warnings.clear();
+        self.append_warning(WarningLevel::Error, code, message);
+    }
+
+    /// go `driver_tidb.go:376`: every statement error lands in the statement
+    /// warning buffer (DDL 1050/1007/1008/1051/1146 et al reach SHOW
+    /// WARNINGS exactly as the query door's errors do).
+    pub fn record_ddl_failure(&mut self, code: u16, message: String) {
+        // go `driver_tidb.go:376` appends the error, but the DDL execution
+        // path may have already recorded it (HandleStatusErr in the
+        // executor's own error handling). Skip the duplicate so SHOW
+        // WARNINGS matches go's single row.
+        if self
+            .warnings
+            .last()
+            .map_or(false, |w| w.code == code && w.message == message)
+        {
+            return;
+        }
+        self.append_warning(WarningLevel::Error, code, message);
+    }
+
+    /// Clears the statement warning buffer (go `ResetContextOfStmt`'s
+    /// per-statement fresh start for write-door statements that bypass the
+    /// session's own statement boundary).
+    pub fn clear_statement_warnings(&mut self) {
+        self.warnings.clear();
+    }
+
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
         self.publish_statement_status(result);
         if let Some(guard) = &self.process {
@@ -2134,7 +2194,15 @@ impl Session {
         }
         if let Err(error) = &result {
             let reported = error.clone().to_mysql_error();
-            self.append_warning(WarningLevel::Error, reported.code, reported.message);
+            // Go's wire behavior is asymmetric per error class (captured on
+            // the oracle with SHOW WARNINGS after each failure): 3140/3143/
+            // 1411 leave the statement warning buffer EMPTY, while 3146/
+            // 1305/1235 and every parse/plan/executor failure show their own
+            // error row there.
+            if !reported.is_from_evaluation() || !matches!(reported.code, 3140 | 3143 | 1411 | 1690)
+            {
+                self.append_warning(WarningLevel::Error, reported.code, reported.message);
+            }
         }
     }
 }
@@ -2283,6 +2351,7 @@ mod session_source_tests {
     }
 }
 
+pub mod metrics;
 #[cfg(test)]
 mod tests_admin_check;
 #[cfg(test)]
@@ -2494,7 +2563,6 @@ mod tests_window;
 mod tests_write_conversion;
 #[cfg(test)]
 mod tests_zero_date;
-pub mod metrics;
 
 /// Go `time.Duration.String()` for a whole number of seconds, which is what
 /// `UPTIME` carries: `time.Since(startTime).String()` with the sub-second

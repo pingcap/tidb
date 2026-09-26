@@ -313,8 +313,8 @@ fn charset_commands_are_typed_and_canonical() {
         ));
     }
     // go defers the unknown-charset check to execution (1115), so the
-        // parse itself succeeds.
-        assert!(parse("set names unknown_charset").is_ok());
+    // parse itself succeeds.
+    assert!(parse("set names unknown_charset").is_ok());
     assert!(parse("set character utf8").is_err());
     assert!(parse("set charset utf8 collate utf8_general_ci").is_err());
     assert_eq!(

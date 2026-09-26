@@ -52,8 +52,8 @@ pub(crate) fn dispatch_in(
         ("UUID_TIMESTAMP", [value]) => Some(uuid_timestamp(value)),
         ("UUID_TO_BIN", [value]) => Some(uuid_to_bin(value, None)),
         ("UUID_TO_BIN", [value, flag]) => Some(uuid_to_bin(value, Some(flag))),
-        ("BIN_TO_UUID", [value]) => Some(bin_to_uuid(value, None)),
-        ("BIN_TO_UUID", [value, flag]) => Some(bin_to_uuid(value, Some(flag))),
+        ("BIN_TO_UUID", [value]) => Some(bin_to_uuid(ctx, value, None)),
+        ("BIN_TO_UUID", [value, flag]) => Some(bin_to_uuid(ctx, value, Some(flag))),
         ("TIDB_SHARD", [value]) => Some(tidb_shard(value, ctx)),
         ("TIDB_DECODE_KEY", [value]) => Some(tidb_decode_key(value, ctx)),
         ("VITESS_HASH", [value]) => Some(vitess_hash(value, ctx)),
@@ -214,22 +214,43 @@ fn uuid_to_bin(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> 
 /// payload (16 bytes); unlike `coerce_str`, this path deliberately accepts
 /// arbitrary non-UTF-8 bytes so binary UUID data cannot be corrupted by a
 /// text conversion.
-fn bin_to_uuid(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> {
+fn bin_to_uuid(
+    ctx: &dyn crate::Columns,
+    value: &Datum,
+    flag: Option<&Datum>,
+) -> Result<Datum, EvalError> {
+    // go's flag argument reaches the signature through `WrapWithCastAsInt`,
+    // a plan-time CAST whose constant fold warns `Truncated incorrect
+    // INTEGER value` BEFORE the 1411 payload error is raised at exec -- so
+    // the warning survives the error (captured: BIN_TO_UUID('中文测试',
+    // 'ünïcödé') answers the error with the truncation warning kept).
+    // Coercing the flag ahead of the payload check reproduces that buffer.
+    let flag_int = match flag {
+        Some(flag @ (Datum::String(_) | Datum::Bytes(_))) => {
+            crate::cast::report_int_truncation(flag, ctx)?;
+            crate::cast::to_i64_signed(flag)
+        }
+        Some(flag) if !matches!(flag, Datum::Null) => crate::cast::to_i64_signed(flag),
+        _ => 0,
+    };
     let Some(input) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
     if input.len() != 16 {
         // go `builtinBinToUUIDSig.evalString`:
-        // `types.ErrWrongValueForType("uuid", str, "bin_to_uuid")` (1411).
+        // `types.ErrWrongValueForType("string", str, "bin_to_uuid")` (1411) —
+        // the message word is the WIRE class "string" even though the check
+        // is the 16-byte payload length (captured on the oracle:
+        // "Incorrect string value: '1' for function bin_to_uuid").
         return Err(EvalError::WrongValueForType {
-            value_class: "uuid",
+            value_class: "string",
             value: String::from_utf8_lossy(&input).into_owned(),
             function: "bin_to_uuid",
         });
     }
     let mut uuid = [0_u8; 16];
     uuid.copy_from_slice(&input);
-    let output = if eval_int_flag(flag) != 0 {
+    let output = if flag_int != 0 {
         format_uuid_swapped(&uuid)
     } else {
         format_uuid(&uuid)

@@ -411,8 +411,7 @@ impl Parser {
         // answers 1115 `Unknown character set: '...'` (and a known alias is
         // canonicalized). Refusing at parse time turned
         // `SET NAMES bogus_charset` into a 1064 the go server never gives.
-        Ok(canonical_charset(&name)
-            .map_or_else(|| name.clone(), |canonical| canonical.to_owned()))
+        Ok(canonical_charset(&name).map_or_else(|| name.clone(), |canonical| canonical.to_owned()))
     }
 
     fn parse_set_collation_name(&mut self) -> PResult<String> {

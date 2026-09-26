@@ -398,9 +398,11 @@ impl RegionQueryLoader for PdRegionLoader {
             }
             RegionQuery::Id(region_id) => {
                 let region = self.retry_on_region_miss(|loader| {
-                    loader
-                        .client
-                        .get_region_by_id_routed(region_id, options.need_buckets, leader_only)
+                    loader.client.get_region_by_id_routed(
+                        region_id,
+                        options.need_buckets,
+                        leader_only,
+                    )
                 })?;
                 self.project_region(region)
             }

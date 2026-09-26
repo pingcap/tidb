@@ -508,6 +508,17 @@ pub(crate) fn eval_func_values(
     vals: &[Datum],
     ctx: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
+    // `JSON_MEMBER_OF`'s rewrite spells the signature `json_member_of`, which
+    // the registry knows (underscore-insensitively) as a registered builtin —
+    // so the registered-but-unimplemented fallback below would swallow it
+    // before the JSON family's own dispatch ever sees the name. Route it
+    // through that dispatch here, where the row evaluator lives.
+    if name.eq_ignore_ascii_case("json_member_of") || name.eq_ignore_ascii_case("json_memberof") {
+        return Some(
+            crate::builtin_ext::json::dispatch("JSON_MEMBER_OF", vals)
+                .unwrap_or_else(|| Err(EvalError::Unsupported("JSON_MEMBER_OF arity"))),
+        );
+    }
     // Go `BuildCastFunction4Union`'s in-union cast-to-unsigned CLAMPS a
     // negative result to 0 (`builtin_cast.go:998`).
     if name == "cast_unsigned_in_union" {
@@ -773,7 +784,7 @@ pub(crate) fn eval_func_values(
         }
         "HEX" if vals.len() == 1 => hex(vals),
         "UNHEX" if vals.len() == 1 => unhex(vals),
-        "BIN" if vals.len() == 1 => bin(vals),
+        "BIN" if vals.len() == 1 => bin(vals, ctx),
         "OCT" if vals.len() == 1 => oct(vals),
         "BIT_LENGTH" => bit_length(vals),
         "FIELD" if vals.len() >= 2 => field(vals, ctx),
@@ -802,7 +813,7 @@ pub(crate) fn eval_func_values(
         "DATE_FORMAT" if vals.len() == 2 => date_format(&vals[0], &vals[1]),
         "ORD" if vals.len() == 1 => ord(vals),
         "QUOTE" if vals.len() == 1 => quote(vals),
-        "BIT_COUNT" if vals.len() == 1 => bit_count(vals),
+        "BIT_COUNT" if vals.len() == 1 => bit_count(vals, ctx),
         "FORMAT" if vals.len() == 2 => format_num(vals, ctx),
         "CHAR_FUNC" if !vals.is_empty() => char_func_with_context(vals, ctx),
         "TO_BASE64" if vals.len() == 1 => to_base64(vals, ctx),

@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -55,7 +55,10 @@ pub static JOBS_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
 /// Go `DDLCounter` (`pkg/metrics`).
 pub static DDL_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_ddl_worker_operation_total", "Counter of creating ddl/worker and isowner."),
+        Opts::new(
+            "tidb_ddl_worker_operation_total",
+            "Counter of creating ddl/worker and isowner.",
+        ),
         &["type"],
     ))
 });
@@ -141,11 +144,29 @@ pub static DDL_OWNER_HANDLE_SYNCER_DURATION: LazyLock<HistogramVec> = LazyLock::
 /// for the exposition header shim that mirrors Go's registered-family output.
 pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
     vec![
-            ("tidb_ddl_handle_job_duration_seconds", "Bucketed histogram of processing time (s) of handle jobs"),
-            ("tidb_ddl_job_table_duration_seconds", "Bucketed histogram of processing time (s) of the 3 DDL job tables"),
-            ("tidb_ddl_worker_operation_duration_seconds", "Bucketed histogram of processing time (s) of ddl worker operations"),
-            ("tidb_ddl_deploy_syncer_duration_seconds", "Bucketed histogram of processing time (s) of deploy syncer"),
-            ("tidb_ddl_update_self_ver_duration_seconds", "Bucketed histogram of processing time (s) of update self version"),
-            ("tidb_ddl_owner_handle_syncer_duration_seconds", "Bucketed histogram of processing time (s) of handle syncer"),
+        (
+            "tidb_ddl_handle_job_duration_seconds",
+            "Bucketed histogram of processing time (s) of handle jobs",
+        ),
+        (
+            "tidb_ddl_job_table_duration_seconds",
+            "Bucketed histogram of processing time (s) of the 3 DDL job tables",
+        ),
+        (
+            "tidb_ddl_worker_operation_duration_seconds",
+            "Bucketed histogram of processing time (s) of ddl worker operations",
+        ),
+        (
+            "tidb_ddl_deploy_syncer_duration_seconds",
+            "Bucketed histogram of processing time (s) of deploy syncer",
+        ),
+        (
+            "tidb_ddl_update_self_ver_duration_seconds",
+            "Bucketed histogram of processing time (s) of update self version",
+        ),
+        (
+            "tidb_ddl_owner_handle_syncer_duration_seconds",
+            "Bucketed histogram of processing time (s) of handle syncer",
+        ),
     ]
 }

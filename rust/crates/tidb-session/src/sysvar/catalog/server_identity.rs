@@ -364,8 +364,6 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
     },
-
-
 ];
 
 /// go `runtime.GOARCH` spelling of the compiling target (`amd64`, not
@@ -376,5 +374,3 @@ const GO_MACHINE: &str = "amd64";
 const GO_MACHINE: &str = "arm64";
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 const GO_MACHINE: &str = std::env::consts::ARCH;
-
-

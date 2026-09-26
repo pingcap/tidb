@@ -76,6 +76,7 @@ pub(crate) fn cast_value_for_column(
     column: &str,
     row_index: usize,
     ctx: &crate::StmtContext,
+    force_ignore_truncate: bool,
 ) -> Result<Datum, DriverError> {
     cast_value_shaped(
         value,
@@ -84,7 +85,7 @@ pub(crate) fn cast_value_for_column(
         row_index,
         ctx,
         CastShape::InsertRow,
-        false,
+        force_ignore_truncate,
     )
 }
 
@@ -163,12 +164,27 @@ fn cast_value_shaped(
                 // attached a one-based row yet.
                 row: 0,
             };
-            return Err(if shape == CastShape::InsertRow {
-                incorrect_value()
-            } else {
-                raw
-            });
+            // go's `completeInsertErr` does NOT retitle a charset error: the
+            // INSERT answer keeps `Incorrect string value '\xE4\xB8\xAD'
+            // for column 'a'` with no `at row N` suffix, so the raw
+            // table.CastValue form is the completed form.
+            let _ = &incorrect_value;
+            return Err(raw);
         }
+        // go keeps the bytes beside the error; with the downgrade switch on
+        // (INSERT IGNORE) the error becomes a 1366 warning and the '?'
+        // substitution is what lands in the row.
+        ctx.append_warning_parts(
+            1366,
+            &format!(
+                "Incorrect string value '{}' for column '{}'",
+                invalid_bytes
+                    .iter()
+                    .map(|byte| format!("\\x{byte:02X}"))
+                    .collect::<String>(),
+                column
+            ),
+        );
         // Go keeps the bytes returned beside the charset error, clears that
         // error, and then still applies the target width/collation rules.
         value = Datum::new_collation_string(converted_bytes, field_type.collation());
@@ -200,7 +216,27 @@ fn cast_value_shaped(
             )));
         }
         Err(error) => {
-            let named = json_write_error(&error).unwrap_or_else(incorrect_value);
+            // go raises a bad TEMPORAL value as `types.ErrWrongValue`
+            // (1292) — `Incorrect time value: '...' for column 't' at row
+            // 1` — the same text `completeInsertErr` would print for 1366,
+            // under the temporal code instead.
+            let named = json_write_error(&error).unwrap_or_else(|| {
+                if matches!(
+                    field_type.code(),
+                    tidb_datatype::FieldTypeCode::Timestamp
+                        | tidb_datatype::FieldTypeCode::Datetime
+                        | tidb_datatype::FieldTypeCode::Date
+                        | tidb_datatype::FieldTypeCode::Duration
+                ) {
+                    return DriverError::IncorrectTemporalValue {
+                        type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+                        value: datum_error_text(&source),
+                        column: column.to_owned(),
+                        row: row_index + 1,
+                    };
+                }
+                incorrect_value()
+            });
             return Err(shape.name(named, &source, field_type));
         }
     };
@@ -557,17 +593,17 @@ pub(crate) fn cast_value_for_assignment(
     ctx: &crate::StmtContext,
 ) -> Result<Datum, DriverError> {
     if value.is_null() {
-        return cast_value_for_column(value, field_type, column, row_index, ctx);
+        return cast_value_for_column(value, field_type, column, row_index, ctx, false);
     }
     if ctx.strict() {
         let source = value.clone();
-        return cast_value_for_column(value, field_type, column, row_index, ctx)
+        return cast_value_for_column(value, field_type, column, row_index, ctx, false)
             .map_err(|wrapped| raw_assignment_error(wrapped, &source, field_type));
     }
     // Non-strict: run the cast with its warning SUPPRESSED, then append the
     // source's own message over the cast value, which is Go's order.
     let before = ctx.warning_count();
-    let cast = cast_value_for_column(value, field_type, column, row_index, ctx)?;
+    let cast = cast_value_for_column(value, field_type, column, row_index, ctx, false)?;
     ctx.rewrite_warnings_from(before, |code, _message| {
         let reported = match code {
             // `completeInsertErr`'s three arms, over the CAST value.
@@ -716,7 +752,7 @@ mod source_tests {
         );
         assert_eq!(converted.value, expected, "{input:?} -> {field_type:?}");
 
-        let write = cast_value_for_column(input, field_type, "", 0, &ctx);
+        let write = cast_value_for_column(input, field_type, "", 0, &ctx, false);
         assert_eq!(write.is_err(), should_fail, "{field_type:?}");
         if !should_fail {
             assert_eq!(write.unwrap(), expected, "{field_type:?}");
@@ -792,7 +828,7 @@ mod source_tests {
         let input = Datum::new_string("2018-03-11 02:00:16");
 
         let lenient = crate::StmtContext::for_dml(false, false, false).with_time_zone(zone.clone());
-        let stored = cast_value_for_column(input.clone(), &field_type, "ts", 0, &lenient)
+        let stored = cast_value_for_column(input.clone(), &field_type, "ts", 0, &lenient, false)
             .expect("non-strict writes store Go's adjusted timestamp");
         assert_eq!(datum_error_text(&stored), "2018-03-11 03:00:00");
         let warnings = lenient.take_warnings();
@@ -803,7 +839,7 @@ mod source_tests {
             .contains("Incorrect timestamp value: '2018-03-11 02:00:16' for column 'ts' at row 1"));
 
         let strict = crate::StmtContext::for_dml(false, true, false).with_time_zone(zone);
-        let error = cast_value_for_column(input, &field_type, "ts", 0, &strict)
+        let error = cast_value_for_column(input, &field_type, "ts", 0, &strict, false)
             .expect_err("strict inserts surface Go's completed insert diagnostic");
         let reported = error.to_mysql_error();
         assert_eq!(reported.code, 1292);

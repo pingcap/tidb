@@ -222,6 +222,14 @@ impl Session {
         self.append_warning(WarningLevel::Warning, code, message);
     }
 
+    /// Records a NOTE raised by a cluster-routed statement: go raises every
+    /// `IF [NOT] EXISTS` suppression with `StmtCtx.AppendNote`, so
+    /// `CREATE DATABASE IF NOT EXISTS db` on an existing db leaves
+    /// `Note | 1007 | Can't create database 'db'; database exists`.
+    pub fn append_routed_note(&mut self, code: u16, message: String) {
+        self.append_warning(WarningLevel::Note, code, message);
+    }
+
     /// The warnings the last statement produced.
     #[must_use]
     pub fn warnings(&self) -> &[SqlWarning] {
@@ -243,6 +251,7 @@ impl Session {
     /// reaching the copy.
     pub fn parse_at_statement_boundary(&mut self, sql: &str) -> Result<Stmt, DriverError> {
         self.prepared_params = None;
+        self.statement_boundary_open = true;
         let previous = std::mem::take(&mut self.warnings);
         let stmt = self.parse(sql)?;
         self.install_statement_warning_state(&stmt, previous);
@@ -253,6 +262,15 @@ impl Session {
     /// the front end already parsed: Go parses a command once
     /// (`session.ParseSQL`) and every later step reads that node.
     pub(crate) fn begin_text_statement_boundary(&mut self, stmt: &Stmt) {
+        // The front end's own parse already opened the boundary
+        // (`parse_at_statement_boundary`); a second open would take the
+        // (already-empty) buffer and reset the counts the first boundary
+        // snapshotted — go's `ResetContextOfStmt` runs once per statement.
+        if self.statement_boundary_open {
+            self.statement_boundary_open = false;
+            self.prepared_params = None;
+            return;
+        }
         self.prepared_params = None;
         let previous = std::mem::take(&mut self.warnings);
         self.install_statement_warning_state(stmt, previous);

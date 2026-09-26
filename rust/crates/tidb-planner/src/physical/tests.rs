@@ -354,7 +354,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
-            lock: false,
+        lock: false,
         base: BasePhysicalPlan::with_id(11, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -392,7 +392,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         ..PhysicalIndexMergeReader::default()
     });
     let template = PhysicalPlan::Dml(PhysicalDmlRoot {
-            fk_triggers: Vec::new(),
+        fk_triggers: Vec::new(),
         base: BasePhysicalPlan::with_id(14, "Update", 0),
         go_operator: "Update".to_owned(),
         select_plan: Some(Box::new(index_merge)),
@@ -452,7 +452,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         ]
     };
     let common_handle = PhysicalPlan::PointGet(PhysicalPointGet {
-            lock: false,
+        lock: false,
         base: BasePhysicalPlan::with_id(31, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -466,7 +466,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         ))),
     });
     let unique_index = PhysicalPlan::PointGet(PhysicalPointGet {
-            lock: false,
+        lock: false,
         base: BasePhysicalPlan::with_id(32, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -541,7 +541,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
         high_exclude: false,
     };
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
-            lock: false,
+        lock: false,
         base: BasePhysicalPlan::with_id(34, "PointGet", 0),
         table_id: 1,
         partition: None,
@@ -1276,11 +1276,8 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
         FieldType::new(FieldTypeCode::LongLong),
     )])));
     base.set_has_tiflash(true);
-    let aggregation = LogicalAggregation::new(
-        base,
-        vec![count],
-        vec![Expression::Column(input.clone())],
-    );
+    let aggregation =
+        LogicalAggregation::new(base, vec![count], vec![Expression::Column(input.clone())]);
     let root = PhysicalProperty::default();
     let plans = get_hash_aggs_with_mpp(&aggregation, &root, &allocator, 1.0, true, false);
     for (store, admits_mpp) in [("tikv", true), ("tiflash", false)] {
@@ -1304,11 +1301,14 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
             _ => None,
         })
         .collect();
-    assert_eq!(modes, [
-        AggMppRunMode::Mpp1Phase,
-        AggMppRunMode::Mpp2Phase,
-        AggMppRunMode::MppTiDB,
-    ]);
+    assert_eq!(
+        modes,
+        [
+            AggMppRunMode::Mpp1Phase,
+            AggMppRunMode::Mpp2Phase,
+            AggMppRunMode::MppTiDB,
+        ]
+    );
     let one_phase = plans
         .iter()
         .find_map(|plan| match plan {
@@ -1319,7 +1319,10 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
         })
         .expect("one-phase candidate");
     assert_eq!(one_phase.mpp_partition_tp, MppPartitionType::Hash);
-    assert_eq!(one_phase.mpp_partition_cols[0].col.unique_id, input.unique_id);
+    assert_eq!(
+        one_phase.mpp_partition_cols[0].col.unique_id,
+        input.unique_id
+    );
 }
 
 #[test]
@@ -1870,7 +1873,7 @@ fn a_union_all_fans_one_child_property_per_child() {
 
     let sorted = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
     assert!(
-        exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0).is_empty()
+        exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0, false).is_empty()
     );
 
     let prop = PhysicalProperty {
@@ -1879,7 +1882,7 @@ fn a_union_all_fans_one_child_property_per_child() {
         no_cop_push_down: true,
         ..PhysicalProperty::default()
     };
-    let plans = exhaust_physical_plans_4_logical_union_all(&union, &prop, &allocator, 1.0);
+    let plans = exhaust_physical_plans_4_logical_union_all(&union, &prop, &allocator, 1.0, false);
     assert_eq!(plans.len(), 1);
     let PhysicalPlan::UnionAll(built) = &plans[0] else {
         panic!("a UnionAll, got {:?}", plans[0]);
@@ -2311,6 +2314,7 @@ fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
         push_down_predicates: Vec::new(),
         column_map: std::collections::BTreeMap::new(),
         is_outer_most_cte: false,
+        optimized_predicate_count: 0,
     };
     let lp = LogicalCTE::new(
         BaseLogicalPlan::new(&allocator, LogicalCTE::TYPE, 0),

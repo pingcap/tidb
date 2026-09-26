@@ -1119,7 +1119,12 @@ fn decode_spill_entry(
         states.push(read_state(&mut reader, func)?);
     }
     reader.finish()?;
-    Ok((key, PipelineGroup { states: states.into() }))
+    Ok((
+        key,
+        PipelineGroup {
+            states: states.into(),
+        },
+    ))
 }
 
 type SpillFile = Arc<Mutex<DataInDiskByChunks>>;
@@ -1196,8 +1201,7 @@ impl ParallelSpillPartitions {
             for (key, group) in map.into_entries() {
                 let partition = Self::bucket(&key);
                 encode_spill_entry(&mut writer, &key, &group, funcs)?;
-                self.chunks[partition]
-                    .append_bytes(0, writer.encoded());
+                self.chunks[partition].append_bytes(0, writer.encoded());
                 if self.chunks[partition].num_rows() >= SPILL_CHUNK_SIZE {
                     self.flush(partition)?;
                 }

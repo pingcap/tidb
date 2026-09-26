@@ -43,9 +43,9 @@
 pub mod element;
 pub mod error;
 pub mod key;
+pub mod metrics;
 pub mod structure;
 pub mod transaction;
 pub mod value;
-pub mod metrics;
 
 pub use error::{MetaError, Result};

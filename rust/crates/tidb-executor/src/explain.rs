@@ -31,8 +31,8 @@ use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, Operat
 use tidb_planner::find_best_task::coster::Ver2Coster;
 
 use crate::driver::{
-    Catalog, DriverError, SelectMeta, run_delete_stmt_with_physical_and_stats,
-    run_insert_stmt_with_physical_and_stats, run_update_stmt_with_physical_and_stats,
+    run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats,
+    run_update_stmt_with_physical_and_stats, Catalog, DriverError, SelectMeta,
 };
 /// The `EXPLAIN FORMAT = '...'` this tier accepts. Go's `'row'` (the
 /// default, also the explicit spelling) and `'brief'` render the identical
@@ -1308,8 +1308,10 @@ fn physical_operator_info(
                     format!("handle:{}", point_handle_text(range))
                 })
             };
-            // Go `PointGetPlan.ExplainInfo` appends `lock` for the
-            // UPDATE/DELETE read.
+            // Go `PointGetPlan.ExplainInfo` renders `lock` for the
+            // UPDATE/DELETE read: `OperatorInfo` appends it whenever
+            // `p.Lock` is set — which is the case for the harness's
+            // transactional (autocommit-off) sessions (W4/W6).
             if point.lock {
                 if info.is_empty() {
                     info = "lock".to_owned();

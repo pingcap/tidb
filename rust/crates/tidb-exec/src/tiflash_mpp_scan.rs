@@ -36,8 +36,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_distsql::query_runtime::query_response::QueryResultSubset;
 use tidb_distsql::{
-    QueryResponseError, ResponseChannelError, SelectResponseIter,
-    mpp_result_metadata,
+    mpp_result_metadata, QueryResponseError, ResponseChannelError, SelectResponseIter,
 };
 use tidb_executor::remote_scan::{
     PushdownReadEngine, PushdownRowStream, PushdownScanRequest, PushdownScannerError,
@@ -54,7 +53,7 @@ use tidb_proto::tipb::{
 };
 
 use crate::cop_scan::scan_column;
-use crate::dag_request::{DEFAULT_DIV_PRECISION_INCREMENT, DagRequestContext, column_to_pb};
+use crate::dag_request::{column_to_pb, DagRequestContext, DEFAULT_DIV_PRECISION_INCREMENT};
 
 /// The process-owned MPP dispatch capability.
 ///

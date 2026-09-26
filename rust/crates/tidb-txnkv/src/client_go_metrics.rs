@@ -57,9 +57,12 @@ pub static GC_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
 /// Go `GCActionRegionResultCounter` (`pkg/metrics/gc_worker.go:68-73`).
 pub static GC_ACTION_REGION_RESULT: LazyLock<CounterVec> = LazyLock::new(|| {
     let metric = CounterVec::new(
-        Opts::new("gc_action_result", "Counter of gc action result on region level.")
-            .namespace("tidb")
-            .subsystem("tikvclient"),
+        Opts::new(
+            "gc_action_result",
+            "Counter of gc action result on region level.",
+        )
+        .namespace("tidb")
+        .subsystem("tikvclient"),
         &["type"],
     )
     .expect("valid gc action result counter");
@@ -115,12 +118,9 @@ pub static GC_REGION_TOO_MANY_LOCKS: LazyLock<Counter> = LazyLock::new(|| {
 /// Go `GCWorkerActionsCounter`.
 pub static GC_WORKER_ACTIONS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
     let metric = CounterVec::new(
-        Opts::new(
-            "gc_worker_actions_total",
-            "Counter of gc worker actions.",
-        )
-        .namespace("tidb")
-        .subsystem("tikvclient"),
+        Opts::new("gc_worker_actions_total", "Counter of gc worker actions.")
+            .namespace("tidb")
+            .subsystem("tikvclient"),
         &["type"],
     )
     .expect("valid gc worker actions metric");
@@ -165,9 +165,7 @@ fn collector_gauge_vec(source: &str) -> Option<prometheus::GaugeVec> {
     tikv_client::metrics::global_metrics()
         .collector(source)
         .and_then(|collector| match collector {
-            tikv_client::metrics::ClientGoCollector::GaugeVec(gauge_vec) => {
-                Some(gauge_vec.clone())
-            }
+            tikv_client::metrics::ClientGoCollector::GaugeVec(gauge_vec) => Some(gauge_vec.clone()),
             _ => None,
         })
 }
@@ -304,16 +302,15 @@ pub fn observe_pessimistic_lock_keys_duration(seconds: f64) {
 #[cfg(test)]
 mod lock_resolver_metric_tests {
     use super::{
-        inc_lock_resolver_expired, inc_lock_resolver_not_expired,
-        inc_lock_resolver_query_check_secondary_locks, inc_lock_resolver_query_txn_status,
-        inc_lock_resolver_query_txn_status_committed,
-        inc_lock_resolver_query_txn_status_rolled_back, inc_lock_resolver_resolve,
-        inc_lock_resolver_resolve_async, inc_lock_resolver_resolve_lock_lite,
-        inc_lock_resolver_resolve_locks,
         inc_lock_resolver_async_check_secondaries_fallback,
         inc_lock_resolver_async_resolve_async_commit_fallback,
-        inc_lock_resolver_async_resolve_async_commit_region_fallback,
-        inc_lock_resolver_wait_expired, init_dashboard_series, lock_resolver_async_gauge,
+        inc_lock_resolver_async_resolve_async_commit_region_fallback, inc_lock_resolver_expired,
+        inc_lock_resolver_not_expired, inc_lock_resolver_query_check_secondary_locks,
+        inc_lock_resolver_query_txn_status, inc_lock_resolver_query_txn_status_committed,
+        inc_lock_resolver_query_txn_status_rolled_back, inc_lock_resolver_resolve,
+        inc_lock_resolver_resolve_async, inc_lock_resolver_resolve_lock_lite,
+        inc_lock_resolver_resolve_locks, inc_lock_resolver_wait_expired, init_dashboard_series,
+        lock_resolver_async_gauge,
     };
 
     fn shortcut_count(shortcut_name: &'static str) -> f64 {
@@ -410,7 +407,9 @@ fn materialize_dashboard_series() {
     LazyLock::force(&GC_ACTION_REGION_RESULT);
     LazyLock::force(&GC_WORKER_ACTIONS_TOTAL);
     LazyLock::force(&GC_REGION_TOO_MANY_LOCKS);
-    let _ = GC_CONFIG.with_label_values(&["tikv_gc_run_interval"]).set(0.0);
+    let _ = GC_CONFIG
+        .with_label_values(&["tikv_gc_run_interval"])
+        .set(0.0);
     let _ = GC_CONFIG.with_label_values(&["tikv_gc_life_time"]).set(0.0);
     if let Some(counter_vec) = collector_counter_vec("TiKVLoadTxnSafePointCounter") {
         let _ = counter_vec.with_label_values(&["ok_compatible"]);
@@ -525,12 +524,7 @@ pub fn histogram_definitions() -> Vec<(String, String)> {
                     | tikv_client::metrics::MetricKind::HistogramVec
             )
         })
-        .map(|spec| {
-            (
-                spec.metric_name,
-                spec.help,
-            )
-        })
+        .map(|spec| (spec.metric_name, spec.help))
         .map(|(name, help)| ("tidb_tikvclient_".to_owned() + name, help.to_owned()))
         .collect()
 }
@@ -656,7 +650,8 @@ pub fn definitions() -> Vec<(String, String, &'static str)> {
                 tikv_client::metrics::MetricKind::CounterVec => "counter",
                 tikv_client::metrics::MetricKind::Gauge => "gauge",
                 tikv_client::metrics::MetricKind::GaugeVec => "gauge",
-                tikv_client::metrics::MetricKind::Histogram | tikv_client::metrics::MetricKind::HistogramVec => "histogram",
+                tikv_client::metrics::MetricKind::Histogram
+                | tikv_client::metrics::MetricKind::HistogramVec => "histogram",
                 _ => return None,
             };
             let fq = format!("tidb_tikvclient_{}", spec.metric_name);

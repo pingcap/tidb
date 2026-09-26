@@ -756,6 +756,17 @@ impl Parser {
 
     /// Parses `name ( arg, ... )` where the current token is the function name.
     pub(crate) fn parse_named_func(&mut self) -> PResult<Expr> {
+        // `IN`/`AND`/`OR`/`XOR` are reserved keywords in go's grammar — they
+        // NEVER start a function call, so `in(1)`/`and(-1)` are yacc's 1064
+        // at the keyword token itself (captured: line 1 column 9 near
+        // "in(1)"), not the binder's 1582.
+        if matches!(
+            self.peek().text.to_ascii_lowercase().as_str(),
+            "in" | "and" | "or" | "xor"
+        ) && self.peek().kind == TokenKind::Keyword
+        {
+            return Err(self.err_here("reserved keyword cannot be used as a function name"));
+        }
         let origin_position = self.peek().offset;
         let name = self.bump().text;
         self.expect_op("(")?;
@@ -764,8 +775,43 @@ impl Parser {
             args.push(self.parse_expr(prec::NONE)?);
             while self.is_op(",") {
                 self.bump();
+                // go's DATE_ADD/DATE_SUB production requires the second
+                // operand to START with INTERVAL: yacc fails AT the
+                // offending token (`date_add(1.25, -3.75)` anchors near
+                // "-3.75)"), never after parsing it -- so the lookahead
+                // check fires here, before the operand is consumed.
+                if matches!(name.to_ascii_uppercase().as_str(), "DATE_ADD" | "DATE_SUB")
+                    && !(self.peek().kind == TokenKind::Keyword
+                        && self.peek().text.eq_ignore_ascii_case("INTERVAL"))
+                {
+                    return Err(self.err_here("expected INTERVAL"));
+                }
                 args.push(self.parse_expr(prec::NONE)?);
             }
+        }
+        // Functions with a DEDICATED grammar production fail at PARSE time
+        // with yacc's 1064 when their arity misses, not the binder's 1582:
+        // `MID` shares `SUBSTRING`'s 2-3 argument production (captured:
+        // `mid()` col 12 near ")", `mid(1)` col 13 near ")"), and the
+        // sequence readers take exactly the sequence name (`lastval()` col
+        // 16 near ")"). The error rides the not-yet-consumed `)` token so
+        // the rendered position matches go's yacc boundary byte for byte.
+        match name.to_ascii_uppercase().as_str() {
+            "MID" if args.len() != 2 && args.len() != 3 => {
+                return Err(self.err_here("MID requires two or three arguments"));
+            }
+            "LASTVAL" | "NEXTVAL" if args.len() != 1 => {
+                return Err(self.err_here("sequence function requires one argument"));
+            }
+            // The datetime-arithmetic functions have a dedicated grammar
+            // production whose second operand MUST be INTERVAL: go's yacc
+            // rejects the empty-argument spelling at the `)` boundary.
+            "DATE_ADD" | "DATE_SUB"
+                if args.len() != 2 || !matches!(args[1], Expr::Interval { .. }) =>
+            {
+                return Err(self.err_here("DATE_ADD/DATE_SUB requires an INTERVAL argument"));
+            }
+            _ => {}
         }
         self.expect_op(")")?;
         // The keyword-form INTERVAL scalar function has no zero- or
@@ -775,11 +821,6 @@ impl Parser {
         // `INTERVAL(value)` so those calls remain syntax errors like Go.
         if name.eq_ignore_ascii_case("INTERVAL") && args.len() < 2 {
             return Err(self.err_here("INTERVAL requires at least two arguments"));
-        }
-        if matches!(name.to_ascii_uppercase().as_str(), "DATE_ADD" | "DATE_SUB")
-            && (args.len() != 2 || !matches!(args[1], Expr::Interval { .. }))
-        {
-            return Err(self.err_here("DATE_ADD/DATE_SUB requires an INTERVAL argument"));
         }
         Ok(Expr::Func {
             name,
@@ -797,6 +838,15 @@ impl Parser {
         let origin_position = self.peek().offset;
         let name = self.bump().text;
         self.expect_op("(")?;
+        // go's grammar splits this family: CURRENT_TIMESTAMP/LOCALTIME/
+        // LOCALTIMESTAMP/CURRENT_TIME/UTC_TIME/UTC_TIMESTAMP/CURTIME accept
+        // ONE optional fsp (`now(1)`; a second argument fails AT the comma),
+        // but CURRENT_DATE/UTC_DATE/CURRENT_ROLE/CURRENT_USER only have the
+        // bare `()` production -- ANY argument fails AT the first argument
+        // token (`current_user(1)` anchors col near "1)", not after it).
+        if is_datetime_no_arg_func(&name) && !self.is_op(")") {
+            return Err(self.err_here("expected )"));
+        }
         let mut args = Vec::new();
         if !self.is_op(")") {
             if self.peek().kind != TokenKind::IntLit {
@@ -927,6 +977,18 @@ fn is_interval_unit(unit: &str) -> bool {
             | "SQL_TSI_MONTH"
             | "SQL_TSI_QUARTER"
             | "SQL_TSI_YEAR"
+    )
+}
+
+/// Whether `name`'s go grammar has ONLY the bare `()` call form (no fsp
+/// production at all): any argument fails AT the first argument token.
+/// Oracle-pinned: `utc_date(1)` anchors near "1)", `current_user(1)` near
+/// "1)", while `current_time(1)` evaluates and `current_time(1, 2)` fails
+/// AT the comma.
+pub(super) fn is_datetime_no_arg_func(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "CURRENT_DATE" | "UTC_DATE" | "CURRENT_ROLE" | "CURRENT_USER"
     )
 }
 

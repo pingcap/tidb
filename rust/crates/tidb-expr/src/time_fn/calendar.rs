@@ -760,7 +760,7 @@ pub(crate) fn date_add_with_result_fsp(
     if let Some((index, cnt)) = composite_spec(unit) {
         return date_add_composite(unit, date, amount, sign, index, cnt, result_fsp, ctx);
     }
-    let Some(s) = interval_date_text(date)? else {
+    let Some(s) = interval_date_text(date, ctx)? else {
         return Ok(Datum::Null);
     };
     let trimmed = s.trim();
@@ -768,10 +768,28 @@ pub(crate) fn date_add_with_result_fsp(
         .split_once(char::is_whitespace)
         .map_or((trimmed, None), |(d, t)| (d, Some(t)));
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
+        // go `builtinAddDateAndDurationSig`'s arg0 cast: an unparseable
+        // datetime text warns `Incorrect datetime value: '<text>'` (1292)
+        // and answers NULL.
+        // go routes each source TYPE to its own parser and its own warning:
+        // the STRING sources warn the datetime-typed text; the numeric
+        // sources parse the INT64 reinterpretation (a u64 overflow reads
+        // -1) and warn the time-typed text.
+        match date {
+            Datum::Int(n) => {
+                ctx.append_warning(1292, &format!("Incorrect time value: '{n}'"));
+            }
+            Datum::UInt(n) => {
+                ctx.append_warning(1292, &format!("Incorrect time value: '{}'", *n as i64));
+            }
+            _ => {
+                ctx.append_warning(1292, &format!("Incorrect datetime value: '{s}'"));
+            }
+        }
         return Ok(Datum::Null);
     };
     if unit.eq_ignore_ascii_case("HOUR") || unit.eq_ignore_ascii_case("MINUTE") {
-        let Some(n) = whole_interval_amount(unit, amount)? else {
+        let Some(n) = whole_interval_amount(unit, amount, ctx)? else {
             return Ok(Datum::Null);
         };
         let unit_micros = if unit.eq_ignore_ascii_case("HOUR") {
@@ -809,7 +827,7 @@ pub(crate) fn date_add_with_result_fsp(
         );
     }
     if unit.eq_ignore_ascii_case("MICROSECOND") {
-        let Some(n) = whole_interval_amount(unit, amount)? else {
+        let Some(n) = whole_interval_amount(unit, amount, ctx)? else {
             return Ok(Datum::Null);
         };
         let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
@@ -823,7 +841,7 @@ pub(crate) fn date_add_with_result_fsp(
             ctx,
         );
     }
-    let Some(n) = whole_interval_amount(unit, amount)? else {
+    let Some(n) = whole_interval_amount(unit, amount, ctx)? else {
         return Ok(Datum::Null);
     };
     // Every unit below scales the amount and adds it to a day or month count,
@@ -925,18 +943,42 @@ pub(crate) fn date_add_with_result_fsp(
 ///
 /// REAL and DECIMAL operands (Go's `getDateFromReal`/`getDateFromDecimal`)
 /// keep the pre-existing text coercion; no recorded row measures them.
-fn interval_date_text(date: &Datum) -> Result<Option<String>, EvalError> {
+fn interval_date_text(date: &Datum, cols: &dyn Columns) -> Result<Option<String>, EvalError> {
     let number = match date {
         Datum::Int(value) => *value,
         Datum::UInt(value) => match i64::try_from(*value) {
             Ok(value) => value,
-            // Beyond `i64` there is no packed date at all; Go's `EvalInt`
-            // hands `ParseTimeFromInt64` a wrapped value that fails the same
-            // way this NULL does.
-            Err(_) => return Ok(None),
+            // Beyond `i64` the packed read fails, but go still WARNS: the
+            // wrapped value (-1) names the failure
+            // (`Incorrect time value: '-1'`, 1292) before the NULL.
+            Err(_) => {
+                cols.append_warning(1292, "Incorrect time value: '-1'");
+                return Ok(None);
+            }
         },
-        _ => return coerce_str(date),
+        _ => {
+            // go's getDateFromReal/getDateFromDecimal do not read the raw
+            // decimal text: the numeric value is truncated toward zero to an
+            // integer first (`1.75` -> `1`), and that integer goes through
+            // the SAME packed read as the INT source. The failure names the
+            // truncated integer (`Incorrect time value: '1'`), never the
+            // decimal text.
+            let n = match date {
+                Datum::Decimal(value) => value.round_to_i64_saturating(),
+                Datum::Real(value) => value.trunc() as i64,
+                _ => return coerce_str(date),
+            };
+            return interval_int_text(n, cols);
+        }
     };
+    interval_int_text(number, cols)
+}
+
+/// The INT-source read shared by `Datum::Int` and the truncating DECIMAL/REAL
+/// sources: parse TiDB's packed `YYYYMMDD[HHMMSS]` number, and when the
+/// number is not a valid datetime name the failure with go's warning text
+/// (`Incorrect time value: '<num>'`, 1292) before the NULL.
+fn interval_int_text(number: i64, cols: &dyn Columns) -> Result<Option<String>, EvalError> {
     let Ok(parsed) = tidb_datatype::parse_time_from_num(
         number,
         tidb_datatype::TimeType::DateTime,
@@ -950,6 +992,7 @@ fn interval_date_text(date: &Datum) -> Result<Option<String>, EvalError> {
         true,
         &chrono_tz::Tz::UTC,
     ) else {
+        cols.append_warning(1292, &format!("Incorrect time value: '{number}'"));
         return Ok(None);
     };
     let core = parsed.time.core_time();
@@ -987,7 +1030,11 @@ fn parse_single_string_amount(unit: &str, s: &str) -> i64 {
     trimmed[..i].parse::<i64>().unwrap_or(i64::MAX)
 }
 
-pub(super) fn whole_interval_amount(unit: &str, amount: &Datum) -> Result<Option<i64>, EvalError> {
+pub(super) fn whole_interval_amount(
+    unit: &str,
+    amount: &Datum,
+    cols: &dyn Columns,
+) -> Result<Option<i64>, EvalError> {
     Ok(Some(match amount {
         Datum::Null => return Ok(None),
         Datum::Int(value) => *value,
@@ -997,7 +1044,28 @@ pub(super) fn whole_interval_amount(unit: &str, amount: &Datum) -> Result<Option
             let Some(value) = coerce_str(amount)? else {
                 return Ok(None);
             };
-            parse_single_string_amount(unit, &value)
+            let n = parse_single_string_amount(unit, &value);
+            // go converts the string amount through a decimal first: a
+            // string that is not a clean decimal (no digit run, or anything
+            // left after it -- including a fraction, which truncates)
+            // warns `Truncated incorrect DECIMAL value: '<s>'` (1292)
+            // before the same leading-run value.
+            let trimmed = value.trim();
+            let after_sign = trimmed
+                .strip_prefix(['+', '-'])
+                .unwrap_or(trimmed);
+            let digits = after_sign
+                .len()
+                - after_sign
+                    .trim_start_matches(|c: char| c.is_ascii_digit())
+                    .len();
+            if digits == 0 || digits < after_sign.len() {
+                cols.append_warning(
+                    1292,
+                    &format!("Truncated incorrect DECIMAL value: '{value}'"),
+                );
+            }
+            n
         }
         Datum::Real(value) => value.round() as i64,
         Datum::MinNotNull | Datum::MaxValue => {
@@ -1221,7 +1289,7 @@ fn date_add_composite(
         },
         _ => return Err(EvalError::Unsupported("composite INTERVAL amount")),
     };
-    let Some(s) = interval_date_text(date)? else {
+    let Some(s) = interval_date_text(date, ctx)? else {
         return Ok(Datum::Null);
     };
     let trimmed = s.trim();
@@ -1229,6 +1297,24 @@ fn date_add_composite(
         .split_once(char::is_whitespace)
         .map_or((trimmed, None), |(d, t)| (d, Some(t)));
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
+        // go `builtinAddDateAndDurationSig`'s arg0 cast: an unparseable
+        // datetime text warns `Incorrect datetime value: '<text>'` (1292)
+        // and answers NULL.
+        // go routes each source TYPE to its own parser and its own warning:
+        // the STRING sources warn the datetime-typed text; the numeric
+        // sources parse the INT64 reinterpretation (a u64 overflow reads
+        // -1) and warn the time-typed text.
+        match date {
+            Datum::Int(n) => {
+                ctx.append_warning(1292, &format!("Incorrect time value: '{n}'"));
+            }
+            Datum::UInt(n) => {
+                ctx.append_warning(1292, &format!("Incorrect time value: '{}'", *n as i64));
+            }
+            _ => {
+                ctx.append_warning(1292, &format!("Incorrect datetime value: '{s}'"));
+            }
+        }
         return Ok(Datum::Null);
     };
     let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
@@ -1270,7 +1356,11 @@ fn date_add_composite(
 /// WHOLE composite result rather than per-field. Fractional seconds on string
 /// inputs are retained as six-digit microseconds, matching the source's
 /// `ExtractDatetimeNum`/`ExtractDurationNum` behavior.
-pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn extract_composite(
+    unit: &str,
+    vals: &[Datum],
+    cols: &dyn Columns,
+) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1286,6 +1376,10 @@ pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, Eva
         .split_once(char::is_whitespace)
         .map_or((trimmed, None), |(d, t)| (d, Some(t)));
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
+        // go `builtinExtractDatetimeSig` converts the unparseable text to the
+        // ZERO datetime first and warns `Incorrect datetime value:
+        // '0000-00-00 00:00:00'` (1292) on its way to NULL.
+        cols.append_warning(1292, "Incorrect datetime value: '0000-00-00 00:00:00'");
         return Ok(Datum::Null);
     };
     let (h, mi, sec, microsecond) = time_parts_with_micros(time_suffix).unwrap_or((0, 0, 0, 0));
@@ -1542,6 +1636,20 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
+    // A NULL operand answers NULL silently; go's StrToDate FAILURE lands on
+    // the zero time whose cast warns `Incorrect datetime value:
+    // '0000-00-00 00:00:00'` (1292) — handled by the wrapper below.
+    if matches!(vals[0], Datum::Null) || matches!(vals[1], Datum::Null) {
+        return Ok(Datum::Null);
+    }
+    let result = str_to_date_inner(vals, cols)?;
+    if matches!(result, Datum::Null) {
+        cols.append_warning(1292, "Incorrect datetime value: '0000-00-00 00:00:00'");
+    }
+    Ok(result)
+}
+
+fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let (Some(date), Some(format)) = (coerce_str(&vals[0])?, coerce_str(&vals[1])?) else {
         return Ok(Datum::Null);
     };
@@ -2335,14 +2443,16 @@ mod composite_extract_tests {
         // DAY_MICROSECOND over a datetime: day 1 + 01:02:03.456700.
         let date = Datum::new_string("2023-03-14 01:02:03.4567".to_string());
         assert_eq!(
-            extract_composite("DAY_MICROSECOND", &[date]).unwrap(),
+            extract_composite("DAY_MICROSECOND", &[date], &crate::context::NoColumns).unwrap(),
             Datum::Int(14_010_203_456_700)
         );
         // HOUR_MICROSECOND over a duration string.
         assert_eq!(
             extract_composite(
                 "HOUR_MICROSECOND",
-                &[Datum::new_string("01:02:03.4567".to_string())],
+                &[
+                Datum::new_string("01:02:03.4567".to_string())],
+            &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(102_034_567_00)
@@ -2355,7 +2465,9 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "MINUTE_MICROSECOND",
-                &[Datum::new_string("02:03.4567".to_string())],
+                &[
+                Datum::new_string("02:03.4567".to_string())],
+            &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(20_345_670_0)
@@ -2364,7 +2476,9 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "SECOND_MICROSECOND",
-                &[Datum::new_string("03.4567".to_string())],
+                &[
+                Datum::new_string("03.4567".to_string())],
+            &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(3_456_700)
@@ -2373,7 +2487,9 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "HOUR_MICROSECOND",
-                &[Datum::new_string("02:03.4567".to_string())],
+                &[
+                Datum::new_string("02:03.4567".to_string())],
+            &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(20_345_670_0)
@@ -2381,7 +2497,7 @@ mod composite_extract_tests {
         // A negative duration applies its sign to the WHOLE composite result.
         let dur = Datum::new_string("-01:02:03.4567".to_string());
         assert_eq!(
-            extract_composite("DAY_MICROSECOND", &[dur]).unwrap(),
+            extract_composite("DAY_MICROSECOND", &[dur], &crate::context::NoColumns).unwrap(),
             // A Duration has no day field: DAY_MICROSECOND degenerates to the
             // h/mi/s/us composite, sign applied to the whole result.
             Datum::Int(-10_203_456_700)

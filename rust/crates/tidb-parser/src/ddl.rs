@@ -24,7 +24,7 @@ use tidb_ast::{
     SplitRegionStmt, SplitTarget, Stmt, TableLock, TableLockType, UserSpec, ViewAlgorithm,
     ViewCheckOption, ViewSecurity,
 };
-use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
+use tidb_lexer::{canonical_collation, TokenKind};
 
 use crate::{prec, PResult, Parser};
 
@@ -946,6 +946,7 @@ impl Parser {
     /// {PARTITIONS count | (typed definitions)}` — the only actions modelled; every other
     /// form (`ADD [CONSTRAINT] FOREIGN KEY`, ...) is an honest
     /// `ParseError`.
+
     pub(crate) fn parse_alter_table_statement(&mut self) -> PResult<Stmt> {
         self.expect_kw("ALTER")?;
         if self.is_kw("IGNORE") {
@@ -1645,7 +1646,10 @@ impl Parser {
             self.bump();
             Ok(None)
         } else {
-            Ok(Some(self.parse_alter_charset_name()?))
+            // go accepts ANY identifier here syntactically — a name that is
+            // not a charset (a collation name, say) fails later with
+            // ErrUnknownCharacterSet (1115), not a 1064.
+            Ok(Some(self.parse_table_option_word()?))
         }
     }
 
@@ -1658,17 +1662,6 @@ impl Parser {
         let collation =
             canonical_collation(&raw).ok_or_else(|| self.err_here("unknown collation"))?;
         Ok(Some(collation.to_ascii_uppercase()))
-    }
-
-    /// Go's `parseTableOption` validates table charset names against
-    /// `charset.GetCharsetInfo`, unlike a general identifier slot. Reuse the
-    /// generated lexer registry so aliases (notably `utf8mb3`) canonicalize
-    /// through the same source-derived table before AST restore.
-    fn parse_alter_charset_name(&mut self) -> PResult<String> {
-        let raw = self.parse_table_option_word()?;
-        canonical_charset(&raw)
-            .map(|charset| charset.to_ascii_uppercase())
-            .ok_or_else(|| self.err_here("unknown character set"))
     }
 
     /// Parses `RENAME TABLE old1 TO new1 [, old2 TO new2 ...]` — a

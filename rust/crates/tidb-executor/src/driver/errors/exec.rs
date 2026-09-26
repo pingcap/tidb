@@ -67,7 +67,7 @@ fn coprocessor_cot_error_matches_go() {
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
     match error {
         ExecError::Mysql(error) => error,
-        ExecError::Eval(eval) => eval_to_mysql_error(eval),
+        ExecError::Eval(eval) => eval_to_mysql_error(eval).from_evaluation(),
         // An internal invariant error carries the exact message Go returns
         // through its generic error path.
         ExecError::Internal(message) => MysqlError::unknown(message),
@@ -208,6 +208,10 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // DECIMAL one. See [`out_of_range`] for the one part still missing.
         EvalError::IntOverflow => out_of_range("BIGINT"),
         EvalError::FloatOverflow => out_of_range("DOUBLE"),
+        EvalError::ConstantFloatCastOverflow { value } => MysqlError::new(
+            ER_DATA_OUT_OF_RANGE,
+            format!("constant {value} overflows float"),
+        ),
         EvalError::DecimalOverflow => out_of_range("DECIMAL"),
         // Porting boundaries with no TiDB answer to match: TiDB evaluates
         // these, so there is no Go message for "not ported yet". The carried
@@ -223,13 +227,19 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // Go `ErrBadField` with `clauseMsg[expressionClause]` — the clause a
         // resolution site without its own clause name reports.
         EvalError::UnknownColumn(column) => {
-            MysqlError::new(1054, format!("Unknown column '{column}' in 'expression'"))
+            // go folds an UNQUOTED identifier to its stored lowercase form
+            // before naming it in ErrBadField.
+            MysqlError::new(
+                1054,
+                format!("Unknown column '{}' in 'expression'", column.to_lowercase()),
+            )
         }
         // Go `ErrBadField` with the clause the name was written in
         // (`clauseMsg`), for example `Unknown column 'j' in 'order clause'`.
-        EvalError::UnknownColumnInClause(column, clause) => {
-            MysqlError::new(1054, format!("Unknown column '{column}' in '{clause}'"))
-        }
+        EvalError::UnknownColumnInClause(column, clause) => MysqlError::new(
+            1054,
+            format!("Unknown column '{}' in '{clause}'", column.to_lowercase()),
+        ),
         EvalError::UnsupportedOperandPair(lhs, rhs) => MysqlError::unknown(format!(
             "a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"
         )),

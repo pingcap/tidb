@@ -694,9 +694,25 @@ pub(crate) fn unhex(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// 64-bit value.  TiDB's `binFunctionClass` requests `ETInt`, so strings use
 /// their leading integer run, decimals round half-up, and reals round
 /// ties-to-even before their resulting two's-complement bits are formatted.
-pub(crate) fn bin(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn bin(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad BIN arity"));
+    }
+    let raw: Option<&[u8]> = match &vals[0] {
+        Datum::String(text) => Some(text.bytes()),
+        Datum::Bytes(text) => Some(text),
+        _ => None,
+    };
+    if let Some(text) = raw {
+        if radix_truncated(text) {
+            ctx.append_warning(
+                1292,
+                &format!(
+                    "Truncated incorrect INTEGER value: '{}'",
+                    String::from_utf8_lossy(text)
+                ),
+            );
+        }
     }
     Ok(radix_integer_bits(&vals[0])?
         .map_or(Datum::Null, |bits| Datum::new_string(format!("{bits:b}"))))
@@ -858,6 +874,23 @@ fn radix_integer_bits(value: &Datum) -> Result<Option<u64>, EvalError> {
 /// optional `+`, parses the leading ASCII digits, and preserves all `u64`
 /// bits.  Invalid/trailing text only emits a warning in TiDB's test context,
 /// so it leaves the valid prefix (or zero) intact.
+/// go `StrToInt`/`StrToUint`: the cast warns `Truncated incorrect INTEGER
+/// value` when the text carries anything the numeric parse could not
+/// consume — a remainder after the digit run, or no digits at all.
+fn radix_truncated(value: &[u8]) -> bool {
+    let value = trim_go_space(value);
+    let digits = if value.len() > 1 && value.starts_with(b"-") {
+        &value[1..]
+    } else {
+        value.strip_prefix(b"+").unwrap_or(value)
+    };
+    let digit_len = digits
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    digit_len < digits.len()
+}
+
 fn radix_string_bits_bytes(value: &[u8]) -> u64 {
     let value = trim_go_space(value);
     let negative = value.len() > 1 && value.starts_with(b"-");
@@ -1540,7 +1573,23 @@ pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// value); `NULL` propagates. This follows the function's ETInt input
 /// signature: decimal/real/string values first take their MySQL integer
 /// coercion, whose statement warnings are outside this value-only domain.
-pub(crate) fn bit_count(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn bit_count(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    let raw: Option<&[u8]> = match &vals[0] {
+        Datum::String(text) => Some(text.bytes()),
+        Datum::Bytes(text) => Some(text),
+        _ => None,
+    };
+    if let Some(text) = raw {
+        if radix_truncated(text) {
+            ctx.append_warning(
+                1292,
+                &format!(
+                    "Truncated incorrect INTEGER value: '{}'",
+                    String::from_utf8_lossy(text)
+                ),
+            );
+        }
+    }
     let bits = match &vals[0] {
         Datum::Null => return Ok(Datum::Null),
         Datum::Int(n) => *n as u64,
@@ -1841,6 +1890,24 @@ pub(crate) fn char_func_with_context(
     for v in nums {
         match v {
             Datum::Null => {} // skipped, matching TiDB's EvalInt NULL path
+            // Go's `WrapWithCastAsInt` over a JSON operand re-reads the
+            // document's text as an integer (StrToInt), raising go's 1292
+            // truncation warning when the text is not a clean integer —
+            // captured: `CHAR(65, j)` over `{}` warns
+            // "Truncated incorrect INTEGER value: '{}'".
+            Datum::Json(value) => {
+                let as_text = Datum::new_string(value.to_string());
+                crate::cast::report_int_truncation(&as_text, ctx)?;
+                append_char_integer(&mut bytes, crate::cast::to_i64_signed(&as_text));
+            }
+            // go `WrapWithCastAsInt` over a STRING source reads the text as
+            // an integer and warns `Truncated incorrect INTEGER value`
+            // (captured: CHAR('中文测试', 'ünïcödé') warns against '中文测试'
+            // before the charset error, so the warning survives it).
+            Datum::String(_) | Datum::Bytes(_) => {
+                crate::cast::report_int_truncation(v, ctx)?;
+                append_char_integer(&mut bytes, crate::cast::to_i64_signed(v));
+            }
             _ => append_char_integer(&mut bytes, crate::cast::to_i64_signed(v)),
         }
     }
@@ -1848,13 +1915,17 @@ pub(crate) fn char_func_with_context(
         return Ok(Datum::new_bytes(bytes));
     }
 
-    let charset = std::str::from_utf8(
-        charset
-            .as_raw_bytes()
-            .ok_or(EvalError::Unsupported("CHAR charset argument"))?,
-    )
-    .map_err(|_| EvalError::Unsupported("CHAR charset argument"))?
-    .to_ascii_lowercase();
+    // go evaluates the charset argument as a STRING (a numeric source
+    // spells its text out: `-3.75` IS the charset name), then
+    // `GetCharsetInfo` answers the bare 1105 `Unknown charset <name>`
+    // BEFORE any encoding work happens.
+    let charset_text = crate::coerce::coerce_str(charset)?.ok_or_else(|| {
+        EvalError::Unsupported("CHAR charset argument")
+    })?;
+    let charset = charset_text.to_ascii_lowercase();
+    let collation_name = get_default_collation(&charset).map_err(|_| {
+        EvalError::Unsupported(Box::leak(format!("Unknown charset {charset}").into_boxed_str()))
+    })?;
     let (decoded, error) = find_encoding(&charset)
         .transform(&bytes, TransformOp::DECODE)
         .into_parts();
@@ -1864,10 +1935,10 @@ pub(crate) fn char_func_with_context(
             return Ok(Datum::Null);
         }
     }
-    let collation_name = get_default_collation(&charset)
-        .map_err(|_| EvalError::Unsupported("CHAR charset argument"))?;
     let collation = Collation::from_name(&collation_name)
-        .ok_or(EvalError::Unsupported("CHAR charset argument"))?;
+        .ok_or_else(|| {
+            EvalError::Unsupported(Box::leak(format!("Unknown charset {charset}").into_boxed_str()))
+        })?;
     Ok(Datum::new_collation_string(decoded, collation))
 }
 
@@ -1962,13 +2033,13 @@ mod bit_count_tests {
             (Datum::Decimal(Decimal::from_literal("3.1")), 2),
         ];
         for (input, want) in cases {
-            assert_eq!(bit_count(&[input]), Ok(Datum::Int(want)));
+            assert_eq!(bit_count(&[input], &crate::context::NoColumns), Ok(Datum::Int(want)));
         }
-        assert_eq!(bit_count(&[Datum::Null]), Ok(Datum::Null));
+        assert_eq!(bit_count(&[Datum::Null], &crate::context::NoColumns), Ok(Datum::Null));
         // Go's string conversion is byte-prefix based, so malformed UTF-8
         // after an ASCII number must not erase the numeric prefix.
         assert_eq!(
-            bit_count(&[Datum::new_bytes(vec![b'1', 0xff])]),
+            bit_count(&[Datum::new_bytes(vec![b'1', 0xff])], &crate::context::NoColumns),
             Ok(Datum::Int(1))
         );
     }

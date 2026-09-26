@@ -107,6 +107,7 @@ impl PendingQuery {
             false,
         );
         let result = self.record_set.finish();
+        self.context.drain_fold_warnings();
         session.drain_eval_warnings(&self.context);
         let finished = std::mem::take(&mut self.transaction_end).finish(session, result.is_ok());
         result.and(finished)
@@ -124,6 +125,7 @@ impl PendingQuery {
             execute_opened_at: _,
         } = self;
         let result = record_set.collect();
+        context.drain_fold_warnings();
         session.drain_eval_warnings(&context);
         let finished = transaction_end.finish(session, result.is_ok());
         let (columns, rows) = result?;

@@ -913,6 +913,12 @@ pub struct StmtContextData {
     /// `@@group_concat_max_len`, the BYTE budget `GROUP_CONCAT` truncates its
     /// joined buffer to (Go `baseGroupConcat4String.maxLen`).
     group_concat_max_len: u64,
+    /// go `SysErrorCount`/`SysWarningCount`: the PREVIOUS statement's counts,
+    /// copied by `ResetContextOfStmt` and read back by `@@error_count` /
+    /// `@@warning_count` (captured: after a failed `SET bogus_var=1` both
+    /// read 1).
+    client_error_count: usize,
+    client_warning_count: usize,
     /// `@@tidb_mem_quota_apply_cache`, captured once for this statement so
     /// every Apply operator uses the same session-visible cache budget.
     apply_cache_capacity: i64,
@@ -1219,6 +1225,19 @@ context_configuration! {
     /// Go `SessionVars.GroupConcatMaxLen`, which the aggregate builder copies
     /// into every `GROUP_CONCAT` it builds. The default is Go's
     /// `DefGroupConcatMaxLen`, 1024.
+    /// Copies the session's previous-statement warning/error counts for the
+    /// `@@error_count` / `@@warning_count` reads.
+    #[must_use]
+    pub fn with_client_warning_counts(
+        mut self,
+        error_count: usize,
+        warning_count: usize,
+    ) -> Self {
+        self.client_error_count = error_count;
+        self.client_warning_count = warning_count;
+        self
+    }
+
     #[must_use]
     pub fn with_group_concat_max_len(mut self, group_concat_max_len: u64) -> Self {
         self.group_concat_max_len = group_concat_max_len;
@@ -1812,6 +1831,8 @@ impl StmtContext {
         session: StmtContextSessionState,
     ) -> Self {
         Self(Arc::new(StmtContextData {
+            client_error_count: 0,
+            client_warning_count: 0,
             context_id: NEXT_STATEMENT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
             warnings: Arc::default(),
             extra_warnings: Arc::default(),
@@ -3536,6 +3557,18 @@ impl StmtContext {
         self.append_warning(code, message);
     }
 
+    /// Moves the warnings the CONSTANT-FOLD evaluation stashed on this
+    /// thread into this context's warning list. go appends a fold-time
+    /// warning to `StmtCtx.warnings` while planning
+    /// (`ADDDATE('abc', INTERVAL 1 DAY)` on an empty table warns `Incorrect
+    /// datetime value: 'abc'`), and the OK packet's count and `SHOW
+    /// WARNINGS` both read them.
+    pub fn drain_fold_warnings(&self) {
+        for (code, message) in tidb_expr::constant_fold::take_fold_warnings() {
+            self.append_warning_parts(code, &message);
+        }
+    }
+
     /// Records a warning in Go's extra-warning handler. Extra warnings are
     /// retained for diagnostics and slow-log consumers, not SHOW WARNINGS.
     pub fn append_extra_warning_parts(&self, code: u16, message: &str) {
@@ -4249,6 +4282,12 @@ impl Columns for StmtContext {
         // trait already has a general variable channel.
         if name.eq_ignore_ascii_case("group_concat_max_len") {
             return Some(Datum::UInt(self.group_concat_max_len));
+        }
+        if name.eq_ignore_ascii_case("error_count") {
+            return Some(Datum::UInt(self.client_error_count as u64));
+        }
+        if name.eq_ignore_ascii_case("warning_count") {
+            return Some(Datum::UInt(self.client_warning_count as u64));
         }
         if matches!(scope, Some(tidb_ast::SysVarScope::Global)) {
             return self

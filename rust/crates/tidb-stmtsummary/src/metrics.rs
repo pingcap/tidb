@@ -39,7 +39,10 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 /// Go `StmtSummaryWindowEvictedCount` (`pkg/metrics`).
 pub static WINDOW_EVICTED_COUNT: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
-        Opts::new("tidb_stmt_summary_window_evicted_count", "The number of LRU evictions in the current statement summary window."),
+        Opts::new(
+            "tidb_stmt_summary_window_evicted_count",
+            "The number of LRU evictions in the current statement summary window.",
+        ),
         &["type"],
     ))
 });
@@ -47,7 +50,10 @@ pub static WINDOW_EVICTED_COUNT: LazyLock<GaugeVec> = LazyLock::new(|| {
 /// Go `StmtSummaryWindowRecordCount` (`pkg/metrics`).
 pub static WINDOW_RECORD_COUNT: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
-        Opts::new("tidb_stmt_summary_window_record_count", "The number of statement summary records currently tracked by statement summary."),
+        Opts::new(
+            "tidb_stmt_summary_window_record_count",
+            "The number of statement summary records currently tracked by statement summary.",
+        ),
         &["type"],
     ))
 });

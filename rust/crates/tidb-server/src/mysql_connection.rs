@@ -1712,6 +1712,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         let parsed = match engine.parse_statement(sql) {
                             Ok(parsed) => parsed,
                             Err(error) => {
+                                // go session.go:1955-1968's parse-failure
+                                // half: fresh warning context + the error row
+                                // (see the session's own record_parse_failure).
+                                engine.record_parse_failure(error.code, error.message.clone());
                                 write_query_error_at(&mut output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
@@ -1852,6 +1856,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             Some(stmt) => engine.execute_write_parsed(sql, stmt),
                             None => engine.execute_write(sql),
                         };
+                        if let Err(ref error) = written {
+                            // go `driver_tidb.go:376` appends every error to
+                            // StmtCtx. The DML column-validation path already
+                            // appends its own warns; avoid double-appending
+                            // (go's INSERT 1264 shows ONE row).
+                            let is_ddl = parsed.as_ref().is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
+                            if is_ddl || !matches!(error.code, 1264 | 1265 | 1366 | 1406) {
+                                engine.record_write_failure(error.code, error.message.clone());
+                            }
+                        }
                         match written {
                             Ok(Some(outcome)) => {
                                 let info = engine.statement_info();

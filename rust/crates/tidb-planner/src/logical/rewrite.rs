@@ -223,6 +223,25 @@ fn column_ranges_selectivity(
     Some(estimate.map(|estimate| (estimate.est / table_stats.row_count()).min(1.0)))
 }
 
+/// GO `ranger.BuildColumnRange(accessConds, ..., cols[0].RetType, ...)`
+/// (`selectivity.go:821`): `Selectivity` prices eq/nulleq/in through column
+/// ranges whose constants the ranger has CONVERTED to the estimated column's
+/// type before encoding. A raw int `-7` against decimal(5,2) TopN keys misses
+/// the TopN and falls to the uniform 1/realtime estimate (q91:
+/// eq(ca_gmt_offset, -7) → 1.7e-6 vs go's 0.10477).
+fn convert_constant_to_column_type(
+    value: tidb_datatype::Datum,
+    column: &tidb_expr::column::Column,
+) -> tidb_datatype::Datum {
+    let Some(field_type) = column.ret_type.as_ref() else {
+        return value;
+    };
+    match value.convert_to(field_type, tidb_datatype::ConversionFlags::default()) {
+        Ok(converted) => converted.value,
+        Err(_) => value,
+    }
+}
+
 pub(crate) fn analyzed_filter_selectivity(
     table_stats: &StatsInfo,
     conditions: &[Expression],
@@ -406,14 +425,34 @@ fn try_analyzed_filter_selectivity_in(
                 }
             }
         }
+        // GO `Selectivity` routes col = col through the ranger: with no
+        // constant to range on the ranger answers the FULL range, i.e.
+        // selectivity 1 — a column equals itself for every non-null row
+        // (q41's eq(i_manufact, i_manufact) self-comparison; the port's
+        // generic 0.8 fallback inflated the DNF by ×4.9).
+        if matches!(function.func_name.lowercase(), "eq" | "nulleq")
+            && matches!(
+                function.args.as_slice(),
+                [Expression::Column(_), Expression::Column(_)]
+            )
+        {
+            recognized = true;
+            continue;
+        }
         let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
             ("eq" | "nulleq", [Expression::Column(column), value @ Expression::Constant(_)]) => (
                 column,
-                vec![evaluate(value).map_err(crate::ranger::points::PointBuilderError::Eval)?],
+                vec![convert_constant_to_column_type(
+                    evaluate(value).map_err(crate::ranger::points::PointBuilderError::Eval)?,
+                    column,
+                )],
             ),
             ("eq" | "nulleq", [value @ Expression::Constant(_), Expression::Column(column)]) => (
                 column,
-                vec![evaluate(value).map_err(crate::ranger::points::PointBuilderError::Eval)?],
+                vec![convert_constant_to_column_type(
+                    evaluate(value).map_err(crate::ranger::points::PointBuilderError::Eval)?,
+                    column,
+                )],
             ),
             ("in", [Expression::Column(column), values @ ..])
                 if !values.is_empty()
@@ -426,7 +465,9 @@ fn try_analyzed_filter_selectivity_in(
                     values
                         .iter()
                         .map(|value| {
-                            evaluate(value).map_err(crate::ranger::points::PointBuilderError::Eval)
+                            evaluate(value)
+                                .map(|value| convert_constant_to_column_type(value, column))
+                                .map_err(crate::ranger::points::PointBuilderError::Eval)
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 )
@@ -1563,6 +1604,9 @@ struct PredicatePushDown<'a, 'ctx> {
     ctx: &'a RuleContext<'ctx>,
     failure: RewriteFailure,
     stash: Vec<PendingPredicates>,
+    /// The predicates above each CTE reference, keyed by storage id:
+    /// the deferred seed predicate pushdown's input.
+    cte_table_preds: Vec<(i32, Vec<Expression>)>,
 }
 
 impl OwnedRewrite for PredicatePushDown<'_, '_> {
@@ -1819,6 +1863,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 use super::cte::CtePredicatePushDown;
 
                 let decision = op.predicate_push_down(&predicates);
+                let mut seed_predicates: Option<Vec<Expression>> = None;
                 if let Some(class) = &op.cte {
                     let mut class = class.borrow_mut();
                     let recorded = match decision {
@@ -1839,9 +1884,26 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                         ),
                     };
                     if let Some(recorded) = recorded {
+                        // The seed's subtree receives the translated copy: GO
+                        // pushes the consumer predicates THROUGH the CTE
+                        // boundary into the seed (q1's seed-scan Selection
+                        // with not(isnull(sr_store_sk)) at the seed's own row
+                        // count), while the predicates also remain above this
+                        // reference (q1's consumer-level Selections).
+                        seed_predicates = Some(vec![recorded.clone()]);
                         class.push_down_predicates.push(recorded);
                     }
                 }
+                // Go returns `predicates` unchanged in EVERY branch of
+                // `LogicalCTE.PredicatePushDown`: the predicates remain above
+                // the reference, and the copy recorded on the shared class is
+                // consumed later by `LogicalCTE.DeriveStats`, which attaches
+                // the DNF-extracted Selection above the seed and re-optimises
+                // it (planner_bridge `optimize_cte_class`). Descending here
+                // is impossible anyway: a reference node has no children, so
+                // the fold would resize the child predicates away and drop
+                // both the copy and the parent's Selection.
+                let _ = seed_predicates;
                 Descend::Stop(predicates)
             }
             // Go's base body: everything goes to `children[0]`, nothing comes
@@ -1967,6 +2029,7 @@ pub fn predicate_push_down(
         ctx,
         failure: RewriteFailure::default(),
         stash: Vec::new(),
+        cte_table_preds: Vec::new(),
     };
     let (plan, remaining) = fold_owned(&mut rewrite, plan, predicates);
     (plan, remaining, rewrite.failure.take())

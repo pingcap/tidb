@@ -39,26 +39,36 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 /// Go `UsedSlotsGauge` (`pkg/metrics`).
 pub static USED_SLOTS: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
-        Opts::new("tidb_disttask_used_slots", "Gauge of used slots on a executor node."),
+        Opts::new(
+            "tidb_disttask_used_slots",
+            "Gauge of used slots on a executor node.",
+        ),
         &["service_scope"],
     ))
 });
 
 /// Go `MergeSortReadBytes` (`pkg/metrics`).
 pub static MERGE_SORT_READ_BYTES: LazyLock<Counter> = LazyLock::new(|| {
-    register(Counter::new("tidb_global_sort_merge_sort_read_bytes", "Counter of bytes read in merge sort."))
+    register(Counter::new(
+        "tidb_global_sort_merge_sort_read_bytes",
+        "Counter of bytes read in merge sort.",
+    ))
 });
 
 /// Go `MergeSortWriteBytes` (`pkg/metrics`).
 pub static MERGE_SORT_WRITE_BYTES: LazyLock<Counter> = LazyLock::new(|| {
-    register(Counter::new("tidb_global_sort_merge_sort_write_bytes", "Counter of bytes written in merge sort."))
+    register(Counter::new(
+        "tidb_global_sort_merge_sort_write_bytes",
+        "Counter of bytes written in merge sort.",
+    ))
 });
 
 /// Go `GlobalSortUploadWorkerCount` (`pkg/metrics`).
 pub static UPLOAD_WORKER_COUNT: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(
-        Opts::new("tidb_global_sort_upload_worker_cnt", "Gauge of active parallel upload worker count."),
-    ))
+    register(Gauge::with_opts(Opts::new(
+        "tidb_global_sort_upload_worker_cnt",
+        "Gauge of active parallel upload worker count.",
+    )))
 });
 
 /// Materializes the series Go's subsystem startup writes, mirroring the

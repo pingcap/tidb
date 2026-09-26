@@ -46,6 +46,47 @@ use tidb_datatype::FieldType;
 ///
 /// The body is resolved now, as Go does: a `CREATE VIEW` over a missing table
 /// or column fails at creation rather than at the first read.
+/// go `AlterView`: the view-definition modification. The view MUST exist
+/// (go answers `infoschema.ErrTableNotExists`, 1146, for a missing view);
+/// the replacement mirrors `CREATE OR REPLACE VIEW`.
+pub fn run_alter_view_in(
+    alter: &tidb_ast::AlterViewStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let name = alter.name.last().cloned().unwrap_or_default();
+    // go `AlterView`: the view MUST exist (1146 for a missing view).
+    if catalog
+        .table_in(current_db, &name)
+        .is_none_or(|entry| !entry.is_view())
+    {
+        return Err(DriverError::Schema(
+            crate::SchemaErrorKind::UnknownTable(format!("{current_db}.{}", alter.name.join("."))),
+        ));
+    }
+    // The definition rebuild mirrors `CREATE OR REPLACE VIEW`: the ALTER
+    // spelling carries only the name, the optional columns and the query.
+    let create = tidb_ast::CreateViewStmt {
+        or_replace: true,
+        algorithm: Default::default(),
+        definer: tidb_ast::UserSpec {
+            current_user: true,
+            user: String::new(),
+            host: String::new(),
+        },
+        security: Default::default(),
+        name: alter.name.clone(),
+        columns: alter.columns.clone(),
+        query: alter.query.clone(),
+        query_parenthesized: false,
+        check_option: Default::default(),
+    };
+    let (database, name, view) = resolve_view_definition(&create, catalog, current_db, ctx)?;
+    catalog.register_view_in(&database, &name, view)?;
+    Ok(())
+}
+
 pub fn run_create_view_in(
     create: &CreateViewStmt,
     catalog: &mut Catalog,

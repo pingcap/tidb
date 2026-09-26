@@ -28,7 +28,11 @@ pub(crate) trait FrameRows {
     /// Go subtracts frame offsets as uint64. A backward offset visits the
     /// remaining rows before its wrapped shift reaches the first invalid row.
     fn sliding_end(&self, start: usize, end: usize) -> usize {
-        if end < start { self.num_rows() } else { end }
+        if end < start {
+            self.num_rows()
+        } else {
+            end
+        }
     }
 
     fn check_sliding_end(&self, start: usize, end: usize) -> Result<(), ExecError> {
@@ -263,7 +267,7 @@ mod tests {
     #[test]
     fn sliding_states_keep_absolute_indexes_after_input_expiry() {
         use crate::hash_agg::{AggFunc, AggKind, WindowAggState};
-        use tidb_expr::{NoColumns, column::Column, expression::Expression};
+        use tidb_expr::{column::Column, expression::Expression, NoColumns};
         let ty = FieldType::new(FieldTypeCode::LongLong);
         let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
         decimal.set_decimal(0);

@@ -74,6 +74,10 @@ use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 pub(crate) struct RangeContext<'a> {
     pub max_size: i64,
     pub fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    /// The live statement context for folds the range builder performs.
+    /// go's detacher folds under `StmtCtx`, so its constant-materialization
+    /// warnings reach the client; a dry context drops them.
+    pub eval_ctx: Option<&'a dyn tidb_expr::Columns>,
 }
 
 impl Default for RangeContext<'_> {
@@ -81,6 +85,7 @@ impl Default for RangeContext<'_> {
         Self {
             max_size: 64 * 1024 * 1024,
             fallback_handler: None,
+            eval_ctx: None,
         }
     }
 }
@@ -3272,6 +3277,7 @@ mod tests {
                     RangeContext {
                         max_size: quota,
                         fallback_handler: None,
+                        eval_ctx: None,
                     },
                     &index,
                 )
@@ -3312,6 +3318,7 @@ mod tests {
                 RangeContext {
                     max_size: quota,
                     fallback_handler: None,
+                    eval_ctx: None,
                 },
                 &index,
             )

@@ -468,10 +468,13 @@ impl Parser {
                 // narrower parser boundary: GBK/UJIS/other registered legacy
                 // names are lexer tokens but unsupported introducers.
                 let charset = canonical_legacy_charset(&t.text).ok_or_else(|| {
-                    self.err_here(&format!(
-                        "[parser:1115]Unsupported character introducer: '{}'",
-                        t.text
-                    ))
+                    // go raises the unsupported introducer as the CLASSED
+                    // terror `ErrUnknownCharacterSet` (1115), not as a 1064
+                    // syntax error wrapping the coded text.
+                    self.err_coded(
+                        1115,
+                        &format!("Unsupported character introducer: '{}'", t.text),
+                    )
                 })?;
                 // Go preserves the canonical lowercase name for an explicit
                 // `_charset` introducer, while national strings (`N'...'`)
@@ -499,13 +502,33 @@ impl Parser {
                         let digits = normalize_hex(&self.peek().text)
                             .map_err(|reason| self.err_here(reason))?;
                         self.bump();
-                        let value = Expr::Hex(digits);
-                        if matches!(charset, "binary" | "utf8mb4") {
-                            Ok(value)
+                        if charset == "binary" {
+                            Ok(Expr::Hex(digits))
+                        } else if charset == "utf8mb4" {
+                            // go's `parseCharsetIntroducer` gives the decoded
+                            // hex payload the introducer's charset: `_utf8mb4
+                            // 0xF09DA080` is a utf8mb4 STRING — CHAR_LENGTH
+                            // counts characters (1), COLLATION answers
+                            // utf8mb4_bin, LEFT(.., 1) returns the first
+                            // CHARACTER (all captured on the oracle). Decode
+                            // here so the literal evaluates as text.
+                            let bytes =
+                                hex_to_bytes(&digits).map_err(|reason| self.err_here(&reason))?;
+                            let text = String::from_utf8(bytes).map_err(|_| {
+                                self.err_here("introduced hex literal is not valid charset text")
+                            })?;
+                            Ok(Expr::CharsetString {
+                                charset: restored_charset,
+                                value: text,
+                            })
                         } else {
+                            // Other charsets keep the byte payload as a
+                            // BINARY literal: `_latin1 0x41 + 0` answers 65
+                            // (the bytes ARE the number), which a text
+                            // re-read would lose.
                             Ok(Expr::CharsetBinary {
                                 charset: restored_charset,
-                                value: Box::new(value),
+                                value: Box::new(Expr::Hex(digits)),
                             })
                         }
                     }
@@ -1107,6 +1130,18 @@ fn normalize_hex(text: &str) -> Result<String, &'static str> {
         lower.insert(0, '0');
     }
     Ok(lower)
+}
+
+/// Decodes an even-length hex digit string into its bytes, for the
+/// charset-introducer hex literal whose payload IS the charset-encoded text
+/// (`_utf8mb4 0xF09DA080` is a utf8mb4 string, not a byte blob).
+fn hex_to_bytes(digits: &str) -> Result<Vec<u8>, &'static str> {
+    (0..digits.len() / 2)
+        .map(|index| {
+            u8::from_str_radix(&digits[index * 2..index * 2 + 2], 16)
+                .map_err(|_| "invalid hexadecimal format")
+        })
+        .collect()
 }
 
 /// Extracts the exact bit digits from `0b101` / `b'0101'` syntax.

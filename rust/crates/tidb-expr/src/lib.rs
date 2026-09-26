@@ -339,6 +339,7 @@ pub mod column;
 pub mod constant;
 pub mod constant_fold;
 pub mod constant_propagation;
+mod go_flate;
 pub use constant_fold::{
     derive_constant_null_flag, fold_constant_in_mode,
     fold_constant_in_mode_preserving_warning_casts, ConstantFoldMode,
@@ -1078,7 +1079,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             )?;
             let le =
                 crate::ops::eval_binary_in(tidb_ast::BinaryOp::Le, v, eval_in(high, cols)?, cols)?;
-            Ok(negate_if(logic_and(ge, le)?, *not))
+            Ok(negate_if(logic_and(ge, le, cols)?, *not))
         }
         Expr::Is { expr, target, not } => {
             // IS is always TRUE/FALSE (never NULL): it tests a definite property.

@@ -137,7 +137,11 @@ impl ParseError {
             return format!("near '{}' at line {comment_line}", &sql[near_offset..]);
         }
         let column = offset.saturating_sub(line_start);
-        let mut near_end = (near_offset + 80).min(sql.len());
+        // go's Scanner.Errorf excerpts the remainder up to 2048 bytes
+        // (oracle-pinned: a 16,892-byte remainder truncates its near text
+        // at exactly 2048) -- the 80-byte cap answered a different message
+        // than the wire carries.
+        let mut near_end = (near_offset + 2048).min(sql.len());
         while !sql.is_char_boundary(near_end) {
             near_end -= 1;
         }
@@ -1770,3 +1774,4 @@ fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool) -> String {
 
 #[cfg(test)]
 mod tests;
+mod pipes_probe_test;

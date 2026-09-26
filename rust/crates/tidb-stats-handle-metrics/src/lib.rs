@@ -17,7 +17,9 @@
 
 use std::sync::{LazyLock, RwLock};
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramVec, HistogramOpts, Opts};
+use prometheus::{
+    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts,
+};
 
 /// Go `StatsHealthyBucket0To50`.
 pub const STATS_HEALTHY_BUCKET_0_TO_50: usize = 0;
@@ -372,11 +374,8 @@ mod tests {
 
 /// Go `SyncLoadCounter` (`pkg/metrics/stats.go`).
 pub static SYNC_LOAD_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
-    let metric = Counter::new(
-        "tidb_statistics_sync_load_total",
-        "Counter of sync load",
-    )
-    .expect("valid sync load counter");
+    let metric = Counter::new("tidb_statistics_sync_load_total", "Counter of sync load")
+        .expect("valid sync load counter");
     prometheus::default_registry()
         .register(Box::new(metric.clone()))
         .expect("sync load counter is registered once");
@@ -428,7 +427,6 @@ static MANUAL_ANALYZE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
 pub fn manual_analyze_total_succ() -> Counter {
     MANUAL_ANALYZE_COUNTER.with_label_values(&["succ"])
 }
-
 
 /// Go `AutoAnalyzeHistogram` (`pkg/metrics/stats.go`).
 pub static AUTO_ANALYZE_HISTOGRAM: LazyLock<Histogram> = LazyLock::new(|| {

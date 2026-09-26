@@ -1085,6 +1085,7 @@ impl Parser {
     /// grammar for non-literal operands; this check only closes the source
     /// owned integer-overflow boundary without inventing a narrower AST.
     fn parse_limit_option(&mut self) -> PResult<Expr> {
+        let start = self.peek().offset;
         let expr = self.parse_expr(prec::NONE)?;
         match &expr {
             Expr::Int(digits) => {
@@ -1097,6 +1098,21 @@ impl Parser {
             // LIMIT accepts only an unsigned integer literal at this grammar
             // boundary, so reject that overflow token before it can restore.
             Expr::Decimal(_) => return Err(self.err_here("LIMIT value out of range")),
+            // `LIMIT -1`: go's grammar takes a positive integer here, so the
+            // minus is a syntax error at this boundary, not a later planner
+            // refusal. Go's `near` excerpt points AT the `-1` token, so the
+            // error anchors where the operand began.
+            Expr::Unary { .. } => {
+                return Err(crate::ParseError {
+                    message: "LIMIT value out of range".to_string(),
+                    // go's column points immediately after the offending
+                    // minus token — the same "after the unexpected token"
+                    // boundary every other arm reports.
+                    offset: start.saturating_add(1).min(self.source.len()),
+                    near_offset: start,
+                    errno: None,
+                });
+            }
             _ => {}
         }
         Ok(expr)

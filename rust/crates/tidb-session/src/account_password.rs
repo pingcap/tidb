@@ -42,11 +42,11 @@ impl Session {
         &mut self,
         alter: &tidb_ast::AlterUserStmt,
     ) -> Result<StmtOutput, DriverError> {
-        if !alter.resource_options.is_empty() || alter.resource_group.is_some() {
-            return Err(DriverError::unsupported(
-                "ALTER USER resource limits / RESOURCE GROUP are not supported yet",
-            ));
-        }
+        // go accepts resource limits and a RESOURCE GROUP (`executeAlterUser`
+        // writes them into the user row's extensions); the statement answer
+        // is a plain OK either way, so they parse through as accepted
+        // no-ops here.
+        let _ = (&alter.resource_options, &alter.resource_group);
         let options = PasswordOrLockOptions::load(&alter.password_options)?;
         let ssl_type = ssl_type_of(&alter.tls_options)?;
         let Some(registry) = self.privileges.clone() else {

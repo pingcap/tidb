@@ -37,8 +37,8 @@ use rows::WindowRows;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType};
-use tidb_expr::Columns;
 use tidb_expr::expression::Expression;
+use tidb_expr::Columns;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, WindowAggState};

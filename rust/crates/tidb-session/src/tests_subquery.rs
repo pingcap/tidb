@@ -1030,9 +1030,8 @@ fn not_in_with_no_other_key_becomes_a_null_aware_anti_join() {
     // like `EqualConditions` -- the "Null-aware " prefix alone is not the
     // whole story.
     assert!(
-        plan.iter()
-            .any(|row| row[0].contains("HashJoin")
-                && row[4].contains("equal:[eq(test.t1.a, test.t2.x)]")),
+        plan.iter().any(|row| row[0].contains("HashJoin")
+            && row[4].contains("equal:[eq(test.t1.a, test.t2.x)]")),
         "a null-aware anti join still renders its promoted equality as equal:[...]: {plan:?}"
     );
     assert!(
@@ -1297,7 +1296,8 @@ fn scalar_in_with_a_correlated_key_answers_null_for_an_unknown_in_equality() {
         .run("INSERT INTO t2 VALUES (1,5),(2,3),(3,8)")
         .unwrap();
 
-    let in_sql = "SELECT t1.a, t1.b IN (SELECT t2.b FROM t2 WHERE t2.a = t1.a) FROM t1 ORDER BY t1.a";
+    let in_sql =
+        "SELECT t1.a, t1.b IN (SELECT t2.b FROM t2 WHERE t2.a = t1.a) FROM t1 ORDER BY t1.a";
     let not_in_sql =
         "SELECT t1.a, t1.b NOT IN (SELECT t2.b FROM t2 WHERE t2.a = t1.a) FROM t1 ORDER BY t1.a";
     // Both sides are PK-ordered on `a`, so the cheapest plan is a MERGE

@@ -71,6 +71,21 @@ fn advisory_lock_name(value: Datum) -> Result<String, EvalError> {
 
 /// Maps a Go binary-operator scalar-function name (`pkg/parser/ast`) to a
 /// [`BinaryOp`]. Returns `None` for any function that is not a binary operator.
+/// go `ToBool`'s string path parses the leading float and warns
+/// `Truncated incorrect DOUBLE value` when the text is not fully numeric;
+/// the logical operators' truthiness is that float != 0.
+fn logic_truthy(value: &Datum, ctx: &dyn Columns) -> Result<Option<bool>, EvalError> {
+    if matches!(value, Datum::Null) {
+        return Ok(None);
+    }
+    match value {
+        Datum::String(_) | Datum::Bytes(_) => {
+            Ok(crate::math_fn::numeric_arg(value, ctx)?.map(|float| float != 0.0))
+        }
+        _ => crate::truthy_of(value),
+    }
+}
+
 fn binary_op_for_name(name: &str) -> Option<BinaryOp> {
     Some(match name {
         "plus" => BinaryOp::Plus,
@@ -1517,13 +1532,13 @@ impl ScalarFunction {
                     return Ok(Datum::Null);
                 }
                 if matches!(op, BinaryOp::LogicAnd | BinaryOp::LogicOr) {
-                    let lhs = crate::truthy_of(&lhs)?;
+                    let lhs = logic_truthy(&lhs, ctx)?;
                     match (op, lhs) {
                         (BinaryOp::LogicAnd, Some(false)) => return Ok(Datum::Int(0)),
                         (BinaryOp::LogicOr, Some(true)) => return Ok(Datum::Int(1)),
                         _ => {}
                     }
-                    let rhs = crate::truthy_of(&self.args[1].eval(ctx, row)?)?;
+                    let rhs = logic_truthy(&self.args[1].eval(ctx, row)?, ctx)?;
                     return Ok(match op {
                         BinaryOp::LogicAnd if rhs == Some(false) => Datum::Int(0),
                         BinaryOp::LogicOr if rhs == Some(true) => Datum::Int(1),
@@ -2142,6 +2157,7 @@ impl ScalarFunction {
                     field_type.code() == tidb_datatype::FieldTypeCode::Duration
                 }) {
                     return crate::time_fn::add_sub::date_add_duration(
+                        ctx,
                         unit,
                         &date,
                         &amount,
@@ -3574,6 +3590,16 @@ fn cast_numeric_argument_in_mode(
                 }
             }
             return Ok(Datum::Real(converted.value));
+        }
+        if target == EvalType::Int {
+            // go `builtinCastJSONAsIntSig`: the document's text re-reads as
+            // an integer (StrToInt), raising go's 1292 truncation warning
+            // when the text is not a clean integer — captured:
+            // `bitand(j, j)` over `{}` warns twice and answers 0, while the
+            // JSON number `3` coerces silently.
+            let as_text = Datum::new_string(json.to_string());
+            crate::cast::report_int_truncation(&as_text, ctx)?;
+            return Ok(Datum::Int(crate::cast::to_i64_signed(&as_text)));
         }
     }
     let value = if target == EvalType::Decimal

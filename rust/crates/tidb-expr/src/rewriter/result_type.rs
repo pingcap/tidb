@@ -50,10 +50,19 @@ pub(super) fn restore_char_result_charset(func: &mut ScalarFunction) -> Result<(
         return Ok(());
     };
     if let Some(charset) = charset {
-        let collation = tidb_datatype::get_default_collation(&charset)
-            .map_err(|_| EvalError::Unsupported("CHAR charset argument"))?;
-        ft.set_charset_name(charset);
-        ft.set_collation_name(collation);
+        // go's charFunctionClass.getFunction does NOT validate the charset:
+        // an unknown name reaches `GetCharsetInfo` at EXEC time and answers
+        // the bare 1105 `Unknown charset <name>` there -- with the argument
+        // coercion's truncation warnings already in the statement buffer.
+        // Failing here at plan time lost that ordering (and answered the
+        // wrong message). An unknown name just keeps the default charset;
+        // the error belongs to the eval below.
+        if let Ok(collation) = tidb_datatype::get_default_collation(&charset) {
+            ft.set_charset_name(charset);
+            ft.set_collation_name(collation);
+        } else {
+            super::set_binary_charset(ft);
+        }
     } else {
         super::set_binary_charset(ft);
     }
@@ -1163,26 +1172,40 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
         return Some(ft);
     }
-    // The bit families and integer division return a plain Longlong.
+    // The bit families return a Longlong flagged UNSIGNED in EVERY call
+    // form: go's bitAnd/bitOr/bitXor/leftShift/rightShiftFunctionClass
+    // getFunction bodies all run `bf.tp.AddFlag(mysql.UnsignedFlag)`, and
+    // the operator spellings (`a & b`) build through the same `funcs`
+    // entries. Without the flag the function form renders the same
+    // two's-complement bit pattern as signed (`bitor(1.25, -3.75)` as -3
+    // instead of the operator form's 18446744073709551613).
+    // `bitneg` carries the same flag (its comment below); `intdiv`/`div`
+    // stay plain — go's intDivideFunctionClass adds the flag only when an
+    // ARGUMENT is unsigned, which the arithmetic inference handles.
     if matches!(
         name,
-        "bitand"
-            | "bitor"
-            | "bitxor"
-            | "bitneg"
-            | "leftshift"
-            | "rightshift"
-            | "intdiv"
-            | "div"
+        "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift"
     ) {
+        let mut ft = FieldType::new(FieldTypeCode::LongLong);
+        ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        return Some(ft);
+    }
+    if matches!(name, "intdiv" | "div") {
         return Some(FieldType::new(FieldTypeCode::LongLong));
     }
+    if name == "bitneg" {
+        let mut ft = FieldType::new(FieldTypeCode::LongLong);
+        ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        return Some(ft);
+    }
     if matches!(name, "minus" | "mod") {
-        let any_decimal = args
-            .iter()
-            .any(|arg| crate::builtin_arithmetic::numeric_context_result_type(arg) == tidb_datatype::EvalType::Decimal);
+        let any_decimal = args.iter().any(|arg| {
+            crate::builtin_arithmetic::numeric_context_result_type(arg)
+                == tidb_datatype::EvalType::Decimal
+        });
         let any_real = args.iter().any(|arg| {
-            crate::builtin_arithmetic::numeric_context_result_type(arg) == tidb_datatype::EvalType::Real
+            crate::builtin_arithmetic::numeric_context_result_type(arg)
+                == tidb_datatype::EvalType::Real
         });
         return Some(if any_decimal {
             let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
@@ -1313,13 +1336,29 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
                     ft.set_collation_name("binary");
                     ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
                 }
-                Some(Expression::Constant(constant)) => {
-                    let charset = constant.value.sql_string().ok()?;
-                    let collation = tidb_datatype::get_default_collation(&charset).ok()?;
-                    ft.set_charset_name(charset);
-                    ft.set_collation_name(collation);
+                // The USING charset travels as a STRING constant; the numeric
+                // trailing arguments are CODE POINTS (go counts them out of
+                // len(args) - 1) and keep the default charset.
+                Some(Expression::Constant(constant))
+                    if matches!(
+                        constant.value,
+                        Datum::String(_) | Datum::Bytes(_)
+                    ) =>
+                {
+                    // An UNKNOWN charset must not invalidate the whole
+                    // return type: go's getFunction stamps the charset
+                    // without validating it, and the 1105 `Unknown charset
+                    // <name>` fires at EVAL time (after the argument
+                    // coercion's warnings). Leave the default charset here;
+                    // the eval below produces the error.
+                    if let Ok(charset) = constant.value.sql_string() {
+                        if let Ok(collation) = tidb_datatype::get_default_collation(&charset) {
+                            ft.set_charset_name(charset);
+                            ft.set_collation_name(collation);
+                        }
+                    }
                 }
-                _ => return None,
+                _ => {}
             }
             ft
         }
@@ -1526,6 +1565,7 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         | "json_length"
         | "json_depth"
         | "json_member_of"
+        | "json_memberof"
         | "json_overlaps"
         | "json_storage_free"
         | "json_storage_size" => int(),

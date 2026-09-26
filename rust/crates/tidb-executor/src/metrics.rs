@@ -23,7 +23,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts, HistogramVec, HistogramOpts};
+use prometheus::{Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -39,7 +39,10 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 /// Go `AffectedRowsCounter` (`pkg/metrics`).
 pub static AFFECTED_ROWS: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_executor_affected_rows", "Counters of server affected rows."),
+        Opts::new(
+            "tidb_executor_affected_rows",
+            "Counters of server affected rows.",
+        ),
         &["sql_type"],
     ))
 });
@@ -47,7 +50,10 @@ pub static AFFECTED_ROWS: LazyLock<CounterVec> = LazyLock::new(|| {
 /// Go `ExecutorCounter` (`pkg/metrics`).
 pub static EXPENSIVE_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_executor_expensive_total", "Counter of Expensive Executors."),
+        Opts::new(
+            "tidb_executor_expensive_total",
+            "Counter of Expensive Executors.",
+        ),
         &["type"],
     ))
 });
@@ -55,7 +61,10 @@ pub static EXPENSIVE_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
 /// Go `IndexLookUpCopTaskCount` (`pkg/metrics`).
 pub static INDEX_LOOKUP_COP_TASK_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_executor_index_lookup_cop_task_count", "Counter for index lookup cop tasks"),
+        Opts::new(
+            "tidb_executor_index_lookup_cop_task_count",
+            "Counter for index lookup cop tasks",
+        ),
         &["type"],
     ))
 });
@@ -63,7 +72,10 @@ pub static INDEX_LOOKUP_COP_TASK_COUNT: LazyLock<CounterVec> = LazyLock::new(|| 
 /// Go `IndexLookRowsCounter` (`pkg/metrics`).
 pub static INDEX_LOOKUP_ROWS: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_executor_index_lookup_rows", "Counter of index lookup push-down rows."),
+        Opts::new(
+            "tidb_executor_index_lookup_rows",
+            "Counter of index lookup push-down rows.",
+        ),
         &["type"],
     ))
 });
@@ -71,7 +83,10 @@ pub static INDEX_LOOKUP_ROWS: LazyLock<CounterVec> = LazyLock::new(|| {
 /// Go `MppCoordinatorStats` (`pkg/metrics`).
 pub static MPP_COORDINATOR_STATS: LazyLock<GaugeVec> = LazyLock::new(|| {
     register(GaugeVec::new(
-        Opts::new("tidb_executor_mpp_coordinator_stats", "Mpp Coordinator related stats"),
+        Opts::new(
+            "tidb_executor_mpp_coordinator_stats",
+            "Mpp Coordinator related stats",
+        ),
         &["type"],
     ))
 });
@@ -79,7 +94,10 @@ pub static MPP_COORDINATOR_STATS: LazyLock<GaugeVec> = LazyLock::new(|| {
 /// Go `NetworkTransmissionStats` (`pkg/metrics`).
 pub static NETWORK_TRANSMISSION: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(
-        Opts::new("tidb_executor_network_transmission", "Counter of network transmission bytes."),
+        Opts::new(
+            "tidb_executor_network_transmission",
+            "Counter of network transmission bytes.",
+        ),
         &["type"],
     ))
 });
@@ -152,9 +170,21 @@ pub static ONGOING_TXN_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
 /// for the exposition header shim that mirrors Go's registered-family output.
 pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
     vec![
-            ("tidb_executor_index_lookup_execute_duration_seconds", "Bucketed histogram of processing time (s) in running index-lookup executor."),
-            ("tidb_executor_index_lookup_row_number", "Row number for each index lookup executor"),
-            ("tidb_executor_mpp_coordinator_latency", "Bucketed histogram of processing time (ms) of mpp coordinator operations."),
-            ("tidb_executor_ongoing_txn_duration_seconds", "Bucketed histogram of processing time (s) of ongoing transactions."),
+        (
+            "tidb_executor_index_lookup_execute_duration_seconds",
+            "Bucketed histogram of processing time (s) in running index-lookup executor.",
+        ),
+        (
+            "tidb_executor_index_lookup_row_number",
+            "Row number for each index lookup executor",
+        ),
+        (
+            "tidb_executor_mpp_coordinator_latency",
+            "Bucketed histogram of processing time (ms) of mpp coordinator operations.",
+        ),
+        (
+            "tidb_executor_ongoing_txn_duration_seconds",
+            "Bucketed histogram of processing time (s) of ongoing transactions.",
+        ),
     ]
 }

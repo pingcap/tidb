@@ -284,10 +284,8 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         let ended = self.snapshot.take().map_or(Ok(()), |snapshot| {
             self.owner
                 .end_read_statement(snapshot, !self.failed)
-                .map_err(|error| tidb_executor::MysqlError {
-                    code: error.code,
-                    state: error.state,
-                    message: error.message,
+                .map_err(|error| {
+                    tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
                 })
         });
         if let Err(error) = &ended {

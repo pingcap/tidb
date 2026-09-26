@@ -89,10 +89,9 @@ pub use errorpb::Error as RegionError;
 
 pub use mpp::{
     CancelTaskRequest as MppCancelTaskRequest, CancelTaskResponse as MppCancelTaskResponse,
-    DispatchTaskRequest as MppDispatchTaskRequest,
-    DispatchTaskResponse as MppDispatchTaskResponse, Error as MppError,
-    EstablishMppConnectionRequest as MppEstablishConnectionRequest,
-    MppDataPacket as MppDataPacket, ReportTaskStatusRequest as MppReportTaskStatusRequest,
+    DispatchTaskRequest as MppDispatchTaskRequest, DispatchTaskResponse as MppDispatchTaskResponse,
+    Error as MppError, EstablishMppConnectionRequest as MppEstablishConnectionRequest,
+    MppDataPacket, ReportTaskStatusRequest as MppReportTaskStatusRequest,
     ReportTaskStatusResponse as MppReportTaskStatusResponse, TaskMeta as MppTaskMeta,
 };
 

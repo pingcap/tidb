@@ -175,9 +175,15 @@ mod tests {
         assert!(dispatch("JSON_DEPTH", &[document("a")])
             .expect("JSON_DEPTH must dispatch")
             .is_err());
-        assert!(dispatch("JSON_DEPTH", &[Datum::Int(1)])
-            .expect("JSON_DEPTH must dispatch")
-            .is_err());
+        // go's implicit scalar→document cast: `JSON_DEPTH(1)` is 1 on the
+        // oracle (the numeric scalar coerces to the JSON number 1), not an
+        // error.
+        assert_eq!(
+            dispatch("JSON_DEPTH", &[Datum::Int(1)])
+                .expect("JSON_DEPTH must dispatch")
+                .expect("scalar depth evaluates"),
+            Datum::Int(1)
+        );
     }
 
     #[test]

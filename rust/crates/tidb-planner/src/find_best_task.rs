@@ -529,32 +529,33 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
         // `table_range_scan` flag rather than as a property field.
-        for table_range_scan in [true, false] {
-            for kind in [IndexJoinKind::IndexJoin, IndexJoinKind::IndexHashJoin] {
-                let mut child_roles = [LeafRole::Plain, LeafRole::Plain];
-                child_roles[1 - outer_idx] = LeafRole::IndexJoinProbe { table_range_scan };
-                out.push(EnumeratedJoin {
-                    strategy: JoinStrategy::Index {
-                        outer_idx,
-                        table_range_scan,
-                        kind,
-                        keep_outer_order: !prop.is_sort_item_empty(),
-                    },
-                    child_props: child_props.clone(),
-                    child_roles,
-                });
-            }
+        //
+        // The candidate ORDER mirrors Go `enumerateIndexJoinByOuterIdx`
+        // (exhaust_physical_plans.go:524): every IndexJoin variant first, then
+        // every IndexHashJoin variant. Ties are broken toward the incumbent
+        // (strict-less comparison), so a reordered enumeration silently flips
+        // ties to the hash variant (q50 chose IndexHashJoin where go master
+        // kept IndexJoin).
+        for (kind, table_range_scan) in [
+            (IndexJoinKind::IndexJoin, true),
+            (IndexJoinKind::IndexJoin, false),
+            (IndexJoinKind::IndexHashJoin, true),
+            (IndexJoinKind::IndexHashJoin, false),
+        ] {
+            let mut child_roles = [LeafRole::Plain, LeafRole::Plain];
+            child_roles[1 - outer_idx] = LeafRole::IndexJoinProbe { table_range_scan };
+            out.push(EnumeratedJoin {
+                strategy: JoinStrategy::Index {
+                    outer_idx,
+                    table_range_scan,
+                    kind,
+                    keep_outer_order: !prop.is_sort_item_empty(),
+                },
+                child_props: child_props.clone(),
+                child_roles,
+            });
         }
     }
-    // Go emits both `IndexJoin` variants before both `IndexHashJoin` variants;
-    // reorder to match, since the enumeration order breaks exact ties.
-    out.sort_by_key(|candidate| match &candidate.strategy {
-        JoinStrategy::Index {
-            kind: IndexJoinKind::IndexHashJoin,
-            ..
-        } => 1,
-        _ => 0,
-    });
     out
 }
 

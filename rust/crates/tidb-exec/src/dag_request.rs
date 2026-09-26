@@ -23,18 +23,18 @@
 use std::{error::Error, fmt};
 
 use tidb_ast::BinaryOp;
-use tidb_distsql::{EncodeType as DistSqlEncodeType, SystemEndian, system_endian};
+use tidb_distsql::{system_endian, EncodeType as DistSqlEncodeType, SystemEndian};
 use tidb_expr::{
     expression::Expression,
-    pb_predicate::{IntPbOperand, bigint_column_field_type, int_comparison_to_pb},
+    pb_predicate::{bigint_column_field_type, int_comparison_to_pb, IntPbOperand},
     pushdown_catalog::ColumnDescriptor,
 };
 use tidb_planner::{
     physical::{PhysicalIndexScan, PhysicalSelection, PhysicalTableScan},
     signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand},
     tikv_scan_spec::{
-        ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec, UnsupportedScanFeature,
-        check_cover_index,
+        check_cover_index, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
+        UnsupportedScanFeature,
     },
 };
 use tidb_proto::tipb::{

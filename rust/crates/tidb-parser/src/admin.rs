@@ -137,6 +137,23 @@ impl Parser {
                 self.parse_admin_cleanup_table_lock()?,
             )));
         }
+        // go's yacc grammar: the ADMIN sub-productions consume their keywords
+        // and fail AT the first unrecognized token (captured: ADMIN CLEANUP
+        // ALL JOBS answers column 17 near "ALL JOBS"). The expect chains
+        // reproduce those positions byte-for-byte.
+        if self.is_kw_at(1, "CLEANUP") {
+            self.expect_kw("CLEANUP")?;
+            self.expect_kw("JOBS")?;
+            return Err(self.err_here("expected a job id list"));
+        }
+        if self.is_kw_at(1, "FLUSH") {
+            self.expect_kw("FLUSH")?;
+            return Err(self.err_here("expected an ADMIN FLUSH target"));
+        }
+        if self.is_kw_at(1, "SHOW") {
+            self.expect_kw("SHOW")?;
+            return Err(self.err_here("expected an ADMIN SHOW target"));
+        }
         Err(self.err_here("unsupported ADMIN command"))
     }
 

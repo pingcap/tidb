@@ -299,18 +299,20 @@ pub(crate) fn physical_dml_plan_for_explain(
         // without a select lock (only UPDATE/DELETE lock their read), and the
         // Insert root plus its mockTablePlan filler are already allocated
         // above, ahead of the source.
-        Some(tidb_ast::QueryStmt::Select(select)) if operator.eq_ignore_ascii_case("Insert") => Some(
-            super::planner_bridge::physical_query_plan_with_allocators(
-                &tidb_ast::QueryStmt::Select(select.clone()),
-                catalog,
-                current_db,
-                ctx,
-                false,
-                &plan_ids,
-                &column_ids,
+        Some(tidb_ast::QueryStmt::Select(select)) if operator.eq_ignore_ascii_case("Insert") => {
+            Some(
+                super::planner_bridge::physical_query_plan_with_allocators(
+                    &tidb_ast::QueryStmt::Select(select.clone()),
+                    catalog,
+                    current_db,
+                    ctx,
+                    false,
+                    &plan_ids,
+                    &column_ids,
+                )
+                .map_err(super::planner_error_to_driver)?,
             )
-            .map_err(super::planner_error_to_driver)?,
-        ),
+        }
         Some(tidb_ast::QueryStmt::Select(select)) => {
             let allow_fast_plan = update.is_none_or(|update| update_allows_fast_plan(update));
             let fast = allow_fast_plan
@@ -372,9 +374,7 @@ pub(crate) fn physical_dml_plan_for_explain(
     };
 
     let base =
-        root_base.ok_or_else(|| {
-            DriverError::unsupported("explain DML build produced no root")
-        })?;
+        root_base.ok_or_else(|| DriverError::unsupported("explain DML build produced no root"))?;
     // Go `BuildOn{Insert,Update,Delete}FKTriggers`, last in the builders.
     let fk_triggers =
         fk_trigger_plan::build_fk_triggers(catalog, ctx, operator, fk_spec, &plan_ids);
@@ -1047,6 +1047,7 @@ fn run_insert_with_physical(
                     name,
                     new_rows.len(),
                     ctx,
+                    insert.ignore,
                 )?;
             }
             // The generated columns are computed from the finished row, so
@@ -2643,8 +2644,7 @@ impl PreparedDmlPlan {
                         cached_plans.remove(index);
                         // Go `plan_cache_lru.go` delete arm decrements the
                         // session plan-num gauge for every dropped plan.
-                        tidb_planner::metrics::plan_cache_instance_num_counter(false)
-                            .sub(1.0);
+                        tidb_planner::metrics::plan_cache_instance_num_counter(false).sub(1.0);
                         return None;
                     }
                 }
@@ -3074,9 +3074,14 @@ fn run_update_with_physical(
     };
     let mut assignments = Vec::with_capacity(update.assignments.len());
     for (assignment_index, assignment) in update.assignments.iter().enumerate() {
-        let (offset, _, _) = resolver
-            .resolve(&assignment.col)
-            .ok_or(DriverError::unsupported("unknown column in SET"))?;
+        let (offset, _, _) = resolver.resolve(&assignment.col).ok_or_else(|| {
+            // go `getColumns` answers the assignment's unknown target with
+            // the ordinary `ErrBadField` (1054) 'field list' form.
+            DriverError::UnknownColumnInClause {
+                column: assignment.col.join("."),
+                clause: "field list".to_owned(),
+            }
+        })?;
         // `_tidb_rowid` READS as an ordinary column but is not a stored one,
         // so it cannot be an assignment target here. Go gates writing it
         // behind `tidb_opt_write_row_id` (`executor/builder.go:3025`), and

@@ -187,21 +187,29 @@ fn information_schema_tables_in_join(
     node: &tidb_ast::JoinNode,
     current_db: &str,
     out: &mut Vec<String>,
+    written_db: &mut Option<String>,
 ) {
     match node {
         tidb_ast::JoinNode::Table(table) => match table.name.as_slice() {
             [name] if infoschema::is_information_schema(current_db) => out.push(name.clone()),
-            [schema, name] if infoschema::is_information_schema(schema) => out.push(name.clone()),
+            [schema, name] if infoschema::is_information_schema(schema) => {
+                // The 1146 for a missing virtual table names the database AS
+                // WRITTEN (go folds nothing here).
+                if written_db.is_none() {
+                    *written_db = Some(schema.clone());
+                }
+                out.push(name.clone());
+            }
             _ => {}
         },
         tidb_ast::JoinNode::Join(join) => {
-            information_schema_tables_in_join(&join.left, current_db, out);
+            information_schema_tables_in_join(&join.left, current_db, out, written_db);
             if let Some(right) = &join.right {
-                information_schema_tables_in_join(right, current_db, out);
+                information_schema_tables_in_join(right, current_db, out, written_db);
             }
         }
         tidb_ast::JoinNode::Derived { subquery, .. } => {
-            information_schema_tables_in_query(subquery, current_db, out);
+            information_schema_tables_in_query(subquery, current_db, out, written_db);
         }
     }
 }
@@ -212,34 +220,39 @@ fn information_schema_tables_in_query(
     query: &tidb_ast::QueryStmt,
     current_db: &str,
     out: &mut Vec<String>,
+    written_db: &mut Option<String>,
 ) {
     match query {
         tidb_ast::QueryStmt::Select(select) => {
             if let Some(with) = &select.with {
                 for cte in &with.ctes {
-                    information_schema_tables_in_query(&cte.query, current_db, out);
+                    information_schema_tables_in_query(&cte.query, current_db, out, written_db);
                 }
             }
             if let Some(join) = &select.from {
-                information_schema_tables_in_join(&join.left, current_db, out);
+                information_schema_tables_in_join(&join.left, current_db, out, written_db);
                 if let Some(right) = &join.right {
-                    information_schema_tables_in_join(right, current_db, out);
+                    information_schema_tables_in_join(right, current_db, out, written_db);
                 }
             }
         }
         tidb_ast::QueryStmt::SetOpr(set_opr) => {
             if let Some(with) = &set_opr.with {
                 for cte in &with.ctes {
-                    information_schema_tables_in_query(&cte.query, current_db, out);
+                    information_schema_tables_in_query(&cte.query, current_db, out, written_db);
                 }
             }
             for term in &set_opr.terms {
                 match &term.body {
                     tidb_ast::SetOprTermBody::Select(select) => {
                         if let Some(join) = &select.from {
-                            information_schema_tables_in_join(&join.left, current_db, out);
+                            information_schema_tables_in_join(
+                                &join.left, current_db, out, written_db,
+                            );
                             if let Some(right) = &join.right {
-                                information_schema_tables_in_join(right, current_db, out);
+                                information_schema_tables_in_join(
+                                    right, current_db, out, written_db,
+                                );
                             }
                         }
                     }
@@ -248,6 +261,7 @@ fn information_schema_tables_in_query(
                             &tidb_ast::QueryStmt::SetOpr(nested.clone()),
                             current_db,
                             out,
+                            written_db,
                         );
                     }
                 }
@@ -493,6 +507,7 @@ impl Session {
         mut table_names: Vec<String>,
         current_db: &str,
         ctx: &tidb_executor::StmtContext,
+        written_db: Option<String>,
     ) -> Result<tidb_executor::driver::QueryRecordSet, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
@@ -500,7 +515,8 @@ impl Session {
         // Go resolves and prunes the memory-table scan before its executor
         // performs the restricted statistics reads. Plan against schema-only
         // virtual tables so the real rows are generated exactly once below.
-        let planning_catalog = self.information_schema_planning_catalog(&table_names)?;
+        let planning_catalog =
+            self.information_schema_planning_catalog(&table_names, written_db)?;
         let mut physical =
             tidb_executor::plan_query_meta_stmt(query, &planning_catalog, current_db, ctx)?;
         let needs_storage_stats =
@@ -525,14 +541,19 @@ impl Session {
     fn information_schema_planning_catalog(
         &mut self,
         table_names: &[String],
+        written_db: Option<String>,
     ) -> Result<Catalog, DriverError> {
         let mut schemas = Vec::with_capacity(table_names.len());
         for table_name in table_names {
             let Some(columns) = infoschema::table_schema(table_name) else {
+                // go names the database AS THE STATEMENT WROTE it in this
+                // 1146, not the canonical `INFORMATION_SCHEMA` spelling.
+                let db = written_db
+                    .clone()
+                    .unwrap_or_else(|| infoschema::INFORMATION_SCHEMA.to_owned());
                 return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
                     "{}.{}",
-                    infoschema::INFORMATION_SCHEMA,
-                    table_name
+                    db, table_name
                 ))));
             };
             schemas.push((table_name.clone(), columns));
@@ -1624,13 +1645,8 @@ impl Session {
         // before the observation. This door is where preprocess, privilege,
         // and planning happen, so it is the compile boundary.
         let started = std::time::Instant::now();
-        let result = self.prepare_parsed_statement_compile_phase(
-            sql,
-            stmt,
-            prepared,
-            select_plan,
-            dml_plan,
-        );
+        let result =
+            self.prepare_parsed_statement_compile_phase(sql, stmt, prepared, select_plan, dml_plan);
         if result.is_ok() {
             crate::metrics::observe_compile_duration(started.elapsed().as_secs_f64(), false);
         }
@@ -1895,8 +1911,20 @@ impl Session {
         if self.control_transaction_stmt(&stmt)?.is_some() {
             return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
         }
-        if self.apply_set_stmt(&stmt)?.is_some() {
-            return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
+        match self.apply_set_stmt(&stmt) {
+            Ok(Some(_)) => {
+                return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
+            }
+            // go's SetExecutor routes every failure through `handleErr`,
+            // which appends it to the statement context: after a failed SET
+            // both error_count and warning_count read 1 and SHOW WARNINGS
+            // carries the row (captured: `SET bogus_var=1`).
+            Err(error) => {
+                let reported = error.clone().to_mysql_error();
+                self.append_warning(WarningLevel::Error, reported.code, reported.message);
+                return Err(error);
+            }
+            Ok(None) => {}
         }
         // A pinned historical read must not silently answer from the present.
         // The check sits BELOW the `SET` and transaction-control doors so the
@@ -2016,10 +2044,21 @@ impl Session {
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context_for_stmt(&stmt, false);
                 let mut table_names = Vec::new();
-                information_schema_tables_in_query(query, &current_db, &mut table_names);
+                let mut written_db = None;
+                information_schema_tables_in_query(
+                    query,
+                    &current_db,
+                    &mut table_names,
+                    &mut written_db,
+                );
                 if !table_names.is_empty() {
-                    let record_set =
-                        self.open_information_schema_query(query, table_names, &current_db, &ctx)?;
+                    let record_set = self.open_information_schema_query(
+                        query,
+                        table_names,
+                        &current_db,
+                        &ctx,
+                        written_db,
+                    )?;
                     return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
                 }
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
@@ -2440,6 +2479,15 @@ impl Session {
                         }
                         Ok(StmtOutput::Affected(imported))
                     }
+                    DmlStmt::Call(_) => {
+                        // go's unsupported-statement wall names the AST node:
+                        // `executor/executor.go`'s `Unsupported type
+                        // *ast.CallStmt` (8108), not a generic 1105.
+                        Err(DriverError::DdlCoded {
+                            errno: 8108,
+                            message: "Unsupported type *ast.CallStmt".to_owned(),
+                        })
+                    }
                     other => Err(DriverError::unsupported(format!(
                         "this DML statement kind ({}) is not supported yet",
                         variant_name(other)
@@ -2654,6 +2702,20 @@ impl Session {
                     let create = create.clone();
                     self.with_catalog_mut(|catalog| {
                         tidb_executor::run_create_view_in(&create, catalog, &current_db, &ctx)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
+                DdlStmt::AlterView(alter) => {
+                    let current_db = self.current_db.clone();
+                    let ctx = self.statement_context(false);
+                    let alter = alter.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_alter_view_in(
+                            &alter,
+                            catalog,
+                            &current_db,
+                            &ctx,
+                        )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }

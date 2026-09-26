@@ -213,11 +213,7 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             state: DEFAULT_SQL_STATE,
             message: message.clone(),
         },
-        TransactionCause::AssertionFailed {
-            key,
-            not_exist,
-            ..
-        } => {
+        TransactionCause::AssertionFailed { key, not_exist, .. } => {
             // Go's own assertion diagnostic (errno 8141,
             // `pkg/errno/errname.go`): `assertion failed: key: %s, assertion:
             // %s, start_ts: %v, existing start ts: %v, existing commit ts:

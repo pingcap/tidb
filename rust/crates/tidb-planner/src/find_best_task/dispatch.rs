@@ -638,6 +638,7 @@ fn exhaust_physical_plans(
             prop,
             ctx.allocator,
             ctx.skew_ratio,
+            ctx.mpp_allowed,
         ))),
         LogicalPlan::PartitionUnionAll(op) => Ok(one(
             physical::exhaust_physical_plans_4_logical_partition_union_all(
@@ -746,8 +747,14 @@ fn exhaust_physical_plans(
                     .cloned()
             };
             let mut joins = Vec::new();
-            for candidate in
-                crate::find_best_task::exhaust_join(&reduced, prop, ctx.use_hash_join_v2)
+            // Burn/construct hash candidates first (`getHashJoins` runs before
+            // `tryToEnumerateIndexJoin` in Go), then the merge/index family.
+            let all_join_candidates =
+                crate::find_best_task::exhaust_join(&reduced, prop, ctx.use_hash_join_v2);
+            let (hash_candidates, other_candidates): (Vec<_>, Vec<_>) = all_join_candidates
+                .into_iter()
+                .partition(|candidate| matches!(candidate.strategy, JoinStrategy::Hash(_)));
+            for candidate in hash_candidates.into_iter().chain(other_candidates.into_iter())
             {
                 let strategy = candidate.strategy.clone();
                 // Go's INL_JOIN/INL_HASH_JOIN/INL_MERGE_JOIN hints are
@@ -867,18 +874,44 @@ fn exhaust_physical_plans(
                             table_range_scan: *table_range_scan,
                         });
                 }
+                // Go `constructIndexHashJoinStatic`: the embedded
+                // `PhysicalIndexJoin` is constructed first and then re-wrapped
+                // as an `IndexHashJoin` whose `Init` consumes another plan id
+                // without the traced constructor. Burn the embedded id so the
+                // ledger matches (R35: two ids per IHJ candidate).
+                if matches!(
+                    &strategy,
+                    JoinStrategy::Index {
+                        kind: crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin,
+                        ..
+                    }
+                ) {
+                    let _embedded = physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        "IndexJoin",
+                        op.base.base.query_block_offset(),
+                    );
+                }
                 let mut base = physical::BasePhysicalPlan::new(
                     ctx.allocator,
                     op.base.base.tp(),
                     op.base.base.query_block_offset(),
                 );
-                base.base.set_stats(op.base.base.stats_info().map(|stats| {
-                    if matches!(&strategy, JoinStrategy::Merge { .. }) {
-                        stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
-                    } else {
-                        stats.clone()
-                    }
-                }));
+                // GO prices every join candidate with the parent's expected
+                // count folded in: GetMergeJoin/GetMergeJoin callers and the
+                // hash/index-join static constructors all Init with
+                // `statsInfo.ScaleByExpectCnt(vars, prop.ExpectedCnt)`
+                // (exhaust_physical_plans.go:223/340, physical_merge_join.go:62).
+                // Without the scaling an anti-semi join's ×0.8 logical stats
+                // stayed unscaled and the displayed rows diverged from GO's
+                // expectation-scaled ones (q78: 115203811.2 vs 144004764).
+                base.base.set_stats(
+                    op.base
+                        .base
+                        .stats_info()
+                        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio))
+                        .or_else(|| op.base.base.stats_info().cloned()),
+                );
                 base.base.set_schema(op.base.base.schema().cloned());
                 base.set_children_req_props(child_props.into_iter().map(Some).collect());
                 let physical = match strategy {
@@ -975,6 +1008,18 @@ fn exhaust_physical_plans(
                 };
                 joins.push(physical);
             }
+            // Go constructs the hash-join candidates BEFORE the index-join
+            // family (`getHashJoins` runs first in
+            // `exhaustPhysicalPlans4LogicalJoin`), so their plan ids are lower;
+            // the returned list still processes merge/index candidates first
+            // (`joins = append(joins, mergeJoins/indexJoins...)` then hash).
+            // Partition the constructed plans the same way: hashes burned
+            // first above, processing order non-hash first here.
+            let (hashes, others): (Vec<_>, Vec<_>) = joins
+                .into_iter()
+                .partition(|candidate| matches!(candidate, PhysicalPlan::HashJoin(_)));
+            let mut joins = others;
+            joins.extend(hashes);
             // Go returns a forced HashJoin/MergeJoin family immediately.
             // IndexJoin hints remain undecided until the inner task builds.
             for hash in [true, false] {
@@ -1552,12 +1597,9 @@ fn is_eq_or_in_on_column(condition: &tidb_expr::expression::Expression, unique_i
     if column.unique_id != unique_id {
         return false;
     }
-    function.args[1..].iter().all(|argument| {
-        matches!(
-            argument,
-            tidb_expr::expression::Expression::Constant(_)
-        )
-    })
+    function.args[1..]
+        .iter()
+        .all(|argument| matches!(argument, tidb_expr::expression::Expression::Constant(_)))
 }
 
 /// `where a > 10 order by _tidb_rowid` on a no-PK table reads
@@ -3076,23 +3118,22 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     if index_join_path_is_max_one_row(ds, path, runtime) {
                         runtime_rows = runtime_rows.min(1.0);
                     }
-                    stats = probe_access_rows_floor
-                        .and_then(|_| {
-                            table_stats.as_ref().map(|table_stats| {
-                                table_stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio)
-                            })
-                        })
-                        .or_else(|| {
-                            Some(
-                                crate::stats_info::StatsInfo::new(runtime_rows, [])
-                                    .with_stats_version(
-                                        ds.base
-                                            .base
-                                            .stats_info()
-                                            .map_or(0, |stats| stats.stats_version()),
-                                    ),
-                            )
-                        });
+                    // Go `constructDS2TableScanTask` (`exhaust_physical_plans.go:865`)
+                    // sets a FRESH StatsInfo: RowCount + StatsVersion only --
+                    // "NDV would not be used in cost computation of IndexJoin, set
+                    // leave it as default nil". No HistColl survives, so the v2
+                    // row size prices the probe reader from type widths; keeping
+                    // the scaled table stats here made probe_row_size diverge
+                    // (q50: 78.92 vs go's 40) and flipped IndexJoin to
+                    // IndexHashJoin.
+                    stats = Some(
+                        crate::stats_info::StatsInfo::new(runtime_rows, []).with_stats_version(
+                            ds.base
+                                .base
+                                .stats_info()
+                                .map_or(0, |stats| stats.stats_version()),
+                        ),
+                    );
                 }
                 base.base.set_stats(stats.clone());
                 let table_range_rebuild = if table_access_conds.is_empty() {
@@ -4177,14 +4218,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                     .table_stats
                                     .as_ref()
                                     .map(|table_stats| {
-                                        table_stats.scale_by_expect_cnt(
-                                            count,
-                                            ctx.skew_ratio,
-                                        )
+                                        table_stats.scale_by_expect_cnt(count, ctx.skew_ratio)
                                     })
-                                    .or_else(|| {
-                                        Some(crate::stats_info::StatsInfo::new(count, []))
-                                    }),
+                                    .or_else(|| Some(crate::stats_info::StatsInfo::new(count, []))),
                                 None => stats.clone(),
                             }
                         } else {

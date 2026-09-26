@@ -49,6 +49,8 @@ pub enum SelectLockType {
     ForShare,
     /// Go `ast.SelectLockForShareNoWait`.
     ForShareNoWait,
+    /// Go `ast.SelectLockForShareWaitN`.
+    ForShareWaitN,
 }
 
 impl std::fmt::Display for SelectLockType {
@@ -63,6 +65,7 @@ impl std::fmt::Display for SelectLockType {
             Self::ForUpdateNoWait => "for update nowait",
             Self::ForUpdateWaitN => "for update wait",
             Self::ForShareNoWait => "for share nowait",
+            Self::ForShareWaitN => "for share wait",
         };
         f.write_str(text)
     }

@@ -27,13 +27,18 @@ use std::collections::HashSet;
 
 use serde_json::Value as Json;
 
-use super::value::{binary_json_datum, parse_json_document_argument};
+use super::value::{
+    binary_json_datum, parse_json_document_argument, parse_json_document_argument_strict,
+};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 
 /// `JSON_EXTRACT(json_doc, path [, path] ...)`, port of
 /// `builtinJSONExtractSig.evalJSON` and `types.BinaryJSON.Extract`.
 pub(super) fn json_extract(vals: &[Datum]) -> Result<Datum, EvalError> {
+    // A NUMERIC scalar document argument is go's ErrInvalidTypeForJSON
+    // (3146, argument 1, json_extract), captured on the oracle.
+    parse_json_document_argument_strict(&vals[0], 1, "json_extract")?;
     let Some(document) = parse_json_document_argument(&vals[0])? else {
         return Ok(Datum::Null);
     };
@@ -116,12 +121,12 @@ pub(super) fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
                     skip_space(&chars, &mut cursor);
                     if after_start != cursor && read_word(&chars, &mut cursor, "to") {
                         if cursor >= chars.len() || !chars[cursor].is_whitespace() {
-                            return Err(path_error(cursor));
+                            return Err(path_error(cursor + 1));
                         }
                         skip_space(&chars, &mut cursor);
                         let end = parse_index(&chars, &mut cursor)?;
                         if (start >= 0 && end >= 0 || start < 0 && end < 0) && start > end {
-                            return Err(path_error(cursor));
+                            return Err(path_error(cursor + 1));
                         }
                         could_match_multiple = true;
                         ArraySelection::Range(start, end)
@@ -132,14 +137,14 @@ pub(super) fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
                 };
                 skip_space(&chars, &mut cursor);
                 if chars.get(cursor) != Some(&']') {
-                    return Err(path_error(cursor));
+                    return Err(path_error(cursor + 1));
                 }
                 cursor += 1;
                 legs.push(PathLeg::Array(selection));
             }
             '*' => {
                 if chars.get(cursor + 1) != Some(&'*') || chars.get(cursor + 2) == Some(&'*') {
-                    return Err(path_error(cursor));
+                    return Err(path_error(cursor + 1));
                 }
                 cursor += 2;
                 legs.push(PathLeg::Recursive);
@@ -155,7 +160,7 @@ pub(super) fn parse_path(input: &str) -> Result<JsonPath, EvalError> {
         skip_space(&chars, &mut cursor);
     }
     if matches!(legs.last(), Some(PathLeg::Recursive)) {
-        return Err(path_error(cursor));
+        return Err(path_error(cursor + 1));
     }
     Ok(JsonPath {
         legs,

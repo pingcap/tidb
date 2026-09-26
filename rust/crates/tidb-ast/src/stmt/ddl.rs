@@ -187,6 +187,7 @@ pub enum DdlStmt {
     CreateTable(Box<CreateTableStmt>),
     /// A `CREATE [OR REPLACE] VIEW` statement.
     CreateView(Box<CreateViewStmt>),
+    AlterView(Box<crate::ddl::AlterViewStmt>),
     /// A `CREATE MATERIALIZED VIEW` statement.
     CreateMaterializedView(Box<crate::CreateMaterializedViewStmt>),
     /// A `CREATE MATERIALIZED VIEW LOG` statement.
@@ -355,6 +356,7 @@ impl DdlStmt {
         match self {
             Self::CreateTable(table) => table.restore_into(out),
             Self::CreateView(view) => view.restore_into(out),
+            Self::AlterView(view) => view.restore_into(out),
             Self::CreateMaterializedView(view) => {
                 view.restore_into(out, &RestoreContext::default())
             }
@@ -373,6 +375,7 @@ impl DdlStmt {
         match self {
             Self::CreateTable(table) => table.restore_into_with_context(out, context),
             Self::CreateView(view) => view.restore_into(out),
+            Self::AlterView(view) => view.restore_into(out),
             Self::CreateMaterializedView(view) => view.restore_into(out, context),
             Self::CreateMaterializedViewLog(log) => log.restore_into(out, context),
             Self::CreateIndex(index) => index.restore_into_with_context(out, context),
@@ -861,6 +864,12 @@ impl crate::Visitable for DdlStmt {
                     return false;
                 }
                 let _ = field_0;
+            }
+            Self::AlterView(view) => {
+                if !crate::Visitable::accept(view.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = view;
             }
             Self::CreateView(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {

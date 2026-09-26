@@ -369,6 +369,18 @@ impl From<OptimisticCoordinatorError> for ClusterDdlError {
     }
 }
 
+/// Go's warning level for one DDL warning: job warnings are
+/// `StmtCtx.AppendWarning` (Warning); `IF [NOT] EXISTS` suppressions are
+/// `AppendNote` (Note) — `DROP TABLE IF EXISTS nosuch` leaves
+/// `Note | 1051 | Unknown table 'x.nosuch'`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DdlWarningLevel {
+    /// Go `StmtCtx.AppendNote`.
+    Note,
+    /// Go `StmtCtx.AppendWarning` (and `AppendError`-recorded failures).
+    Warning,
+}
+
 /// What one catalog change did.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClusterDdlReport {
@@ -380,14 +392,14 @@ pub enum ClusterDdlReport {
         created_id: Option<i64>,
         /// Go `job.Warning`: what the change did differently from what was
         /// written, for the caller to raise as a statement warning.
-        warning: Option<String>,
+        warnings: Vec<(DdlWarningLevel, u16, String)>,
     },
     /// `IF [NOT] EXISTS` was already satisfied, so nothing was written.
     AlreadySatisfied {
         /// What was already true.
         detail: String,
-        /// The warning the statement raises even though it changed nothing.
-        warning: Option<String>,
+        /// The warnings the statement raises even though it changed nothing.
+        warnings: Vec<(DdlWarningLevel, u16, String)>,
     },
 }
 
@@ -473,9 +485,9 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         plan_ddl(&mut snapshot, statement, start_ts)?
     };
     let write = match plan {
-        DdlPlan::AlreadySatisfied { detail, warning } => {
+        DdlPlan::AlreadySatisfied { detail, warnings } => {
             transaction.finish_without_writes()?;
-            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warning });
+            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warnings });
         }
         DdlPlan::Write(write) => write,
     };
@@ -563,7 +575,7 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
             Ok(ClusterDdlReport::Applied {
                 schema_version: planned_version,
                 created_id: write.created_id,
-                warning: write.warning,
+                warnings: write.warnings.clone(),
             })
         }
         OptimisticCommitOutcome::RolledBack(rolled_back) => Err(compensate_external_delivery(
@@ -1291,7 +1303,8 @@ pub fn load_active_persisted_ddl_jobs_cached<
         if cached_job_table.is_none() {
             let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
             *cached_job_table = Some(
-                DdlJobTable::locate(&catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                DdlJobTable::locate(&catalog)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             );
         }
         // Requiring `&mut snapshot` means the cache can only hold table
@@ -1360,7 +1373,8 @@ pub fn load_min_persisted_ddl_job_id_cached<
         if cached_job_table.is_none() {
             let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
             *cached_job_table = Some(
-                DdlJobTable::locate(&catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                DdlJobTable::locate(&catalog)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             );
         }
         let read = cached_job_table
@@ -1614,12 +1628,12 @@ fn commit_cluster_ddl_with_backfill_once<
         }
     };
     let write = match plan {
-        DdlPlan::AlreadySatisfied { detail, warning } => {
+        DdlPlan::AlreadySatisfied { detail, warnings } => {
             transaction
                 .rollback()
                 .map_err(ClusterDdlError::NotCommitted)?;
             return Ok(DdlPhaseOutcome::AlreadySatisfied(
-                ClusterDdlReport::AlreadySatisfied { detail, warning },
+                ClusterDdlReport::AlreadySatisfied { detail, warnings },
             ));
         }
         DdlPlan::Write(write) => *write,
@@ -1715,7 +1729,7 @@ fn commit_cluster_ddl_with_backfill_once<
                 report: ClusterDdlReport::Applied {
                     schema_version: planned_version,
                     created_id: write.created_id,
-                    warning: write.warning,
+                    warnings: write.warnings.clone(),
                 },
                 ddl_job_id: write.ddl_job_id,
                 schema_version: planned_version,

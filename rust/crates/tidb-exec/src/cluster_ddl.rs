@@ -70,6 +70,7 @@ use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
 use crate::ddl_job_submit::GlobalIdAllocator;
+use crate::real_tikv_ddl::DdlWarningLevel;
 use crate::table_info_build::{
     build_table_info_with_context, default_ddl_statement_context, resolve_charset_collation,
     ClusteredIndexDefMode, GENERIC_ERROR_CODE,
@@ -536,6 +537,26 @@ pub enum DdlStatement {
         table: String,
         /// Whether a missing table is a no-op rather than an error.
         if_exists: bool,
+    },
+    /// `DROP TABLE a, b, ...` — go lowers the whole list into ONE job
+    /// (mysql-compatibility: the existing tables go, the missing ones are
+    /// reported per table).
+    DropTables {
+        /// Each `(schema, name)` in written order.
+        names: Vec<(String, String)>,
+        /// Whether missing tables demote to notes rather than the error.
+        if_exists: bool,
+    },
+    /// go runs a no-op DDL job for the option-only ALTER forms
+    /// (ALGORITHM / LOCK / WITH/WITHOUT VALIDATION); the optional warning is
+    /// its `job.Warning` (8200, WITH VALIDATION).
+    AcceptedNoOp {
+        /// The table the statement names.
+        schema: String,
+        /// The table name.
+        table: String,
+        /// go `job.Warning`, when the option raised one.
+        warning: Option<(u16, String)>,
     },
     /// `RENAME TABLE [schema.]from TO [schema.]to`, including the single
     /// action form of `ALTER TABLE ... RENAME TO`.
@@ -1383,6 +1404,35 @@ fn lower_alter_table_catalog(
                  multiple actions need one atomic multi-schema DDL job",
             ));
         }
+        // go runs a no-op job when every specification is one of the
+        // option-only forms (ALGORITHM / LOCK / WITH/WITHOUT VALIDATION);
+        // WITH VALIDATION additionally raises job warning 8200.
+        if alter.actions.iter().all(|action| {
+            matches!(
+                action,
+                tidb_ast::AlterTableAction::Algorithm(_)
+                    | tidb_ast::AlterTableAction::Lock(_)
+                    | tidb_ast::AlterTableAction::WithValidation
+                    | tidb_ast::AlterTableAction::WithoutValidation
+            )
+        }) {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            let warning = alter
+                .actions
+                .iter()
+                .any(|action| matches!(action, tidb_ast::AlterTableAction::WithValidation))
+                .then(|| {
+                    (
+                        8200_u16,
+                        "ALTER TABLE WITH VALIDATION is currently unsupported".to_owned(),
+                    )
+                });
+            return Ok(Some(DdlStatement::AcceptedNoOp {
+                schema,
+                table,
+                warning,
+            }));
+        }
         return Ok(None);
     };
 
@@ -1406,11 +1456,8 @@ fn lower_alter_table_catalog(
             let (from_schema, from_table) =
                 split_name(&alter.name, default_schema, "renamed table")?;
             let (to_schema, to_table) = split_name(new_name, default_schema, "new table name")?;
-            if from_schema.eq_ignore_ascii_case(&to_schema)
-                && from_table.eq_ignore_ascii_case(&to_table)
-            {
-                return Ok(None);
-            }
+            // go accepts a same-name rename as a no-op DDL job; returning
+            // Ok(None) here made the session node reject it as unrecognized.
             Ok(Some(DdlStatement::RenameTable {
                 from_schema,
                 from_table,
@@ -1418,7 +1465,11 @@ fn lower_alter_table_catalog(
                 to_table,
             }))
         }
-        tidb_ast::AlterTableAction::SetTiFlashReplica { hypo, count, labels } => {
+        tidb_ast::AlterTableAction::SetTiFlashReplica {
+            hypo,
+            count,
+            labels,
+        } => {
             if *hypo {
                 // Go `onSetTiFlashReplicaSpec` (ddl/executor/alter_executor.go):
                 // the planner-only HYPO form has no DDL execution.
@@ -1656,6 +1707,17 @@ fn lower_alter_table_catalog(
         }
         tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            if let Some(name) = charset {
+                // go's CONVERT TO accepts any identifier at the grammar and
+                // answers `ErrUnknownCharacterSet` (1115) when the name is
+                // not a charset — a collation name, say.
+                if tidb_datatype::get_charset_info(name).is_err() {
+                    return Err(DdlAdmissionError::with_code(
+                        1115,
+                        format!("Unknown character set: '{name}'"),
+                    ));
+                }
+            }
             Ok(Some(DdlStatement::ModifyTableCharsetAndCollate {
                 schema,
                 table,
@@ -1875,6 +1937,37 @@ fn lower_alter_table_catalog(
                 with_validation: *with_validation,
             }))
         }
+        tidb_ast::AlterTableAction::WithValidation => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AcceptedNoOp {
+                schema,
+                table,
+                warning: Some((
+                    8200,
+                    "ALTER TABLE WITH VALIDATION is currently unsupported".to_owned(),
+                )),
+            }))
+        }
+        tidb_ast::AlterTableAction::WithoutValidation
+        | tidb_ast::AlterTableAction::Algorithm(_)
+        | tidb_ast::AlterTableAction::Lock(_) => {
+            // go runs these as no-op jobs: the option selects execution
+            // strategy, and there is nothing to execute.
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AcceptedNoOp {
+                schema,
+                table,
+                warning: None,
+            }))
+        }
+        tidb_ast::AlterTableAction::SetStatsOptions(_) => Err(DdlAdmissionError::with_code(
+            8200,
+            "This type of ALTER TABLE is currently unsupported",
+        )),
+        tidb_ast::AlterTableAction::Force => Err(DdlAdmissionError::with_code(
+            8200,
+            "Unsupported Unsupported/unknown ALTER TABLE specification",
+        )),
         _ => Ok(None),
     }
 }
@@ -1940,7 +2033,7 @@ fn lower_alter_add_index(
         }
         IndexConstraintKind::Fulltext => {
             return Err(DdlAdmissionError::unsupported(
-                "ALTER TABLE ADD FULLTEXT is not supported by this node",
+                "FULLTEXT index is only supported in starter deployment mode",
             ))
         }
         IndexConstraintKind::Vector => {
@@ -2161,9 +2254,7 @@ fn apply_drop_column(
             )));
         }
         // Go 1091 ErrCantDropFieldOrKey.
-        return Err(DdlPlanError::Encode(format!(
-            "Can't DROP '{column}'; check that column/key exists"
-        )));
+        return Err(DdlPlanError::CantDropFieldOrKey(column.to_owned()));
     };
     if info.columns.len() == 1 {
         // Go 1090 ErrCantRemoveAllFields.
@@ -2308,18 +2399,22 @@ fn lower_drop_table(
     drop: &DropTableStmt,
     default_schema: &str,
 ) -> Result<DdlStatement, DdlAdmissionError> {
-    if drop.temporary != tidb_ast::DropTemporary::None {
-        return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            "DROP TEMPORARY TABLE is not supported: this node never creates temporary tables",
-        ));
+    // go answers `DROP TEMPORARY TABLE` with an ordinary OK (the session's
+    // temp table, or nothing, goes); the temporary spelling does not change
+    // the lowered job.
+    let mut names = Vec::with_capacity(drop.names.len());
+    for name in &drop.names {
+        names.push(split_name(name, default_schema, "table")?);
     }
     let [name] = drop.names.as_slice() else {
-        return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            "DROP TABLE names exactly one table on this node, so a failed drop \
-             cannot leave the others half-applied",
-        ));
+        // go lowers the whole list into one job: the existing tables are
+        // dropped and each missing one is reported (`ErrBadTable` 1051,
+        // comma-joined when it is an error, one note per table with
+        // `IF EXISTS`).
+        return Ok(DdlStatement::DropTables {
+            names,
+            if_exists: drop.if_exists,
+        });
     };
     let (schema, table) = split_name(name, default_schema, "table")?;
     Ok(DdlStatement::DropTable {
@@ -2359,31 +2454,11 @@ fn lower_create_table(
             if_not_exists: create.if_not_exists,
         });
     }
-    // The same gate [`lower_create_index`] applies, for the same reason and
-    // with the same words: a prefix-length index in the INLINE list would be
-    // published into a `TableInfo` that this node's own catalog loader then
-    // refuses, so the CREATE would report success and the table would not
-    // exist. `CREATE INDEX` and `ALTER TABLE ... ADD INDEX` have always
-    // refused it; without this, only the inline spelling slipped through.
-    for constraint in &create.table_constraints {
-        let tidb_ast::TableConstraint::Index(index) = constraint else {
-            continue;
-        };
-        for part in &index.parts {
-            if matches!(
-                part,
-                tidb_ast::IndexPart::Column {
-                    prefix_len: Some(_),
-                    ..
-                }
-            ) {
-                return Err(DdlAdmissionError::unsupported(
-                    "a prefix-length index is not supported by this node, which neither \
-                     reads nor writes entries cut to a prefix",
-                ));
-            }
-        }
-    }
+    // Prefix-length key parts (`INDEX(b(2))`) are admitted: the builder
+    // stores the length on the `IndexColumn`, the write path cuts entries
+    // (`index_prefix_cut::cut_index_value`), and the read path treats cut
+    // endpoints as inclusive ranges. The catalog loader never validated the
+    // length away — the old refusal here predated that support.
     // The server default `tidb_enable_clustered_index = ON`, which is what a
     // real TiDB builds a user table under. Bootstrap is the one caller that
     // uses a different mode, and it says so at its own call site.
@@ -2436,17 +2511,13 @@ fn lower_create_index(
                  hidden GENERATED column, which this node's catalog loader refuses",
             ));
         };
-        if prefix_len.is_some() {
-            return Err(DdlAdmissionError::unsupported(
-                "a prefix-length index is not supported by this node, which neither \
-                 reads nor writes entries cut to a prefix",
-            ));
-        }
         columns.push(IndexColumn {
             name: CiString::new(name.clone()),
-            // Resolved against the stored table when the change is planned.
+            // Resolved against the stored table when the change is planned;
+            // the declared prefix travels in `length` and is validated (and
+            // normalized) there, where the column's type is known.
             offset: 0,
-            length: -1,
+            length: prefix_len.unwrap_or(-1),
             ..IndexColumn::default()
         });
     }
@@ -2546,6 +2617,12 @@ pub enum DdlPlanError {
     /// The statement named a table that is not in the catalog (Go
     /// `infoschema.ErrTableNotExists`, 1146).
     ///
+    /// `DROP TABLE a, b` naming tables that are not in the catalog (Go
+    /// `ErrBadTable` 1051, every missing name comma-joined).
+    UnknownTables(Vec<String>),
+    /// Go `ErrCantDropFieldOrKey` (1091): DROP COLUMN/INDEX names something
+    /// the table does not have.
+    CantDropFieldOrKey(String),
     /// Distinct from [`Self::UnknownTable`], which is Go's `ErrBadTable`
     /// (1051): `DROP TABLE` answers that one, and Go's own
     /// `TestDropTableWithoutIfExists` pins the difference. Every other
@@ -2633,6 +2710,15 @@ impl fmt::Display for DdlPlanError {
             Self::UnknownTable { schema, table } => {
                 write!(formatter, "Unknown table '{schema}.{table}'")
             }
+            Self::UnknownTables(names) => {
+                write!(formatter, "Unknown table '{}'", names.join(","))
+            }
+            Self::CantDropFieldOrKey(name) => {
+                write!(
+                    formatter,
+                    "Can't DROP '{name}'; check that column/key exists"
+                )
+            }
             Self::TableNotExists { schema, table } => {
                 write!(formatter, "Table '{schema}.{table}' doesn't exist")
             }
@@ -2671,8 +2757,8 @@ impl fmt::Display for DdlPlanError {
                 formatter,
                 "global id:{wanted} exceeds the limit:{MAX_USER_GLOBAL_ID}"
             ),
-            Self::Encode(detail) => write!(formatter, "catalog encode failed: {detail}"),
-            Self::Mutations(error) => write!(formatter, "catalog mutations: {error}"),
+            Self::Encode(detail) => write!(formatter, "{detail}"),
+            Self::Mutations(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -2725,9 +2811,11 @@ pub enum DdlPlan {
     AlreadySatisfied {
         /// Human-readable statement of what was already true.
         detail: String,
-        /// The warning the statement raises even though it changed nothing.
-        /// Go's `OrderByColumns` is the case that has one.
-        warning: Option<String>,
+        /// The warnings the statement raises even though it changed nothing:
+        /// go notes 1007/1051, errors 1105. A statement can raise several
+        /// (`DROP TABLE IF EXISTS a, b` on two missing tables leaves one
+        /// 1051 note per table).
+        warnings: Vec<(DdlWarningLevel, u16, String)>,
     },
     /// The mutations to publish in one transaction.
     Write(Box<DdlWrite>),
@@ -3329,7 +3417,7 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
                 .then(|| mdl_info_update(&catalog, info.id))
                 .transpose()?,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -3485,7 +3573,7 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -3649,7 +3737,7 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -3861,7 +3949,7 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -4097,7 +4185,7 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
                 check_constraint_validation: None,
                 mdl_info_update: None,
                 exchange_partition_label_swap: None,
-                warning: None,
+                warnings: Vec::new(),
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
             },
@@ -4199,7 +4287,7 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -4281,7 +4369,7 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
                 check_constraint_validation: None,
                 mdl_info_update: None,
                 exchange_partition_label_swap: None,
-                warning: None,
+                warnings: Vec::new(),
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
             },
@@ -4373,7 +4461,7 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -4484,7 +4572,7 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
                 check_constraint_validation: None,
                 mdl_info_update: None,
                 exchange_partition_label_swap: None,
-                warning: None,
+                warnings: Vec::new(),
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
             },
@@ -4526,7 +4614,7 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
                 check_constraint_validation: None,
                 mdl_info_update: None,
                 exchange_partition_label_swap: None,
-                warning: None,
+                warnings: Vec::new(),
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
             },
@@ -4621,7 +4709,7 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -4937,7 +5025,7 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: Some(mdl_info_update),
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -4976,7 +5064,7 @@ fn rolling_back_step(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: Some(error.to_string()),
+            warnings: vec![(DdlWarningLevel::Warning, 1105, error.to_string())],
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -5151,7 +5239,7 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -5525,7 +5613,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                     check_constraint_validation: None,
                     mdl_info_update: Some(mdl_info_update),
                     exchange_partition_label_swap: None,
-                    warning: None,
+                    warnings: Vec::new(),
                     placement_bundles: Vec::new(),
                     placement_rollback_bundles: Vec::new(),
                 },
@@ -5711,7 +5799,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                     check_constraint_validation: None,
                     mdl_info_update: Some(mdl_info_update),
                     exchange_partition_label_swap: None,
-                    warning: None,
+                    warnings: Vec::new(),
                     placement_bundles: Vec::new(),
                     placement_rollback_bundles: Vec::new(),
                 },
@@ -5873,7 +5961,7 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warning: None,
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -5960,13 +6048,14 @@ pub struct DdlWrite {
     pub mdl_info_update: Option<MdlInfoUpdate>,
     /// The PD region-label rule swap owed by `EXCHANGE PARTITION`.
     pub exchange_partition_label_swap: Option<ExchangePartitionLabelSwap>,
-    /// The warning the change raises, if any.
+    /// The warnings the change raises, if any.
     ///
-    /// Go carries this as `job.Warning` (and, for the same adjustment made at
-    /// admission time, `StmtCtx.AppendWarning`); the client reads it back with
-    /// `SHOW WARNINGS`. A change that silently did something other than what
-    /// was written would otherwise look like it did exactly what was written.
-    pub warning: Option<String>,
+    /// Go carries these as `job.Warning` (and, for the same adjustments made
+    /// at admission time, `StmtCtx.AppendWarning`); the client reads them
+    /// back with `SHOW WARNINGS`. A change that silently did something other
+    /// than what was written would otherwise look like it did exactly what
+    /// was written.
+    pub warnings: Vec<(DdlWarningLevel, u16, String)>,
     /// The placement rule bundles PD has to be told about before this change
     /// becomes visible.
     ///
@@ -6629,7 +6718,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     let mut exchange_partition_validation = None;
     let mut check_constraint_validation = None;
     let mut exchange_partition_label_swap = None;
-    let mut warning = None;
+    let mut warnings: Vec<(DdlWarningLevel, u16, String)> = Vec::new();
     let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
     let mut diff = SchemaDiff {
         version: schema_version,
@@ -6771,10 +6860,17 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         } => {
             if let Some(existing) = find_database(&catalog, name) {
                 if *if_not_exists {
-                    return Ok(already(format!(
-                        "database `{}` already exists",
-                        existing.info.name.original()
-                    )));
+                    return Ok(DdlPlan::AlreadySatisfied {
+                        detail: format!(
+                            "database `{}` already exists",
+                            existing.info.name.original()
+                        ),
+                        warnings: vec![(
+                            DdlWarningLevel::Note,
+                            1007,
+                            format!("Can't create database '{}'; database exists", name),
+                        )],
+                    });
                 }
                 return Err(DdlPlanError::DatabaseExists(name.clone()));
             }
@@ -6927,28 +7023,28 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let _ = (schema, view);
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: "ALTER MATERIALIZED VIEW changes nothing".to_owned(),
-                warning: None,
+                warnings: Vec::new(),
             });
         }
         DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
             let _ = (schema, table);
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: "ALTER MATERIALIZED VIEW LOG changes nothing".to_owned(),
-                warning: None,
+                warnings: Vec::new(),
             });
         }
         DdlStatement::DropMaterializedViewNoOp { schema, view } => {
             let _ = (schema, view);
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: "DROP MATERIALIZED VIEW changes nothing".to_owned(),
-                warning: None,
+                warnings: Vec::new(),
             });
         }
         DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
             let _ = (schema, table);
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: "DROP MATERIALIZED VIEW LOG changes nothing".to_owned(),
-                warning: None,
+                warnings: Vec::new(),
             });
         }
         DdlStatement::CreateTableLike {
@@ -7332,17 +7428,28 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 dropped_any = true;
             }
             if !missing.is_empty() && !if_exists {
-                return Err(DdlPlanError::Unsupported(format!(
-                    "Unknown table '{}'",
-                    missing.join(",")
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    1051,
+                    format!("Unknown table '{}'", missing.join(",")),
                 )));
             }
+            // go files one `Note | 1051` per missing view under IF EXISTS —
+            // alongside the drops when the list mixes existing and missing
+            // names.
+            let notes = missing
+                .iter()
+                .map(|name| {
+                    let (schema, view) = name.rsplit_once('.').unwrap_or(("", name.as_str()));
+                    missing_table_note(schema, view)
+                })
+                .collect::<Vec<_>>();
             if !dropped_any {
-                return Ok(already(format!(
-                    "no named view exists: {}",
-                    missing.join(",")
-                )));
+                return Ok(already_with_warnings(
+                    format!("no named view exists: {}", missing.join(",")),
+                    notes,
+                ));
             }
+            warnings.extend(notes);
         }
         DdlStatement::RebaseAutoRandom {
             schema,
@@ -7516,7 +7623,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             if replica.read().available == *available {
                 return Ok(DdlPlan::AlreadySatisfied {
                     detail: "TiFlash replica status already matches".to_owned(),
-                    warning: None,
+                    warnings: Vec::new(),
                 });
             }
             replica.write().available = *available;
@@ -8080,10 +8187,12 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 ..AffectedOption::default()
             }]
             .into();
-            warning = Some(
+            warnings = vec![(
+                DdlWarningLevel::Warning,
+                1105,
                 "after the exchange, please analyze related table of the exchange to update statistics"
                     .to_owned(),
-            );
+            )];
             if !tidb_metadef::is_mem_or_sys_db(&standalone_schema.go_to_lower()) {
                 schema_change_events.push((
                     -1,
@@ -8881,17 +8990,20 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         } => {
             let Some(database) = find_database(&catalog, schema) else {
                 if *if_exists {
-                    return Ok(already(format!(
-                        "table `{schema}`.`{table}` does not exist"
-                    )));
+                    // go `ErrBadTable` demoted to a note: `Unknown table 'd.t'`.
+                    return Ok(already_with_warnings(
+                        format!("table `{schema}`.`{table}` does not exist"),
+                        vec![missing_table_note(schema, table)],
+                    ));
                 }
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
             };
             let Some(stored) = find_table(database, table) else {
                 if *if_exists {
-                    return Ok(already(format!(
-                        "table `{schema}`.`{table}` does not exist"
-                    )));
+                    return Ok(already_with_warnings(
+                        format!("table `{schema}`.`{table}` does not exist"),
+                        vec![missing_table_note(schema, table)],
+                    ));
                 }
                 return Err(DdlPlanError::UnknownTable {
                     schema: schema.clone(),
@@ -8923,25 +9035,140 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     .push((-1, SchemaChangeEvent::drop_table(stored.clone_like_go())));
             }
         }
+        DdlStatement::AcceptedNoOp {
+            schema,
+            table,
+            warning,
+        } => {
+            let warnings = warning
+                .as_ref()
+                .map(|(code, message)| {
+                    vec![(
+                        crate::real_tikv_ddl::DdlWarningLevel::Warning,
+                        *code,
+                        message.clone(),
+                    )]
+                })
+                .unwrap_or_default();
+            return Ok(already_with_warnings(
+                format!("ALTER TABLE `{schema}`.`{table}` changed nothing"),
+                warnings,
+            ));
+        }
+        DdlStatement::DropTables { names, if_exists } => {
+            // go builds ONE job for the whole list and answers mysql-style:
+            // every EXISTING table goes, and the missing ones are reported —
+            // `Unknown table 'a,b'` (1051) as an error without `IF EXISTS`,
+            // one `Note | 1051` per table with it.
+            let mut existing: Vec<(String, i64, i64, tidb_model::TableInfo)> = Vec::new();
+            let mut missing: Vec<String> = Vec::new();
+            for (schema, table) in names {
+                match find_database(&catalog, schema).and_then(|db| {
+                    find_table(db, table).map(|stored| (db.info.id, stored.clone_like_go()))
+                }) {
+                    Some((db_id, stored)) => {
+                        existing.push((schema.clone(), db_id, stored.id, stored))
+                    }
+                    None => missing.push(format!("{schema}.{table}")),
+                }
+            }
+            if !missing.is_empty() && !*if_exists {
+                return Err(DdlPlanError::UnknownTables(missing));
+            }
+            let notes = missing
+                .iter()
+                .map(|name| {
+                    let (schema, table) = name.rsplit_once('.').unwrap_or(("", name.as_str()));
+                    missing_table_note(schema, table)
+                })
+                .collect::<Vec<_>>();
+            if existing.is_empty() {
+                return Ok(already_with_warnings(
+                    format!("{} listed tables do not exist", missing.len()),
+                    notes,
+                ));
+            }
+            for (ordinal, (schema, db_id, table_id, stored)) in existing.iter().enumerate() {
+                writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                    *db_id, *table_id,
+                ))?);
+                for allocator in [
+                    key::auto_table_id_kv_key(*db_id, *table_id),
+                    key::auto_increment_id_kv_key(*db_id, *table_id),
+                    key::auto_random_table_id_kv_key(*db_id, *table_id),
+                ] {
+                    if snapshot.get(&allocator)?.is_some() {
+                        writes.push(OptimisticMutation::meta_delete(allocator)?);
+                    }
+                }
+                if ordinal == 0 {
+                    diff.action_type = ActionType::ACTION_DROP_TABLE;
+                    diff.schema_id = *db_id;
+                    diff.table_id = *table_id;
+                } else {
+                    let mut options: Vec<AffectedOption> = diff
+                        .affected_options
+                        .iter_deref()
+                        .map(|option| option.read().clone())
+                        .collect();
+                    options.push(AffectedOption {
+                        schema_id: *db_id,
+                        table_id: *table_id,
+                        old_table_id: *table_id,
+                        old_schema_id: *db_id,
+                        ..AffectedOption::default()
+                    });
+                    diff.affected_options = options.into();
+                }
+                if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                    // Each event needs a DISTINCT (job, sub-job) pair: the
+                    // notifier table keys its rows by both, so two events
+                    // sharing the -1 placeholder collide on the index.
+                    schema_change_events.push((
+                        ordinal as i64,
+                        SchemaChangeEvent::drop_table(stored.clone()),
+                    ));
+                }
+            }
+            warnings.extend(notes);
+        }
         DdlStatement::RenameTable {
             from_schema,
             from_table,
             to_schema,
             to_table,
         } => {
-            let pair = RenameTablePair {
-                from_schema: from_schema.clone(),
-                from_table: from_table.clone(),
-                to_schema: to_schema.clone(),
-                to_table: to_table.clone(),
-            };
-            plan_rename_tables(
-                &catalog,
-                std::slice::from_ref(&pair),
-                start_ts,
-                &mut writes,
-                &mut diff,
-            )?;
+            if from_schema.eq_ignore_ascii_case(&to_schema)
+                && from_table.eq_ignore_ascii_case(&to_table)
+            {
+                // go accepts a same-name rename as a no-op DDL job: the
+                // table is renamed to itself, no catalog writes needed. The
+                // table must still exist — go resolves through
+                // `getSchemaAndTableByIdent` and answers 1146 when it does
+                // not, even though nothing would be renamed.
+                let exists = find_database(&catalog, from_schema)
+                    .is_some_and(|database| find_table(database, from_table).is_some());
+                if !exists {
+                    return Err(DdlPlanError::TableNotExists {
+                        schema: from_schema.clone(),
+                        table: from_table.clone(),
+                    });
+                }
+            } else {
+                let pair = RenameTablePair {
+                    from_schema: from_schema.clone(),
+                    from_table: from_table.clone(),
+                    to_schema: to_schema.clone(),
+                    to_table: to_table.clone(),
+                };
+                plan_rename_tables(
+                    &catalog,
+                    std::slice::from_ref(&pair),
+                    start_ts,
+                    &mut writes,
+                    &mut diff,
+                )?;
+            }
         }
         DdlStatement::RenameTables { pairs } => {
             plan_rename_tables(&catalog, pairs, start_ts, &mut writes, &mut diff)?;
@@ -8986,6 +9213,77 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 let stored_column = stored_column.read();
                 column.name = stored_column.name.clone();
                 column.offset = stored_column.offset;
+                if column.length != -1 {
+                    // go `buildIndexColumns` -> `checkIndexColumn`: the
+                    // declared prefix is validated against the column's type
+                    // and normalized (a prefix covering the whole column is
+                    // the same as no prefix). The WRITE path cuts entries by
+                    // this length, so it must be the declared one that
+                    // survived the checks.
+                    use tidb_executor::ddl::index_prefix::{
+                        stored_index_length, IndexedColumn, PrefixError,
+                    };
+                    let declared = (column.length != -1).then_some(column.length);
+                    match stored_index_length(
+                        &stored_column.field_type,
+                        IndexedColumn::Named(column.name.original()),
+                        declared,
+                        true,
+                    ) {
+                        Ok(normalized) => column.length = normalized,
+                        Err(PrefixError::IncorrectPrefixKey) => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrWrongSubKey,
+                                "Incorrect prefix key; the used key part isn't a string, \
+                                     the used length is longer than the key part, or the storage \
+                                     engine doesn't support unique prefix keys",
+                            )));
+                        }
+                        Err(PrefixError::BlobKeyWithoutLength(name)) => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrBlobKeyWithoutLength,
+                                format!(
+                                    "BLOB/TEXT column '{name}' used in key specification \
+                                         without a key length"
+                                ),
+                            )));
+                        }
+                        Err(PrefixError::KeyPart0(name)) => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrKeyPart0,
+                                format!("Key part '{name}' length cannot be 0"),
+                            )));
+                        }
+                        Err(PrefixError::WrongKeyColumn(name)) => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrWrongKeyColumn,
+                                format!("The used storage engine can't index column '{name}'"),
+                            )));
+                        }
+                        Err(PrefixError::JsonUsedAsKey(name)) => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrJSONUsedAsKey,
+                                format!(
+                                    "JSON column '{name}' cannot be used in key specification."
+                                ),
+                            )));
+                        }
+                        Err(PrefixError::TooLongKey { length, max }) => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrTooLongKey,
+                                format!(
+                                    "Specified key was too long ({length} bytes); \
+                                         max key length is {max} bytes"
+                                ),
+                            )));
+                        }
+                        Err(other) => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                                format!("{other:?}"),
+                            )));
+                        }
+                    }
+                }
             }
             let mut info = stored.clone_like_go();
             info.max_index_id += 1;
@@ -9449,14 +9747,17 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     .field_type
                     .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
             });
-            let warning = has_primary_key.then(|| {
-                format!(
-                    "ORDER BY ignored as there is a user-defined clustered index in the table '{table}'"
-                )
-            });
+            let warnings = has_primary_key
+                .then(|| {
+                    format!(
+                        "ORDER BY ignored as there is a user-defined clustered index in the table '{table}'"
+                    )
+                })
+                .map(|message| vec![(DdlWarningLevel::Warning, 1105, message)])
+                .unwrap_or_default();
             return Ok(DdlPlan::AlreadySatisfied {
                 detail: format!("ORDER BY on `{schema}`.`{table}` changes nothing"),
-                warning,
+                warnings,
             });
         }
         DdlStatement::RebaseAutoIncrementId {
@@ -9484,10 +9785,14 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 // handed out ids past the requested base.
                 let adjusted = u64::max(new_base as u64, next_global) as i64;
                 if adjusted != new_base {
-                    warning = Some(format!(
-                        "Can't reset AUTO_INCREMENT to {new_base} without FORCE option, \
-                         using {adjusted} instead"
-                    ));
+                    warnings = vec![(
+                        DdlWarningLevel::Warning,
+                        1105,
+                        format!(
+                            "Can't reset AUTO_INCREMENT to {new_base} without FORCE option, \
+                             using {adjusted} instead"
+                        ),
+                    )];
                     new_base = adjusted;
                 }
             }
@@ -9562,7 +9867,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         check_constraint_validation,
         mdl_info_update,
         exchange_partition_label_swap,
-        warning,
+        warnings,
         placement_bundles,
         placement_rollback_bundles,
     })))
@@ -9768,8 +10073,25 @@ fn is_column_with_index(name: &str, table: &TableInfo) -> bool {
 fn already(detail: String) -> DdlPlan {
     DdlPlan::AlreadySatisfied {
         detail,
-        warning: None,
+        warnings: Vec::new(),
     }
+}
+
+/// go's note for one missing table: `Note | 1051 | Unknown table 'd.t'`.
+fn missing_table_note(
+    schema: &str,
+    table: &str,
+) -> (crate::real_tikv_ddl::DdlWarningLevel, u16, String) {
+    (
+        crate::real_tikv_ddl::DdlWarningLevel::Note,
+        1051,
+        format!("Unknown table '{schema}.{table}'"),
+    )
+}
+
+/// `already` carrying go's per-table 1051 notes (DROP ... IF EXISTS).
+fn already_with_warnings(detail: String, warnings: Vec<(DdlWarningLevel, u16, String)>) -> DdlPlan {
+    DdlPlan::AlreadySatisfied { detail, warnings }
 }
 
 #[derive(Clone)]

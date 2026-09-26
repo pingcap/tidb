@@ -105,7 +105,7 @@ pub(crate) fn dispatch(
         // own doc.
         "YEAR_MONTH" | "DAY_HOUR" | "DAY_MINUTE" | "DAY_SECOND" | "DAY_MICROSECOND"
         | "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND" | "MINUTE_SECOND"
-        | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => calendar::extract_composite(name, vals),
+        | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => calendar::extract_composite(name, vals, cols),
         _ => return None,
     })
 }

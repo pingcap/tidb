@@ -379,6 +379,19 @@ pub fn build_table_info_with_context(
         db_charset,
         db_collate,
     )?;
+    // go `CheckCharsetCollation` under new collation: latin1's DEFAULT
+    // collation is latin1_swedish_ci, which new collation does not carry, so
+    // a TABLE declaring the latin1 charset — or naming that collation
+    // explicitly — answers `ErrUnsupportedCollation` (1273). A COLUMN may
+    // still declare latin1: it resolves to latin1_bin, which exists.
+    if table_charset.eq_ignore_ascii_case("latin1")
+        || table_collate.eq_ignore_ascii_case("latin1_swedish_ci")
+    {
+        return Err(DdlAdmissionError::with_code(
+            1273,
+            "Unsupported collation when new collation is enabled: 'latin1_swedish_ci'",
+        ));
+    }
 
     // Go `buildColumnsAndConstraints`: the table-level PRIMARY KEY is located
     // first because every column needs to know whether it is one of its keys.
@@ -388,6 +401,12 @@ pub fn build_table_info_with_context(
     } else {
         Vec::new()
     };
+    // go `BuildHiddenColumnInfo` runs per table-level index constraint: an
+    // expression key part becomes one hidden VIRTUAL generated column, so
+    // the AST of each part is captured here and synthesized once every real
+    // column exists (the hidden column's dependencies and the anonymous
+    // index's name resolve against the completed column list).
+    let mut constraint_exprs: Vec<Vec<Option<tidb_ast::Expr>>> = Vec::new();
     for constraint in &create.table_constraints {
         // Go `ast.ConstraintCheck` with the flag off — the DEFAULT — warns
         // and skips (`ddl/create_table.go:1470`), exactly like the
@@ -398,6 +417,7 @@ pub fn build_table_info_with_context(
             }
             continue;
         }
+        constraint_exprs.push(table_constraint_expr_parts(constraint));
         constraints.push(lower_table_constraint(constraint)?);
     }
     let out_primary_key: Option<Constraint> = constraints
@@ -414,13 +434,32 @@ pub fn build_table_info_with_context(
             &table_charset,
             &table_collate,
             context,
-            None,
+            // go `columnDefToCol` resolves generated expressions against the
+            // columns PRECEDING this one in the CREATE TABLE (all columns
+            // already processed by this loop iteration).
+            Some(&columns),
         )?;
         // An inline PRIMARY KEY / UNIQUE becomes a constraint of its own, in
-        // the position Go appends it: after every table-level one.
+        // the position Go appends it: after every table-level one. Inline
+        // constraints carry no key parts, so they contribute no expression
+        // parts to the hidden-column synthesis.
         constraints.extend(inline);
+        constraint_exprs.push(Vec::new());
         columns.push(info);
     }
+
+    // go `BuildHiddenColumnInfo` (pkg/ddl/create_table.go:1590): every
+    // expression index part is lowered to a hidden VIRTUAL generated column
+    // `_V$_<index>_<part-position>` and the key part points at it. Runs now
+    // — after every declared column exists — because the hidden column's
+    // dependency check and the anonymous index's name both resolve against
+    // the completed column list, exactly as go interleaves them.
+    synthesize_expression_index_columns(
+        &mut columns,
+        &mut constraints,
+        &constraint_exprs,
+        context,
+    )?;
 
     let mut seen: Vec<String> = Vec::with_capacity(columns.len());
     for column in &columns {
@@ -729,10 +768,28 @@ enum ConstraintKind {
 struct KeyPart {
     name: String,
     prefix_len: i64,
+    desc: bool,
 }
 
 fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     let TableConstraint::Index(index) = constraint else {
+        if let TableConstraint::ForeignKey(fk) = constraint {
+            // go `CreateNewForeignKey`/`SetAutoIncrement` tries to open the
+            // referenced table and fails with ErrFKIncompatibleTables
+            // (1824, "Failed to open the referenced table '...'") when the
+            // referenced table is absent.
+            let referenced = fk
+                .reference
+                .table
+                .as_ref()
+                .and_then(|path| path.last())
+                .map(|t| t.as_str())
+                .unwrap_or("?");
+            return Err(DdlAdmissionError::with_code(
+                1824,
+                format!("Failed to open the referenced table '{referenced}'"),
+            ));
+        }
         return Err(DdlAdmissionError::with_code(
             GENERIC_ERROR_CODE,
             "CREATE TABLE FOREIGN KEY constraints are not supported by this node",
@@ -759,22 +816,22 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
                 prefix_len,
                 desc,
             } => {
-                if *desc {
-                    return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        "CREATE TABLE descending index parts are not supported by this node",
-                    ));
-                }
                 parts.push(KeyPart {
                     name: name.clone(),
                     prefix_len: prefix_len.unwrap_or(UNSPECIFIED_LENGTH),
+                    desc: *desc,
                 });
             }
-            IndexPart::Expr { .. } => {
-                return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    "CREATE TABLE expression index parts are not supported by this node",
-                ))
+            IndexPart::Expr { desc, .. } => {
+                // go `BuildHiddenColumnInfo`: the expression part becomes a
+                // hidden generated column; the placeholder name is filled
+                // by `synthesize_expression_index_columns` once every
+                // declared column exists. Position is what matters here.
+                parts.push(KeyPart {
+                    name: String::new(),
+                    prefix_len: UNSPECIFIED_LENGTH,
+                    desc: *desc,
+                });
             }
         }
     }
@@ -810,6 +867,136 @@ fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
         IndexType::INVALID => IndexType::BTREE,
         other => other,
     })
+}
+
+/// The expression payload of each index part, position-aligned with the
+/// lowered constraint's parts: `Some` for an `IndexPart::Expr`, `None` for a
+/// named column. This is the AST go hands to `BuildHiddenColumnInfo`.
+fn table_constraint_expr_parts(constraint: &TableConstraint) -> Vec<Option<Expr>> {
+    let TableConstraint::Index(index) = constraint else {
+        return Vec::new();
+    };
+    index
+        .parts
+        .iter()
+        .map(|part| match part {
+            IndexPart::Column { .. } => None,
+            IndexPart::Expr { expr, .. } => Some(expr.clone()),
+        })
+        .collect()
+}
+
+/// go `BuildHiddenColumnInfo` (pkg/ddl/create_table.go:1590) plus
+/// `getAnonymousIndexPrefix`/`GetName4AnonymousIndex` (executor.go:4709):
+/// every expression key part of every table-level index becomes one hidden
+/// VIRTUAL generated column `_V$_<index>_<part-position>`, and the key part
+/// is rewritten to point at it. `SHOW CREATE TABLE` and `SHOW INDEX` render
+/// the stored expression back from that column; the column itself never
+/// appears in the column list.
+fn synthesize_expression_index_columns(
+    columns: &mut Vec<ColumnInfo>,
+    constraints: &mut [Constraint],
+    constraint_exprs: &[Vec<Option<Expr>>],
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    let names: Vec<String> = columns
+        .iter()
+        .map(|column| column.name.original().to_owned())
+        .collect();
+    let types: Vec<FieldType> = columns.iter().map(|c| c.field_type.clone()).collect();
+    // go `GetName4AnonymousIndex` dedups the anonymous name against the
+    // index names already in the statement, suffixing `_2`, `_3`, ... .
+    let mut taken: Vec<String> = constraints
+        .iter()
+        .filter(|constraint| !constraint.name.is_empty())
+        .map(|constraint| constraint.name.to_lowercase())
+        .collect();
+    for (constraint, exprs) in constraints.iter_mut().zip(constraint_exprs) {
+        if exprs.is_empty() {
+            // Inline constraints carry no key parts.
+            continue;
+        }
+        if constraint.name.is_empty() && exprs.iter().any(|expr| expr.is_some()) {
+            let mut id = 2;
+            let mut candidate = "expression_index".to_owned();
+            while taken.contains(&candidate) || candidate.eq_ignore_ascii_case("PRIMARY") {
+                candidate = format!("expression_index_{id}");
+                id += 1;
+            }
+            taken.push(candidate.to_lowercase());
+            constraint.name = candidate;
+        }
+        if constraint.kind == ConstraintKind::PrimaryKey && exprs.iter().any(|expr| expr.is_some())
+        {
+            // go `CheckPKOnGeneratedColumn` -> `ErrUnsupportedOnGeneratedColumn`
+            // (3756): the primary key cannot be an expression index.
+            return Err(DdlAdmissionError::with_code(
+                3756,
+                "The primary key cannot be an expression index",
+            ));
+        }
+        for (position, expr) in exprs.iter().enumerate() {
+            let Some(expr) = expr else { continue };
+            // go `BuildHiddenColumnInfo`: a part whose built expression is
+            // just a column is rejected (`ErrFunctionalIndexOnField`, 3762).
+            if let Expr::Column(_) = expr {
+                return Err(DdlAdmissionError::with_code(
+                    3762,
+                    "Expression index on a column is not supported. Consider using a regular index instead",
+                ));
+            }
+            let hidden_name = format!("_V$_{}_{}", constraint.name, position);
+            // The same builder a declared generated column goes through:
+            // it resolves dependencies (go `checkDependedColExist`),
+            // rejects disallowed functions (go `checkIllegalFn4Generated`)
+            // and restores the expression in go's own `GeneratedExprString`
+            // spelling.
+            let generated =
+                tidb_executor::generated_column::build_added_generated_column_with_like_default_escape(
+                    &hidden_name,
+                    expr,
+                    false,
+                    &names,
+                    &types,
+                    &context.session_zone(),
+                    context.like_default_escape(),
+                )
+                .map_err(generated_column_admission_error)?;
+            let mut dependences = GoStringSet::default();
+            for dependency in generated.dependencies {
+                dependences.insert(dependency);
+            }
+            columns.push(ColumnInfo {
+                id: 0,
+                name: CiString::new(hidden_name.clone()),
+                offset: i64::try_from(columns.len()).expect("a column offset fits in i64"),
+                origin_default_value: GoAny::nil(),
+                origin_default_value_bit: Default::default(),
+                default_value: GoAny::nil(),
+                default_value_bit: Default::default(),
+                default_is_expr: false,
+                generated_expr_string: generated.expr_text,
+                generated_stored: false,
+                dependences,
+                // go infers the type from the built expression; this tier
+                // has no inference entry point yet, so the key-length math
+                // sees a bigint — the type `a + 1` infers to anyway. Only
+                // `SHOW EXTENDED COLUMNS` can observe a wider type.
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                changing_field_type: None,
+                state: SchemaState::PUBLIC,
+                comment: String::new(),
+                hidden: true,
+                change_state_info: None,
+                version: CURR_LATEST_COLUMN_INFO_VERSION,
+            });
+            let part = &mut constraint.parts[position];
+            part.name = hidden_name;
+            // go resets the length of an expression part to Unspecified.
+            part.prefix_len = UNSPECIFIED_LENGTH;
+        }
+    }
+    Ok(())
 }
 
 /// Builds the one column an `ALTER TABLE ... ADD COLUMN` appends, against the
@@ -1059,6 +1246,31 @@ fn build_column(
     // `build_field_type` is what actually stamps `binary`/`binary` on a type
     // that carries no charset, so the resolved pair above is only an input.
     let mut field_type = build_field_type(name, &column.ty, &charset, &collate)?;
+    // go deprecates an EXPLICIT integer display width
+    // (`ErrIntegerDisplayWidthDeprecated`, 1681), warned even when the width
+    // equals the type's default (`int(11)`); the `tinyint(1)` boolean
+    // convention is the one exemption.
+    if matches!(
+        field_type.code(),
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+    ) {
+        let declared_width = match column.ty.args.as_slice() {
+            [tidb_ast::ColumnTypeArg::Text(text)] => text.parse::<i64>().ok(),
+            _ => None,
+        };
+        let boolean_convention =
+            field_type.code() == FieldTypeCode::Tiny && declared_width == Some(1);
+        if declared_width.is_some() && !boolean_convention {
+            context.append_warning_parts(
+                1681,
+                "Integer display width is deprecated and will be removed in a future release.",
+            );
+        }
+    }
     // Go `checkColumnAttributes` -- each refusal carries go's own errno and
     // text (1426/1427/1291/3505); flattening them to a generic 1105 turned
     // `ENUM('x','x')` into a Rust Debug leak on the wire.
@@ -1121,6 +1333,7 @@ fn build_column(
                         parts: vec![KeyPart {
                             name: name.clone(),
                             prefix_len: UNSPECIFIED_LENGTH,
+                            desc: false,
                         }],
                         clustered: storage,
                         comment: String::new(),
@@ -1140,6 +1353,7 @@ fn build_column(
                         parts: vec![KeyPart {
                             name: name.clone(),
                             prefix_len: UNSPECIFIED_LENGTH,
+                            desc: false,
                         }],
                         clustered: None,
                         comment: String::new(),
@@ -1151,7 +1365,24 @@ fn build_column(
                 }
             },
             ColumnOption::Default(expr) => {
-                staged_default = Some(stage_column_default(name, &field_type, expr, context)?);
+                let preceding_names: Vec<String> = generated_preceding
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|column| column.name.original().to_owned())
+                    .collect();
+                let preceding_types: Vec<FieldType> = generated_preceding
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|column| column.field_type.clone())
+                    .collect();
+                staged_default = Some(stage_column_default(
+                    name,
+                    &field_type,
+                    expr,
+                    context,
+                    &preceding_names,
+                    &preceding_types,
+                )?);
                 remove_on_update_now(&mut field_type);
             }
             ColumnOption::OnUpdate(expr) => {
@@ -1264,6 +1495,12 @@ fn build_column(
                     context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
                 }
             }
+            // go `columnDefToCol` parses an inline `REFERENCES` clause and
+            // never reads it (MySQL compatibility): the referenced table is
+            // not opened and nothing is stored, whether or not the table
+            // exists. Only the table-level `CONSTRAINT ... FOREIGN KEY`
+            // spelling is honored.
+            ColumnOption::Reference(_) => {}
             other => {
                 return Err(DdlAdmissionError::with_code(
                     GENERIC_ERROR_CODE,
@@ -1380,7 +1617,7 @@ pub(crate) fn set_column_default(
         return Ok(());
     };
     let field_type = info.field_type.clone();
-    let staged = stage_column_default(name, &field_type, expr, context)?;
+    let staged = stage_column_default(name, &field_type, expr, context, &[], &[])?;
     // Go `updateColumnDefaultValue` turns a staged value that carries no
     // default at all into `ErrInvalidDefaultValue`, which is why
     // `sql_mode=''` plus `SET DEFAULT ''` on TEXT is 1067 here even though
@@ -1523,7 +1760,10 @@ fn build_table(
         > 1
     {
         // Go `ErrMultiplePriKey` (1068).
-        return Err(DdlAdmissionError::with_code(1068, "Multiple primary key defined"));
+        return Err(DdlAdmissionError::with_code(
+            1068,
+            "Multiple primary key defined",
+        ));
     }
 
     for constraint in &constraints {
@@ -1766,20 +2006,28 @@ fn stage_column_default(
     field_type: &FieldType,
     expr: &Expr,
     context: &tidb_executor::StmtContext,
+    preceding_names: &[String],
+    preceding_types: &[FieldType],
 ) -> Refusal<StagedColumnDefault> {
     let built = tidb_executor::column_default::build(expr, field_type, |expr| {
-        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
-            expr,
-            &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+        // go resolves a DEFAULT expression against the table's own columns
+        // (`getDefaultValue` runs the expression resolver over them), so an
+        // unknown name fails with ErrBadField (1054) 'expression'.
+        let resolver =
+            tidb_executor::generated_column::TableColumnResolver::with_like_default_escape(
+                preceding_names,
+                preceding_types,
                 context.session_zone(),
                 context.like_default_escape(),
-            ),
-        )
-        .map_err(|_| {
-            tidb_executor::column_default::DefaultError::Unsupported(
-                "a DEFAULT this node cannot evaluate",
-            )
-        })?;
+            );
+        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(
+            |_| match resolver.missing_name() {
+                Some(name) => tidb_executor::column_default::DefaultError::UnknownColumn(name),
+                None => tidb_executor::column_default::DefaultError::Unsupported(
+                    "a DEFAULT this node cannot evaluate",
+                ),
+            },
+        )?;
         tidb_expr::eval_expression_once(&rewritten, context).map_err(|_| {
             tidb_executor::column_default::DefaultError::Unsupported(
                 "a DEFAULT this node cannot evaluate",

@@ -4090,6 +4090,7 @@ mod tests {
             crate::index_range::RangeContext {
                 max_size: 1,
                 fallback_handler: None,
+                eval_ctx: None,
             },
         );
         // Each column group falls back to 0.8; independent union is 0.96.

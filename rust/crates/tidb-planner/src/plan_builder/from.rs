@@ -421,6 +421,38 @@ pub fn set_preferred_join_type_and_order(
         f::NO_INDEX_MERGE_JOIN,
     ];
     for flag in symmetric {
+        // go `addMPPHintCalls`-era semantics: the broadcast/shuffle join
+        // hints request MPP pushdown, which a tier without the MPP engine
+        // cannot serve — go warns `The join can not push down to the MPP
+        // side, the X() hint is invalid` (Warning 1815) and ignores the
+        // hint entirely.
+        if matches!(flag, f::BC_JOIN | f::SHUFFLE_JOIN) {
+            // Run the table-name matching FIRST (go MatchTableName marks the
+            // hinted entries), so a MATCHED MPP hint warns the invalid-
+            // push-down warning while an unmatched name keeps its own
+            // no-matching-table warning.
+            // BOTH sides must run their matching: the || short-circuit
+            // would skip the rhs pass when the lhs matched, leaving the
+            // rhs hint entry unmarked and firing go's no-matching-table
+            // warning beside the MPP warning.
+            let matched_lhs = hints.prefers(lhs.as_ref(), flag);
+            let matched_rhs = hints.prefers(rhs.as_ref(), flag);
+            let matched_any = matched_lhs || matched_rhs;
+            if matched_any {
+                tidb_expr::constant_fold::record_fold_warning(
+                    1815,
+                    &format!(
+                        "The join can not push down to the MPP side, the {}() hint is invalid",
+                        if flag == f::BC_JOIN {
+                            "broadcast_join"
+                        } else {
+                            "shuffle_join"
+                        }
+                    ),
+                );
+            }
+            continue;
+        }
         if hints.prefers(lhs.as_ref(), flag) {
             join.prefer_join_type |= flag;
             join.left_prefer_join_type |= flag;

@@ -483,13 +483,20 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
         "default_func" => Some("DEFAULT"),
         "uuid_short" => Some("UUID_SHORT"),
         // go declares both FTS functions in `funcs` but building outside a
-        // fulltext index answers `ErrNotSupportedYet` (1235)
-        // (`pkg/expression/builtin_fts.go`).
+        // fulltext index answers `ErrNotSupportedYet` (1235) whose carried
+        // text is the whole deployment sentence
+        // (`pkg/expression/builtin_fts.go`; captured on the oracle:
+        // "This version of TiDB doesn't yet support 'FTS_MATCH_WORD() is
+        // only supported in starter deployment mode'").
         "fts_match_word" => {
-            return crate::EvalError::NotImplemented("fts_match_word")
+            return crate::EvalError::NotImplemented(
+                "FTS_MATCH_WORD() is only supported in starter deployment mode",
+            )
         }
         "match_against" => {
-            return crate::EvalError::NotImplemented("match_against")
+            return crate::EvalError::NotImplemented(
+                "MATCH_AGAINST() is only supported in starter deployment mode",
+            )
         }
         _ => None,
     };

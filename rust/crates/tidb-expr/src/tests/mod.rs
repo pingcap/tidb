@@ -200,23 +200,23 @@ fn bin_follows_tidb_implicit_integer_coercion() {
     // A Go `float64` table datum selects `builtinCastRealAsIntSig`, whose
     // ties-to-even rule is distinct from decimal's half-up rule.
     assert_eq!(
-        string_fn::bin(&[Datum::Real(10.0)]).unwrap(),
+        string_fn::bin(&[Datum::Real(10.0)], &NoColumns).unwrap(),
         Datum::new_string("1010".to_string())
     );
     assert_eq!(
-        string_fn::bin(&[Datum::Real(10.5)]).unwrap(),
+        string_fn::bin(&[Datum::Real(10.5)], &NoColumns).unwrap(),
         Datum::new_string("1010".to_string())
     );
     assert_eq!(
-        string_fn::bin(&[Datum::new_bytes(b"10".to_vec())]).unwrap(),
+        string_fn::bin(&[Datum::new_bytes(b"10".to_vec())], &NoColumns).unwrap(),
         Datum::new_string("1010".to_string())
     );
     assert_eq!(
-        string_fn::bin(&[Datum::new_bytes(vec![0xff])]).unwrap(),
+        string_fn::bin(&[Datum::new_bytes(vec![0xff])], &NoColumns).unwrap(),
         Datum::new_string("0".to_string())
     );
     assert_eq!(
-        string_fn::bin(&[]),
+        string_fn::bin(&[], &NoColumns),
         Err(EvalError::Unsupported("bad BIN arity"))
     );
 }

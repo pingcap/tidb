@@ -366,6 +366,9 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownTable { .. }) => {
             SqlQueryError::new(1051, *b"42S02", error.to_string())
         }
+        ClusterDdlError::Plan(error @ DdlPlanError::UnknownTables(_)) => {
+            SqlQueryError::new(1051, *b"42S02", error.to_string())
+        }
         // Go `infoschema.ErrTableNotExists` (1146): every other statement
         // resolves its table through `getSchemaAndTableByIdent`.
         ClusterDdlError::Plan(error @ DdlPlanError::TableNotExists { .. }) => {
@@ -390,6 +393,9 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         }
         // Go `ErrCantDropFieldOrKey` (1091, 42000): DROP INDEX and
         // DROP PRIMARY KEY naming something the table does not have.
+        ClusterDdlError::Plan(error @ DdlPlanError::CantDropFieldOrKey(_)) => {
+            SqlQueryError::new(1091, *b"42000", error.to_string())
+        }
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownIndex(_)) => {
             SqlQueryError::new(1091, *b"42000", error.to_string())
         }
@@ -1096,6 +1102,19 @@ pub trait QuerySession {
     fn parse_statement(&mut self, _sql: &str) -> Result<Option<Stmt>, SqlQueryError> {
         Ok(None)
     }
+
+    /// Records a COM_QUERY parse failure on the session's warning buffer:
+    /// go `session.go:1955-1968` opens a FRESH warning context on a parse
+    /// failure and appends the syntax error into it, so `SHOW WARNINGS`
+    /// after a failed parse reports the error row and NOT the previous
+    /// statement's leftovers. Default: nothing, for sessions without a
+    /// warning buffer.
+    fn record_parse_failure(&mut self, _code: u16, _message: String) {}
+
+    /// Records a write-door statement failure (DDL/GlobalVars/etc.) on the
+    /// session's warning buffer: go `driver_tidb.go:376` appends every
+    /// statement error so `SHOW WARNINGS` reports it.
+    fn record_write_failure(&mut self, _code: u16, _message: String) {}
 
     /// Returns the client-local path a statement asks the connection to read.
     fn local_infile_path(&mut self, _sql: &str) -> Result<Option<String>, SqlQueryError> {

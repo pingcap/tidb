@@ -1047,6 +1047,12 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.warning_context
     }
 
+    /// Evaluates materialized constants in the LIVE statement context when
+    /// one is bound. The trait default's zone-only context is deliberately
+    /// dry — its `HandleTruncate` warnings vanish — which silently dropped
+    /// go's 1292 rows for constants such as a derived table's
+    /// `CAST('{}' AS JSON)` feeding `BITAND(j, j)` (captured on the oracle:
+    /// two 1292 rows, values equal).
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
         // A live statement context owns warning emission. Defer value folding
         // until `PlanBuilder::rewrite_scalar` can invoke the folder with that
@@ -3063,7 +3069,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     expanded.extend(Self::unfold_wild_star(path, schema, names));
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
-                window_spec_column: false,
+                    window_spec_column: false,
                     expr: expr.clone(),
                     column_reference: matches!(
                         inner_from_parentheses_and_unary_plus(expr),
@@ -3128,7 +3134,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     expanded.extend(list);
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
-                window_spec_column: false,
+                    window_spec_column: false,
                     expr: expr.clone(),
                     column_reference: matches!(
                         inner_from_parentheses_and_unary_plus(expr),
@@ -3217,7 +3223,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     }
                     let index = fields.len();
                     fields.push(ProjectionField {
-                window_spec_column: false,
+                        window_spec_column: false,
                         expr: node.clone(),
                         column_reference: true,
                         alias: None,
@@ -3249,7 +3255,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // that trim is what renders q42's `Column#77->Column#81`.
                 let index = if aggregation::is_aggregate_call(node) {
                     fields.push(ProjectionField {
-                window_spec_column: false,
+                        window_spec_column: false,
                         expr: node.clone(),
                         column_reference: matches!(node, Expr::Column(_)),
                         alias: None,
@@ -3262,7 +3268,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         Some(index) => index,
                         None => {
                             fields.push(ProjectionField {
-                window_spec_column: false,
+                                window_spec_column: false,
                                 expr: node.clone(),
                                 column_reference: matches!(node, Expr::Column(_)),
                                 alias: None,
@@ -4024,9 +4030,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 (LockKind::Update, LockWait::Default) => SelectLockType::ForUpdate,
                 (LockKind::Update, LockWait::NoWait) => SelectLockType::ForUpdateNoWait,
                 (LockKind::Update, LockWait::Wait(_)) => SelectLockType::ForUpdateWaitN,
+                // go `ast.SelectLockForUpdateSkipLocked`/`ForShareSkipLocked`
+                // reach the same Lock operator; the skip-on-conflict is the
+                // runtime locking behaviour, not a distinct plan node.
+                (LockKind::Update, LockWait::SkipLocked) => SelectLockType::ForUpdate,
                 (LockKind::Share, LockWait::Default) => SelectLockType::ForShare,
                 (LockKind::Share, LockWait::NoWait) => SelectLockType::ForShareNoWait,
-                _ => return Err(PlanError::not_supported_yet("SELECT lock mode")),
+                (LockKind::Share, LockWait::Wait(_)) => SelectLockType::ForShareWaitN,
+                (LockKind::Share, LockWait::SkipLocked) => SelectLockType::ForShare,
             };
             let wait_sec = match lock.wait {
                 LockWait::Wait(seconds) => seconds,
@@ -4139,7 +4150,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             for (index, _) in having_aggs.iter().enumerate() {
                 let position = fields.len();
                 fields.push(ProjectionField {
-                window_spec_column: false,
+                    window_spec_column: false,
                     expr: PlanMarker::new(MarkerKind::Agg, having_offset + index).as_expr(),
                     column_reference: false,
                     alias: Some(format!("sel_agg_{position}")),

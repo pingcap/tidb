@@ -22,6 +22,7 @@ use crate::aggregation::wrap_cast::{
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::constant_fold::ConstantFoldMode;
+use crate::context::JsonError;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
@@ -221,7 +222,13 @@ pub trait ColumnResolver {
     /// Session-backed resolvers override this; the standalone default carries
     /// only the explicitly supplied timezone.
     fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
-        crate::eval_expression_once(expression, &crate::ZonedNoColumns(self.time_zone()))
+        // The fold context COLLECTS the warnings the expression raises
+        // (go appends them to StmtCtx.warnings): ADDDATE('abc', INTERVAL 1
+        // DAY) warns `Incorrect datetime value: 'abc'` even on an empty
+        // table. The statement driver drains the stash into the warning
+        // buffer right after planning.
+        let ctx = crate::constant_fold::FoldWarningContext::new(self.time_zone());
+        crate::eval_expression_once(expression, &ctx)
     }
 }
 
@@ -625,10 +632,7 @@ fn binary_expression(
                             // boundary; a wrap that early-returned leaves the
                             // argument untouched and needs no fold.
                             if is_newly_built_cast(argument) {
-                                resolver.fold_constant(
-                                    argument,
-                                    ConstantFoldMode::Normal,
-                                );
+                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
                             }
                         }
                     }
@@ -644,10 +648,7 @@ fn binary_expression(
                                 ),
                             )?;
                             if is_newly_built_cast(argument) {
-                                resolver.fold_constant(
-                                    argument,
-                                    ConstantFoldMode::Normal,
-                                );
+                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
                             }
                         }
                     }
@@ -664,14 +665,62 @@ fn binary_expression(
                                 None,
                             )?;
                             if is_newly_built_cast(argument) {
-                                resolver.fold_constant(
-                                    argument,
-                                    ConstantFoldMode::Normal,
-                                );
+                                resolver.fold_constant(argument, ConstantFoldMode::Normal);
                             }
                         }
                     }
                     _ => {}
+                }
+            }
+            // GO `logicAnd/logicOr/logicXorFunctionClass.getFunction`
+            // (builtin_op.go:65/128/191): every argument runs through
+            // `wrapWithIsTrue(ctx, true, arg, false)` — an ETInt argument
+            // passes through unwrapped (wrapForInt=false); anything else is
+            // wrapped in `istrue_with_null`, whose getFunction prices a
+            // string/time/json argument through ETReal — the base builder
+            // emits `cast(arg, double BINARY)` (q84's `||` chains render
+            // `or(istrue_with_null(cast(coalesce(..), double BINARY)), 0)`).
+            if matches!(name, "and" | "or" | "xor") {
+                for argument in &mut args {
+                    let eval_type = argument
+                        .static_type()
+                        .map(|t| t.eval_type())
+                        .unwrap_or(tidb_datatype::EvalType::Int);
+                    if eval_type == tidb_datatype::EvalType::Int {
+                        continue;
+                    }
+                    let wrapped = if matches!(
+                        eval_type,
+                        tidb_datatype::EvalType::String
+                            | tidb_datatype::EvalType::Timestamp
+                            | tidb_datatype::EvalType::Datetime
+                            | tidb_datatype::EvalType::Duration
+                            | tidb_datatype::EvalType::Json
+                    ) {
+                        // GO folds the wrap-time cast bottom-up
+                        // (WrapWithCastAsReal evaluates a constant argument
+                        // eagerly), so `istrue_with_null(cast(', ', double))`
+                        // collapses to `0`. Fold the cast first: the wrapper
+                        // fold requires all-constant arguments.
+                        let mut cast = crate::simple_expr::build_cast_function(
+                            std::mem::replace(
+                                argument,
+                                Expression::Constant(Constant::new_null()),
+                            ),
+                            crate::expr_util::builder::double_field_type(),
+                            false,
+                        )?;
+                        resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
+                        cast
+                    } else {
+                        std::mem::replace(argument, Expression::Constant(Constant::new_null()))
+                    };
+                    *argument = Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new("istrue_with_null"),
+                        crate::expr_util::builder::tiny_int_type(),
+                        vec![wrapped],
+                    ));
+                    resolver.fold_constant(argument, ConstantFoldMode::Normal);
                 }
             }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
@@ -1477,9 +1526,7 @@ fn rewrite_leaf_compound(
                 if !duplicate {
                     if position > 0 {
                         if let Expression::Constant(constant) = &argument {
-                            if constant.param_marker.is_none()
-                                && constant.deferred_expr.is_none()
-                            {
+                            if constant.param_marker.is_none() && constant.deferred_expr.is_none() {
                                 seen_values.push(constant.value.clone());
                             }
                         }
@@ -1509,14 +1556,12 @@ fn rewrite_leaf_compound(
                     Some(EvalType::Real) => wrap_with_cast_as_real(argument)?,
                     Some(EvalType::Decimal) => wrap_with_cast_as_decimal(argument)?,
                     Some(EvalType::String) => wrap_with_cast_as_string(argument, connection)?,
-                    Some(EvalType::Datetime) => wrap_with_cast_as_time(
-                        argument,
-                        FieldType::new(FieldTypeCode::Datetime),
-                    )?,
-                    Some(EvalType::Timestamp) => wrap_with_cast_as_time(
-                        argument,
-                        FieldType::new(FieldTypeCode::Timestamp),
-                    )?,
+                    Some(EvalType::Datetime) => {
+                        wrap_with_cast_as_time(argument, FieldType::new(FieldTypeCode::Datetime))?
+                    }
+                    Some(EvalType::Timestamp) => {
+                        wrap_with_cast_as_time(argument, FieldType::new(FieldTypeCode::Timestamp))?
+                    }
                     Some(EvalType::Duration) => wrap_with_cast_as_duration(argument)?,
                     Some(EvalType::Json) => wrap_with_cast_as_json(argument)?,
                     _ => argument,
@@ -1942,6 +1987,45 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 args.len()
             };
             crate::builtin_registry::verify_args_by_count(&lowered, arity_count)?;
+            // go's JSON signature classes validate the DOCUMENT argument's
+            // TYPE at build time (`ETJson` or `ETString` required); anything
+            // else — an INT column, say — answers ErrInvalidJSONData as
+            // "Invalid data type for JSON data in argument 1 to function
+            // json_extract; a JSON string or JSON type is required." even
+            // before a row is read.
+            if matches!(
+                lowered.as_str(),
+                "json_extract"
+                    | "json_set"
+                    | "json_insert"
+                    | "json_replace"
+                    | "json_remove"
+                    | "json_merge"
+                    | "json_merge_preserve"
+                    | "json_merge_patch"
+            ) {
+                if let Some(Expr::Column(path)) = args.first() {
+                    if let Some((_, doc_type, _)) = resolver.resolve(path) {
+                        let code = doc_type.code();
+                        if code != FieldTypeCode::Json && !code.is_string() {
+                            let function: &'static str = match lowered.as_str() {
+                                "json_extract" => "json_extract",
+                                "json_set" => "json_set",
+                                "json_insert" => "json_insert",
+                                "json_replace" => "json_replace",
+                                "json_remove" => "json_remove",
+                                "json_merge" => "json_merge",
+                                "json_merge_preserve" => "json_merge_preserve",
+                                _ => "json_merge_patch",
+                            };
+                            return Err(EvalError::Json(JsonError::InvalidTypeForJson {
+                                argument: 1,
+                                function,
+                            }));
+                        }
+                    }
+                }
+            }
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             if lowered == "name_const" {
                 validate_name_const_args(args)?;
@@ -2833,8 +2917,7 @@ mod tests {
             ],
             not: false,
         };
-        let rewritten =
-            rewrite_expr_resolved(&expression, &DateColumnResolver).unwrap();
+        let rewritten = rewrite_expr_resolved(&expression, &DateColumnResolver).unwrap();
         let Expression::ScalarFunction(function) = &rewritten else {
             panic!("expected the in() node, got {rewritten:?}")
         };
@@ -2855,10 +2938,7 @@ mod tests {
                 panic!("expected a folded constant candidate, got {candidate:?}")
             };
             let Datum::Time(time) = &constant.value else {
-                panic!(
-                    "expected a datetime constant, got {:?}",
-                    constant.value
-                )
+                panic!("expected a datetime constant, got {:?}", constant.value)
             };
             // `WrapWithCastAsTime` raises a string source to `MaxFsp`.
             assert_eq!(time.fsp(), 6);

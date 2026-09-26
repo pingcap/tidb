@@ -192,10 +192,7 @@ where
         let progress = entry.progress();
         let send_metrics = SendRequestObservation {
             started_at: std::time::Instant::now(),
-            store_id: context
-                .peer
-                .as_ref()
-                .map_or(0, |peer| peer.store_id),
+            store_id: context.peer.as_ref().map_or(0, |peer| peer.store_id),
             stale_read: context.stale_read,
             request_source: context.request_source.clone(),
         };

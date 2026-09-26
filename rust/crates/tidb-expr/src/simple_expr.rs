@@ -699,11 +699,23 @@ pub(crate) fn build_cast_function(
             _ => "cast_decimal",
         },
         FieldTypeCode::NewDecimal => "cast_decimal",
-        FieldTypeCode::Float | FieldTypeCode::Double => {
+        FieldTypeCode::Float => {
             if in_union && target.flags() & FieldTypeFlags::UNSIGNED != 0 {
                 // Go `builtinCastRealAsRealSig.evalReal`
                 // (`builtin_cast.go:1346-1352`): an in-union unsigned-target
                 // cast clamps a negative to 0.
+                "cast_real_in_union"
+            } else {
+                // A FLOAT target is its OWN signature: go's float32 cast
+                // overflows differently from the double one (captured:
+                // `CAST('1e300' AS FLOAT)` errors 1690
+                // "constant 1e+300 overflows float" while the DOUBLE cast
+                // answers 1e+300).
+                "cast_float"
+            }
+        }
+        FieldTypeCode::Double => {
+            if in_union && target.flags() & FieldTypeFlags::UNSIGNED != 0 {
                 "cast_real_in_union"
             } else {
                 "cast_double"

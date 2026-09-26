@@ -70,9 +70,9 @@ use tidb_distsql::{
 };
 use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
-    EXTRA_HANDLE_COLUMN_ID, PushdownAggregateKind, PushdownPartialAggregate, PushdownReadEngine,
-    PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownScanner,
-    PushdownScannerError,
+    PushdownAggregateKind, PushdownPartialAggregate, PushdownReadEngine, PushdownRowStream,
+    PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownScannerError,
+    EXTRA_HANDLE_COLUMN_ID,
 };
 use tidb_executor::storage::StorageError;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
@@ -86,9 +86,9 @@ use tidb_proto::tipb::{
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
-    DagRequestContext, TiKvScanPlan, construct_aggregate_read_only_dag_req_with_conditions,
+    construct_aggregate_read_only_dag_req_with_conditions,
     construct_capped_read_only_dag_req_with_conditions,
-    construct_grouped_aggregate_read_only_dag_req_with_conditions,
+    construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
 
 enum LoweredAggregate {
@@ -112,8 +112,8 @@ use crate::wide_scan_selection::{accepts, wide_scan_selection_conditions};
 /// it; the RealTiKV harness greps those lines as the pushdown receipt
 /// instead of trusting a claimed number.
 pub mod scan_receipt {
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
 
     static WIRE_ROWS: AtomicU64 = AtomicU64::new(0);
     static SHAPE: Mutex<String> = Mutex::new(String::new());

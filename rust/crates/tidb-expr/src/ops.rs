@@ -228,8 +228,8 @@ fn string_operand_text(d: &Datum) -> String {
 
 pub(crate) fn eval_binary_full(
     op: BinaryOp,
-    l: Datum,
-    r: Datum,
+    mut l: Datum,
+    mut r: Datum,
     div_precision_increment: u32,
     collation: tidb_datatype::Collation,
     operands: Operands<'_>,
@@ -250,8 +250,8 @@ pub(crate) fn eval_binary_full(
     // plain `Datum::Int`. Reinterpreting the bits HERE, once, is exactly Go's
     // `uval := uint64(val)` and leaves every operator below reading one fact
     // (`Integer::Unsigned`) instead of two.
-    let l = unsigned_operand(l, operands.lhs);
-    let r = unsigned_operand(r, operands.rhs);
+    let mut l = unsigned_operand(l, operands.lhs);
+    let mut r = unsigned_operand(r, operands.rhs);
     // Go's `intDivideFunctionClass` stamps its result `UnsignedFlag` when
     // EITHER argument carries it and `builtinArithmeticIntDivideDecimalSig`
     // then reads the quotient back through `ToUint`, which REJECTS a negative
@@ -323,9 +323,9 @@ pub(crate) fn eval_binary_full(
     // string comparison branch: string-vs-string is a binary collation
     // comparison for `=`, `<`, etc., but never for a logical operator.
     match op {
-        LogicAnd => return logic_and(l, r),
-        LogicOr => return logic_or(l, r),
-        LogicXor => return logic_xor(l, r),
+        LogicAnd => return logic_and(l, r, ctx),
+        LogicOr => return logic_or(l, r, ctx),
+        LogicXor => return logic_xor(l, r, ctx),
         _ => {}
     }
     // A JSON operand compares in the JSON domain, and it has to be intercepted
@@ -345,42 +345,59 @@ pub(crate) fn eval_binary_full(
     // everything; they covered Str/Float/Decimal and NOT Json.
     if matches!(l, Datum::Json(_)) || matches!(r, Datum::Json(_)) {
         if !matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
-            return Err(EvalError::Unsupported("JSON operand"));
-        }
-        if l == Datum::Null || r == Datum::Null {
-            return Ok(Datum::Null);
-        }
-        // The STRING side of a JSON comparison is PARSED as a JSON document,
-        // not wrapped as a JSON string scalar: Go's `GetCmpFunction` wraps
-        // both operands with `WrapWithCastAsJSON`, and EVERY string-to-JSON
-        // cast that builder constructs carries `mysql.ParseToJSONFlag`
-        // (`castAsJSONFunctionClass.getFunction`'s `types.ETString` arm), so
-        // `castStringAsJSONSig` takes its `ParseBinaryJSONFromString` branch.
-        // Without the parse, `json_remove(..) = cast('{}' as json)` compared
-        // an OBJECT against the string scalar `"{}"` and answered 0 -- which
-        // broke the NULLIF collapse `ALTER USER ... DISCARD OLD PASSWORD`
-        // relies on. Non-string operands keep `Datum::to_mysql_json`'s
-        // wrapping, which is those casts' `CreateBinaryJSON` arm.
-        let parse_string_side = |value: Datum| -> Result<Datum, EvalError> {
-            let text: &[u8] = match &value {
-                Datum::String(text) => text.bytes(),
-                Datum::Bytes(text) => text,
-                _ => return Ok(value),
+            if !matches!(op, BitAnd | BitOr | BitXor | LeftShift | RightShift) {
+                return Err(EvalError::Unsupported("JSON operand"));
+            }
+            // go's bit signatures declare ETInt arguments, so a JSON operand
+            // reaches them through `WrapWithCastAsInt`:
+            // `builtinCastJSONAsIntSig` re-reads the document's MarshalJSON
+            // text as an integer -- StrToInt, go's 1292 truncation warning
+            // included -- so `bitand(j, j)` over `{}` answers 0 (warned) and
+            // over the JSON number `3` it answers 3. Rewriting both sides to
+            // their text here hands them to the string-operand arm below,
+            // which is exactly that cast.
+            let to_text = |value: Datum| match value {
+                Datum::Json(value) => Datum::new_string(value.to_string()),
+                other => other,
             };
-            let text =
-                std::str::from_utf8(text).map_err(|_| EvalError::Unsupported("JSON comparison"))?;
-            // Go's parse failure here is ErrInvalidJSONText (3140), the same
-            // error the explicit CAST raises.
-            tidb_datatype::BinaryJSON::parse(text)
-                .map(Datum::Json)
-                .map_err(|_| EvalError::Json(crate::JsonError::InvalidText))
-        };
-        let l = parse_string_side(l)?;
-        let r = parse_string_side(r)?;
-        let ordering = l
-            .compare(&r, collation)
-            .map_err(|_| EvalError::Unsupported("JSON comparison"))?;
-        return Ok(ordering_to_bool(op, ordering));
+            l = to_text(l);
+            r = to_text(r);
+        } else {
+            if l == Datum::Null || r == Datum::Null {
+                return Ok(Datum::Null);
+            }
+            // The STRING side of a JSON comparison is PARSED as a JSON document,
+            // not wrapped as a JSON string scalar: Go's `GetCmpFunction` wraps
+            // both operands with `WrapWithCastAsJSON`, and EVERY string-to-JSON
+            // cast that builder constructs carries `mysql.ParseToJSONFlag`
+            // (`castAsJSONFunctionClass.getFunction`'s `types.ETString` arm), so
+            // `castStringAsJSONSig` takes its `ParseBinaryJSONFromString` branch.
+            // Without the parse, `json_remove(..) = cast('{}' as json)` compared
+            // an OBJECT against the string scalar `"{}"` and answered 0 -- which
+            // broke the NULLIF collapse `ALTER USER ... DISCARD OLD PASSWORD`
+            // relies on. Non-string operands keep `Datum::to_mysql_json`'s
+            // wrapping, which is those casts' `CreateBinaryJSON` arm.
+            let parse_string_side = |value: Datum| -> Result<Datum, EvalError> {
+                let text: &[u8] = match &value {
+                    Datum::String(text) => text.bytes(),
+                    Datum::Bytes(text) => text,
+                    _ => return Ok(value),
+                };
+                let text = std::str::from_utf8(text)
+                    .map_err(|_| EvalError::Unsupported("JSON comparison"))?;
+                // Go's parse failure here is ErrInvalidJSONText (3140), the same
+                // error the explicit CAST raises.
+                tidb_datatype::BinaryJSON::parse(text)
+                    .map(Datum::Json)
+                    .map_err(|_| EvalError::Json(crate::JsonError::InvalidText))
+            };
+            let l = parse_string_side(l)?;
+            let r = parse_string_side(r)?;
+            let ordering = l
+                .compare(&r, collation)
+                .map_err(|_| EvalError::Unsupported("JSON comparison"))?;
+            return Ok(ordering_to_bool(op, ordering));
+        }
     }
     // Two strings compare under the collation the expression derivation
     // aggregated for THIS comparison (byte order and PAD SPACE for
@@ -791,6 +808,31 @@ pub(crate) fn eval_binary_full(
             return Err(EvalError::DecimalOverflow);
         }
         return Ok(Datum::Decimal(quotient));
+    }
+    // go's bit signatures declare `ETInt` arguments, and the implied casts
+    // wrap EACH OPERAND IN ITS OWN SOURCE TYPE: a `uint64` operand goes
+    // through `builtinCastUintAsIntSig` -- a silent two's-complement wrap --
+    // and a decimal operand rounds through `builtinCastDecimalAsIntSig`
+    // (warned only at the BIGINT saturation). Promoting the pair to Decimal
+    // instead -- the arithmetic rule -- made `bitand(18446744073709551615,
+    // 0.000001)` warn `Truncated incorrect DECIMAL value` against the u64,
+    // where go answers 0 with no warning at all.
+    if matches!(op, BitAnd | BitOr | BitXor | LeftShift | RightShift) {
+        let bits_of = |value: &Datum| -> Option<Result<i64, EvalError>> {
+            match value {
+                Datum::Int(value) => Some(Ok(*value)),
+                Datum::UInt(value) => Some(Ok(*value as i64)),
+                Datum::Decimal(value) => Some(decimal_bit_operand(value, ctx)),
+                _ => None,
+            }
+        };
+        if let (Some(a), Some(b)) = (bits_of(&l), bits_of(&r)) {
+            if l == Datum::Null || r == Datum::Null {
+                return Ok(Datum::Null);
+            }
+            let (a, b) = (a?, b?);
+            return integer_binary(op, Integer::Signed(a), Integer::Signed(b), ctx);
+        }
     }
     // A Decimal operand (an Int operand promotes to a scale-0 decimal, MySQL's
     // implicit rule) arithmetics/compares exactly; handles its own NullEq.
@@ -1315,7 +1357,23 @@ fn string_compare(
 /// FALSE dominates; otherwise NULL propagates if either side is unknown.
 /// Also called directly from `crate::eval_in`'s `BETWEEN` handling (`x >= lo
 /// AND x <= hi`), not just from `eval_binary`'s `LogicAnd` arm.
-pub(crate) fn logic_and(l: Datum, r: Datum) -> Result<Datum, EvalError> {
+/// go `ToBool`'s string path parses the leading float and raises
+/// `Truncated incorrect DOUBLE value` when the text is not fully numeric;
+/// the logical operators' truthiness coercion carries that warning.
+fn warn_string_double_truncation(values: &[&Datum], ctx: &dyn crate::context::Columns) {
+    for value in values {
+        if matches!(value, Datum::String(_) | Datum::Bytes(_)) {
+            let _ = crate::math_fn::numeric_arg(value, ctx);
+        }
+    }
+}
+
+pub(crate) fn logic_and(
+    l: Datum,
+    r: Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
+    warn_string_double_truncation(&[&l, &r], ctx);
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(false), _) | (_, Some(false)) => Datum::Int(0),
         (Some(true), Some(true)) => Datum::Int(1),
@@ -1323,7 +1381,8 @@ pub(crate) fn logic_and(l: Datum, r: Datum) -> Result<Datum, EvalError> {
     })
 }
 
-fn logic_or(l: Datum, r: Datum) -> Result<Datum, EvalError> {
+fn logic_or(l: Datum, r: Datum, ctx: &dyn crate::context::Columns) -> Result<Datum, EvalError> {
+    warn_string_double_truncation(&[&l, &r], ctx);
     // TRUE dominates; otherwise NULL propagates if either side is unknown.
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(true), _) | (_, Some(true)) => Datum::Int(1),
@@ -1332,7 +1391,8 @@ fn logic_or(l: Datum, r: Datum) -> Result<Datum, EvalError> {
     })
 }
 
-fn logic_xor(l: Datum, r: Datum) -> Result<Datum, EvalError> {
+fn logic_xor(l: Datum, r: Datum, ctx: &dyn crate::context::Columns) -> Result<Datum, EvalError> {
+    warn_string_double_truncation(&[&l, &r], ctx);
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(a), Some(b)) => bool_int(a ^ b),
         _ => Datum::Null,

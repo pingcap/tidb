@@ -2555,7 +2555,9 @@ pub(crate) fn physical_plan_for_logical(
     dispatch.shuffle_options = ctx.optimizer_cost_env().session.shuffle_options;
     let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)?;
     let mut physical = task.plan().cloned().ok_or_else(|| {
-        tidb_planner::plan_base::PlanError::internal("physical planning produced no plan")
+        tidb_planner::plan_base::PlanError::internal_coded(
+            "Can't find a proper physical plan for this query",
+        )
     })?;
     // Go physicalOptimize binds positions before postOptimize removes aliases.
     physical.resolve_indices()?;
@@ -2643,6 +2645,7 @@ fn optimize_cte_tree(
         range_context: crate::index_range::RangeContext {
             max_size: ctx.range_max_size(),
             fallback_handler: Some(ctx.range_fallback_handler()),
+            eval_ctx: Some(ctx),
         },
         catalog,
         select: None,
@@ -2691,10 +2694,17 @@ fn optimize_cte_class(
     {
         let class = class.borrow();
         if let Some(physical) = class.seed_part_physical_plan.as_deref() {
-            if let (Some(seed_stat), Some(stats)) = (seed_stat, physical.stats_info()) {
-                *seed_stat.borrow_mut() = stats.clone();
+            if class.push_down_predicates.len() == class.optimized_predicate_count {
+                if let (Some(seed_stat), Some(stats)) = (seed_stat, physical.stats_info()) {
+                    *seed_stat.borrow_mut() = stats.clone();
+                }
+                return Ok(());
             }
-            return Ok(());
+            // The seed was optimised before the rule list with the predicates
+            // recorded SO FAR. `LogicalCTE.PredicatePushDown` appended more
+            // since (GO records them in the logical phase and only then runs
+            // `DeriveStats`), so fall through and rebuild the seed with the
+            // DNF-extracted Selection below.
         }
     }
     if !visiting.insert(identity) {
@@ -2704,8 +2714,16 @@ fn optimize_cte_class(
     }
 
     let result = (|| {
-        let (mut seed, recursive, mut opt_flag, pushed_predicates) = {
+        let (mut seed, recursive, mut opt_flag, pushed_predicates, re_optimize) = {
             let class = class.borrow();
+            // When the predicate set grew after the eager first pass, the
+            // seed is RE-optimised below with ONLY the predicate pushdown
+            // (plus stats re-derivation and the physical build): the recorded
+            // conditions ride the SAME absorption path pass 1 used, so their
+            // selectivities land correctly, and re-running the full rule list
+            // is neither needed nor safe on an already-optimised tree.
+            let re_optimize = class.seed_part_physical_plan.is_some()
+                && class.push_down_predicates.len() != class.optimized_predicate_count;
             let seed = class
                 .seed_part_logical_plan
                 .as_deref()
@@ -2723,14 +2741,22 @@ fn optimize_cte_class(
                     .map(LogicalPlan::deep_clone),
                 class.opt_flag,
                 class.push_down_predicates.clone(),
+                re_optimize,
             )
         };
 
         // Go composes the predicates recorded by every reference as one DNF,
         // extracts common conjuncts, and puts that Selection above the seed
         // before running the CTE's own optimizer pass.
+        let pushed_count = pushed_predicates.len();
         if let Some(dnf) = compose_dnf_condition(pushed_predicates) {
             let conditions = extract_filters_from_dnfs(vec![dnf]);
+            if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                eprintln!("CTEDNF count={:?}", conditions.len());
+                for condition in &conditions {
+                    eprintln!("CTEDNF cond={:?}", condition);
+                }
+            }
             let query_block_offset = seed.base().base.query_block_offset();
             let mut selection = LogicalSelection::new(
                 BaseLogicalPlan::new(plan_ids, LogicalSelection::TYPE, query_block_offset),
@@ -2741,34 +2767,60 @@ fn optimize_cte_class(
             opt_flag = tidb_planner::logical::rule::set_predicate_push_down_flag(opt_flag);
         }
 
-        let (seed_logical, seed_physical) = optimize_cte_tree(
-            seed,
-            opt_flag,
-            catalog,
-            ctx,
-            zone,
-            plan_ids,
-            column_ids,
-            rule_context,
-            visiting,
-        )?;
-        let seed_stats = seed_physical.stats_info().cloned().ok_or_else(|| {
-            tidb_planner::plan_base::PlanError::internal(
-                "LogicalCTE.DeriveStats: seed physical stats are nil",
-            )
-        })?;
-        if let Some(seed_stat) = seed_stat {
-            *seed_stat.borrow_mut() = seed_stats;
-        }
-        {
-            let mut class = class.borrow_mut();
-            class.seed_part_logical_plan = Some(Box::new(seed_logical));
-            class.seed_part_physical_plan = Some(Box::new(seed_physical));
-        }
-
-        if let Some(recursive) = recursive {
-            let (recursive_logical, recursive_physical) = optimize_cte_tree(
-                recursive,
+        let (seed_logical, seed_physical) = if re_optimize {
+            // Light re-optimisation: push the attached Selection's conditions
+            // down (the pass-1 tree's DataSources hold fully initialised
+            // statistics, so absorption updates the estimates exactly the way
+            // pass 1's own PPDSolver pass did), then re-derive statistics and
+            // rebuild the physical tree. The logical rule list must NOT run
+            // again: pass 1 already applied it, and a second pass over an
+            // optimised tree perturbs the estimates (q30's join flipped from
+            // 603125.46 to 3405929.32).
+            let (seed, remaining, failure) =
+                tidb_planner::logical::rewrite::predicate_push_down(rule_context, seed, Vec::new());
+            if let Some(error) = failure {
+                return Err(error);
+            }
+            let mut seed = if !remaining.is_empty() {
+                let query_block_offset = seed.base().base.query_block_offset();
+                let mut selection = LogicalSelection::new(
+                    BaseLogicalPlan::new(plan_ids, LogicalSelection::TYPE, query_block_offset),
+                    remaining,
+                );
+                selection.base.set_children(vec![seed]);
+                LogicalPlan::Selection(selection)
+            } else {
+                seed
+            };
+            // GO's single pass runs the column pruner after the pushdown; the
+            // join-output projections the pushdown ensures are eliminated
+            // there (q30/q1 kept one between HashAgg and HashJoin without
+            // this step).
+            let root_cols: Vec<tidb_expr::column::Column> = seed
+                .schema()
+                .map(|schema| schema.columns.clone())
+                .unwrap_or_default();
+            let (seed, prune_failure) = tidb_planner::logical::rewrite::prune_columns(
+                rule_context,
+                seed,
+                root_cols,
+            );
+            if let Some(error) = prune_failure {
+                return Err(error);
+            }
+            // Mirror optimize_cte_tree's tail around the re-derivation: the
+            // access-path check and the possible-properties preparation feed
+            // physical_plan_for_logical; skipping either rebuilds scans from
+            // stale info (q1/q30 lost their scan Selections and the d_year
+            // filter showed full-table estimates).
+            let mut seed = check_partial_index_paths(seed, ctx, rule_context.use_plan_cache);
+            seed.recursive_derive_stats_with_context(&[], rule_context)?;
+            let seed = prepare_possible_properties(seed).0;
+            let physical = physical_plan_for_logical(&seed, plan_ids, column_ids, ctx)?;
+            (seed, physical)
+        } else {
+            optimize_cte_tree(
+                seed,
                 opt_flag,
                 catalog,
                 ctx,
@@ -2777,7 +2829,67 @@ fn optimize_cte_class(
                 column_ids,
                 rule_context,
                 visiting,
-            )?;
+            )?
+        };
+        let seed_stats = seed_physical.stats_info().cloned().ok_or_else(|| {
+            tidb_planner::plan_base::PlanError::internal(
+                "LogicalCTE.DeriveStats: seed physical stats are nil",
+            )
+        })?;
+        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+            eprintln!(
+                "CTEOPT pass pushed={} count={} seed_rows={}",
+                pushed_count,
+                class.borrow().optimized_predicate_count,
+                seed_stats.row_count()
+            );
+            {
+                eprintln!("CTETREE === seed logical ===");
+                seed_logical.walk_preorder(&mut |node| {
+                    let rows = node
+                        .stats_info()
+                        .map(|stats| stats.row_count().to_string())
+                        .unwrap_or_else(|| "?".to_string());
+                    eprintln!("CTETREE {} rows={}", node.tp(), rows);
+                });
+            }
+        }
+        if let Some(seed_stat) = seed_stat {
+            *seed_stat.borrow_mut() = seed_stats;
+        }
+        {
+            let mut class = class.borrow_mut();
+            class.seed_part_logical_plan = Some(Box::new(seed_logical));
+            class.seed_part_physical_plan = Some(Box::new(seed_physical));
+            class.optimized_predicate_count = pushed_count;
+        }
+
+        if let Some(recursive) = recursive {
+            let (recursive_logical, recursive_physical) = if re_optimize {
+                // The recursive part was already optimised in pass 1 and the
+                // recorded consumer predicates target the seed; leave it
+                // untouched rather than re-running the rule list on it.
+                (
+                    recursive,
+                    class.borrow().recursive_part_physical_plan.as_deref().cloned().ok_or_else(|| {
+                        tidb_planner::plan_base::PlanError::internal(
+                            "LogicalCTE.DeriveStats: recursive physical plan is nil",
+                        )
+                    })?,
+                )
+            } else {
+                optimize_cte_tree(
+                    recursive,
+                    opt_flag,
+                    catalog,
+                    ctx,
+                    zone,
+                    plan_ids,
+                    column_ids,
+                    rule_context,
+                    visiting,
+                )?
+            };
             let mut class = class.borrow_mut();
             class.recursive_part_logical_plan = Some(Box::new(recursive_logical));
             class.recursive_part_physical_plan = Some(Box::new(recursive_physical));
@@ -3185,6 +3297,35 @@ pub(crate) fn physical_dml_source_plan_explained(
     // W51 receipt) before the physical `SelectLock` — reproducing Go's
     // exact id sequence without a filler.
     let root = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, operator, 0);
+    // Go burns three logical plan ids AFTER buildUpdate's own ctor and
+    // BEFORE the read plan is optimized: the conflict-detector's two join
+    // rewrites and the join-order projection (`find_best_task` W52 ledger:
+    // ids 10, 11, 12). The port folds those constructions into the
+    // in-subquery rewrite, so mirror the ledger here whenever the DML read
+    // actually contains such a join.
+    fn logical_contains_join(plan: &tidb_planner::logical::LogicalPlan) -> bool {
+        if matches!(plan, tidb_planner::logical::LogicalPlan::Join(_)) {
+            return true;
+        }
+        plan.children().iter().any(logical_contains_join)
+    }
+    if logical_contains_join(&plan) {
+        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+            plan_ids,
+            tidb_planner::logical::LogicalJoin::TYPE,
+            0,
+        );
+        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+            plan_ids,
+            tidb_planner::logical::LogicalJoin::TYPE,
+            0,
+        );
+        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+            plan_ids,
+            tidb_planner::logical::LogicalProjection::TYPE,
+            0,
+        );
+    }
     let logical = optimize_built_logical(
         plan,
         plan_flags,
@@ -3258,6 +3399,7 @@ fn optimize_built_logical(
                 range_context: crate::index_range::RangeContext {
                     max_size: self.context.range_max_size(),
                     fallback_handler: Some(self.context.range_fallback_handler()),
+                    eval_ctx: Some(self.context),
                 },
                 catalog: self.catalog,
                 select: self.select,
@@ -3381,11 +3523,17 @@ fn optimize_built_logical(
     // join reorder derives candidate statistics while logical optimization
     // is still running. Attach real-or-pseudo base statistics before entering
     // that rule list, rather than delaying them until physical optimization.
-    let plan = tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester::initialize(
+    let mut plan = tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester::initialize(
         &statistics_load,
         plan,
     )
     .map_err(|(_, error)| error)?;
+    // Go `core.RecheckCTE(logic)` (`optimize.go:553`): fill
+    // `IsOuterMostCTE` on every CTE class before ANY optimization runs —
+    // `LogicalCTE.PredicatePushDown` refuses to record predicates for a
+    // non-outermost CTE, and the eager seed optimization below runs the rule
+    // list on seeds that contain nested CTE references.
+    tidb_planner::logical::cte::recheck_cte(&mut plan);
     // Go's `LogicalCTE.DeriveStats` optimizes its CTE class the first time a
     // logical rule asks the producer for statistics, which happens DURING
     // `logicalOptimize`. A class reference kept alive by two or more uses (a

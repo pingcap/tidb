@@ -4185,11 +4185,11 @@ impl tidb_session::binding::GlobalBindingWriter for InternalBindingWriter {
         operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_executor::DriverError>,
     ) -> Result<u64, tidb_executor::DriverError> {
         let to_driver = |error: SqlQueryError| {
-            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError {
-                code: error.code,
-                state: error.state,
-                message: error.message,
-            })
+            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
+                error.code,
+                error.state,
+                error.message,
+            ))
         };
         let factory = self.factory.upgrade().ok_or_else(|| {
             tidb_executor::DriverError::unsupported("global binding session factory is stopped")
@@ -5732,11 +5732,19 @@ impl ClusterServerSession {
                     // The refusal carries Go's own errno where it has one
                     // (`Unsupported ...` is 8200), so a client can tell a
                     // shape this server will not do from an internal failure.
-                    Err(refusal) => Err(SqlQueryError::new(
-                        refusal.code,
-                        refusal.sql_state(),
-                        refusal.to_string(),
-                    )),
+                    // Warnings the lowering raised BEFORE the refusal (a
+                    // 1681 display-width warning beside an 8216 auto-random
+                    // refusal) survive it: go's failed DDL leaves both in
+                    // the warning buffer.
+                    Err(refusal) => {
+                        self.session.begin_routed_statement_warnings();
+                        self.session.drain_context_warnings(&context);
+                        Err(SqlQueryError::new(
+                            refusal.code,
+                            refusal.sql_state(),
+                            refusal.to_string(),
+                        ))
+                    }
                 }
             }
         }
@@ -5811,6 +5819,13 @@ impl ClusterServerSession {
         // session-scoped assignment mixed into the same `SET` must still
         // land on the connection's own live-seeded copies.
         self.session.swap_globals(live);
+        // go's SetExecutor routes every failure through `handleErr`, which
+        // appends it to the statement context: after a failed SET both
+        // error_count and warning_count read 1 (captured: `SET bogus_var=1`).
+        if let Err(error) = &applied {
+            self.session
+                .record_ddl_failure(error.code, error.message.clone());
+        }
         applied?;
         let changed = pending.commit()?;
         if !changed.is_empty() {
@@ -6441,16 +6456,42 @@ impl ClusterServerSession {
         // `SHOW WARNINGS` reports what the change did differently from what
         // was written. `toTError` gives a plain `fmt.Errorf` the generic
         // 1105 code.
-        if let ClusterDdlReport::Applied {
-            warning: Some(warning),
-            ..
+        // go raises an applied job's `job.Warning` via `AppendWarning` and an
+        // `IF [NOT] EXISTS` suppression via `AppendNote`; the level follows
+        // the variant.
+        match report {
+            ClusterDdlReport::Applied { warnings, .. } => {
+                for (level, code, warning) in warnings {
+                    match level {
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Note => {
+                            self.session.append_routed_note(code, warning)
+                        }
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning => {
+                            self.session.append_routed_warning(code, warning)
+                        }
+                    }
+                }
+            }
+            ClusterDdlReport::AlreadySatisfied { warnings, .. } => {
+                for (level, code, warning) in warnings {
+                    match level {
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Note => {
+                            self.session.append_routed_note(code, warning)
+                        }
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning => {
+                            self.session.append_routed_warning(code, warning)
+                        }
+                    }
+                }
+            }
         }
-        | ClusterDdlReport::AlreadySatisfied {
-            warning: Some(warning),
-            ..
-        } = report
-        {
-            self.session.append_routed_warning(1105, warning);
+        // Go `dropSchema` invalidates the session's current database when the
+        // DROP removes it: the next unqualified statement answers 1046
+        // (`ErrNoDB`) until a fresh `USE`.
+        if let DdlStatement::DropDatabase { name, .. } = statement {
+            if self.session.current_database().eq_ignore_ascii_case(name) {
+                self.session.deselect_database();
+            }
         }
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
@@ -6484,6 +6525,14 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    fn record_parse_failure(&mut self, code: u16, message: String) {
+        self.session.record_parse_failure_coded(code, message);
+    }
+
+    fn record_write_failure(&mut self, code: u16, message: String) {
+        self.session.record_ddl_failure(code, message);
+    }
+
     fn metrics_resource_group(&self) -> &str {
         self.session.current_resource_group()
     }
@@ -6493,9 +6542,14 @@ impl QuerySession for ClusterServerSession {
 
     /// Go `handleQuery`'s one `ParseSQL`: the connection parses each
     /// statement of the command here and every door below reads that node.
+    /// The parse sits on the statement boundary (go `ResetContextOfStmt`):
+    /// the previous statement's warnings go, unless this statement is the
+    /// one that reports them. Parsing through the bare `&self` door left
+    /// the buffer uncleared, so a failed DDL's error rows leaked into every
+    /// later `SHOW WARNINGS`.
     fn parse_statement(&mut self, sql: &str) -> Result<Option<Stmt>, SqlQueryError> {
         self.session
-            .parse_statement(sql)
+            .parse_at_statement_boundary(sql)
             .map(Some)
             .map_err(map_error)
     }
@@ -6740,7 +6794,10 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        let stmt = self.session.parse_statement(sql).map_err(|error| {
+            self.session.record_parse_failure(&error);
+            map_error(error)
+        })?;
         self.execute_write_parsed(sql, &stmt)
     }
 
@@ -7292,7 +7349,10 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        let stmt = self.session.parse_statement(sql).map_err(|error| {
+            self.session.record_parse_failure(&error);
+            map_error(error)
+        })?;
         self.execute_parsed(sql, &stmt)
     }
 

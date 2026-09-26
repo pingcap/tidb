@@ -277,8 +277,8 @@ pub mod infoschema_meta;
 mod multi_dml;
 mod record_set;
 pub use record_set::QueryRecordSet;
-pub(crate) mod params;
 pub(crate) mod fk_trigger_plan;
+pub(crate) mod params;
 pub(crate) mod physical_builder;
 pub(crate) mod planner_bridge;
 pub(crate) mod point_get_key;
@@ -538,10 +538,7 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
         }
         tidb_planner::plan_base::PlanErrorKind::BadTable(table) => {
-            DriverError::Mysql(MysqlError::new(
-                1051,
-                format!("Unknown table '{table}'"),
-            ))
+            DriverError::Mysql(MysqlError::new(1051, format!("Unknown table '{table}'")))
         }
         tidb_planner::plan_base::PlanErrorKind::UnknownTableInClause(table, clause) => {
             DriverError::Mysql(MysqlError::new(

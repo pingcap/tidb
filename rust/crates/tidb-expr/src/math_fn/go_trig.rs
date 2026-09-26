@@ -445,3 +445,91 @@ mod tests {
         }
     }
 }
+
+// Go `math.Xatan` (src/math/atan.go), bit-exact. The rational approximation
+// over |x| <= 0.66.
+fn go_xatan(x: f64) -> f64 {
+    const P0: f64 = -8.750_608_600_031_904_122_785e-1;
+    const P1: f64 = -1.615_753_718_733_365_076_637e1;
+    const P2: f64 = -7.500_855_792_314_704_667_340e1;
+    const P3: f64 = -1.228_866_684_490_136_173_410e2;
+    const P4: f64 = -6.485_021_904_942_025_371_773e1;
+    const Q0: f64 = 2.485_846_490_142_306_297_962e1;
+    const Q1: f64 = 1.650_270_098_316_988_542_046e2;
+    const Q2: f64 = 4.328_810_604_912_902_668_951e2;
+    const Q3: f64 = 4.853_903_996_359_136_964_868e2;
+    const Q4: f64 = 1.945_506_571_482_613_964_425e2;
+    let z = x * x;
+    let z = z * ((((P0 * z + P1) * z + P2) * z + P3) * z + P4)
+        / (((((z + Q0) * z + Q1) * z + Q2) * z + Q3) * z + Q4);
+    x * z + x
+}
+
+/// Go `math.Satan` (src/math/atan.go), bit-exact: the argument reduction
+/// over the three |x| regimes.
+fn go_satan(x: f64) -> f64 {
+    const MOREBITS: f64 = 6.123_233_995_736_765_886_130e-17; // pi/2 = PIO2 + Morebits
+    const TAN3PIO8: f64 = 2.414_213_562_373_095_048_80; // tan(3*pi/8)
+    if x <= 0.66 {
+        return go_xatan(x);
+    }
+    if x > TAN3PIO8 {
+        return core::f64::consts::FRAC_PI_2 - go_xatan(1.0 / x) + MOREBITS;
+    }
+    core::f64::consts::FRAC_PI_4 + go_xatan((x - 1.0) / (x + 1.0)) + 0.5 * MOREBITS
+}
+
+/// Go `math.Atan` (src/math/atan.go), bit-exact. TiDB's `ATAN`/`ATAN2`
+/// evaluate through go's standard library, whose Cephes-derived arctangent
+/// rounds one ulp away from the system libm on ordinary inputs.
+pub(crate) fn go_atan(x: f64) -> f64 {
+    if x == 0.0 {
+        return x;
+    }
+    if x > 0.0 {
+        return go_satan(x);
+    }
+    -go_satan(-x)
+}
+
+/// Go `math.Atan2` (src/math/atan2.go), bit-exact: the special-case table
+/// and the quadrant fix-up over [`go_atan`].
+pub(crate) fn go_atan2(y: f64, x: f64) -> f64 {
+    // special cases
+    if y.is_nan() || x.is_nan() {
+        return f64::NAN;
+    }
+    if y == 0.0 {
+        if x >= 0.0 && !x.is_sign_negative() {
+            return 0.0f64.copysign(y);
+        }
+        return core::f64::consts::PI.copysign(y);
+    }
+    if x == 0.0 {
+        return core::f64::consts::FRAC_PI_2.copysign(y);
+    }
+    if x.is_infinite() {
+        if x > 0.0 {
+            if y.is_infinite() {
+                return core::f64::consts::FRAC_PI_4.copysign(y);
+            }
+            return 0.0f64.copysign(y);
+        }
+        if y.is_infinite() {
+            return (3.0 * core::f64::consts::FRAC_PI_4).copysign(y);
+        }
+        return core::f64::consts::PI.copysign(y);
+    }
+    if y.is_infinite() {
+        return core::f64::consts::FRAC_PI_2.copysign(y);
+    }
+    // Call atan and determine the quadrant.
+    let q = go_atan(y / x);
+    if x < 0.0 {
+        if q <= 0.0 {
+            return q + core::f64::consts::PI;
+        }
+        return q - core::f64::consts::PI;
+    }
+    q
+}

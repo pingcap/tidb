@@ -387,6 +387,16 @@ impl Session {
         if is_global {
             self.require_set_global_privilege()?;
         }
+        // go `SetExecutor`: max_allowed_packet is SESSION-read-only — any
+        // session-scope assignment (including `= DEFAULT`) answers
+        // ErrReadOnlyVariable (1621) naming the variable.
+        if assignment.name.eq_ignore_ascii_case("max_allowed_packet") && !is_global {
+            return Err(DriverError::Var(
+                tidb_executor::VarErrorKind::SessionScopeIsReadOnly(
+                    "max_allowed_packet".to_owned(),
+                ),
+            ));
+        }
         self.require_sem_writable_sysvar(&assignment.name)?;
         // An explicit `SET INSTANCE` is Go's `v.IsInstance`; anything else
         // unqualified/SESSION reaches the tier only through the legacy
@@ -436,6 +446,16 @@ impl Session {
                         .reset_instance(&assignment.name)
                         .map_err(var_error)?;
                 } else {
+                    // go's scope check runs BEFORE the DEFAULT restore, so the
+                    // session-read-only variable refuses even `= DEFAULT`
+                    // with ErrReadOnlyVariable (1621).
+                    self.check_max_allowed_packet_scope(
+                        &assignment.name,
+                        &sysvar::get_sys_var(&assignment.name)
+                            .map(|definition| definition.value)
+                            .unwrap_or_default(),
+                        is_node_wide,
+                    )?;
                     self.vars
                         .reset_system(&assignment.name)
                         .map_err(var_error)?;
