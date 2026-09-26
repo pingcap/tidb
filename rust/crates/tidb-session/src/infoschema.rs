@@ -546,6 +546,7 @@ fn push_key_column_usage_row(
 /// the same population `SHOW INDEX` reports.
 fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
+    let mut indexed_rows: Vec<(i64, Vec<tidb_datatype::Datum>)> = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
@@ -2584,16 +2585,29 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
             for (position, offset) in index.column_offsets.iter().enumerate() {
                 let column = &table.columns[*offset];
                 let prefix = index.prefix_length(position);
+                // go renders an expression index part with COLUMN_NAME 'NULL'
+                // beside the expression text (`builtinRegexpSig`-shaped
+                // `Null` for SUB_PART); the plain columns keep their names.
+                let generated_expr = column
+                    .generated
+                    .as_ref()
+                    .map(|generated| generated.expr_text.clone());
                 rows.push(vec![
                     text(&schema),
                     text(&table_name),
                     Datum::Int(i64::from(!index.unique)),
                     text(&index.name),
                     Datum::Int(position as i64 + 1),
-                    text(&column.name),
+                    match &generated_expr {
+                        Some(_) => text("NULL"),
+                        None => text(&column.name),
+                    },
                     if prefix > 0 { Datum::Int(prefix) } else { Datum::Null },
                     text(&index.comment),
-                    Datum::Null,
+                    match &generated_expr {
+                        Some(expr) => text(expr),
+                        None => Datum::Null,
+                    },
                     Datum::Int(index.id),
                     text(if index.visible { "YES" } else { "NO" }),
                     text("NO"),
