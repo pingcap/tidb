@@ -657,6 +657,51 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	require.Equal(t, expectedKey, []byte(gotKeys[0]))
 }
 
+func TestUnchangedPartialAndMultiValueIndexKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name, condition, json string
+		value                 int64
+		want                  []int64
+	}{
+		{name: "excluded", condition: "a > 0", value: -1},
+		{name: "included", condition: "a > 0", value: 7, want: []int64{7}},
+		{name: "multi", json: "[7,8,7]", want: []int64{7, 8}},
+		{name: "empty", json: "[]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := types.NewFieldType(mysql.TypeLonglong)
+			ft.SetArray(tc.json != "")
+			info := &model.TableInfo{ID: 100, Name: ast.NewCIStr("t"),
+				Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("a"), State: model.StatePublic, FieldType: *ft}},
+				Indices: []*model.IndexInfo{{ID: 1, Name: ast.NewCIStr("uk"), Unique: true, State: model.StatePublic,
+					MVIndex: tc.json != "", ConditionExprString: tc.condition,
+					Columns: []*model.IndexColumn{{Name: ast.NewCIStr("a"), Offset: 0, Length: types.UnspecifiedLength}},
+				}},
+			}
+			tbl := tables.MockTableFromMeta(info)
+			sctx := mock.NewContext()
+			sctx.GetSessionVars().TxnCtx.IsPessimistic = true
+			row := []types.Datum{types.NewIntDatum(tc.value)}
+			if tc.json != "" {
+				j, err := types.ParseBinaryJSONFromString(tc.json)
+				require.NoError(t, err)
+				row[0] = types.NewJSONDatum(j)
+			}
+			h := kv.IntHandle(1)
+			count, err := addUnchangedKeysForLockByRow(sctx, tbl, h, row, lockUniqueKeys)
+			require.NoError(t, err)
+			require.Equal(t, len(tc.want), count)
+			var expected []kv.Key
+			for _, v := range tc.want {
+				key, _, err := tbl.Indices()[0].GenIndexKey(errctx.StrictNoWarningContext, sctx.GetSessionVars().StmtCtx.TimeZone(), []types.Datum{types.NewIntDatum(v)}, h, nil)
+				require.NoError(t, err)
+				expected = append(expected, kv.Key(key))
+			}
+			require.ElementsMatch(t, expected, sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil))
+		})
+	}
+}
+
 func TestStrictNotNullCheckForInsert(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)

@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -372,12 +371,14 @@ func addUnchangedKeysForLockByRow(
 	}
 	count := 0
 	physicalID := t.Meta().ID
+	indexTable := t
 	if pt, ok := t.(table.PartitionedTable); ok {
 		p, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return 0, err
 		}
 		physicalID = p.GetPhysicalID()
+		indexTable = p
 	}
 	if keySet&lockRowKey > 0 {
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
@@ -387,45 +388,31 @@ func addUnchangedKeysForLockByRow(
 	if keySet&lockUniqueKeys > 0 {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		clustered := t.Meta().HasClusteredIndex()
-		for _, idx := range t.Indices() {
+		for _, idx := range indexTable.Indices() {
 			meta := idx.Meta()
 			if !meta.Unique || !meta.IsPublic() || (meta.Primary && clustered) {
+				continue
+			}
+			meet, err := idx.MeetPartialCondition(row)
+			if err != nil {
+				return count, err
+			}
+			if !meet {
 				continue
 			}
 			ukVals, err := idx.FetchValues(row, nil)
 			if err != nil {
 				return count, err
 			}
-			idxTblID := physicalID
-			fullHandle := h
-			if meta.Global {
-				idxTblID = t.Meta().ID
-				if pi := t.Meta().GetPartitionInfo(); pi != nil && pi.NewTableID != 0 {
-					if isNew, ok := pi.DDLChangedIndex[meta.ID]; ok && isNew {
-						idxTblID = pi.NewTableID
-					}
+			iter := idx.GenIndexKVIter(stmtCtx.ErrCtx(), stmtCtx.TimeZone(), ukVals, h, nil)
+			for iter.Valid() {
+				unchangedUniqueKey, _, _, err := iter.Next(nil, nil)
+				if err != nil {
+					return count, err
 				}
-				if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
-					meta.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
-					fullHandle = kv.NewPartitionHandle(physicalID, fullHandle)
-				}
+				txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey, false)
+				count++
 			}
-			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
-				codec.NewEncoder(t.UseNewCollate()),
-				stmtCtx.TimeZone(),
-				idx.TableMeta(),
-				meta,
-				idxTblID,
-				ukVals,
-				fullHandle,
-				nil,
-			)
-			err = stmtCtx.HandleError(err)
-			if err != nil {
-				return count, err
-			}
-			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey, false)
-			count++
 		}
 	}
 	return count, nil
