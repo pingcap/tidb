@@ -611,7 +611,7 @@ func (b *builtinInetAtonSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 	}
 	// ip address should not end with '.'.
 	if len(val) == 0 || val[len(val)-1] == '.' {
-		return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+		return 0, true, nil
 	}
 
 	var (
@@ -623,17 +623,17 @@ func (b *builtinInetAtonSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 			digit := uint64(c - '0')
 			byteResult = byteResult*10 + digit
 			if byteResult > 255 {
-				return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+				return 0, true, nil
 			}
 		} else if c == '.' {
 			dotCount++
 			if dotCount > 3 {
-				return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+				return 0, true, nil
 			}
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+			return 0, true, nil
 		}
 	}
 	// 127 		-> 0.0.0.127
