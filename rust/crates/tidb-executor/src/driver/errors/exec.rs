@@ -67,7 +67,19 @@ fn coprocessor_cot_error_matches_go() {
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
     match error {
         ExecError::Mysql(error) => error,
-        ExecError::Eval(eval) => eval_to_mysql_error(eval).from_evaluation(),
+        ExecError::Eval(eval) => {
+            let error = eval_to_mysql_error(eval);
+            // go's charFunctionClass.getFunction BUILD failure (`Unknown
+            // charset ...`) is a statement-level build error, not an
+            // evaluation event: the warning buffer records the 1105 row
+            // beside the argument casts' truncation warnings (oracle:
+            // CHAR('中文测试', 'ünïcödé')).
+            if error.message.starts_with("Unknown charset ") {
+                error
+            } else {
+                error.from_evaluation()
+            }
+        }
         // An internal invariant error carries the exact message Go returns
         // through its generic error path.
         ExecError::Internal(message) => MysqlError::unknown(message),
@@ -137,7 +149,16 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
                 tidb_expr::JsonError::InvalidPath(_) => 1105,
                 _ => json.code(),
             };
-            MysqlError::coded(code, json.message())
+            let error = MysqlError::coded(code, json.message());
+            // The path-parse failure is an evaluation-origin event: go's
+            // write/read flags never record it as its own warning row (the
+            // column-sourced `JSON_EXTRACT(a, 1)` answers 1105 with an EMPTY
+            // SHOW WARNINGS).
+            if code == 1105 {
+                error.from_evaluation()
+            } else {
+                error
+            }
         }
         EvalError::Sequence(sequence) => MysqlError::coded(sequence.code(), sequence.message()),
         // The collation class is how a user learns a query needs an explicit

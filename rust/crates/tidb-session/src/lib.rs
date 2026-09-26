@@ -2204,7 +2204,8 @@ impl Session {
             // 1411 leave the statement warning buffer EMPTY, while 3146/
             // 1305/1235 and every parse/plan/executor failure show their own
             // error row there.
-            if !reported.is_from_evaluation() || !matches!(reported.code, 3140 | 3143 | 1411 | 1690)
+            if !reported.is_from_evaluation()
+                || !matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105)
             {
                 self.append_warning(WarningLevel::Error, reported.code, reported.message);
             }
