@@ -1464,10 +1464,28 @@ struct LookupBatchJob {
     /// to the table worker. Only a remote refusal moves them back in the
     /// `LookupFetch::LocalFallback` variant.
     handle_count: usize,
+    /// Admission units retained until this result batch is consumed.
+    adaptive_reserved_handles: usize,
     /// The fetch outcome when the drain runs off-thread.
     receiver: Option<std::sync::mpsc::Receiver<Result<LookupFetch, String>>>,
     /// Windows that complete at collect time carry their payload directly.
     ready: Option<Result<LookupFetch, String>>,
+}
+
+struct AdaptiveLookupProgress {
+    reserved_handles: usize,
+    handles: usize,
+    output_rows: usize,
+}
+
+struct LookupBatchResult {
+    rows: Vec<Option<Vec<Datum>>>,
+    handles: Vec<Option<TableHandle>>,
+    filter_complete: bool,
+    filter_applied_locally: bool,
+    chunk: Option<crate::kv_table::FinishedLookupChunk>,
+    adaptive_reserved_handles: usize,
+    handle_count: usize,
 }
 
 /// What one lookup window's drain produced.
@@ -1529,6 +1547,9 @@ pub struct IndexRangeSourceExec {
     /// Rows read from the range before any pushed filter -- the `actRows` the
     /// access operator reports once it filters internally.
     scanned: crate::executor::RowCount,
+    /// Index entries consumed from the local cursor before index-side and
+    /// table-side filtering. Remote scans use their coprocessor counters.
+    index_entries_scanned: crate::executor::RowCount,
     /// Conjuncts this source took over from the `Selection` above it.
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// The same conjunct descriptions, lowered into an index-side
@@ -1680,6 +1701,11 @@ pub struct IndexRangeSourceExec {
     lookup_concurrency: usize,
     /// Bounded-concurrency prefetch pipeline over the row-lookup windows.
     lookup_pipeline: Option<LookupPipeline>,
+    /// Shared with the LIMIT that bounds this eligible ordered lookup.
+    adaptive_limit: Option<Arc<crate::adaptive_limit::AdaptiveLimitController>>,
+    adaptive_runtime: Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
+    /// The result task currently being emitted in order.
+    adaptive_lookup_progress: Option<AdaptiveLookupProgress>,
     /// Go's persistent table-worker set for the lookup pipeline. The pool is
     /// owned by this source so Close can stop and join every worker before
     /// releasing a queued lookup's cloned table/request state.
@@ -1783,7 +1809,7 @@ fn calculate_lookup_batch_size(
     )
 }
 
-fn calculate_lookup_batch_size_with_cap(
+pub(crate) fn calculate_lookup_batch_size_with_cap(
     estimated_rows: Option<f64>,
     initial_batch_size: usize,
     index_paging: bool,
@@ -1935,6 +1961,7 @@ impl IndexRangeSourceExec {
             cursor: None,
             produced: crate::executor::RowCount::default(),
             scanned: crate::executor::RowCount::default(),
+            index_entries_scanned: crate::executor::RowCount::default(),
             filter: None,
             pushed: Vec::new(),
             index_filter: false,
@@ -1981,6 +2008,9 @@ impl IndexRangeSourceExec {
             partial_done: false,
             lookup_concurrency: DEFAULT_LOOKUP_FETCH_CONCURRENCY,
             lookup_pipeline: None,
+            adaptive_limit: None,
+            adaptive_runtime: None,
+            adaptive_lookup_progress: None,
             lookup_lanes: None,
             chunk_demand: 0,
             dirty_merge: false,
@@ -2046,6 +2076,80 @@ impl IndexRangeSourceExec {
     /// distinct from the parent chunk size and lookup worker concurrency.
     pub(crate) fn set_lookup_size(&mut self, size: usize) {
         self.max_lookup_batch_size = size.max(1);
+    }
+
+    pub(crate) fn set_adaptive_limit_controller(
+        &mut self,
+        controller: Arc<crate::adaptive_limit::AdaptiveLimitController>,
+    ) {
+        self.adaptive_limit = Some(controller);
+    }
+
+    pub(crate) fn set_adaptive_limit_runtime_sink(
+        &mut self,
+        sink: crate::adaptive_limit::AdaptiveLimitRuntimeSink,
+    ) {
+        self.adaptive_runtime = Some(sink);
+    }
+
+    fn finish_adaptive_lookup(&mut self) {
+        let Some(progress) = self.adaptive_lookup_progress.take() else {
+            return;
+        };
+        let Some(controller) = self.adaptive_limit.as_ref() else {
+            return;
+        };
+        controller.complete_lookup(
+            progress.reserved_handles,
+            progress.handles,
+            progress.output_rows,
+        );
+        self.batch_size = controller.suggested_batch_size(self.max_lookup_batch_size);
+    }
+
+    fn finish_adaptive_lookup_if_consumed(&mut self) {
+        // Go's lookup task stores only rows returned by the table side, while
+        // this cursor keeps one optional slot per handle. Once every remaining
+        // slot is empty, all returned rows have been consumed even if trailing
+        // handles were deleted or filtered out.
+        let consumed = self.lookup_chunk.as_ref().map_or_else(
+            || {
+                self.lookup_rows
+                    .get(self.lookup_row_at..)
+                    .is_some_and(|rows| rows.iter().all(Option::is_none))
+            },
+            |chunk| self.lookup_chunk_row >= chunk.row_positions.len(),
+        );
+        if consumed {
+            self.finish_adaptive_lookup();
+        }
+    }
+
+    fn record_adaptive_lookup_output(&mut self) {
+        if let Some(progress) = self.adaptive_lookup_progress.as_mut() {
+            progress.output_rows = progress.output_rows.saturating_add(1);
+        }
+    }
+
+    fn prefilter_adaptive_lookup_rows(
+        &mut self,
+        rows: &mut [Option<Vec<Datum>>],
+    ) -> Result<bool, ExecError> {
+        if self.adaptive_limit.is_none() {
+            return Ok(false);
+        }
+        let Some(filter) = self.filter.as_mut() else {
+            return Ok(false);
+        };
+        for slot in rows {
+            let Some(row) = slot.as_ref() else {
+                continue;
+            };
+            if !filter.admits(row)? {
+                *slot = None;
+            }
+        }
+        Ok(true)
     }
 
     /// Enables Go's `LocalIndexLookUp` storage-side lookup mode. The planner
@@ -2348,23 +2452,28 @@ impl IndexRangeSourceExec {
                 return Ok(None);
             }
             if self.lookup_row_at == self.lookup_rows.len() {
+                self.finish_adaptive_lookup_if_consumed();
                 self.lookup_rows.clear();
                 self.lookup_row_at = 0;
                 self.lookup_filter_complete = false;
-                let Some((rows, lookup_handles, filter_complete, lookup_chunk)) =
-                    self.next_lookup_batch()?
-                else {
+                let Some(batch) = self.next_lookup_batch()? else {
                     return Ok(None);
                 };
-                self.lookup_rows = rows;
-                self.lookup_handles = lookup_handles;
-                self.lookup_filter_complete = filter_complete
-                    && self
-                        .filter
-                        .as_ref()
-                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
-                self.lookup_chunk = lookup_chunk;
+                self.lookup_rows = batch.rows;
+                self.lookup_handles = batch.handles;
+                self.lookup_filter_complete = batch.filter_applied_locally
+                    || (batch.filter_complete
+                        && self.filter.as_ref().is_none_or(
+                            crate::predicate_pushdown::ScanFilterProbe::fully_described,
+                        ));
+                self.lookup_chunk = batch.chunk;
                 self.lookup_chunk_row = 0;
+                self.adaptive_lookup_progress =
+                    (batch.adaptive_reserved_handles > 0).then_some(AdaptiveLookupProgress {
+                        reserved_handles: batch.adaptive_reserved_handles,
+                        handles: batch.handle_count,
+                        output_rows: 0,
+                    });
                 if self.lookup_chunk.is_some() {
                     return Ok(None);
                 }
@@ -2447,23 +2556,28 @@ impl IndexRangeSourceExec {
     fn next_snapshot_merge_row(&mut self) -> Result<Option<(TableHandle, Vec<Datum>)>, ExecError> {
         loop {
             if self.lookup_row_at == self.lookup_rows.len() {
+                self.finish_adaptive_lookup_if_consumed();
                 self.lookup_rows.clear();
                 self.lookup_row_at = 0;
                 self.lookup_filter_complete = false;
-                let Some((rows, lookup_handles, filter_complete, lookup_chunk)) =
-                    self.next_lookup_batch()?
-                else {
+                let Some(batch) = self.next_lookup_batch()? else {
                     return Ok(None);
                 };
-                self.lookup_rows = rows;
-                self.lookup_handles = lookup_handles;
-                self.lookup_filter_complete = filter_complete
-                    && self
-                        .filter
-                        .as_ref()
-                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
+                self.lookup_rows = batch.rows;
+                self.lookup_handles = batch.handles;
+                self.lookup_filter_complete = batch.filter_applied_locally
+                    || (batch.filter_complete
+                        && self.filter.as_ref().is_none_or(
+                            crate::predicate_pushdown::ScanFilterProbe::fully_described,
+                        ));
+                self.adaptive_lookup_progress =
+                    (batch.adaptive_reserved_handles > 0).then_some(AdaptiveLookupProgress {
+                        reserved_handles: batch.adaptive_reserved_handles,
+                        handles: batch.handle_count,
+                        output_rows: 0,
+                    });
                 debug_assert!(
-                    lookup_chunk.is_none(),
+                    batch.chunk.is_none(),
                     "a dirty double read never takes the chunk path",
                 );
                 // A fully-filtered batch leaves no rows for this window: the
@@ -2554,18 +2668,7 @@ impl IndexRangeSourceExec {
     /// cannot charge raw handles against its output count; its windows retain
     /// Go's growing task sizes until enough rows survive. An early-stopping
     /// caller tears the pipeline down and discards whatever is in flight.
-    #[allow(clippy::type_complexity)]
-    fn next_lookup_batch(
-        &mut self,
-    ) -> Result<
-        Option<(
-            Vec<Option<Vec<Datum>>>,
-            Vec<Option<TableHandle>>,
-            bool,
-            Option<crate::kv_table::FinishedLookupChunk>,
-        )>,
-        ExecError,
-    > {
+    fn next_lookup_batch(&mut self) -> Result<Option<LookupBatchResult>, ExecError> {
         loop {
             // Top the pipeline up while the phase-A stream still yields
             // windows and the width allows more drains in flight.
@@ -2582,6 +2685,13 @@ impl IndexRangeSourceExec {
                     .map_or(1, |pipeline| pipeline.width);
                 if inflight >= width {
                     break;
+                }
+                if let Some(controller) = &self.adaptive_limit {
+                    self.batch_size = controller.suggested_batch_size(self.max_lookup_batch_size);
+                    if controller.snapshot().stopped {
+                        limit_exhausted = true;
+                        break;
+                    }
                 }
                 let unemitted = self
                     .lookup_pipeline
@@ -2631,24 +2741,72 @@ impl IndexRangeSourceExec {
                     // Local test/in-memory cursors have no network wait to
                     // overlap; keep their exact demand-bounded behavior.
                     && self.remote_index.is_some();
-                if demand_allowance == 0 && inflight > 0 && !needs_table_filter_read_ahead {
+                if self.adaptive_limit.is_none()
+                    && demand_allowance == 0
+                    && inflight > 0
+                    && !needs_table_filter_read_ahead
+                {
                     break;
                 }
+                let adaptive_reservation = if let Some(controller) = &self.adaptive_limit {
+                    match controller.try_reserve_lookup(target) {
+                        Some(reserved) => reserved,
+                        None => {
+                            if inflight == 0 || controller.snapshot().stopped {
+                                limit_exhausted = true;
+                            }
+                            break;
+                        }
+                    }
+                } else {
+                    0
+                };
+                let target = if self.adaptive_limit.is_some() {
+                    adaptive_reservation
+                } else {
+                    target
+                };
                 let mut handles = Vec::with_capacity(target);
                 while handles.len() < target {
-                    let Some(handle) = self.next_lookup_handle()? else {
-                        break;
+                    match self.next_lookup_handle() {
+                        Ok(Some(handle)) => handles.push(handle),
+                        Ok(None) => break,
+                        Err(error) => {
+                            if let Some(controller) = &self.adaptive_limit {
+                                controller.abort_lookup(adaptive_reservation);
+                            }
+                            return Err(error);
+                        }
                     };
-                    handles.push(handle);
                 }
                 if handles.is_empty() {
+                    if let Some(controller) = &self.adaptive_limit {
+                        controller.abort_lookup(adaptive_reservation);
+                    }
                     stream_exhausted = true;
                     break;
+                }
+                let reserved_handles = handles.len();
+                if let Some(controller) = &self.adaptive_limit {
+                    controller.abort_lookup(adaptive_reservation - reserved_handles);
                 }
                 // A short window means the index stream ended inside it; with
                 // no earlier window in flight there is nothing to overlap.
                 let last_window_alone = handles.len() < target && inflight == 0;
-                let job = self.build_lookup_job(handles, last_window_alone)?;
+                let mut job = match self.build_lookup_job(handles, last_window_alone) {
+                    Ok(job) => job,
+                    Err(error) => {
+                        if let Some(controller) = &self.adaptive_limit {
+                            controller.abort_lookup(reserved_handles);
+                        }
+                        return Err(error);
+                    }
+                };
+                job.adaptive_reserved_handles = if self.adaptive_limit.is_some() {
+                    reserved_handles
+                } else {
+                    0
+                };
                 let pipeline = self.lookup_pipeline.get_or_insert_with(|| LookupPipeline {
                     inflight: VecDeque::new(),
                     // A directly-consumed source never opened itself;
@@ -2679,21 +2837,26 @@ impl IndexRangeSourceExec {
                     .unemitted_handles
                     .saturating_sub(job.handle_count as u64);
             }
+            let reserved_handles = job.adaptive_reserved_handles;
+            let handle_count = job.handle_count;
             let payload = if let Some(receiver) = job.receiver {
-                receiver
-                    .recv()
-                    .map_err(|_| {
-                        ExecError::unsupported("remote table lookup failed: fetch worker exited")
-                    })?
-                    .map_err(|error| {
-                        ExecError::unsupported(format!("remote table lookup failed: {error}"))
-                    })?
+                receiver.recv().unwrap_or_else(|_| {
+                    Err("remote table lookup failed: fetch worker exited".to_owned())
+                })
             } else {
                 job.ready
                     .expect("a job without a receiver carries its payload")
-                    .map_err(|error| {
-                        ExecError::unsupported(format!("remote table lookup failed: {error}"))
-                    })?
+            };
+            let payload = match payload {
+                Ok(payload) => payload,
+                Err(error) => {
+                    if let Some(controller) = &self.adaptive_limit {
+                        controller.abort_lookup(reserved_handles);
+                    }
+                    return Err(ExecError::unsupported(format!(
+                        "remote table lookup failed: {error}"
+                    )));
+                }
             };
             match payload {
                 LookupFetch::Remote(rows, predicates_applied, wire_rows) => {
@@ -2705,27 +2868,46 @@ impl IndexRangeSourceExec {
                     // each handle out once, matching Go's tableWorker rows
                     // plus rowIdx handoff without a second scan or clone.
                     let keep_handles = self.extra_handle_slot.is_some();
-                    let (lookup_rows, lookup_handles): (Vec<_>, Vec<_>) = rows
+                    let (mut lookup_rows, lookup_handles): (Vec<_>, Vec<_>) = rows
                         .into_iter()
                         .map(|(handle, row)| (Some(row), keep_handles.then_some(handle)))
                         .unzip();
-                    return Ok(Some((
-                        lookup_rows,
-                        lookup_handles,
-                        predicates_applied,
-                        None,
-                    )));
+                    let filter_applied_locally = if predicates_applied {
+                        false
+                    } else {
+                        match self.prefilter_adaptive_lookup_rows(&mut lookup_rows) {
+                            Ok(applied) => applied,
+                            Err(error) => {
+                                if let Some(controller) = &self.adaptive_limit {
+                                    controller.abort_lookup(reserved_handles);
+                                }
+                                return Err(error);
+                            }
+                        }
+                    };
+                    return Ok(Some(LookupBatchResult {
+                        rows: lookup_rows,
+                        handles: lookup_handles,
+                        filter_complete: predicates_applied,
+                        filter_applied_locally,
+                        chunk: None,
+                        adaptive_reserved_handles: reserved_handles,
+                        handle_count,
+                    }));
                 }
                 LookupFetch::RemoteChunk(chunk) => {
                     if chunk.wire_rows > 0 {
                         crate::storage::note_storage_op(|ops| ops.cop_rows += chunk.wire_rows);
                     }
-                    return Ok(Some((
-                        Vec::new(),
-                        Vec::new(),
-                        chunk.predicates_applied,
-                        Some(chunk),
-                    )));
+                    return Ok(Some(LookupBatchResult {
+                        rows: Vec::new(),
+                        handles: Vec::new(),
+                        filter_complete: chunk.predicates_applied,
+                        filter_applied_locally: false,
+                        chunk: Some(chunk),
+                        adaptive_reserved_handles: reserved_handles,
+                        handle_count,
+                    }));
                 }
                 LookupFetch::LocalFallback(handles) => {
                     // The local batch answers one slot per requested handle,
@@ -2737,15 +2919,39 @@ impl IndexRangeSourceExec {
                     } else {
                         Vec::new()
                     };
-                    let lookup_rows = self
-                        .table
-                        .get_rows_by_handles_projected_with_context(
+                    let mut lookup_rows =
+                        match self.table.get_rows_by_handles_projected_with_context(
                             &handles,
                             Some(&self.keep),
                             &self.decode_context,
-                        )
-                        .map_err(ExecError::from)?;
-                    return Ok(Some((lookup_rows, lookup_handles, false, None)));
+                        ) {
+                            Ok(rows) => rows,
+                            Err(error) => {
+                                if let Some(controller) = &self.adaptive_limit {
+                                    controller.abort_lookup(reserved_handles);
+                                }
+                                return Err(ExecError::from(error));
+                            }
+                        };
+                    let filter_applied_locally =
+                        match self.prefilter_adaptive_lookup_rows(&mut lookup_rows) {
+                            Ok(applied) => applied,
+                            Err(error) => {
+                                if let Some(controller) = &self.adaptive_limit {
+                                    controller.abort_lookup(reserved_handles);
+                                }
+                                return Err(error);
+                            }
+                        };
+                    return Ok(Some(LookupBatchResult {
+                        rows: lookup_rows,
+                        handles: lookup_handles,
+                        filter_complete: false,
+                        filter_applied_locally,
+                        chunk: None,
+                        adaptive_reserved_handles: reserved_handles,
+                        handle_count,
+                    }));
                 }
             }
         }
@@ -2770,6 +2976,7 @@ impl IndexRangeSourceExec {
             // lookup never ran for this shape.
             return Ok(LookupBatchJob {
                 handle_count,
+                adaptive_reserved_handles: 0,
                 receiver: None,
                 ready: Some(Ok(LookupFetch::LocalFallback(handles))),
             });
@@ -2828,6 +3035,7 @@ impl IndexRangeSourceExec {
                     .collect();
                 return Ok(LookupBatchJob {
                     handle_count,
+                    adaptive_reserved_handles: 0,
                     receiver: None,
                     // Reuse the normal remote-row handoff: direct BatchGet
                     // has fully materialized rows and evaluated no residual
@@ -2851,6 +3059,7 @@ impl IndexRangeSourceExec {
             let Some(staged) = staged else {
                 return Ok(LookupBatchJob {
                     handle_count,
+                    adaptive_reserved_handles: 0,
                     receiver: None,
                     ready: Some(Ok(LookupFetch::LocalFallback(handles))),
                 });
@@ -2871,6 +3080,7 @@ impl IndexRangeSourceExec {
             };
             return Ok(LookupBatchJob {
                 handle_count,
+                adaptive_reserved_handles: 0,
                 receiver: None,
                 ready: Some(outcome),
             });
@@ -2921,6 +3131,7 @@ impl IndexRangeSourceExec {
             // lane handoff that nothing could overlap.
             return Ok(LookupBatchJob {
                 handle_count,
+                adaptive_reserved_handles: 0,
                 receiver: None,
                 ready: Some(worker()),
             });
@@ -2949,6 +3160,7 @@ impl IndexRangeSourceExec {
             .map_err(|_| ExecError::internal("index lookup worker pool stopped"))?;
         Ok(LookupBatchJob {
             handle_count,
+            adaptive_reserved_handles: 0,
             receiver: Some(result_rx),
             ready: None,
         })
@@ -2959,7 +3171,20 @@ impl IndexRangeSourceExec {
     /// Results that already arrived are dropped with the pipeline -- the same
     /// discard an early-stopping serial walk performed by never fetching.
     fn teardown_lookup_pipeline(&mut self) {
-        self.lookup_pipeline = None;
+        if let Some(controller) = &self.adaptive_limit {
+            if let Some(progress) = self.adaptive_lookup_progress.take() {
+                controller.abort_lookup(progress.reserved_handles);
+            }
+        } else {
+            self.adaptive_lookup_progress = None;
+        }
+        if let Some(pipeline) = self.lookup_pipeline.take() {
+            if let Some(controller) = &self.adaptive_limit {
+                for job in pipeline.inflight {
+                    controller.abort_lookup(job.adaptive_reserved_handles);
+                }
+            }
+        }
         // Closing the queue after dropping per-window receivers mirrors Go's
         // cancel-then-wait lifecycle and prevents a worker from outliving the
         // source that supplied its cloned table/request state.
@@ -3019,7 +3244,9 @@ impl IndexRangeSourceExec {
                     || self.index_probe.is_some()
                     || self.native_covering
                 {
+                    let index_entries_scanned = self.index_entries_scanned.clone();
                     cursor.next_handle_in_partition_if(|handle, key, value| {
+                        index_entries_scanned.set(index_entries_scanned.get().wrapping_add(1));
                         if self.index_probe.is_some() || self.native_covering {
                             let row = self
                                 .table
@@ -3056,7 +3283,12 @@ impl IndexRangeSourceExec {
                         }
                     })?
                 } else {
-                    cursor.next_handle_in_partition().map_err(ExecError::from)?
+                    let entry = cursor.next_handle_in_partition().map_err(ExecError::from)?;
+                    if entry.is_some() {
+                        self.index_entries_scanned
+                            .set(self.index_entries_scanned.get().wrapping_add(1));
+                    }
+                    entry
                 };
                 if let Some(entry) = entry {
                     return Ok(Some(entry));
@@ -3672,6 +3904,7 @@ impl IndexRangeSourceExec {
         let Some(lookup) = self.lookup_chunk.as_ref() else {
             return Ok(());
         };
+        let mut adaptive_output_rows = 0_usize;
         let output_width = self.meta.schema().columns.len();
         let projection = if let Some(slot) = self.extra_handle_slot {
             if lookup.appended_handle {
@@ -3707,12 +3940,17 @@ impl IndexRangeSourceExec {
             debug_assert!(lookup.predicates_applied);
             req.append_row_by_col_idxs(row, Some(&projection));
             self.lookup_chunk_row += 1;
+            adaptive_output_rows += 1;
             self.scanned.set(self.scanned.get() + 1);
             self.produced.set(self.produced.get() + 1);
+        }
+        if let Some(progress) = self.adaptive_lookup_progress.as_mut() {
+            progress.output_rows = progress.output_rows.saturating_add(adaptive_output_rows);
         }
         if self.lookup_chunk_row == lookup.row_positions.len() {
             self.lookup_chunk = None;
             self.lookup_chunk_row = 0;
+            self.finish_adaptive_lookup_if_consumed();
         }
         Ok(())
     }
@@ -3728,6 +3966,7 @@ impl Executor for IndexRangeSourceExec {
         self.cursor = None;
         self.produced.set(0);
         self.scanned.set(0);
+        self.index_entries_scanned.set(0);
         self.batch.clear();
         self.batch_at = 0;
         self.batch_size = calculate_lookup_batch_size_with_cap(
@@ -3736,8 +3975,12 @@ impl Executor for IndexRangeSourceExec {
             self.index_paging,
             self.max_lookup_batch_size,
         );
+        if let Some(controller) = &self.adaptive_limit {
+            self.batch_size = controller.suggested_batch_size(self.max_lookup_batch_size);
+        }
         self.lookup_rows.clear();
         self.lookup_row_at = 0;
+        self.adaptive_lookup_progress = None;
         self.lookup_chunk = None;
         self.lookup_chunk_row = 0;
         self.lookup_filter_complete = false;
@@ -3824,8 +4067,11 @@ impl Executor for IndexRangeSourceExec {
             .index_probe
             .as_ref()
             .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described)
-            && (!legacy_index_filter || self.filter.as_ref()
-                .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described));
+            && (!legacy_index_filter
+                || self
+                    .filter
+                    .as_ref()
+                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described));
         if let Some(aggregate) = self
             .partial_aggregate
             .as_ref()
@@ -4131,9 +4377,11 @@ impl Executor for IndexRangeSourceExec {
                 req.append_datum(c, value);
             }
             self.produced.set(self.produced.get() + 1);
+            self.record_adaptive_lookup_output();
             if req.num_cols() == 0 {
                 req.set_num_virtual_rows(req.num_rows() + 1);
             }
+            self.finish_adaptive_lookup_if_consumed();
         }
         Ok(())
     }
@@ -4155,6 +4403,12 @@ impl Executor for IndexRangeSourceExec {
         self.lookup_chunk = None;
         self.lookup_chunk_row = 0;
         self.teardown_lookup_pipeline();
+        if let (Some(controller), Some(sink)) = (&self.adaptive_limit, &self.adaptive_runtime) {
+            *sink.lock().unwrap() = Some(crate::adaptive_limit::AdaptiveLimitRuntimeSnapshot {
+                kind: crate::adaptive_limit::AdaptiveLimitRuntimeKind::DirectLookup,
+                snapshot: controller.snapshot(),
+            });
+        }
         Ok(())
     }
 
@@ -4207,6 +4461,17 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             stats.1 = stats.1.wrapping_add(live.1);
         }
         Some(stats)
+    }
+
+    fn local_index_usage_rows(&self) -> Option<u64> {
+        if self.remote_index.is_none()
+            && self.partial_remote.is_none()
+            && !self.table.has_dirty_content(&self.statement.staged_writes)
+        {
+            Some(self.index_entries_scanned.get())
+        } else {
+            None
+        }
     }
 
     fn accept_scan_estimate(&mut self, rows: f64) {
@@ -8096,6 +8361,131 @@ mod tests {
     #[test]
     fn a_kept_order_double_read_answers_in_index_order() {
         assert_eq!(read_through_index(false, true, None), vec![2, 4, 3, 1]);
+    }
+
+    #[test]
+    fn adaptive_direct_lookup_accounts_a_fully_consumed_ordered_batch() {
+        let columns = (0..3_i64)
+            .map(|offset| {
+                let mut column = tidb_expr::column::Column::new(offset + 1, long());
+                column.index = offset;
+                column
+            })
+            .collect();
+        let mut source = IndexRangeSourceExec::new_with_context(
+            ExecutorMeta::new(tidb_expr::schema::Schema::new(columns), 0, 32, 1024),
+            crossed_order_table(),
+            1,
+            vec![IndexRange::full()],
+            crate::RowDecodeContext::for_test_query_utc(),
+        );
+        use crate::table_access::TableAccess;
+        assert!(source.accept_keep_order(false));
+        source.set_lookup_concurrency(2);
+        source.set_lookup_size(3);
+        let controller = crate::adaptive_limit::AdaptiveLimitController::for_direct_lookup(
+            crate::adaptive_limit::AdaptiveLimitConfig {
+                demand_rows: 3,
+                initial_outer_window: 0,
+                max_outer_window: 0,
+                initial_lookup_window: 3,
+                max_lookup_window: 6,
+                initial_lookup_batch_size: 3,
+                max_lookup_batch_size: 3,
+            },
+        );
+        source.set_adaptive_limit_controller(Arc::clone(&controller));
+        let runtime_sink = Arc::new(std::sync::Mutex::new(None));
+        source.set_adaptive_limit_runtime_sink(Arc::clone(&runtime_sink));
+
+        source.open().unwrap();
+        let mut actual = Vec::new();
+        loop {
+            let mut chunk = source.new_chunk();
+            source.next(&mut chunk).unwrap();
+            if chunk.num_rows() == 0 {
+                break;
+            }
+            actual.extend((0..chunk.num_rows()).map(|row| chunk.get_row(row).get_int64(0)));
+        }
+        let snapshot = controller.snapshot();
+        source.close().unwrap();
+        assert_eq!(
+            runtime_sink
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|runtime| runtime.snapshot),
+            Some(controller.snapshot())
+        );
+
+        assert_eq!(actual, vec![2, 4, 3]);
+        assert_eq!(snapshot.output_rows, 3);
+        assert_eq!(snapshot.lookup_handles, 3);
+        assert_eq!(snapshot.lookup_rows, 3);
+        assert_eq!(snapshot.lookup_reserved, 0);
+        assert!(snapshot.stopped);
+    }
+
+    #[test]
+    fn adaptive_direct_limit_resets_its_lookup_controller_on_reopen() {
+        let columns = (0..3_i64)
+            .map(|offset| {
+                let mut column = tidb_expr::column::Column::new(offset + 1, long());
+                column.index = offset;
+                column
+            })
+            .collect();
+        let mut source = IndexRangeSourceExec::new_with_context(
+            ExecutorMeta::new(tidb_expr::schema::Schema::new(columns), 0, 32, 1024),
+            crossed_order_table(),
+            1,
+            vec![IndexRange::full()],
+            crate::RowDecodeContext::for_test_query_utc(),
+        );
+        use crate::table_access::TableAccess;
+        assert!(source.accept_keep_order(false));
+        source.set_lookup_concurrency(2);
+        source.set_lookup_size(3);
+        let controller = crate::adaptive_limit::AdaptiveLimitController::for_direct_lookup(
+            crate::adaptive_limit::AdaptiveLimitConfig {
+                demand_rows: 3,
+                initial_outer_window: 0,
+                max_outer_window: 0,
+                initial_lookup_window: 3,
+                max_lookup_window: 6,
+                initial_lookup_batch_size: 3,
+                max_lookup_batch_size: 3,
+            },
+        );
+        source.set_adaptive_limit_controller(Arc::clone(&controller));
+        let schema = source.schema().clone();
+        let mut limit = crate::limit::LimitExec::new(
+            ExecutorMeta::new(schema, 0, 3, 1024),
+            0,
+            3,
+            Box::new(source),
+        );
+        limit.set_adaptive_limit_controller(Arc::clone(&controller));
+
+        for _ in 0..2 {
+            limit.open().unwrap();
+            let mut actual = Vec::new();
+            loop {
+                let mut chunk = limit.new_chunk();
+                limit.next(&mut chunk).unwrap();
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                actual.extend((0..chunk.num_rows()).map(|row| chunk.get_row(row).get_int64(0)));
+            }
+            assert_eq!(actual, vec![2, 4, 3]);
+            let snapshot = controller.snapshot();
+            assert_eq!(snapshot.lookup_handles, 3);
+            assert_eq!(snapshot.lookup_rows, 3);
+            assert!(snapshot.stopped);
+            limit.close().unwrap();
+        }
     }
 
     /// THE ROW-SET HALF of the rule, and the only one whose failure loses

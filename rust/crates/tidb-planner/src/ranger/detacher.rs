@@ -751,7 +751,7 @@ pub fn extract_eq_and_in_condition_in<'a, C: std::borrow::Borrow<Expression>>(
 }
 
 /// Go `DetachRangeResult`.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DetachRangeResult {
     /// Go `Ranges`.
     pub ranges: super::types::Ranges,

@@ -187,6 +187,7 @@ fn optimize_recursive(
 
 fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
     RuleContext {
+        estimator_options: context.estimator_options,
         allocator: context.allocator,
         column_allocator: context.column_allocator,
         builder: context.builder,
@@ -195,11 +196,13 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         plan_cache_marker: context.plan_cache_marker,
         allow_derive_topn: context.allow_derive_topn,
         allow_agg_push_down: context.allow_agg_push_down,
+        expr_pushdown_blacklist: context.expr_pushdown_blacklist.clone(),
         disabled_rules: context.disabled_rules.clone(),
         statistics_load: context.statistics_load,
         partition_pruning: context.partition_pruning,
         opt_index_prune_threshold: context.opt_index_prune_threshold,
         opt_prefix_index_single_scan: context.opt_prefix_index_single_scan,
+        index_merge_enabled: context.index_merge_enabled,
         range_max_size: context.range_max_size,
         selectivity_factor: context.selectivity_factor,
         range_fallback_handler: context.range_fallback_handler,
@@ -209,6 +212,8 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         enable_null_aware_anti_join: context.enable_null_aware_anti_join,
         enable_no_decorrelate_in_select: context.enable_no_decorrelate_in_select,
         join_reorder_threshold: context.join_reorder_threshold,
+        group_ndv_skew_ratio: context.group_ndv_skew_ratio,
+        scale_ndv_skew_ratio: context.scale_ndv_skew_ratio,
         advanced_join_reorder: context.advanced_join_reorder,
         cartesian_join_order_threshold: context.cartesian_join_order_threshold,
         join_reorder_through_proj: false,

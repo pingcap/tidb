@@ -263,6 +263,10 @@ impl IndexHashOutput {
 }
 
 impl IndexHashState {
+    pub(super) fn ordered_consumed_outer_rows(&self) -> Option<usize> {
+        self.ordered.as_ref().map(|_| self.outer_row)
+    }
+
     pub fn new(
         output: &IndexHashOutput,
         keys: &[EquiKey],

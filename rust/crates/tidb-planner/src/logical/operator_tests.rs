@@ -1102,7 +1102,10 @@ fn data_source_records_all_conds_and_returns_the_remainder() {
     // Go admits only the one-argument RoundInt/RoundReal/RoundDec PbCodes, so
     // `round(col, 1)` is the non-pushable half of the split.
     let kept = Expression::ScalarFunction(call("round", vec![col_expr(2), one()]));
-    let remaining = source.predicate_push_down_local(vec![pushable.clone(), kept.clone()]);
+    let remaining = source.predicate_push_down_local(
+        vec![pushable.clone(), kept.clone()],
+        &Default::default(),
+    );
     assert_eq!(source.all_conds.len(), 2);
     assert_eq!(source.pushed_down_conds.len(), 1);
     assert_eq!(remaining.len(), 1);
@@ -1187,12 +1190,44 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
     assert_eq!(output.pk_or_uk[0][0].unique_id, 2);
     assert_eq!(source.get_pk_is_handle_col(&output).unwrap().unique_id, 2);
 
+    source.base.base.set_schema(Some(output.clone()));
+    source.handle_is_int = true;
+    source.handle_cols = vec![column(2)];
+    let index = crate::plan_builder::catalog::SourceIndex {
+        columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+            name: "a".into(),
+            offset: 0,
+            length: -1,
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        source
+            .index_range_columns(&index)
+            .iter()
+            .map(|(column, _)| column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+
     // Without PKIsHandle there is no handle column and no derived key.
     source.pk_is_handle = false;
     let mut output = schema(&[1, 2]);
     source.build_key_info(&mut output, Vec::new());
     assert!(output.pk_or_uk.is_empty());
     assert!(source.get_pk_is_handle_col(&output).is_none());
+    assert_eq!(
+        source.index_range_columns(&index).len(),
+        1,
+        "an integer HandleCols entry alone does not authorize a PK suffix"
+    );
+    source.pk_is_handle = true;
+    source.base.base.set_schema(Some(schema(&[1])));
+    assert_eq!(
+        source.index_range_columns(&index).len(),
+        1,
+        "a pruned primary key must not be restored into ranger's prefix"
+    );
 }
 
 #[test]

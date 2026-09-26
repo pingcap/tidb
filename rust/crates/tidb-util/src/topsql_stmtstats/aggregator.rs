@@ -25,6 +25,9 @@ use super::rustats::{
     default_ru_version, normalize_ru_version, RuIncrementMap, RuVersion, RuVersionProvider,
 };
 use super::stmtstats::{StatementStats, StatementStatsMap};
+use crate::topsql_reporter::metrics::{
+    IGNORE_EXCEED_RU_KEYS_COUNTER, IGNORE_EXCEED_RU_TOTAL_COUNTER,
+};
 use crate::topsql_state::{top_ru_enabled, top_sql_enabled};
 
 /// Go `maxStmtStatsSize`.
@@ -58,22 +61,6 @@ pub trait RuCollector: Send + Sync {
     /// Go `RUCollector.OnRUVersionChange`: clears version-sensitive RU state
     /// when the aggregator detects a version handover.
     fn on_ru_version_change(&self, version: RuVersion);
-}
-
-/// The RU keys and RU total that one [`Aggregator::drain_and_push_ru`] cycle
-/// dropped because of [`MAX_RU_KEYS_PER_AGGREGATE`].
-///
-/// boundary: Go publishes these into
-/// `topsql/reporter/metrics.IgnoreExceedRUKeysCounter` and
-/// `IgnoreExceedRUTotalCounter`. Reporter telemetry is out of scope for this
-/// crate, so the same two numbers are returned to the caller instead of being
-/// counted into Prometheus; the drop policy itself is unchanged.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct RuDropStats {
-    /// Go's `droppedKeys`.
-    pub keys: i64,
-    /// Go's `droppedRU`.
-    pub total_ru: f64,
 }
 
 /// Go `aggregator`: collects and aggregates data from all
@@ -230,11 +217,10 @@ impl Aggregator {
 
     /// Go `aggregator.drainAndPushRU`: drains RU increments from all sessions,
     /// applies the key cap, and pushes merged data to the RU collectors when
-    /// Top-RU is enabled.
+    /// Top-RU is enabled. Keys rejected by the cap increment the matching
+    /// `reporter/metrics` counters, as in Go.
     ///
-    /// Returns what Go instead counts into the reporter's ignore-counters; see
-    /// [`RuDropStats`].
-    pub fn drain_and_push_ru(&self) -> RuDropStats {
+    pub fn drain_and_push_ru(&self) {
         let current_ru_version = self.current_ru_version();
         if current_ru_version != self.last_ru_version() {
             let snapshot: Vec<_> = self.lock_stats().clone();
@@ -250,11 +236,12 @@ impl Aggregator {
                 collector.on_ru_version_change(current_ru_version);
             }
             self.set_last_ru_version(current_ru_version);
-            return RuDropStats::default();
+            return;
         }
 
         let mut total = RuIncrementMap::with_capacity(MAX_RU_KEYS_PER_AGGREGATE);
-        let mut drops = RuDropStats::default();
+        let mut dropped_keys = 0i64;
+        let mut dropped_ru = 0.0;
         let snapshot: Vec<_> = self.lock_stats().clone();
         for stats in &snapshot {
             let session_ru = stats.merge_ru_into();
@@ -264,12 +251,17 @@ impl Aggregator {
                     continue;
                 }
                 if total.len() >= MAX_RU_KEYS_PER_AGGREGATE {
-                    drops.keys += 1;
-                    drops.total_ru += incr.total_ru;
+                    dropped_keys += 1;
+                    dropped_ru += incr.total_ru;
                 } else {
                     total.0.insert(key.clone(), *incr);
                 }
             }
+        }
+
+        if dropped_keys > 0 {
+            IGNORE_EXCEED_RU_KEYS_COUNTER.inc_by(dropped_keys as f64);
+            IGNORE_EXCEED_RU_TOTAL_COUNTER.inc_by(dropped_ru);
         }
 
         if top_ru_enabled() && !total.is_empty() {
@@ -282,7 +274,6 @@ impl Aggregator {
                 collector.collect_ru_increments(&total, current_ru_version);
             }
         }
-        drops
     }
 
     /// Go `aggregator.register`: binds a [`StatementStats`]. Thread-safe.
@@ -1076,7 +1067,9 @@ mod tests {
             sink.lock().unwrap().merge(m);
         })));
 
-        let drops = aggregator.drain_and_push_ru();
+        let before_dropped_keys = std::sync::LazyLock::force(&IGNORE_EXCEED_RU_KEYS_COUNTER).get();
+        let before_dropped_ru = std::sync::LazyLock::force(&IGNORE_EXCEED_RU_TOTAL_COUNTER).get();
+        aggregator.drain_and_push_ru();
 
         let collected = collected.lock().unwrap();
         assert_eq!(
@@ -1085,10 +1078,13 @@ mod tests {
             "push size should be capped at MAX_RU_KEYS_PER_AGGREGATE"
         );
         let expected_dropped_keys = (TOTAL_DISTINCT_KEYS - MAX_RU_KEYS_PER_AGGREGATE) as i64;
-        assert_eq!(expected_dropped_keys, drops.keys);
+        assert_eq!(
+            expected_dropped_keys as f64,
+            std::sync::LazyLock::force(&IGNORE_EXCEED_RU_KEYS_COUNTER).get() - before_dropped_keys
+        );
         assert_in_delta(
             expected_dropped_keys as f64 * LOW_RU_PER_KEY,
-            drops.total_ru,
+            std::sync::LazyLock::force(&IGNORE_EXCEED_RU_TOTAL_COUNTER).get() - before_dropped_ru,
         );
 
         let hot = collected

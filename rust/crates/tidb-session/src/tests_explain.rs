@@ -3,6 +3,231 @@
 use crate::tests_support::*;
 use crate::*;
 
+/// Go `mockStatsTable`/`mockStatsHistogram`: each integer in [0, NDV)
+/// occupies one bucket, and table StatsVer deliberately remains zero while
+/// the individual columns and indexes use version 2.
+fn install_cardinality_mock_statistics(session: &Session, row_count: i64, columns: &[(i64, i64)]) {
+    install_cardinality_mock_statistics_for_table(session, "t", row_count, columns);
+}
+
+fn install_cardinality_mock_statistics_for_table(
+    session: &Session,
+    table_name: &str,
+    row_count: i64,
+    columns: &[(i64, i64)],
+) {
+    use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
+    use tidb_stats::histogram::Histogram;
+
+    let shared = session.shared_catalog();
+    let mut catalog = shared.lock().unwrap();
+    let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", table_name).unwrap() else {
+        panic!("{table_name} must be a KV table");
+    };
+    assert_eq!(columns.len(), table.columns.len());
+    let table_id = table.table_id;
+    let histogram = |id, ndv: i64, repeat: i64, index| {
+        let mut histogram = Histogram::new(id, ndv, 0, 0, ndv as usize, 0);
+        for value in 0..ndv {
+            let datum = if index {
+                Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(value)]).unwrap())
+            } else {
+                Datum::Int(value)
+            };
+            histogram.append_bucket(datum.clone(), datum, (value + 1) * repeat, repeat);
+        }
+        histogram
+    };
+    let mut statistics = tidb_executor::access_cost::TableStatistics {
+        row_count,
+        ..Default::default()
+    };
+    for (column, &(ndv, repeat)) in table.columns.iter().zip(columns) {
+        statistics.columns.insert(
+            column.id,
+            ColumnStats {
+                histogram: histogram(column.id, ndv, repeat, false),
+                topn: None,
+                cms: None,
+                stats_ver: 2,
+                unsigned: false,
+            },
+        );
+        statistics
+            .column_load_status
+            .insert(column.id, tidb_stats::StatsLoadedStatus::full_load());
+        statistics.column_stats_existence.insert(column.id, true);
+    }
+    for index in table
+        .indexes()
+        .iter()
+        .filter(|index| !index.clustered_primary)
+    {
+        // Go TestOrderingIdxSelectivityRatioForApply deliberately installs
+        // one-component histogram keys even for its composite ibc index.
+        let (ndv, repeat) = columns[index.column_offsets[0]];
+        statistics.indexes.insert(
+            index.id,
+            IndexStats {
+                histogram: histogram(index.id, ndv, repeat, true),
+                topn: None,
+                cms: None,
+                stats_ver: 2,
+                num_columns: index.column_offsets.len(),
+                unique: index.unique,
+            },
+        );
+        statistics
+            .index_load_status
+            .insert(index.id, tidb_stats::StatsLoadedStatus::full_load());
+        statistics.index_stats_existence.insert(index.id, true);
+    }
+    catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+}
+
+fn check_cardinality_query_fixture(session: &mut Session, name: &str) {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../pkg/planner/cardinality/testdata/cardinality_suite_out.json"
+    ))
+    .unwrap();
+    let cases = fixture
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["Name"] == name)
+        .unwrap()["Cases"]
+        .as_array()
+        .unwrap();
+    let mut mismatches = Vec::new();
+    for case in cases {
+        let sql = case["Query"].as_str().unwrap();
+        if case["Result"].is_null() {
+            session.run(sql).unwrap();
+            continue;
+        }
+        let actual = row_text(session.run(sql))
+            .iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>();
+        let expected = case["Result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row.as_str().unwrap())
+            .collect::<Vec<_>>();
+        if actual != expected {
+            mismatches.push(format!(
+                "{sql}\nactual: {actual:#?}\nexpected: {expected:#?}"
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{name}: {} mismatches\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+}
+
+/// Go `TestIndexJoinInnerRowCountUpperBound`: Fix44855 caps each probe's
+/// scan estimate using loaded join-key NDV, separately from the access floor.
+#[test]
+fn index_join_inner_row_count_upper_bound_matches_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT, b INT, INDEX idx(b))")
+        .unwrap();
+    install_cardinality_mock_statistics(&session, 500_000, &[(500, 1000), (500, 1000)]);
+    check_cardinality_query_fixture(&mut session, "TestIndexJoinInnerRowCountUpperBound");
+}
+
+#[test]
+fn ordering_index_selectivity_threshold_matches_go_fixture() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT PRIMARY KEY, b INT, c INT, d INT, INDEX ib(b), INDEX ic(c))")
+        .unwrap();
+    install_cardinality_mock_statistics(
+        &session,
+        100_000,
+        &[(100_000, 1), (10_000, 10), (10_000, 10), (10_000, 10)],
+    );
+    check_cardinality_query_fixture(&mut session, "TestOrderingIdxSelectivityThreshold");
+}
+
+#[test]
+fn index_merge_disjuncts_use_their_own_ranges_and_union_overlap() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT PRIMARY KEY,b INT,c INT,d INT,INDEX ib(b),INDEX ic(c))")
+        .unwrap();
+    install_cardinality_mock_statistics(
+        &session,
+        100_000,
+        &[(100_000, 1), (10_000, 10), (10_000, 10), (10_000, 10)],
+    );
+    for hint in ["/*+ USE_INDEX_MERGE(t,ib,ic) */", ""] {
+        let rows = row_text(session.run(&format!("EXPLAIN FORMAT='brief' SELECT {hint} * FROM t WHERE (b>=0 AND b<=50) OR (c>=0 AND c<=50)")));
+        assert_eq!(rows[0][0], "IndexMerge", "{rows:?}");
+        assert_eq!(rows[0][1], "1017.40", "{rows:?}");
+        assert_eq!(rows[1][1], "510.00", "{rows:?}");
+        assert_eq!(rows[2][1], "510.00", "{rows:?}");
+        assert_eq!(rows[3][1], "1017.40", "{rows:?}");
+    }
+    session.run("INSERT INTO t VALUES (1,1,100,0),(2,2,90,0),(3,9,10,0),(4,9,20,0),(5,3,30,0),(6,9,200,0)").unwrap();
+    for direction in ["ASC", "DESC"] {
+        let suffix = format!("WHERE b<=3 OR c<=30 ORDER BY c {direction} LIMIT 2 OFFSET 1");
+        let expected = row_text(session.run(&format!("SELECT * FROM t USE INDEX() {suffix}")));
+        let actual = row_text(session.run(&format!(
+            "SELECT /*+ USE_INDEX_MERGE(t,ib,ic) */ * FROM t {suffix}"
+        )));
+        assert_eq!(actual, expected, "merge advisory order {direction}");
+    }
+}
+
+#[test]
+fn ordering_index_selectivity_ratio_matches_go_fixture() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT PRIMARY KEY, b INT, c INT, INDEX ib(b), INDEX ic(c))")
+        .unwrap();
+    install_cardinality_mock_statistics(&session, 1000, &[(1000, 1), (1000, 1), (1000, 1)]);
+    check_cardinality_query_fixture(&mut session, "TestOrderingIdxSelectivityRatio");
+}
+
+/// Index lookup must apply table predicates before LIMIT and obtain table
+/// columns before sorting; index readers must restore datasource column order.
+#[test]
+fn index_lookup_limit_and_topn_preserve_table_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT PRIMARY KEY, b INT, c INT, INDEX ib(b), INDEX ic(c))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,0,10),(2,900,40),(3,901,30),(4,902,20)")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT a,b,c FROM t FORCE INDEX(ic) WHERE b>=900 ORDER BY c LIMIT 1",
+            vec![vec!["4", "902", "20"]],
+        ),
+        (
+            "SELECT a,b,c FROM t FORCE INDEX(ic) WHERE b>=900 ORDER BY c LIMIT 1 OFFSET 1",
+            vec![vec!["3", "901", "30"]],
+        ),
+        (
+            "SELECT a,b,c FROM t FORCE INDEX(ib) WHERE b>=900 ORDER BY c LIMIT 1",
+            vec![vec!["4", "902", "20"]],
+        ),
+        (
+            "SELECT a,b FROM t FORCE INDEX(ib) WHERE b>=900 ORDER BY b LIMIT 1",
+            vec![vec!["2", "900"]],
+        ),
+    ] {
+        assert_eq!(row_text(session.run(sql)), expected, "{sql}");
+    }
+}
+
 #[test]
 fn ordinary_execution_publishes_the_brief_binary_plan() {
     let registry = process::ProcessRegistry::default();
@@ -518,6 +743,1840 @@ fn common_handle_tuple_comparison_uses_appended_index_ranges() {
     );
 }
 
+/// Go `pkg/planner/cardinality.AdjustRowCountForAppendedHandleColumns`:
+/// a range on an integer primary-key handle appended to a secondary index
+/// lowers the index scan estimate after analyzed statistics are available.
+#[test]
+fn appended_integer_handle_range_lowers_index_scan_estimate() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE appended_handle_estimate (
+                id BIGINT PRIMARY KEY,
+                a BIGINT NOT NULL,
+                payload BIGINT,
+                KEY ia(a)
+            )",
+        )
+        .unwrap();
+    let values = (1..=100)
+        .map(|id| format!("({id}, 1, {id})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO appended_handle_estimate VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE appended_handle_estimate")
+        .unwrap();
+
+    let index_scan_estimate = |session: &mut Session, predicate: &str| {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN SELECT payload FROM appended_handle_estimate USE INDEX (ia) WHERE {predicate}"
+        )));
+        rows.iter()
+            .find(|row| row[0].contains("IndexRangeScan"))
+            .unwrap_or_else(|| panic!("missing index scan for {predicate}: {rows:?}"))[1]
+            .parse::<f64>()
+            .unwrap()
+    };
+
+    let prefix_estimate = index_scan_estimate(&mut session, "a = 1");
+    let appended_handle_estimate =
+        index_scan_estimate(&mut session, "a = 1 AND id BETWEEN 10 AND 19");
+    assert!(
+        appended_handle_estimate < prefix_estimate,
+        "the appended integer-handle range should reduce the index estimate: \
+         prefix={prefix_estimate}, with_handle={appended_handle_estimate}"
+    );
+}
+
+/// Go `TestIndexRangeEstimationWithAppendedHandleColumn`: estimation must
+/// remain aligned with the declared index columns when only column
+/// histograms are available and a signed integer handle is appended to the
+/// execution range.
+#[test]
+fn appended_handle_range_uses_partial_column_statistics() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE appended_partial_stats (
+                id INT PRIMARY KEY, a INT, b INT, c INT, KEY idx_ab(a,b)
+            )",
+        )
+        .unwrap();
+    let values = (1..=100)
+        .map(|id| format!("({id}, {id}, {id}, {id})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO appended_partial_stats VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE appended_partial_stats ALL COLUMNS")
+        .unwrap();
+
+    let shared = session.shared_catalog();
+    let (table_id, index_id) = {
+        let catalog = shared.lock().unwrap();
+        let table = match catalog.table_in("test", "appended_partial_stats").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table,
+            _ => panic!("appended_partial_stats is not a KV table"),
+        };
+        (
+            table.table_id,
+            table
+                .indexes()
+                .iter()
+                .find(|index| index.name.eq_ignore_ascii_case("idx_ab"))
+                .expect("idx_ab")
+                .id,
+        )
+    };
+    {
+        let mut catalog = shared.lock().unwrap();
+        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
+        statistics.indexes.remove(&index_id);
+        statistics.index_load_status.remove(&index_id);
+        statistics.index_stats_existence.remove(&index_id);
+        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    }
+
+    let rows = row_text(session.run(
+        "EXPLAIN SELECT * FROM appended_partial_stats USE INDEX (idx_ab) \
+         WHERE a = 3 AND b = 3 AND id = 3",
+    ));
+    let scan = rows
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing index range scan: {rows:?}"));
+    assert!(scan[4].contains("range:[3 3 3,3 3 3]"), "{scan:?}");
+    assert_eq!(scan[1], "1.00", "{rows:?}");
+    assert!(
+        scan[4].contains("stats:partial[idx_ab:missing]"),
+        "{scan:?}"
+    );
+}
+
+/// Go `TestNewIndexWithColumnStats`: an index created after ANALYZE must use
+/// existing column statistics when its own index histogram is absent.
+#[test]
+fn newly_created_index_estimates_from_existing_column_statistics() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE indexed_after_analyze (a INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE indexed_without_stats (a INT, KEY idxa(a))")
+        .unwrap();
+    let values = (1..=500)
+        .map(|value| format!("({})", value % 250))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO indexed_after_analyze VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run(&format!(
+            "INSERT INTO indexed_without_stats VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE indexed_after_analyze ALL COLUMNS")
+        .unwrap();
+    session
+        .run("CREATE INDEX idxa ON indexed_after_analyze(a)")
+        .unwrap();
+
+    let with_column_stats = row_text(session.run(
+        "EXPLAIN ANALYZE SELECT * FROM indexed_after_analyze USE INDEX (idxa) \
+         WHERE a > 5 AND a < 25",
+    ));
+    let without_stats = row_text(session.run(
+        "EXPLAIN SELECT * FROM indexed_without_stats USE INDEX (idxa) \
+         WHERE a > 5 AND a < 25",
+    ));
+    let analyzed_scan = with_column_stats
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing analyzed index range scan: {with_column_stats:?}"));
+    let pseudo_scan = without_stats
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing pseudo index range scan: {without_stats:?}"));
+    assert_eq!(analyzed_scan[2], "38", "{with_column_stats:?}");
+    assert!(
+        (analyzed_scan[1].parse::<f64>().unwrap() - 38.0).abs() < 0.1,
+        "column stats should estimate the actual 38 rows: {with_column_stats:?}"
+    );
+    assert_ne!(analyzed_scan[1], pseudo_scan[1], "{without_stats:?}");
+}
+
+/// Go `TestNewIndexWithoutStats`: skyline planning should favor analyzed
+/// statistics when equality coverage ties, but prefer a newly-created index
+/// when it covers more equality/range predicates.
+#[test]
+fn new_index_without_stats_skyline_choice_matches_go() {
+    let mut session = Session::new();
+    session
+        .run("SET SESSION tidb_opt_table_full_scan_cost_factor = 1000")
+        .unwrap();
+    session
+        .run("CREATE TABLE new_index_skyline (a INT, b INT, c INT, KEY idxa(a), KEY idxca(c,a))")
+        .unwrap();
+    let values = (1..=500)
+        .map(|value| format!("({}, {}, {})", value % 250, value % 10, value % 100))
+        .chain(std::iter::once("(1, 1, 1)".to_owned()))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO new_index_skyline VALUES {values}"))
+        .unwrap();
+    session.run("ANALYZE TABLE new_index_skyline").unwrap();
+    session
+        .run("CREATE INDEX idxb ON new_index_skyline(b)")
+        .unwrap();
+
+    let assert_index = |session: &mut Session, predicate: &str, expected: &str| {
+        let sql =
+            format!("EXPLAIN FORMAT='brief' SELECT * FROM new_index_skyline WHERE {predicate}");
+        let plan = row_text(session.run(&sql));
+        let plan_text = plan
+            .iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan_text.contains(expected),
+            "expected {expected} for `{predicate}`, got:\n{plan_text}"
+        );
+    };
+
+    // A fresh index without statistics loses when it ties idxa's equality
+    // coverage. Once analyzed, the same tie still resolves to idxa.
+    assert_index(&mut session, "a = 5 AND b = 5", "index:idxa(a)");
+    session.run("ANALYZE TABLE new_index_skyline").unwrap();
+    assert_index(&mut session, "a = 5 AND b = 5", "index:idxa(a)");
+
+    // A fresh composite index wins when its leading columns cover more
+    // predicates, even before that index has its own histogram.
+    session
+        .run("CREATE INDEX idxab ON new_index_skyline(a, b)")
+        .unwrap();
+    assert_index(&mut session, "a = 5 AND b = 5", "index:idxab(a, b)");
+    assert_index(&mut session, "a > 5 AND b > 5", "index:idxab(a, b)");
+    assert_index(
+        &mut session,
+        "a = 5 AND b > 5 AND c > 5",
+        "index:idxab(a, b)",
+    );
+    assert_index(
+        &mut session,
+        "a = 5 AND b > 5 AND c = 5",
+        "index:idxca(c, a)",
+    );
+}
+
+/// Go `TestIssue57948`: a lone index created after ANALYZE is still a valid
+/// access path using its column statistics and must not be pruned.
+#[test]
+fn single_new_index_with_column_stats_is_chosen() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE issue_57948 (a INT, b INT, c INT)")
+        .unwrap();
+    let values = (1..=500)
+        .map(|value| format!("({}, {}, {})", value % 250, value % 10, value % 100))
+        .chain(std::iter::once("(1, 1, 1)".to_owned()))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO issue_57948 VALUES {values}"))
+        .unwrap();
+    session.run("ANALYZE TABLE issue_57948").unwrap();
+    session.run("CREATE INDEX idxb ON issue_57948(b)").unwrap();
+
+    let plan =
+        row_text(session.run("EXPLAIN FORMAT='brief' SELECT * FROM issue_57948 WHERE b = 5"));
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let forced_plan = row_text(
+        session
+            .run("EXPLAIN FORMAT='brief' SELECT * FROM issue_57948 USE INDEX (idxb) WHERE b = 5"),
+    );
+    let forced_plan_text = forced_plan
+        .iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan_text.contains("index:idxb(b)"),
+        "the sole newly created index must remain a candidate using column stats:\n{plan_text}\nforced index plan:\n{forced_plan_text}"
+    );
+}
+
+/// SQL-plan assertions from Go `TestIndexEstimationCrossValidate`: a composite
+/// equality range should estimate one row, and a newly analyzed but empty
+/// index histogram should not replace the valid table scan estimate. The
+/// high-CMS-count comparison is exercised at the planner estimator boundary.
+#[test]
+fn composite_index_estimate_and_empty_index_stats_match_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE cross_validate (a INT, b INT, KEY idx_ab(a, b))")
+        .unwrap();
+    session
+        .run("INSERT INTO cross_validate VALUES (1,1),(1,2),(1,3),(2,2)")
+        .unwrap();
+    session.run("ANALYZE TABLE cross_validate").unwrap();
+
+    let plan = row_text(
+        session.run("EXPLAIN FORMAT='brief' SELECT * FROM cross_validate WHERE a=1 AND b=2"),
+    );
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan_text.contains("IndexRangeScan") && plan_text.contains("1.00"),
+        "composite equality estimate should use the index histogram:\n{plan_text}"
+    );
+
+    session
+        .run("CREATE TABLE cross_validate_invalid (a INT, b INT, KEY idx_b(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO cross_validate_invalid VALUES (1,1),(2,2),(3,3),(4,4),(5,5)")
+        .unwrap();
+    // Go marks the column's stats as needed before ANALYZE creates an empty
+    // index histogram, reproducing the stale-index-stats fallback.
+    session
+        .run("SELECT * FROM cross_validate_invalid WHERE b=2")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE cross_validate_invalid INDEX idx_b")
+        .unwrap();
+    let plan = row_text(
+        session.run("EXPLAIN FORMAT='brief' SELECT * FROM cross_validate_invalid WHERE b=2"),
+    );
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan_text.contains("TableFullScan") && !plan_text.contains("IndexRangeScan"),
+        "invalid index stats should leave the table scan estimate in place:\n{plan_text}"
+    );
+}
+
+/// Go `TestCrossValidationSelectivity`: the clustered PK range keeps both
+/// matching rows, then the out-of-range residual column predicate estimates
+/// one of them away.
+#[test]
+fn cross_validation_on_clustered_pk_range_matches_go() {
+    let mut session = Session::new();
+    session.run("SET tidb_analyze_version = 2").unwrap();
+    session
+        .run("CREATE TABLE cross_validate_pk (a INT, b INT, c INT, PRIMARY KEY (a, b) CLUSTERED)")
+        .unwrap();
+    session
+        .run("INSERT INTO cross_validate_pk VALUES (1,2,3),(1,4,5)")
+        .unwrap();
+    session.run("ANALYZE TABLE cross_validate_pk").unwrap();
+
+    let rows = row_text(session.run(
+        "EXPLAIN FORMAT='brief' SELECT * FROM cross_validate_pk \
+         WHERE a = 1 AND b > 0 AND b < 1000 AND c > 1000",
+    ));
+    let plan_text = rows
+        .iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan_text.contains("Selection 1.00")
+            && plan_text.contains("TableRangeScan 2.00")
+            && plan_text.contains("range:(1 0,1 1000)"),
+        "clustered-PK range and residual selectivity should match Go:\n{plan_text}"
+    );
+}
+
+/// Go `TestIgnoreRealtimeStats`: determinate objective uses pseudo stats
+/// before ANALYZE and analyzed counts after later modifications.
+#[test]
+fn determinate_objective_uses_analyzed_row_count_after_inserts() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ignore_realtime_stats (a INT, b INT)")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO ignore_realtime_stats VALUES \
+             (1,1),(1,2),(1,3),(1,4),(1,5),(2,1),(2,2),(2,3),(2,4),(2,5),(3,1)",
+        )
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+
+    let explain = |session: &mut Session| {
+        row_text(session.run(
+            "EXPLAIN FORMAT='brief' SELECT * FROM ignore_realtime_stats \
+             WHERE a = 1 AND b > 2",
+        ))
+    };
+    let estimate = |rows: &[Vec<String>], operator: &str| {
+        rows.iter()
+            .find(|row| row[0].contains(operator))
+            .map(|row| row[1].clone())
+            .unwrap_or_else(|| panic!("missing {operator} in {rows:?}"))
+    };
+
+    // Go's unANALYZEd stats_meta row retains its real count in moderate mode;
+    // determinate resets it to zero and uses PseudoRowCount.
+    let moderate_unanalyzed = explain(&mut session);
+    session
+        .run("SET tidb_opt_objective = 'determinate'")
+        .unwrap();
+    let determinate_unanalyzed = explain(&mut session);
+    assert!(
+        estimate(&moderate_unanalyzed, "TableFullScan") == "11.00"
+            && estimate(&moderate_unanalyzed, "Selection") == "1.00",
+        "{moderate_unanalyzed:?}"
+    );
+    assert!(
+        estimate(&determinate_unanalyzed, "TableFullScan") == "10000.00"
+            && estimate(&determinate_unanalyzed, "Selection") == "3.33",
+        "{determinate_unanalyzed:?}"
+    );
+
+    session.run("SET tidb_opt_objective = 'moderate'").unwrap();
+    session
+        .run("ANALYZE TABLE ignore_realtime_stats ALL COLUMNS WITH 1 SAMPLERATE")
+        .unwrap();
+    let moderate_analyzed = explain(&mut session);
+    session
+        .run("SET tidb_opt_objective = 'determinate'")
+        .unwrap();
+    let determinate_analyzed = explain(&mut session);
+    assert!(
+        estimate(&moderate_analyzed, "TableFullScan") == "11.00"
+            && estimate(&moderate_analyzed, "Selection") == "2.73"
+            && estimate(&determinate_analyzed, "TableFullScan") == "11.00"
+            && estimate(&determinate_analyzed, "Selection") == "2.73",
+        "ANALYZE should make both objectives use 11 rows:\nmoderate={moderate_analyzed:?}\ndeterminate={determinate_analyzed:?}"
+    );
+
+    session.run("BEGIN").unwrap();
+    session
+        .run("INSERT INTO ignore_realtime_stats VALUES (3,2),(3,3)")
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+    let shared = session.shared_catalog();
+    {
+        let catalog = shared.lock().unwrap();
+        let table_id = match catalog.table_in("test", "ignore_realtime_stats").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("ignore_realtime_stats is not a KV table"),
+        };
+        let statistics = catalog.table_statistics(table_id).unwrap();
+        assert_eq!(statistics.row_count, 11);
+        assert_eq!(statistics.modify_count, 0);
+    }
+    session.run("ROLLBACK").unwrap();
+
+    session
+        .run("INSERT INTO ignore_realtime_stats VALUES (3,2),(3,3),(3,4),(3,5)")
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+    let shared = session.shared_catalog();
+    {
+        let catalog = shared.lock().unwrap();
+        let table_id = match catalog.table_in("test", "ignore_realtime_stats").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("ignore_realtime_stats is not a KV table"),
+        };
+        // Go's source test flushes these four committed inserts and reloads
+        // stats_meta before comparing the objective modes.
+        let statistics = catalog.table_statistics(table_id).unwrap();
+        assert_eq!(statistics.row_count, 15);
+        assert_eq!(statistics.modify_count, 4);
+    }
+
+    session.run("SET tidb_opt_objective = 'moderate'").unwrap();
+    let moderate = explain(&mut session);
+    session
+        .run("SET tidb_opt_objective = 'determinate'")
+        .unwrap();
+    let determinate = explain(&mut session);
+    assert!(
+        estimate(&moderate, "TableFullScan") == "15.00"
+            && estimate(&moderate, "Selection") == "3.72",
+        "{moderate:?}"
+    );
+    assert!(
+        estimate(&determinate, "TableFullScan") == "11.00"
+            && estimate(&determinate, "Selection") == "2.73",
+        "{determinate:?}"
+    );
+}
+
+#[test]
+fn flush_stats_delta_honors_table_and_database_scope() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE flush_scope_a (a INT)").unwrap();
+    session.run("CREATE TABLE flush_scope_b (a INT)").unwrap();
+    session.run("INSERT INTO flush_scope_a VALUES (1)").unwrap();
+    session
+        .run("INSERT INTO flush_scope_b VALUES (1),(2)")
+        .unwrap();
+
+    session.run("FLUSH STATS_DELTA test.flush_scope_a").unwrap();
+    let shared = session.shared_catalog();
+    {
+        let catalog = shared.lock().unwrap();
+        let a = match catalog.table_in("test", "flush_scope_a").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("flush_scope_a is not a KV table"),
+        };
+        let b = match catalog.table_in("test", "flush_scope_b").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("flush_scope_b is not a KV table"),
+        };
+        assert_eq!(catalog.table_statistics(a).unwrap().row_count, 1);
+        assert!(catalog.table_statistics(b).is_none());
+    }
+
+    session.run("FLUSH STATS_DELTA test.*").unwrap();
+    let catalog = shared.lock().unwrap();
+    let b = match catalog.table_in("test", "flush_scope_b").unwrap() {
+        tidb_executor::TableEntry::Kv(table) => table.table_id,
+        _ => panic!("flush_scope_b is not a KV table"),
+    };
+    assert_eq!(catalog.table_statistics(b).unwrap().row_count, 2);
+}
+
+#[test]
+fn flush_stats_delta_counts_changed_updates_and_deletes() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE flush_dml_delta (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO flush_dml_delta VALUES (1,1),(2,2)")
+        .unwrap();
+    session.run("ANALYZE TABLE flush_dml_delta").unwrap();
+
+    session
+        .run("UPDATE flush_dml_delta SET b = 3 WHERE a = 1")
+        .unwrap();
+    session
+        .run("FLUSH STATS_DELTA test.flush_dml_delta")
+        .unwrap();
+    let shared = session.shared_catalog();
+    let table_id = {
+        let catalog = shared.lock().unwrap();
+        let table_id = match catalog.table_in("test", "flush_dml_delta").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("flush_dml_delta is not a KV table"),
+        };
+        let statistics = catalog.table_statistics(table_id).unwrap();
+        assert_eq!(statistics.row_count, 2);
+        assert_eq!(statistics.modify_count, 1);
+        table_id
+    };
+
+    session
+        .run("DELETE FROM flush_dml_delta WHERE a = 2")
+        .unwrap();
+    session
+        .run("FLUSH STATS_DELTA test.flush_dml_delta")
+        .unwrap();
+    let catalog = shared.lock().unwrap();
+    let statistics = catalog.table_statistics(table_id).unwrap();
+    assert_eq!(statistics.row_count, 1);
+    assert_eq!(statistics.modify_count, 2);
+}
+
+#[test]
+fn flush_stats_delta_tracks_partition_physical_ids() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE flush_partition_delta (a INT) \
+             PARTITION BY HASH(a) PARTITIONS 2",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO flush_partition_delta VALUES (1),(2)")
+        .unwrap();
+    session
+        .run("INSERT INTO flush_partition_delta VALUES (3),(4)")
+        .unwrap();
+    session
+        .run("FLUSH STATS_DELTA test.flush_partition_delta")
+        .unwrap();
+
+    let shared = session.shared_catalog();
+    let catalog = shared.lock().unwrap();
+    let table = match catalog.table_in("test", "flush_partition_delta").unwrap() {
+        tidb_executor::TableEntry::Kv(table) => table,
+        _ => panic!("flush_partition_delta is not a KV table"),
+    };
+    let partition_ids = table
+        .partition()
+        .unwrap()
+        .definitions
+        .iter()
+        .map(|partition| partition.id)
+        .collect::<Vec<_>>();
+    let statistics = partition_ids
+        .iter()
+        .map(|id| catalog.table_statistics(*id).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statistics.iter().map(|stats| stats.row_count).sum::<i64>(),
+        4
+    );
+    assert_eq!(
+        statistics
+            .iter()
+            .map(|stats| stats.modify_count)
+            .sum::<i64>(),
+        4
+    );
+}
+
+#[test]
+fn flush_stats_delta_restores_statement_and_savepoint_deltas() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE flush_rollback_delta (a INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("INSERT INTO flush_rollback_delta VALUES (1)")
+        .unwrap();
+    session.run("ANALYZE TABLE flush_rollback_delta").unwrap();
+
+    session.run("BEGIN").unwrap();
+    session
+        .run("INSERT INTO flush_rollback_delta VALUES (2)")
+        .unwrap();
+    session.run("SAVEPOINT delta_point").unwrap();
+    session
+        .run("INSERT INTO flush_rollback_delta VALUES (3)")
+        .unwrap();
+    session.run("ROLLBACK TO delta_point").unwrap();
+    assert!(
+        session
+            .run("INSERT INTO flush_rollback_delta VALUES (4),(1)")
+            .is_err()
+    );
+    session.run("COMMIT").unwrap();
+    session
+        .run("FLUSH STATS_DELTA test.flush_rollback_delta")
+        .unwrap();
+
+    let shared = session.shared_catalog();
+    let catalog = shared.lock().unwrap();
+    let table_id = match catalog.table_in("test", "flush_rollback_delta").unwrap() {
+        tidb_executor::TableEntry::Kv(table) => table.table_id,
+        _ => panic!("flush_rollback_delta is not a KV table"),
+    };
+    let statistics = catalog.table_statistics(table_id).unwrap();
+    assert_eq!(statistics.row_count, 2);
+    assert_eq!(statistics.modify_count, 1);
+}
+
+/// Go `TestIssue64137`: a high-count TopN is removed from the index histogram;
+/// the small remaining NDV bounds an out-of-range estimate after inserts.
+#[test]
+fn small_ndv_out_of_range_index_reader_rows_match_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE issue_64137 (a INT, KEY idx_a(a))")
+        .unwrap();
+    session.run("SET cte_max_recursion_depth = 10000").unwrap();
+    session
+        .run("INSERT INTO issue_64137 SELECT a FROM (WITH RECURSIVE cte AS (SELECT 1 AS a, 1 AS num UNION ALL SELECT 1 AS a, num + 1 AS num FROM cte WHERE num < 10000) SELECT a FROM cte) AS source_rows")
+        .unwrap();
+    session.run("ANALYZE TABLE issue_64137").unwrap();
+    session
+        .run("INSERT INTO issue_64137 SELECT * FROM issue_64137 LIMIT 2000")
+        .unwrap();
+    let shared = session.shared_catalog();
+    {
+        let mut catalog = shared.lock().unwrap();
+        catalog.flush_stats_delta();
+        let table_id = match catalog.table_in("test", "issue_64137").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("issue_64137 is not a KV table"),
+        };
+        // Go's source test flushes the session delta and calls
+        // StatsHandle.Update, so its cached stats_meta count/modify_count
+        // reflect the 2,000 committed inserts while the analyzed histogram
+        // remains unchanged. Session::new has no domain stats worker; model
+        // that refreshed metadata at the same boundary for this estimator
+        // parity test.
+        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
+        statistics.row_count = 12_000;
+        statistics.modify_count = 2_000;
+        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    }
+
+    for (predicate, expected_rows) in [("a=99999999", "24.00"), ("a=1", "12000.00")] {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN FORMAT='brief' SELECT * FROM issue_64137 WHERE {predicate}"
+        )));
+        let plan_text = rows
+            .iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan_text.contains("IndexRangeScan") && plan_text.contains(expected_rows),
+            "{predicate} should estimate {expected_rows} through the index range:\n{plan_text}"
+        );
+    }
+}
+
+#[test]
+fn null_column_and_index_ranges_match_cardinality_goldens() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE null_estimation (a INT, b INT, c INT, KEY idx_b(b), KEY idx_c_a(c,a))")
+        .unwrap();
+    session
+        .run("INSERT INTO null_estimation VALUES (1,NULL,1),(2,NULL,2),(3,3,3),(4,NULL,4),(NULL,NULL,NULL)")
+        .unwrap();
+    session.run("ANALYZE TABLE null_estimation").unwrap();
+
+    let cases = [
+        (
+            "EXPLAIN SELECT b FROM null_estimation WHERE b IS NULL",
+            "4.00",
+            "IndexRangeScan",
+            Some("range:[NULL,NULL]"),
+        ),
+        (
+            "EXPLAIN SELECT b FROM null_estimation WHERE b IS NOT NULL",
+            "1.00",
+            "IndexFullScan",
+            None,
+        ),
+        (
+            "EXPLAIN SELECT b FROM null_estimation WHERE b IS NULL OR b > 3",
+            "4.00",
+            "IndexRangeScan",
+            Some("range:[NULL,NULL], (3,+inf]"),
+        ),
+        (
+            "EXPLAIN SELECT b FROM null_estimation USE INDEX (idx_b)",
+            "5.00",
+            "IndexFullScan",
+            None,
+        ),
+        (
+            "EXPLAIN SELECT b FROM null_estimation WHERE b < 4",
+            "1.00",
+            "IndexRangeScan",
+            Some("range:[-inf,4)"),
+        ),
+        (
+            "EXPLAIN SELECT * FROM null_estimation WHERE a IS NULL",
+            "1.00",
+            "TableFullScan",
+            None,
+        ),
+        (
+            "EXPLAIN SELECT * FROM null_estimation WHERE a IS NOT NULL",
+            "4.00",
+            "TableFullScan",
+            None,
+        ),
+        (
+            "EXPLAIN SELECT * FROM null_estimation WHERE a IS NULL OR a > 3",
+            "2.00",
+            "TableFullScan",
+            None,
+        ),
+        (
+            "EXPLAIN SELECT * FROM null_estimation",
+            "5.00",
+            "TableFullScan",
+            None,
+        ),
+        (
+            "EXPLAIN SELECT * FROM null_estimation WHERE a < 4",
+            "3.00",
+            "TableFullScan",
+            None,
+        ),
+    ];
+    for (sql, expected_rows, expected_scan, expected_range) in cases {
+        let plan = row_text(session.run(sql));
+        assert_eq!(plan[0][1], expected_rows, "{sql}: {plan:?}");
+        let scan = plan
+            .iter()
+            .find(|row| row[0].contains(expected_scan))
+            .unwrap_or_else(|| panic!("{sql}: no {expected_scan} in {plan:?}"));
+        assert_eq!(
+            scan[1],
+            if expected_scan == "TableFullScan" {
+                "5.00"
+            } else {
+                expected_rows
+            }
+        );
+        if let Some(expected_range) = expected_range {
+            assert!(scan[4].contains(expected_range), "{sql}: {scan:?}");
+        }
+    }
+}
+
+/// Go `TestUniqCompEqualEst`: complete equalities on a clustered composite
+/// primary key resolve to one point-get row after ANALYZE.
+#[test]
+fn clustered_composite_primary_key_equality_matches_go_point_get() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE uniq_composite (a INT, b INT, PRIMARY KEY (a,b))")
+        .unwrap();
+    let values = (1..=10)
+        .map(|value| format!("(1,{value})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO uniq_composite VALUES {values}"))
+        .unwrap();
+    session.run("ANALYZE TABLE uniq_composite").unwrap();
+
+    let plan = row_text(
+        session.run("EXPLAIN SELECT * FROM uniq_composite WHERE a = 1 AND b = 5 AND 1 = 1"),
+    );
+    let point = plan
+        .iter()
+        .find(|row| row[0].contains("Point_Get"))
+        .unwrap_or_else(|| panic!("expected clustered composite point get: {plan:?}"));
+    assert_eq!(point[1], "1.00", "{plan:?}");
+    assert!(
+        point[3].contains("clustered index:PRIMARY(a, b)"),
+        "{plan:?}"
+    );
+}
+
+/// Go `TestRiskRangeSkewRatioWithinBucket`: session ratios widen an index
+/// interval's estimate monotonically. Go resolves `SET SESSION ... = DEFAULT`
+/// to the system variable's compiled-in default, independently of a later
+/// `SET GLOBAL` value.
+#[test]
+fn within_bucket_range_skew_setting_changes_analyzed_index_estimate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE skew_range (a INT, KEY idx_a(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO skew_range VALUES (1),(1),(1),(1),(2),(2),(3),(4),(5),(5)")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE skew_range WITH 0 TOPN, 1 BUCKETS")
+        .unwrap();
+    let estimate = |session: &mut Session| {
+        let rows = row_text(
+            session
+                .run("EXPLAIN SELECT * FROM skew_range USE INDEX (idx_a) WHERE a >= 2 AND a <= 3"),
+        );
+        let scan = rows
+            .iter()
+            .find(|row| row[0].contains("IndexRangeScan"))
+            .unwrap_or_else(|| panic!("missing index range scan: {rows:?}"));
+        scan[1].parse::<f64>().unwrap()
+    };
+
+    session
+        .run("SET SESSION tidb_opt_risk_range_skew_ratio = 0")
+        .unwrap();
+    let zero = estimate(&mut session);
+    session
+        .run("SET SESSION tidb_opt_risk_range_skew_ratio = 0.5")
+        .unwrap();
+    let half = estimate(&mut session);
+    session
+        .run("SET SESSION tidb_opt_risk_range_skew_ratio = 1")
+        .unwrap();
+    let one = estimate(&mut session);
+    assert!(zero < half && half < one, "0={zero}, 0.5={half}, 1={one}");
+
+    session
+        .run("SET GLOBAL tidb_opt_risk_range_skew_ratio = 0.5")
+        .unwrap();
+    let retained_session_value = estimate(&mut session);
+    assert!(half < retained_session_value);
+    session
+        .run("SET SESSION tidb_opt_risk_range_skew_ratio = DEFAULT")
+        .unwrap();
+    let default_value = estimate(&mut session);
+    assert_eq!(default_value, zero);
+    session
+        .run("SET GLOBAL tidb_opt_risk_range_skew_ratio = DEFAULT")
+        .unwrap();
+}
+
+/// Go `TestIndexRangeEstimationWithTruncatedHandleRange`: pruning estimate
+/// ranges to declared index columns must retain valid bound inclusivity, and
+/// complete point ranges may use appended-handle selectivity and the point cap.
+#[test]
+fn truncated_integer_handle_ranges_match_go_cardinality_estimates() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE truncated_handle_estimate (
+                id BIGINT PRIMARY KEY CLUSTERED,
+                a INT,
+                KEY ia(a)
+            )",
+        )
+        .unwrap();
+    let values = (1..=100)
+        .map(|id| format!("({id}, {})", id % 10))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO truncated_handle_estimate VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE truncated_handle_estimate ALL COLUMNS")
+        .unwrap();
+
+    let index_scan = |session: &mut Session, predicate: &str| {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN SELECT * FROM truncated_handle_estimate USE INDEX (ia) WHERE {predicate}"
+        )));
+        rows.iter()
+            .find(|row| row[0].contains("IndexRangeScan"))
+            .unwrap_or_else(|| panic!("missing index scan for {predicate}: {rows:?}"))
+            .clone()
+    };
+
+    let low_exclusive = index_scan(&mut session, "a = 5 AND id > 10");
+    assert!(
+        low_exclusive[4].contains("range:(5 10,5 +inf]"),
+        "{low_exclusive:?}"
+    );
+    assert_eq!(low_exclusive[1], "10.00");
+
+    let high_exclusive = index_scan(&mut session, "a = 5 AND id < 10");
+    assert!(
+        high_exclusive[4].contains("range:[5 -inf,5 10)"),
+        "{high_exclusive:?}"
+    );
+    assert_eq!(high_exclusive[1], "10.00");
+
+    let handle_points = index_scan(&mut session, "a = 5 AND id IN (11, 22)");
+    assert!(
+        handle_points[4].contains("range:[5 11,5 11], [5 22,5 22]"),
+        "{handle_points:?}"
+    );
+    assert_eq!(handle_points[1], "2.00");
+
+    let full_point = index_scan(&mut session, "a = 5 AND id = 7");
+    assert!(full_point[4].contains("range:[5 7,5 7]"), "{full_point:?}");
+    assert_eq!(full_point[1], "1.00");
+
+    session
+        .run(
+            "CREATE TABLE unsigned_handle_estimate (
+                id BIGINT UNSIGNED PRIMARY KEY CLUSTERED,
+                a INT,
+                KEY ia(a)
+            )",
+        )
+        .unwrap();
+    session
+        .run(&format!(
+            "INSERT INTO unsigned_handle_estimate VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE unsigned_handle_estimate ALL COLUMNS")
+        .unwrap();
+    let unsigned_point = row_text(session.run(
+        "EXPLAIN SELECT * FROM unsigned_handle_estimate USE INDEX (ia) \
+         WHERE a = 5 AND id IN (11, 22)",
+    ));
+    let unsigned_scan = unsigned_point
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing unsigned index scan: {unsigned_point:?}"));
+    assert!(
+        unsigned_scan[4].contains("range:[5,5]"),
+        "{unsigned_scan:?}"
+    );
+    assert!(!unsigned_scan[4].contains("5 11"), "{unsigned_scan:?}");
+    assert_eq!(unsigned_scan[1], "10.00");
+}
+
+/// Go `cardinality.recordUsedItemStatsStatus` and scan `FormatForExplain`:
+/// fully loaded items are omitted, while missing, uninitialized, and evicted
+/// items are attached to the statement's scans without leaking to later SQL.
+#[test]
+fn explain_marks_missing_stats_for_selected_index() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE explain_partial_index (a INT, b INT, payload INT, KEY idx_ab(a,b))")
+        .unwrap();
+    session
+        .run("INSERT INTO explain_partial_index VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4)")
+        .unwrap();
+    session.run("ANALYZE TABLE explain_partial_index").unwrap();
+
+    let shared = session.shared_catalog();
+    let (table_id, index_id, column_b_id, original_statistics) = {
+        let catalog = shared.lock().unwrap();
+        let table = match catalog.table_in("test", "explain_partial_index").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table,
+            _ => panic!("explain_partial_index is not a KV table"),
+        };
+        let statistics = catalog.table_statistics(table.table_id).unwrap().clone();
+        (
+            table.table_id,
+            table
+                .indexes()
+                .iter()
+                .find(|index| index.name.eq_ignore_ascii_case("idx_ab"))
+                .expect("idx_ab")
+                .id,
+            table
+                .columns
+                .iter()
+                .find(|column| column.name.eq_ignore_ascii_case("b"))
+                .expect("column b")
+                .id,
+            statistics,
+        )
+    };
+    let fully_loaded = row_text(session.run(
+        "EXPLAIN SELECT payload FROM explain_partial_index USE INDEX (idx_ab) WHERE a = 2 AND b = 2",
+    ));
+    let fully_loaded_scan = fully_loaded
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing index range scan: {fully_loaded:?}"));
+    assert!(
+        !fully_loaded_scan[4].contains("stats:partial"),
+        "fully loaded index statistics must not be marked partial: {fully_loaded:?}"
+    );
+    {
+        let mut catalog = shared.lock().unwrap();
+        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
+        statistics.indexes.remove(&index_id);
+        statistics.index_load_status.remove(&index_id);
+        statistics.index_stats_existence.remove(&index_id);
+        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    }
+
+    let rows = row_text(session.run(
+        "EXPLAIN SELECT payload FROM explain_partial_index USE INDEX (idx_ab) WHERE a = 2 AND b = 2",
+    ));
+    let scan = rows
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing index range scan: {rows:?}"));
+    assert!(
+        scan[4].contains("stats:partial[idx_ab:missing]"),
+        "missing used-index status in EXPLAIN: {rows:?}"
+    );
+
+    let mut statistics = (*original_statistics).clone();
+    statistics
+        .index_load_status
+        .insert(index_id, tidb_stats::StatsLoadedStatus::all_evicted());
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    let rows = row_text(session.run(
+        "EXPLAIN SELECT payload FROM explain_partial_index USE INDEX (idx_ab) WHERE a = 2 AND b = 2",
+    ));
+    let scan = rows
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing index range scan: {rows:?}"));
+    assert!(
+        scan[4].contains("stats:partial[idx_ab:allEvicted]"),
+        "evicted used-index status in EXPLAIN: {rows:?}"
+    );
+
+    let mut statistics = (*original_statistics).clone();
+    statistics.columns.remove(&column_b_id);
+    statistics.column_load_status.remove(&column_b_id);
+    statistics.column_stats_existence.remove(&column_b_id);
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    let rows = row_text(session.run(
+        "EXPLAIN SELECT payload FROM explain_partial_index IGNORE INDEX (idx_ab) WHERE b = 2",
+    ));
+    let scan = rows
+        .iter()
+        .find(|row| row[0].contains("TableFullScan"))
+        .unwrap_or_else(|| panic!("missing table scan: {rows:?}"));
+    assert!(
+        scan[4].contains("stats:partial[b:missing]"),
+        "missing used-column status in EXPLAIN: {rows:?}"
+    );
+
+    let mut statistics = (*original_statistics).clone();
+    statistics.columns.remove(&column_b_id);
+    statistics.column_load_status.remove(&column_b_id);
+    statistics.column_stats_existence.insert(column_b_id, true);
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    let rows = row_text(session.run(
+        "EXPLAIN SELECT payload FROM explain_partial_index IGNORE INDEX (idx_ab) WHERE b = 2",
+    ));
+    let scan = rows
+        .iter()
+        .find(|row| row[0].contains("TableFullScan"))
+        .unwrap_or_else(|| panic!("missing table scan: {rows:?}"));
+    assert!(
+        scan[4].contains("stats:partial[b:unInitialized]"),
+        "analyzed but uninitialized column status missing from EXPLAIN: {rows:?}"
+    );
+
+    // A later statement must not inherit the preceding statement's statuses.
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(table_id, original_statistics);
+    let rows = row_text(session.run(
+        "EXPLAIN SELECT payload FROM explain_partial_index IGNORE INDEX (idx_ab) WHERE b = 2",
+    ));
+    let scan = rows
+        .iter()
+        .find(|row| row[0].contains("TableFullScan"))
+        .unwrap_or_else(|| panic!("missing table scan: {rows:?}"));
+    assert!(
+        !scan[4].contains("stats:partial"),
+        "fully loaded statistics in a later statement inherited old statuses: {rows:?}"
+    );
+}
+
+/// Port of Go `TestPartialStatsInExplain`'s SQL matrix. The compact in-memory
+/// session has no asynchronous histogram loader, so model its before/after
+/// states by changing the cached item load statuses around the same queries.
+#[test]
+fn explain_partial_stats_match_go_plan_matrix() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT, b INT, c INT, PRIMARY KEY(a), KEY idx(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1,1),(2,2,2),(3,3,3)")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2(a INT, PRIMARY KEY(a))")
+        .unwrap();
+    session.run("INSERT INTO t2 VALUES (1),(2),(3)").unwrap();
+    session
+        .run(
+            "CREATE TABLE tp(a INT, b INT, c INT, INDEX ic(c)) \
+             PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO tp VALUES (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
+        .unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("ANALYZE TABLE t2").unwrap();
+    session.run("ANALYZE TABLE tp").unwrap();
+
+    let shared = session.shared_catalog();
+    let (tp_id, tp_b_id, tp_original, t_id, t_original) = {
+        let catalog = shared.lock().unwrap();
+        let table = match catalog.table_in("test", "tp").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table,
+            _ => panic!("tp is not a KV table"),
+        };
+        let column_b_id = table
+            .columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case("b"))
+            .unwrap()
+            .id;
+        let t = match catalog.table_in("test", "t").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table,
+            _ => panic!("t is not a KV table"),
+        };
+        (
+            table.table_id,
+            column_b_id,
+            catalog.table_statistics(table.table_id).unwrap().clone(),
+            t.table_id,
+            catalog.table_statistics(t.table_id).unwrap().clone(),
+        )
+    };
+
+    let query_tp = "EXPLAIN FORMAT = BRIEF SELECT * FROM tp WHERE b = 10";
+    let mut partial_tp = (*tp_original).clone();
+    partial_tp.columns.remove(&tp_b_id);
+    partial_tp.column_load_status.remove(&tp_b_id);
+    partial_tp.column_stats_existence.remove(&tp_b_id);
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(tp_id, std::sync::Arc::new(partial_tp));
+    let plan = row_text(session.run(query_tp));
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan_text.contains("stats:partial["),
+        "missing partial marker: {plan_text}"
+    );
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(tp_id, tp_original.clone());
+    let plan = row_text(session.run(query_tp));
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !plan_text.contains("stats:partial["),
+        "unexpected partial marker: {plan_text}"
+    );
+
+    let query_join = "EXPLAIN FORMAT = BRIEF SELECT * FROM t JOIN tp \
+                      WHERE tp.a = 10 AND t.b = tp.c";
+    let plan = row_text(session.run(query_join));
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !plan_text.contains("stats:partial["),
+        "unexpected partial marker: {plan_text}"
+    );
+
+    let mut evicted_t = (*t_original).clone();
+    for id in evicted_t.columns.keys().copied().collect::<Vec<_>>() {
+        evicted_t
+            .column_load_status
+            .insert(id, tidb_stats::StatsLoadedStatus::all_evicted());
+    }
+    for id in evicted_t.indexes.keys().copied().collect::<Vec<_>>() {
+        evicted_t
+            .index_load_status
+            .insert(id, tidb_stats::StatsLoadedStatus::all_evicted());
+    }
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(t_id, std::sync::Arc::new(evicted_t.clone()));
+    let plan = row_text(session.run(query_join));
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan_text.contains("stats:partial["),
+        "missing partial marker: {plan_text}"
+    );
+    assert!(
+        plan_text.contains("allEvicted"),
+        "missing evicted status: {plan_text}"
+    );
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(t_id, t_original.clone());
+    let plan = row_text(session.run(query_join));
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !plan_text.contains("stats:partial["),
+        "unexpected partial marker: {plan_text}"
+    );
+
+    let query_partition_join = "EXPLAIN FORMAT = BRIEF SELECT * FROM t \
+        JOIN tp PARTITION (p0) JOIN t2 WHERE t.a < 10 AND t.b = tp.c \
+        AND t2.a > 10 AND t2.a = tp.c";
+    let plan = row_text(session.run(query_partition_join));
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan_text.contains("IndexHashJoin"),
+        "Go plan shape missing: {plan_text}"
+    );
+    shared
+        .lock()
+        .unwrap()
+        .set_table_statistics(t_id, std::sync::Arc::new(evicted_t));
+    let plan = row_text(session.run(query_partition_join));
+    let plan_text = plan
+        .iter()
+        .map(|row| row.join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan_text.contains("IndexHashJoin"),
+        "Go plan shape missing: {plan_text}"
+    );
+    assert!(
+        plan_text.contains("stats:partial["),
+        "missing partial marker: {plan_text}"
+    );
+    assert!(
+        plan_text.contains("allEvicted"),
+        "missing evicted status: {plan_text}"
+    );
+}
+
+/// Go `cardinality.Selectivity`: every dimension of a clustered common
+/// handle appended to a non-unique index participates in its estimate range.
+#[test]
+fn appended_common_handle_ranges_lower_index_scan_estimate() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE appended_common_handle_estimate (
+                a BIGINT NOT NULL,
+                b BIGINT NOT NULL,
+                c BIGINT NOT NULL,
+                payload BIGINT,
+                PRIMARY KEY (b, c),
+                KEY ia(a)
+            )",
+        )
+        .unwrap();
+    let values = (1..=100)
+        .map(|id| format!("(1, {}, {id}, {id})", id % 10))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO appended_common_handle_estimate VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE appended_common_handle_estimate")
+        .unwrap();
+
+    let index_scan_estimate = |session: &mut Session, predicate: &str| {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN SELECT payload FROM appended_common_handle_estimate USE INDEX (ia) WHERE {predicate}"
+        )));
+        rows.iter()
+            .find(|row| row[0].contains("IndexRangeScan"))
+            .unwrap_or_else(|| panic!("missing index scan for {predicate}: {rows:?}"))[1]
+            .parse::<f64>()
+            .unwrap()
+    };
+
+    let prefix_estimate = index_scan_estimate(&mut session, "a = 1");
+    let appended_handle_estimate =
+        index_scan_estimate(&mut session, "a = 1 AND b = 1 AND c BETWEEN 11 AND 19");
+    assert!(
+        appended_handle_estimate < prefix_estimate,
+        "the complete common-handle range should reduce the index estimate: \
+         prefix={prefix_estimate}, with_handle={appended_handle_estimate}"
+    );
+}
+
+/// Go `TestIndexRangeEstimationWithPrefixedCommonHandle`: execution ranges
+/// use the stored prefix, retain remaining common-handle columns, and recheck
+/// untruncated predicates while statistics use full column values.
+#[test]
+fn prefixed_common_handle_ranges_match_go_cardinality_cases() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE prefixed_common_handle_estimate (
+                p1 VARCHAR(64),
+                p2 INT,
+                c INT,
+                PRIMARY KEY (p1(2), p2) CLUSTERED,
+                KEY ic(c)
+            )",
+        )
+        .unwrap();
+    let values = (1..=100)
+        .map(|id| format!("('pp_{id:03}', {id}, {})", id % 10))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO prefixed_common_handle_estimate VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE prefixed_common_handle_estimate ALL COLUMNS")
+        .unwrap();
+
+    let explain = |session: &mut Session, sql: &str| row_text(session.run(sql));
+    let prefix_query = "SELECT * FROM prefixed_common_handle_estimate USE INDEX (ic) \
+                        WHERE c = 5 AND p1 = 'pp_055'";
+    let prefix_plan = explain(&mut session, &format!("EXPLAIN {prefix_query}"));
+    let prefix_scan = prefix_plan
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing prefix index scan: {prefix_plan:?}"));
+    assert!(
+        prefix_scan[4].contains("range:[5 \"pp\",5 \"pp\"]"),
+        "{prefix_scan:?}"
+    );
+    let selection = prefix_plan
+        .iter()
+        .find(|row| row[0].contains("Selection"))
+        .unwrap_or_else(|| panic!("missing prefix predicate recheck: {prefix_plan:?}"));
+    assert!(
+        selection[4].contains("eq(test.prefixed_common_handle_estimate.p1, \"pp_055\")"),
+        "{selection:?}"
+    );
+
+    let second_handle_query = "EXPLAIN SELECT * FROM prefixed_common_handle_estimate \
+        USE INDEX (ic) WHERE c = 5 AND p1 = 'pp_055' AND p2 = 55";
+    let second_handle_plan = explain(&mut session, second_handle_query);
+    let second_handle_scan = second_handle_plan
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing two-column handle range: {second_handle_plan:?}"));
+    assert!(
+        second_handle_scan[4].contains("range:[5 \"pp\" 55,5 \"pp\" 55]"),
+        "{second_handle_scan:?}"
+    );
+
+    let tuple_query = "SELECT * FROM prefixed_common_handle_estimate \
+                       WHERE (c, p1, p2) > (5, 'pp_055', 55)";
+    let tuple_plan = explain(&mut session, &format!("EXPLAIN {tuple_query}"));
+    let tuple_selection = tuple_plan
+        .iter()
+        .find(|row| row[0].contains("Selection"))
+        .unwrap_or_else(|| panic!("missing tuple Selection: {tuple_plan:?}"));
+    assert_eq!(tuple_selection[1], "40.00", "{tuple_plan:?}");
+    assert_eq!(row_text(session.run(tuple_query)).len(), 44);
+
+    let forced_tuple_query = "SELECT * FROM prefixed_common_handle_estimate USE INDEX (ic) \
+                              WHERE (c, p1, p2) > (5, 'pp_055', 55)";
+    let forced_tuple_plan = explain(&mut session, &format!("EXPLAIN {forced_tuple_query}"));
+    let forced_tuple_scan = forced_tuple_plan
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("missing forced tuple scan: {forced_tuple_plan:?}"));
+    assert!(
+        forced_tuple_scan[4].contains("range:[5 \"pp\",5 +inf], (5,+inf]"),
+        "{forced_tuple_scan:?}"
+    );
+    assert_eq!(forced_tuple_scan[1], "50.00");
+    assert_eq!(row_text(session.run(forced_tuple_query)).len(), 44);
+}
+
+/// Go `TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation`:
+/// setting the default string-match selectivity to zero lets the analyzed
+/// TopN estimate a selective infix LIKE more accurately.
+#[test]
+fn default_string_match_selectivity_zero_improves_like_estimates() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE default_string_match_estimate (a VARCHAR(64))")
+        .unwrap();
+    let values = (0..100)
+        .map(|row| {
+            if row < 5 {
+                "('needle target')"
+            } else {
+                "('other value')"
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO default_string_match_estimate VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE default_string_match_estimate WITH 2 TOPN")
+        .unwrap();
+
+    let actual = row_text(
+        session.run("SELECT COUNT(*) FROM default_string_match_estimate WHERE a LIKE '%needle%'"),
+    );
+    assert_eq!(actual, [["5"]]);
+
+    let table_reader_estimate = |session: &mut Session| {
+        let rows = row_text(
+            session
+                .run("EXPLAIN SELECT * FROM default_string_match_estimate WHERE a LIKE '%needle%'"),
+        );
+        rows.iter()
+            .find(|row| row[0].contains("TableReader"))
+            .unwrap_or_else(|| panic!("missing table reader for LIKE query: {rows:?}"))[1]
+            .parse::<f64>()
+            .unwrap()
+    };
+
+    session
+        .run("SET @@tidb_default_string_match_selectivity = 0.8")
+        .unwrap();
+    let default_estimate = table_reader_estimate(&mut session);
+    assert_eq!(default_estimate, 80.0);
+    session
+        .run("SET @@tidb_default_string_match_selectivity = 0")
+        .unwrap();
+    let topn_assisted_estimate = table_reader_estimate(&mut session);
+
+    assert!(
+        (topn_assisted_estimate - 5.0).abs() < (default_estimate - 5.0).abs(),
+        "TopN-assisted LIKE estimate should be closer to 5 actual rows: \
+         default={default_estimate}, topn={topn_assisted_estimate}"
+    );
+}
+
+/// Go `TestDNFCondSelectivity` keeps these planner safety cases alongside the
+/// numeric selectivity goldens: hidden-rowid predicates must plan, adding an
+/// unanalyzed timestamp column must terminate DNF estimation, and mixed
+/// BLOB/DECIMAL/TIMESTAMP NOT-BETWEEN ranges must survive EXPLAIN.
+#[test]
+fn dnf_selectivity_safety_cases_match_go_smoke_coverage() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE dnf_safety (a INT, b INT, c INT, d INT, INDEX idx(a,b,c,d))")
+        .unwrap();
+
+    // Go issue 19981: the hidden row id can appear in both OR arms.
+    session
+        .run("SELECT * FROM dnf_safety WHERE _tidb_rowid IS NULL OR _tidb_rowid > 7")
+        .unwrap();
+
+    // Go issue 22134: stats are not available for this new column yet. The
+    // disjunction must use the missing-statistics guard instead of recursing.
+    session
+        .run("ALTER TABLE dnf_safety ADD COLUMN n TIMESTAMP")
+        .unwrap();
+    session
+        .run("SELECT * FROM dnf_safety WHERE n = '2000-01-01' OR n = '2000-01-02'")
+        .unwrap();
+
+    // Go issue 27294: range construction over these mixed types used to fail
+    // while planning this NOT-BETWEEN DNF expression.
+    session
+        .run("CREATE TABLE dnf_range_safety (COL1 BLOB DEFAULT NULL, COL2 DECIMAL(37,4) DEFAULT NULL, COL3 TIMESTAMP NULL DEFAULT NULL, COL4 INT(11) DEFAULT NULL, UNIQUE KEY U_M_COL4(COL1(10),COL2), UNIQUE KEY U_M_COL5(COL3,COL2))")
+        .unwrap();
+    let explain = row_text(session.run(
+        "EXPLAIN FORMAT = 'brief' SELECT * FROM dnf_range_safety \
+         WHERE col1 IS NOT NULL OR \
+         col2 NOT BETWEEN 454623814170074.2771 AND -975540642273402.9269 AND \
+         col3 NOT BETWEEN '2039-1-19 10:14:57' AND '2002-3-27 14:40:23'",
+    ));
+    assert!(!explain.is_empty(), "the source Go smoke query must plan");
+}
+
+/// Go `TestBuiltinInEstWithoutStats`: the pseudo distribution for eight
+/// equality points over a ten-row table must keep the one-row selection
+/// floor, for either column, without inventing analyzed column statistics.
+#[test]
+fn builtin_in_estimate_without_stats_keeps_selection_floor() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE builtin_in_pseudo (a INT, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO builtin_in_pseudo VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
+        .unwrap();
+    session.shared_catalog().lock().unwrap().flush_stats_delta();
+    let shared = session.shared_catalog();
+    let catalog = shared.lock().unwrap();
+    let table_id = match catalog.table_in("test", "builtin_in_pseudo").unwrap() {
+        tidb_executor::TableEntry::Kv(table) => table.table_id,
+        _ => panic!("builtin_in_pseudo is not a KV table"),
+    };
+    let statistics = catalog
+        .table_statistics(table_id)
+        .expect("flushed stats_meta produces a cached statistics table");
+    assert!(statistics.pseudo);
+    assert!(!statistics.cache_pseudo);
+    assert_eq!(
+        statistics.column_stats_existence,
+        std::collections::BTreeMap::from([(1, false), (2, false)])
+    );
+    assert!(statistics.index_stats_existence.is_empty());
+    drop(catalog);
+
+    for column in ["a", "b"] {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM builtin_in_pseudo WHERE {column} IN (1,2,3,4,5,6,7,8)"
+        )));
+        assert_eq!(rows.len(), 3, "{column}: {rows:?}");
+        assert_eq!(rows[0][0], "TableReader", "{column}: {rows:?}");
+        assert_eq!(rows[0][1], "1.00", "{column}: {rows:?}");
+        assert_eq!(rows[1][0], "└─Selection", "{column}: {rows:?}");
+        assert_eq!(rows[1][1], "1.00", "{column}: {rows:?}");
+        assert_eq!(rows[2][0], "  └─TableFullScan", "{column}: {rows:?}");
+        assert_eq!(rows[2][1], "10.00", "{column}: {rows:?}");
+        assert_eq!(
+            rows[2][4], "keep order:false, stats:pseudo",
+            "{column}: {rows:?}"
+        );
+    }
+}
+
+/// Go `TestRangeStepOverflow`: after ANALYZE loads a DATETIME histogram whose
+/// values are far below the query bounds, detaching the wide year range must
+/// remain valid on both the stats-loading and steady-state execution paths.
+#[test]
+fn datetime_range_step_overflow_survives_stats_loading() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE datetime_range_overflow (col DATETIME)")
+        .unwrap();
+    session
+        .run("INSERT INTO datetime_range_overflow VALUES ('3580-05-26 07:16:48'),('4055-03-06 22:27:16'),('4862-01-26 07:16:54')")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE datetime_range_overflow")
+        .unwrap();
+
+    let sql = "SELECT * FROM datetime_range_overflow \
+               WHERE col BETWEEN '8499-1-23 2:14:38' AND '9961-7-23 18:35:26'";
+    assert!(row_text(session.run(sql)).is_empty());
+    assert!(row_text(session.run(sql)).is_empty());
+}
+
+/// An analyzed-table reference checked against Go master. The threshold
+/// gates LIMIT adjustment; it does not force the selective index to win.
+#[test]
+fn analyzed_ordering_threshold_preserves_go_cost_choice() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ordering_threshold (a INT PRIMARY KEY, b INT, c INT, INDEX ib(b), INDEX ic(c))")
+        .unwrap();
+    let values = (1..=1000)
+        .map(|row| format!("({row}, {row}, {})", (row * 337) % 1000))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO ordering_threshold VALUES {values}"))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE ordering_threshold WITH 8 BUCKETS, 0 TOPN")
+        .unwrap();
+    session
+        .run("SET tidb_opt_ordering_index_selectivity_ratio = -1")
+        .unwrap();
+
+    let cases = [
+        (
+            "",
+            vec![
+                [
+                    "TopN",
+                    "1.00",
+                    "root",
+                    "",
+                    "test.ordering_threshold.c, offset:0, count:1",
+                ],
+                ["└─TableReader", "1.00", "root", "", "data:TopN"],
+                [
+                    "  └─TopN",
+                    "1.00",
+                    "cop[tikv]",
+                    "",
+                    "test.ordering_threshold.c, offset:0, count:1",
+                ],
+                [
+                    "    └─Selection",
+                    "52.00",
+                    "cop[tikv]",
+                    "",
+                    "ge(test.ordering_threshold.b, 950)",
+                ],
+                [
+                    "      └─TableFullScan",
+                    "1000.00",
+                    "cop[tikv]",
+                    "table:ordering_threshold",
+                    "keep order:false",
+                ],
+            ],
+        ),
+        (
+            "FORCE INDEX(ic)",
+            vec![
+                ["Limit", "1.00", "root", "", "offset:0, count:1"],
+                ["└─IndexLookUp", "1.00", "root", "", ""],
+                [
+                    "  ├─IndexFullScan(Build)",
+                    "19.23",
+                    "cop[tikv]",
+                    "table:ordering_threshold, index:ic(c)",
+                    "keep order:true",
+                ],
+                [
+                    "  └─Selection(Probe)",
+                    "1.00",
+                    "cop[tikv]",
+                    "",
+                    "ge(test.ordering_threshold.b, 950)",
+                ],
+                [
+                    "    └─TableRowIDScan",
+                    "19.23",
+                    "cop[tikv]",
+                    "table:ordering_threshold",
+                    "keep order:false",
+                ],
+            ],
+        ),
+        (
+            "FORCE INDEX(ib)",
+            vec![
+                [
+                    "TopN",
+                    "1.00",
+                    "root",
+                    "",
+                    "test.ordering_threshold.c, offset:0, count:1",
+                ],
+                ["└─IndexLookUp", "1.00", "root", "", ""],
+                [
+                    "  ├─IndexRangeScan(Build)",
+                    "52.00",
+                    "cop[tikv]",
+                    "table:ordering_threshold, index:ib(b)",
+                    "range:[950,+inf], keep order:false",
+                ],
+                [
+                    "  └─TopN(Probe)",
+                    "1.00",
+                    "cop[tikv]",
+                    "",
+                    "test.ordering_threshold.c, offset:0, count:1",
+                ],
+                [
+                    "    └─TableRowIDScan",
+                    "52.00",
+                    "cop[tikv]",
+                    "table:ordering_threshold",
+                    "keep order:false",
+                ],
+            ],
+        ),
+    ];
+    for threshold in ["0", "0.1"] {
+        session
+            .run(&format!(
+                "SET tidb_opt_ordering_index_selectivity_threshold = {threshold}"
+            ))
+            .unwrap();
+        for (hint, expected) in &cases {
+            let actual = row_text(session.run(&format!(
+                "EXPLAIN FORMAT='brief' SELECT * FROM ordering_threshold {hint} WHERE b >= 950 ORDER BY c LIMIT 1"
+            )));
+            assert_eq!(&actual, expected, "threshold={threshold}, hint={hint}");
+        }
+    }
+}
+
+/// Go cardinality.TestVirtualColumnIndexEstimation: a missing virtual-column
+/// histogram must not remove the most selective dimension from the estimate.
+#[test]
+fn virtual_column_index_estimation_preserves_the_selective_suffix() {
+    let mut session = Session::new();
+    session.run("SET tidb_analyze_version = 2").unwrap();
+    session.run("CREATE TABLE virtual_estimate(a INT, b INT, c INT, d INT AS (c + 1) VIRTUAL, INDEX iabd(a,b,d))").unwrap();
+    let values = (1..=500)
+        .map(|n| format!("({},{},{n})", n % 5, n % 5))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO virtual_estimate(a,b,c) VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE virtual_estimate WITH 8 BUCKETS, 0 TOPN")
+        .unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) =
+                catalog.table_in("test", "virtual_estimate")
+            else {
+                panic!("missing test table");
+            };
+            let stats = catalog.table_statistics(table.table_id).unwrap();
+            let virtual_id = table
+                .columns
+                .iter()
+                .find(|column| column.name == "d")
+                .unwrap()
+                .id;
+            assert!(
+                !stats.columns.contains_key(&virtual_id),
+                "Go never publishes a virtual-column histogram"
+            );
+            assert!(
+                !stats.indexes.is_empty(),
+                "the composite index must retain statistics"
+            );
+            Ok(())
+        })
+        .unwrap();
+    session
+        .run("CREATE TABLE ordinary_estimate(a INT, b INT, c INT, d INT, INDEX iabd(a,b,d))")
+        .unwrap();
+    session
+        .run("INSERT INTO ordinary_estimate SELECT a,b,c,d FROM virtual_estimate")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE ordinary_estimate COLUMNS a,b WITH 8 BUCKETS, 0 TOPN")
+        .unwrap();
+    for (table, virtual_column) in [("virtual_estimate", true), ("ordinary_estimate", false)] {
+        let predicate = "a = 1 AND b = 1 AND d > 447";
+        let count = row_text(session.run(&format!(
+            "SELECT COUNT(*) FROM {table} USE INDEX(iabd) WHERE {predicate}"
+        )));
+        assert_eq!(count, vec![vec!["10".to_owned()]]);
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN SELECT * FROM {table} USE INDEX(iabd) WHERE {predicate}"
+        )));
+        let estimate = rows[0][1].parse::<f64>().unwrap();
+        if virtual_column {
+            assert!(estimate < 25.0, "{table}: {rows:?}");
+        } else {
+            assert!(estimate > 10.0, "{table}: {rows:?}");
+        }
+    }
+}
+
 /// Small Web3Bench aggregates, pinned to Go master's live plans
 /// (fdfadb96b2, unistore): COUNT(DISTINCT) stays a SINGLE-phase root
 /// HashAgg over a plain IndexFullScan -- with
@@ -547,14 +2606,17 @@ fn web3bench_small_aggregates_follow_go_cost_boundary() {
     // own plan (captured live): `HashAgg_7 | 1.00 | root |
     // funcs:count(distinct ...)` over `IndexReader_17 | index:IndexFullScan_16`
     // over the plain index full scan.
-    let distinct =
-        row_text(session.run("EXPLAIN SELECT COUNT(DISTINCT from_address) FROM web3_agg"));
+    // Brief format compares this cost-boundary choice without coupling it to
+    // IDs allocated for other candidates that the optimizer also considered.
+    let distinct = row_text(
+        session.run("EXPLAIN FORMAT = 'brief' SELECT COUNT(DISTINCT from_address) FROM web3_agg"),
+    );
     assert_eq!(
         distinct.iter().map(|row| row.join("|")).collect::<Vec<_>>(),
         vec![
-            "HashAgg_5|1.00|root||funcs:count(distinct test.web3_agg.from_address)->Column#5",
-            "└─IndexReader_11|10000.00|root||index:IndexFullScan_10",
-            "  └─IndexFullScan_10|10000.00|cop[tikv]|table:web3_agg, index:idx_from(from_address)|keep order:false, stats:pseudo",
+            "HashAgg|1.00|root||funcs:count(distinct test.web3_agg.from_address)->Column#5",
+            "└─IndexReader|10000.00|root||index:IndexFullScan",
+            "  └─IndexFullScan|10000.00|cop[tikv]|table:web3_agg, index:idx_from(from_address)|keep order:false, stats:pseudo",
         ]
     );
 
@@ -868,6 +2930,366 @@ fn explain_analyze_fast_paths_real_act_rows() {
     );
 }
 
+/// The Go `TestAdaptiveLimitDirectIndexLookUpExecution` query keeps its
+/// ordered double-read shape while adaptive admission changes only speculative
+/// lookup work. Results, offsets, empty results, and the one-row early stop
+/// stay identical with the setting disabled.
+#[test]
+fn adaptive_limit_direct_index_lookup_preserves_sql_results() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE adaptive_direct_lookup (\
+             id INT PRIMARY KEY, order_key INT NOT NULL, filter_col INT NOT NULL, \
+             payload VARCHAR(32), KEY idx_order_key(order_key))",
+        )
+        .unwrap();
+    let values = (1..=128)
+        .map(|id| {
+            let filter_col = if matches!(id, 1 | 3 | 6 | 9 | 12) || id % 16 == 0 {
+                1
+            } else {
+                0
+            };
+            format!("({id},{id},{filter_col},'payload_{id}')")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO adaptive_direct_lookup VALUES {values}"
+        ))
+        .unwrap();
+    for setting in [
+        "SET tidb_index_lookup_size = 32",
+        "SET tidb_index_lookup_concurrency = 2",
+        "SET tidb_init_chunk_size = 32",
+        "SET tidb_max_chunk_size = 32",
+    ] {
+        session.run(setting).unwrap();
+    }
+
+    let sql = "SELECT order_key, payload FROM adaptive_direct_lookup \
+               USE INDEX(idx_order_key) \
+               WHERE order_key BETWEEN 1 AND 128 AND filter_col = 1 \
+               ORDER BY order_key LIMIT 4";
+    let plan = row_text(session.run(&format!("EXPLAIN {sql}")))
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(plan.contains("IndexLookUp"), "{plan}");
+    assert!(plan.contains("Selection"), "{plan}");
+    assert!(plan.contains("keep order:true"), "{plan}");
+
+    session
+        .run("SET tidb_enable_adaptive_limit_scan = ON")
+        .unwrap();
+    let on_rows = row_text(session.run(sql));
+    assert_eq!(
+        on_rows,
+        [
+            ["1", "payload_1"],
+            ["3", "payload_3"],
+            ["6", "payload_6"],
+            ["9", "payload_9"],
+        ]
+        .map(|row| row.map(str::to_owned).to_vec())
+    );
+    let on_analyze = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")))
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(on_analyze.contains("adaptive:{lookup:"), "{on_analyze}");
+    assert!(!on_analyze.contains("outer:"), "{on_analyze}");
+
+    let paging_sql = "SELECT order_key, payload FROM adaptive_direct_lookup \
+                      USE INDEX(idx_order_key) \
+                      WHERE order_key BETWEEN 1 AND 128 AND filter_col >= 0 \
+                      ORDER BY order_key LIMIT 1";
+    assert_eq!(
+        row_text(session.run(paging_sql)),
+        [vec!["1".to_owned(), "payload_1".to_owned()]]
+    );
+    let paging_analyze = row_text(session.run(&format!("EXPLAIN ANALYZE {paging_sql}")))
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        paging_analyze.contains("adaptive:{lookup:1/1, outstanding:0,"),
+        "{paging_analyze}"
+    );
+
+    let offset_sql = sql.replace("LIMIT 4", "LIMIT 2, 2");
+    let offset_rows = row_text(session.run(&offset_sql));
+    assert_eq!(
+        offset_rows,
+        [["6", "payload_6"], ["9", "payload_9"],].map(|row| row.map(str::to_owned).to_vec())
+    );
+    let empty_sql = sql.replace("filter_col = 1", "filter_col = 2");
+    assert!(row_text(session.run(&empty_sql)).is_empty());
+    let empty_analyze = row_text(session.run(&format!("EXPLAIN ANALYZE {empty_sql}")))
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        empty_analyze.contains("adaptive:{lookup:"),
+        "{empty_analyze}"
+    );
+    let large_limit_sql = sql.replace("LIMIT 4", "LIMIT 100");
+    let large_limit_rows = row_text(session.run(&large_limit_sql));
+    assert_eq!(large_limit_rows.len(), 13);
+
+    session
+        .run("SET tidb_enable_adaptive_limit_scan = OFF")
+        .unwrap();
+    let off_rows = row_text(session.run(sql));
+    assert_eq!(off_rows, on_rows);
+    assert_eq!(
+        row_text(session.run(paging_sql)),
+        [vec!["1".to_owned(), "payload_1".to_owned()]]
+    );
+    assert_eq!(row_text(session.run(&offset_sql)), offset_rows);
+    assert!(row_text(session.run(&empty_sql)).is_empty());
+    assert_eq!(row_text(session.run(&large_limit_sql)), large_limit_rows);
+    let off_analyze = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")))
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(!off_analyze.contains("adaptive:{"), "{off_analyze}");
+}
+
+fn adaptive_index_join_counts(analyze: &str) -> [u64; 6] {
+    let fields = analyze
+        .split_once("adaptive:{outer:")
+        .expect("index-join adaptive stats")
+        .1
+        .split_once('}')
+        .expect("closed adaptive stats")
+        .0;
+    let (outer, fields) = fields.split_once(", lookup:").expect("outer counters");
+    let (lookup, fields) = fields
+        .split_once(", outstanding:")
+        .expect("lookup counters");
+    let (outstanding, _) = fields
+        .split_once(", blocked:outer=")
+        .expect("outstanding counters");
+    let pair = |value: &str| {
+        let (left, right) = value.split_once('/').expect("counter pair");
+        (
+            left.parse::<u64>().expect("left counter"),
+            right.parse::<u64>().expect("right counter"),
+        )
+    };
+    let outer = pair(outer);
+    let lookup = pair(lookup);
+    let outstanding = pair(outstanding);
+    [
+        outer.0,
+        outer.1,
+        lookup.0,
+        lookup.1,
+        outstanding.0,
+        outstanding.1,
+    ]
+}
+
+/// The Go `TestAdaptiveLimitExecution` workload drives the other supported
+/// shape: an early-stop ordered index join whose outer reader is an ordered
+/// double read. Adaptive mode reports both admission stages and leaves query
+/// rows unchanged when switched off.
+#[test]
+fn adaptive_limit_index_join_preserves_sql_results() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE adaptive_outer (\
+             id INT PRIMARY KEY, order_key INT NOT NULL, join_key INT NOT NULL, \
+             filter_col INT NOT NULL, payload VARCHAR(32), KEY idx_order_key(order_key))",
+        )
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE adaptive_inner (\
+             id INT PRIMARY KEY, join_key INT NOT NULL, v INT NOT NULL, \
+             KEY idx_join_key(join_key))",
+        )
+        .unwrap();
+    let outer_values = (1..=128)
+        .map(|id| {
+            let filter_col = if matches!(id, 1 | 3 | 6 | 9 | 12) || id % 16 == 0 {
+                1
+            } else {
+                0
+            };
+            format!("({id},{id},{id},{filter_col},'payload_{id}')")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO adaptive_outer VALUES {outer_values}"))
+        .unwrap();
+    let mut inner_values = (1..=64)
+        .map(|id| format!("({id},1,{id})"))
+        .collect::<Vec<_>>();
+    inner_values.extend(
+        [(65, 3), (66, 6), (67, 9), (68, 12)].map(|(id, key)| format!("({id},{key},{key})")),
+    );
+    inner_values.extend((16..=128).step_by(16).map(|key| {
+        let id = 1000 + key;
+        format!("({id},{key},{key})")
+    }));
+    session
+        .run(&format!(
+            "INSERT INTO adaptive_inner VALUES {}",
+            inner_values.join(",")
+        ))
+        .unwrap();
+    for setting in [
+        "SET tidb_enable_adaptive_limit_scan = ON",
+        "SET tidb_index_join_batch_size = 32",
+        "SET tidb_index_lookup_size = 32",
+        "SET tidb_index_lookup_join_concurrency = 2",
+        "SET tidb_index_lookup_concurrency = 2",
+        "SET tidb_init_chunk_size = 32",
+        "SET tidb_max_chunk_size = 32",
+    ] {
+        session.run(setting).unwrap();
+    }
+
+    let sql = "SELECT /*+ INL_JOIN(i) */ o.payload, i.v \
+               FROM adaptive_outer o USE INDEX(idx_order_key) \
+               JOIN adaptive_inner i USE INDEX(idx_join_key) \
+                 ON o.join_key = i.join_key \
+               WHERE o.order_key BETWEEN 1 AND 4 AND o.filter_col > 0 \
+               ORDER BY o.order_key LIMIT 40";
+    let text = |rows: Vec<Vec<String>>| rows.into_iter().flatten().collect::<Vec<_>>().join(" ");
+    let plan = text(row_text(session.run(&format!("EXPLAIN {sql}"))));
+    assert!(plan.contains("IndexJoin"), "{plan}");
+    assert!(plan.contains("keep order:true"), "{plan}");
+    let mut on_rows = row_text(session.run(sql));
+    on_rows.sort();
+    assert_eq!(on_rows.len(), 40);
+    let on_analyze = text(row_text(session.run(&format!("EXPLAIN ANALYZE {sql}"))));
+    assert!(on_analyze.contains("adaptive:{outer:"), "{on_analyze}");
+    assert!(on_analyze.contains("lookup:"), "{on_analyze}");
+    assert!(on_analyze.contains("outstanding:"), "{on_analyze}");
+    assert!(on_analyze.contains("blocked:"), "{on_analyze}");
+
+    let budget_sql = "SELECT /*+ INL_JOIN(i) */ o.payload, i.v \
+               FROM adaptive_outer o USE INDEX(idx_order_key) \
+               JOIN adaptive_inner i USE INDEX(idx_join_key) \
+                 ON o.join_key = i.join_key \
+               WHERE o.order_key BETWEEN 1 AND 128 AND o.filter_col >= 0 \
+               ORDER BY o.order_key LIMIT 4";
+    let mut budget_rows = row_text(session.run(budget_sql));
+    budget_rows.sort();
+    assert_eq!(budget_rows.len(), 4);
+    let budget_analyze = text(row_text(
+        session.run(&format!("EXPLAIN ANALYZE {budget_sql}")),
+    ));
+    let [
+        outer_fetched,
+        outer_consumed,
+        lookup_handles,
+        lookup_rows,
+        outer_outstanding,
+        lookup_outstanding,
+    ] = adaptive_index_join_counts(&budget_analyze);
+    assert!(outer_fetched <= 4, "{budget_analyze}");
+    assert!(lookup_handles <= 4, "{budget_analyze}");
+    assert!(outer_consumed <= outer_fetched, "{budget_analyze}");
+    assert!(lookup_rows <= lookup_handles, "{budget_analyze}");
+    assert!(outer_outstanding <= 4, "{budget_analyze}");
+    assert!(lookup_outstanding <= 4, "{budget_analyze}");
+
+    let low_selectivity_sql = "SELECT /*+ INL_JOIN(i) */ o.order_key, i.v \
+               FROM adaptive_outer o USE INDEX(idx_order_key) \
+               JOIN adaptive_inner i USE INDEX(idx_join_key) \
+                 ON o.join_key = i.join_key \
+               WHERE o.order_key BETWEEN 13 AND 128 AND o.filter_col = 1 \
+               ORDER BY o.order_key LIMIT 4";
+    let low_rows = row_text(session.run(low_selectivity_sql));
+    assert_eq!(
+        low_rows,
+        [
+            vec!["16".to_owned(), "16".to_owned()],
+            vec!["32".to_owned(), "32".to_owned()],
+            vec!["48".to_owned(), "48".to_owned()],
+            vec!["64".to_owned(), "64".to_owned()],
+        ]
+    );
+    let low_analyze = text(row_text(
+        session.run(&format!("EXPLAIN ANALYZE {low_selectivity_sql}")),
+    ));
+    assert!(low_analyze.contains("adaptive:{outer:"), "{low_analyze}");
+    let [
+        outer_fetched,
+        outer_consumed,
+        lookup_handles,
+        lookup_rows,
+        _,
+        _,
+    ] = adaptive_index_join_counts(&low_analyze);
+    assert!(lookup_handles > lookup_rows, "{low_analyze}");
+    assert!(lookup_rows >= 4, "{low_analyze}");
+    assert!(outer_consumed <= outer_fetched, "{low_analyze}");
+    assert!(lookup_rows <= lookup_handles, "{low_analyze}");
+
+    let small_limit_sql = low_selectivity_sql.replace("LIMIT 4", "LIMIT 1");
+    let small_rows = row_text(session.run(&small_limit_sql));
+    assert_eq!(small_rows, [vec!["16".to_owned(), "16".to_owned()]]);
+    let ordered_sql = "SELECT /*+ INL_JOIN(i) */ o.order_key, i.v \
+               FROM adaptive_outer o USE INDEX(idx_order_key) \
+               JOIN adaptive_inner i USE INDEX(idx_join_key) \
+                 ON o.join_key = i.join_key \
+               WHERE o.order_key BETWEEN 2 AND 12 AND o.filter_col > 0 \
+               ORDER BY o.order_key LIMIT 4";
+    assert_eq!(
+        row_text(session.run(ordered_sql)),
+        [
+            vec!["3".to_owned(), "3".to_owned()],
+            vec!["6".to_owned(), "6".to_owned()],
+            vec!["9".to_owned(), "9".to_owned()],
+            vec!["12".to_owned(), "12".to_owned()],
+        ]
+    );
+
+    session
+        .run("SET tidb_enable_adaptive_limit_scan = OFF")
+        .unwrap();
+    let mut off_rows = row_text(session.run(sql));
+    off_rows.sort();
+    assert_eq!(off_rows, on_rows);
+    let mut off_budget_rows = row_text(session.run(budget_sql));
+    off_budget_rows.sort();
+    assert_eq!(off_budget_rows, budget_rows);
+    assert_eq!(row_text(session.run(low_selectivity_sql)), low_rows);
+    assert_eq!(row_text(session.run(&small_limit_sql)), small_rows);
+    assert_eq!(
+        row_text(session.run(ordered_sql)),
+        [
+            vec!["3".to_owned(), "3".to_owned()],
+            vec!["6".to_owned(), "6".to_owned()],
+            vec!["9".to_owned(), "9".to_owned()],
+            vec!["12".to_owned(), "12".to_owned()],
+        ]
+    );
+    let off_analyze = text(row_text(session.run(&format!("EXPLAIN ANALYZE {sql}"))));
+    assert!(!off_analyze.contains("adaptive:{"), "{off_analyze}");
+    let off_budget_analyze = text(row_text(
+        session.run(&format!("EXPLAIN ANALYZE {budget_sql}")),
+    ));
+    assert!(
+        !off_budget_analyze.contains("adaptive:{"),
+        "{off_budget_analyze}"
+    );
+}
+
 /// `EXPLAIN ANALYZE` of a grouped aggregate/`DISTINCT`: real `actRows`
 /// -- captured: a `GROUP BY` on `(1,1),(1,2),(2,3),(2,4),(3,5)` groups
 /// into 3 real groups, and `SELECT DISTINCT a` over the same rows
@@ -968,44 +3390,18 @@ fn explain_update_and_delete_plan_without_writing() {
         .unwrap();
     session.run("INSERT INTO t VALUES (1, 1)").unwrap();
 
-    assert_eq!(
-        row_text(session.run("EXPLAIN UPDATE t SET b = 100 WHERE a = 1")),
-        vec![
-            vec![
-                "Update_2".to_owned(),
-                "N/A".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "N/A".to_owned(),
-            ],
-            vec![
-                "└─Point_Get_1".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                "table:t".to_owned(),
-                "handle:1".to_owned(),
-            ],
-        ]
-    );
-    assert_eq!(
-        row_text(session.run("EXPLAIN DELETE FROM t WHERE a = 1")),
-        vec![
-            vec![
-                "Delete_2".to_owned(),
-                "N/A".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "N/A".to_owned(),
-            ],
-            vec![
-                "└─Point_Get_1".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                "table:t".to_owned(),
-                "handle:1".to_owned(),
-            ],
-        ]
-    );
+    for (sql, root_name) in [
+        ("EXPLAIN UPDATE t SET b = 100 WHERE a = 1", "Update_"),
+        ("EXPLAIN DELETE FROM t WHERE a = 1", "Delete_"),
+    ] {
+        let rows = row_text(session.run(sql));
+        assert_eq!(rows.len(), 2, "{sql}: {rows:?}");
+        assert!(rows[0][0].starts_with(root_name), "{sql}: {rows:?}");
+        assert_eq!(rows[0][1..], ["N/A", "root", "", "N/A"], "{sql}");
+        assert!(rows[1][0].starts_with("└─Point_Get"), "{sql}: {rows:?}");
+        assert_eq!(rows[1][1..4], ["1.00", "root", "table:t"], "{sql}");
+        assert_eq!(rows[1][4], "handle:1, lock", "{sql}: {rows:?}");
+    }
     // Neither plan wrote or removed the row.
     assert_eq!(
         row_text(session.run("SELECT * FROM t")),
@@ -1128,7 +3524,8 @@ fn explain_union_all_records_each_term_without_execution() {
     );
     assert_eq!(rows.len(), 5);
     assert!(rows[0][0].starts_with("Union_"));
-    assert_eq!(rows[0][1], "6666.67");
+    // Go Selectivity uses the sentinel-bound column estimate for a <= 2.
+    assert_eq!(rows[0][1], "3335.33");
     assert_eq!(rows[0][2], "root");
     assert_eq!(
         rows.iter()
@@ -1735,10 +4132,12 @@ fn an_empty_index_range_is_a_table_dual_not_a_scan() {
         assert_eq!(leaf[0], "TableDual", "{where_clause}: {rows:?}");
         assert_eq!(leaf[4], "rows:0", "{where_clause}");
         // The rows were already right and must stay right.
-        assert!(row_text(session.run(&format!(
-            "SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
-        )))
-        .is_empty());
+        assert!(
+            row_text(session.run(&format!(
+                "SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
+            )))
+            .is_empty()
+        );
     }
 
     // The CONTROL: a bound the unsigned domain can satisfy still reads the
@@ -2571,7 +4970,9 @@ fn prepared_explain_constants_follow_current_parameters() {
             let expected = match kind {
                 0 => format!("eq(test.explain_param.b, \"{word}\")"),
                 1 => "gt(test.explain_param.a, 0)".to_owned(),
-                _ => format!("or(eq(cast(test.explain_param.b, double BINARY), {number}), eq(test.explain_param.b, \"{word}\"))"),
+                _ => format!(
+                    "or(eq(cast(test.explain_param.b, double BINARY), {number}), eq(test.explain_param.b, \"{word}\"))"
+                ),
             };
             assert_eq!(selection[4], expected, "{query}");
             assert_eq!(
@@ -2626,7 +5027,13 @@ fn prepared_explain_index_probe_strings_match_go() {
                 .iter()
                 .find(|row| row[0].contains("TableRangeScan"))
                 .unwrap();
-            assert_eq!(scan[4], format!("range: decided by [eq(test.exp_inner.a, test.exp_outer.a) eq(test.exp_inner.b, {word})], keep order:false, stats:pseudo"), "{hint}");
+            assert_eq!(
+                scan[4],
+                format!(
+                    "range: decided by [eq(test.exp_inner.a, test.exp_outer.a) eq(test.exp_inner.b, {word})], keep order:false, stats:pseudo"
+                ),
+                "{hint}"
+            );
             let selection = rows
                 .iter()
                 .find(|row| row[0].contains("Selection"))
@@ -2644,4 +5051,522 @@ fn prepared_explain_index_probe_strings_match_go() {
         }
         session.run("DEALLOCATE PREPARE s").unwrap();
     }
+}
+
+/// Go `TestEstimationForUnknownValues`: exercise unknown-value estimation
+/// around repeated ANALYZE, stats-delta publication, TRUNCATE, and table
+/// recreation through the production local session path.
+#[test]
+fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
+        .unwrap();
+    session.run("SET tidb_analyze_version = 2").unwrap();
+    session
+        .run("CREATE TABLE unknown_value_lifecycle (a INT, b INT, KEY idx_ab(a, b))")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE unknown_value_lifecycle")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO unknown_value_lifecycle VALUES \
+             (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)",
+        )
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session
+        .run("ANALYZE TABLE unknown_value_lifecycle")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO unknown_value_lifecycle VALUES \
+             (10,10),(11,11),(12,12),(13,13),(14,14),\
+             (15,15),(16,16),(17,17),(18,18),(19,19)",
+        )
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+
+    let estimate_column_range = |session: &Session, table: &str, low: i64, high: i64| {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let (table_id, column_id) = match catalog.table_in("test", table).unwrap() {
+            tidb_executor::TableEntry::Kv(table) => (table.table_id, table.columns[0].id),
+            _ => panic!("{table} is not a KV table"),
+        };
+        let stats = catalog.table_statistics(table_id).unwrap();
+        tidb_planner::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+            stats.columns.get(&column_id),
+            &[
+                tidb_planner::cardinality::row_count_estimator::ColumnRange::new(
+                    tidb_datatype::Datum::Int(low),
+                    tidb_datatype::Datum::Int(high),
+                    false,
+                    false,
+                ),
+            ],
+            tidb_datatype::Collation::Binary,
+            stats.row_count,
+            stats.modify_count,
+            false,
+            tidb_planner::cardinality::row_count_estimator::EstimatorOptions::default(),
+        )
+        .unwrap()
+        .est
+    };
+    assert_eq!(
+        estimate_column_range(&session, "unknown_value_lifecycle", 30, 30),
+        2.0
+    );
+    assert_eq!(
+        estimate_column_range(&session, "unknown_value_lifecycle", 9, 30),
+        4.0
+    );
+    assert_eq!(
+        estimate_column_range(&session, "unknown_value_lifecycle", 9, i64::MAX),
+        4.0
+    );
+
+    session
+        .run("TRUNCATE TABLE unknown_value_lifecycle")
+        .unwrap();
+    session
+        .run("INSERT INTO unknown_value_lifecycle VALUES (NULL, NULL)")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE unknown_value_lifecycle")
+        .unwrap();
+    assert_eq!(
+        estimate_column_range(&session, "unknown_value_lifecycle", 1, 30),
+        1.0
+    );
+
+    session.run("DROP TABLE unknown_value_lifecycle").unwrap();
+    session
+        .run("CREATE TABLE unknown_value_lifecycle (a INT, b INT, KEY idx_b(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO unknown_value_lifecycle VALUES (1, 1)")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE unknown_value_lifecycle")
+        .unwrap();
+    let estimate = estimate_column_range(&session, "unknown_value_lifecycle", 2, 2);
+    assert!((estimate - 0.001).abs() < 1e-12, "estimate was {estimate}");
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'ALL'")
+        .unwrap();
+}
+
+/// Go `TestEstimationForUnknownValuesAfterModify`: after ANALYZE, committed
+/// writes update only the realtime/modify counts and change an unseen value's
+/// estimate without replacing the analyzed histogram.
+#[test]
+fn unknown_value_estimates_follow_modify_delta_lifecycle() {
+    let mut session = Session::new();
+    let prior_auto_analyze =
+        row_text(session.run("SELECT @@global.tidb_enable_auto_analyze"))[0][0].clone();
+    session
+        .run("SET GLOBAL tidb_enable_auto_analyze = 'OFF'")
+        .unwrap();
+    session.run("SET tidb_analyze_version = 2").unwrap();
+    session
+        .run("CREATE TABLE unknown_modify_lifecycle (a INT, KEY idx_a(a))")
+        .unwrap();
+    let values = (1..=10)
+        .flat_map(|value| std::iter::repeat_n(format!("({value})"), 10))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!(
+            "INSERT INTO unknown_modify_lifecycle VALUES {values}"
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE unknown_modify_lifecycle")
+        .unwrap();
+
+    let estimate_column_point = |session: &Session, value: i64| {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let (table_id, column_id) = match catalog
+            .table_in("test", "unknown_modify_lifecycle")
+            .unwrap()
+        {
+            tidb_executor::TableEntry::Kv(table) => (table.table_id, table.columns[0].id),
+            _ => panic!("unknown_modify_lifecycle is not a KV table"),
+        };
+        let stats = catalog.table_statistics(table_id).unwrap();
+        tidb_planner::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+            stats.columns.get(&column_id),
+            &[
+                tidb_planner::cardinality::row_count_estimator::ColumnRange::point(
+                    tidb_datatype::Datum::Int(value),
+                ),
+            ],
+            tidb_datatype::Collation::Binary,
+            stats.row_count,
+            stats.modify_count,
+            false,
+            tidb_planner::cardinality::row_count_estimator::EstimatorOptions::default(),
+        )
+        .unwrap()
+        .est
+    };
+    assert_eq!(estimate_column_point(&session, 5), 10.0);
+    assert_eq!(estimate_column_point(&session, 11), 1.0);
+
+    session
+        .run("INSERT INTO unknown_modify_lifecycle SELECT a + 10 FROM unknown_modify_lifecycle")
+        .unwrap();
+    session
+        .run("INSERT INTO unknown_modify_lifecycle SELECT a + 10 FROM unknown_modify_lifecycle WHERE a <= 10")
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+    let estimate = estimate_column_point(&session, 15);
+    assert!(estimate > 1.0 && estimate < 10.0, "estimate was {estimate}");
+
+    session
+        .run(&format!(
+            "SET GLOBAL tidb_enable_auto_analyze = '{}'",
+            prior_auto_analyze.to_ascii_uppercase()
+        ))
+        .unwrap();
+}
+
+/// Go `TestGlobalStatsOutOfRangeEstimationAfterDelete`: dynamic partition
+/// statistics must account for committed deletes and stay stable when one
+/// partition's statistics are analyzed again.
+#[test]
+fn global_partition_out_of_range_estimates_survive_delete_and_partition_analyze() {
+    let mut session = Session::new();
+    session
+        .run("SET tidb_partition_prune_mode = 'dynamic'")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE global_out_of_range (a INT UNSIGNED) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (400), PARTITION p1 VALUES LESS THAN (600),\
+             PARTITION p2 VALUES LESS THAN (800), PARTITION p3 VALUES LESS THAN (1000),\
+             PARTITION p4 VALUES LESS THAN (1200))",
+        )
+        .unwrap();
+    let values = (0..3000)
+        .map(|row| format!("({})", row / 5 + 300))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO global_out_of_range VALUES {values}"))
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session
+        .run("ANALYZE TABLE global_out_of_range ALL COLUMNS WITH 1 SAMPLERATE, 0 TOPN")
+        .unwrap();
+    session
+        .run("DELETE FROM global_out_of_range WHERE a < 500")
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+    let expected_input: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../pkg/planner/cardinality/testdata/cardinality_suite_in.json"
+    ))
+    .unwrap();
+    let expected_output: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../pkg/planner/cardinality/testdata/cardinality_suite_out.json"
+    ))
+    .unwrap();
+    let queries = expected_input
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["name"] == "TestGlobalStatsOutOfRangeEstimationAfterDelete")
+        .unwrap()["cases"]
+        .as_array()
+        .unwrap();
+    let goldens = expected_output
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["Name"] == "TestGlobalStatsOutOfRangeEstimationAfterDelete")
+        .unwrap()["Cases"]
+        .as_array()
+        .unwrap();
+    assert_eq!(queries.len(), 13);
+    assert_eq!(goldens.len(), queries.len());
+
+    let check_plans = |session: &mut Session| {
+        for (query, golden) in queries.iter().zip(goldens) {
+            let sql = query
+                .as_str()
+                .unwrap()
+                .replace("from t ", "from global_out_of_range ");
+            let rows = row_text(session.run(&sql));
+            let expected = golden["Result"][0].as_str().unwrap();
+            let expected_rows = expected
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .parse::<f64>()
+                .unwrap();
+            let reader = rows
+                .first()
+                .unwrap_or_else(|| panic!("no plan for {sql}: {rows:?}"));
+            let actual_rows = reader[1].parse::<f64>().unwrap();
+            assert!(
+                (actual_rows - expected_rows).abs() < 0.01,
+                "{sql}: expected {expected_rows}, got {actual_rows}: {rows:?}"
+            );
+            let expected_partition = expected
+                .split_once("partition:")
+                .map(|(_, suffix)| suffix.split_whitespace().next().unwrap())
+                .unwrap();
+            assert!(
+                reader
+                    .join(" ")
+                    .contains(&format!("partition:{expected_partition}")),
+                "{sql}: expected partition {expected_partition}: {rows:?}"
+            );
+            let scan = rows
+                .iter()
+                .find(|row| row[0].contains("TableFullScan"))
+                .unwrap_or_else(|| panic!("missing full scan for {sql}: {rows:?}"));
+            assert_eq!(scan[1], "2000.00", "{sql}: {rows:?}");
+        }
+    };
+    check_plans(&mut session);
+
+    session
+        .run(
+            "ANALYZE TABLE global_out_of_range PARTITION p4 ALL COLUMNS \
+             WITH 1 SAMPLERATE, 0 TOPN",
+        )
+        .unwrap();
+    check_plans(&mut session);
+}
+
+
+/// Go cardinality.TestOptScaleNDVSkewRatioSetVar.
+#[test]
+fn ndv_skew_hint_changes_distinct_estimates_after_analyze() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT, b INT, KEY(a), KEY(b))")
+        .unwrap();
+    let values = (0..100)
+        .map(|i| format!("({}, {i})", i % 20))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO t VALUES {values}"))
+        .unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("SET tidb_stats_load_sync_wait=100").unwrap();
+    for (ratio, expected) in [("0", "19.44"), ("\"0.5\"", "14.82"), ("1", "10.20")] {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN SELECT /*+ SET_VAR(tidb_opt_scale_ndv_skew_ratio={ratio}) */ DISTINCT(a) FROM t WHERE b<50"
+        )));
+        assert_eq!(rows[0][1], expected, "ratio={ratio}: {rows:?}");
+    }
+}
+
+/// Go cardinality.TestIssue54812.
+#[test]
+fn ndv_skew_distinct_aggregation_preserves_selection_rows() {
+    let mut session = Session::new();
+    session.run("SET tidb_opt_scale_ndv_skew_ratio=0").unwrap();
+    session
+        .run("CREATE TABLE t(a INT, b INT, KEY(a), KEY(b))")
+        .unwrap();
+    let values = (0..100)
+        .map(|i| format!("({i}, 1)"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO t VALUES {values}"))
+        .unwrap();
+    let repeated = vec!["(100, 2)"; 100].join(",");
+    for _ in 0..10 {
+        session
+            .run(&format!("INSERT INTO t VALUES {repeated}"))
+            .unwrap();
+    }
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("SET tidb_stats_load_sync_wait=100").unwrap();
+    let rows = row_text(session.run("EXPLAIN FORMAT='brief' SELECT DISTINCT(a) FROM t WHERE b=1"));
+    let actual = rows.iter().map(|row| row.join(" ")).collect::<Vec<_>>();
+    assert_eq!(
+        actual,
+        vec![
+            "HashAgg 65.23 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+            "└─TableReader 65.23 root  data:HashAgg",
+            "  └─HashAgg 65.23 cop[tikv]  group by:test.t.a, ",
+            "    └─Selection 100.00 cop[tikv]  eq(test.t.b, 1)",
+            "      └─TableFullScan 1100.00 cop[tikv] table:t keep order:false",
+        ]
+    );
+}
+
+#[test]
+fn physical_null_filters_reuse_derived_datasource_statistics() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(id INT PRIMARY KEY, a INT, b INT, KEY ia(a))").unwrap();
+    let values = (1..=100)
+        .map(|i| format!("({i},{},{})", i % 10, if i % 2 == 0 { "NULL" } else { "1" }))
+        .collect::<Vec<_>>()
+        .join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("ANALYZE TABLE t ALL COLUMNS").unwrap();
+    session.run("SET tidb_stats_load_sync_wait = 100").unwrap();
+    for (query, access, expected, actual_rows) in [
+        ("SELECT * FROM t USE INDEX(ia) WHERE a<5 AND b IS NULL", "IndexLookUp", "25.00", 30),
+        ("SELECT * FROM t USE INDEX(ia) WHERE a<5 AND b IS NOT NULL", "IndexLookUp", "25.00", 20),
+        ("SELECT * FROM t WHERE id IN (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20) AND b IS NULL", "Batch_Point_Get", "10.00", 10),
+        ("SELECT * FROM t WHERE id IN (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20) AND b IS NOT NULL", "Batch_Point_Get", "10.00", 10),
+    ] {
+        let plan = row_text(session.run(&format!("EXPLAIN FORMAT='brief' {query}")));
+        assert!(plan.iter().any(|row| row[0].contains(access)), "{query}: {plan:?}");
+        let selection = plan.iter().find(|row| row[0].contains("Selection")).unwrap();
+        assert_eq!(selection[1], expected, "{query}: {plan:?}");
+        assert_eq!(row_text(session.run(query)).len(), actual_rows, "{query}");
+    }
+}
+
+#[test]
+fn verbose_explain_reports_statement_costs_and_runtime_columns() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE verbose_cost(a INT)").unwrap();
+    session.run("INSERT INTO verbose_cost VALUES (1),(2),(3)").unwrap();
+    let query = "SELECT * FROM verbose_cost WHERE a > 1";
+    let rows = row_text(session.run(&format!("EXPLAIN FORMAT=verbose {query}")));
+    assert!(rows.iter().all(|row| row.len() == 6), "{rows:?}");
+    let costs = rows.iter().map(|row| row[2].parse::<f64>().unwrap()).collect::<Vec<_>>();
+    assert_eq!(costs, [318680.0, 4569000.0, 4070000.0], "Go verbose costs: {rows:?}");
+    session.run("SET tidb_opt_table_full_scan_cost_factor = 1000").unwrap();
+    let expensive = row_text(session.run(&format!("EXPLAIN FORMAT=verbose {query}")));
+    assert_eq!(
+        expensive.iter().map(|row| row[2].as_str()).collect::<Vec<_>>(),
+        ["271380680.00", "4070499000.00", "4070000000.00"],
+        "Go verbose costs with the statement scan factor: {expensive:?}",
+    );
+    let analyzed = row_text(session.run(&format!("EXPLAIN ANALYZE FORMAT=verbose {query}")));
+    assert!(analyzed.iter().all(|row| row.len() == 10), "{analyzed:?}");
+    assert_eq!(analyzed[0][3], "2", "{analyzed:?}");
+    for (plain, runtime) in expensive.iter().zip(&analyzed) {
+        assert_eq!(plain[2], runtime[2], "estimated cost must not use actual rows");
+    }
+    let update = row_text(session.run(
+        "EXPLAIN FORMAT=verbose UPDATE verbose_cost SET a=a+1 WHERE a>1",
+    ));
+    assert_eq!(update[0][2], "N/A", "the Go DML root is not a physical cost node");
+    assert!(update.iter().skip(1).all(|row| row[2].parse::<f64>().is_ok()), "{update:?}");
+}
+
+/// Go TestOrderingIdxSelectivityRatioForJoin: the ordering penalty must
+/// reach the chosen index join through the ordinary child-cost lifecycle.
+#[test]
+fn ordering_ratio_increases_index_join_cost() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT, b INT, c INT, INDEX ibc(b,c))").unwrap();
+    session.run("INSERT INTO t VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10)").unwrap();
+    session.run("INSERT INTO t SELECT a,b,c FROM t").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    for name in ["tidb_opt_merge_join_cost_factor", "tidb_opt_hash_join_cost_factor", "tidb_opt_topn_cost_factor"] {
+        session.run(&format!("SET {name} = 1000")).unwrap();
+    }
+    let query = "EXPLAIN FORMAT=verbose SELECT t1.* FROM t t1 USE INDEX(ibc) JOIN t t2 ON t1.b=t2.b WHERE t2.c=5 ORDER BY t1.b LIMIT 2";
+    let mut costs = Vec::new();
+    for ratio in [-1.0, 0.0, 0.5, 1.0] {
+        session.run(&format!("SET tidb_opt_ordering_index_selectivity_ratio = {ratio}")).unwrap();
+        let rows = row_text(session.run(query));
+        costs.push(rows[0][2].parse::<f64>().unwrap());
+    }
+    assert_eq!(costs[0], costs[1], "{costs:?}");
+    assert!(costs[1] < costs[2] && costs[2] < costs[3], "{costs:?}");
+}
+
+/// Go TestOrderingIdxSelectivityRatioForMergeJoin, including its 320-row
+/// inputs and stable forced MergeJoin shape at every ratio.
+#[test]
+fn ordering_ratio_increases_merge_join_cost() {
+    let mut session = Session::new();
+    for table in ["t1", "t2"] {
+        session.run(&format!("CREATE TABLE {table}(a INT, b INT, c INT, INDEX ib(b))")).unwrap();
+        session.run(&format!("INSERT INTO {table} VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10)")).unwrap();
+        for _ in 0..5 {
+            session.run(&format!("INSERT INTO {table} SELECT a,b,c FROM {table}")).unwrap();
+        }
+        session.run(&format!("ANALYZE TABLE {table}")).unwrap();
+    }
+    let query = "EXPLAIN FORMAT=verbose SELECT /*+ MERGE_JOIN(t1,t2) */ t1.* FROM t1 USE INDEX(ib) JOIN t2 USE INDEX(ib) ON t1.b=t2.b WHERE t1.c<t2.c ORDER BY t1.b LIMIT 2";
+    let mut costs = Vec::new();
+    for ratio in [-1.0, 0.0, 0.5, 1.0] {
+        session.run(&format!("SET tidb_opt_ordering_index_selectivity_ratio = {ratio}")).unwrap();
+        let rows = row_text(session.run(query));
+        assert!(rows.iter().any(|row| row[0].contains("MergeJoin")), "{rows:?}");
+        costs.push(rows[0][2].parse::<f64>().unwrap());
+    }
+    assert_eq!(costs[0], costs[1], "{costs:?}");
+    assert!(costs[1] < costs[2] && costs[2] < costs[3], "{costs:?}");
+}
+
+/// Go TestOrderingIdxSelectivityRatioForApply, including its prefix-only
+/// mock index histogram and required correlated Apply shape.
+#[test]
+fn ordering_ratio_increases_apply_cost() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t1(a INT, b INT, c INT, INDEX ibc(b,c))").unwrap();
+    session.run("CREATE TABLE t2(a INT, b INT, c INT)").unwrap();
+    for table in ["t1", "t2"] {
+        install_cardinality_mock_statistics_for_table(
+            &session, table, 1000, &[(1000, 1), (1000, 1), (1000, 1)],
+        );
+    }
+    for name in ["tidb_opt_merge_join_cost_factor", "tidb_opt_hash_join_cost_factor", "tidb_opt_topn_cost_factor"] {
+        session.run(&format!("SET {name} = 1000")).unwrap();
+    }
+    let query = "EXPLAIN FORMAT=verbose SELECT * FROM t1 WHERE EXISTS (SELECT /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE t2.b=t1.b AND t2.c>1) ORDER BY t1.b LIMIT 2";
+    let mut costs = Vec::new();
+    for ratio in [-1.0, 0.0, 0.5, 1.0] {
+        session.run(&format!("SET tidb_opt_ordering_index_selectivity_ratio = {ratio}")).unwrap();
+        let rows = row_text(session.run(query));
+        assert!(rows.iter().any(|row| row[0].contains("Apply")), "{rows:?}");
+        costs.push(rows[0][2].parse::<f64>().unwrap());
+    }
+    assert_eq!(costs[0], costs[1], "{costs:?}");
+    assert!(costs[1] < costs[2] && costs[2] < costs[3], "{costs:?}");
+}
+
+/// Go TestApplyCacheEnabledByOuterRowCount, including an upstream join that
+/// duplicates otherwise unique outer keys before a correlated LATERAL Apply.
+#[test]
+fn apply_cache_runtime_uses_repeated_outer_keys() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE tac_inner(k1 INT NOT NULL, k2 INT NOT NULL, PRIMARY KEY(k1,k2) CLUSTERED)").unwrap();
+    session.run("CREATE TABLE tac_uniq(id INT PRIMARY KEY, k1 INT NOT NULL)").unwrap();
+    session.run("CREATE TABLE tac_rep(id INT PRIMARY KEY, k1 INT NOT NULL)").unwrap();
+    session.run("CREATE TABLE tac_fan(id INT PRIMARY KEY, k1 INT NOT NULL, KEY ik(k1))").unwrap();
+    let inner = (0..50).flat_map(|key| (0..40).map(move |i| format!("({key},{})", key * 1000 + i))).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO tac_inner VALUES {inner}")).unwrap();
+    for (table, count) in [("tac_uniq", 50), ("tac_rep", 500), ("tac_fan", 500)] {
+        let values = (0..count).map(|i| format!("({i},{})", i % 50)).collect::<Vec<_>>().join(",");
+        session.run(&format!("INSERT INTO {table} VALUES {values}")).unwrap();
+    }
+    for table in ["tac_inner", "tac_uniq", "tac_rep", "tac_fan"] {
+        session.run(&format!("ANALYZE TABLE {table} ALL COLUMNS")).unwrap();
+    }
+    session.run("INSERT INTO mysql.opt_rule_blacklist VALUES ('decorrelate')").unwrap();
+    session.run("ADMIN RELOAD OPT_RULE_BLACKLIST").unwrap();
+    let lateral = "INNER JOIN LATERAL (SELECT t2.k2 FROM tac_inner t2 WHERE t2.k1=o.k1) f";
+    for (outer, cache, actual) in [
+        ("tac_uniq o", "cache:OFF", "2000"),
+        ("tac_rep o", "cache:ON, cacheHitRatio:90.000%", "20000"),
+        ("tac_uniq o JOIN tac_fan ON tac_fan.k1=o.k1", "cache:ON, cacheHitRatio:90.000%", "20000"),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE SELECT o.k1,f.k2 FROM {outer} {lateral}")));
+        let apply = rows.iter().find(|row| row[0].contains("Apply")).unwrap_or_else(|| panic!("correlated Apply: {rows:?}"));
+        assert_eq!(apply[2], actual, "{rows:?}");
+        assert!(apply[5].contains(cache), "expected {cache}: {rows:?}");
+    }
+    session.run("DELETE FROM mysql.opt_rule_blacklist WHERE name='decorrelate'").unwrap();
+    session.run("ADMIN RELOAD OPT_RULE_BLACKLIST").unwrap();
 }

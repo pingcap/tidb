@@ -17,7 +17,7 @@
 use crate::apply_cache::ApplyCache;
 use crate::joiner::{Joiner, NAAJType};
 use crate::{ExecError, Executor, ExecutorMeta, StatementMemory, StmtContext};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tidb_chunk::{
     chunk::Chunk,
     iterator::{Iterator4List, LendingIterator, ListIteratorPosition},
@@ -26,6 +26,16 @@ use tidb_chunk::{
 use tidb_datatype::FieldType;
 use tidb_expr::{column::CorrelatedColumn, expression::Expression, schema::Schema};
 use tidb_util::memory::Tracker;
+
+/// Go joinRuntimeStats cache counters, published by NestedLoopApplyExec.Close.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ApplyRuntimeSnapshot {
+    pub enabled: bool,
+    pub accesses: u64,
+    pub hits: u64,
+}
+
+pub(crate) type ApplyRuntimeSink = Arc<Mutex<Option<ApplyRuntimeSnapshot>>>;
 
 struct InnerRows {
     list: List,
@@ -50,6 +60,9 @@ pub struct NestedLoopApplyExec {
     memory: StatementMemory,
     tracker: Arc<Tracker>,
     cache_enabled: bool,
+    cache_accesses: u64,
+    cache_hits: u64,
+    runtime_sink: Option<ApplyRuntimeSink>,
     cache: Option<ApplyCache<InnerRows>>,
     inner_rows: Option<Arc<InnerRows>>,
     inner_position: Option<ListIteratorPosition>,
@@ -93,6 +106,9 @@ impl NestedLoopApplyExec {
             memory,
             tracker,
             cache_enabled,
+            cache_accesses: 0,
+            cache_hits: 0,
+            runtime_sink: None,
             cache: None,
             inner_rows: None,
             inner_position: None,
@@ -107,6 +123,11 @@ impl NestedLoopApplyExec {
             done: false,
         }
     }
+    pub(crate) fn with_runtime_sink(mut self, sink: Option<ApplyRuntimeSink>) -> Self {
+        self.runtime_sink = sink;
+        self
+    }
+
     fn account(&self) -> Result<(), ExecError> {
         let rows = self
             .inner_rows
@@ -152,7 +173,9 @@ impl NestedLoopApplyExec {
             }
         }
         if let (Some(cache), Some(key)) = (&self.cache, &key) {
+            self.cache_accesses += 1;
             if let Some(rows) = cache.get(key) {
+                self.cache_hits += 1;
                 self.inner_rows = Some(rows);
                 return self.account();
             }
@@ -273,6 +296,8 @@ impl Executor for NestedLoopApplyExec {
         self.done = false;
         self.has_match = false;
         self.has_null = false;
+        self.cache_accesses = 0;
+        self.cache_hits = 0;
         self.cache = self
             .cache_enabled
             .then(|| ApplyCache::new(self.context.apply_cache_capacity()));
@@ -341,6 +366,13 @@ impl Executor for NestedLoopApplyExec {
         Ok(())
     }
     fn close(&mut self) -> Result<(), ExecError> {
+        if let Some(sink) = &self.runtime_sink {
+            *sink.lock().unwrap() = Some(ApplyRuntimeSnapshot {
+                enabled: self.cache_enabled,
+                accesses: self.cache_accesses,
+                hits: self.cache_hits,
+            });
+        }
         self.inner_rows = None;
         self.cache = None;
         self.active_outer = None;

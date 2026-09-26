@@ -247,11 +247,7 @@ fn go_max(x: f64, y: f64) -> f64 {
     if x == 0.0 && x == y {
         return if x.is_sign_negative() { y } else { x };
     }
-    if x > y {
-        x
-    } else {
-        y
-    }
+    if x > y { x } else { y }
 }
 
 fn round_two(value: f64) -> f64 {
@@ -450,4 +446,93 @@ pub fn get_avg_row_size_data_in_disk_by_rows(
         }
     }
     go_max(0.0, size + 8.0 * columns.len() as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        RowSizeColumnStats, RowSizeType, avg_col_size, avg_col_size_chunk_format,
+        avg_col_size_data_in_disk_by_rows,
+    };
+
+    /// Go `pkg/planner/cardinality.TestAvgColLen`: the same five column
+    /// types are analyzed once, then analyzed after a second row is inserted.
+    #[test]
+    fn average_column_sizes_match_go_avg_col_len_fixture() {
+        let first_analysis = [
+            (
+                RowSizeColumnStats::new(RowSizeType::Long, 1, 0, 1.0, false),
+                1.0,
+                8.0,
+                8.0,
+            ),
+            (
+                RowSizeColumnStats::new(RowSizeType::Variable, 8, 0, 1.0, false),
+                8.0,
+                5.0,
+                13.0,
+            ),
+            (
+                RowSizeColumnStats::new(RowSizeType::Float, 4, 0, 1.0, false),
+                8.0,
+                4.0,
+                4.0,
+            ),
+            (
+                RowSizeColumnStats::new(RowSizeType::Datetime, 8, 0, 1.0, false),
+                8.0,
+                8.0,
+                8.0,
+            ),
+            (
+                RowSizeColumnStats::new(RowSizeType::Variable, 0, 1, 1.0, false),
+                0.0,
+                0.0,
+                8.0,
+            ),
+        ];
+        for (column, avg, disk, chunk) in first_analysis {
+            assert_eq!(avg_col_size(&column, 1, false), avg);
+            assert_eq!(avg_col_size_data_in_disk_by_rows(&column, 1), disk);
+            assert_eq!(avg_col_size_chunk_format(&column, 1), chunk);
+        }
+
+        let after_growth = [
+            (
+                RowSizeColumnStats::new(RowSizeType::Long, 3, 0, 2.0, false),
+                1.5,
+                8.0,
+                8.0,
+            ),
+            (
+                RowSizeColumnStats::new(RowSizeType::Variable, 21, 0, 2.0, false),
+                10.5,
+                ((10.5_f64 - 10.5_f64.log2()) * 100.0).round() / 100.0,
+                ((10.5_f64 - 10.5_f64.log2()) * 100.0).round() / 100.0 + 8.0,
+            ),
+            (
+                RowSizeColumnStats::new(RowSizeType::Float, 8, 0, 2.0, false),
+                8.0,
+                4.0,
+                4.0,
+            ),
+            (
+                RowSizeColumnStats::new(RowSizeType::Datetime, 16, 0, 2.0, false),
+                8.0,
+                8.0,
+                8.0,
+            ),
+            (
+                RowSizeColumnStats::new(RowSizeType::Variable, 0, 2, 2.0, false),
+                0.0,
+                0.0,
+                8.0,
+            ),
+        ];
+        for (column, avg, disk, chunk) in after_growth {
+            assert_eq!(avg_col_size(&column, 2, false), avg);
+            assert_eq!(avg_col_size_data_in_disk_by_rows(&column, 2), disk);
+            assert_eq!(avg_col_size_chunk_format(&column, 2), chunk);
+        }
+    }
 }

@@ -350,7 +350,26 @@ impl ClusterTableStats {
                 i32::MAX
             }
         });
-        let mut existence = ColAndIdxExistenceMap::new(self.columns.len(), self.indexes.len());
+        let mut existence =
+            ColAndIdxExistenceMap::new(table_info.columns.len(), table_info.indices.len());
+
+        // Go `statistics.PseudoTable` seeds schema-visible items as known,
+        // but not analyzed. Storage may have a real stats_meta row before
+        // any column or index histogram rows exist; starting from the schema
+        // keeps later load decisions and `ColAndIdxExistenceMap` queries
+        // equivalent to that metadata-only table.
+        for column in table_info.cols().iter_deref() {
+            let column = column.read();
+            if column.state == tidb_model::SchemaState::PUBLIC && !column.hidden {
+                existence.insert_column(column.id, false);
+            }
+        }
+        for index in table_info.indices.iter_deref() {
+            let index = index.read();
+            if index.state == tidb_model::SchemaState::PUBLIC {
+                existence.insert_index(index.id, false);
+            }
+        }
 
         for item in &self.columns {
             let Some(column) = item.to_column(self.table_id, table_info) else {

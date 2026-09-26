@@ -83,16 +83,19 @@ pub(crate) struct StatementVarSnapshot {
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
     ordering_index_selectivity_ratio: f64,
+    ordering_index_selectivity_threshold: f64,
     allow_projection_push_down: bool,
     enable_inl_join_inner_multi_pattern: bool,
     enable_null_aware_anti_join: bool,
     limit_push_down_threshold: u64,
+    enable_adaptive_limit_scan: bool,
     index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
     join_reorder_through_proj: bool,
     join_reorder_through_sel: bool,
     outer_join_reorder: bool,
     index_merge: bool,
     static_partition_prune: bool,
+    select_limit: u64,
     new_only_full_group_by_check: bool,
     auto_increment_in_generated: bool,
     remove_orderby_in_subquery: bool,
@@ -200,14 +203,53 @@ impl Session {
             }
         };
 
+        let group_ndv_skew_ratio = number("tidb_opt_group_ndv_skew_ratio", 0.0);
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+        env.session.estimator_options =
+            tidb_planner::cardinality::row_count_estimator::EstimatorOptions {
+                risk_eq_skew_ratio: number(
+                    tidb_vardef::tidb_vars::TIDB_OPT_RISK_EQ_SKEW_RATIO,
+                    tidb_vardef::defaults::DEF_OPT_RISK_EQ_SKEW_RATIO,
+                ),
+                risk_range_skew_ratio: number(
+                    tidb_vardef::tidb_vars::TIDB_OPT_RISK_RANGE_SKEW_RATIO,
+                    tidb_vardef::defaults::DEF_OPT_RISK_RANGE_SKEW_RATIO,
+                ),
+                allow_use_modify_count: self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_OPT_OBJECTIVE)
+                    .ok()
+                    .is_none_or(|value| {
+                        !value
+                            .eq_ignore_ascii_case(tidb_vardef::tidb_vars::OPT_OBJECTIVE_DETERMINATE)
+                    }),
+            };
+        env.session.correlation_options =
+            tidb_planner::cardinality::cross_estimation::CorrelationOptions {
+                enabled: enabled(
+                    tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_CORRELATION_ADJUSTMENT,
+                    tidb_vardef::defaults::DEF_OPT_ENABLE_CORRELATION_ADJUSTMENT,
+                ),
+                threshold: number(
+                    tidb_vardef::tidb_vars::TIDB_OPT_CORRELATION_THRESHOLD,
+                    tidb_vardef::defaults::DEF_OPT_CORRELATION_THRESHOLD,
+                ),
+                exponent: self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_OPT_CORRELATION_EXP_FACTOR)
+                    .ok()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(tidb_vardef::defaults::DEF_OPT_CORRELATION_EXP_FACTOR),
+            };
         env.session.hash_join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
         env.session.shuffle_options = tidb_planner::physical::shuffle_optimize::ShuffleOptions {
             window_concurrency: resolved_concurrency("tidb_window_concurrency") as usize,
             stream_agg_concurrency: resolved_concurrency("tidb_streamagg_concurrency") as usize,
             merge_join_concurrency: resolved_concurrency("tidb_merge_join_concurrency") as usize,
-            group_ndv_skew_ratio: number("tidb_opt_group_ndv_skew_ratio", 0.0),
+            group_ndv_skew_ratio,
         };
+        env.session.group_ndv_skew_ratio = group_ndv_skew_ratio;
+        env.session.scale_ndv_skew_ratio = number("tidb_opt_scale_ndv_skew_ratio", 1.0);
         env.session.distsql_scan_concurrency = number("tidb_distsql_scan_concurrency", 15.0);
         env.session.index_lookup_concurrency =
             resolved_concurrency("tidb_index_lookup_concurrency");
@@ -231,8 +273,7 @@ impl Session {
             .is_none_or(|value| tidb_exec::hash_join_version::is_optimized_version(&value))
             && tidb_exec::hash_join_version::is_hash_join_v2_supported();
         env.session.mpp_allowed = enabled("tidb_allow_mpp", true);
-        env.session.mpp_enforced =
-            env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
+        env.session.mpp_enforced = env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
 
         env.cost_factors.index_scan = number("tidb_opt_index_scan_cost_factor", 1.0);
         env.cost_factors.table_row_id_scan = number("tidb_opt_table_rowid_scan_cost_factor", 1.0);
@@ -816,10 +857,16 @@ impl Session {
             constraint_check_in_place: on(tidb_vardef::tidb_vars::TIDB_CONSTRAINT_CHECK_IN_PLACE),
             ordering_index_selectivity_ratio: self
                 .vars
-                .get_system("tidb_opt_ordering_index_selectivity_ratio")
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_RATIO)
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.01),
+            ordering_index_selectivity_threshold: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_THRESH)
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH),
             allow_projection_push_down: on("tidb_opt_projection_push_down"),
             enable_inl_join_inner_multi_pattern: not_off(
                 tidb_vardef::tidb_vars::TIDB_ENABLE_INL_JOIN_INNER_MULTI_PATTERN,
@@ -831,6 +878,7 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD as u64),
+            enable_adaptive_limit_scan: on(tidb_vardef::tidb_vars::TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN),
             index_lookup_push_down_session,
             join_reorder_through_proj: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ,
@@ -840,6 +888,7 @@ impl Session {
                 tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_OUTER_JOIN_REORDER,
             ),
             index_merge: not_off("tidb_enable_index_merge"),
+            select_limit: self.vars.select_limit(),
             static_partition_prune: self
                 .vars
                 .get_system("tidb_partition_prune_mode")
@@ -1032,10 +1081,12 @@ impl Session {
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
+        let ordering_index_selectivity_threshold = snapshot.ordering_index_selectivity_threshold;
         let allow_projection_push_down = snapshot.allow_projection_push_down;
         let enable_inl_join_inner_multi_pattern = snapshot.enable_inl_join_inner_multi_pattern;
         let enable_null_aware_anti_join = snapshot.enable_null_aware_anti_join;
         let limit_push_down_threshold = snapshot.limit_push_down_threshold;
+        let enable_adaptive_limit_scan = snapshot.enable_adaptive_limit_scan;
         let mut index_lookup_push_down_session = snapshot.index_lookup_push_down_session;
         // Transaction state is not part of the variable-table generation
         // that keys `StatementVarSnapshot`, so read it at every statement
@@ -1081,13 +1132,31 @@ impl Session {
             tmp_storage_on_oom,
         );
         let statement_memory = result_authority.statement_memory();
-        let index_usage_collector = self.session_index_usage_collector.as_ref().map(|session| {
-            Arc::new(
-                tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector::new(Arc::clone(
-                    session,
-                )),
-            )
+        // Go `ResetContextOfStmt` checks this process-wide instance switch on
+        // every statement and clears the statement collector while it is OFF.
+        // The session collector may outlive a toggle, so its presence alone
+        // must not decide whether this statement reports index usage.
+        let collect_execution_info = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_COLLECT_EXECUTION_INFO)
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"));
+        let runtime_stats_source: Option<
+            Arc<dyn tidb_executor::executor::ExecutorRuntimeStatsSource>,
+        > = collect_execution_info.then(|| {
+            Arc::new(tidb_exec::runtime_stats::RuntimeStatsColl::new(None))
+                as Arc<dyn tidb_executor::executor::ExecutorRuntimeStatsSource>
         });
+        let index_usage_collector = if collect_execution_info {
+            self.session_index_usage_collector.as_ref().map(|session| {
+                Arc::new(
+                    tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector::new(Arc::clone(
+                        session,
+                    )),
+                )
+            })
+        } else {
+            None
+        };
         self.statement_result_authority
             .replace(Some(result_authority));
         // The SAME three bits on both branches: a query reads them for
@@ -1113,6 +1182,7 @@ impl Session {
             sequences: self.sequence_snapshot(),
             resource_group_name: self.active_resource_group.clone(),
             isolation_read_engines,
+            select_limit: snapshot.select_limit,
             connection_charset,
             connection_collation,
             ddl_sql_mode: sql_mode.0,
@@ -1140,10 +1210,12 @@ impl Session {
                     .with_tiflash_pre_agg_mode(tiflash_pre_agg_mode.clone())
                     .with_partial_ordered_index_for_topn(partial_ordered_index_for_topn)
                     .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+                    .with_ordering_index_selectivity_threshold(ordering_index_selectivity_threshold)
                     .with_projection_push_down(allow_projection_push_down)
                     .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
                     .with_enable_null_aware_anti_join(enable_null_aware_anti_join)
                     .with_limit_push_down_threshold(limit_push_down_threshold)
+                    .with_enable_adaptive_limit_scan(enable_adaptive_limit_scan)
                     .with_index_lookup_push_down_session(index_lookup_push_down_session)
                     .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                     .with_optimizer_cost_env(optimizer_cost_env.clone())
@@ -1213,6 +1285,7 @@ impl Session {
                     .with_plan_replayer_capture(plan_replayer_capture_enabled)
                     .with_column_stats_usage(self.stats_collector.clone())
                     .with_index_usage_collector(index_usage_collector)
+                    .with_executor_runtime_stats_source(runtime_stats_source.clone())
                     .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
                     .with_opt_index_prune_threshold(opt_index_prune_threshold)
                     .with_range_max_size(range_max_size)
@@ -1313,6 +1386,7 @@ impl Session {
                 .with_plan_replayer_capture(plan_replayer_capture_enabled)
                 .with_column_stats_usage(self.stats_collector.clone())
                 .with_index_usage_collector(index_usage_collector)
+                .with_executor_runtime_stats_source(runtime_stats_source.clone())
                 .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
                 .with_opt_index_prune_threshold(opt_index_prune_threshold)
                 .with_range_max_size(range_max_size)
@@ -1352,10 +1426,12 @@ impl Session {
                 .with_tiflash_pre_agg_mode(tiflash_pre_agg_mode.clone())
                 .with_partial_ordered_index_for_topn(partial_ordered_index_for_topn)
                 .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+                .with_ordering_index_selectivity_threshold(ordering_index_selectivity_threshold)
                 .with_projection_push_down(allow_projection_push_down)
                 .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
                 .with_enable_null_aware_anti_join(enable_null_aware_anti_join)
                 .with_limit_push_down_threshold(limit_push_down_threshold)
+                .with_enable_adaptive_limit_scan(enable_adaptive_limit_scan)
                 .with_index_lookup_push_down_session(index_lookup_push_down_session)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                 .with_optimizer_cost_env(optimizer_cost_env)
@@ -1513,6 +1589,85 @@ pub(crate) const fn scanner_sql_mode_of(mode: tidb_mysql::SqlMode) -> tidb_parse
 mod tests {
 
     #[test]
+    fn adaptive_limit_scan_uses_the_session_statement_snapshot() {
+        let mut session = Session::new();
+        assert!(
+            !session
+                .statement_context(false)
+                .enable_adaptive_limit_scan()
+        );
+        session
+            .run("SET tidb_enable_adaptive_limit_scan = ON")
+            .unwrap();
+        let query = session.statement_context(false);
+        let dml = session.statement_context(true);
+        assert!(query.enable_adaptive_limit_scan());
+        assert!(dml.enable_adaptive_limit_scan());
+
+        session
+            .run("SET tidb_enable_adaptive_limit_scan = OFF")
+            .unwrap();
+        assert!(
+            !session
+                .statement_context(false)
+                .enable_adaptive_limit_scan()
+        );
+        assert!(query.enable_adaptive_limit_scan());
+    }
+
+    #[test]
+    fn index_usage_collector_tracks_execution_info_switch_per_statement() {
+        let global = tidb_stats_handle_usage_indexusage::Collector::new();
+        global.start_worker();
+        let mut session = Session::new();
+        session
+            .run("SET tidb_enable_collect_execution_info = ON")
+            .unwrap();
+        session.set_session_index_usage_collector(global.spawn_session_collector());
+        assert!(
+            session
+                .statement_context(false)
+                .index_usage_collector()
+                .is_some()
+        );
+        assert!(
+            session
+                .statement_context(false)
+                .executor_runtime_stats_source()
+                .is_some()
+        );
+
+        session
+            .run("SET tidb_enable_collect_execution_info = OFF")
+            .unwrap();
+        assert!(
+            session
+                .statement_context(false)
+                .index_usage_collector()
+                .is_none()
+        );
+        assert!(
+            session
+                .statement_context(false)
+                .executor_runtime_stats_source()
+                .is_none()
+        );
+
+        session
+            .run("SET tidb_enable_collect_execution_info = ON")
+            .unwrap();
+        assert!(
+            session
+                .statement_context(false)
+                .index_usage_collector()
+                .is_some()
+        );
+
+        drop(session);
+        global.close();
+    }
+
+    #[test]
     fn mpp_enforcement_requires_both_session_switches() {
         let mut session = Session::new();
         let state = |session: &Session| {
@@ -1536,6 +1691,113 @@ mod tests {
         session.run("SET tidb_allow_mpp = OFF").unwrap();
         assert_eq!(state(&session), (false, false));
     }
+
+    #[test]
+    fn cardinality_estimator_options_follow_session_variables() {
+        let mut session = Session::new();
+        let original = session.statement_context(false);
+        let original_options = original.optimizer_cost_env().session.estimator_options;
+        assert_eq!(original_options, Default::default());
+
+        session
+            .run("SET tidb_opt_risk_eq_skew_ratio = 0.25")
+            .unwrap();
+        session
+            .run("SET tidb_opt_risk_range_skew_ratio = 0.5")
+            .unwrap();
+        session
+            .run("SET tidb_opt_objective = 'determinate'")
+            .unwrap();
+
+        let options = session
+            .statement_context(false)
+            .optimizer_cost_env()
+            .session
+            .estimator_options;
+        assert_eq!(options.risk_eq_skew_ratio, 0.25);
+        assert_eq!(options.risk_range_skew_ratio, 0.5);
+        assert!(!options.allow_use_modify_count);
+        assert_eq!(
+            original.optimizer_cost_env().session.estimator_options,
+            original_options
+        );
+    }
+
+    #[test]
+    fn group_ndv_skew_ratio_is_snapshotted_for_planning() {
+        let mut session = Session::new();
+        let original = session.statement_context(false);
+        assert_eq!(
+            original.optimizer_cost_env().session.group_ndv_skew_ratio,
+            tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO
+        );
+
+        session
+            .run("SET tidb_opt_group_ndv_skew_ratio = 0.4")
+            .unwrap();
+        session.run("SET tidb_opt_scale_ndv_skew_ratio = 0.6").unwrap();
+        let current_context = session.statement_context(false);
+        let current = current_context.optimizer_cost_env();
+        assert_eq!(current.session.group_ndv_skew_ratio, 0.4);
+        assert_eq!(current.session.scale_ndv_skew_ratio, 0.6);
+        assert_eq!(original.optimizer_cost_env().session.scale_ndv_skew_ratio, 1.0);
+        assert_eq!(current.session.shuffle_options.group_ndv_skew_ratio, 0.4);
+        assert_eq!(
+            original.optimizer_cost_env().session.group_ndv_skew_ratio,
+            tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO
+        );
+    }
+
+    #[test]
+    fn correlation_estimator_options_follow_session_variables() {
+        let mut session = Session::new();
+        let original = session.statement_context(false);
+        let original_options = original.optimizer_cost_env().session.correlation_options;
+        assert_eq!(original_options, Default::default());
+
+        session
+            .run("SET tidb_opt_enable_correlation_adjustment = OFF")
+            .unwrap();
+        session
+            .run("SET tidb_opt_correlation_threshold = 0.75")
+            .unwrap();
+        session
+            .run("SET tidb_opt_correlation_exp_factor = 3")
+            .unwrap();
+
+        let options = session
+            .statement_context(false)
+            .optimizer_cost_env()
+            .session
+            .correlation_options;
+        assert!(!options.enabled);
+        assert_eq!(options.threshold, 0.75);
+        assert_eq!(options.exponent, 3);
+        assert_eq!(
+            original.optimizer_cost_env().session.correlation_options,
+            original_options
+        );
+    }
+
+    #[test]
+    fn ordering_index_selectivity_threshold_is_snapshotted_per_statement() {
+        let mut session = Session::new();
+        let original = session.statement_context(false);
+        assert_eq!(original.ordering_index_selectivity_threshold(), 0.0);
+
+        session
+            .run("SET tidb_opt_ordering_index_selectivity_threshold = 0.1")
+            .unwrap();
+
+        assert_eq!(
+            session
+                .statement_context(false)
+                .ordering_index_selectivity_threshold(),
+            0.1
+        );
+        assert_eq!(original.ordering_index_selectivity_threshold(), 0.0);
+    }
+
     #[test]
     fn range_quota_uses_session_snapshot_and_refreshes_after_set() {
         let mut session = crate::Session::new();
@@ -1559,10 +1821,12 @@ mod tests {
         use tidb_executor::{Executor, ExecutorMeta, TableDualExec};
 
         let mut session = Session::new();
-        assert!(session
-            .statement_context(false)
-            .selected_lock_keys()
-            .is_none());
+        assert!(
+            session
+                .statement_context(false)
+                .selected_lock_keys()
+                .is_none()
+        );
         session.set_selected_lock_keys(Some(SelectedLockKeys::default()));
         for is_dml in [false, true] {
             let context = session.statement_context(is_dml);
@@ -1587,25 +1851,31 @@ mod tests {
             exec.close().unwrap();
         }
         session.set_selected_lock_keys(None);
-        assert!(session
-            .statement_context(false)
-            .selected_lock_keys()
-            .is_none());
+        assert!(
+            session
+                .statement_context(false)
+                .selected_lock_keys()
+                .is_none()
+        );
         assert!(session.take_selected_lock_keys().is_empty());
     }
 
     #[test]
     fn no_decorrelate_in_select_reaches_the_statement_context() {
         let mut session = Session::new();
-        assert!(!session
-            .statement_context(false)
-            .enable_no_decorrelate_in_select());
+        assert!(
+            !session
+                .statement_context(false)
+                .enable_no_decorrelate_in_select()
+        );
         session
             .run("set tidb_opt_enable_no_decorrelate_in_select = on")
             .unwrap();
-        assert!(session
-            .statement_context(false)
-            .enable_no_decorrelate_in_select());
+        assert!(
+            session
+                .statement_context(false)
+                .enable_no_decorrelate_in_select()
+        );
     }
 
     /// Go `ResetContextOfStmt` sets `sc.Priority` from the statement's own

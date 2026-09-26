@@ -47,7 +47,7 @@ use tidb_codec::encode_key;
 use tidb_datatype::{Collation, Datum};
 use tidb_planner::cardinality::row_count_estimator::{
     equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges,
-    ColumnRange, ColumnStats, EstimatorOptions, IndexRangeDatums, IndexStats,
+    ColumnRange, ColumnStats, EstimatorOptions, IndexRangeDatums, IndexRowCounts, IndexStats,
 };
 use tidb_planner::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
@@ -254,7 +254,8 @@ fn column_estimate(
         MODIFY,
         pk,
         EstimatorOptions::default(),
-    );
+    )
+    .unwrap();
     (result.est, result.min_est, result.max_est)
 }
 
@@ -588,8 +589,9 @@ fn index_range(
     high_exclude: bool,
 ) -> IndexRangeDatums {
     IndexRangeDatums {
-        low: low.iter().map(|v| Datum::Int(*v)).collect(),
-        high: high.iter().map(|v| Datum::Int(*v)).collect(),
+        collators: vec![tidb_datatype::Collation::Binary; low.len()],
+        low_val: low.iter().map(|v| Datum::Int(*v)).collect(),
+        high_val: high.iter().map(|v| Datum::Int(*v)).collect(),
         low_exclude,
         high_exclude,
     }
@@ -663,11 +665,13 @@ fn source_index_range_estimates() {
         let result = get_index_row_count_for_stats_v2(
             &index,
             &columns,
+            &[],
+            &[],
             ranges,
-            REALTIME,
-            MODIFY,
+            IndexRowCounts::unscaled(REALTIME, MODIFY),
             EstimatorOptions::default(),
-        );
+        )
+        .unwrap();
         check(name, (result.est, result.min_est, result.max_est), *want);
     }
 }
@@ -727,11 +731,13 @@ fn source_index_exp_backoff_estimates() {
         let result = get_index_row_count_for_stats_v2(
             &index,
             &columns,
+            &[],
+            &[],
             ranges,
-            REALTIME,
-            MODIFY,
+            IndexRowCounts::unscaled(REALTIME, MODIFY),
             EstimatorOptions::default(),
-        );
+        )
+        .unwrap();
         check(name, (result.est, result.min_est, result.max_est), *want);
     }
 }
@@ -777,11 +783,13 @@ fn source_composite_index_prefix_matching_the_first_bound_is_in_range() {
     let result = get_index_row_count_for_stats_v2(
         &index,
         &columns,
+        &[],
+        &[],
         &[index_range(&[1], &[1], false, false)],
-        100,
-        0,
+        IndexRowCounts::unscaled(100, 0),
         EstimatorOptions::default(),
-    );
+    )
+    .unwrap();
 
     check(
         "composite prefix at first histogram bound",
@@ -942,9 +950,11 @@ fn equal_row_count_prefers_topn_over_every_later_source() {
         REALTIME,
         MODIFY,
         EstimatorOptions::default(),
-    );
+    )
+    .unwrap();
     assert_close(result.est, 22.0, "TopN count is exact");
 }
+
 
 #[test]
 fn selectivity_estimates_only_conditions_left_uncovered_by_statistics() {

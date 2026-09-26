@@ -1094,15 +1094,16 @@ pub fn query_value_with_encoder<E>(
         .query_bytes(&encoded))
 }
 
-/// Native typed Go `QueryValue` using the requested session time zone.
-pub fn query_value<TZ: chrono::TimeZone + 'static>(
+/// Native typed Go `QueryValue` using table-value flattening and the requested
+/// session time zone. `None` uses UTC, as Go does without a statement context.
+pub fn query_value(
     cms: Option<&CmsSketch>,
     topn: Option<&TopN>,
     value: &Datum,
-    timezone: &TZ,
-) -> Result<u64, tidb_codec::CodecError> {
+    timezone: Option<&tidb_datatype::SessionTimeZone>,
+) -> Result<u64, tidb_tablecodec::TableRowError> {
     query_value_with_encoder(cms, topn, value, |value| {
-        tidb_codec::encode_value_in_timezone(timezone, std::slice::from_ref(value))
+        tidb_tablecodec::encode_table_value(timezone, value)
     })
 }
 

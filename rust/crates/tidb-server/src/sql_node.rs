@@ -1075,9 +1075,13 @@ pub struct SessionContext {
 /// Query capability retained entirely inside one fixed worker thread.
 pub trait QuerySession {
     /// Go SessionVars.ResourceGroupName for command metrics.
-    fn metrics_resource_group(&self) -> &str { "default" }
+    fn metrics_resource_group(&self) -> &str {
+        "default"
+    }
     /// Go StmtCtx.ResourceGroupName, including an admitted statement hint.
-    fn metrics_statement_resource_group(&self) -> &str { self.metrics_resource_group() }
+    fn metrics_statement_resource_group(&self) -> &str {
+        self.metrics_resource_group()
+    }
 
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;

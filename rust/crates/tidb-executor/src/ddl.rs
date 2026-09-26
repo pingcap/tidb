@@ -404,7 +404,10 @@ pub(crate) enum HandleKind {
     IntHandle(usize),
     /// Go `TableInfo.IsCommonHandle` (with `CommonHandleVersion = 1`): the
     /// primary key's columns, in key order, datum-encode into the row key.
-    CommonHandle(Vec<usize>),
+    CommonHandle {
+        offsets: Vec<usize>,
+        prefix_lengths: Vec<i64>,
+    },
 }
 
 impl HandleKind {
@@ -428,6 +431,7 @@ impl HandleKind {
         mode: tidb_vardef::modes::ClusteredIndexDefMode,
         storage: Option<tidb_ast::PrimaryKeyStorage>,
         pk_offsets: &[usize],
+        pk_prefix_lengths: &[i64],
         columns: &[ColumnInfo],
     ) -> Self {
         if pk_offsets.is_empty() {
@@ -451,7 +455,10 @@ impl HandleKind {
         } else if single_int {
             Self::IntHandle(pk_offsets[0])
         } else {
-            Self::CommonHandle(pk_offsets.to_vec())
+            Self::CommonHandle {
+                offsets: pk_offsets.to_vec(),
+                prefix_lengths: pk_prefix_lengths.to_vec(),
+            }
         }
     }
 
@@ -466,7 +473,7 @@ impl HandleKind {
         match self {
             Self::RowId => &[],
             Self::IntHandle(offset) => std::slice::from_ref(offset),
-            Self::CommonHandle(offsets) => offsets.as_slice(),
+            Self::CommonHandle { offsets, .. } => offsets.as_slice(),
         }
     }
 }
@@ -1371,6 +1378,9 @@ pub fn run_create_table_in(
         clustered_index_mode,
         primary_key.as_ref().and_then(|declared| declared.storage),
         &pk_offsets,
+        primary_key
+            .as_ref()
+            .map_or(&[], |declared| declared.prefix_lengths.as_slice()),
         &columns,
     );
     let auto_random = auto_random::validate(
@@ -1588,8 +1598,12 @@ pub fn run_create_table_in(
     match &handle {
         HandleKind::RowId => {}
         HandleKind::IntHandle(offset) => table.set_pk_handle_offset(*offset),
-        HandleKind::CommonHandle(offsets) => {
+        HandleKind::CommonHandle {
+            offsets,
+            prefix_lengths,
+        } => {
             table.set_common_handle_offsets(offsets.clone());
+            table.set_common_handle_prefix_lengths(prefix_lengths.clone());
             table.set_common_handle_version(1);
         }
     }
@@ -1662,7 +1676,7 @@ pub fn run_create_table_in(
     // float handle loses precision.
     if ttl_info.is_some() && clustered {
         let pk_offsets: &[usize] = match &handle {
-            HandleKind::CommonHandle(offsets) => offsets,
+            HandleKind::CommonHandle { offsets, .. } => offsets,
             HandleKind::IntHandle(offset) => std::slice::from_ref(offset),
             HandleKind::RowId => &[],
         };
@@ -1739,7 +1753,7 @@ pub fn run_create_table_in(
         create,
         &columns,
         clustered,
-        matches!(&handle, HandleKind::CommonHandle(_)),
+        matches!(&handle, HandleKind::CommonHandle { .. }),
         ctx,
         catalog.max_index_length(),
     )?;

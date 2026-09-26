@@ -386,6 +386,7 @@ tidb_disable_txn_auto_retry	ON
 tidb_distsql_scan_concurrency	15
 tidb_dml_batch_size	0
 tidb_enable_1pc	OFF
+tidb_enable_adaptive_limit_scan	ON
 tidb_enable_analyze_snapshot	OFF
 tidb_enable_async_commit	OFF
 tidb_enable_async_merge_global_stats	ON

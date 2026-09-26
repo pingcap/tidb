@@ -21,7 +21,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::aggregator::global_aggregator;
 use super::rustats::{normalize_ru_version, ExecutionContext, RuIncrementMap, RuKey, RuVersion};
-use super::ruv2_metrics::{self, RuV2Metrics, RuV2Weights};
 use tikv_client::RuDetails;
 
 /// Go `BinaryDigest`, converted from `parser.Digest.Bytes()` so that it can be
@@ -218,12 +217,8 @@ impl DerefMut for StatementStatsMap {
 pub struct ExecBeginInfo {
     /// Go's `Ctx.Value(util.RUDetailsCtxKey)`, resolved by the caller.
     pub ru_details: Option<Arc<RuDetails>>,
-    /// Go `ExecBeginInfo.RUV2Metrics`.
-    pub ruv2_metrics: Option<Arc<RuV2Metrics>>,
     /// Go `ExecBeginInfo.User`.
     pub user: String,
-    /// Go `ExecBeginInfo.RUV2Weights`.
-    pub ruv2_weights: RuV2Weights,
     /// Go `ExecBeginInfo.InNetworkBytes`.
     pub in_network_bytes: u64,
     /// Go `ExecBeginInfo.RUVersion`.
@@ -240,6 +235,8 @@ pub struct ExecFinishInfo {
     pub ru_details: Option<Arc<RuDetails>>,
     /// Go `ExecFinishInfo.User`.
     pub user: String,
+    /// Go `ExecFinishInfo.TotalRUV2`, finalized once at statement finish.
+    pub total_ru_v2: f64,
     /// Go `ExecFinishInfo.OutNetworkBytes`.
     pub out_network_bytes: u64,
     /// Go `ExecFinishInfo.ExecDuration`, as a signed nanosecond count.
@@ -337,8 +334,6 @@ impl StatementStats {
         // Replace stale execution context defensively.
         inner.exec_ctx = Some(ExecutionContext {
             ru_details: info.ru_details.clone(),
-            ruv2_metrics: info.ruv2_metrics.clone(),
-            ruv2_weights: info.ruv2_weights,
             ru_version: normalize_ru_version(info.ru_version),
             key: key.clone(),
             last_ru_total: 0.0,
@@ -350,14 +345,12 @@ impl StatementStats {
     /// Go's `addRUOnFinishLocked`.
     fn add_ru_on_finish_locked(
         inner: &mut StatementStatsInner,
-        user: &str,
         sql_digest: &[u8],
         plan_digest: &[u8],
-        ru: Option<&RuDetails>,
-        exec_duration_ns: i64,
+        info: &ExecFinishInfo,
     ) {
         let key = RuKey {
-            user: user.to_owned(),
+            user: info.user.clone(),
             sql_digest: BinaryDigest::from(sql_digest),
             plan_digest: BinaryDigest::from(plan_digest),
         };
@@ -374,7 +367,10 @@ impl StatementStats {
 
             // Go arms `defer s.clearRUExecCtxLocked()` from here on, so every
             // path below leaves the execution context cleared.
-            let current_total_ru = current_ru_total(Some(exec_ctx), ru);
+            let mut current_total_ru = current_ru_total(Some(exec_ctx), info.ru_details.as_deref());
+            if normalize_ru_version(exec_ctx.ru_version) == RuVersion::V2 {
+                current_total_ru = info.total_ru_v2;
+            }
             if current_total_ru <= 0.0 {
                 inner.exec_ctx = None;
                 return;
@@ -393,7 +389,7 @@ impl StatementStats {
         }
         let incr = inner.finished_ru_buffer.get_or_create(key);
         incr.total_ru += delta_ru;
-        incr.exec_duration += exec_duration_ns.unsigned_abs();
+        incr.exec_duration += info.exec_duration_ns.unsigned_abs();
     }
 
     /// Go `StatementStats.ResetRUStateOnVersionChange`: resets RU state for an
@@ -530,15 +526,7 @@ impl StatementObserver for StatementStats {
             item.network_out_bytes += info.out_network_bytes;
         }
         if info.top_ru_enabled {
-            let ru = info.ru_details.clone();
-            Self::add_ru_on_finish_locked(
-                &mut inner,
-                &info.user,
-                sql_digest,
-                plan_digest,
-                ru.as_deref(),
-                ns,
-            );
+            Self::add_ru_on_finish_locked(&mut inner, sql_digest, plan_digest, info);
         } else {
             inner.exec_ctx = None;
         }
@@ -553,18 +541,7 @@ fn current_ru_total(exec_ctx: Option<&ExecutionContext>, ru_details: Option<&RuD
     };
 
     if normalize_ru_version(exec_ctx.ru_version) == RuVersion::V2 {
-        let mut tikv_ru = 0.0;
-        let mut tiflash_ru = 0.0;
-        if let Some(ru) = ru_details {
-            tikv_ru = ru.tikv_ru_v2();
-            tiflash_ru = ru.tiflash_ru();
-        }
-        return ruv2_metrics::total_ru(
-            exec_ctx.ruv2_metrics.as_deref(),
-            exec_ctx.ruv2_weights,
-            tikv_ru,
-            tiflash_ru,
-        );
+        return 0.0;
     }
 
     match ru_details {
@@ -748,155 +725,13 @@ mod tests {
         assert!(stats.finished());
     }
 
-    // Go `TestStatementStatsRUV2Sampling`.
+    // Go RU-v2 statement accounting uses a finalized total supplied at finish.
     #[test]
-    fn statement_stats_ruv2_sampling() {
-        let _guard = global_test_guard();
-        let key = ru_key("u1", "sql", "plan");
-
-        // Go subtest "with ru details".
-        {
-            let stats = StatementStats::detached();
-            let ru = Arc::new(RuDetails::new());
-            ru.add_tikv_ru_v2(11.0);
-            let metrics = Arc::new(RuV2Metrics::new());
-            metrics.add_plan_cnt(3);
-            let weights = RuV2Weights {
-                ru_scale: 1.0,
-                plan_cnt: 2.0,
-                ..RuV2Weights::default()
-            };
-            let info = ExecBeginInfo {
-                ru_details: Some(ru.clone()),
-                user: "u1".to_owned(),
-                top_ru_enabled: true,
-                ru_version: RuVersion::V2,
-                ruv2_metrics: Some(metrics.clone()),
-                ruv2_weights: weights,
-                ..ExecBeginInfo::default()
-            };
-            stats.on_execution_begin(b"sql", b"plan", Some(&info));
-
-            let first = stats.merge_ru_into();
-            assert_eq!(first[&key].exec_count, 1);
-            assert_in_delta(17.0, first[&key].total_ru);
-
-            metrics.add_plan_cnt(1);
-            ru.add_tikv_ru_v2(5.0);
-            let second = stats.merge_ru_into();
-            assert_in_delta(7.0, second[&key].total_ru);
-
-            metrics.add_plan_cnt(2);
-            ru.add_tikv_ru_v2(4.0);
-            stats.on_execution_finished(
-                b"sql",
-                b"plan",
-                Some(&ExecFinishInfo {
-                    ru_details: Some(ru.clone()),
-                    user: "u1".to_owned(),
-                    exec_duration_ns: SECOND_NS as i64,
-                    top_ru_enabled: true,
-                    ..ExecFinishInfo::default()
-                }),
-            );
-            let finish = stats.merge_ru_into();
-            assert_in_delta(8.0, finish[&key].total_ru);
-            assert_eq!(finish[&key].exec_duration, SECOND_NS);
-        }
-
-        // Go subtest "without ru details still counts tidb ru".
-        {
-            let stats = StatementStats::detached();
-            let metrics = Arc::new(RuV2Metrics::new());
-            metrics.add_plan_cnt(3);
-            let weights = RuV2Weights {
-                ru_scale: 1.0,
-                plan_cnt: 2.0,
-                ..RuV2Weights::default()
-            };
-            stats.on_execution_begin(
-                b"sql",
-                b"plan",
-                Some(&ExecBeginInfo {
-                    user: "u1".to_owned(),
-                    top_ru_enabled: true,
-                    ru_version: RuVersion::V2,
-                    ruv2_metrics: Some(metrics.clone()),
-                    ruv2_weights: weights,
-                    ..ExecBeginInfo::default()
-                }),
-            );
-
-            let first = stats.merge_ru_into();
-            assert_eq!(first[&key].exec_count, 1);
-            assert_in_delta(6.0, first[&key].total_ru);
-
-            metrics.add_plan_cnt(1);
-            let second = stats.merge_ru_into();
-            assert_in_delta(2.0, second[&key].total_ru);
-
-            metrics.add_plan_cnt(2);
-            stats.on_execution_finished(
-                b"sql",
-                b"plan",
-                Some(&ExecFinishInfo {
-                    user: "u1".to_owned(),
-                    exec_duration_ns: SECOND_NS as i64,
-                    top_ru_enabled: true,
-                    ..ExecFinishInfo::default()
-                }),
-            );
-            let finish = stats.merge_ru_into();
-            assert_in_delta(4.0, finish[&key].total_ru);
-            assert_eq!(finish[&key].exec_duration, SECOND_NS);
-        }
-
-        // Go subtest "v2 with nil metrics falls back to external ru".
-        {
-            let stats = StatementStats::detached();
-            let ru = Arc::new(RuDetails::new());
-            ru.add_tikv_ru_v2(11.0);
-
-            stats.on_execution_begin(
-                b"sql",
-                b"plan",
-                Some(&ExecBeginInfo {
-                    ru_details: Some(ru.clone()),
-                    user: "u1".to_owned(),
-                    top_ru_enabled: true,
-                    ru_version: RuVersion::V2,
-                    ..ExecBeginInfo::default()
-                }),
-            );
-
-            let first = stats.merge_ru_into();
-            assert_eq!(first[&key].exec_count, 1);
-            assert_in_delta(11.0, first[&key].total_ru);
-
-            ru.add_tikv_ru_v2(4.0);
-            let second = stats.merge_ru_into();
-            assert_in_delta(4.0, second[&key].total_ru);
-        }
-    }
-
-    // Go `TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields`:
-    // ResourceManager{Read,Write}Cnt are invisible to in-flight Top-RU samples
-    // until the end-of-statement drain, and the in-flight + finalize deltas
-    // telescope to the full per-statement total.
-    #[test]
-    fn statement_stats_ruv2_in_flight_sampling_excludes_drain_only_fields() {
+    fn statement_stats_ruv2_finalized_total_is_reported_only_at_finish() {
         let _guard = global_test_guard();
         let stats = StatementStats::detached();
-        let ru = Arc::new(RuDetails::new());
-        let metrics = Arc::new(RuV2Metrics::new());
-        let weights = RuV2Weights {
-            ru_scale: 1.0,
-            plan_cnt: 1.0,
-            resource_manager_read_cnt: 0.02,
-            resource_manager_write_cnt: 0.07,
-            ..RuV2Weights::default()
-        };
-        metrics.add_plan_cnt(1); // live field, not drain-fed
+        let key = ru_key("u1", "sql", "plan");
+        let ru = Arc::new(RuDetails::new_with(10.0, 20.0, Duration::from_millis(1)));
 
         stats.on_execution_begin(
             b"sql",
@@ -906,36 +741,32 @@ mod tests {
                 user: "u1".to_owned(),
                 top_ru_enabled: true,
                 ru_version: RuVersion::V2,
-                ruv2_metrics: Some(metrics.clone()),
-                ruv2_weights: weights,
                 ..ExecBeginInfo::default()
             }),
         );
-        let key = ru_key("u1", "sql", "plan");
 
-        // In-flight sample: only PlanCnt visible, drain-fed fields still zero.
+        // Go currentRUTotal intentionally returns zero for in-flight RU-v2
+        // samples. The begin-based execution count is still emitted.
         let in_flight = stats.merge_ru_into();
-        assert_in_delta(1.0, in_flight[&key].total_ru);
         assert_eq!(in_flight[&key].exec_count, 1);
-
-        // Equivalent of finalizeStatementRUV2Metrics's drain; bypassing kvproto.
-        metrics.add_resource_manager_read_cnt(5);
-        metrics.add_resource_manager_write_cnt(3);
+        assert_eq!(in_flight[&key].total_ru, 0.0);
 
         stats.on_execution_finished(
             b"sql",
             b"plan",
             Some(&ExecFinishInfo {
-                ru_details: Some(ru.clone()),
+                ru_details: Some(ru),
                 user: "u1".to_owned(),
+                total_ru_v2: 42.0,
                 exec_duration_ns: SECOND_NS as i64,
                 top_ru_enabled: true,
                 ..ExecFinishInfo::default()
             }),
         );
         let finish = stats.merge_ru_into();
-        assert_in_delta(0.31, finish[&key].total_ru); // 5*0.02 + 3*0.07
-        assert_in_delta(1.31, in_flight[&key].total_ru + finish[&key].total_ru);
+        assert_eq!(finish[&key].exec_count, 0);
+        assert_in_delta(42.0, finish[&key].total_ru);
+        assert_eq!(finish[&key].exec_duration, SECOND_NS);
     }
 
     // Go `TestStatementStatsResetRUStateOnVersionChangePreservesStmtStats`.
@@ -1077,40 +908,44 @@ mod tests {
         assert_eq!(item.duration_count, 3);
     }
 
-    // Go `TestOnExecutionBeginFinishRU`: one begin/finish pair emits exactly
-    // one RU key with the expected exec-count, RU total, and duration.
+    // Go `TestOnExecutionBeginFinishRU`: both RU versions use the same
+    // begin-based count and duration, while RU-v2 uses its finalized total.
     #[test]
     fn on_execution_begin_finish_ru() {
         let _guard = global_test_guard();
-        let stats = create_statement_stats();
-        stats.on_execution_begin(
-            b"sql1",
-            b"plan1",
-            Some(&ExecBeginInfo {
-                user: "user1".to_owned(),
-                top_ru_enabled: true,
-                ..ExecBeginInfo::default()
-            }),
-        );
-        let ru = Arc::new(RuDetails::new_with(10.0, 20.0, Duration::from_millis(1)));
-        stats.on_execution_finished(
-            b"sql1",
-            b"plan1",
-            Some(&ExecFinishInfo {
-                user: "user1".to_owned(),
-                top_ru_enabled: true,
-                ru_details: Some(ru),
-                exec_duration_ns: SECOND_NS as i64,
-                ..ExecFinishInfo::default()
-            }),
-        );
+        for (version, expected_ru) in [(RuVersion::V1, 30.0), (RuVersion::V2, 42.0)] {
+            let stats = StatementStats::detached();
+            stats.on_execution_begin(
+                b"sql1",
+                b"plan1",
+                Some(&ExecBeginInfo {
+                    user: "user1".to_owned(),
+                    top_ru_enabled: true,
+                    ru_version: version,
+                    ..ExecBeginInfo::default()
+                }),
+            );
+            let ru = Arc::new(RuDetails::new_with(10.0, 20.0, Duration::from_millis(1)));
+            stats.on_execution_finished(
+                b"sql1",
+                b"plan1",
+                Some(&ExecFinishInfo {
+                    user: "user1".to_owned(),
+                    top_ru_enabled: true,
+                    ru_details: Some(ru),
+                    total_ru_v2: 42.0,
+                    exec_duration_ns: SECOND_NS as i64,
+                    ..ExecFinishInfo::default()
+                }),
+            );
 
-        let m = stats.merge_ru_into();
-        assert_eq!(m.len(), 1);
-        let incr = &m[&ru_key("user1", "sql1", "plan1")];
-        assert_eq!(incr.exec_count, 1);
-        assert_eq!(incr.total_ru, 30.0);
-        assert_eq!(incr.exec_duration, SECOND_NS);
+            let increments = stats.merge_ru_into();
+            assert_eq!(increments.len(), 1);
+            let increment = &increments[&ru_key("user1", "sql1", "plan1")];
+            assert_eq!(increment.exec_count, 1);
+            assert_eq!(increment.total_ru, expected_ru);
+            assert_eq!(increment.exec_duration, SECOND_NS);
+        }
     }
 
     // Go `TestMergeRUIntoInFlightSamplingAndFinishDedup`: tick sampling plus

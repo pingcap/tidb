@@ -96,6 +96,110 @@ pub struct CandidateMetrics {
     pub max_count_after_access: f64,
 }
 
+pub(super) fn equality_facts(detached: &crate::ranger::detacher::DetachRangeResult) -> (usize, bool) {
+    use tidb_expr::expression::Expression;
+    fn only_equal(expression: &Expression) -> bool {
+        let Expression::ScalarFunction(function) = expression else {
+            return false;
+        };
+        match function.func_name.lowercase() {
+            "eq" | "in" => true,
+            "and" | "or" => function.args.iter().all(only_equal),
+            _ => false,
+        }
+    }
+    let equal_dnf = detached.is_dnf_cond && detached.access_conds.iter().all(only_equal);
+    let minimum_dnf = detached.min_access_conds_for_dnf_cond.max(0) as usize;
+    let eq_or_in_count = if !detached.is_dnf_cond || detached.access_conds.is_empty() {
+        detached.eq_or_in_count
+    } else if equal_dnf {
+        minimum_dnf
+    } else {
+        minimum_dnf.saturating_sub(1)
+    };
+    (eq_or_in_count, equal_dnf)
+}
+
+/// Go `getIndexCandidate`: read both coverage maps and estimate stages from
+/// the logically filled path. Missing facts must not eliminate a competitor.
+pub(crate) fn index_candidate_metrics(
+    source: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    path: &crate::access_path::IndexPathState,
+    single_scan: bool,
+    matches_property: bool,
+) -> Option<CandidateMetrics> {
+    use tidb_expr::expression::Expression;
+    let filled = path.filled.as_ref()?;
+    let estimate = path.row_estimate?;
+    let count_after_index = filled.count_after_index?;
+    fn extract<'a>(
+        conditions: impl Iterator<Item = &'a Expression>,
+        columns: impl Iterator<Item = &'a (tidb_expr::column::Column, i64)> + Clone,
+    ) -> Col2Len {
+        fn visit<'a>(
+            expression: &Expression,
+            columns: impl Iterator<Item = &'a (tidb_expr::column::Column, i64)> + Clone,
+            result: &mut std::collections::BTreeMap<i64, i64>,
+        ) {
+            match expression {
+                Expression::Column(column) => {
+                    if let Some((_, length)) = columns
+                        .clone()
+                        .find(|(key, _)| key.unique_id == column.unique_id)
+                    {
+                        result.insert(column.unique_id, *length);
+                    }
+                }
+                Expression::ScalarFunction(function) => {
+                    for arg in &function.args {
+                        visit(arg, columns.clone(), result);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut result = std::collections::BTreeMap::new();
+        for condition in conditions {
+            visit(condition, columns.clone(), &mut result);
+        }
+        Col2Len::from_pairs(result)
+    }
+    let access_columns = extract(filled.detached.access_conds.iter(), filled.columns.iter());
+    let index_columns = extract(
+        filled
+            .detached
+            .access_conds
+            .iter()
+            .chain(&filled.index_filters),
+        filled.full_columns.iter().flatten(),
+    );
+    let detached = &filled.detached;
+    let (eq_or_in_count, equal_dnf) = equality_facts(detached);
+    let minimum_dnf = detached.min_access_conds_for_dnf_cond.max(0) as usize;
+    let full_index_match = if equal_dnf {
+        minimum_dnf >= index.columns.len()
+    } else {
+        detached.eq_or_in_count > 0 && index_columns.len() >= index.columns.len()
+    };
+    Some(CandidateMetrics {
+        access_columns,
+        index_columns,
+        single_scan,
+        multi_valued: index.is_multi_valued,
+        global: index.global,
+        matches_property,
+        pseudo: !source.analyzed_index_ids.contains(&index.id),
+        full_index_match,
+        eq_or_in_count,
+        count_after_access: estimate.est,
+        count_after_index,
+        min_count_after_access: estimate.min_est,
+        max_count_after_access: estimate.max_est,
+        ..Default::default()
+    })
+}
+
 /// Go compareCandidates's result and its statement-context fix-control read.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CandidateComparison {
@@ -332,6 +436,110 @@ mod skyline_tests {
         );
         refined.range_count = 4;
         assert_eq!(choose_heuristic_path(&[full, unique, refined]), Some(1));
+    }
+
+    #[test]
+    fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {
+        use crate::access_path::{IndexPathState, ordinary::FilledIndexPath};
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::{
+            column::Column, constant::Constant, expression::Expression,
+            scalar_function::ScalarFunction,
+        };
+        let ty = FieldType::new(FieldTypeCode::LongLong);
+        let a = Column::new(1, ty.clone());
+        let c = Column::new(3, ty.clone());
+        let func = |name: &str, args| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                ty.clone(),
+                args,
+            ))
+        };
+        let eq = |column: &Column| {
+            func(
+                "eq",
+                vec![
+                    Expression::Column(column.clone()),
+                    Expression::Constant(Constant::new(Datum::Int(1), ty.clone())),
+                ],
+            )
+        };
+        let index = SourceIndex {
+            id: 9,
+            columns: vec![SourceIndexColumn::default(); 3],
+            ..Default::default()
+        };
+        let source = crate::logical::DataSource::default();
+        let mut path = IndexPathState {
+            row_estimate: Some(crate::cardinality::row_count_column::RowEstimate::new(
+                100.0, 20.0, 200.0,
+            )),
+            filled: Some(FilledIndexPath {
+                columns: vec![(a.clone(), -1)],
+                // The unresolved middle key cannot erase a later index filter.
+                full_columns: vec![Some((a.clone(), -1)), None, Some((c.clone(), 4))],
+                detached: crate::ranger::detacher::DetachRangeResult {
+                    access_conds: vec![eq(&a)],
+                    eq_or_in_count: 1,
+                    ..Default::default()
+                },
+                index_filters: vec![eq(&c)],
+                table_filters: Vec::new(),
+                count_after_index: Some(8.0),
+            }),
+            ..Default::default()
+        };
+        let facts = index_candidate_metrics(&source, &index, &path, false, false).unwrap();
+        assert_eq!(facts.access_columns, Col2Len::from_pairs([(1, -1)]));
+        assert_eq!(facts.index_columns, Col2Len::from_pairs([(1, -1), (3, 4)]));
+        assert_eq!(
+            (facts.count_after_access, facts.count_after_index),
+            (100.0, 8.0)
+        );
+        assert_eq!(
+            (facts.min_count_after_access, facts.max_count_after_access),
+            (20.0, 200.0)
+        );
+        assert!(!facts.full_index_match);
+        let mut two_keys = index.clone();
+        two_keys.columns.truncate(2);
+        assert!(
+            index_candidate_metrics(&source, &two_keys, &path, false, false)
+                .unwrap()
+                .full_index_match,
+            "non-DNF full match includes index filters, as in Go"
+        );
+
+        let detached = &mut path.filled.as_mut().unwrap().detached;
+        detached.is_dnf_cond = true;
+        detached.min_access_conds_for_dnf_cond = 2;
+        detached.eq_or_in_count = 0;
+        detached.access_conds = vec![func(
+            "or",
+            vec![
+                func("and", vec![eq(&a), eq(&c)]),
+                func("and", vec![eq(&a), eq(&c)]),
+            ],
+        )];
+        let facts = index_candidate_metrics(&source, &two_keys, &path, false, false).unwrap();
+        assert_eq!(facts.eq_or_in_count, 2);
+        assert!(facts.full_index_match);
+        path.filled
+            .as_mut()
+            .unwrap()
+            .detached
+            .access_conds
+            .push(func("not", vec![eq(&c)]));
+        let facts = index_candidate_metrics(&source, &two_keys, &path, false, false).unwrap();
+        assert_eq!(facts.eq_or_in_count, 1);
+        assert!(!facts.full_index_match);
+        path.filled.as_mut().unwrap().count_after_index = None;
+        assert!(
+            index_candidate_metrics(&source, &index, &path, false, false).is_none(),
+            "unavailable filter estimates cannot justify eliminating a candidate"
+        );
     }
 
     fn path(columns: &[i64]) -> CandidateMetrics {

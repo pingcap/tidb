@@ -146,9 +146,10 @@ fn contradiction_plan(
         common_handle_offsets,
         residuals: Vec::new(),
         contradiction: true,
-        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
+        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handle_prefixes(
             table.visible_columns(),
             handle_offset,
+            &[],
             &[],
             &output.offsets,
         )
@@ -1284,10 +1285,11 @@ pub fn build_prepared_point_get_plan(
             .collect::<Option<Vec<_>>>()?,
         handle_literals,
         target,
-        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
+        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handle_prefixes(
             table.visible_columns(),
             handle_offset,
             &common_handle_offsets,
+            table.common_handle_prefix_lengths(),
             &output.offsets,
         )
         .ok()?,

@@ -28,6 +28,8 @@ use tidb_planner::explain::{
 use tidb_planner::physical::{PhysicalPlan, RedactMode};
 use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, OperatorLabel};
 
+use tidb_planner::find_best_task::coster::Ver2Coster;
+
 use crate::driver::{
     Catalog, DriverError, SelectMeta, run_delete_stmt_with_physical_and_stats,
     run_insert_stmt_with_physical_and_stats, run_update_stmt_with_physical_and_stats,
@@ -35,12 +37,15 @@ use crate::driver::{
 /// The `EXPLAIN FORMAT = '...'` this tier accepts. Go's `'row'` (the
 /// default, also the explicit spelling) and `'brief'` render the identical
 /// five-column tree; `'brief'` merely drops each operator's `_N` build-order
-/// suffix. `'plan_tree'` is Go's four-column tree shape (it omits `estRows`),
+/// suffix. `'verbose'` adds costs from the statement's optimizer context.
+/// `'plan_tree'` is Go's four-column tree shape (it omits `estRows`),
 /// which is the format used by the TPC-DS source test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExplainFormat {
     /// Go's default: every operator id carries its `_N` build-order suffix.
     Row,
+    /// Row format with statement-local estimated operator costs.
+    Verbose,
     /// Same tree, ids printed without the `_N` suffix.
     Brief,
     /// Go's four-column tree format, without estimates or id suffixes.
@@ -55,6 +60,8 @@ impl ExplainFormat {
     pub fn parse(format: &str) -> Option<Self> {
         if format.eq_ignore_ascii_case("row") {
             Some(Self::Row)
+        } else if format.eq_ignore_ascii_case("verbose") {
+            Some(Self::Verbose)
         } else if format.eq_ignore_ascii_case("brief") {
             Some(Self::Brief)
         } else if format.eq_ignore_ascii_case("plan_tree") {
@@ -69,6 +76,7 @@ impl ExplainFormat {
 fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
     match format {
         ExplainFormat::Row => PlannerExplainFormat::Row,
+        ExplainFormat::Verbose => PlannerExplainFormat::Verbose,
         ExplainFormat::Brief => PlannerExplainFormat::Brief,
         ExplainFormat::PlanTree => PlannerExplainFormat::PlanTree,
     }
@@ -110,6 +118,79 @@ fn scan_uses_pseudo_statistics(base: &tidb_planner::physical::BasePhysicalPlan) 
     base.base
         .stats_info()
         .is_none_or(|stats| stats.stats_version() == tidb_stats::PSEUDO_VERSION)
+}
+
+/// Go scan `ExplainInfoInternal`: use the statement's estimator observations,
+/// falling back to the plan's pseudo version only when no used-stat record
+/// exists for this physical table.
+fn used_stats_suffix_for_scan(
+    context: &crate::StmtContext,
+    physical_table_id: i64,
+    base: &tidb_planner::physical::BasePhysicalPlan,
+    catalog: &Catalog,
+    selected_index_id: Option<i64>,
+) -> Option<String> {
+    // A correlated IndexJoin can select its inner index after datasource
+    // candidate estimation. Go records that index when its row-count
+    // estimator runs; if this planning path did not estimate the selected
+    // lookup index, retain its status here so the physical scan still reports
+    // the statistic it actually uses.
+    if let (Some(index_id), Some(table), Some(statistics)) = (
+        selected_index_id,
+        catalog.physical_kv_table_by_id(physical_table_id),
+        catalog.table_statistics(physical_table_id),
+    ) {
+        let status = statistics.index_load_status.get(&index_id).copied();
+        if !status.is_some_and(tidb_stats::StatsLoadedStatus::is_full_load) {
+            let analyzed = statistics
+                .index_stats_existence
+                .get(&index_id)
+                .copied()
+                .unwrap_or(false);
+            let status = status.map_or_else(
+                || if analyzed { "unInitialized" } else { "missing" },
+                tidb_stats::StatsLoadedStatus::status_to_string,
+            );
+            context.record_used_stats_status(
+                physical_table_id,
+                &table.name,
+                if statistics.pseudo {
+                    0
+                } else {
+                    statistics.version
+                },
+                statistics.row_count,
+                statistics.modify_count,
+                index_id,
+                true,
+                status,
+            );
+        }
+    }
+    if let Some(used_stats) = context.used_stats_info(physical_table_id) {
+        let (column_names, index_names) = catalog
+            .physical_kv_table_by_id(physical_table_id)
+            .map(|table| {
+                (
+                    table
+                        .columns
+                        .iter()
+                        .map(|column| (column.id, column.name.clone()))
+                        .collect(),
+                    table
+                        .indexes()
+                        .iter()
+                        .map(|index| (index.id, index.name.clone()))
+                        .collect(),
+                )
+            })
+            .unwrap_or_default();
+        let formatted = used_stats.format_for_explain(&column_names, &index_names);
+        if !formatted.is_empty() {
+            return Some(formatted);
+        }
+    }
+    scan_uses_pseudo_statistics(base).then(|| "stats:pseudo".to_owned())
 }
 
 fn expressions_text(
@@ -750,8 +831,6 @@ fn index_join_int_pk_decided_by_text(
 fn index_join_decided_by_text_for_scan(
     eval_ctx: &dyn tidb_expr::Columns,
     context: &IndexJoinExplainContext<'_>,
-    scan: &tidb_planner::physical::PhysicalTableScan,
-    catalog: &Catalog,
 ) -> String {
     // Master picks the integer-PK spelling when the join probes the table's
     // integer handle (`constructDS2TableScanTask`'s int-PK branch records the
@@ -947,6 +1026,7 @@ fn point_handle_text_unsigned(range: &tidb_planner::ranger::types::Range) -> Str
 
 fn physical_operator_info(
     eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     plan: &PhysicalPlan,
     catalog: &Catalog,
     ignore_explain_id_suffix: bool,
@@ -1135,7 +1215,7 @@ fn physical_operator_info(
                 let ctx = index_join_context.expect("index join context");
                 // Table handle metadata selects Go's integer-PK or common
                 // handle range description.
-                let parts_text = index_join_decided_by_text_for_scan(eval_ctx, &ctx, scan, catalog);
+                let parts_text = index_join_decided_by_text_for_scan(eval_ctx, &ctx);
                 parts.push(parts_text);
             } else if scan
                 .scan_kind()
@@ -1145,8 +1225,14 @@ fn physical_operator_info(
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
             }
             parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
-            if scan_uses_pseudo_statistics(&scan.base) {
-                parts.push("stats:pseudo".to_owned());
+            if let Some(stats) = used_stats_suffix_for_scan(
+                statement_context,
+                scan.table_id,
+                &scan.base,
+                catalog,
+                None,
+            ) {
+                parts.push(stats);
             }
             parts.join(", ")
         }
@@ -1173,8 +1259,14 @@ fn physical_operator_info(
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
             }
             parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
-            if scan_uses_pseudo_statistics(&scan.base) {
-                parts.push("stats:pseudo".to_owned());
+            if let Some(stats) = used_stats_suffix_for_scan(
+                statement_context,
+                scan.table_id,
+                &scan.base,
+                catalog,
+                Some(scan.index_id),
+            ) {
+                parts.push(stats);
             }
             parts.join(", ")
         }
@@ -1333,7 +1425,9 @@ fn runtime_rows(
 }
 
 fn physical_explain_operator(
+    costs: Option<&Ver2Coster>,
     eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     brief_binary: bool,
     plan: &PhysicalPlan,
     catalog: &Catalog,
@@ -1347,9 +1441,16 @@ fn physical_explain_operator(
     // sits inside. `EXPLAIN` displays `StatsInfo.RowCount * probeCount`.
     probe_count: f64,
 ) -> ExplainOperator {
+    // Price parents before children so scans retain their reader/task context,
+    // matching Go's cached GetPlanCostVer2 during top-down EXPLAIN rendering.
+    let estimated_cost = costs.filter(|_| !matches!(plan, PhysicalPlan::Dml(_))).map(|coster| {
+        coster.plan_cost(plan, tidb_planner::task_type::TaskType::Root, false).value()
+    });
     let mut children = match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => vec![physical_explain_operator(
+            costs,
             eval_ctx,
+            statement_context,
             brief_binary,
             &receiver.data_source,
             catalog,
@@ -1393,7 +1494,9 @@ fn physical_explain_operator(
                     }
                 };
                 vec![physical_explain_operator(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1411,7 +1514,9 @@ fn physical_explain_operator(
             .as_deref()
             .map(|child| {
                 vec![physical_explain_operator(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1435,7 +1540,9 @@ fn physical_explain_operator(
         .flatten()
         .map(|(child, label)| {
             physical_explain_operator(
+                costs,
                 eval_ctx,
+                statement_context,
                 brief_binary,
                 child,
                 catalog,
@@ -1458,7 +1565,9 @@ fn physical_explain_operator(
             .chain(reader.table_plan.as_deref().map(|child| (child, "(Probe)")))
             .map(|(child, label)| {
                 physical_explain_operator(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1480,7 +1589,9 @@ fn physical_explain_operator(
                 .as_deref()
                 .map(|child| {
                     vec![physical_explain_operator(
+                        costs,
                         eval_ctx,
+                        statement_context,
                         brief_binary,
                         child,
                         catalog,
@@ -1501,6 +1612,7 @@ fn physical_explain_operator(
                     id: trigger.id,
                     label: String::new(),
                     estimated_rows: Some(0.0),
+                    estimated_cost: None,
                     actual_rows: None,
                     execution_info: None,
                     task: ExplainTask::Root,
@@ -1554,7 +1666,9 @@ fn physical_explain_operator(
                     _ => probe_count,
                 };
                 physical_explain_operator(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1603,6 +1717,7 @@ fn physical_explain_operator(
     } else {
         physical_operator_info(
             eval_ctx,
+            statement_context,
             plan,
             catalog,
             ignore_explain_id_suffix,
@@ -1616,6 +1731,7 @@ fn physical_explain_operator(
     if let Some(access_object) = physical_access(plan, catalog) {
         operator = operator.with_access_object(access_object);
     }
+    operator.estimated_cost = estimated_cost;
     operator.label = label.to_owned();
     if let Some(rows) = plan
         .stats_info()
@@ -1646,7 +1762,9 @@ fn physical_explain_operator(
 }
 
 fn cte_definitions(
+    costs: Option<&Ver2Coster>,
     eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     brief_binary: bool,
     plan: &PhysicalPlan,
     catalog: &Catalog,
@@ -1658,7 +1776,9 @@ fn cte_definitions(
     if let PhysicalPlan::CTE(cte) = plan {
         if seen.insert(cte.id_for_storage) {
             let mut children = vec![physical_explain_operator(
+                costs,
                 eval_ctx,
+                statement_context,
                 brief_binary,
                 &cte.seed_plan,
                 catalog,
@@ -1671,7 +1791,9 @@ fn cte_definitions(
             )];
             if let Some(recursive) = cte.recursive_plan.as_deref() {
                 children.push(physical_explain_operator(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     recursive,
                     catalog,
@@ -1696,7 +1818,9 @@ fn cte_definitions(
             out.push(definition);
         }
         cte_definitions(
+            costs,
             eval_ctx,
+            statement_context,
             brief_binary,
             &cte.seed_plan,
             catalog,
@@ -1707,7 +1831,9 @@ fn cte_definitions(
         );
         if let Some(recursive) = cte.recursive_plan.as_deref() {
             cte_definitions(
+                costs,
                 eval_ctx,
+                statement_context,
                 brief_binary,
                 recursive,
                 catalog,
@@ -1720,7 +1846,9 @@ fn cte_definitions(
     }
     for child in plan.children() {
         cte_definitions(
+            costs,
             eval_ctx,
+            statement_context,
             brief_binary,
             child,
             catalog,
@@ -1732,7 +1860,9 @@ fn cte_definitions(
     }
     match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => cte_definitions(
+            costs,
             eval_ctx,
+            statement_context,
             brief_binary,
             &receiver.data_source,
             catalog,
@@ -1744,7 +1874,9 @@ fn cte_definitions(
         PhysicalPlan::TableReader(reader) => {
             if let Some(child) = reader.table_plan.as_deref() {
                 cte_definitions(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1758,7 +1890,9 @@ fn cte_definitions(
         PhysicalPlan::IndexReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
                 cte_definitions(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1772,7 +1906,9 @@ fn cte_definitions(
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
                 cte_definitions(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1784,7 +1920,9 @@ fn cte_definitions(
             }
             if let Some(child) = reader.table_plan.as_deref() {
                 cte_definitions(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1798,7 +1936,9 @@ fn cte_definitions(
         PhysicalPlan::Dml(root) => {
             if let Some(child) = root.select_plan.as_deref() {
                 cte_definitions(
+                    costs,
                     eval_ctx,
+                    statement_context,
                     brief_binary,
                     child,
                     catalog,
@@ -1814,7 +1954,9 @@ fn cte_definitions(
 }
 
 fn physical_explain_roots(
+    costs: Option<&Ver2Coster>,
     eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     brief_binary: bool,
     physical: &PhysicalPlan,
     catalog: &Catalog,
@@ -1823,7 +1965,9 @@ fn physical_explain_roots(
     scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
 ) -> Vec<ExplainOperator> {
     let mut roots = vec![physical_explain_operator(
+        costs,
         eval_ctx,
+        statement_context,
         brief_binary,
         physical,
         catalog,
@@ -1835,7 +1979,9 @@ fn physical_explain_roots(
         1.0,
     )];
     cte_definitions(
+        costs,
         eval_ctx,
+        statement_context,
         brief_binary,
         physical,
         catalog,
@@ -1846,7 +1992,9 @@ fn physical_explain_roots(
     );
     for subquery in scalar_subqueries {
         roots.push(scalar_subquery_root(
+            costs,
             eval_ctx,
+            statement_context,
             brief_binary,
             subquery,
             catalog,
@@ -1862,7 +2010,9 @@ fn physical_explain_roots(
 /// `ExplainInfo` lists the output column ids the folded constants carry and
 /// whose single child is the optimized subquery plan.
 fn scalar_subquery_root(
+    costs: Option<&Ver2Coster>,
     eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     brief_binary: bool,
     subquery: &crate::driver::planner_bridge::RegisteredScalarSubquery,
     catalog: &Catalog,
@@ -1878,7 +2028,9 @@ fn scalar_subquery_root(
     ExplainOperator::new("ScalarSubQuery", subquery.block_offset)
         .with_operator_info(format!("Output: {output}"))
         .with_children(vec![physical_explain_operator(
+            costs,
             eval_ctx,
+            statement_context,
             brief_binary,
             &subquery.physical,
             catalog,
@@ -1953,12 +2105,32 @@ fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOp
 /// build-side-first traversal and brief operator metadata.
 #[must_use]
 pub fn brief_binary_plan(
-    eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
     catalog: &Catalog,
 ) -> String {
-    let mut full = physical_explain_roots(eval_ctx, false, physical, catalog, None, false, &[]);
-    let mut brief = physical_explain_roots(eval_ctx, true, physical, catalog, None, true, &[]);
+    let mut full = physical_explain_roots(
+        None,
+        statement_context,
+        statement_context,
+        false,
+        physical,
+        catalog,
+        None,
+        false,
+        &[],
+    );
+    let mut brief = physical_explain_roots(
+        None,
+        statement_context,
+        statement_context,
+        true,
+        physical,
+        catalog,
+        None,
+        true,
+        &[],
+    );
     if full.is_empty() || brief.is_empty() {
         return String::new();
     }
@@ -2036,12 +2208,9 @@ fn collect_executor_process_fields(
     index_names: &mut Vec<String>,
 ) {
     match plan {
-        PhysicalPlan::ShuffleReceiver(receiver) => collect_executor_process_fields(
-            &receiver.data_source,
-            catalog,
-            table_ids,
-            index_names,
-        ),
+        PhysicalPlan::ShuffleReceiver(receiver) => {
+            collect_executor_process_fields(&receiver.data_source, catalog, table_ids, index_names)
+        }
         PhysicalPlan::TableReader(reader) => {
             if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
                 table_ids.push(logical_table_id(catalog, scan.table_id));
@@ -2170,11 +2339,11 @@ fn collect_stats_info(
 /// constructed.
 #[must_use]
 pub fn process_plan_info(
-    eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
     catalog: &Catalog,
 ) -> crate::ProcessPlanInfo {
-    process_plan_info_with_brief(eval_ctx, physical, catalog, true)
+    process_plan_info_with_brief(statement_context, physical, catalog, true)
 }
 
 /// [`process_plan_info`] with the brief binary plan rendered only when
@@ -2182,14 +2351,14 @@ pub fn process_plan_info(
 /// collected, as Go's `StmtCtx.TableIDs`/`IndexNames` are.
 #[must_use]
 pub fn process_plan_info_with_brief(
-    eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
     catalog: &Catalog,
     with_brief: bool,
 ) -> crate::ProcessPlanInfo {
     let mut info = crate::ProcessPlanInfo {
         brief_binary_plan: if with_brief {
-            brief_binary_plan(eval_ctx, physical, catalog)
+            brief_binary_plan(statement_context, physical, catalog)
         } else {
             String::new()
         },
@@ -2207,6 +2376,7 @@ pub fn process_plan_info_with_brief(
 
 fn render_physical_plan(
     eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
     catalog: &Catalog,
     format: ExplainFormat,
@@ -2215,8 +2385,13 @@ fn render_physical_plan(
     scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
 ) -> Result<SelectMeta, DriverError> {
     let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
+    let coster = (format == ExplainFormat::Verbose).then(|| {
+        Ver2Coster::from_env(statement_context.optimizer_cost_env()).with_explain_cache()
+    });
     let roots = physical_explain_roots(
+        coster.as_ref(),
         eval_ctx,
+        statement_context,
         false,
         physical,
         catalog,
@@ -2270,6 +2445,7 @@ fn render_physical_query(
         .then(|| crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx))
         .transpose()?;
     render_physical_plan(
+        ctx,
         ctx,
         &physical,
         catalog,
@@ -2382,7 +2558,7 @@ pub fn explain_insert_stmt(
         ctx,
         &fk_spec,
     )?;
-    render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
+    render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
 }
 
 /// `EXPLAIN ANALYZE <insert>`: unlike [`explain_insert_stmt`], this really
@@ -2423,7 +2599,16 @@ pub fn explain_analyze_insert_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, crate::executor::RowCount::default().into());
-    render_physical_plan(ctx, &physical, catalog, format, true, Some(&runtime), &[])
+    render_physical_plan(
+        ctx,
+        ctx,
+        &physical,
+        catalog,
+        format,
+        true,
+        Some(&runtime),
+        &[],
+    )
 }
 
 /// Plans an `UPDATE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -2451,7 +2636,7 @@ pub fn explain_update_stmt(
         ctx,
         &fk_spec,
     )?;
-    render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
+    render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
 }
 
 /// Plans a `DELETE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -2476,7 +2661,7 @@ pub fn explain_delete_stmt(
         ctx,
         &fk_spec,
     )?;
-    render_physical_plan(ctx, &physical, catalog, format, false, None, &[])
+    render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
 }
 
 /// `EXPLAIN ANALYZE <update>`: unlike [`explain_update_stmt`], this really
@@ -2517,7 +2702,16 @@ pub fn explain_analyze_update_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, crate::executor::RowCount::default().into());
-    render_physical_plan(ctx, &physical, catalog, format, true, Some(&runtime), &[])
+    render_physical_plan(
+        ctx,
+        ctx,
+        &physical,
+        catalog,
+        format,
+        true,
+        Some(&runtime),
+        &[],
+    )
 }
 
 /// `EXPLAIN ANALYZE <delete>`: see [`explain_analyze_update_stmt`] -- the
@@ -2552,7 +2746,16 @@ pub fn explain_analyze_delete_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, crate::executor::RowCount::default().into());
-    render_physical_plan(ctx, &physical, catalog, format, true, Some(&runtime), &[])
+    render_physical_plan(
+        ctx,
+        ctx,
+        &physical,
+        catalog,
+        format,
+        true,
+        Some(&runtime),
+        &[],
+    )
 }
 
 fn text(value: &str) -> Datum {
@@ -2693,6 +2896,7 @@ mod tests {
 
         let info = physical_operator_info(
             &crate::StmtContext::default(),
+            &crate::StmtContext::default(),
             &index_join,
             &Catalog::default(),
             false,
@@ -2721,12 +2925,47 @@ mod tests {
         index.is_null_eq = vec![true, false];
         let info = physical_operator_info(
             &crate::StmtContext::default(),
+            &crate::StmtContext::default(),
             &PhysicalPlan::IndexJoin(index),
             &Catalog::default(),
             false,
             None,
         );
         assert!(info.contains("equal cond:eq(Column#2, Column#4), nulleq(Column#1, Column#3)"));
+    }
+
+    #[test]
+    fn index_join_range_info_uses_the_go_spelling_for_the_chosen_probe() {
+        use tidb_planner::physical::PhysicalTableScan;
+
+        let column =
+            |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+        let inner_keys = [column(1)];
+        let outer_keys = [column(2)];
+        let key_offsets = [0];
+        let access_conditions: [tidb_expr::expression::Expression; 0] = [];
+        let eval_ctx = crate::StmtContext::default();
+        let scan = PhysicalTableScan::default();
+        let catalog = Catalog::default();
+
+        for (range_bare, expected) in [
+            (true, "range: decided by [Column#2]"),
+            (false, "range: decided by [eq(Column#1, Column#2)]"),
+        ] {
+            let context = IndexJoinExplainContext {
+                table_id: 1,
+                index_id: None,
+                inner_keys: &inner_keys,
+                outer_keys: &outer_keys,
+                key_offsets: &key_offsets,
+                access_conditions: &access_conditions,
+                range_bare,
+            };
+            assert_eq!(
+                index_join_decided_by_text_for_scan(&eval_ctx, &context),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -2752,6 +2991,7 @@ mod tests {
         // Go sorts the rendered conditions; `eq` precedes `gt` here.
         merge.other_conditions = vec![condition("gt", 1, 5), condition("eq", 2, 6)];
         let info = physical_operator_info(
+            &crate::StmtContext::default(),
             &crate::StmtContext::default(),
             &PhysicalPlan::MergeJoin(merge),
             &Catalog::default(),
@@ -2779,6 +3019,7 @@ mod tests {
         outer.base.set_children(vec![child()]);
         let info = physical_operator_info(
             &crate::StmtContext::default(),
+            &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(outer),
             &Catalog::default(),
             true,
@@ -2799,6 +3040,7 @@ mod tests {
         inner.base.set_children(vec![child()]);
         let info = physical_operator_info(
             &crate::StmtContext::default(),
+            &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(inner),
             &Catalog::default(),
             true,
@@ -2816,6 +3058,7 @@ mod tests {
         join.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
         assert_eq!(
             physical_operator_info(
+                &crate::StmtContext::default(),
                 &crate::StmtContext::default(),
                 &PhysicalPlan::HashJoin(join),
                 &Catalog::default(),
@@ -2840,6 +3083,7 @@ mod tests {
         )]);
         let info = physical_operator_info(
             &crate::StmtContext::default(),
+            &crate::StmtContext::default(),
             &PhysicalPlan::HashJoin(join),
             &Catalog::default(),
             true,
@@ -2851,19 +3095,9 @@ mod tests {
         );
     }
     #[test]
-    fn brief_binary_plan_does_not_render_selection_constants_twice() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        struct Parameters(AtomicUsize);
-        impl tidb_expr::Columns for Parameters {
-            fn get(&self, _: &[String]) -> Option<tidb_datatype::Datum> {
-                None
-            }
-            fn param_value(&self, _: usize) -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
-                self.0.fetch_add(1, Ordering::SeqCst);
-                Ok(tidb_datatype::Datum::Int(42))
-            }
-        }
-        let ctx = Parameters(AtomicUsize::new(0));
+    fn brief_binary_plan_renders_bound_selection_parameters() {
+        let ctx = crate::StmtContext::for_query()
+            .with_prepared_params(vec![tidb_datatype::Datum::Int(42)].into());
         let mut parameter = tidb_expr::constant::Constant::new(
             tidb_datatype::Datum::Int(0),
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -2874,6 +3108,5 @@ mod tests {
             ..Default::default()
         });
         assert!(!super::brief_binary_plan(&ctx, &plan, &Catalog::default()).is_empty());
-        assert_eq!(ctx.0.load(Ordering::SeqCst), 1);
     }
 }

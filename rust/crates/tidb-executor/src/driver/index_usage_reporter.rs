@@ -305,13 +305,20 @@ impl CopIndexUsageExec {
             return;
         }
         self.reported = true;
-        let Some((kv_requests, accessed_rows)) = self
-            .child
-            .table_access()
-            .and_then(|access| access.cop_count_and_rows())
-        else {
+        let Some(access) = self.child.table_access() else {
             return;
         };
+        let (kv_requests, mut accessed_rows) = access.cop_count_and_rows().unwrap_or_default();
+        // The in-process backend has no coprocessor RPC counters. A clean
+        // local index source can still report its physical scan count; TiKV
+        // counters remain authoritative when present, and sources with
+        // staged rows refuse this fallback.
+        if kv_requests == 0 && accessed_rows == 0 {
+            accessed_rows = access.local_index_usage_rows().unwrap_or_default();
+        }
+        if kv_requests == 0 && accessed_rows == 0 {
+            return;
+        }
         let reporter = IndexUsageReporter::new(self.collector.as_ref());
         if let Some(index_id) = self.index_id {
             reporter.report_cop(
@@ -373,6 +380,54 @@ mod tests {
 
     use super::*;
 
+    struct CountedScanExecutor {
+        meta: crate::executor::ExecutorMeta,
+    }
+
+    impl Executor for CountedScanExecutor {
+        fn open(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+
+        fn next(&mut self, _req: &mut Chunk) -> Result<(), ExecError> {
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+
+        fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+            Some(self)
+        }
+    }
+
+    impl crate::table_access::TableAccess for CountedScanExecutor {
+        fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
+            Some((1, 70))
+        }
+    }
+
     fn collectors() -> (
         Collector,
         Arc<Mutex<tidb_stats_handle_usage_indexusage::SessionIndexUsageCollector>>,
@@ -413,6 +468,52 @@ mod tests {
     }
 
     #[test]
+    fn cop_executor_reports_live_scan_counts_on_close() {
+        let (global, session, statement) = collectors();
+        let scan = CountedScanExecutor {
+            meta: crate::executor::ExecutorMeta::new(Schema::default(), 0, 1, 1),
+        };
+        let mut reporter = CopIndexUsageExec::new(
+            Box::new(scan),
+            42,
+            Some(Arc::new(TableStatistics {
+                row_count: 100,
+                ..TableStatistics::default()
+            })),
+            Some(statement),
+            Some(7),
+        );
+
+        reporter.open().expect("open counted scan");
+        reporter.close().expect("close counted scan");
+        session.lock().expect("session collector").flush();
+        global.close();
+
+        let usage = global.get_index_usage(42, 7);
+        assert_eq!(usage.query_total, 1);
+        assert_eq!(usage.kv_req_total, 1);
+        assert_eq!(usage.row_access_total, 70);
+        assert_eq!(usage.percentage_access, [0, 0, 0, 0, 0, 1, 0]);
+    }
+
+    #[test]
+    fn disabled_reporter_does_not_record_index_usage() {
+        let (global, session, _statement) = collectors();
+        let reporter = IndexUsageReporter::new(None);
+        let stats = TableStatistics {
+            row_count: 100,
+            ..TableStatistics::default()
+        };
+
+        reporter.report_point(1, Some(&stats), 2, 1, 1);
+        reporter.report_cop(1, 2, Some(&stats), 1, 1);
+        session.lock().expect("session collector").flush();
+        global.close();
+
+        assert_eq!(global.get_index_usage(1, 2), Default::default());
+    }
+
+    #[test]
     fn point_get_without_real_stats_uses_smallest_nonzero_bucket() {
         let (global, session, statement) = collectors();
         let reporter = IndexUsageReporter::new(Some(&statement));
@@ -444,5 +545,49 @@ mod tests {
         global.close();
 
         assert_eq!(global.get_index_usage(1, 0).query_total, 1);
+    }
+
+    #[test]
+    fn cluster_index_id_matches_go_table_handle_kinds() {
+        let mut integer_handle = KvTable::new(1, vec![]);
+        integer_handle.set_pk_handle_offset(0);
+        assert_eq!(cluster_index_id(&integer_handle), Some(0));
+
+        let mut common_handle = KvTable::new(2, vec![]);
+        common_handle.set_common_handle_offsets(vec![0]);
+        common_handle.add_index(
+            crate::kv_table::KvIndex {
+                id: 7,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![0],
+                prefix_lengths: vec![],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            true,
+        );
+        assert_eq!(cluster_index_id(&common_handle), Some(7));
+
+        let mut nonclustered_handle = KvTable::new(3, vec![]);
+        nonclustered_handle.add_index(
+            crate::kv_table::KvIndex {
+                id: 8,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![0],
+                prefix_lengths: vec![],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        assert_eq!(cluster_index_id(&nonclustered_handle), None);
     }
 }

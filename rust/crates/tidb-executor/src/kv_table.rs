@@ -513,6 +513,8 @@ pub struct KvTable {
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
     common_handle_offsets: Vec<usize>,
+    /// Go `IndexColumn.Length` for each common-handle column.
+    common_handle_prefix_lengths: Vec<i64>,
     /// Go `TableInfo.CommonHandleVersion`.
     common_handle_version: u16,
     /// Go `TableInfo.Charset`/`Collate`: the table's default character set and
@@ -690,7 +692,17 @@ impl PointRowDecoder {
                 let ids = table
                     .pk_handle_offset
                     .into_iter()
-                    .chain(table.common_handle_offsets.iter().copied())
+                    .chain(
+                        table
+                            .common_handle_offsets
+                            .iter()
+                            .copied()
+                            .zip(&table.common_handle_prefix_lengths)
+                            .filter(|(_, length)| {
+                                **length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+                            })
+                            .map(|(offset, _)| offset),
+                    )
                     .filter_map(|offset| table.columns.get(offset).map(|column| column.id))
                     .collect();
                 (columns, ids)
@@ -700,8 +712,17 @@ impl PointRowDecoder {
                 TableHandle::Common(encoded) => {
                     let common = CommonHandle::new(encoded.clone())
                         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                    let parts = (0..table.common_handle_offsets.len())
-                        .filter_map(|index| common.encoded_column(index).map(<[u8]>::to_vec))
+                    let parts = table
+                        .common_handle_offsets
+                        .iter()
+                        .enumerate()
+                        .filter(|(position, _)| {
+                            table.common_handle_prefix_lengths.get(*position).copied()
+                                == Some(crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
+                        })
+                        .filter_map(|(index, _)| {
+                            common.encoded_column(index).map(<[u8]>::to_vec)
+                        })
                         .collect();
                     tidb_codec::Handle::Common(parts)
                 }
@@ -730,6 +751,7 @@ impl PointRowDecoder {
                 table.columns.clone(),
                 table.pk_handle_offset,
                 table.common_handle_offsets.clone(),
+                table.common_handle_prefix_lengths.clone(),
                 None,
                 table.use_new_collation,
                 context.clone(),
@@ -1113,6 +1135,7 @@ impl KvTable {
             indexes: std::sync::Arc::new(Vec::new()),
             partial_index_conditions: std::collections::BTreeMap::new(),
             common_handle_offsets: Vec::new(),
+            common_handle_prefix_lengths: Vec::new(),
             common_handle_version: 0,
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
@@ -1277,6 +1300,7 @@ impl KvTable {
         copy.indexes = self.indexes.clone();
         copy.partial_index_conditions = self.partial_index_conditions.clone();
         copy.common_handle_offsets = self.common_handle_offsets.clone();
+        copy.common_handle_prefix_lengths = self.common_handle_prefix_lengths.clone();
         copy.common_handle_version = self.common_handle_version;
         copy.has_affinity = self.has_affinity;
         copy.tiflash_replica = self.tiflash_replica.clone().map(|mut replica| {
@@ -1393,7 +1417,16 @@ impl KvTable {
     /// `GetStatsTable` rule 3), so the planner needs the same number the
     /// flushed delta would have produced.
     pub fn stats_row_count(&mut self) -> Result<i64, KvTableError> {
-        let (low, high) = get_table_handle_key_range(self.table_id);
+        self.stats_row_count_for_physical_id(self.table_id)
+    }
+
+    /// Reads the record count for one physical table ID, including a single
+    /// partition's keyspace. Stats-meta rows are keyed by these IDs.
+    pub fn stats_row_count_for_physical_id(
+        &mut self,
+        physical_table_id: i64,
+    ) -> Result<i64, KvTableError> {
+        let (low, high) = get_table_handle_key_range(physical_table_id);
         let mut upper = high;
         upper.push(0);
         let mut iterator = self
@@ -1932,6 +1965,13 @@ impl KvTable {
     /// records as `TableInfo.IsCommonHandle`.
     pub fn set_common_handle_offsets(&mut self, offsets: Vec<usize>) {
         self.common_handle_offsets = offsets;
+        self.common_handle_prefix_lengths = vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; self.common_handle_offsets.len()];
+    }
+
+    /// Records Go `IndexColumn.Length` for each common-handle component.
+    pub fn set_common_handle_prefix_lengths(&mut self, lengths: Vec<i64>) {
+        assert_eq!(lengths.len(), self.common_handle_offsets.len());
+        self.common_handle_prefix_lengths = lengths;
     }
 
     /// Records Go `TableInfo.CommonHandleVersion`.
@@ -1973,6 +2013,12 @@ impl KvTable {
         &self.common_handle_offsets
     }
 
+    /// Prefix lengths for the clustered primary-key columns.
+    #[must_use]
+    pub fn common_handle_prefix_lengths(&self) -> &[i64] {
+        &self.common_handle_prefix_lengths
+    }
+
     /// Encodes one complete clustered composite primary-key tuple as its
     /// record handle.
     ///
@@ -1990,8 +2036,23 @@ impl KvTable {
                 "a common handle probe does not cover every key column".to_owned(),
             ));
         }
+        let mut stored_values = values.to_vec();
+        for (position, (value, offset)) in stored_values
+            .iter_mut()
+            .zip(self.common_handle_offsets.iter().copied())
+            .enumerate()
+        {
+            let Some(column) = self.columns.get(offset) else {
+                return Err(KvTableError::Encode(
+                    "a common-handle column is outside the table schema".to_owned(),
+                ));
+            };
+            if let Some(length) = self.common_handle_prefix_lengths.get(position) {
+                crate::index_prefix_cut::cut_index_value(value, *length, &column.field_type);
+            }
+        }
         let encoded = tidb_codec::Encoder::new(self.use_new_collation)
-            .encode_key_in_timezone(zone, values)
+            .encode_key_in_timezone(zone, &stored_values)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         let padded = tidb_txnkv::CommonHandle::new(encoded)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
@@ -2356,8 +2417,16 @@ impl KvTable {
             // collation loses information. Go keeps exactly those handle
             // columns in the row bytes and rebuilds only lossless handles
             // from the record key.
+            let handle_position = self
+                .common_handle_offsets
+                .iter()
+                .position(|handle_offset| *handle_offset == offset);
+            let full_common_handle = handle_position.is_some_and(|position| {
+                self.common_handle_prefix_lengths.get(position).copied()
+                    == Some(crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
+            });
             let lossless_handle = self.pk_handle_offset == Some(offset)
-                || (self.common_handle_offsets.contains(&offset)
+                || (full_common_handle
                     && !column
                         .field_type
                         .need_restored_data_with_collation(self.use_new_collation));
@@ -2383,6 +2452,7 @@ impl KvTable {
             &self.columns,
             self.pk_handle_offset,
             &self.common_handle_offsets,
+            &self.common_handle_prefix_lengths,
             row,
             handle,
             zone,

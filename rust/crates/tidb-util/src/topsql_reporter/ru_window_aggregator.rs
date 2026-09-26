@@ -38,6 +38,9 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use super::metrics::{
+    IGNORE_LATE_COMPACTED_RU_KEYS_COUNTER, IGNORE_LATE_COMPACTED_RU_TOTAL_COUNTER,
+};
 use super::ru_datamodel::{
     RuCollecting, TopRuRecord, MAX_PRE_TOP_N_SQLS_PER_USER, MAX_PRE_TOP_N_USERS,
     MAX_TOP_SQLS_PER_USER, MAX_TOP_USERS,
@@ -61,44 +64,6 @@ pub const RU_REPORT_TOP_N_USERS: usize = 100;
 /// Go `ruReportTopNSQLsPerUser`: the per-item-interval output cap on SQLs per
 /// user.
 pub const RU_REPORT_TOP_N_SQLS_PER_USER: usize = 100;
-
-/// boundary: Go `reporter/metrics` prometheus `Counter`s are float counters
-/// read back by the tests through `readCounter`. `tidb-util` carries no
-/// reporter metric registry, so the two late-drop counters keep their names
-/// and their float semantics as process counters.
-#[derive(Debug)]
-pub struct FloatCounter(Mutex<f64>);
-
-impl FloatCounter {
-    /// A counter starting at zero.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self(Mutex::new(0.0))
-    }
-
-    /// Prometheus `Counter.Add`.
-    pub fn add(&self, delta: f64) {
-        *self.0.lock().unwrap() += delta;
-    }
-
-    /// The test-side `readCounter`.
-    #[must_use]
-    pub fn get(&self) -> f64 {
-        *self.0.lock().unwrap()
-    }
-}
-
-impl Default for FloatCounter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// boundary: Go `reporter/metrics.IgnoreLateCompactedRUKeysCounter`.
-pub static IGNORE_LATE_COMPACTED_RU_KEYS_COUNTER: FloatCounter = FloatCounter::new();
-
-/// boundary: Go `reporter/metrics.IgnoreLateCompactedRUTotalCounter`.
-pub static IGNORE_LATE_COMPACTED_RU_TOTAL_COUNTER: FloatCounter = FloatCounter::new();
 
 /// boundary: Go `ruBatch` lives in `reporter.go`, which is gRPC-bound and out
 /// of scope here; the three fields the window aggregator reads are declared
@@ -216,8 +181,8 @@ impl RuWindowAggregator {
             // observable.
             if was_late_batch {
                 let dropped_ru: f64 = batch.data.values().map(|incr| incr.total_ru).sum();
-                IGNORE_LATE_COMPACTED_RU_KEYS_COUNTER.add(batch.data.len() as f64);
-                IGNORE_LATE_COMPACTED_RU_TOTAL_COUNTER.add(dropped_ru);
+                IGNORE_LATE_COMPACTED_RU_KEYS_COUNTER.inc_by(batch.data.len() as f64);
+                IGNORE_LATE_COMPACTED_RU_TOTAL_COUNTER.inc_by(dropped_ru);
             }
             return;
         };

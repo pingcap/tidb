@@ -356,6 +356,8 @@ pub enum PlanErrorKind {
     /// Go `ErrInternal` (1815) carrying a planner message verbatim: the
     /// client renders the errno template (`Internal : %s`) around it.
     InternalCoded { message: String },
+    /// Go `plannererrors.ErrUnsupportedType` (8108), with its rendered diagnostic.
+    UnsupportedType { message: String },
     /// Go window frame errors, retaining the original window name.
     WindowFrame { code: u16, window: String },
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
@@ -521,6 +523,18 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::Internal,
             message: message.into(),
+        }
+    }
+
+    /// Go `plannererrors.ErrUnsupportedType.GenWithStack`, preserving its diagnostic.
+    #[must_use]
+    pub fn unsupported_type(message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            kind: PlanErrorKind::UnsupportedType {
+                message: message.clone(),
+            },
+            message,
         }
     }
 

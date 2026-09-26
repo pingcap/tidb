@@ -127,13 +127,27 @@ pub fn analyze_kv_table_columns(
 
     let visible = table.visible_columns();
     let mut columns = BTreeMap::new();
+    let mut column_fm_sketches = BTreeMap::new();
     for (position, built) in analyzed.columns.into_iter().enumerate() {
-        let unsigned = visible[source_positions[position]].field_type.is_unsigned();
+        let column = &visible[source_positions[position]];
+        // Go analyzeColumnsPushdownV2 omits virtual-column histograms.
+        // Their materialized sample values are still needed for index keys.
+        if crate::generated_column::is_virtual(column) {
+            continue;
+        }
+        let unsigned = column.field_type.is_unsigned();
+        if let Some(sketch) = built.fm_sketch.clone() {
+            column_fm_sketches.insert(built.id, sketch);
+        }
         columns.insert(built.id, column_statistics(built, unsigned));
     }
     let mut indexes = BTreeMap::new();
+    let mut index_fm_sketches = BTreeMap::new();
     for (position, built) in analyzed.indexes.into_iter().enumerate() {
         let stored = &table.indexes()[source_indexes[position]];
+        if let Some(sketch) = built.fm_sketch.clone() {
+            index_fm_sketches.insert(built.id, sketch);
+        }
         indexes.insert(
             built.id,
             index_statistics(built, stored.column_offsets.len(), stored.unique),
@@ -155,6 +169,7 @@ pub fn analyze_kv_table_columns(
     // This function knows zero came from an actual ANALYZE scan.
     statistics.cache_pseudo = false;
     Ok(statistics
+        .with_fm_sketches(column_fm_sketches, index_fm_sketches)
         // Go stamps the writing transaction's start TS into both
         // `mysql.stats_meta` columns (`save.go:200`). This tier has no cluster
         // TSO, so the stamp is this process's clock in Go's TSO shape -- the

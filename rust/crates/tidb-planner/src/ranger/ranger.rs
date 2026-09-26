@@ -279,8 +279,12 @@ pub fn has_prefix(lengths: &[i64]) -> bool {
 }
 
 /// Go `UnionRanges`: sort by encoded start key and merge overlapping (or,
-/// with `merge_consecutive`, touching) ranges.
-pub fn union_ranges(ranges: Ranges, merge_consecutive: bool) -> Result<Ranges, PointBuilderError> {
+/// with `merge_consecutive`, touching) ranges. Returns the original codec
+/// error when either bound cannot be encoded.
+pub fn union_ranges(
+    ranges: Ranges,
+    merge_consecutive: bool,
+) -> Result<Ranges, tidb_codec::CodecError> {
     if ranges.is_empty() {
         return Ok(Ranges::new());
     }
@@ -291,9 +295,7 @@ pub fn union_ranges(ranges: Ranges, merge_consecutive: bool) -> Result<Ranges, P
     }
     let mut objects = Vec::with_capacity(ranges.len());
     for ran in ranges {
-        let (left, right) = ran
-            .encode()
-            .map_err(|error| PointBuilderError::Unsupported(error.to_string()))?;
+        let (left, right) = ran.encode()?;
         objects.push(SortRange {
             original: ran,
             encoded_start: left,
@@ -925,6 +927,33 @@ mod tests {
             .expect("unions");
         assert_eq!(fused.len(), 1);
         assert_eq!(fused[0].to_display_string(), "[1,6]");
+    }
+
+    #[test]
+    fn union_ranges_preserves_bound_encoding_errors() {
+        for (low, high) in [
+            (Datum::Raw(vec![1]), Datum::Int(2)),
+            (Datum::Int(1), Datum::Raw(vec![2])),
+        ] {
+            for merge_consecutive in [false, true] {
+                let result = union_ranges(
+                    vec![Range {
+                        low_val: vec![low.clone()],
+                        high_val: vec![high.clone()],
+                        collators: vec![tidb_datatype::Collation::Binary],
+                        low_exclude: false,
+                        high_exclude: false,
+                    }],
+                    merge_consecutive,
+                );
+                assert!(matches!(
+                    result,
+                    Err(tidb_codec::CodecError::InvalidEncoding(
+                        "unsupported raw datum"
+                    ))
+                ));
+            }
+        }
     }
 
     /// `newFieldType`: ints widen to LONGLONG keeping flags, strings drop

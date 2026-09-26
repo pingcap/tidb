@@ -214,7 +214,14 @@ pub fn exhaust_physical_plans_4_logical_selection(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
 ) -> Vec<PhysicalPlan> {
-    exhaust_physical_plans_4_logical_selection_with_mpp(p, prop, allocator, skew_ratio, false)
+    exhaust_physical_plans_4_logical_selection_with_mpp(
+        p,
+        prop,
+        allocator,
+        skew_ratio,
+        false,
+        &Default::default(),
+    )
 }
 
 /// MPP-aware form of [`exhaust_physical_plans_4_logical_selection`].
@@ -225,6 +232,7 @@ pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
     mpp_allowed: bool,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Vec<PhysicalPlan> {
     let mut child_prop = prop.clone_essential_fields();
     child_prop.index_join_prop = prop.index_join_prop.clone();
@@ -243,7 +251,11 @@ pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
         && mpp_allowed
         && p.base.has_tiflash()
         && !contains_virtual_column
-        && crate::pushdown::can_exprs_push_down_tiflash(&p.conditions)
+        && crate::pushdown::can_exprs_push_down(
+            &p.conditions,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            blacklist,
+        )
     {
         let mut mpp_prop = prop.clone_essential_fields();
         mpp_prop.task_tp = TaskType::Mpp;
@@ -309,6 +321,7 @@ pub fn exhaust_physical_plans_4_logical_projection(
         skew_ratio,
         allow_projection_push_down,
         false,
+        &Default::default(),
     )
 }
 
@@ -321,6 +334,7 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
     skew_ratio: f64,
     allow_projection_push_down: bool,
     mpp_allowed: bool,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Vec<PhysicalPlan> {
     let Some(child_prop) = p.try_to_get_child_prop(prop) else {
         return Vec::new();
@@ -334,7 +348,11 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
     if child_prop.task_tp != TaskType::Mpp
         && mpp_allowed
         && p.base.has_tiflash()
-        && crate::pushdown::can_exprs_push_down_tiflash(&p.exprs)
+        && crate::pushdown::can_exprs_push_down(
+            &p.exprs,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            blacklist,
+        )
     {
         let mut mpp_prop = child_prop.clone_essential_fields();
         mpp_prop.task_tp = TaskType::Mpp;
@@ -354,7 +372,11 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
     });
     if child_prop.task_tp != TaskType::CopSingleRead
         && allow_projection_push_down
-        && crate::pushdown::can_exprs_push_down_tikv(&p.exprs)
+        && crate::pushdown::can_exprs_push_down(
+            &p.exprs,
+            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            blacklist,
+        )
         && !contains_virtual_column
         && tidb_expr::expr_util::projection_benefits_from_pushed_down(&p.exprs, child_schema_len)
     {
@@ -3021,6 +3043,7 @@ pub fn get_hash_aggs_with_mpp(
         true,
         false,
         tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE,
+        &Default::default(),
     )
 }
 
@@ -3037,13 +3060,14 @@ pub fn get_hash_aggs_with_mpp_options(
     enable_3_stage_distinct_agg: bool,
     enable_3_stage_multi_distinct_agg: bool,
     tiflash_pre_agg_mode: &str,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Vec<PhysicalPlan> {
     if !prop.is_sort_item_empty() {
         return Vec::new();
     }
     let can_push_mpp = mpp_allowed
         && agg.base.has_tiflash()
-        && check_agg_can_push_mpp(agg);
+        && check_agg_can_push_mpp(agg, blacklist);
     if prop.task_tp == TaskType::Mpp && !can_push_mpp {
         return Vec::new();
     }
@@ -3122,8 +3146,8 @@ pub fn get_hash_aggs_with_mpp_options(
 /// Go `checkCanPushDownToMPP` plus the TiFlash half of
 /// `CheckAggCanPushCop`.  The caller has already established the TiFlash
 /// replica and MPP session gates.
-fn check_agg_can_push_mpp(agg: &crate::logical::LogicalAggregation) -> bool {
-    crate::final_mode_agg::check_agg_can_push_mpp(&agg.agg_funcs, &agg.group_by_items)
+fn check_agg_can_push_mpp(agg: &crate::logical::LogicalAggregation, blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist) -> bool {
+    crate::final_mode_agg::check_agg_can_push_mpp(&agg.agg_funcs, &agg.group_by_items, blacklist)
 }
 
 fn get_mpp_hash_aggs(

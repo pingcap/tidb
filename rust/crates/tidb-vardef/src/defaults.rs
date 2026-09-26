@@ -241,6 +241,8 @@ pub const DEF_TIDB_OPTIMIZER_ENABLE_NEW_OFGB: bool = false;
 pub const DEF_TIDB_ENABLE_OUTER_JOIN_REORDER: bool = true;
 /// Go `DefTiDBEnableNAAJ` (= `true`).
 pub const DEF_TIDB_ENABLE_NAAJ: bool = true;
+/// Go `DefTiDBEnableAdaptiveLimitScan`; session and registry default is OFF.
+pub const DEF_TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN: bool = false;
 /// Go `DefTiDBAllowBatchCop` (= `1`).
 pub const DEF_TIDB_ALLOW_BATCH_COP: i64 = 1;
 /// Go `DefShardRowIDBits` (= `0`).

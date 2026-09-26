@@ -583,6 +583,9 @@ impl DisabledLogicalRules {
 /// back-pointer to a session, so the context is threaded explicitly. Every
 /// field here is a Go `sessionctx` read, named.
 pub struct RuleContext<'a> {
+    /// Go `SessionVars.RiskRangeSkewRatio`, `RiskEqSkewRatio`, and
+    /// `GetOptObjective()` inputs used by histogram cardinality estimation.
+    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
     /// Go `sessionVars.PlanID`, for the operators a rule CREATES —
     /// `logicalop.AddSelection`'s `LogicalSelection` and `Conds2TableDual`'s
     /// `LogicalTableDual`.
@@ -607,6 +610,8 @@ pub struct RuleContext<'a> {
     pub allow_derive_topn: bool,
     /// Go `DefaultDisabledLogicalRulesList`.
     pub disabled_rules: DisabledLogicalRules,
+    /// Published expression policy, read before datasource range derivation.
+    pub expr_pushdown_blacklist: tidb_expr::infer_pushdown::ExprPushDownBlacklist,
     /// Go's domain `StatsHandle`, reached at this rule's exact position.
     pub statistics_load: Option<&'a dyn super::rule_collect_plan_stats::StatisticsLoadRequester>,
     /// Go's partition metadata/ranger access at the partition-processor rule.
@@ -615,6 +620,8 @@ pub struct RuleContext<'a> {
     pub opt_index_prune_threshold: i32,
     /// Go `SessionVars.OptPrefixIndexSingleScan`, read while deriving access paths.
     pub opt_prefix_index_single_scan: bool,
+    /// Go EnableIndexMerge, used before physical property search.
+    pub index_merge_enabled: bool,
     /// Go `SessionVars.RangeMaxSize`; zero means unlimited.
     pub range_max_size: i64,
     /// Go SessionVars.SelectivityFactor for uncovered or partially covered predicates.
@@ -634,6 +641,10 @@ pub struct RuleContext<'a> {
     pub enable_no_decorrelate_in_select: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
     pub join_reorder_threshold: i32,
+    /// Go `SessionVars.RiskGroupNDVSkewRatio` for join and aggregation stats.
+    pub group_ndv_skew_ratio: f64,
+    /// Go SessionVars.RiskScaleNDVSkewRatio for filtered/scaled profiles.
+    pub scale_ndv_skew_ratio: f64,
     /// Go `SessionVars.AllowAggPushDown` (`@@tidb_opt_agg_push_down`, default
     /// off): gates the aggregation-push-down rule's join and union arms; the
     /// projection-crossing arm runs regardless, as in Go.

@@ -49,6 +49,20 @@ pub fn optimize_by_shuffle(
     options: ShuffleOptions,
     allocator: &PlanIdAllocator,
 ) -> Result<Task, PlanError> {
+    optimize_by_shuffle_in(
+        task,
+        options,
+        allocator,
+        &crate::ranger::points::evaluate_static,
+    )
+}
+
+pub(crate) fn optimize_by_shuffle_in(
+    task: Task,
+    options: ShuffleOptions,
+    allocator: &PlanIdAllocator,
+    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+) -> Result<Task, PlanError> {
     let Some(plan) = task.plan() else {
         return Ok(task);
     };
@@ -142,7 +156,7 @@ pub fn optimize_by_shuffle(
     });
     Ok(attach_plan_to_task(
         shuffle,
-        task.into_root_task(allocator)?,
+        task.into_root_task_in(allocator, evaluate)?,
     ))
 }
 

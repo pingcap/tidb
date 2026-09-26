@@ -1316,7 +1316,13 @@ impl Session {
             // answer without touching a user table, and keeping them here
             // pushed this file past the repository's 2200-line ceiling.
             tidb_ast::AdminStmt::Flush(flush) => {
-                return crate::show_admin::flush_stmt(flush).map(Some);
+                let current_db = self.current_db.clone();
+                let shared = self.shared_catalog();
+                let mut catalog = shared
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                return crate::show_admin::flush_stmt(flush, &mut catalog, &current_db)
+                    .map(Some);
             }
             tidb_ast::AdminStmt::ShowDdl => {
                 return Ok(Some(crate::show_admin::show_ddl_output(

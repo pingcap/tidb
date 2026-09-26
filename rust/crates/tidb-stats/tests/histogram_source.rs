@@ -250,6 +250,8 @@ fn source_out_of_range_estimation_matches_go_boundaries() {
     let histogram = int_histogram();
     assert!(!histogram.out_of_range(&Datum::new_int(0), Collation::Binary));
     assert!(!histogram.out_of_range(&Datum::new_int(49), Collation::Binary));
+    assert!(histogram.out_of_range(&Datum::MinNotNull, Collation::Binary));
+    assert!(histogram.out_of_range(&Datum::MaxValue, Collation::Binary));
     assert!(histogram.out_of_range(&Datum::new_int(-1), Collation::Binary));
     assert!(histogram.out_of_range(&Datum::new_int(50), Collation::Binary));
     assert_eq!(histogram.abs_row_count_difference(60), 10.0);

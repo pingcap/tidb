@@ -1283,6 +1283,18 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
     );
     let root = PhysicalProperty::default();
     let plans = get_hash_aggs_with_mpp(&aggregation, &root, &allocator, 1.0, true, false);
+    for (store, admits_mpp) in [("tikv", true), ("tiflash", false)] {
+        let blacklist = std::collections::HashMap::from([(
+            "count".into(), tidb_expr::infer_pushdown::blacklist_store_mask(store),
+        )]);
+        let candidates = super::get_hash_aggs_with_mpp_options(
+            &aggregation, &root, &allocator, 1.0, true, false, true, false,
+            tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE, &blacklist,
+        );
+        assert_eq!(candidates.iter().any(|candidate| matches!(candidate,
+            PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode != AggMppRunMode::NoMpp
+        )), admits_mpp, "MPP enumeration must use the {store} blacklist mask");
+    }
     let modes: Vec<AggMppRunMode> = plans
         .iter()
         .filter_map(|plan| match plan {
@@ -1548,6 +1560,7 @@ fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
         &allocator,
         1.0,
         true,
+        &Default::default(),
     );
     assert_eq!(selection_plans.len(), 2);
     assert_eq!(
@@ -1572,6 +1585,7 @@ fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
         1.0,
         true,
         true,
+        &Default::default(),
     );
     assert_eq!(projection_plans.len(), 2);
     assert_eq!(
@@ -1582,6 +1596,52 @@ fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
             .task_tp,
         TaskType::Mpp
     );
+}
+
+#[test]
+fn published_blacklist_prevents_remote_candidate_enumeration() {
+    use crate::logical::{BaseLogicalPlan, LogicalProjection, LogicalSelection};
+    let allocator = PlanIdAllocator::new();
+    let col = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+    let expression = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+        tidb_ast::CiString::new("gt"),
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![Expression::Column(col.clone()), Expression::Column(col)],
+    ));
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
+    base.set_has_tiflash(true);
+    let selection = LogicalSelection::new(base, vec![expression.clone()]);
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalProjection::TYPE, 0);
+    base.set_has_tiflash(true);
+    let projection = LogicalProjection::new(base, vec![expression]);
+    let prop = PhysicalProperty::default();
+    for (store, expected_mpp) in [("tikv", true), ("tiflash", false)] {
+        let blacklist = std::collections::HashMap::from([(
+            "gt".into(),
+            tidb_expr::infer_pushdown::blacklist_store_mask(store),
+        )]);
+        let selections = exhaust_physical_plans_4_logical_selection_with_mpp(
+            &selection, &prop, &allocator, 1.0, true, &blacklist,
+        );
+        let projections = exhaust_physical_plans_4_logical_projection_with_mpp(
+            &projection,
+            &prop,
+            &allocator,
+            1.0,
+            true,
+            true,
+            &blacklist,
+        );
+        for candidates in [selections, projections] {
+            assert_eq!(
+                candidates
+                    .iter()
+                    .any(|p| p.base().child_req_prop(0).unwrap().task_tp == TaskType::Mpp),
+                expected_mpp,
+                "candidate admission must consult the {store} policy before allocating plans"
+            );
+        }
+    }
 }
 
 #[test]

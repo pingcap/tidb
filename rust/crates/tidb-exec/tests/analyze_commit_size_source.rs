@@ -1357,6 +1357,16 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
         physical_id: table_id,
         table: TableInfo {
             id: table_id,
+            columns: vec![ColumnInfo {
+                id: 1,
+                name: CiString::new("a"),
+                field_type: tidb_datatype::FieldType::new(
+                    tidb_datatype::FieldTypeCode::LongLong,
+                ),
+                state: SchemaState::PUBLIC,
+                ..ColumnInfo::default()
+            }]
+            .into(),
             indices: vec![IndexInfo {
                 id: 2,
                 name: CiString::new("idx_a"),
@@ -1366,7 +1376,10 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
             .into(),
             ..TableInfo::default()
         },
-        column_types: BTreeMap::new(),
+        column_types: BTreeMap::from([(
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        )]),
     };
     let targets = [target(empty_id), target(topn_only_id)];
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
@@ -1387,6 +1400,16 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
     assert_eq!(empty.hist_coll.realtime_count, 6);
     assert_eq!(empty.hist_coll.index_count(), 0);
     assert_eq!(empty.hist_coll.column_count(), 0);
+    let existence = empty
+        .existence_map
+        .as_ref()
+        .expect("schema metadata has an existence map")
+        .read()
+        .unwrap();
+    assert!(existence.has(1, false));
+    assert!(!existence.has_analyzed(1, false));
+    assert!(existence.has(2, true));
+    assert!(!existence.has_analyzed(2, true));
 
     let topn_only = loaded[&topn_only_id]
         .loaded()

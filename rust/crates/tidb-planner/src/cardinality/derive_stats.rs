@@ -113,39 +113,24 @@ fn estimate_skewed_ndv(original_ndv: f64, original_rows: f64, selected_rows: f64
 /// Go `EstimateColsNDVWithMatchedLen` (`cardinality/ndv.go:87-123`), production
 /// path.
 ///
-/// Returns `(ndv, matched_len)`. An empty column list is Go's early
-/// `return 1.0, 1`. For one column, conservative and exponential agree, so the
-/// source returns the naive estimate directly. For several columns the
-/// production default applies: `DefOptRiskGroupNDVSkewRatio` is `0.0`
-/// (`vardef/tidb_vars.go:1472`), so the `skewRatio > 0` branch is not taken and
-/// the *conservative* (naive max) estimate is returned with `matched_len = 1`.
-///
-/// The exponential-backoff blend behind a non-zero group-NDV skew ratio is
-/// deliberately out of scope here. The backoff itself is already ported as
-/// [`apply_exponential_backoff`](crate::cardinality::apply_exponential_backoff),
-/// but nothing calls it from here because the production ratio is zero.
+/// Returns `(ndv, matched_len)` using the Go default
+/// `DefOptRiskGroupNDVSkewRatio` (`0.0`).
 #[must_use]
 pub fn estimate_cols_ndv_with_matched_len(cols: &[ColumnId], profile: &StatsInfo) -> (f64, usize) {
-    if cols.is_empty() {
-        return (1.0, 1);
-    }
-    let mut sorted_cols = cols.to_vec();
-    sorted_cols.sort_unstable();
-    if let Some(group) = profile.group_ndvs().iter().find(|group| {
-        let mut group_cols = group.columns.clone();
-        group_cols.sort_unstable();
-        group_cols == sorted_cols
-    }) {
-        return (group.ndv.max(1.0), group.columns.len());
-    }
+    estimate_cols_ndv_with_matched_len_and_skew_ratio(
+        cols,
+        profile,
+        tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+    )
+}
 
-    let mut max_ndv = 1.0_f64;
-    for col in cols {
-        if let Some(ndv) = profile.col_ndvs().get(col) {
-            if *ndv > 0.0 {
-                max_ndv = max_ndv.max(*ndv);
-            }
-        }
-    }
-    (max_ndv, 1)
+/// Go `EstimateColsNDVWithMatchedLen` with the session's
+/// `RiskGroupNDVSkewRatio` (`pkg/planner/cardinality/ndv.go`).
+#[must_use]
+pub fn estimate_cols_ndv_with_matched_len_and_skew_ratio(
+    cols: &[ColumnId],
+    profile: &StatsInfo,
+    skew_ratio: f64,
+) -> (f64, usize) {
+    crate::cardinality::ndv::estimate_cols_ndv_with_stats(cols, profile, skew_ratio)
 }

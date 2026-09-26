@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! TiKV expression push-down admission.
+//! Shared logical and store-specific expression push-down admission.
 //!
 //! Go `canExprPushDown` first proves that an expression has a protobuf
 //! representation, and `canScalarFuncPushDown` then applies the source-owned
-//! TiKV policy recursively. Rust keeps that policy in
+//! store policy recursively. Rust keeps that policy in
 //! [`tidb_expr::infer_pushdown`] and concrete signatures in
 //! [`tidb_expr::pushdown_catalog`]. Keeping a second function-name whitelist in
 //! the planner let these answers drift (notably for Go's PbCode-dependent
@@ -38,28 +38,105 @@ pub fn can_exprs_push_down_tiflash(exprs: &[Expression]) -> bool {
     exprs.iter().all(can_expr_push_down_tiflash)
 }
 
+/// Shared admission for the logical datasource and store-specific consumers.
+/// Go uses Unspecified before deriving any ordinary or index-merge ranges.
+#[must_use]
+pub fn can_exprs_push_down(
+    exprs: &[Expression],
+    store: tidb_expr::infer_pushdown::PushDownStore,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> bool {
+    exprs
+        .iter()
+        .all(|expr| can_expr_push_down(expr, store, blacklist))
+}
+
+/// Go SplitSelCondsWithVirtualColumn followed by PushDownExprs for scan filters.
+/// The second list remains on the root task until reader conversion.
+pub fn split_scan_filters(
+    filters: Vec<Expression>,
+    store: tidb_expr::infer_pushdown::PushDownStore,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> (Vec<Expression>, Vec<Expression>) {
+    let (ordinary, mut root) = split_virtual_column_filters(filters);
+    let (pushed, rejected): (Vec<_>, Vec<_>) = ordinary.into_iter().partition(|condition| {
+        can_exprs_push_down(std::slice::from_ref(condition), store, blacklist)
+    });
+    root.extend(rejected);
+    (pushed, root)
+}
+
+/// Go SplitSelCondsWithVirtualColumn, kept separate for index/table phase order.
+pub fn split_virtual_column_filters(
+    filters: Vec<Expression>,
+) -> (Vec<Expression>, Vec<Expression>) {
+    filters.into_iter().partition(|condition| {
+        !tidb_expr::simple_expr::extract_columns(condition)
+            .iter()
+            .any(|column| column.virtual_expr.is_some())
+    })
+}
+
 fn can_expr_push_down_tikv(expr: &Expression) -> bool {
-    use tidb_expr::infer_pushdown::{scalar_expr_supported_by_tikv, PushDownPolicy};
+    can_expr_push_down(
+        expr,
+        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        &Default::default(),
+    )
+}
+
+fn can_expr_push_down_tiflash(expr: &Expression) -> bool {
+    can_expr_push_down(
+        expr,
+        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+        &Default::default(),
+    )
+}
+
+fn can_expr_push_down(
+    expr: &Expression,
+    store: tidb_expr::infer_pushdown::PushDownStore,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> bool {
+    use tidb_expr::infer_pushdown::{
+        can_function_be_pushed, is_push_down_enabled, PushDownPolicy, PushDownStore,
+    };
     use tidb_expr::pushdown_catalog::{PbScalar, ScalarFuncSig};
 
     let Expression::ScalarFunction(function) = expr else {
-        // Go probes columns/constants/correlated columns through PbConverter.
-        // Every such node represented by this physical expression tree has
-        // already passed the expression rewriter's type construction.
+        // Go PbConverter.columnToPBExpr checks column types independently of
+        // the requested engine, including correlated columns.
+        if matches!(
+            expr,
+            Expression::Column(_) | Expression::CorrelatedColumn(_)
+        ) {
+            if let Some(field_type) = expr.static_type() {
+                use tidb_datatype::FieldTypeCode;
+                return match field_type.code() {
+                    FieldTypeCode::Enum => {
+                        is_push_down_enabled(blacklist, "enum", PushDownStore::Unspecified)
+                    }
+                    FieldTypeCode::Bit => {
+                        is_push_down_enabled(blacklist, "bit", PushDownStore::TiKv)
+                    }
+                    FieldTypeCode::Set | FieldTypeCode::Geometry | FieldTypeCode::Unspecified => {
+                        false
+                    }
+                    _ => true,
+                };
+            }
+        }
         return true;
     };
-    if !function.args.iter().all(can_expr_push_down_tikv) {
+    if !function
+        .args
+        .iter()
+        .all(|arg| can_expr_push_down(arg, store, blacklist))
+    {
         return false;
     }
     let name = function.func_name.lowercase();
-    // Go builds every cast under the single name `ast.Cast`, which
-    // `scalarExprSupportedByTiKV` admits unconditionally
-    // (`infer_pushdown.go:246`). The dedicated-cast transcreation names each
-    // target type (`cast_decimal`, `cast_signed`, ...), so map that family
-    // back to Go's name before the shared policy sees it. Without this the
-    // policy answers "not pushable" for `not(isnull(cast_decimal(col)))` and
-    // the derived NOT NULL filter is left above the projection that defines
-    // the cast instead of inside the cop reader.
+    // Dedicated Rust casts represent Go's single ast.Cast function family.
     let policy_name = if name.starts_with("cast_") {
         "cast"
     } else {
@@ -69,9 +146,8 @@ fn can_expr_push_down_tikv(expr: &Expression) -> bool {
         Some(PbScalar::Call { signature, .. }) => signature.sig,
         _ => ScalarFuncSig::Unspecified,
     };
-    // Go's conditional arms read PbCode. A name-only answer for one would be
-    // speculation, so require the shared signature catalog to resolve it.
-    if signature == ScalarFuncSig::Unspecified
+    if store == PushDownStore::TiKv
+        && signature == ScalarFuncSig::Unspecified
         && matches!(
             policy_name,
             "if" | "ifnull"
@@ -89,38 +165,18 @@ fn can_expr_push_down_tikv(expr: &Expression) -> bool {
     {
         return false;
     }
-    scalar_expr_supported_by_tikv(&PushDownPolicy::new(policy_name, signature))
-}
-
-fn can_expr_push_down_tiflash(expr: &Expression) -> bool {
-    use tidb_expr::infer_pushdown::{scalar_expr_supported_by_flash, PushDownPolicy};
-    use tidb_expr::pushdown_catalog::{PbScalar, ScalarFuncSig};
-
-    let Expression::ScalarFunction(function) = expr else {
-        return true;
-    };
-    if !function.args.iter().all(can_expr_push_down_tiflash) {
-        return false;
-    }
-    let name = function.func_name.lowercase();
-    let policy_name = if name.starts_with("cast_") {
-        "cast"
-    } else {
-        name.as_ref()
-    };
-    let signature = match tidb_expr::pushdown_catalog::from_expression(expr) {
-        Some(PbScalar::Call { signature, .. }) => signature.sig,
-        _ => ScalarFuncSig::Unspecified,
-    };
     let mut policy = PushDownPolicy::new(policy_name, signature);
     if policy_name == "cast" {
-        // TiFlash's cast policy uses both declared types. The catalog's
-        // resolved signature is still authoritative; an unresolved internal
-        // cast is refused rather than guessed.
         policy.source_type = function.args.first().and_then(Expression::static_type);
         policy.return_type = expr.static_type();
     }
-    scalar_expr_supported_by_flash(&policy)
+    if matches!(
+        policy_name,
+        "regexp" | "regexp_like" | "regexp_substr" | "regexp_instr" | "regexp_replace"
+    ) {
+        (policy.charset, policy.collation) = function.collation.charset_and_collation();
+    }
+    can_function_be_pushed(&policy, store, blacklist)
 }
 
 #[cfg(test)]
@@ -136,6 +192,52 @@ mod tests {
         sf.func_name = tidb_ast::CiString::new(name.to_owned());
         sf.args = args;
         Expression::ScalarFunction(sf)
+    }
+
+    #[test]
+    fn datasource_admission_preserves_unspecified_store_blacklist_semantics() {
+        use tidb_expr::infer_pushdown::{blacklist_store_mask, PushDownStore};
+        let column = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::LongLong)));
+        let one = Expression::Constant(Constant::new(
+            Datum::Int(1),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        let predicate = func("gt", vec![column, one]);
+        let mut blacklist = Default::default();
+        for name in ["gt", "gt.gtint"] {
+            blacklist =
+                std::collections::HashMap::from([(name.into(), blacklist_store_mask("tikv"))]);
+            assert!(can_exprs_push_down(
+                std::slice::from_ref(&predicate),
+                PushDownStore::Unspecified,
+                &blacklist
+            ));
+            assert!(!can_exprs_push_down(
+                std::slice::from_ref(&predicate),
+                PushDownStore::TiKv,
+                &blacklist
+            ));
+            blacklist.insert(name.into(), blacklist_store_mask("tikv,tiflash,tidb"));
+            assert!(!can_exprs_push_down(
+                std::slice::from_ref(&predicate),
+                PushDownStore::Unspecified,
+                &blacklist
+            ));
+        }
+        let enum_column = Expression::Column(Column::new(2, FieldType::new(FieldTypeCode::Enum)));
+        blacklist.clear();
+        blacklist.insert("enum".into(), blacklist_store_mask("tikv"));
+        assert!(can_exprs_push_down(
+            std::slice::from_ref(&enum_column),
+            PushDownStore::TiKv,
+            &blacklist
+        ));
+        blacklist.insert("enum".into(), blacklist_store_mask("tikv,tiflash,tidb"));
+        assert!(!can_exprs_push_down(
+            &[enum_column],
+            PushDownStore::Unspecified,
+            &blacklist
+        ));
     }
 
     #[test]

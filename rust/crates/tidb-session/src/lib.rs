@@ -1252,6 +1252,19 @@ impl Session {
                     collector.update(table_id, item.delta, item.count);
                 }
             }
+        } else if !delta.is_empty() {
+            // The standalone catalog has no Domain stats worker. Preserve Go's
+            // post-commit collector boundary by publishing committed modify
+            // counts into the shared catalog only after its transaction lands.
+            let mut catalog = self
+                .catalog
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (table_id, item) in delta {
+                if table_id > 0 {
+                    catalog.record_stats_modify_count(table_id, item.count);
+                }
+            }
         }
     }
 
@@ -1995,7 +2008,11 @@ impl Session {
         execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         self.begin_statement_execution(sql)?;
+        let table_delta_savepoint = self.table_delta_savepoint();
         let result = execute(self);
+        if result.is_err() {
+            self.restore_table_delta_savepoint(table_delta_savepoint);
+        }
         let result_authority = (capture_result_authority
             && matches!(&result, Ok(StmtOutput::Rows { .. })))
         .then(|| self.result_materialization_authority());
@@ -2416,6 +2433,8 @@ mod tests_positional_orderby;
 mod tests_prepared_plan_cache;
 #[cfg(test)]
 mod tests_prepared_statements;
+#[cfg(test)]
+mod tests_pushdown_blacklist;
 #[cfg(test)]
 mod tests_read_cast;
 #[cfg(test)]

@@ -6549,7 +6549,11 @@ impl QuerySession for ClusterServerSession {
 
     /// The session's own `tidb_slow_log_threshold`, in milliseconds.
     fn slow_log_threshold(&self) -> Option<std::time::Duration> {
-        let raw = self.session.vars().get_system("tidb_slow_log_threshold").ok()?;
+        let raw = self
+            .session
+            .vars()
+            .get_system("tidb_slow_log_threshold")
+            .ok()?;
         let millis: u64 = raw.parse().ok()?;
         Some(std::time::Duration::from_millis(millis))
     }

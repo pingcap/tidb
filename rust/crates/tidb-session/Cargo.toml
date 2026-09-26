@@ -48,6 +48,7 @@ toml.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+tidb-codec = { path = "../tidb-codec" }
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
 # as record or index keys, which is `tablecodec`'s judgement to make.
 tidb-tablecodec = { path = "../tidb-tablecodec" }
@@ -59,3 +60,7 @@ workspace = true
 [[test]]
 name = "all"
 path = "tests/all.rs"
+
+[[test]]
+name = "topn_assisted_string_match"
+path = "tests/topn_assisted_string_match.rs"

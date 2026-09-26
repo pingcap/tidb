@@ -973,6 +973,8 @@ pub fn table_statistics_from_table_schema(
         .collect::<BTreeMap<_, _>>();
     let mut columns = BTreeMap::new();
     let mut indexes = BTreeMap::new();
+    let mut column_fm_sketches = BTreeMap::new();
+    let mut index_fm_sketches = BTreeMap::new();
     let mut column_load_status = BTreeMap::new();
     let mut index_load_status = BTreeMap::new();
     for column in stats.hist_coll.stable_columns() {
@@ -1002,6 +1004,9 @@ pub fn table_statistics_from_table_schema(
                 unsigned,
             },
         );
+        if let Some(sketch) = column.fm_sketch.clone() {
+            column_fm_sketches.insert(id, sketch);
+        }
         column_load_status.insert(id, column.stats_loaded_status);
     }
     for index in stats.hist_coll.stable_indices() {
@@ -1030,6 +1035,9 @@ pub fn table_statistics_from_table_schema(
                 unique: schema.2,
             },
         );
+        if let Some(sketch) = index.fm_sketch.clone() {
+            index_fm_sketches.insert(id, sketch);
+        }
         index_load_status.insert(id, index.stats_loaded_status);
     }
     let mut statistics = TableStatistics::new(
@@ -1045,7 +1053,8 @@ pub fn table_statistics_from_table_schema(
     // even when its meta version is unset.
     .with_stats_ver(i64::from(stats.hist_coll.stats_version))
     .with_load_statuses(column_load_status, index_load_status)
-    .with_stats_existence(column_stats_existence, index_stats_existence);
+    .with_stats_existence(column_stats_existence, index_stats_existence)
+    .with_fm_sketches(column_fm_sketches, index_fm_sketches);
     // Go `GetStatsTable` marks the planner copy pseudo when the canonical
     // table has no initialized column or index statistics. Do not infer this
     // from the reduced maps above: unloaded placeholder items can still have

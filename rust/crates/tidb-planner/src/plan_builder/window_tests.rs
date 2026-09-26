@@ -83,6 +83,7 @@ fn column(offset: usize, name: &str, ret_type: FieldType) -> SourceColumn {
         offset,
         ret_type,
         is_public: true,
+        is_generated: false,
         is_hidden: false,
         is_virtual_generated: false,
         generated_expr: None,

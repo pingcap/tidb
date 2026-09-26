@@ -234,6 +234,8 @@ pub struct SelectivityDefaults {
     /// paths, so it passes `false` and leaves the demand to the pruning rule;
     /// every later estimation keeps Go's `true`.
     pub trigger_load: bool,
+    /// Histogram risk settings from the current statement's plan context.
+    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
 }
 
 impl SelectivityDefaults {
@@ -279,6 +281,7 @@ impl SelectivityDefaults {
             negate_str_match_default,
             eval_topn_string_match: default_str_match_selectivity == 0.0,
             trigger_load: true,
+            estimator_options: Default::default(),
         }
     }
 }

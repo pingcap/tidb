@@ -1708,6 +1708,9 @@ impl Session {
                         (start_ts, commit_ts)
                     };
                     self.set_last_txn_info_committed(start_ts, commit_ts);
+                    if self.stats_collector.is_none() {
+                        self.publish_table_delta();
+                    }
                 }
                 PendingExecution::Complete(StmtOutput::Rows { .. }) if query_reads_stored_table => {
                     let start_ts = self.lock_catalog()?.allocate_tso();

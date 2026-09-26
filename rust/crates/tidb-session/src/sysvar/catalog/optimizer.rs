@@ -14,7 +14,7 @@
 
 //! Plan choice: the optimizer switches, join strategies, index selection, plan cache and SQL bindings.
 //!
-//! `bind_address` .. `tiflash_hash_join_version` -- 131 entries, name-ordered.
+//! `bind_address` .. `tiflash_hash_join_version` -- 132 entries, name-ordered.
 //!
 //! Captured from Go `pkg/sessionctx/variable/sysvar.go`'s `sysVars`. The
 //! registry is one flat name-ordered slice because lookup binary-searches
@@ -23,7 +23,7 @@
 
 use super::super::{SysVarDef, VarType};
 
-pub(super) static ENTRIES: [SysVarDef; 131] = [
+pub(super) static ENTRIES: [SysVarDef; 132] = [
     SysVarDef {
         name: "bind_address",
         scope: 0,
@@ -177,6 +177,18 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         allow_auto_value: false,
         min_value: 1,
         max_value: 2,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+    SysVarDef {
+        name: "tidb_enable_adaptive_limit_scan",
+        scope: 3,
+        value: "OFF",
+        var_type: VarType::Bool,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
     },

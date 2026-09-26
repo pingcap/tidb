@@ -554,14 +554,30 @@ impl LogicalAggregation {
     /// reloads)` (`logical_aggregation.go:219`): the output row count is the
     /// NDV of the group-by columns, and every output column takes that NDV.
     ///
-    /// The production default `RiskGroupNDVSkewRatio == 0` uses Go's
-    /// conservative estimate: an exact `GroupNDV` when present, otherwise the
-    /// largest group-column NDV. It does not multiply independent column NDVs.
+    /// The default `RiskGroupNDVSkewRatio == 0` uses Go's conservative
+    /// estimate: an exact `GroupNDV` when present, otherwise the largest
+    /// group-column NDV.
     pub fn derive_stats(
         &mut self,
         child_stats: &[StatsInfo],
         self_schema: &Schema,
         reloads: &[bool],
+    ) -> Option<(StatsInfo, bool)> {
+        self.derive_stats_with_group_ndv_skew_ratio(
+            child_stats,
+            self_schema,
+            reloads,
+            tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+        )
+    }
+
+    /// Go `LogicalAggregation.DeriveStats` with its session skew ratio.
+    pub fn derive_stats_with_group_ndv_skew_ratio(
+        &mut self,
+        child_stats: &[StatsInfo],
+        self_schema: &Schema,
+        reloads: &[bool],
+        group_ndv_skew_ratio: f64,
     ) -> Option<(StatsInfo, bool)> {
         let reload = reloads.len() == 1 && reloads[0];
         if !reload {
@@ -578,8 +594,12 @@ impl LogicalAggregation {
             .iter()
             .map(|column| column.unique_id)
             .collect::<Vec<_>>();
-        let (ndv, _) =
-            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&group_ids, child);
+        let (ndv, _) = crate::cardinality::derive_stats::
+            estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                &group_ids,
+                child,
+                group_ndv_skew_ratio,
+            );
         let ndv = ndv.min(child.row_count());
         let stats = StatsInfo::new(
             ndv,

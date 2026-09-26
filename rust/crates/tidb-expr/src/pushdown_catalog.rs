@@ -894,6 +894,35 @@ fn resolve_unix_timestamp(args: &[PbScalar]) -> Option<&'static BuiltinSignature
 /// MySQL's special rounding behaviour), is absent rather than flagged, so
 /// "not in the catalog" and "TiKV refuses it" are one answer.
 pub const CATALOG: &[BuiltinSignature] = &[
+    // Go `ifNullFunctionClass.getFunction` selects ETString for these
+    // string/string arguments, casts both operands to ETString and assigns
+    // `IfNullString`; TiKV admits that signature. Its result collation is
+    // inherited from the first argument for the ordinary column/literal
+    // cases represented here.
+    string_signature(
+        "ifnull",
+        &[
+            ArgPattern::eval(EvalType::String),
+            ArgPattern::eval(EvalType::String),
+        ],
+        &[EvalType::String, EvalType::String],
+        ScalarFuncSig::IfNullString,
+        RetCollation::FirstArgString,
+    ),
+    // Go `regexpLikeFunctionClass.getFunction` coerces both REGEXP operands
+    // to ETString and assigns `RegexpLikeSig`; TiKV admits it unless the
+    // derived function charset and collation are both binary.
+    signature(
+        "regexp",
+        &[
+            ArgPattern::eval(EvalType::String),
+            ArgPattern::eval(EvalType::String),
+        ],
+        &[EvalType::String, EvalType::String],
+        EvalType::Int,
+        ScalarFuncSig::RegexpLikeSig,
+        false,
+    ),
     // Go isNullFunctionClass: Timestamp uses Time, JSON is cast to String.
     signature(
         "isnull",
@@ -2152,6 +2181,22 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
     if name == "unix_timestamp" {
         return resolve_unix_timestamp(args);
     }
+    if name == "ifnull"
+        && !matches!(
+            args,
+            [
+                PbScalar::Column { field_type, .. },
+                PbScalar::StringLiteral { field_type: literal_type, .. }
+            ] if field_type.eval_type() == EvalType::String
+                && literal_type.eval_type() == EvalType::String
+        )
+    {
+        // In this projection the IFNULL result collation is known to come
+        // from the implicit column operand only for column/string-literal
+        // pairs. Other coercibility combinations stay local instead of
+        // assigning a possibly wrong collation to the TiKV expression.
+        return None;
+    }
     CATALOG.iter().find(|candidate| {
         candidate.name == name
             && candidate.selector.len() == args.len()
@@ -2819,6 +2864,39 @@ mod tests {
             offset: 0,
             field_type: FieldType::new(code),
         }
+    }
+
+    #[test]
+    fn ifnull_string_column_literal_uses_go_signature_and_column_collation() {
+        let mut column_type = FieldType::new(FieldTypeCode::Varchar);
+        column_type.set_collation_name("utf8mb4_general_ci");
+        let column = PbScalar::Column {
+            offset: 0,
+            field_type: column_type,
+        };
+        let literal = PbScalar::StringLiteral {
+            value: b"fallback".to_vec(),
+            field_type: FieldType::new(FieldTypeCode::VarString),
+        };
+        let call = build_call("ifnull", vec![column.clone(), literal.clone()])
+            .expect("Go supports IFNULL(string column, string literal)");
+        assert!(matches!(
+            &call,
+            PbScalar::Call { signature, .. }
+                if signature.sig == ScalarFuncSig::IfNullString
+                    && signature.arg_types == [EvalType::String, EvalType::String]
+        ));
+        let encoded = to_pb(&call, &descriptors(&call)).unwrap();
+        assert_eq!(encoded.sig, Some(ScalarFuncSig::IfNullString as i32));
+        assert_eq!(
+            encoded.field_type.as_ref().unwrap().collate,
+            Some(tidb_datatype::collation_to_proto("utf8mb4_general_ci"))
+        );
+
+        // With the literal first and column second, the column's stronger
+        // coercibility supplies the result collation, so this row refuses
+        // rather than claiming the first argument's collation.
+        assert!(build_call("ifnull", vec![literal, column]).is_none());
     }
 
     #[test]

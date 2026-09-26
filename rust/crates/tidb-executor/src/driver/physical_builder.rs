@@ -85,13 +85,29 @@ struct BuildState {
     shuffle_receivers: HashMap<i32, Box<dyn Executor>>,
     cte_slots: HashMap<i32, CteBuildSlot>,
     runtime_counters: Option<PhysicalRuntimeStats>,
+    executor_runtime_stats_source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
     /// The coprocessor `Limit offset:o, count:c` a covering `IndexReader`'s
     /// `IndexPlan` carries above its `IndexScan`, as `o + c`. Go pushes it into
     /// the region request; the local cursor has no request, so the scan build
     /// consumes it here. Set only while the reader's own subtree is built.
     index_scan_limit: Option<u64>,
+    /// One task-local replacement for the retained index-merge table scan.
+    table_task_source: Option<(i32, Box<dyn Executor>)>,
     /// Reader subplans use coprocessor expression semantics.
     in_reader: bool,
+    /// Scoped statement-local adaptive LIMIT controller, keyed to the one
+    /// physical ordered lookup reader Go attaches it to.
+    adaptive_limit_reader: Option<(
+        usize,
+        Arc<crate::adaptive_limit::AdaptiveLimitController>,
+        Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
+    )>,
+    /// The same controller attached to an eligible ordered index join.
+    adaptive_limit_join: Option<(
+        usize,
+        Arc<crate::adaptive_limit::AdaptiveLimitController>,
+        Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
+    )>,
     /// Whether a `PhysicalProjection` may run Go's projection workers. Go
     /// keeps every projection serial inside INSERT/UPDATE/DELETE (its
     /// `inUpdateStmt`/`inDeleteStmt`/`inInsertStmt` builder flags, because
@@ -107,11 +123,18 @@ pub(crate) type PhysicalRuntimeStats = HashMap<usize, PhysicalRuntimeCounter>;
 pub(crate) struct PhysicalRuntimeCounter {
     rows: crate::executor::RowCount,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
+    adaptive: Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
+    apply: Option<crate::apply::native::ApplyRuntimeSink>,
 }
 
 impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
     fn from(rows: crate::executor::RowCount) -> Self {
-        Self { rows, calls: None }
+        Self {
+            rows,
+            calls: None,
+            apply: None,
+            adaptive: None,
+        }
     }
 }
 
@@ -121,19 +144,61 @@ impl PhysicalRuntimeCounter {
     }
 
     pub(crate) fn execution_info(&self) -> Option<String> {
-        let calls = *self.calls.as_ref()?.lock().unwrap();
         let format = |elapsed: Duration| {
             tidb_model::go_duration::format_explain_duration(
                 i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX),
             )
         };
-        Some(format!(
-            "time:{}, open:{}, close:{}, loops:{}",
-            format(calls.open + calls.next + calls.close),
-            format(calls.open),
-            format(calls.close),
-            calls.loops,
-        ))
+        let mut details = Vec::new();
+        if let Some(calls) = &self.calls {
+            let calls = *calls.lock().unwrap();
+            details.push(format!(
+                "time:{}, open:{}, close:{}, loops:{}",
+                format(calls.open + calls.next + calls.close),
+                format(calls.open),
+                format(calls.close),
+                calls.loops,
+            ));
+        }
+        if let Some(snapshot) = self.apply.as_ref().and_then(|sink| *sink.lock().unwrap()) {
+            if snapshot.enabled {
+                let ratio = if snapshot.accesses == 0 { 0.0 } else {
+                    snapshot.hits as f64 / snapshot.accesses as f64 * 100.0
+                };
+                details.push(format!("concurrency:OFF, cache:ON, cacheHitRatio:{ratio:.3}%"));
+            } else {
+                details.push("concurrency:OFF, cache:OFF".to_owned());
+            }
+        }
+        if let Some(runtime_snapshot) = self
+            .adaptive
+            .as_ref()
+            .and_then(|snapshot| *snapshot.lock().unwrap())
+        {
+            use crate::adaptive_limit::AdaptiveLimitRuntimeKind::{DirectLookup, IndexJoin};
+            let snapshot = runtime_snapshot.snapshot;
+            details.push(match runtime_snapshot.kind {
+                DirectLookup => format!(
+                    "adaptive:{{lookup:{}/{}, outstanding:{}, blocked:{}}}",
+                    snapshot.lookup_handles,
+                    snapshot.lookup_rows,
+                    snapshot.lookup_outstanding_at_stop,
+                    format(snapshot.lookup_admission_blocked),
+                ),
+                IndexJoin => format!(
+                    "adaptive:{{outer:{}/{}, lookup:{}/{}, outstanding:{}/{}, blocked:outer={},lookup={}}}",
+                    snapshot.outer_fetched,
+                    snapshot.outer_consumed,
+                    snapshot.lookup_handles,
+                    snapshot.lookup_rows,
+                    snapshot.outer_outstanding_at_stop,
+                    snapshot.lookup_outstanding_at_stop,
+                    format(snapshot.outer_admission_blocked),
+                    format(snapshot.lookup_admission_blocked),
+                ),
+            });
+        }
+        (!details.is_empty()).then(|| details.join(", "))
     }
 }
 
@@ -152,7 +217,48 @@ pub(crate) fn runtime_plan_key(plan: &PhysicalPlan) -> usize {
 }
 
 impl BuildState {
-    fn meter(&mut self, plan: &PhysicalPlan, mut executor: Box<dyn Executor>) -> Box<dyn Executor> {
+    fn apply_runtime_sink(&mut self, plan_key: usize) -> Option<crate::apply::native::ApplyRuntimeSink> {
+        let counter = self.runtime_counters.as_mut()?.entry(plan_key)
+            .or_insert_with(|| crate::executor::RowCount::default().into());
+        Some(Arc::clone(counter.apply.get_or_insert_with(|| Arc::new(Mutex::new(None)))))
+    }
+
+    fn adaptive_runtime_sink(
+        &mut self,
+        plan_key: usize,
+    ) -> Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink> {
+        let counters = self.runtime_counters.as_mut()?;
+        let counter = counters
+            .entry(plan_key)
+            .or_insert_with(|| PhysicalRuntimeCounter {
+                rows: crate::executor::RowCount::default(),
+                calls: None,
+                apply: None,
+                adaptive: None,
+            });
+        let sink = counter
+            .adaptive
+            .get_or_insert_with(|| Arc::new(Mutex::new(None)));
+        // One physical plan has at most one adaptive controller. Its kind is
+        // written with the final snapshot by the executor that owns Close.
+        Some(Arc::clone(sink))
+    }
+
+    fn meter(
+        &mut self,
+        plan: &PhysicalPlan,
+        mut executor: Box<dyn Executor>,
+        memory: crate::StatementMemory,
+    ) -> Box<dyn Executor> {
+        let plan_id = i64::from(plan.base().base.id());
+        let runtime_stats = (plan_id > 0)
+            .then(|| {
+                self.executor_runtime_stats_source
+                    .as_ref()
+                    .and_then(|source| source.for_executor(plan_id))
+            })
+            .flatten();
+        executor = checked_executor_with_stats(executor, memory, runtime_stats);
         let Some(counters) = self.runtime_counters.as_mut() else {
             return executor;
         };
@@ -171,21 +277,113 @@ impl BuildState {
         // Shuffle builds several executors for the same physical node. Go
         // merges their BasicRuntimeStats by plan ID; share one accumulator
         // instead of replacing it with the last worker's counters.
-        let stats = counters.entry(runtime_plan_key(plan)).or_insert_with(|| {
-            PhysicalRuntimeCounter {
-                rows: crate::executor::RowCount::default(),
-                calls: None,
-            }
-        });
+        let stats =
+            counters
+                .entry(runtime_plan_key(plan))
+                .or_insert_with(|| PhysicalRuntimeCounter {
+                    rows: crate::executor::RowCount::default(),
+                    calls: None,
+                    apply: None,
+                    adaptive: None,
+                });
         let counter = stats.rows.clone();
-        let calls = Arc::clone(stats.calls.get_or_insert_with(|| {
-            Arc::new(Mutex::new(PhysicalCallStats::default()))
-        }));
-        Box::new(PhysicalCountExec {
+        let calls = Arc::clone(
+            stats
+                .calls
+                .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default()))),
+        );
+        executor = Box::new(PhysicalCountExec {
             child: executor,
             counter,
             calls,
-        })
+        });
+        executor
+    }
+}
+
+/// Applies Go `exec.Next`'s before/after SQL-killer checks to every operator
+/// constructed from the retained physical tree. Child executors call their
+/// trait methods directly, so each built node needs its own boundary.
+struct SqlKillerCheckExec {
+    child: Box<dyn Executor>,
+    memory: crate::StatementMemory,
+    runtime_stats: Option<Arc<dyn crate::executor::ExecutorRuntimeStats>>,
+}
+
+fn checked_executor(child: Box<dyn Executor>, memory: crate::StatementMemory) -> Box<dyn Executor> {
+    checked_executor_with_stats(child, memory, None)
+}
+
+fn checked_executor_with_stats(
+    child: Box<dyn Executor>,
+    memory: crate::StatementMemory,
+    runtime_stats: Option<Arc<dyn crate::executor::ExecutorRuntimeStats>>,
+) -> Box<dyn Executor> {
+    Box::new(SqlKillerCheckExec {
+        child,
+        memory,
+        runtime_stats,
+    })
+}
+
+impl Executor for SqlKillerCheckExec {
+    fn open(&mut self) -> Result<(), crate::ExecError> {
+        let start = self.runtime_stats.as_ref().map(|_| Instant::now());
+        let result = crate::sort_util::recover_executor_panic(|| self.child.open());
+        if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
+            stats.record_open(start.elapsed());
+        }
+        result
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
+        let start = self.runtime_stats.as_ref().map(|_| Instant::now());
+        let result = crate::sort_util::recover_executor_panic(|| {
+            self.memory.check()?;
+            self.child.next(req)?;
+            self.memory.check()
+        });
+        if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
+            stats.record_next(start.elapsed(), req.num_rows() as i64);
+        }
+        result
+    }
+
+    fn close(&mut self) -> Result<(), crate::ExecError> {
+        let start = self.runtime_stats.as_ref().map(|_| Instant::now());
+        let result = crate::sort_util::recover_executor_panic(|| self.child.close());
+        if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
+            stats.record_close(start.elapsed());
+        }
+        result
+    }
+
+    fn schema(&self) -> &Schema {
+        self.child.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.child.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.child.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.child.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.child.new_chunk()
+    }
+
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        self.child.table_access()
+    }
+
+    fn agg_tree_input_empty(&self) -> bool {
+        self.child.agg_tree_input_empty()
     }
 }
 
@@ -201,7 +399,7 @@ struct PhysicalCountExec {
 impl Executor for PhysicalCountExec {
     fn open(&mut self) -> Result<(), crate::ExecError> {
         let start = Instant::now();
-        let result = self.child.open();
+        let result = crate::sort_util::recover_executor_panic(|| self.child.open());
         let mut calls = self.calls.lock().unwrap();
         calls.open += start.elapsed();
         result
@@ -209,7 +407,7 @@ impl Executor for PhysicalCountExec {
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
         let start = Instant::now();
-        let result = self.child.next(req);
+        let result = crate::sort_util::recover_executor_panic(|| self.child.next(req));
         let mut calls = self.calls.lock().unwrap();
         calls.next += start.elapsed();
         calls.loops += 1;
@@ -222,7 +420,7 @@ impl Executor for PhysicalCountExec {
 
     fn close(&mut self) -> Result<(), crate::ExecError> {
         let start = Instant::now();
-        let result = self.child.close();
+        let result = crate::sort_util::recover_executor_panic(|| self.child.close());
         let mut calls = self.calls.lock().unwrap();
         calls.close += start.elapsed();
         result
@@ -1406,6 +1604,146 @@ fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {
     }
 }
 
+fn adaptive_limit_lookup_candidate(plan: &PhysicalPlan) -> Option<&PhysicalPlan> {
+    let mut candidate = plan;
+    loop {
+        match candidate {
+            PhysicalPlan::Projection(_) if candidate.children().len() == 1 => {
+                candidate = &candidate.children()[0];
+            }
+            PhysicalPlan::IndexLookUpReader(_) => return Some(candidate),
+            _ => return None,
+        }
+    }
+}
+
+fn adaptive_limit_index_join_candidate(plan: &PhysicalPlan) -> Option<&PhysicalPlan> {
+    let mut candidate = plan;
+    loop {
+        match candidate {
+            PhysicalPlan::Projection(_) if candidate.children().len() == 1 => {
+                candidate = &candidate.children()[0];
+            }
+            PhysicalPlan::IndexJoin(_) => return Some(candidate),
+            _ => return None,
+        }
+    }
+}
+
+fn adaptive_limit_lookup_config(
+    limit: &tidb_planner::physical::PhysicalLimit,
+    candidate: &PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Option<(usize, crate::adaptive_limit::AdaptiveLimitConfig)> {
+    let PhysicalPlan::IndexLookUpReader(reader) = candidate else {
+        return None;
+    };
+    if !reader.keep_order || reader.pushed_limit.is_some() || reader.index_lookup_push_down {
+        return None;
+    }
+    let scan = embedded_index_scan(reader.index_plan.as_deref()?)?;
+    let table = catalog.physical_kv_table_by_id(scan.table_id)?;
+    // Go also excludes explicit/correlated grouped ranges because their
+    // merge-sort stage can fetch all groups before handle admission begins.
+    // This Rust physical path carries one flat range list and walks it
+    // sequentially; it has no grouped-range metadata or merge-sort source to
+    // admit. When that planner/executor shape is added, carry its eligibility
+    // metadata here and apply Go's grouped-range veto before attaching.
+    if table.partition().is_some() {
+        return None;
+    }
+
+    let demand_rows = limit.offset.saturating_add(limit.count);
+    let lookup_size = ctx.index_lookup_size();
+    let initial_window = adaptive_limit_initial_window(demand_rows, lookup_size);
+    let (_, max_chunk_size) = ctx.executor_chunk_sizes();
+    let initial_batch_size = if reader.paging {
+        initial_window
+    } else {
+        initial_window
+            .max(max_chunk_size as u64)
+            .min(lookup_size as u64)
+    };
+    Some((
+        runtime_plan_key(candidate),
+        crate::adaptive_limit::AdaptiveLimitConfig {
+            demand_rows,
+            initial_outer_window: 0,
+            max_outer_window: 0,
+            initial_lookup_window: initial_window,
+            max_lookup_window: (lookup_size as u64)
+                .saturating_mul(ctx.index_lookup_concurrency() as u64),
+            initial_lookup_batch_size: initial_batch_size,
+            max_lookup_batch_size: lookup_size as u64,
+        },
+    ))
+}
+
+fn adaptive_limit_controller_for_lookup(
+    limit: &tidb_planner::physical::PhysicalLimit,
+    child: &PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Option<(usize, Arc<crate::adaptive_limit::AdaptiveLimitController>)> {
+    if !ctx.enable_adaptive_limit_scan() || ctx.index_lookup_concurrency() <= 1 {
+        return None;
+    }
+    let candidate = adaptive_limit_lookup_candidate(child)?;
+    let (reader_key, config) = adaptive_limit_lookup_config(limit, candidate, catalog, ctx)?;
+    Some((
+        reader_key,
+        crate::adaptive_limit::AdaptiveLimitController::for_direct_lookup(config),
+    ))
+}
+
+fn adaptive_limit_controller_for_index_join(
+    limit: &tidb_planner::physical::PhysicalLimit,
+    child: &PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Option<(
+    usize,
+    usize,
+    Arc<crate::adaptive_limit::AdaptiveLimitController>,
+)> {
+    if !ctx.enable_adaptive_limit_scan() || ctx.index_lookup_concurrency() <= 1 {
+        return None;
+    }
+    let join_plan = adaptive_limit_index_join_candidate(child)?;
+    let PhysicalPlan::IndexJoin(join) = join_plan else {
+        unreachable!("adaptive index-join candidate is an index join")
+    };
+    let outer_idx = 1usize.checked_sub(join.inner_child_idx)?;
+    if !join
+        .base
+        .child_req_prop(outer_idx)
+        .is_some_and(|property| property.need_keep_order())
+    {
+        return None;
+    }
+    let outer_plan = join_plan.children().get(outer_idx)?;
+    let reader_plan = adaptive_limit_lookup_candidate(outer_plan)?;
+    let (reader_key, mut config) = adaptive_limit_lookup_config(limit, reader_plan, catalog, ctx)?;
+    let batch_size = ctx.index_join_batch_size();
+    config.initial_outer_window = adaptive_limit_initial_window(config.demand_rows, batch_size);
+    config.max_outer_window =
+        (batch_size as u64).saturating_mul(ctx.index_lookup_join_concurrency() as u64);
+    Some((
+        runtime_plan_key(join_plan),
+        reader_key,
+        crate::adaptive_limit::AdaptiveLimitController::for_index_join(config),
+    ))
+}
+
+fn adaptive_limit_initial_window(demand_rows: u64, ceiling: usize) -> u64 {
+    if demand_rows == 0 || ceiling <= 1 {
+        1
+    } else {
+        demand_rows.min(ceiling as u64)
+    }
+}
+
 /// Go pushes a `Limit offset:o, count:c | cop[tikv]` under the index reader's
 /// `IndexPlan`, so the coprocessor index scan itself stops after `o + c`
 /// entries. The local byte-level cursor has no region request to carry it, so
@@ -1454,25 +1792,6 @@ fn lower_index_lookup_selections(
             "a physical index lookup cannot apply its retained Selection",
         ));
     }
-    Ok(())
-}
-
-fn lower_index_merge_selections(
-    plan: &PhysicalPlan,
-    executor: &mut IndexMergeReaderExec,
-    schema: &Schema,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    for child in plan.children() {
-        lower_index_merge_selections(child, executor, schema, ctx)?;
-    }
-    let PhysicalPlan::Selection(selection) = plan else {
-        return Ok(());
-    };
-    executor.push_table_filters(
-        resolve_expressions(&selection.conditions, schema)?,
-        ctx.clone(),
-    );
     Ok(())
 }
 
@@ -1556,6 +1875,8 @@ fn build_index_reader(
     expect_cnt: Option<u64>,
     lookup_pushdown: bool,
     scan_limit: Option<u64>,
+    adaptive_limit: Option<Arc<crate::adaptive_limit::AdaptiveLimitController>>,
+    adaptive_runtime: Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -1659,6 +1980,12 @@ fn build_index_reader(
     source.read_table_columns(keep);
     source.set_lookup_concurrency(ctx.index_lookup_concurrency());
     source.set_lookup_size(ctx.index_lookup_size());
+    if let Some(controller) = adaptive_limit {
+        source.set_adaptive_limit_controller(controller);
+    }
+    if let Some(sink) = adaptive_runtime {
+        source.set_adaptive_limit_runtime_sink(sink);
+    }
     if lookup_pushdown {
         source.enable_lookup_pushdown();
     }
@@ -2614,6 +2941,14 @@ fn build_index_join(
     executor.set_index_lookup_concurrency(ctx.index_lookup_join_concurrency());
     executor.set_index_join_batch_size(ctx.index_join_batch_size());
     executor.set_vectorized_expression(ctx.enable_vectorized_expression());
+    if let Some((target, controller, sink)) = &state.adaptive_limit_join {
+        if *target == runtime_plan_key(plan) {
+            executor.set_adaptive_limit_controller(Arc::clone(controller));
+            if let Some(sink) = sink {
+                executor.set_adaptive_limit_runtime_sink(Arc::clone(sink));
+            }
+        }
+    }
     if join.kind == tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin {
         executor.set_index_hash_join(join.keep_outer_order);
     }
@@ -3066,7 +3401,7 @@ fn build_apply(
         apply.hash_join.join_type != LogicalJoinType::Inner,
         apply.can_use_cache,
         ctx.clone(),
-    );
+    ).with_runtime_sink(state.apply_runtime_sink(runtime_plan_key(plan)));
     Ok(Box::new(executor))
 }
 
@@ -3505,7 +3840,13 @@ fn wrap_point_index_usage(
     index_id: Option<i64>,
     command: PointCommand,
 ) -> Box<dyn Executor> {
-    let stats = catalog.table_statistics(table.stats_physical_id());
+    // Go PointGet has no planner UsedStatsInfo entry and uses the smallest
+    // bucket. BatchPointGet reports against the logical table's whole count,
+    // including when static pruning narrows the keys to one partition.
+    let stats = match command {
+        PointCommand::Get => None,
+        PointCommand::BatchGet => batch_point_usage_stats(catalog, &table),
+    };
     Box::new(PointIndexUsageExec::new(
         child,
         table,
@@ -3514,6 +3855,28 @@ fn wrap_point_index_usage(
         index_id,
         command,
     ))
+}
+
+fn batch_point_usage_stats(
+    catalog: &Catalog,
+    table: &crate::kv_table::KvTable,
+) -> Option<std::sync::Arc<crate::access_cost::TableStatistics>> {
+    if let Some(stats) = catalog.table_statistics(table.table_id) {
+        return Some(stats);
+    }
+    let partition = table.partition()?;
+    let mut row_count = 0_i64;
+    for definition in &partition.definitions {
+        let stats = catalog.table_statistics(definition.id)?;
+        if stats.pseudo {
+            return None;
+        }
+        row_count = row_count.saturating_add(stats.row_count);
+    }
+    Some(std::sync::Arc::new(crate::access_cost::TableStatistics {
+        row_count,
+        ..crate::access_cost::TableStatistics::default()
+    }))
 }
 
 fn schema_column_slot(schema: &Schema, wanted: &Column) -> Option<usize> {
@@ -3611,17 +3974,29 @@ struct IndexPartialHandleSource {
     ctx: crate::StmtContext,
     index_id: i64,
     reported: bool,
+    initial_batch_size: usize,
+    batch_size: usize,
+    max_batch_size: usize,
 }
 
 impl PartialHandleSource for IndexPartialHandleSource {
     fn open(&mut self) -> Result<(), crate::ExecError> {
         self.reported = false;
+        self.batch_size = self.initial_batch_size;
         self.source.open()
     }
 
     fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, crate::ExecError> {
-        let mut handles = Vec::with_capacity(self.source.max_chunk_size());
-        while handles.len() < self.source.max_chunk_size() {
+        self.next_batch_with_max_handles(usize::MAX)
+    }
+
+    fn next_batch_with_max_handles(
+        &mut self,
+        maximum: usize,
+    ) -> Result<Option<PartialHandleBatch>, crate::ExecError> {
+        let target = self.batch_size.min(maximum);
+        let mut handles = Vec::with_capacity(target);
+        while handles.len() < target {
             let Some((handle, partition)) = self.source.next_index_merge_handle()? else {
                 break;
             };
@@ -3633,9 +4008,12 @@ impl PartialHandleSource for IndexPartialHandleSource {
                 partition_index,
             });
         }
+        if handles.len() == self.batch_size {
+            self.batch_size = self.batch_size.saturating_mul(2).min(self.max_batch_size);
+        }
         Ok((!handles.is_empty()).then_some(PartialHandleBatch {
             handles,
-            sort_keys: Vec::new(),
+            sort_keys: Default::default(),
         }))
     }
 
@@ -3643,9 +4021,11 @@ impl PartialHandleSource for IndexPartialHandleSource {
         let result = self.source.close();
         if !self.reported {
             self.reported = true;
-            if let Some((requests, rows)) =
-                crate::table_access::TableAccess::cop_count_and_rows(&self.source)
-            {
+            if let Some(access) = self.source.table_access() {
+                let (requests, mut rows) = access.cop_count_and_rows().unwrap_or_default();
+                if requests == 0 && rows == 0 {
+                    rows = access.local_index_usage_rows().unwrap_or_default();
+                }
                 super::index_usage_reporter::IndexUsageReporter::new(
                     self.ctx.index_usage_collector(),
                 )
@@ -3731,15 +4111,27 @@ fn build_index_merge_reader(
                 if let Some(counters) = state.runtime_counters.as_mut() {
                     counters.insert(runtime_plan_key(partial), source.produced_rows().into());
                 }
-                built.push((reader.by_items.is_empty(), Box::new(IndexPartialHandleSource {
-                    source,
-                    partition_indexes: selected,
-                    stats: catalog.table_statistics(partial_table.stats_physical_id()),
-                    table: partial_table,
-                    ctx: ctx.clone(),
-                    index_id: scan.index_id,
-                    reported: false,
-                })));
+                built.push((
+                    reader.by_items.is_empty(),
+                    Box::new(IndexPartialHandleSource {
+                        source,
+                        partition_indexes: selected,
+                        stats: catalog.table_statistics(partial_table.stats_physical_id()),
+                        table: partial_table,
+                        ctx: ctx.clone(),
+                        index_id: scan.index_id,
+                        reported: false,
+                        initial_batch_size:
+                            crate::access_path::calculate_lookup_batch_size_with_cap(
+                                partial.stats_count(),
+                                ctx.executor_chunk_sizes().1,
+                                false,
+                                ctx.index_lookup_size(),
+                            ),
+                        batch_size: 0,
+                        max_batch_size: ctx.index_lookup_size(),
+                    }),
+                ));
                 continue;
             }
         }
@@ -3755,16 +4147,35 @@ fn build_index_merge_reader(
                     "an index-merge partial executor changed its retained output width",
                 ));
             }
-            partitions.push(Box::new(
-                ExecutorPartialHandleSource::new(
-                    executor,
-                    (*table).clone(),
-                    RowDecodeContext::for_query(ctx),
-                    partial_handle_columns(&partial_schema, &table)?,
-                    partial_sort_key_columns(&partial_schema, &reader.by_items)?,
-                )
-                .with_partition_index(partition_index),
-            ));
+            let mut source = ExecutorPartialHandleSource::new(
+                executor,
+                (*table).clone(),
+                RowDecodeContext::for_query(ctx),
+                partial_handle_columns(&partial_schema, &table)?,
+                partial_sort_key_columns(&partial_schema, &reader.by_items)?,
+            )
+            .with_batch_sizes(
+                crate::access_path::calculate_lookup_batch_size_with_cap(
+                    embedded_index_scan(partial).and_then(|scan| {
+                        scan.base.base.stats_info().map(|stats| stats.row_count())
+                    }),
+                    ctx.executor_chunk_sizes().1,
+                    false,
+                    ctx.index_lookup_size(),
+                ),
+                ctx.index_lookup_size(),
+            )
+            .with_partition_index(partition_index)
+            .with_memory_label(i64::from(plan.id()));
+            if embedded_index_scan(partial).is_some() {
+                source = source.with_index_row_layout(
+                    partial_schema
+                        .columns
+                        .iter()
+                        .position(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID),
+                );
+            }
+            partitions.push(Box::new(source));
         }
         let source = PartitionedHandleSource::new(partitions).with_order(
             reader
@@ -3789,7 +4200,33 @@ fn build_index_merge_reader(
     partials.extend(rest.into_iter().map(|(_, source)| source));
 
     let schema = plan_schema(plan)?;
-    let output_columns = table_output_columns(&schema, &table)?;
+    let mut table_scan = table_plan;
+    while !matches!(table_scan, PhysicalPlan::TableScan(_)) {
+        table_scan = only_child(table_scan)?;
+    }
+    let source_schema = plan_schema(table_scan)?;
+    let output_columns = table_output_columns(&source_schema, &table)?;
+    let scan_id = table_scan.id();
+    let retained_table_plan = table_plan.clone();
+    let task_catalog = catalog.clone();
+    let task_context = ctx.clone();
+    let table_task_builder = Box::new(move |source: Box<dyn Executor>| {
+        let mut state = BuildState {
+            table_task_source: Some((scan_id, source)),
+            in_reader: true,
+            ..Default::default()
+        };
+        build_with_state(
+            &retained_table_plan,
+            &task_catalog,
+            &task_context,
+            &mut state,
+        )
+        .map_err(|error| match error {
+            DriverError::Exec(error) => error,
+            other => crate::ExecError::Mysql(other.to_mysql_error()),
+        })
+    });
     let by_items = reader
         .by_items
         .iter()
@@ -3807,8 +4244,12 @@ fn build_index_merge_reader(
     )
     .with_batch_size(ctx.index_lookup_size())
     .with_output_columns(output_columns)
-    .with_by_items(by_items);
-    lower_index_merge_selections(table_plan, &mut executor, &schema, ctx)?;
+    .with_by_items(by_items)
+    .with_table_plan(
+        source_schema,
+        table_task_builder,
+        matches!(table_plan, PhysicalPlan::TableScan(_)),
+    );
     if let Some(limit) = reader.pushed_limit {
         executor = executor.with_pushed_limit(ExecutorPushedDownLimit {
             offset: limit.offset,
@@ -4168,12 +4609,25 @@ fn build_with_state(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    if matches!(plan, PhysicalPlan::TableScan(_))
+        && state
+            .table_task_source
+            .as_ref()
+            .is_some_and(|(id, _)| *id == plan.id())
+    {
+        return Ok(state.table_task_source.take().unwrap().1);
+    }
+    if state.executor_runtime_stats_source.is_none() {
+        state.executor_runtime_stats_source = ctx.executor_runtime_stats_source().cloned();
+    }
     if let Some(receiver) = state.shuffle_receivers.remove(&plan.id()) {
-        return Ok(state.meter(plan, receiver));
+        return Ok(state.meter(plan, receiver, ctx.statement_memory()));
     }
     let executor: Box<dyn Executor> = match plan {
         PhysicalPlan::Shuffle(shuffle) => build_shuffle(plan, shuffle, catalog, ctx, state),
-        PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported("shuffle receiver has no owning worker")),
+        PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported(
+            "shuffle receiver has no owning worker",
+        )),
         PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
         PhysicalPlan::TableScan(scan) => build_table_scan(plan, scan, catalog, ctx),
         PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
@@ -4187,6 +4641,8 @@ fn build_with_state(
             None,
             false,
             state.index_scan_limit.take(),
+            None,
+            None,
             catalog,
             ctx,
         ),
@@ -4208,7 +4664,22 @@ fn build_with_state(
                 .map(|(offset, count)| offset.saturating_add(count));
             let built = build_reader(reader.index_plan.as_deref(), catalog, ctx, state);
             state.index_scan_limit = None;
-            built
+            let child = built?;
+            // The physical index row is ordered by index keys and handles.
+            // Go's reader OutputColumns restores the datasource's output.
+            if child.schema().columns.len() == reader.output_columns.len()
+                && child.schema().columns.iter().zip(&reader.output_columns)
+                    .all(|(input, output)| input.unique_id == output.unique_id)
+            {
+                Ok(child)
+            } else {
+                let expressions = reader.output_columns.iter().cloned()
+                    .map(Expression::Column).collect::<Vec<_>>();
+                let expressions = resolve_expressions(&expressions, child.schema())?;
+                Ok(Box::new(ProjectionExec::new(
+                    meta(ctx, plan, plan_schema(plan)?), expressions, child, ctx.clone(),
+                )) as Box<dyn Executor>)
+            }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             let executor = build_index_reader(
@@ -4223,6 +4694,16 @@ fn build_with_state(
                 reader.paging.then_some(reader.expect_cnt),
                 reader.index_lookup_push_down,
                 None,
+                state
+                    .adaptive_limit_reader
+                    .as_ref()
+                    .filter(|(target, _, _)| *target == runtime_plan_key(plan))
+                    .map(|(_, controller, _)| Arc::clone(controller)),
+                state
+                    .adaptive_limit_reader
+                    .as_ref()
+                    .filter(|(target, _, _)| *target == runtime_plan_key(plan))
+                    .and_then(|(_, _, sink)| sink.as_ref().map(Arc::clone)),
                 catalog,
                 ctx,
             )?;
@@ -4440,7 +4921,31 @@ fn build_with_state(
             }
         }
         PhysicalPlan::Limit(limit) => {
-            let mut child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+            let child_plan = only_child(plan)?;
+            let adaptive_join =
+                adaptive_limit_controller_for_index_join(limit, child_plan, catalog, ctx);
+            let adaptive = if let Some((_, reader_key, controller)) = &adaptive_join {
+                Some((*reader_key, Arc::clone(controller), None))
+            } else {
+                adaptive_limit_controller_for_lookup(limit, child_plan, catalog, ctx).map(
+                    |(reader_key, controller)| {
+                        let sink = state.adaptive_runtime_sink(reader_key);
+                        (reader_key, controller, sink)
+                    },
+                )
+            };
+            let adaptive_join = adaptive_join.map(|(join_key, _, controller)| {
+                let sink = state.adaptive_runtime_sink(join_key);
+                (join_key, controller, sink)
+            });
+            let previous_adaptive = state.adaptive_limit_reader.clone();
+            let previous_adaptive_join = state.adaptive_limit_join.clone();
+            state.adaptive_limit_reader = adaptive.clone();
+            state.adaptive_limit_join = adaptive_join.clone();
+            let built_child = build_with_state(child_plan, catalog, ctx, state);
+            state.adaptive_limit_reader = previous_adaptive;
+            state.adaptive_limit_join = previous_adaptive_join;
+            let mut child = built_child?;
             // Go puts a cop-side Limit below the reader's scan; the local
             // LimitExec still applies the offset. A refused cap leaves that
             // executor as the sole authority, which is always correct, only
@@ -4453,7 +4958,7 @@ fn build_with_state(
             let schema = unary_schema(plan, child.as_ref());
             let max_chunk_size = ctx.executor_chunk_sizes().1;
             let init_cap = limit.count.min(max_chunk_size as u64) as usize;
-            Ok(Box::new(LimitExec::new(
+            let mut executor = LimitExec::new(
                 ExecutorMeta::new(
                     schema,
                     i64::from(plan.base().base.id()),
@@ -4463,7 +4968,11 @@ fn build_with_state(
                 limit.offset,
                 limit.count,
                 child,
-            )) as Box<dyn Executor>)
+            );
+            if let Some((_, controller, _)) = adaptive {
+                executor.set_adaptive_limit_controller(controller);
+            }
+            Ok(Box::new(executor) as Box<dyn Executor>)
         }
         PhysicalPlan::Sort(sort) => {
             // Go buildSort consumes the positions bound before postOptimize.
@@ -4588,7 +5097,7 @@ fn build_with_state(
                 && can_use_hash_join_v2(join)
             {
                 return build_hash_join_v2(plan, join, catalog, ctx, state)
-                    .map(|executor| state.meter(plan, executor));
+                    .map(|executor| state.meter(plan, executor, ctx.statement_memory()));
             }
             let mut executor = build_join(
                 plan,
@@ -4702,7 +5211,7 @@ fn build_with_state(
             plan.base().base.tp()
         ))),
     }?;
-    Ok(state.meter(plan, executor))
+    Ok(state.meter(plan, executor, ctx.statement_memory()))
 }
 
 pub(super) fn build(
@@ -4729,12 +5238,15 @@ pub(super) fn build(
             .ok_or_else(|| {
                 DriverError::unsupported("root output column is absent from executor")
             })?;
-        return Ok(Box::new(ProjectionExec::new(
-            meta(ctx, plan, output),
-            expressions,
-            child,
-            ctx.clone(),
-        )));
+        return Ok(checked_executor(
+            Box::new(ProjectionExec::new(
+                meta(ctx, plan, output),
+                expressions,
+                child,
+                ctx.clone(),
+            )),
+            ctx.statement_memory(),
+        ));
     }
     Ok(child)
 }
@@ -4968,9 +5480,381 @@ mod tests {
     use tidb_datatype::Datum;
     use tidb_planner::physical::{
         BasePhysicalPlan, PhysicalBatchPointGet, PhysicalCTE, PhysicalCTETable,
-        PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalPointGet, PhysicalSelection,
-        PhysicalTableDual, PhysicalTableReader, PhysicalUnionAll,
+        PhysicalIndexLookUpReader, PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalPointGet,
+        PhysicalProjection, PhysicalSelection, PhysicalTableDual, PhysicalTableReader,
+        PhysicalUnionAll,
     };
+
+    #[derive(Default)]
+    struct RecordedExecutorRuntimeStats {
+        opens: std::sync::atomic::AtomicUsize,
+        nexts: std::sync::atomic::AtomicUsize,
+        rows: std::sync::atomic::AtomicI64,
+        closes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::executor::ExecutorRuntimeStats for RecordedExecutorRuntimeStats {
+        fn record_open(&self, _elapsed: Duration) {
+            self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn record_next(&self, _elapsed: Duration, rows: i64) {
+            self.nexts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.rows
+                .fetch_add(rows, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn record_close(&self, _elapsed: Duration) {
+            self.closes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingExecutorRuntimeStatsSource {
+        plan_ids: Mutex<Vec<i64>>,
+        stats: Arc<RecordedExecutorRuntimeStats>,
+    }
+
+    impl crate::executor::ExecutorRuntimeStatsSource for RecordingExecutorRuntimeStatsSource {
+        fn for_executor(
+            &self,
+            plan_id: i64,
+        ) -> Option<Arc<dyn crate::executor::ExecutorRuntimeStats>> {
+            self.plan_ids.lock().unwrap().push(plan_id);
+            let stats: Arc<dyn crate::executor::ExecutorRuntimeStats> = self.stats.clone();
+            Some(stats)
+        }
+    }
+
+    #[test]
+    fn ordinary_executor_records_runtime_stats_when_collection_is_enabled() {
+        let source = Arc::new(RecordingExecutorRuntimeStatsSource::default());
+        let source_handle: Arc<dyn crate::executor::ExecutorRuntimeStatsSource> = source.clone();
+        let ctx =
+            crate::StmtContext::for_query().with_executor_runtime_stats_source(Some(source_handle));
+        let plan = dual(17, 1);
+        let mut executor = build(&plan, &Catalog::default(), &ctx).unwrap();
+
+        executor.open().unwrap();
+        let mut req = executor.new_chunk();
+        executor.next(&mut req).unwrap();
+        assert_eq!(req.num_rows(), 1);
+        req.reset();
+        executor.next(&mut req).unwrap();
+        assert_eq!(req.num_rows(), 0);
+        executor.close().unwrap();
+
+        assert_eq!(*source.plan_ids.lock().unwrap(), [17]);
+        assert_eq!(
+            source.stats.opens.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            source.stats.nexts.load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+        assert_eq!(
+            source.stats.rows.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            source
+                .stats
+                .closes
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[test]
+    fn built_executor_checks_sql_killer_before_next() {
+        let memory = crate::StatementMemory::default();
+        let ctx = crate::StmtContext::for_query_with_memory(memory.clone());
+        let mut executor = build(&dual(1, 1), &Catalog::default(), &ctx).unwrap();
+        executor.open().unwrap();
+        memory
+            .sql_killer()
+            .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+
+        let mut req = executor.new_chunk();
+        assert!(matches!(
+            executor.next(&mut req),
+            Err(crate::ExecError::Killed(_))
+        ));
+        assert_eq!(req.num_rows(), 0);
+        executor.close().unwrap();
+    }
+
+    #[test]
+    fn metered_executor_records_sql_killer_precheck_failures() {
+        let memory = crate::StatementMemory::default();
+        let plan = dual(1, 1);
+        let plan_key = runtime_plan_key(&plan);
+        let mut state = BuildState {
+            runtime_counters: Some(HashMap::new()),
+            ..BuildState::default()
+        };
+        let child = PanickingExec {
+            meta: ExecutorMeta::new(empty_schema(), 1, 1, 1),
+            panic_at: PanicAt::Close,
+        };
+        let mut executor = state.meter(&plan, Box::new(child), memory.clone());
+        executor.open().unwrap();
+        memory
+            .sql_killer()
+            .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        let mut req = executor.new_chunk();
+        assert!(matches!(
+            executor.next(&mut req),
+            Err(crate::ExecError::Killed(_))
+        ));
+
+        let counter = &state.runtime_counters.as_ref().unwrap()[&plan_key];
+        let calls = *counter.calls.as_ref().unwrap().lock().unwrap();
+        assert_eq!(calls.loops, 1);
+    }
+
+    struct KillOnNextExec {
+        meta: ExecutorMeta,
+        memory: crate::StatementMemory,
+    }
+
+    impl Executor for KillOnNextExec {
+        fn open(&mut self) -> Result<(), crate::ExecError> {
+            Ok(())
+        }
+
+        fn next(&mut self, _req: &mut Chunk) -> Result<(), crate::ExecError> {
+            self.memory
+                .sql_killer()
+                .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), crate::ExecError> {
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    #[test]
+    fn executor_rechecks_sql_killer_after_next() {
+        let memory = crate::StatementMemory::default();
+        let child = KillOnNextExec {
+            meta: ExecutorMeta::new(empty_schema(), 1, 1, 1),
+            memory: memory.clone(),
+        };
+        let mut executor = checked_executor(Box::new(child), memory);
+        executor.open().unwrap();
+
+        let mut req = executor.new_chunk();
+        assert!(matches!(
+            executor.next(&mut req),
+            Err(crate::ExecError::Killed(_))
+        ));
+        executor.close().unwrap();
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum PanicAt {
+        Open,
+        Next,
+        Close,
+    }
+
+    struct PanickingExec {
+        meta: ExecutorMeta,
+        panic_at: PanicAt,
+    }
+
+    impl PanickingExec {
+        fn panic_if(&self, point: PanicAt) {
+            if self.panic_at == point {
+                std::thread::sleep(Duration::from_millis(1));
+                panic!("executor panic at {point:?}");
+            }
+        }
+    }
+
+    impl Executor for PanickingExec {
+        fn open(&mut self) -> Result<(), crate::ExecError> {
+            self.panic_if(PanicAt::Open);
+            Ok(())
+        }
+
+        fn next(&mut self, _req: &mut Chunk) -> Result<(), crate::ExecError> {
+            self.panic_if(PanicAt::Next);
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), crate::ExecError> {
+            self.panic_if(PanicAt::Close);
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    #[test]
+    fn built_executor_recovers_open_next_and_close_panics() {
+        let memory = crate::StatementMemory::default();
+        let build = |panic_at| {
+            checked_executor(
+                Box::new(PanickingExec {
+                    meta: ExecutorMeta::new(empty_schema(), 1, 1, 1),
+                    panic_at,
+                }),
+                memory.clone(),
+            )
+        };
+
+        let mut open = build(PanicAt::Open);
+        assert!(matches!(
+            open.open(),
+            Err(crate::ExecError::Internal(message)) if message == "executor panic at Open"
+        ));
+
+        let mut next = build(PanicAt::Next);
+        next.open().unwrap();
+        let mut req = next.new_chunk();
+        assert!(matches!(
+            next.next(&mut req),
+            Err(crate::ExecError::Internal(message)) if message == "executor panic at Next"
+        ));
+        next.close().unwrap();
+
+        let mut close = build(PanicAt::Close);
+        close.open().unwrap();
+        assert!(matches!(
+            close.close(),
+            Err(crate::ExecError::Internal(message)) if message == "executor panic at Close"
+        ));
+    }
+
+    #[test]
+    fn metered_executor_records_lifecycle_time_when_child_panics() {
+        let build = |panic_at| {
+            let calls = Arc::new(Mutex::new(PhysicalCallStats::default()));
+            let executor = PhysicalCountExec {
+                child: Box::new(PanickingExec {
+                    meta: ExecutorMeta::new(empty_schema(), 1, 1, 1),
+                    panic_at,
+                }),
+                counter: crate::executor::RowCount::default(),
+                calls: Arc::clone(&calls),
+            };
+            (executor, calls)
+        };
+
+        let (mut open, open_calls) = build(PanicAt::Open);
+        assert!(open.open().is_err());
+        assert!(open_calls.lock().unwrap().open >= Duration::from_millis(1));
+
+        let (mut next, next_calls) = build(PanicAt::Next);
+        next.open().unwrap();
+        let mut req = next.new_chunk();
+        assert!(next.next(&mut req).is_err());
+        let next_calls = next_calls.lock().unwrap();
+        assert_eq!(next_calls.loops, 1);
+        assert!(next_calls.next >= Duration::from_millis(1));
+
+        let (mut close, close_calls) = build(PanicAt::Close);
+        close.open().unwrap();
+        assert!(close.close().is_err());
+        assert!(close_calls.lock().unwrap().close >= Duration::from_millis(1));
+    }
+
+    #[test]
+    fn adaptive_runtime_stats_match_go_compact_snapshot_format() {
+        let direct = PhysicalRuntimeCounter {
+            rows: crate::executor::RowCount::default(),
+            calls: None,
+            apply: None,
+            adaptive: Some(Arc::new(Mutex::new(Some(
+                crate::adaptive_limit::AdaptiveLimitRuntimeSnapshot {
+                    kind: crate::adaptive_limit::AdaptiveLimitRuntimeKind::DirectLookup,
+                    snapshot: crate::adaptive_limit::AdaptiveLimitSnapshot {
+                        lookup_handles: 7,
+                        lookup_rows: 4,
+                        lookup_outstanding_at_stop: 2,
+                        ..Default::default()
+                    },
+                },
+            )))),
+        };
+        let zero = tidb_model::go_duration::format_explain_duration(0);
+        assert_eq!(
+            direct.execution_info().as_deref(),
+            Some(format!("adaptive:{{lookup:7/4, outstanding:2, blocked:{zero}}}").as_str())
+        );
+
+        let join = PhysicalRuntimeCounter {
+            rows: crate::executor::RowCount::default(),
+            calls: None,
+            apply: None,
+            adaptive: Some(Arc::new(Mutex::new(Some(
+                crate::adaptive_limit::AdaptiveLimitRuntimeSnapshot {
+                    kind: crate::adaptive_limit::AdaptiveLimitRuntimeKind::IndexJoin,
+                    snapshot: crate::adaptive_limit::AdaptiveLimitSnapshot {
+                        outer_fetched: 9,
+                        outer_consumed: 6,
+                        lookup_handles: 12,
+                        lookup_rows: 5,
+                        outer_outstanding_at_stop: 3,
+                        lookup_outstanding_at_stop: 7,
+                        ..Default::default()
+                    },
+                },
+            )))),
+        };
+        assert_eq!(
+            join.execution_info().as_deref(),
+            Some(
+                format!(
+                    "adaptive:{{outer:9/6, lookup:12/5, outstanding:3/7, blocked:outer={zero},lookup={zero}}}"
+                )
+                .as_str()
+            )
+        );
+    }
 
     fn int_handles(values: &[i64]) -> Vec<TableHandle> {
         values.iter().copied().map(TableHandle::Int).collect()
@@ -4981,6 +5865,218 @@ mod tests {
             .iter()
             .map(|handle| handle.int_value().expect("int handle"))
             .collect()
+    }
+
+    #[test]
+    fn adaptive_limit_direct_lookup_targets_only_keep_order_reader_under_projections() {
+        let table_id = 610;
+        let mut catalog = Catalog::default();
+        catalog.register_kv(
+            "adaptive_limit",
+            crate::KvTable::new(table_id, vec![long_column("id", 1)]),
+        );
+        let scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
+            table_id,
+            ..PhysicalIndexScan::default()
+        });
+        let mut reader_base = BasePhysicalPlan::with_id(1, "IndexLookUpReader", 0);
+        reader_base.set_children(vec![scan.clone()]);
+        let reader = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
+            base: reader_base,
+            index_plan: Some(Box::new(scan)),
+            keep_order: true,
+            ..PhysicalIndexLookUpReader::default()
+        });
+        let mut projection_base = BasePhysicalPlan::with_id(2, "Projection", 0);
+        projection_base.set_children(vec![reader]);
+        let child = PhysicalPlan::Projection(PhysicalProjection {
+            base: projection_base,
+            ..PhysicalProjection::default()
+        });
+        let limit = tidb_planner::physical::PhysicalLimit {
+            offset: 2,
+            count: 3,
+            ..Default::default()
+        };
+        let mut cost_env = tidb_planner::find_best_task::coster::CostEnv::default();
+        cost_env.session.index_lookup_concurrency = 3.0;
+        cost_env.session.index_lookup_size = 12.0;
+        let ctx = crate::StmtContext::for_query()
+            .with_enable_adaptive_limit_scan(true)
+            .with_optimizer_cost_env(cost_env);
+
+        let (target, controller) =
+            adaptive_limit_controller_for_lookup(&limit, &child, &catalog, &ctx)
+                .expect("eligible ordered lookup receives adaptive admission");
+        let candidate = adaptive_limit_lookup_candidate(&child).expect("projection wraps reader");
+        assert_eq!(target, runtime_plan_key(candidate));
+        let initial = controller.snapshot();
+        assert_eq!(initial.demand_rows, 5);
+        assert_eq!(initial.lookup_window, 5);
+        assert_eq!(initial.lookup_batch_size, 12);
+
+        let disabled = crate::StmtContext::for_query();
+        assert!(
+            adaptive_limit_controller_for_lookup(&limit, &child, &catalog, &disabled).is_none()
+        );
+    }
+
+    #[test]
+    fn adaptive_limit_direct_lookup_allows_a_flat_multi_range_scan() {
+        let table_id = 612;
+        let mut catalog = Catalog::default();
+        catalog.register_kv(
+            "adaptive_limit_multi_range",
+            crate::KvTable::new(table_id, vec![long_column("id", 1)]),
+        );
+        let point_range = |value| tidb_planner::ranger::types::Range {
+            low_val: vec![Datum::Int(value)],
+            high_val: vec![Datum::Int(value)],
+            collators: vec![tidb_datatype::Collation::DEFAULT],
+            ..Default::default()
+        };
+        let scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
+            table_id,
+            ranges: vec![point_range(2), point_range(4)],
+            ..PhysicalIndexScan::default()
+        });
+        let mut reader_base = BasePhysicalPlan::with_id(21, "IndexLookUpReader", 0);
+        reader_base.set_children(vec![scan.clone()]);
+        let reader = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
+            base: reader_base,
+            index_plan: Some(Box::new(scan)),
+            keep_order: true,
+            ..PhysicalIndexLookUpReader::default()
+        });
+        let limit = tidb_planner::physical::PhysicalLimit {
+            count: 2,
+            ..Default::default()
+        };
+        let mut cost_env = tidb_planner::find_best_task::coster::CostEnv::default();
+        cost_env.session.index_lookup_concurrency = 2.0;
+        let ctx = crate::StmtContext::for_query()
+            .with_enable_adaptive_limit_scan(true)
+            .with_optimizer_cost_env(cost_env);
+
+        assert!(adaptive_limit_controller_for_lookup(&limit, &reader, &catalog, &ctx).is_some());
+    }
+
+    #[test]
+    fn adaptive_limit_index_join_requires_keep_order_and_shares_the_outer_reader() {
+        use tidb_planner::physical::{PhysicalIndexJoin, PhysicalTableDual};
+        use tidb_planner::physical_property::{PhysicalProperty, TaskType};
+
+        let table_id = 611;
+        let mut catalog = Catalog::default();
+        catalog.register_kv(
+            "adaptive_limit_join",
+            crate::KvTable::new(table_id, vec![long_column("id", 1)]),
+        );
+        let scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
+            table_id,
+            ..PhysicalIndexScan::default()
+        });
+        let mut reader_base = BasePhysicalPlan::with_id(11, "IndexLookUpReader", 0);
+        reader_base.set_children(vec![scan.clone()]);
+        let reader = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
+            base: reader_base,
+            index_plan: Some(Box::new(scan)),
+            keep_order: true,
+            ..PhysicalIndexLookUpReader::default()
+        });
+        let mut outer_projection_base = BasePhysicalPlan::with_id(12, "Projection", 0);
+        outer_projection_base.set_children(vec![reader]);
+        let outer = PhysicalPlan::Projection(PhysicalProjection {
+            base: outer_projection_base,
+            ..PhysicalProjection::default()
+        });
+        let mut join_base = BasePhysicalPlan::with_id(13, "IndexJoin", 0);
+        join_base.set_children(vec![
+            outer,
+            PhysicalPlan::TableDual(PhysicalTableDual::default()),
+        ]);
+        join_base.set_children_req_props(vec![
+            Some(PhysicalProperty::new(
+                TaskType::Root,
+                &[1],
+                false,
+                f64::MAX,
+                false,
+            )),
+            Some(PhysicalProperty::default()),
+        ]);
+        let join = PhysicalPlan::IndexJoin(PhysicalIndexJoin {
+            base: join_base,
+            inner_child_idx: 1,
+            ..PhysicalIndexJoin::default()
+        });
+        let mut root_projection_base = BasePhysicalPlan::with_id(14, "Projection", 0);
+        root_projection_base.set_children(vec![join]);
+        let child = PhysicalPlan::Projection(PhysicalProjection {
+            base: root_projection_base,
+            ..PhysicalProjection::default()
+        });
+        let limit = tidb_planner::physical::PhysicalLimit {
+            offset: 2,
+            count: 3,
+            ..Default::default()
+        };
+        let mut cost_env = tidb_planner::find_best_task::coster::CostEnv::default();
+        cost_env.session.index_lookup_concurrency = 3.0;
+        cost_env.session.index_lookup_join_concurrency = 2.0;
+        cost_env.session.index_lookup_size = 12.0;
+        cost_env.session.index_join_batch_size = 17.0;
+        let ctx = crate::StmtContext::for_query()
+            .with_enable_adaptive_limit_scan(true)
+            .with_optimizer_cost_env(cost_env.clone());
+
+        let (join_key, reader_key, controller) =
+            adaptive_limit_controller_for_index_join(&limit, &child, &catalog, &ctx)
+                .expect("ordered index join with an ordered lookup outer gets one controller");
+        let join_plan = adaptive_limit_index_join_candidate(&child).expect("projected join");
+        let outer_reader = adaptive_limit_lookup_candidate(&join_plan.children()[0])
+            .expect("projected outer reader");
+        assert_eq!(join_key, runtime_plan_key(join_plan));
+        assert_eq!(reader_key, runtime_plan_key(outer_reader));
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.demand_rows, 5);
+        assert_eq!(snapshot.outer_window, 5);
+        assert_eq!(snapshot.lookup_window, 5);
+        assert_eq!(snapshot.lookup_batch_size, 12);
+        for expected in [5, 10, 17, 17] {
+            let reserved = controller
+                .try_reserve_outer(17)
+                .expect("outer window admits the next bounded batch");
+            assert_eq!(reserved, expected);
+            controller.commit_outer(reserved, reserved);
+            controller.observe_join_progress(reserved, 0);
+        }
+        assert_eq!(controller.snapshot().outer_window, 34);
+
+        let mut unordered_join = match &child {
+            PhysicalPlan::Projection(projection) => projection.base.children()[0].clone(),
+            _ => unreachable!(),
+        };
+        if let PhysicalPlan::IndexJoin(join) = &mut unordered_join {
+            join.base.set_children_req_props(vec![
+                Some(PhysicalProperty::default()),
+                Some(PhysicalProperty::default()),
+            ]);
+        }
+        let mut unordered_root_base = BasePhysicalPlan::with_id(15, "Projection", 0);
+        unordered_root_base.set_children(vec![unordered_join]);
+        let unordered_child = PhysicalPlan::Projection(PhysicalProjection {
+            base: unordered_root_base,
+            ..PhysicalProjection::default()
+        });
+        let disabled = crate::StmtContext::for_query().with_optimizer_cost_env(cost_env);
+        assert!(
+            adaptive_limit_controller_for_index_join(&limit, &unordered_child, &catalog, &ctx)
+                .is_none()
+        );
+        assert!(
+            adaptive_limit_controller_for_index_join(&limit, &child, &catalog, &disabled).is_none()
+        );
     }
 
     #[test]
@@ -5015,7 +6111,9 @@ mod tests {
         });
         let mut plan = tidb_planner::physical::eliminate_physical_projection(plan);
         let ids = tidb_planner::plan_base::PlanIdAllocator::new();
-        for _ in 0..7 { ids.alloc(); }
+        for _ in 0..7 {
+            ids.alloc();
+        }
         tidb_planner::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
         let mut exec = build(&plan, &Catalog::default(), &crate::StmtContext::default()).unwrap();
         for _ in 0..2 {
@@ -5609,6 +6707,441 @@ mod tests {
     }
 
     #[test]
+    fn index_merge_partial_batches_grow_across_chunks_and_reset() {
+        let mut table =
+            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_pk_handle_offset(0);
+        for id in 1..=19 {
+            table
+                .insert_row_with_row_id(
+                    &[Datum::Int(id), Datum::Int(id * 10)],
+                    None,
+                    0,
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        table
+            .create_index_with_context(
+                crate::kv_table::KvIndex {
+                    id: 7,
+                    name: "value_idx".to_owned(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: vec![1],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    visible: true,
+                    global: false,
+                    global_index_version: 0,
+                    clustered_primary: false,
+                },
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+        let mut catalog = Catalog::default();
+        catalog.register_kv("im", table.clone());
+        let ctx = crate::StmtContext::for_query().with_executor_chunk_sizes(2, 2);
+        for quota in [1, -1] {
+            let memory = crate::StatementMemory::new(quota, crate::OomAction::Cancel, 7);
+            let memory_ctx = crate::StmtContext::for_query_with_memory(memory.clone())
+                .with_executor_chunk_sizes(2, 2);
+            let executor = build(&table_scan(10, 42, 1, 19), &catalog, &memory_ctx).unwrap();
+            let scratch_bytes = executor.new_chunk().memory_usage();
+            let mut source = ExecutorPartialHandleSource::new(
+                executor,
+                table.clone(),
+                RowDecodeContext::for_query(&memory_ctx),
+                PartialHandleColumns::Int(0),
+                vec![1],
+            )
+            .with_batch_sizes(5, 5);
+            source.open().unwrap();
+            let batch = source.next_batch();
+            if quota == 1 {
+                assert!(
+                    matches!(
+                        batch,
+                        Err(crate::ExecError::MemoryExceedForQuery { conn_id: 7 })
+                    ),
+                    "{batch:?}"
+                );
+            } else {
+                assert_eq!(batch.unwrap().unwrap().handles.len(), 5);
+                assert_eq!(memory.stmt_tracker().max_consumed(), 3 * scratch_bytes);
+                loop {
+                    let batch = source.next_batch().unwrap();
+                    assert_eq!(memory.stmt_tracker().bytes_consumed(), 0);
+                    if batch.is_none() {
+                        break;
+                    }
+                }
+            }
+            if quota == 1 {
+                assert_eq!(memory.stmt_tracker().max_consumed(), scratch_bytes);
+            }
+            assert_eq!(memory.stmt_tracker().bytes_consumed(), 0);
+            source.close().unwrap();
+        }
+        // An ORDER BY handle still occupies a separate key slot before the
+        // handle suffix in Go's index task. Table tasks prune that suffix.
+        for index_layout in [false, true] {
+            let executor = build(&table_scan(10, 42, 1, 19), &catalog, &ctx).unwrap();
+            let mut source = ExecutorPartialHandleSource::new(
+                executor,
+                table.clone(),
+                RowDecodeContext::for_query(&ctx),
+                PartialHandleColumns::Int(0),
+                vec![0],
+            )
+            .with_batch_sizes(5, 5);
+            if index_layout {
+                source = source.with_index_row_layout(None);
+            }
+            source.open().unwrap();
+            let batch = source.next_batch_with_max_handles(3).unwrap().unwrap();
+            let crate::index_merge_reader::MergeSortKeys::Typed { chunk, fields } =
+                &batch.sort_keys
+            else {
+                panic!("expected typed task rows");
+            };
+            assert_eq!(chunk.capacity(), 5);
+            assert_eq!(chunk.num_cols(), if index_layout { 2 } else { 1 });
+            assert_eq!(fields.len(), chunk.num_cols());
+            for row in 0..3 {
+                let value = Datum::Int(row as i64 + 1);
+                assert_eq!(batch.sort_keys.values(row), vec![value; chunk.num_cols()]);
+            }
+            source.close().unwrap();
+        }
+        for (initial, expected) in [(2, vec![2, 4, 5, 5, 3]), (5, vec![5, 5, 5, 4])] {
+            let executor = build(&table_scan(10, 42, 1, 19), &catalog, &ctx).unwrap();
+            let source = ExecutorPartialHandleSource::new(
+                executor,
+                table.clone(),
+                RowDecodeContext::for_query(&ctx),
+                PartialHandleColumns::Int(0),
+                vec![1],
+            )
+            .with_batch_sizes(initial, 5);
+            let index_source = IndexPartialHandleSource {
+                source: IndexRangeSourceExec::new_with_statement(
+                    ExecutorMeta::new(two_long_schema(), 10, 2, 2),
+                    table.clone(),
+                    7,
+                    vec![IndexRange::full()],
+                    RowDecodeContext::for_query(&ctx),
+                    PushdownStatementContext::from_stmt(&ctx),
+                ),
+                partition_indexes: vec![0],
+                table: table.clone(),
+                stats: None,
+                ctx: ctx.clone(),
+                index_id: 7,
+                reported: false,
+                initial_batch_size: initial,
+                batch_size: 0,
+                max_batch_size: 5,
+            };
+            let sources: Vec<(Box<dyn PartialHandleSource>, bool)> =
+                vec![(Box::new(source), true), (Box::new(index_source), false)];
+            for (mut source, ordered) in sources {
+                for _ in 0..2 {
+                    source.open().unwrap();
+                    let mut sizes = Vec::new();
+                    let mut ids = Vec::new();
+                    while let Some(batch) = source.next_batch().unwrap() {
+                        sizes.push(batch.handles.len());
+                        for (index, handle) in batch.handles.iter().enumerate() {
+                            let id = handle.handle.int_value().unwrap();
+                            if ordered {
+                                assert_eq!(batch.sort_keys.values(index), vec![Datum::Int(id * 10)]);
+                            } else {
+                                assert!(batch.sort_keys.is_empty());
+                            }
+                            ids.push(id);
+                        }
+                    }
+                    assert_eq!(sizes, expected);
+                    assert_eq!(ids, (1..=19).collect::<Vec<_>>());
+                    source.close().unwrap();
+                }
+                source.open().unwrap();
+                let batch = source.next_batch_with_max_handles(3).unwrap().unwrap();
+                assert_eq!(batch.handles.len(), initial.min(3));
+                if ordered {
+                    let crate::index_merge_reader::MergeSortKeys::Typed { chunk, fields } =
+                        &batch.sort_keys
+                    else {
+                        panic!("partial source discarded typed key storage");
+                    };
+                    // Go allocates retChk at the adaptive task capacity,
+                    // even when the pushed budget requests fewer rows.
+                    assert_eq!(chunk.capacity(), initial);
+                    assert_eq!(chunk.num_rows(), batch.handles.len());
+                    assert_eq!(fields.len(), 1);
+                }
+                assert_eq!(
+                    batch
+                        .handles
+                        .iter()
+                        .map(|handle| handle.handle.int_value().unwrap())
+                        .collect::<Vec<_>>(),
+                    (1..=initial.min(3) as i64).collect::<Vec<_>>()
+                );
+                assert!(source.next_batch_with_max_handles(0).unwrap().is_none());
+                source.close().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn index_merge_partial_limit_counts_handles_before_union_dedup_only() {
+        let mut table =
+            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_pk_handle_offset(0);
+        for id in 1..=19 {
+            table
+                .insert_row_with_row_id(
+                    &[Datum::Int(id), Datum::Int(id * 10)],
+                    None,
+                    0,
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("im", table);
+        for (intersection, ordered) in [(false, false), (false, true), (true, false)] {
+            let partials = vec![table_scan(10, 42, 1, 19), table_scan(11, 42, 1, 19)];
+            let mut base = BasePhysicalPlan::with_id(30, "IndexMerge", 0);
+            base.base.set_schema(Some(two_long_schema()));
+            let plan = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+                base,
+                partial_plans_raw: partials,
+                table_plan: Some(Box::new(table_scan(20, 42, 1, 19))),
+                is_intersection_type: intersection,
+                by_items: if ordered {
+                    vec![tidb_expr::aggregation::ByItems::new(
+                        Expression::Column(two_long_schema().columns[1].clone()),
+                        false,
+                    )]
+                } else {
+                    vec![]
+                },
+                pushed_limit: Some(tidb_planner::physical::PushedDownLimit {
+                    offset: 3,
+                    count: 2,
+                }),
+                ..Default::default()
+            });
+            let ctx = crate::StmtContext::for_query().with_executor_chunk_sizes(6, 6);
+            let mut state = BuildState {
+                runtime_counters: Some(HashMap::new()),
+                ..Default::default()
+            };
+            let mut executor = build_with_state(&plan, &catalog, &ctx, &mut state).unwrap();
+            executor.open().unwrap();
+            let mut ids = Vec::new();
+            loop {
+                let mut chunk = executor.new_chunk();
+                executor.next(&mut chunk).unwrap();
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                ids.extend((0..chunk.num_rows()).map(|row| chunk.get_row(row).get_int64(0)));
+            }
+            executor.close().unwrap();
+            if intersection {
+                assert_eq!(ids.len(), 2);
+                assert!(ids.iter().all(|id| (1..=19).contains(id)));
+                assert_ne!(ids[0], ids[1]);
+            } else {
+                assert_eq!(ids, vec![4, 5]);
+            }
+            let PhysicalPlan::IndexMergeReader(reader) = &plan else {
+                unreachable!()
+            };
+            for (index, partial) in reader.partial_plans_raw.iter().enumerate() {
+                let rows =
+                    state.runtime_counters.as_ref().unwrap()[&runtime_plan_key(partial)].get();
+                let expected = if intersection {
+                    19
+                } else if ordered || index == 0 {
+                    5
+                } else {
+                    0
+                };
+                assert_eq!(
+                    rows, expected,
+                    "intersection={intersection}, ordered={ordered}, partial={index}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn union_merge_delivers_table_tasks_before_draining_partials() {
+        let mut table =
+            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_pk_handle_offset(0);
+        for id in 1..=19 {
+            table
+                .insert_row_with_row_id(
+                    &[Datum::Int(id), Datum::Int(id * 10)],
+                    None,
+                    0,
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("im", table);
+        let partials = vec![table_scan(10, 42, 1, 19), table_scan(11, 42, 1, 19)];
+        let keys = partials.iter().map(runtime_plan_key).collect::<Vec<_>>();
+        let mut base = BasePhysicalPlan::with_id(30, "IndexMerge", 0);
+        base.base.set_schema(Some(two_long_schema()));
+        let merge = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+            base,
+            partial_plans_raw: partials,
+            table_plan: Some(Box::new(table_selection(21, table_scan(20, 42, 1, 19), 20))),
+            ..Default::default()
+        });
+        let mut base = BasePhysicalPlan::with_id(31, "Limit", 0);
+        base.base.set_schema(Some(two_long_schema()));
+        base.set_children(vec![merge]);
+        let plan = PhysicalPlan::Limit(tidb_planner::physical::PhysicalLimit {
+            base,
+            count: 1,
+            ..Default::default()
+        });
+        let ctx = crate::StmtContext::for_query().with_executor_chunk_sizes(6, 6);
+        let mut state = BuildState {
+            runtime_counters: Some(HashMap::new()),
+            ..Default::default()
+        };
+        let mut executor = build_with_state(&plan, &catalog, &ctx, &mut state).unwrap();
+        for _ in 0..2 {
+            executor.open().unwrap();
+            let mut chunk = executor.new_chunk();
+            executor.next(&mut chunk).unwrap();
+            assert_eq!(chunk.num_rows(), 1);
+            assert_eq!(chunk.get_row(0).get_int64(0), 3);
+            executor.close().unwrap();
+            let counters = state.runtime_counters.as_ref().unwrap();
+            // Go Next fills MaxChunkSize even under an outer LIMIT 1.
+            // Four survivors from the first six-handle task require another
+            // task; adaptive extraction fetches twelve more handles.
+            assert_eq!(counters[&keys[0]].get(), 18);
+            assert_eq!(counters[&keys[1]].get(), 0);
+        }
+    }
+
+    #[test]
+    fn index_merge_table_tasks_execute_retained_operator_order() {
+        let mut table =
+            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        table.set_pk_handle_offset(0);
+        for id in 1..=6 {
+            table
+                .insert_row_with_row_id(
+                    &[Datum::Int(id), Datum::Int(id * 10)],
+                    None,
+                    0,
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("im", table);
+        for batch_size in [3, 20_000] {
+            for topn in [false, true] {
+                for limit_above_filter in [false, true] {
+                    let scan = table_scan(20, 42, i64::MIN, i64::MAX);
+                    let child = if limit_above_filter {
+                        table_selection(21, scan, 20)
+                    } else {
+                        scan
+                    };
+                    let mut base = BasePhysicalPlan::with_id(22, "Limit", 0);
+                    base.base.set_schema(Some(two_long_schema()));
+                    base.set_children(vec![child]);
+                    let limit = if topn {
+                        let mut value = two_long_schema().columns[1].clone();
+                        value.index = 1;
+                        PhysicalPlan::TopN(tidb_planner::physical::PhysicalTopN {
+                            base,
+                            offset: 1,
+                            count: 2,
+                            by_items: vec![tidb_expr::aggregation::ByItems::new(
+                                Expression::Column(value),
+                                true,
+                            )],
+                            ..Default::default()
+                        })
+                    } else {
+                        PhysicalPlan::Limit(tidb_planner::physical::PhysicalLimit {
+                            base,
+                            offset: 0,
+                            count: 2,
+                            ..Default::default()
+                        })
+                    };
+                    let table_plan = if limit_above_filter {
+                        limit
+                    } else {
+                        table_selection(21, limit, 20)
+                    };
+                    let mut partial = table_scan(10, 42, 1, 6);
+                    partial
+                        .base_mut()
+                        .base
+                        .set_schema(Some(Schema::new(
+                            vec![two_long_schema().columns[0].clone()],
+                        )));
+                    let mut base = BasePhysicalPlan::with_id(30, "IndexMerge", 0);
+                    base.base.set_schema(Some(two_long_schema()));
+                    let plan = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+                        base,
+                        partial_plans_raw: vec![partial],
+                        table_plan: Some(Box::new(table_plan)),
+                        ..Default::default()
+                    });
+                    let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+                    env.session.index_lookup_size = batch_size as f64;
+                    let ctx = crate::StmtContext::for_query()
+                        .with_optimizer_cost_env(env)
+                        .with_executor_chunk_sizes(6, 6);
+                    let mut executor = build(&plan, &catalog, &ctx).unwrap();
+                    executor.open().unwrap();
+                    let mut ids = Vec::new();
+                    loop {
+                        let mut chunk = executor.new_chunk();
+                        executor.next(&mut chunk).unwrap();
+                        if chunk.num_rows() == 0 {
+                            break;
+                        }
+                        ids.extend(
+                            (0..chunk.num_rows()).map(|row| chunk.get_row(row).get_int64(0)),
+                        );
+                    }
+                    executor.close().unwrap();
+                    let expected = match (topn, limit_above_filter, batch_size) {
+                        (true, _, _) => vec![5, 4],
+                        (false, true, 3) => vec![3, 4, 5],
+                        (false, true, _) => vec![3, 4],
+                        (false, false, 3) => vec![4, 5],
+                        _ => vec![],
+                    };
+                    assert_eq!(
+                        ids, expected,
+                        "TopN={topn}, above_filter={limit_above_filter}, batch={batch_size}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn cached_physical_index_merge_builds_from_retained_partial_trees() {
         // Go TestIdexMerge: exercise the retained reader, not a cost-selected
         // table scan that can accidentally hide a broken index-merge builder.
@@ -5741,10 +7274,11 @@ mod tests {
                                 output.columns.push(column);
                             }
                             reader.base.base.set_schema(Some(output.clone()));
-                            reader
-                                .table_plan
-                                .as_mut()
-                                .unwrap()
+                            // A Selection preserves its scan's columns. Keep
+                            // the partition-ID slot in both retained schemas.
+                            let table_plan = reader.table_plan.as_mut().unwrap();
+                            table_plan.base_mut().base.set_schema(Some(output.clone()));
+                            table_plan.base_mut().children_mut()[0]
                                 .base_mut()
                                 .base
                                 .set_schema(Some(output));

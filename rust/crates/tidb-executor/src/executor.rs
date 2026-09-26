@@ -18,6 +18,7 @@
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
@@ -126,9 +127,13 @@ impl From<EvalError> for ExecError {
 /// Callers drive it with `open()`, repeated `next(&mut chunk)` (an empty result
 /// chunk signals EOF, as in Go), then `close()`.
 ///
-/// The observability/control surface of Go's interface (`RuntimeStats`,
-/// `HandleSQLKillerSignal`, `RegisterSQLAndPlanInExecForTopProfiling`, `Detach`)
-/// and the `context.Context` argument are intentionally omitted from this seed.
+/// Go's `RuntimeStats` is applied by physical-plan construction when the
+/// statement has an enabled runtime-stat source. The remaining observability/
+/// control methods (`HandleSQLKillerSignal`,
+/// `RegisterSQLAndPlanInExecForTopProfiling`, `Detach`) and the
+/// `context.Context` argument are still outside this trait. Physical-plan
+/// construction applies Go's before/after SQL-killer behavior at each built
+/// operator boundary and converts Open/Next/Close panics to executor errors.
 pub trait Executor: Send {
     /// Go `Open`: prepare the operator (and, by convention, its children).
     fn open(&mut self) -> Result<(), ExecError>;
@@ -182,6 +187,26 @@ pub trait Executor: Send {
     }
 }
 
+/// Go `exec.BaseExecutorV2`'s per-operator runtime-stat handle. The physical
+/// builder installs one handle on each retained operator only when TiDB's
+/// execution-info collector is enabled; the hot `Next` path then updates the
+/// shared atomics directly without looking the plan up in a collector map.
+pub trait ExecutorRuntimeStats: Send + Sync {
+    /// Go `BasicRuntimeStats.RecordOpen`.
+    fn record_open(&self, elapsed: Duration);
+    /// Go `BasicRuntimeStats.Record`.
+    fn record_next(&self, elapsed: Duration, rows: i64);
+    /// Go `BasicRuntimeStats.RecordClose`.
+    fn record_close(&self, elapsed: Duration);
+}
+
+/// Creates the shared runtime-stat handle for one constructed physical
+/// executor, matching Go `RuntimeStatsColl.GetBasicRuntimeStats(id, true)`.
+pub trait ExecutorRuntimeStatsSource: Send + Sync {
+    /// Registers one executor for `plan_id` and returns its shared counters.
+    fn for_executor(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>>;
+}
+
 /// A row counter owned by one executor and observed by its statement.
 /// Moving the executor to a worker does not move or invalidate the observer.
 /// Counts carry no data-publication ordering; chunk/worker handoffs do that.
@@ -204,8 +229,8 @@ impl RowCount {
 /// by every operator (Go embeds it via `BaseExecutorV2`).
 ///
 /// The chunk-sizing fields (`init_cap`, `max_chunk_size`) come from Go's
-/// `executorChunkAllocator`; the runtime-stats, killer, and RU-tracking helpers
-/// that `BaseExecutorV2` also composes are deferred.
+/// `executorChunkAllocator`; runtime stats attach at the physical-builder
+/// boundary, while killer and RU-tracking helpers remain deferred.
 #[derive(Clone, Debug)]
 pub struct ExecutorMeta {
     schema: Schema,

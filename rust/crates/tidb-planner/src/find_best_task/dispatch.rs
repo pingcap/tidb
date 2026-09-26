@@ -51,12 +51,12 @@
 use crate::logical::data_source::{index_covers_condition, index_path_is_single_scan};
 use std::collections::{HashMap, HashSet};
 
-use crate::enforce::enforce_property;
+use crate::enforce::enforce_property_in;
 use crate::logical::LogicalPlan;
 use crate::physical::{self, PhysicalPlan};
 use crate::physical_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
-use crate::task::{attach2_task, Task};
+use crate::task::Task;
 use crate::task_type::TaskType;
 
 /// Go `getTaskPlanCost`'s pricing half: what a built task costs.
@@ -101,11 +101,17 @@ pub fn compare_task_cost(
 /// from, the coster, the NDV skew ratio the stats scaling reads, and Go's
 /// per-operator task map.
 pub struct DispatchContext<'a> {
+    /// Published expression policy used throughout physical task attachment.
+    pub expr_pushdown_blacklist: tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    /// Session inputs to Go's histogram cardinality estimators.
+    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    /// Session controls for Go's correlated scan-limit estimator.
+    pub correlation_options: crate::cardinality::cross_estimation::CorrelationOptions,
     /// The plan id allocator for built physical operators.
     pub allocator: &'a PlanIdAllocator,
     /// The pricing seam.
     pub coster: &'a dyn TaskCoster,
-    /// The `tidb_opt_skew_ratio` the NDV scaling reads; 1.0 is Go's default.
+    /// The `tidb_opt_scale_ndv_skew_ratio` the NDV scaling reads; 1.0 is Go's default.
     pub skew_ratio: f64,
     /// Session range memory limit used during initial access-path construction.
     pub range_max_size: i64,
@@ -119,6 +125,9 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.OptOrderingIdxSelRatio`, used by the ordered LIMIT
     /// row-count adjustment for table and index scans.
     pub ordering_index_selectivity_ratio: f64,
+    /// Go `SessionVars.OptOrderingIdxSelThresh`, which can disable expected-
+    /// count adjustment when any datasource path is sufficiently selective.
+    pub ordering_index_selectivity_threshold: f64,
     /// Go `SessionVars.AllowProjectionPushDown`, used when Projection
     /// enumerates its TiKV coprocessor candidate.
     pub allow_projection_push_down: bool,
@@ -141,6 +150,8 @@ pub struct DispatchContext<'a> {
     pub hash_join_concurrency: usize,
     /// Resolved session settings for the shuffle rewrite.
     pub shuffle_options: crate::physical::shuffle_optimize::ShuffleOptions,
+    /// Go `SessionVars.RiskGroupNDVSkewRatio` for cardinality estimates.
+    pub group_ndv_skew_ratio: f64,
     /// Go `SessionVars.UseHashJoinV2`; see `CostSessionOpts::use_hash_join_v2`.
     pub use_hash_join_v2: bool,
     /// Go `SessionVars.MemQuotaApplyCache`, used by
@@ -149,10 +160,11 @@ pub struct DispatchContext<'a> {
     pub apply_cache_capacity: i64,
     /// Go `fixcontrol.Fix44855`, which raises an IndexJoin probe's scan-row
     /// floor when the chosen access path can use only a prefix of the equality
-    /// join keys. Go reads it with `GetBoolWithDefault(..., false)`: the fix is
-    /// OFF unless the session's `tidb_opt_fix_control` turns it on. Callers
-    /// that resolve the session fix-control map pass its value.
+    /// join keys. Go reads this floor with `GetBoolWithDefault(..., true)`;
+    /// its distinct upper bound below uses the false default.
     pub index_join_probe_row_count_fix: bool,
+    /// Go Fix44855's separate NDV upper bound, disabled by default.
+    pub index_join_row_count_upper_bound: bool,
     /// Whether normal optimization may convert scans to PointGet/BatchPointGet.
     /// Go fix 52592 disables both conversions when enabled by the session.
     pub enable_point_get_conversion: bool,
@@ -183,17 +195,13 @@ pub struct DispatchContext<'a> {
     /// cost is higher. The executor does not expose the session override yet,
     /// so callers use Go's default.
     pub prefer_range_scan: bool,
-    /// Go `SessionVars.EnableIndexMerge` (`tidb_enable_index_merge`, default
-    /// ON): an OR whose disjuncts each admit a non-full access path yields a
-    /// union index-merge candidate.
-    pub index_merge_enabled: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
     /// property. Numeric plan IDs are explain identities and are deliberately
     /// shared by static-partition DataSource copies.
     task_map: HashMap<(usize, Vec<u8>), Task>,
     /// Go AccessPath.ForcePartialOrder survives the partial candidate search.
     /// DataSource object identity keeps separate table occurrences independent.
-    forced_partial_order_paths: HashSet<(usize, i64)>,
+    pub(super) forced_partial_order_paths: HashSet<(usize, i64)>,
     /// Go `SessionVars.AllocPlanColumnID`: the column-id allocator the
     /// aggregate partial/final split draws fresh columns from. `None` keeps
     /// pre-split searches working; a search that can push aggregates sets it
@@ -210,6 +218,9 @@ impl<'a> DispatchContext<'a> {
         skew_ratio: f64,
     ) -> Self {
         Self {
+            expr_pushdown_blacklist: Default::default(),
+            estimator_options: Default::default(),
+            correlation_options: Default::default(),
             allocator,
             coster,
             skew_ratio,
@@ -219,6 +230,8 @@ impl<'a> DispatchContext<'a> {
             range_fallback_handler: None,
             expression_evaluator: &crate::ranger::points::evaluate_static,
             ordering_index_selectivity_ratio: 0.01,
+            ordering_index_selectivity_threshold:
+                tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH,
             allow_projection_push_down: true,
             heavy_function_optimize: true,
             // Go `vardef.DefTiDBEnableINLJoinMultiPattern` is true.
@@ -228,9 +241,11 @@ impl<'a> DispatchContext<'a> {
             enable_paging: true,
             hash_join_concurrency: 5,
             shuffle_options: Default::default(),
+            group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
             use_hash_join_v2: true,
             apply_cache_capacity: 0,
-            index_join_probe_row_count_fix: false,
+            index_join_probe_row_count_fix: true,
+            index_join_row_count_upper_bound: false,
             enable_point_get_conversion: true,
             index_join_skyline_threshold: 1_000.0,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
@@ -244,11 +259,76 @@ impl<'a> DispatchContext<'a> {
             mpp_warning_sink: None,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
-            index_merge_enabled: false,
             task_map: HashMap::new(),
             forced_partial_order_paths: HashSet::new(),
             column_ids: None,
         }
+    }
+
+    /// Uses the session's resolved histogram-estimator options.
+    #[must_use]
+    pub const fn with_estimator_options(
+        mut self,
+        options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    ) -> Self {
+        self.estimator_options = options;
+        self
+    }
+
+    /// Estimate only the predicates retained in the remote scan.
+    fn pushed_filter_stats(
+        &self,
+        source: &crate::logical::DataSource,
+        input: Option<&crate::stats_info::StatsInfo>,
+        filters: &[tidb_expr::expression::Expression],
+    ) -> Option<crate::stats_info::StatsInfo> {
+        let selectivity = source
+            .table_stats
+            .as_ref()
+            .and_then(|stats| {
+                crate::logical::rewrite::analyzed_filter_selectivity_with_evaluator(
+                    stats,
+                    filters,
+                    self.estimator_options,
+                    self.expression_evaluator,
+                )
+            })
+            .unwrap_or(self.selectivity_factor);
+        input.map(|stats| stats.scale(selectivity, self.skew_ratio))
+    }
+
+    /// Retain the same statement settings for ordinary and merge task conversion.
+    pub(crate) fn task_stats_context(
+        &self,
+        source: &crate::logical::DataSource,
+        root_filters: &[tidb_expr::expression::Expression],
+    ) -> crate::task::TaskStatsContext {
+        crate::task::TaskStatsContext {
+            root_filter_stats: if root_filters.is_empty() {
+                None
+            } else {
+                source.table_stats.clone().map(std::sync::Arc::new)
+            },
+            estimator_options: self.estimator_options,
+            scale_ndv_skew_ratio: self.skew_ratio,
+        }
+    }
+
+    /// Uses the session's group-NDV blend ratio.
+    #[must_use]
+    pub const fn with_group_ndv_skew_ratio(mut self, ratio: f64) -> Self {
+        self.group_ndv_skew_ratio = ratio;
+        self
+    }
+
+    /// Uses the session's correlation-adjustment settings.
+    #[must_use]
+    pub const fn with_correlation_options(
+        mut self,
+        options: crate::cardinality::cross_estimation::CorrelationOptions,
+    ) -> Self {
+        self.correlation_options = options;
+        self
     }
 
     pub(crate) fn detach_index_range(
@@ -258,22 +338,21 @@ impl<'a> DispatchContext<'a> {
         lengths: &[i64],
     ) -> Result<crate::ranger::detacher::DetachRangeResult, crate::ranger::points::PointBuilderError>
     {
-        match self.range_fallback_handler {
-            Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler_in(
-                conditions,
-                columns,
-                lengths,
-                self.range_max_size,
-                handler,
-                self.expression_evaluator,
-            ),
-            None => crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
-                conditions,
-                columns,
-                lengths,
-                self.range_max_size,
-                self.expression_evaluator,
-            ),
+        self.access_path_derivation_context()
+            .detach_index_range(conditions, columns, lengths)
+    }
+
+    pub(crate) fn access_path_derivation_context(
+        &self,
+    ) -> crate::access_path::AccessPathDerivationContext<'_> {
+        crate::access_path::AccessPathDerivationContext {
+            opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
+            expr_pushdown_blacklist: &self.expr_pushdown_blacklist,
+            selectivity_factor: self.selectivity_factor,
+            estimator_options: self.estimator_options,
+            range_max_size: self.range_max_size,
+            range_fallback_handler: self.range_fallback_handler,
+            expression_evaluator: self.expression_evaluator,
         }
     }
 
@@ -314,6 +393,13 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// Attaches `tidb_opt_ordering_index_selectivity_threshold`.
+    #[must_use]
+    pub const fn with_ordering_index_selectivity_threshold(mut self, threshold: f64) -> Self {
+        self.ordering_index_selectivity_threshold = threshold;
+        self
+    }
+
     /// The same context with the session's projection-pushdown switch.
     #[must_use]
     pub const fn with_projection_push_down(mut self, allow: bool) -> Self {
@@ -349,12 +435,6 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
-    /// The same context with `tidb_enable_index_merge` resolved.
-    pub const fn with_index_merge_enabled(mut self, enabled: bool) -> Self {
-        self.index_merge_enabled = enabled;
-        self
-    }
-
     /// The same context with the resolved hash-join concurrency.
     #[must_use]
     pub const fn with_use_hash_join_v2(mut self, enabled: bool) -> Self {
@@ -378,6 +458,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_index_join_probe_row_count_fix(mut self, enabled: bool) -> Self {
         self.index_join_probe_row_count_fix = enabled;
+        self
+    }
+
+    /// Uses the session's Fix44855 value with the upper-bound default (false).
+    #[must_use]
+    pub const fn with_index_join_row_count_upper_bound(mut self, enabled: bool) -> Self {
+        self.index_join_row_count_upper_bound = enabled;
         self
     }
 
@@ -501,6 +588,7 @@ fn exhaust_physical_plans(
                 ctx.allocator,
                 ctx.skew_ratio,
                 ctx.mpp_allowed,
+                &ctx.expr_pushdown_blacklist,
             ),
         )),
         LogicalPlan::Projection(op) => Ok(one(
@@ -511,6 +599,7 @@ fn exhaust_physical_plans(
                 ctx.skew_ratio,
                 ctx.allow_projection_push_down,
                 ctx.mpp_allowed,
+                &ctx.expr_pushdown_blacklist,
             ),
         )),
         LogicalPlan::Sort(op) => Ok(one(physical::exhaust_physical_plans_4_logical_sort(
@@ -628,6 +717,7 @@ fn exhaust_physical_plans(
                 ctx.enable_3_stage_distinct_agg,
                 ctx.enable_3_stage_multi_distinct_agg,
                 &ctx.tiflash_pre_agg_mode,
+                &ctx.expr_pushdown_blacklist,
             );
             if !hash_aggs.is_empty()
                 && op.prefer_agg_type & crate::expression_rewriter::PREFER_HASH_AGG != 0
@@ -702,6 +792,25 @@ fn exhaust_physical_plans(
                     continue;
                 }
                 let mut child_props = candidate.child_props;
+                if matches!(&strategy, JoinStrategy::Merge { .. })
+                    && !child_props[0].can_add_enforcer
+                {
+                    // GetMergeJoin adjusts naturally ordered children; Go's
+                    // getEnforcedMergeJoin deliberately keeps unbounded inputs.
+                    let join_rows = op.base.base.stats_info().map_or(
+                        0.0, crate::stats_info::StatsInfo::row_count,
+                    );
+                    if prop.expected_cnt < join_rows {
+                        for (child_prop, child) in child_props.iter_mut().zip(plan.children()) {
+                            let child_rows = child.stats_info().map_or(
+                                0.0, crate::stats_info::StatsInfo::row_count,
+                            );
+                            child_prop.expected_cnt = calc_child_expected_cnt(
+                                prop, child_rows, join_rows, ctx.ordering_index_selectivity_ratio,
+                            );
+                        }
+                    }
+                }
                 if let JoinStrategy::Index {
                     outer_idx,
                     table_range_scan,
@@ -763,7 +872,13 @@ fn exhaust_physical_plans(
                     op.base.base.tp(),
                     op.base.base.query_block_offset(),
                 );
-                base.base.set_stats(op.base.base.stats_info().cloned());
+                base.base.set_stats(op.base.base.stats_info().map(|stats| {
+                    if matches!(&strategy, JoinStrategy::Merge { .. }) {
+                        stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
+                    } else {
+                        stats.clone()
+                    }
+                }));
                 base.base.set_schema(op.base.base.schema().cloned());
                 base.set_children_req_props(child_props.into_iter().map(Some).collect());
                 let physical = match strategy {
@@ -901,31 +1016,20 @@ fn exhaust_physical_plans(
                 return Ok((Vec::new(), true));
             }
 
-            let outer_rows = plan
-                .children()
-                .first()
-                .and_then(LogicalPlan::stats_info)
-                .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+            let outer_stats = plan.children().first().and_then(LogicalPlan::stats_info);
+            let outer_rows = outer_stats.map_or(0.0, crate::stats_info::StatsInfo::row_count);
             let stats = op.base().base.stats_info().cloned();
             let apply_rows = stats
                 .as_ref()
                 .map_or(0.0, crate::stats_info::StatsInfo::row_count);
-            // Go `physicalop.CalcChildExpectedCnt`.
-            let outer_expected_cnt = if prop.expected_cnt < apply_rows
-                || (!prop.is_sort_item_empty()
-                    && ctx.ordering_index_selectivity_ratio > 0.0
-                    && outer_rows > apply_rows
-                    && prop.expected_cnt < outer_rows
-                    && apply_rows > 0.0)
-            {
-                let rows_to_meet_first = if prop.is_sort_item_empty() {
-                    0.0
-                } else {
-                    ((outer_rows - apply_rows) * ctx.ordering_index_selectivity_ratio).max(0.0)
-                };
-                outer_rows * prop.expected_cnt / apply_rows + rows_to_meet_first
-            } else {
+            // Go only adjusts an Apply's outer requirement for ordered output.
+            // Reuse the same helper as index and natural merge joins.
+            let outer_expected_cnt = if prop.is_sort_item_empty() {
                 f64::MAX
+            } else {
+                calc_child_expected_cnt(
+                    prop, outer_rows, apply_rows, ctx.ordering_index_selectivity_ratio,
+                )
             };
             let outer_prop = PhysicalProperty {
                 sort_items: prop.sort_items.clone(),
@@ -948,7 +1052,10 @@ fn exhaust_physical_plans(
                 ..PhysicalProperty::default()
             };
 
-            let can_use_cache = stats.as_ref().is_some_and(|stats| {
+            // Cache hits reuse correlated keys across outer rows. Apply output
+            // may shrink (semi join) or multiply (LATERAL), so it is not the
+            // population whose NDV determines reuse.
+            let can_use_cache = outer_stats.is_some_and(|stats| {
                 if stats.row_count() == 0.0 || ctx.apply_cache_capacity <= 0 {
                     return false;
                 }
@@ -957,9 +1064,12 @@ fn exhaust_physical_plans(
                     .iter()
                     .map(|column| column.column.unique_id)
                     .collect::<Vec<_>>();
-                let (ndv, _) = crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(
-                    &ids, stats,
-                );
+                let (ndv, _) = crate::cardinality::derive_stats::
+                    estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                        &ids,
+                        stats,
+                        ctx.group_ndv_skew_ratio,
+                    );
                 1.0 - ndv / stats.row_count() > 0.1
             });
             let (left_join_keys, right_join_keys, is_null_eq, _) = op.join.get_join_keys();
@@ -1311,7 +1421,7 @@ fn find_best_task_4_logical_mem_table(
         let mut unordered_prop = direct_prop;
         unordered_prop.sort_items.clear();
         let unordered = find_best_task(logical, &unordered_prop, ctx)?;
-        return enforce_property(prop, unordered, ctx.allocator);
+        return enforce_property_in(prop, unordered, ctx.allocator, ctx.expression_evaluator);
     }
 
     if !prop.sort_items.is_empty() {
@@ -1454,7 +1564,7 @@ fn is_eq_or_in_on_column(condition: &tidb_expr::expression::Expression, unique_i
 /// `TableFullScan ... keep order:true`. [`DataSource::handle_is_int`] only
 /// stays true while that handle column survives pruning, so the liveness
 /// half of Go's schema scan is this port's flag reset.
-fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProperty) -> bool {
+pub(super) fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProperty) -> bool {
     if ds.handle_is_int {
         let Some(pk_col) = ds.handle_cols.first() else {
             return false;
@@ -1493,41 +1603,7 @@ fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProp
     true
 }
 
-/// Count of `ds.pushed_down_conds` whose referenced columns ALL sit inside
-/// `index`'s prefix — a cheap proxy for go's `accessCondsColMap` size
-/// before the ranger detach runs.
-fn index_prefix_access_count(
-    ds: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
-) -> usize {
-    if ds.pushed_down_conds.is_empty() || index.columns.is_empty() {
-        return 0;
-    }
-    let prefix: std::collections::BTreeSet<i64> = index
-        .columns
-        .iter()
-        .filter_map(|index_column| {
-            ds.table_columns
-                .get(index_column.offset)
-                .map(|table_column| table_column.unique_id)
-        })
-        .collect();
-    if prefix.is_empty() {
-        return 0;
-    }
-    ds.pushed_down_conds
-        .iter()
-        .filter(|condition| {
-            let columns = tidb_expr::simple_expr::extract_columns(condition);
-            !columns.is_empty()
-                && columns
-                    .iter()
-                    .all(|column| prefix.contains(&column.unique_id))
-        })
-        .count()
-}
-
-fn index_path_matches_order(
+pub(super) fn index_path_matches_order(
     ds: &crate::logical::DataSource,
     index: &crate::plan_builder::catalog::SourceIndex,
     prop: &PhysicalProperty,
@@ -1565,7 +1641,7 @@ fn index_path_matches_order(
 /// can provide the requested TopN prefix only when all index-definition
 /// columns line up with the ORDER BY columns, the final definition column is
 /// a prefix column, and no earlier definition column is truncated.
-fn match_partial_order_property(
+pub(super) fn match_partial_order_property(
     ds: &crate::logical::DataSource,
     index: &crate::plan_builder::catalog::SourceIndex,
     partial: &crate::physical_property::PartialOrderInfo,
@@ -1677,6 +1753,7 @@ fn index_join_probe_access_rows_floor(
     access_columns: &[tidb_expr::column::Column],
     runtime: &crate::physical_property::IndexJoinRuntimeProp,
     enabled: bool,
+    group_ndv_skew_ratio: f64,
 ) -> Option<f64> {
     if !enabled || runtime.inner_join_keys.is_empty() || ds.handle_is_int {
         return None;
@@ -1728,8 +1805,12 @@ fn index_join_probe_access_rows_floor(
         .iter()
         .map(|column| column.unique_id)
         .collect::<Vec<_>>();
-    let (ndv, _) =
-        crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&ids, table_stats);
+    let (ndv, _) = crate::cardinality::derive_stats::
+        estimate_cols_ndv_with_matched_len_and_skew_ratio(
+            &ids,
+            table_stats,
+            group_ndv_skew_ratio,
+        );
     if !ndv.is_finite() || ndv <= 0.0 {
         return None;
     }
@@ -1892,59 +1973,6 @@ fn path_matches_index_join_runtime(
     }
 }
 
-/// Go `tryAppendCommonHandleColsToIndexPath` (`pkg/planner/core/stats.go`):
-/// a non-unique secondary-index key physically ends with the complete
-/// clustered common handle.  Keep those handle columns in the ranger prefix
-/// so predicates such as `(a,b,c) > (1,2,3)` can constrain the physical key,
-/// not just the declared `a` part of `KEY ia(a)`.
-///
-/// The append is deliberately conservative at the same boundaries as Go:
-/// primary/unique keys already identify rows, global and special index kinds
-/// have a different key layout, and a V0 new-collation string handle is not
-/// restored as its original value in the key.  If any handle column is
-/// already declared by the index, skip the whole append; the physical key
-/// repeats it and a partial append would misalign every following dimension.
-fn append_common_handle_cols_to_index_prefix(
-    ds: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
-    resolved: &mut Vec<(tidb_expr::column::Column, i64)>,
-) {
-    if !ds.is_common_handle
-        || ds.common_handle_cols.is_empty()
-        || ds.common_handle_cols.len() != ds.common_handle_lens.len()
-        || index.unique
-        || index.primary
-        || index.global
-        || index.is_multi_valued
-        || index.is_columnar
-    {
-        return;
-    }
-    if ds.common_handle_version < 1
-        && tidb_datatype::new_collation_enabled()
-        && ds.common_handle_cols.iter().any(|column| {
-            column
-                .ret_type
-                .as_ref()
-                .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::String)
-        })
-    {
-        return;
-    }
-    if ds.common_handle_cols.iter().any(|handle| {
-        resolved
-            .iter()
-            .any(|(column, _)| column.unique_id == handle.unique_id)
-    }) {
-        return;
-    }
-    resolved.extend(
-        ds.common_handle_cols
-            .iter()
-            .cloned()
-            .zip(ds.common_handle_lens.iter().copied()),
-    );
-}
 
 /// Go `indexJoinPathGetRangeInfoAndMaxOneRow` (`index_join_path.go:588`): a
 /// UNIQUE access path whose complete key is covered by equality access
@@ -2288,7 +2316,7 @@ fn find_best_task_4_logical_data_source(
         unordered_prop.sort_items.clear();
         let unordered =
             find_best_task_4_logical_data_source_without_enforcer(ds, &unordered_prop, ctx)?;
-        let enforced = enforce_property(prop, unordered, ctx.allocator)?;
+        let enforced = enforce_property_in(prop, unordered, ctx.allocator, ctx.expression_evaluator)?;
         if compare_task_cost(ctx.coster, &direct, &enforced)? {
             return Ok(direct);
         }
@@ -2298,59 +2326,328 @@ fn find_best_task_4_logical_data_source(
     find_best_task_4_logical_data_source_without_enforcer(ds, prop, ctx)
 }
 
-/// Go `skylinePruning`'s `indexFilters := c.eqOrInCount > 0 || ...` combined
-/// with `!c.isFullRange`: whether this index path is one the prefer-range
-/// override keeps. This runs BEFORE the candidate loop so a preferred
-/// range-scan path can suppress the full table scan for EVERY property,
-/// exactly as Go removes the full-scan path from `candidates`.
-fn index_path_is_preferred_range(
-    ds: &crate::logical::DataSource,
-    source_index: &crate::plan_builder::catalog::SourceIndex,
-    ctx: &DispatchContext<'_>,
-) -> bool {
-    let mut resolved_index_prefix = source_index
-        .columns
-        .iter()
-        .map_while(|index_column| {
-            ds.schema_column_for_index_column(index_column)
-                .cloned()
-                .map(|column| (column, index_column.length))
-        })
-        .collect::<Vec<_>>();
-    let declared_index_prefix_complete = resolved_index_prefix.len() == source_index.columns.len();
-    if !source_index.unique
-        && !source_index.primary
-        && declared_index_prefix_complete
-        && ds.handle_is_int
-    {
-        if let Some(handle) = ds.handle_cols.first().filter(|handle| {
-            !handle.ret_type.as_ref().is_some_and(|ty| ty.is_unsigned())
-                && !resolved_index_prefix
-                    .iter()
-                    .any(|(column, _)| column.unique_id == handle.unique_id)
-        }) {
-            resolved_index_prefix.push((handle.clone(), tidb_datatype::UNSPECIFIED_LENGTH));
+fn filter_column_correlation(
+    stats: &crate::stats_info::StatsInfo,
+    filters: &[tidb_expr::expression::Expression],
+    threshold: f64,
+) -> (usize, Option<tidb_expr::column::Column>, f64) {
+    let mut columns = std::collections::BTreeMap::new();
+    for filter in filters {
+        for column in tidb_expr::simple_expr::extract_columns(filter) {
+            columns.entry(column.unique_id).or_insert(column);
         }
     }
-    if !declared_index_prefix_complete {
-        return false;
+
+    let column_count = columns.len();
+    let mut max_correlation = 0.0_f64;
+    let mut most_correlated_column = None;
+    let mut found_histogram = false;
+    if let Some(hist_coll) = stats.hist_coll() {
+        for unique_id in columns.keys() {
+            let Some(histogram) = hist_coll.histogram(*unique_id) else {
+                continue;
+            };
+            let correlation = histogram.histogram.correlation;
+            if !found_histogram || max_correlation.abs() < correlation.abs() {
+                max_correlation = correlation;
+                most_correlated_column = columns.get(unique_id).cloned();
+                found_histogram = true;
+            }
+        }
     }
-    let index_cols = resolved_index_prefix
-        .iter()
-        .map(|(column, _)| column.clone())
-        .collect::<Vec<_>>();
-    let index_lengths = resolved_index_prefix
-        .iter()
-        .map(|(_, length)| *length)
-        .collect::<Vec<_>>();
-    if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
-        return false;
+    let correlation_column = (column_count == 1 && max_correlation.abs() >= threshold)
+        .then_some(most_correlated_column)
+        .flatten();
+    (column_count, correlation_column, max_correlation)
+}
+
+/// Applies Go's `AdjustRowCountForIndexScanByLimit` uniform scan estimate and
+/// residual-filter ordering ratio. The caller decides whether this physical
+/// index path is eligible for expected-count adjustment.
+pub(super) fn adjust_index_scan_count_by_expected(
+    count_after_access: f64,
+    expected_count: f64,
+    datasource_rows: f64,
+    has_residual_filters: bool,
+    ordering_ratio: f64,
+) -> f64 {
+    if count_after_access <= 0.0 || expected_count >= datasource_rows {
+        return count_after_access;
     }
-    let Ok(detach) = ctx.detach_index_range(&ds.pushed_down_conds, &index_cols, &index_lengths)
-    else {
-        return false;
+    let selectivity = datasource_rows / count_after_access;
+    let mut row_count = count_after_access.min(expected_count / selectivity);
+    if count_after_access > row_count && ordering_ratio > 0.0 && has_residual_filters {
+        row_count += (count_after_access - row_count) * ordering_ratio;
+    }
+    row_count
+}
+
+pub(super) fn ignore_index_scan_expected_count(
+    ordering_index_selectivity_threshold: f64,
+    access_path_min_selectivity: f64,
+    has_residual_filters: bool,
+) -> bool {
+    ordering_index_selectivity_threshold != 0.0
+        && access_path_min_selectivity <= ordering_index_selectivity_threshold
+        && has_residual_filters
+}
+
+#[cfg(test)]
+mod index_scan_limit_adjustment_tests {
+    use super::{adjust_index_scan_count_by_expected, ignore_index_scan_expected_count};
+
+    #[test]
+    fn residual_filter_ratio_applies_when_go_adjusts_an_unordered_index_scan() {
+        // Go invokes AdjustRowCountForIndexScanByLimit for sort-empty
+        // properties as well as matched ordering properties. Its final ratio
+        // adjustment depends on residual filters, not on IsMatchProp.
+        let with_residual = adjust_index_scan_count_by_expected(100.0, 10.0, 100.0, true, 0.2);
+        let without_residual = adjust_index_scan_count_by_expected(100.0, 10.0, 100.0, false, 0.2);
+
+        assert!((with_residual - 28.0).abs() < 1e-12);
+        assert_eq!(without_residual, 10.0);
+        assert_eq!(
+            adjust_index_scan_count_by_expected(100.0, 100.0, 100.0, true, 0.2),
+            100.0
+        );
+    }
+
+    #[test]
+    fn selective_access_path_disables_limit_adjustment_only_with_residual_filters() {
+        let adjusted = |threshold, path_selectivity, has_residual_filters| {
+            if ignore_index_scan_expected_count(
+                threshold,
+                path_selectivity,
+                has_residual_filters,
+            ) {
+                100.0
+            } else {
+                adjust_index_scan_count_by_expected(
+                    100.0,
+                    10.0,
+                    100.0,
+                    has_residual_filters,
+                    0.2,
+                )
+            }
+        };
+
+        // Go leaves the access estimate untouched if any path is selective
+        // and this index scan still evaluates filters after range access.
+        assert_eq!(adjusted(0.1, 0.05, true), 100.0);
+        // A disabled threshold, a nonselective path, or no residual filter
+        // keeps the ordinary expected-count cost adjustment.
+        assert_eq!(adjusted(0.0, 0.05, true), 28.0);
+        assert_eq!(adjusted(0.1, 0.2, true), 28.0);
+        assert_eq!(adjusted(0.1, 0.05, false), 10.0);
+    }
+}
+
+#[cfg(test)]
+mod correlation_tests {
+    use super::filter_column_correlation;
+    use crate::cardinality::row_count_estimator::ColumnStats;
+    use crate::stats_info::{HistColl, StatsInfo};
+    use std::sync::Arc;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_expr::expression::Expression;
+    use tidb_stats::histogram::Histogram;
+
+    #[test]
+    fn filter_correlation_uses_unique_columns_and_largest_loaded_correlation() {
+        let column_a = Column::new(7, FieldType::new(FieldTypeCode::LongLong));
+        let column_b = Column::new(8, FieldType::new(FieldTypeCode::LongLong));
+        let histogram = |id, correlation| {
+            Arc::new(ColumnStats {
+                histogram: Histogram {
+                    id,
+                    correlation,
+                    ..Histogram::default()
+                },
+                topn: None,
+                cms: None,
+                stats_ver: 2,
+                unsigned: false,
+            })
+        };
+        let stats = StatsInfo::new(100.0, []).with_hist_coll(
+            HistColl::new(false, 100, [])
+                .with_histograms([(7, histogram(7, 0.4)), (8, histogram(8, -0.9))]),
+        );
+
+        let (both_count, both_column, largest) = filter_column_correlation(
+            &stats,
+            &[
+                Expression::Column(column_a.clone()),
+                Expression::Column(column_b.clone()),
+            ],
+            0.9,
+        );
+        assert_eq!(both_count, 2);
+        assert!(both_column.is_none());
+        assert_eq!(largest, -0.9);
+
+        let (one_count, one_column, one_correlation) = filter_column_correlation(
+            &stats,
+            &[
+                Expression::Column(column_a.clone()),
+                Expression::Column(column_a),
+            ],
+            0.9,
+        );
+        assert_eq!(one_count, 1);
+        assert!(one_column.is_none());
+        assert_eq!(one_correlation, 0.4);
+
+        let (one_count, one_column, one_correlation) =
+            filter_column_correlation(&stats, &[Expression::Column(column_b)], 0.9);
+        assert_eq!(one_count, 1);
+        assert_eq!(one_column.map(|column| column.unique_id), Some(8));
+        assert_eq!(one_correlation, -0.9);
+    }
+}
+
+#[cfg(test)]
+mod cross_estimate_dispatch_tests {
+    use super::{
+        DispatchContext, PhysicalProperty, Task, TaskType,
+        find_best_task_4_logical_data_source_without_enforcer,
     };
-    detach.eq_or_in_count > 0 && !crate::ranger::types::has_full_range(&detach.ranges, false)
+    use crate::access_path::PossiblePath;
+    use crate::cardinality::row_count_estimator::ColumnStats;
+    use crate::find_best_task::coster::Ver2Coster;
+    use crate::logical::data_source::DataSourceColumn;
+    use crate::logical::{BaseLogicalPlan, DataSource};
+    use crate::plan_base::PlanIdAllocator;
+    use crate::stats_info::{HistColl, StatsInfo};
+    use std::sync::Arc;
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_expr::constant::Constant;
+    use tidb_expr::expression::Expression;
+    use tidb_expr::scalar_function::ScalarFunction;
+    use tidb_expr::schema::Schema;
+    use tidb_stats::histogram::Histogram;
+
+    #[test]
+    fn table_limit_costing_uses_cross_estimation_for_one_correlated_filter() {
+        let allocator = PlanIdAllocator::new();
+        let coster = Ver2Coster::default();
+        let mut context = DispatchContext::new(&allocator, &coster, 1.0);
+        let mut handle_type = FieldType::new(FieldTypeCode::LongLong);
+        handle_type.set_flags(handle_type.flags() | tidb_datatype::FieldTypeFlags::PRI_KEY);
+        let handle = Column::new(1, handle_type);
+        let filtered = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
+        let filter = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("eq"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![
+                Expression::Column(filtered.clone()),
+                Expression::Constant(Constant::new(
+                    Datum::Int(50),
+                    FieldType::new(FieldTypeCode::LongLong),
+                )),
+            ],
+        ));
+        let histogram = Arc::new(ColumnStats {
+            histogram: Histogram {
+                id: 2,
+                ndv: 100,
+                correlation: 0.95,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 100,
+                    repeat: 1,
+                    ndv: 100,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(100),
+                }],
+                ..Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        });
+        let hist_coll = HistColl::new(false, 100, []).with_histograms([(2, histogram)]);
+        let stats = StatsInfo::new(100.0, []).with_hist_coll(hist_coll.clone());
+        let expected_cross_count =
+            crate::cardinality::cross_estimation::estimate_table_cross_row_count(
+                &hist_coll,
+                &hist_coll,
+                std::slice::from_ref(&filter),
+                &filtered,
+                0.95,
+                1.0,
+                100.0,
+                false,
+                0,
+                &crate::ranger::points::evaluate_static,
+                Default::default(),
+            );
+        let mut base = BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0);
+        base.base.set_stats(Some(stats.clone()));
+        base.base
+            .set_schema(Some(Schema::new(vec![handle.clone(), filtered.clone()])));
+        let source = DataSource {
+            base,
+            physical_table_id: 7,
+            columns: vec![
+                DataSourceColumn {
+                    id: 1,
+                    name: "pk".to_owned(),
+                    is_primary_key: true,
+                    is_not_null: true,
+                },
+                DataSourceColumn {
+                    id: 2,
+                    name: "a".to_owned(),
+                    ..DataSourceColumn::default()
+                },
+            ],
+            table_columns: vec![handle, filtered],
+            handle_cols: vec![Column::new(1, FieldType::new(FieldTypeCode::LongLong))],
+            handle_is_int: true,
+            pk_is_handle: true,
+            pushed_down_conds: vec![filter],
+            enumerated_paths: vec![PossiblePath::Table {
+                is_int_handle: true,
+                primary_index: None,
+            }],
+            table_stats: Some(stats),
+            ..DataSource::default()
+        };
+        let property = PhysicalProperty {
+            task_tp: TaskType::CopSingleRead,
+            expected_cnt: 1.0,
+            ..PhysicalProperty::default()
+        };
+
+        let task =
+            find_best_task_4_logical_data_source_without_enforcer(&source, &property, &mut context)
+                .expect("the table scan candidate is built");
+        let Task::Cop(cop) = task else {
+            panic!("the single-read table path remains a cop task");
+        };
+        let mut node = cop.table_plan.as_deref().expect("table plan");
+        while !matches!(node, crate::physical::PhysicalPlan::TableScan(_)) {
+            node = node.children().first().expect("table scan below selection");
+        }
+        let crate::physical::PhysicalPlan::TableScan(scan) = node else {
+            unreachable!();
+        };
+        let estimated_rows = scan.base.base.stats_info().expect("scan stats").row_count();
+        assert!(
+            estimated_rows > 1.0 && estimated_rows < 100.0,
+            "cross-estimation should price a prefix of the table, got {estimated_rows}"
+        );
+        assert!(expected_cross_count.1);
+        assert!(
+            (estimated_rows - expected_cross_count.0).abs() < 1e-9,
+            "dispatcher must apply Go's cross estimate: expected {}, got {estimated_rows}",
+            expected_cross_count.0
+        );
+    }
 }
 
 fn find_best_task_4_logical_data_source_without_enforcer(
@@ -2370,6 +2667,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         _ => return Ok(Task::invalid_task()),
     };
     let cop_multi_read = prop.task_tp == TaskType::CopMultiRead;
+    let table_pseudo = ds
+        .table_stats
+        .as_ref()
+        .or_else(|| ds.base.base.stats_info())
+        .and_then(crate::stats_info::StatsInfo::hist_coll)
+        .is_none_or(crate::stats_info::HistColl::pseudo);
     if let Some(dual) = try_to_get_dual_task(ds, ctx) {
         return Ok(dual);
     }
@@ -2409,6 +2712,38 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     // (`matchProperty:1082`), the basic prefix arm for an index
     // (`matchProperty:1095`) — and the admitted scan carries
     // `KeepOrder`/`Desc` (`convertToTableScan:2834`).
+    let mut ordinary_paths = ds.derived_access_paths.as_ref().map_or_else(
+        || ds.enumerated_paths.iter().collect::<Vec<_>>(),
+        |paths| {
+            paths
+                .paths
+                .iter()
+                .filter_map(|path| match path {
+                    crate::access_path::DerivedAccessPath::Ordinary(path) => Some(path),
+                    _ => None,
+                })
+                .collect()
+        },
+    );
+    let preparation = super::candidate_preparation::prepare_access_paths(
+        ds, &ordinary_paths, prop, ctx, table_pseudo,
+    );
+    let merge_candidates = preparation.merges;
+    let preparation = preparation.ordinary;
+    let prepared = preparation.is_some();
+    let mut prepared_missing_stats = false;
+    let mut heuristic_selected = false;
+    if let Some(preparation) = preparation {
+        ordinary_paths = preparation.paths;
+        prepared_missing_stats = preparation.idx_missing_stats;
+        heuristic_selected = preparation.heuristic_selected;
+    }
+    let access_path_min_selectivity = ds
+        .derived_access_paths
+        .as_ref()
+        .map_or(ds.access_path_min_selectivity, |paths| {
+            paths.min_selectivity
+        });
     let ordered = !prop.is_sort_item_empty();
     let partial_order = prop.partial_order_info.as_ref();
     let desc = if ordered {
@@ -2418,79 +2753,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     };
     let mut best = Task::invalid_task();
     let mut best_index_join_skyline_count = None;
-    // Go `skylinePruning`'s `preferRange` override
-    // (`find_best_task.go:1877`): when statistics are unreliable, a range-scan
-    // path with an `=`/`IN` prefix (`c.eqOrInCount > 0`) survives against a
-    // full table scan even though its estimated cost is higher. Go removes
-    // the full-scan path from the candidate list, so the later cost
-    // comparison never sees it.
-    let prefer_range = ctx.prefer_range_scan
-        && prop.index_join_prop.is_none()
-        && ds.table_stats.as_ref().is_none_or(|stats| {
-            stats.stats_version() == tidb_stats::PSEUDO_VERSION || stats.row_count() < 1.0
-        });
-    let preferred_index_exists = prefer_range
-        && ds.enumerated_paths.iter().any(|path| match path {
-            crate::access_path::PossiblePath::Index { index } => ds
-                .indexes
-                .get(*index)
-                .is_some_and(|source_index| index_path_is_preferred_range(ds, source_index, ctx)),
-            _ => false,
-        });
     let mut best_preferred_range: Option<Task> = None;
     let mut best_is_preferred_range = false;
     let mut best_is_full_range = true;
     let mut ordinary_candidates = Vec::new();
-    // Go `skylinePruning`'s pairwise `compareCandidates` fold prunes
-    // dominated index candidates BEFORE the path loop, so their plan ids
-    // are never burned. Port the access-coverage + order-match dominance
-    // that decides R21: an index with strictly MORE fully-covered access
-    // predicates, no worse on order match, dominates the competitor.
-    let rs_skyline_pruned: std::collections::BTreeSet<usize> = {
-        let mut pruned = std::collections::BTreeSet::new();
-        let n = ds.enumerated_paths.len();
-        let mut access_counts = vec![0usize; n];
-        let mut order_matches = vec![false; n];
-        for (i, path) in ds.enumerated_paths.iter().enumerate() {
-            if let crate::access_path::PossiblePath::Index { index } = path {
-                if let Some(source_index) = ds.indexes.get(*index) {
-                    if source_index.is_public && !source_index.is_multi_valued {
-                        access_counts[i] = index_prefix_access_count(ds, source_index);
-                        order_matches[i] = index_path_matches_order(ds, source_index, prop);
-                    }
-                }
-            }
-        }
-        for i in 0..n {
-            if access_counts[i] == 0 && !order_matches[i] {
-                continue;
-            }
-            for j in 0..n {
-                if i == j || pruned.contains(&j) {
-                    continue;
-                }
-                if let (
-                    crate::access_path::PossiblePath::Index { index: idx_i },
-                    crate::access_path::PossiblePath::Index { index: idx_j },
-                ) = (&ds.enumerated_paths[i], &ds.enumerated_paths[j])
-                {
-                    let public_i = ds.indexes.get(*idx_i).is_some_and(|x| x.is_public);
-                    let public_j = ds.indexes.get(*idx_j).is_some_and(|x| x.is_public);
-                    if !public_i || !public_j {
-                        continue;
-                    }
-                    if access_counts[i] > access_counts[j] && order_matches[i] >= order_matches[j] {
-                        pruned.insert(j);
-                    }
-                }
-            }
-        }
-        pruned
-    };
-    'paths: for (rs_path_idx, path) in ds.enumerated_paths.iter().enumerate() {
-        if rs_skyline_pruned.contains(&rs_path_idx) {
-            continue 'paths;
-        }
+    'paths: for path in &ordinary_paths {
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
             && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
             || (ds.prefer_store_type & crate::logical::data_source::PREFER_TIKV != 0
@@ -2528,34 +2795,30 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if keep_order && !table_path_matches_order(ds, prop) {
                     continue 'paths;
                 }
-                // Go `skylinePruning`'s pairwise `compareCandidates` fold runs
-                // BEFORE the candidate loop, so a table path strictly
-                // dominated by an index candidate never reaches
-                // `convertToTableScan` and does not consume a plan id. Port
-                // the dominance case that decides R22: an index whose
-                // leading column carries an EQ/IN access predicate strictly
-                // beats the table scan on access coverage while everything
-                // else ties, so the table path is dropped before its plan id
-                // burns. Column-comparison predicates (R25's
-                // `next_block_number <= block_number`) cannot become point
-                // ranges, so they must NOT trigger this prune.
-                if ds.indexes.iter().any(|source_index| {
-                    source_index.is_public
-                        && !source_index.is_multi_valued
-                        && index_path_is_single_scan(
-                            ds,
-                            source_index,
-                            ctx.opt_prefix_index_single_scan,
-                        )
-                        && source_index.columns.first().is_some_and(|first| {
-                            ds.table_columns.get(first.offset).is_some_and(|table_column| {
-                                ds.pushed_down_conds.iter().any(|condition| {
-                                    is_eq_or_in_on_column(condition, table_column.unique_id)
-                                })
-                            })
-                        })
-                }) {
-                    continue 'paths;
+                let fallback_table_path;
+                let table_path = if let Some(path) = ds
+                    .derived_access_paths
+                    .as_ref()
+                    .and_then(|paths| paths.table_path.as_ref())
+                    .filter(|_| prop.index_join_prop.is_none())
+                {
+                    path
+                } else {
+                    fallback_table_path = crate::access_path::ordinary::fill_table_path(
+                        ds,
+                        *primary_index,
+                        &ctx.access_path_derivation_context(),
+                    )?;
+                    &fallback_table_path
+                };
+                let handle_column = table_path.handle_column.as_ref();
+                let handle_type = &table_path.handle_type;
+                let common_handle = primary_index.and_then(|index| ds.indexes.get(index));
+                let (common_columns, common_lengths): (Vec<_>, Vec<_>) =
+                    table_path.common_columns.iter().cloned().unzip();
+                let ranges = table_path.detached.ranges.clone();
+                if ranges.is_empty() {
+                    return Ok(empty_range_dual_task(ds, ctx));
                 }
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
@@ -2563,131 +2826,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     ds.base.base.query_block_offset(),
                 );
                 base.base.set_schema(ds.base.base.schema().cloned());
-                // Go `buildTableRange`: integer handles use the table ranger;
-                // clustered common handles use the primary-index ranger over
-                // the complete handle tuple.
-                let handle_column = ds
-                    .base
-                    .base
-                    .schema()
-                    .and_then(|schema| ds.get_pk_is_handle_col(schema))
-                    .or_else(|| {
-                        ds.handle_cols
-                            .first()
-                            .filter(|column| column.id == tidb_model::column::EXTRA_HANDLE_ID)
-                    });
-                let handle_type = handle_column
-                    .and_then(|col| col.ret_type.clone())
-                    .unwrap_or_else(|| {
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
-                    });
-                let common_handle = primary_index.and_then(|index| ds.indexes.get(index));
-                let common_columns = common_handle.map_or_else(Vec::new, |index| {
-                    index
-                        .columns
-                        .iter()
-                        .filter_map(|column| ds.schema_column_for_index_column(column).cloned())
-                        .collect::<Vec<_>>()
-                });
-                // A pruned schema may omit trailing PRIMARY KEY columns
-                // (for example TPCC order_line.ol_number).  Ranging only the
-                // retained leading handle columns is still valid; requiring
-                // all catalog columns here incorrectly falls back to a full
-                // scan whenever projection/aggregation prunes that suffix.
-                let common_lengths = common_handle.map_or_else(Vec::new, |index| {
-                    index
-                        .columns
-                        .iter()
-                        .filter_map(|column| {
-                            ds.schema_column_for_index_column(column)
-                                .map(|_| column.length)
-                        })
-                        .collect::<Vec<_>>()
-                });
-                let common_detach = common_handle.and_then(|_index| {
-                    if ds.pushed_down_conds.is_empty() || common_columns.is_empty() {
-                        return None;
-                    }
-                    ctx.detach_index_range(&ds.pushed_down_conds, &common_columns, &common_lengths)
-                        .ok()
-                });
-                let int_access_conditions = handle_column.map_or_else(Vec::new, |handle| {
-                    crate::ranger::detacher::extract_access_conditions_for_column(
-                        &ds.pushed_down_conds,
-                        handle,
-                        true,
-                    )
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                });
-                let int_detach = if common_handle.is_none() && !int_access_conditions.is_empty() {
-                    crate::ranger::ranger::build_table_range_in(
-                        &int_access_conditions,
-                        &handle_type,
-                        ctx.range_max_size,
-                        ctx.expression_evaluator,
-                    )
-                    .ok()
-                } else {
-                    None
-                };
-                if int_detach
-                    .as_ref()
-                    .is_some_and(|result| !result.remained_conds.is_empty())
-                {
-                    // BuildTableRange returns remaining conditions only when its
-                    // memory quota forces a full range. Share statement warning
-                    // and cache state with all other access-path candidates.
-                    if let Some(handler) = ctx.range_fallback_handler {
-                        handler.record_range_fallback(ctx.range_max_size);
-                    }
-                }
-                let (ranges, empty_range) = if common_handle.is_some() {
-                    common_detach.as_ref().map_or_else(
-                        || (crate::ranger::points::full_range(), false),
-                        |result| (result.ranges.clone(), result.ranges.is_empty()),
-                    )
-                } else {
-                    int_detach.as_ref().map_or_else(
-                        || {
-                            (
-                                crate::ranger::points::full_int_range(handle_type.is_unsigned()),
-                                false,
-                            )
-                        },
-                        |result| (result.ranges.clone(), result.ranges.is_empty()),
-                    )
-                };
-                if empty_range {
-                    return Ok(empty_range_dual_task(ds, ctx));
-                }
                 cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
-                if preferred_index_exists && cur_is_full_range {
-                    // Go's prefer-range pass drops every full-scan path once a
-                    // range-scan path survives, so the table candidate is not
-                    // offered to any property.
-                    continue 'paths;
-                }
-                let table_access_conds = common_detach.as_ref().map_or_else(
-                    || {
-                        int_detach
-                            .as_ref()
-                            .map_or_else(Vec::new, |result| result.access_conds.to_vec())
-                    },
-                    |result| result.access_conds.clone(),
-                );
-                let mut table_filters = if common_handle.is_some() {
-                    common_detach.as_ref().map_or_else(
-                        || ds.pushed_down_conds.clone(),
-                        |result| result.remained_conds.clone(),
-                    )
-                } else {
-                    crate::ranger::detacher::remove_conditions(
-                        &ds.pushed_down_conds,
-                        &table_access_conds,
-                    )
-                };
+                let table_access_conds = table_path.detached.access_conds.clone();
+                let mut table_filters = table_path.detached.remained_conds.clone();
                 // Go `constructDS2TableScanTask` computes the residual
                 // selectivity from `chosenRemained` BEFORE the inner-only
                 // access conditions are re-attached to the Selection.
@@ -2737,6 +2878,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         &common_columns,
                         runtime,
                         ctx.index_join_probe_row_count_fix,
+                        ctx.group_ndv_skew_ratio,
                     )
                 });
                 heuristic = Some(crate::find_best_task::candidate::HeuristicPath {
@@ -2760,24 +2902,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         }),
                     ),
                 });
-                let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
-                if !table_access_conds.is_empty() {
-                    count_after_access = ds.table_path_count_after_access.or_else(|| {
-                        let base_stats = table_stats.as_ref()?;
-                        Some(if common_handle.is_some() {
-                            crate::ranger::stats_bridge::pseudo_count_by_ranges(
-                                &ranges,
-                                base_stats.row_count(),
-                            )
-                        } else {
-                            crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
-                                &ranges,
-                                base_stats.row_count(),
-                                handle_type.is_unsigned(),
-                            )
-                        })
-                    });
-                }
+                let mut count_after_access = table_path.count_after_access;
                 if let (Some(count), Some(floor)) =
                     (count_after_access.as_mut(), probe_access_rows_floor)
                 {
@@ -2792,6 +2917,28 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         *count = (ds_stats.row_count() / crate::cost_factors::SELECTION_FACTOR)
                             .min(base_stats.row_count());
                     }
+                }
+                if let Some(access) = count_after_access.filter(|_| !prepared) {
+                    let columns = crate::column_length::Col2Len::from_pairs(
+                        table_access_conds.iter().flat_map(|condition| {
+                            tidb_expr::simple_expr::extract_columns(condition)
+                                .into_iter()
+                                .map(|column| (column.unique_id, -1))
+                        }),
+                    );
+                    candidate_metrics = Some(
+                        crate::find_best_task::candidate::CandidateMetrics {
+                            access_columns: columns.clone(),
+                            index_columns: columns,
+                            table_path: true,
+                            single_scan: true,
+                            pseudo: table_pseudo,
+                            matches_property: !ordered || keep_order,
+                            count_after_access: access,
+                            count_after_index: access,
+                            ..Default::default()
+                        },
+                    );
                 }
                 let mut stats = table_stats.as_ref().map(|stats| {
                     stats.scale_by_expect_cnt(
@@ -2816,7 +2963,66 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             let mut row_count = count_after_access;
                             if prop.expected_cnt < original_row_count {
                                 let selectivity = original_row_count / count_after_access;
-                                row_count = count_after_access.min(prop.expected_cnt / selectivity);
+                                let uniform_est =
+                                    count_after_access.min(prop.expected_cnt / selectivity);
+                                let correlation_options = ctx.correlation_options;
+                                let (column_count, correlation_column, correlation) =
+                                    if correlation_options.enabled
+                                        && !table_filters.is_empty()
+                                        && !table_stats
+                                            .hist_coll()
+                                            .is_some_and(crate::stats_info::HistColl::pseudo)
+                                    {
+                                        filter_column_correlation(
+                                            table_stats,
+                                            &table_filters,
+                                            correlation_options.threshold,
+                                        )
+                                    } else {
+                                        (0, None, 0.0)
+                                    };
+                                let abs_correlation = correlation.abs();
+                                let cross_estimate = if column_count == 1
+                                    && correlation_column.is_some()
+                                    && table_access_conds.is_empty()
+                                {
+                                    let source_hist_coll = ds
+                                        .base
+                                        .base
+                                        .stats_info()
+                                        .and_then(|stats| stats.hist_coll());
+                                    let table_hist_coll = table_stats.hist_coll();
+                                    match (source_hist_coll, table_hist_coll, correlation_column) {
+                                        (Some(source), Some(table), Some(column)) => Some(
+                                            crate::cardinality::cross_estimation::estimate_table_cross_row_count(
+                                                source,
+                                                table,
+                                                &table_filters,
+                                                &column,
+                                                correlation,
+                                                prop.expected_cnt,
+                                                count_after_access,
+                                                desc,
+                                                ctx.range_max_size,
+                                                ctx.expression_evaluator,
+                                                ctx.estimator_options,
+                                            ),
+                                        ),
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                };
+                                let (cross_count, cross_ok, fallback_correlation) =
+                                    cross_estimate.unwrap_or((0.0, false, correlation));
+                                if cross_ok {
+                                    row_count = uniform_est.max(cross_count);
+                                } else if fallback_correlation.abs() < 1.0 {
+                                    let correlation_factor = (1.0 - abs_correlation)
+                                        .powf(correlation_options.exponent as f64);
+                                    row_count =
+                                        count_after_access.min(uniform_est / correlation_factor);
+                                }
                             }
                             if keep_order && count_after_access > row_count {
                                 let ratio = ctx.ordering_index_selectivity_ratio;
@@ -2834,27 +3040,27 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         1.0
                     } else {
                         table_stats
-                            .as_ref()
-                            .and_then(|stats| {
-                                if ds.table_scan_penalty.pseudo_stats {
-                                    crate::logical::rewrite::pseudo_range_filter_selectivity(
-                                        ds,
-                                        stats,
-                                        &residual_table_filters,
-                                        ds.base.base.schema()?,
-                                        ctx.range_max_size,
-                                        ctx.selectivity_factor,
-                                        ctx.range_fallback_handler,
-                                    )
-                                } else {
-                                    crate::logical::rewrite::analyzed_filter_selectivity(
-                                        stats,
-                                        &residual_table_filters,
-                                    )
-                                }
-                            })
-                            .filter(|value| *value > 0.0)
-                            .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
+                        .as_ref()
+                        .and_then(|stats| {
+                            if ds.table_scan_penalty.pseudo_stats {
+                                crate::logical::rewrite::pseudo_range_filter_selectivity(
+                                    ds,
+                                    stats,
+                                    &residual_table_filters,
+                                    ds.base.base.schema()?,
+                                    &ctx.access_path_derivation_context(),
+                                    ctx.selectivity_factor,
+                                )
+                            } else {
+                                crate::logical::rewrite::analyzed_filter_selectivity_in(
+                                    stats,
+                                    &residual_table_filters,
+                                    &ctx.access_path_derivation_context(),
+                                )
+                            }
+                        })
+                        .filter(|value| *value > 0.0)
+                        .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
                     };
                 if let Some(runtime) = &prop.index_join_prop {
                     // Go `constructDS2TableScanTask`: the runtime row count is
@@ -3021,40 +3227,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         selection_base
                             .base
                             .set_schema(ds.base.base.schema().cloned());
-                        selection_base
-                            .base
-                            .set_stats(
-                                ds.base.base.stats_info().cloned().map(|stats| {
-                                    let scaled = stats.scale_by_expect_cnt(
-                                        prop.expected_cnt,
-                                        ctx.skew_ratio,
-                                    );
-                                    // Go `LogicalSelection.DeriveStats` scales
-                                    // the child profile by
-                                    // `cardinality.Selectivity` over the
-                                    // derived conditions: master counts
-                                    // `not(isnull(col))` as the column's
-                                    // not-null histogram range, i.e.
-                                    // (total - null_count) / total. Other
-                                    // filter shapes keep the expected-count
-                                    // scaling this port used before.
-                                    let mut ratio = 1.0;
-                                    for condition in &table_filters {
-                                        if let Some(selectivity) = crate::logical::
-                                            data_source::is_null_condition_selectivity(
-                                                condition, &scaled,
-                                            )
-                                        {
-                                            ratio *= selectivity;
-                                        }
-                                    }
-                                    if ratio < 1.0 {
-                                        scaled.scale(ratio, 1.0)
-                                    } else {
-                                        scaled
-                                    }
-                                }),
-                            );
+                        // Go reuses the datasource's final filtered profile;
+                        // residual conditions have already contributed to it.
+                        selection_base.base.set_stats(
+                            ds.base.base.stats_info().map(|stats| {
+                                stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
+                            }),
+                        );
                         selection_base.set_children(vec![point]);
                         point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,
@@ -3066,6 +3245,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     root.set_plan(point);
                     return Ok(Task::Root(root));
                 }
+                let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
+                    table_filters, tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                    &ctx.expr_pushdown_blacklist,
+                );
                 // Go `PhysicalTableScan.IsFullScan`: `len(p.RangeInfo) > 0 ||
                 // p.haveCorCol()` short-circuits to "not full" before the
                 // ranges are even inspected. An index-join inner probe's
@@ -3135,12 +3318,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     // from the DataSource's post-filter estimate.
                     selection_base
                         .base
-                        .set_stats(if prop.index_join_prop.is_some() {
+                        .set_stats(if !root_task_conds.is_empty() {
+                            ctx.pushed_filter_stats(ds, scan.stats_info(), &table_filters)
+                        } else if prop.index_join_prop.is_some() {
                             stats
                                 .as_ref()
                                 .map(|stats| stats.scale(probe_selectivity, ctx.skew_ratio))
                         } else {
-                            ds.base.base.stats_info().cloned()
+                            ds.base.base.stats_info().map(|stats| {
+                                stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
+                            })
                         });
                     selection_base.set_children(vec![scan]);
                     PhysicalPlan::Selection(crate::physical::PhysicalSelection {
@@ -3154,6 +3341,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     index_plan_finished: true,
                     keep_order,
                     expect_cnt: prop.expected_cnt as u64,
+                    stats_context: ctx.task_stats_context(ds, &root_task_conds),
+                    root_task_conds,
                     index_join_info: match &prop.index_join_prop {
                         Some(runtime) => Some(match index_join_feedback(ds, path, runtime, ctx) {
                             Some(info) => info,
@@ -3204,7 +3393,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
                     )),
                 });
-                let table_plan = if ds.pushed_down_conds.is_empty() {
+                let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
+                    ds.pushed_down_conds.clone(), tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+                    &ctx.expr_pushdown_blacklist,
+                );
+                let table_plan = if table_filters.is_empty() {
                     scan
                 } else {
                     let mut selection_base = crate::physical::BasePhysicalPlan::new(
@@ -3220,17 +3413,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     // ExpectedCnt -- a Limit above the scan caps the
                     // selection's estimate.
                     selection_base.base.set_stats(
-                        ds.base.base.stats_info().cloned().map(|stats| {
-                            stats.scale_by_expect_cnt(
-                                prop.expected_cnt,
-                                ctx.skew_ratio,
-                            )
-                        }),
+                        if !root_task_conds.is_empty() {
+                            ctx.pushed_filter_stats(ds, scan.stats_info(), &table_filters)
+                        } else { ds.base.base.stats_info().cloned().map(|stats| {
+                            stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
+                        }) },
                     );
                     selection_base.set_children(vec![scan]);
                     PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                         base: selection_base,
-                        conditions: ds.pushed_down_conds.clone(),
+                        conditions: table_filters,
                         from_data_source: true,
                     })
                 };
@@ -3239,6 +3431,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     index_plan_finished: true,
                     keep_order,
                     expect_cnt: prop.expected_cnt as u64,
+                    stats_context: ctx.task_stats_context(ds, &root_task_conds),
+                    root_task_conds,
                     ..crate::task::CopTask::default()
                 })
             }
@@ -3259,17 +3453,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // column pruning. A missing later index column does not
                 // invalidate ranges on an earlier prefix; only the first
                 // unresolved position ends that prefix.
-                let mut resolved_index_prefix = source_index
-                    .columns
-                    .iter()
-                    .map_while(|index_column| {
-                        ds.schema_column_for_index_column(index_column)
-                            .cloned()
-                            .map(|column| (column, index_column.length))
-                    })
-                    .collect::<Vec<_>>();
+                let filled_path = prop.index_join_prop.is_none().then(|| {
+                    ds.derived_index_paths.get(&source_index.id).and_then(|path| path.filled.as_ref())
+                }).flatten();
+                let resolved_index_prefix = filled_path.map_or_else(
+                    || ds.index_range_columns(source_index), |path| path.columns.clone(),
+                );
                 let declared_index_prefix_complete =
-                    resolved_index_prefix.len() == source_index.columns.len();
+                    resolved_index_prefix.len() >= source_index.columns.len();
                 // Go `find_best_task.go:2204`: `canConvertPointGet =
                 // path.Index.Unique && !path.Index.HasPrefixIndex()`. A prefix
                 // entry holds `'abc'` where the row holds `'abcdef'`, and a
@@ -3282,36 +3473,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .map(|column| column.length)
                         .collect::<Vec<_>>(),
                 );
-                // Go `fillIndexPath` appends the signed integer table handle
-                // to every complete non-unique secondary-index prefix.  It
-                // is a real trailing execution key part, so predicates on
-                // the handle participate in range detachment.  Unique and
-                // primary indexes do not append it, an unsigned handle is
-                // deliberately excluded because its encoded ordering is
-                // signed, and an index that already declares the handle must
-                // not add it twice.
-                if !source_index.unique
-                    && !source_index.primary
-                    && declared_index_prefix_complete
-                    && ds.handle_is_int
-                {
-                    if let Some(handle) = ds.handle_cols.first().filter(|handle| {
-                        !handle.ret_type.as_ref().is_some_and(|ty| ty.is_unsigned())
-                            && !resolved_index_prefix
-                                .iter()
-                                .any(|(column, _)| column.unique_id == handle.unique_id)
-                    }) {
-                        resolved_index_prefix
-                            .push((handle.clone(), tidb_datatype::UNSPECIFIED_LENGTH));
-                    }
-                }
-                if declared_index_prefix_complete {
-                    append_common_handle_cols_to_index_prefix(
-                        ds,
-                        source_index,
-                        &mut resolved_index_prefix,
-                    );
-                }
                 let index_cols = resolved_index_prefix
                     .iter()
                     .map(|(column, _)| column.clone())
@@ -3320,7 +3481,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .iter()
                     .map(|(_, length)| *length)
                     .collect::<Vec<_>>();
-                let detach = if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
+                let detach = if let Some(path) = filled_path {
+                    Some(path.detached.clone())
+                } else if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
                     None
                 } else {
                     match ctx.detach_index_range(&ds.pushed_down_conds, &index_cols, &index_lengths)
@@ -3368,11 +3531,15 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // read (`BuildIndexLookUpTask` at conversion) — the cop task
                 // carries BOTH halves, exactly Go's shape.
                 let single_scan = ds
-                    .index_path_single_scan
+                    .derived_index_paths
                     .get(&source_index.id)
-                    .copied()
+                    .and_then(|path| path.is_single_scan)
                     .unwrap_or_else(|| {
-                        index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan)
+                        index_path_is_single_scan(
+                            ds,
+                            source_index,
+                            ctx.opt_prefix_index_single_scan,
+                        )
                     });
                 // The two COP property kinds are disjoint: a covering index
                 // is single-read, while a lookup is multi-read.
@@ -3382,60 +3549,50 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     continue 'paths;
                 }
                 // Go `skylinePruning` keepIndex (`find_best_task.go:1812`):
-                // an index path with no access conditions, no sort
-                // requirement, no force hint, and no single-scan coverage is
-                // pruned before candidates are built. (The partial-order
-                // match term is unreachable for this tier's ds paths; the
-                // force-hint term is dropped — no force hints on this tier.)
+                // an index path with no access conditions, no order match, no
+                // force hint, and no single-scan coverage is pruned before
+                // candidates are built. `PartialOrderInfo` is separate from
+                // `SortItems`, so its successful prefix match must be tested
+                // explicitly here.
                 let access_conds_empty = detach
                     .as_ref()
                     .is_none_or(|detached| detached.access_conds.is_empty());
-                if access_conds_empty && prop.is_sort_item_empty() && !single_scan {
+                if access_conds_empty
+                    && prop.index_join_prop.is_none()
+                    && prop.is_sort_item_empty()
+                    && partial_order_match.is_none()
+                    && !ds.forced_index_ids.contains(&source_index.id)
+                    && !single_scan
+                {
                     continue 'paths;
+                }
+                if !prepared && prop.index_join_prop.is_none() {
+                    candidate_metrics = ds
+                        .derived_index_paths
+                        .get(&source_index.id)
+                        .and_then(|path| {
+                            super::candidate::index_candidate_metrics(
+                                ds,
+                                source_index,
+                                path,
+                                single_scan,
+                                !ordered || keep_order,
+                            )
+                        });
                 }
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
                     "IndexScan",
                     ds.base.base.query_block_offset(),
                 );
-                // Go `InitSchema` (`physical_index_scan.go:366-376`): index
-                // columns beyond the resolved access prefix receive FRESH
-                // plan column ids in the scan schema. This tier does not
-                // materialise them; consume the ids so the downstream column
-                // numbering matches Go.
-                if let Some(ids) = ctx.column_ids {
-                    // Go `InitSchema` burns a fresh id per index column the
-                    // detacher did not resolve to a DataSource column
-                    // (`idxExprCols[i] == nil`).
-                    let referenced: std::collections::BTreeSet<i64> = ds
-                        .pushed_down_conds
-                        .iter()
-                        .flat_map(|condition| {
-                            tidb_expr::simple_expr::extract_columns(condition)
-                                .into_iter()
-                                .map(|column| column.unique_id)
-                        })
-                        .collect();
-                    let uncovered = source_index
-                        .columns
-                        .iter()
-                        .filter(|index_column| {
-                            ds.table_columns
-                                .get(index_column.offset)
-                                .is_none_or(|table_column| {
-                                    !referenced.contains(&table_column.unique_id)
-                                })
-                        })
-                        .count();
-                    for _ in 0..uncovered {
-                        let _ = ids.alloc();
-                    }
-                }
+                let index_schema = super::index_merge_union::index_scan_schema(
+                    ds, source_index, ctx, !single_scan,
+                )?;
                 if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
                     base.base
                         .set_noncacheable_reason("IndexScan of partial index is uncacheable");
                 }
-                base.base.set_schema(ds.base.base.schema().cloned());
+                base.base.set_schema(Some(tidb_expr::schema::Schema::new(index_schema)));
                 // Go `indexFilters := c.eqOrInCount > 0 || ...` plus
                 // `!c.isFullRange`: this candidate is what the prefer-range
                 // override keeps.
@@ -3527,7 +3684,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if prop.index_join_prop.is_none()
                     && ctx.enable_point_get_conversion
                     && (ds.partition_definition_ids.is_empty()
-                        || ds.physical_table_id != ds.table_id)
+                        || ds.physical_table_id != ds.table_id
+                        // A GLOBAL index is stored in the logical table's
+                        // keyspace and carries each row's partition ID, so a
+                        // unique-key point read does not need static pruning
+                        // to choose one physical table first.
+                        || source_index.global)
                     && source_index.unique
                     && !declared_index_has_prefix
                     && declared_index_prefix_complete
@@ -3553,9 +3715,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     }
                     point_base.base.set_schema(ds.base.base.schema().cloned());
                     let access_rows = ds
-                        .index_path_count_after_access
+                        .derived_index_paths
                         .get(&source_index.id)
-                        .copied()
+                        .and_then(|path| path.count_after_access())
                         .unwrap_or(ranges.len() as f64)
                         .min(ranges.len() as f64);
                     point_base.base.set_stats(
@@ -3612,14 +3774,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .set_schema(ds.base.base.schema().cloned());
                         selection_base
                             .base
-                            .set_stats(
-                                ds.base.base.stats_info().cloned().map(|stats| {
-                                    stats.scale_by_expect_cnt(
-                                        prop.expected_cnt,
-                                        ctx.skew_ratio,
-                                    )
-                                }),
-                            );
+                            .set_stats(ds.base.base.stats_info().cloned().map(|stats| {
+                                stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
+                            }));
                         selection_base.set_children(vec![point]);
                         point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                             base: selection_base,
@@ -3641,14 +3798,21 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         &index_cols,
                         runtime,
                         ctx.index_join_probe_row_count_fix,
+                        ctx.group_ndv_skew_ratio,
                     )
                 });
                 let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
+                let ranges_include_appended_handle =
+                    resolved_index_prefix.len() > source_index.columns.len()
+                        && ranges.iter().any(|range| {
+                            range.low_val.len() > source_index.columns.len()
+                                || range.high_val.len() > source_index.columns.len()
+                        });
                 if detach.is_some() {
                     count_after_access = ds
-                        .index_path_count_after_access
+                        .derived_index_paths
                         .get(&source_index.id)
-                        .copied()
+                        .and_then(|path| path.count_after_access())
                         .or_else(|| {
                             let base_stats = table_stats.as_ref()?;
                             // Go `deriveIndexPathStats` trims the signed handle
@@ -3694,12 +3858,29 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     ds.base.base.stats_info(),
                     table_stats.as_ref(),
                 ) {
-                    if *count + crate::cost_factors::TOLERANCE_FACTOR < ds_stats.row_count() {
-                        *count = (ds_stats.row_count() / crate::cost_factors::SELECTION_FACTOR)
-                            .min(base_stats.row_count());
+                    // Filled ordinary paths were adjusted during logical derivation.
+                    // Runtime probes and unfilled sources retain this fallback.
+                    let logically_adjusted = filled_path.is_some()
+                        && ds
+                            .derived_index_paths
+                            .get(&source_index.id)
+                            .is_some_and(|path| path.row_estimate.is_some());
+                    if !logically_adjusted
+                        && *count + crate::cost_factors::TOLERANCE_FACTOR < ds_stats.row_count()
+                    {
+                        if ranges_include_appended_handle {
+                            // Go's `adjustCountAfterAccess` aligns estimates that
+                            // already credit appended-handle predicates to the
+                            // datasource row count without applying the generic
+                            // SelectionFactor penalty a second time.
+                            *count = ds_stats.row_count();
+                        } else {
+                            *count = (ds_stats.row_count()
+                                / crate::cost_factors::SELECTION_FACTOR)
+                                .min(base_stats.row_count());
+                        }
                     }
                 }
-                let skyline_access_count = count_after_access;
                 // Go `GetOriginalPhysicalIndexScan` calls
                 // `AdjustRowCountForIndexScanByLimit` before pricing the
                 // scan. With pseudo statistics its cross-estimation arm
@@ -3711,19 +3892,23 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 if let (Some(count), Some(ds_stats)) =
                     (count_after_access.as_mut(), ds.base.base.stats_info())
                 {
+                    let ignore_expected_count = ignore_index_scan_expected_count(
+                        ctx.ordering_index_selectivity_threshold,
+                        access_path_min_selectivity,
+                        !remained_conds.is_empty(),
+                    );
                     if (keep_order || prop.is_sort_item_empty())
                         && prop.expected_cnt < ds_stats.row_count()
                         && *count > 0.0
+                        && !ignore_expected_count
                     {
-                        let selectivity = ds_stats.row_count() / *count;
-                        let mut adjusted = (*count).min(prop.expected_cnt / selectivity);
-                        if keep_order && !remained_conds.is_empty() && *count > adjusted {
-                            let ratio = ctx.ordering_index_selectivity_ratio;
-                            if ratio > 0.0 {
-                                adjusted += (*count - adjusted).max(0.0) * ratio;
-                            }
-                        }
-                        *count = adjusted;
+                        *count = adjust_index_scan_count_by_expected(
+                            *count,
+                            prop.expected_cnt,
+                            ds_stats.row_count(),
+                            !remained_conds.is_empty(),
+                            ctx.ordering_index_selectivity_ratio,
+                        );
                     }
                 }
                 let stats = table_stats.as_ref().map(|stats| {
@@ -3739,100 +3924,69 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // the per-outer-row runtime count.
                 // Go splitIndexFilterConditions uses the same handle/full-column
                 // coverage as IsSingleScan, including appended primary-key columns.
-                let (index_filters, table_filters): (Vec<_>, Vec<_>) =
-                    remained_conds.into_iter().partition(covered);
-                // Retain candidates whose skyline facts are unavailable. In
-                // particular, do not invent CountAfterIndex for residual filters.
-                if prop.index_join_prop.is_none() && index_filters.is_empty() {
-                    if let (Some(estimate), Some(detached), Some(access)) = (
-                        ds.index_path_row_estimates.get(&source_index.id),
-                        detach.as_ref(),
-                        skyline_access_count,
-                    ) {
-                        let analyzed = ds.analyzed_index_ids.contains(&source_index.id);
-                        // Go constructs candidatePath metrics for pseudo
-                        // tables as well.  RealtimeCount may already be
-                        // known while distributions are pseudo; skipping
-                        // this path here lets cost choose a narrower index
-                        // before skyline can recognize a strict superset.
-                        if analyzed || ds.table_scan_penalty.pseudo_stats {
-                            let mut pairs = std::collections::BTreeMap::new();
-                            for condition in &detached.access_conds {
-                                for column in tidb_expr::simple_expr::extract_columns(condition) {
-                                    if let Some(position) = index_cols
-                                        .iter()
-                                        .position(|index| index.unique_id == column.unique_id)
-                                    {
-                                        pairs.insert(column.unique_id, index_lengths[position]);
-                                    }
-                                }
-                            }
-                            let columns = crate::column_length::Col2Len::from_pairs(pairs);
-                            candidate_metrics =
-                                Some(crate::find_best_task::candidate::CandidateMetrics {
-                                    access_columns: columns.clone(),
-                                    index_columns: columns,
-                                    single_scan,
-                                    multi_valued: source_index.is_multi_valued,
-                                    global: source_index.global,
-                                    matches_property: !ordered || keep_order,
-                                    eq_or_in_count: detached.eq_or_in_count,
-                                    count_after_access: access,
-                                    count_after_index: access,
-                                    min_count_after_access: estimate.min_est.min(estimate.est),
-                                    max_count_after_access: estimate.max_est.max(access),
-                                    ..Default::default()
-                                });
-                        }
-                    }
-                }
+                let (index_filters, table_filters): (Vec<_>, Vec<_>) = filled_path.map_or_else(
+                    || remained_conds.into_iter().partition(covered),
+                    |path| (path.index_filters.clone(), path.table_filters.clone()),
+                );
                 // Go `constructDS2IndexScanTask` sets the scan to
                 // `tmpPath.CountAfterAccess`, which for a runtime probe is the
                 // per-outer-row count divided by the residual index-filter
                 // selectivity; the static access estimate is used otherwise.
-                let table_rows = table_stats.as_ref().map_or(0.0, |stats| stats.row_count());
-                let runtime_probe_stats = prop.index_join_prop.as_ref().map(|runtime| {
-                    let index_selectivity = if !index_filters.is_empty() && table_rows > 0.0 {
-                        count_after_access
-                            .filter(|count| *count > 0.0)
-                            .map_or(1.0, |count| count / table_rows)
+                let runtime_counts = prop.index_join_prop.as_ref().map(|runtime| {
+                    let upper_bound = if ctx.index_join_row_count_upper_bound {
+                        let fixed = index_join_fixed_ids(ds);
+                        let used_columns = resolved_index_prefix.iter().take_while(|(column, _)| {
+                            fixed.contains(&column.unique_id)
+                                || runtime.inner_join_keys.iter().any(|key| key.unique_id == column.unique_id)
+                        }).filter_map(|(column, length)| {
+                            ((*length == tidb_datatype::UNSPECIFIED_LENGTH
+                                || column.ret_type.as_ref().is_some_and(|ty| ty.flen() == *length))
+                                && runtime.inner_join_keys.iter().any(|key| key.unique_id == column.unique_id))
+                                .then_some(column.unique_id)
+                        }).collect::<Vec<_>>();
+                        table_stats.as_ref().and_then(|stats| {
+                            let ndv = stats.hist_coll()?.ndv_lower_bound(&used_columns)?;
+                            (ndv > 0).then(|| stats.row_count() / ndv as f64)
+                        }).filter(|bound| *bound > 0.0)
                     } else {
-                        1.0
+                        None
                     };
-                    // Go floors CountAfterAccess, retaining the index-filter ratio.
-                    let mut runtime_rows = runtime
-                        .avg_inner_row_count
-                        .max(probe_access_rows_floor.unwrap_or(0.0) * index_selectivity);
-                    if index_join_path_is_max_one_row(ds, path, runtime) {
-                        runtime_rows = runtime_rows.min(1.0);
+                    let max_one_row = index_join_path_is_max_one_row(ds, path, runtime);
+                    let cap = |count: f64| {
+                        let count = upper_bound.map_or(count, |bound| count.min(bound));
+                        if max_one_row { count.min(1.0) } else { count }
+                    };
+                    let selectivity = |filters: &[tidb_expr::expression::Expression]| {
+                        if filters.is_empty() {
+                            return 1.0;
+                        }
+                        table_stats.as_ref().and_then(|stats| {
+                            crate::logical::rewrite::analyzed_filter_selectivity_in(
+                                stats, filters, &ctx.access_path_derivation_context(),
+                            )
+                        }).filter(|ratio| *ratio > 0.0)
+                            .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
+                    };
+                    let final_rows = cap(runtime.avg_inner_row_count);
+                    let mut index_rows = cap(final_rows / selectivity(&table_filters));
+                    let mut access_rows = cap(index_rows / selectivity(&index_filters));
+                    // The access floor runs after the upper bounds and retains
+                    // the residual index-filter ratio, exactly as Go does.
+                    if !max_one_row {
+                        if let Some(floor) = probe_access_rows_floor.filter(|floor| *floor > access_rows) {
+                            let ratio = if access_rows > 0.0 { index_rows / access_rows } else { 1.0 };
+                            access_rows = floor;
+                            index_rows = floor * ratio;
+                        }
                     }
-                    table_stats
-                        .as_ref()
-                        .map(|stats| stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio))
-                        .unwrap_or_else(|| crate::stats_info::StatsInfo::new(runtime_rows, []))
+                    let scale = |rows| table_stats.as_ref()
+                        .map(|stats| stats.scale_by_expect_cnt(rows, ctx.skew_ratio))
+                        .unwrap_or_else(|| crate::stats_info::StatsInfo::new(rows, []));
+                    (scale(final_rows), scale(index_rows), scale(access_rows))
                 });
-                let scan_stats = match (&runtime_probe_stats, count_after_access) {
-                    (Some(runtime_stats), Some(access))
-                        if !index_filters.is_empty() && access > 0.0 && table_rows > 0.0 =>
-                    {
-                        let scan_rows = runtime_stats.row_count() * table_rows / access;
-                        Some(
-                            table_stats
-                                .as_ref()
-                                .map(|table_stats| {
-                                    table_stats.scale_by_expect_cnt(scan_rows, ctx.skew_ratio)
-                                })
-                                .unwrap_or_else(|| {
-                                    crate::stats_info::StatsInfo::new(scan_rows, [])
-                                }),
-                        )
-                    }
-                    // With no residual index filters the runtime ranges ARE
-                    // the whole access: the scan carries the per-outer-row
-                    // count directly.
-                    (Some(runtime_stats), _) => Some(runtime_stats.clone()),
-                    _ => stats.clone(),
-                };
+                let runtime_final_stats = runtime_counts.as_ref().map(|counts| counts.0.clone());
+                let runtime_probe_stats = runtime_counts.as_ref().map(|counts| counts.1.clone());
+                let scan_stats = runtime_counts.as_ref().map(|counts| counts.2.clone()).or(stats.clone());
                 base.base.set_stats(scan_stats.clone());
                 let mut cost_columns = source_index
                     .columns
@@ -3874,13 +4028,27 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
                 });
-                let (mut table_side, root_task_conds) = if single_scan {
+                let (table_filters, mut virtual_table_filters) =
+                    crate::pushdown::split_virtual_column_filters(table_filters);
+                let (index_filters, mut rejected_index_filters) = crate::pushdown::split_scan_filters(
+                    index_filters, tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                    &ctx.expr_pushdown_blacklist,
+                );
+                let (table_filters, rejected_table_filters) = if single_scan {
+                    (Vec::new(), table_filters)
+                } else {
+                    crate::pushdown::split_scan_filters(table_filters,
+                        tidb_expr::infer_pushdown::PushDownStore::TiKv, &ctx.expr_pushdown_blacklist)
+                };
+                let has_root_filters = !virtual_table_filters.is_empty()
+                    || !rejected_index_filters.is_empty() || !rejected_table_filters.is_empty();
+                let (mut table_side, mut root_task_conds) = if single_scan {
                     // A condition that is not covered by the index key (for
                     // example an unsigned integer handle predicate) remains
                     // above the covering IndexReader as Go's
                     // `CopTask.RootTaskConds`; it must never disappear merely
                     // because no table probe is required.
-                    (None, table_filters.clone())
+                    (None, rejected_table_filters.clone())
                 } else {
                     // Go `convertToIndexScan` builds the lookup's table side
                     // over the source's schema and stats.
@@ -3889,35 +4057,35 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         "TableScan",
                         ds.base.base.query_block_offset(),
                     );
-                    table_base.base.set_stats(
-                        runtime_probe_stats
-                            .clone()
-                            .or_else(|| {
-                                scan.base().base.stats_info().cloned().map(|stats| {
-                                    // Go `convertToIndexScan`:
-                                    // `ts.SetStats(&property.StatsInfo{StatsVersion:
-                                    // ds.TableStats.StatsVersion})` — the table
-                                    // side carries the TABLE stats' VERSION (the
-                                    // row counts are filled from the index plan
-                                    // in `(*copTask).finishIndexPlan`). Inheriting
-                                    // the cop Limit's fresh stats verbatim left
-                                    // the pseudo version on an analyzed table.
-                                    let version = ds
-                                        .table_stats
-                                        .as_ref()
-                                        .map(|table_stats| table_stats.stats_version())
-                                        .or_else(|| {
-                                            ds.base.base.stats_info()
-                                                .map(|ds_stats| ds_stats.stats_version())
-                                        });
-                                    if let Some(version) = version {
-                                        stats.with_stats_version(version)
-                                    } else {
-                                        stats
-                                    }
-                                })
-                            }),
-                    );
+                    table_base
+                        .base
+                        .set_stats(runtime_probe_stats.clone().or_else(|| {
+                            scan.base().base.stats_info().cloned().map(|stats| {
+                                // Go `convertToIndexScan`:
+                                // `ts.SetStats(&property.StatsInfo{StatsVersion:
+                                // ds.TableStats.StatsVersion})` — the table
+                                // side carries the TABLE stats' VERSION (the
+                                // row counts are filled from the index plan
+                                // in `(*copTask).finishIndexPlan`). Inheriting
+                                // the cop Limit's fresh stats verbatim left
+                                // the pseudo version on an analyzed table.
+                                let version = ds
+                                    .table_stats
+                                    .as_ref()
+                                    .map(|table_stats| table_stats.stats_version())
+                                    .or_else(|| {
+                                        ds.base
+                                            .base
+                                            .stats_info()
+                                            .map(|ds_stats| ds_stats.stats_version())
+                                    });
+                                if let Some(version) = version {
+                                    stats.with_stats_version(version)
+                                } else {
+                                    stats
+                                }
+                            })
+                        }));
                     table_base.base.set_schema(ds.base.base.schema().cloned());
                     let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                         base: table_base,
@@ -3943,61 +4111,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             ),
                         ),
                     });
-                    let table_plan = if table_filters.is_empty() {
-                        table_scan
-                    } else {
-                        let mut selection_base = crate::physical::BasePhysicalPlan::new(
-                            ctx.allocator,
-                            "Selection",
-                            ds.base.base.query_block_offset(),
-                        );
-                        selection_base
-                            .base
-                            .set_schema(ds.base.base.schema().cloned());
-                        // Go `PhysicalSelection.Init` (physical_selection.go:78):
-                        // the selection's stats scale by the required
-                        // property's ExpectedCnt, so a Limit above the scan
-                        // caps the selection's estimate instead of leaving
-                        // the raw filtered row count. Master's
-                        // `LogicalSelection.DeriveStats` then scales the child
-                        // profile by `cardinality.Selectivity` over the
-                        // conditions: not(isnull(col)) counts the column's
-                        // not-null histogram range, i.e.
-                        // (total - null_count) / total. Other filter shapes
-                        // keep the expected-count scaling this port used
-                        // before.
-                        selection_base.base.set_stats(
-                            ds.base.base.stats_info().cloned().map(|stats| {
-                                let scaled = stats.scale_by_expect_cnt(
-                                    prop.expected_cnt,
-                                    ctx.skew_ratio,
-                                );
-                                let mut ratio = 1.0;
-                                for condition in &table_filters {
-                                    if let Some(selectivity) = crate::logical::
-                                        data_source::is_null_condition_selectivity(
-                                            condition, &scaled,
-                                        )
-                                    {
-                                        ratio *= selectivity;
-                                    }
-                                }
-                                if ratio < 1.0 {
-                                    scaled.scale(ratio, 1.0)
-                                } else {
-                                    scaled
-                                }
-                            }),
-                        );
-                        selection_base.set_children(vec![table_scan]);
-                        PhysicalPlan::Selection(crate::physical::PhysicalSelection {
-                            base: selection_base,
-                            conditions: table_filters.clone(),
-                            from_data_source: true,
-                        })
-                    };
-                    (Some(Box::new(table_plan)), Vec::new())
+                    (Some(Box::new(table_scan)), rejected_table_filters)
                 };
+                // Go records virtual table predicates first, then rejected
+                // index predicates, then the remaining rejected table predicates.
+                virtual_table_filters.append(&mut rejected_index_filters);
+                virtual_table_filters.extend(root_task_conds);
+                root_task_conds = virtual_table_filters;
                 let index_plan = if index_filters.is_empty() {
                     scan
                 } else {
@@ -4008,10 +4128,26 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     );
                     selection_base
                         .base
-                        .set_schema(ds.base.base.schema().cloned());
+                        .set_schema(scan.schema().cloned());
                     selection_base.base.set_stats(
                         if let Some(runtime_stats) = &runtime_probe_stats {
                             Some(runtime_stats.clone())
+                        } else if let Some(count_after_index) =
+                            filled_path.and_then(|path| path.count_after_index)
+                        {
+                            let access_rows = ds
+                                .derived_index_paths
+                                .get(&source_index.id)
+                                .and_then(|path| path.count_after_access())
+                                .unwrap_or(0.0);
+                            let selectivity = if access_rows > 0.0 {
+                                count_after_index / access_rows
+                            } else {
+                                0.0
+                            };
+                            scan_stats
+                                .as_ref()
+                                .map(|stats| stats.scale(selectivity, ctx.skew_ratio))
                         } else if table_filters.is_empty() {
                             // Go `addPushedDownSelection4PhysicalIndexScan`
                             // (`find_best_task.go:2762`): count =
@@ -4076,7 +4212,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // `BuildIndexLookUpTask` builds (the reader's schema is the
                 // table side's, `physical_indexlookup_reader.go:205`).
                 let extra_handle_proj =
-                    keep_order && table_side.is_some() && ds.common_handle_cols.is_empty();
+                    keep_order && table_side.is_some() && ds.common_handle_cols.is_empty()
+                        && ds.handle_cols.is_empty();
                 if extra_handle_proj {
                     if let Some(table_plan) = table_side.as_deref_mut() {
                         if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
@@ -4090,11 +4227,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 + 1;
                             let mut extra = tidb_expr::column::Column::new(
                                 ctx.column_ids.map(|ids| ids.alloc()).unwrap_or(next_id),
-                                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
-                                    .with_flags(
-                                        tidb_datatype::FieldTypeFlags::NOT_NULL
-                                            | tidb_datatype::FieldTypeFlags::PRI_KEY,
-                                    ),
+                                tidb_datatype::FieldType::new(
+                                    tidb_datatype::FieldTypeCode::LongLong,
+                                )
+                                .with_flags(
+                                    tidb_datatype::FieldTypeFlags::NOT_NULL
+                                        | tidb_datatype::FieldTypeFlags::PRI_KEY,
+                                ),
                             );
                             extra.id = crate::logical::data_source::EXTRA_HANDLE_ID;
                             extra.orig_name = "_tidb_rowid".to_owned();
@@ -4103,7 +4242,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         }
                     }
                 }
-                Task::Cop(crate::task::CopTask {
+                let mut cop = crate::task::CopTask {
                     index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
                     need_extra_proj: extra_handle_proj,
@@ -4119,6 +4258,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .copied()
                             .unwrap_or(crate::access_path::IndexLookupPushDownBy::None)
                     },
+                    stats_context: ctx.task_stats_context(ds, &root_task_conds),
                     root_task_conds,
                     index_plan_finished: false,
                     keep_order,
@@ -4132,13 +4272,42 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     },
                     partial_order_match_result: partial_order_match,
                     ..crate::task::CopTask::default()
-                })
+                };
+                // Go finishes the index phase before building the table
+                // Selection: its input rows are the completed index plan's
+                // output, including any retained index-side filters.
+                if !single_scan && !table_filters.is_empty() {
+                    cop.finish_index_plan();
+                    let table_scan = cop.table_plan.take().expect("lookup has a table scan");
+                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                        ctx.allocator, "Selection", ds.base.base.query_block_offset(),
+                    );
+                    selection_base.base.set_schema(table_scan.schema().cloned());
+                    selection_base.base.set_stats(if has_root_filters {
+                        ctx.pushed_filter_stats(ds, table_scan.stats_info(), &table_filters)
+                    } else {
+                        runtime_final_stats.clone().or_else(|| {
+                            ds.base.base.stats_info().map(|stats| {
+                                stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
+                            })
+                        })
+                    });
+                    selection_base.set_children(vec![*table_scan]);
+                    cop.table_plan = Some(Box::new(PhysicalPlan::Selection(
+                        crate::physical::PhysicalSelection {
+                            base: selection_base,
+                            conditions: table_filters,
+                            from_data_source: true,
+                        },
+                    )));
+                }
+                Task::Cop(cop)
             }
         };
         let cur = if cop_answer {
             cop
         } else {
-            cop.convert_to_root_task(ctx.allocator)?
+            cop.convert_to_root_task_in(ctx.allocator, ctx.expression_evaluator)?
         };
         if prop.index_join_prop.is_none() {
             ordinary_candidates.push((
@@ -4182,7 +4351,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     }
     // The unordered root enumeration contains all candidates. Ordered and
     // runtime join enumerations may omit paths, so cannot apply this rule here.
-    if !ordered && prop.task_tp == TaskType::Root && prop.index_join_prop.is_none() {
+    if !prepared && !ordered && prop.task_tp == TaskType::Root && prop.index_join_prop.is_none() {
         if let Some(paths) = ordinary_candidates
             .iter()
             .map(|candidate| candidate.4.clone())
@@ -4195,16 +4364,22 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         }
     }
     let mut skyline_candidates = Vec::new();
+    let mut idx_missing_stats = prepared_missing_stats;
     for candidate in ordinary_candidates {
-        crate::find_best_task::candidate::insert_skyline_candidate(
+        if prepared {
+            skyline_candidates.push(candidate);
+            continue;
+        }
+        let (_, missing_stats, _) = crate::find_best_task::candidate::insert_skyline_candidate(
             &mut skyline_candidates,
             candidate,
             |candidate| candidate.1.as_ref(),
-            ds.table_scan_penalty.pseudo_stats,
+            table_pseudo,
             prop.expected_cnt,
             ctx.prefer_range_scan,
             ctx.index_join_skyline_threshold,
         );
+        idx_missing_stats |= missing_stats;
     }
     for (cur, _, preferred, full_range, _) in skyline_candidates {
         let better_range = if preferred {
@@ -4224,29 +4399,41 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             best_is_full_range = full_range;
         }
     }
-    // Go `generateIndexMergePath`: the OR-union candidate competes with the
-    // ordinary paths by cost (subject to `tidb_enable_index_merge`).
-    // Narrowing: this tier prices the union from pseudo-statistics
-    // estimates, so the candidate only fires on pseudo-stats sources —
-    // exactly the recorded fixtures. Analyzed tables keep the ordinary
-    // paths until per-partial histogram cardinality is ported.
-    {
-        if ctx.index_merge_enabled
-            && !ordered
-            && prop.task_tp == TaskType::Root
-            && prop.index_join_prop.is_none()
-            && ds.table_scan_penalty.pseudo_stats
-        {
-            if let Some(merge_task) =
-                crate::find_best_task::index_merge_union::build_union_index_merge_task(ds, ctx)?
-            {
-                if best.invalid() || compare_task_cost(ctx.coster, &merge_task, &best)? {
-                    best = merge_task;
-                    best_is_full_range = false;
-                }
+    if heuristic_selected {
+        return Ok(best);
+    }
+    // All alternative choices were fixed before ordinary physical construction.
+    for candidate in &merge_candidates {
+        let mut merge_task = match candidate {
+            super::candidate_preparation::PreparedMerge::Union(path) =>
+                super::index_merge_union::build_converged_union_index_merge_task(ds, path, ctx)?,
+            super::candidate_preparation::PreparedMerge::Intersection(path) =>
+                super::index_merge_intersection::build_prepared_intersection_index_merge_task(ds, path, ctx)?,
+        };
+        if prop.task_tp == TaskType::Root {
+            if let Task::Cop(cop) = &mut merge_task {
+                cop.index_plan_finished = true;
             }
+            merge_task = merge_task.into_root_task_in(ctx.allocator, ctx.expression_evaluator)?;
+        }
+        if best.invalid() || compare_task_cost(ctx.coster, &merge_task, &best)? {
+            best = merge_task;
+            best_is_full_range = false;
         }
     }
+    // Go keeps preferRange enabled only when the skyline saw an unanalyzed
+    // index winner, the table statistics are pseudo, or the table is empty.
+    // This decision comes after candidate comparisons; making it before
+    // enumeration misses idxMissingStats for a new index on analyzed columns.
+    let prefer_range = ctx.prefer_range_scan
+        && prop.index_join_prop.is_none()
+        && (idx_missing_stats
+            || table_pseudo
+            || ds
+                .table_stats
+                .as_ref()
+                .or_else(|| ds.base.base.stats_info())
+                .is_none_or(|stats| stats.row_count() < 1.0));
     if prefer_range && best_is_full_range {
         if let Some(range_task) = best_preferred_range {
             if !best_is_preferred_range {
@@ -4304,6 +4491,9 @@ fn enumerate_physical_plans_4_task(
             let child_is_cop = matches!(child_tasks.first(), Some(Task::Cop(_)));
             let child_is_root = matches!(child_tasks.first(), Some(Task::Root(_)));
             let child_is_mpp = matches!(child_tasks.first(), Some(Task::Mpp(_)));
+            // Merge hints have already restricted the datasource candidates.
+            // Promoting only root readers here would discard a hinted merge's
+            // cop task before its parent can push LIMIT into the partials.
             let hint_applicable = logical_hint_applies(plan, pp, child_is_cop);
             let normally_preferred = normal_preference_applies(
                 plan,
@@ -4314,11 +4504,14 @@ fn enumerate_physical_plans_4_task(
                 ctx.limit_push_down_threshold,
                 &mut state,
             );
-            let mut cur_task = match attach2_task(
+            let mut cur_task = match crate::task::attach2_task_in(
                 pp.clone_shallow(),
                 child_tasks,
                 ctx.column_ids,
                 ctx.allocator,
+                ctx.group_ndv_skew_ratio,
+                ctx.expression_evaluator,
+                &ctx.expr_pushdown_blacklist,
             ) {
                 Ok(task) => task,
                 // An unported attach body refuses; Go has no such arm, so a
@@ -4330,10 +4523,10 @@ fn enumerate_physical_plans_4_task(
                 continue;
             }
             if !matches!(cur_task, Task::Root(_)) && prop.task_tp == TaskType::Root {
-                cur_task = cur_task.convert_to_root_task(ctx.allocator)?;
+                cur_task = cur_task.convert_to_root_task_in(ctx.allocator, ctx.expression_evaluator)?;
             }
             if add_enforcer {
-                cur_task = enforce_property(prop, cur_task, ctx.allocator)?;
+                cur_task = enforce_property_in(prop, cur_task, ctx.allocator, ctx.expression_evaluator)?;
             }
             // A column-only NominalSort returns its ordered child task directly.
             // Rewriting that child here would invalidate the ORDER BY contract
@@ -4342,10 +4535,11 @@ fn enumerate_physical_plans_4_task(
                 && !matches!(cur_task, Task::Mpp(_))
                 && prop.is_sort_item_empty()
             {
-                cur_task = crate::physical::shuffle_optimize::optimize_by_shuffle(
+                cur_task = crate::physical::shuffle_optimize::optimize_by_shuffle_in(
                     cur_task,
                     ctx.shuffle_options,
                     ctx.allocator,
+                    ctx.expression_evaluator,
                 )?;
             }
             if hint_applicable {
@@ -4583,9 +4777,11 @@ mod tests {
         let logical = LogicalPlan::MaxOneRow(LogicalMaxOneRow::new(base));
 
         let ordered = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
-        assert!(find_best_task(&logical, &ordered, &mut ctx)
-            .expect("ordered refusal is a valid search result")
-            .invalid());
+        assert!(
+            find_best_task(&logical, &ordered, &mut ctx)
+                .expect("ordered refusal is a valid search result")
+                .invalid()
+        );
         assert_eq!(
             sink.0.borrow().as_slice(),
             ["MPP mode may be blocked because operator `MaxOneRow` is not supported now."]
@@ -4595,18 +4791,22 @@ mod tests {
             task_tp: TaskType::Mpp,
             ..PhysicalProperty::default()
         };
-        assert!(find_best_task(&logical, &mpp, &mut ctx)
-            .expect("MPP refusal is a valid search result")
-            .invalid());
+        assert!(
+            find_best_task(&logical, &mpp, &mut ctx)
+                .expect("MPP refusal is a valid search result")
+                .invalid()
+        );
         assert_eq!(sink.0.borrow().len(), 2);
 
         let cop = PhysicalProperty {
             task_tp: TaskType::CopSingleRead,
             ..PhysicalProperty::default()
         };
-        assert!(find_best_task(&logical, &cop, &mut ctx)
-            .expect("cop refusal is a valid search result")
-            .invalid());
+        assert!(
+            find_best_task(&logical, &cop, &mut ctx)
+                .expect("cop refusal is a valid search result")
+                .invalid()
+        );
         assert_eq!(sink.0.borrow().len(), 3);
 
         let root = find_best_task(&logical, &PhysicalProperty::default(), &mut ctx)
@@ -4809,6 +5009,53 @@ mod tests {
         assert_eq!(scan.table_id, 42);
     }
 
+    fn apply_candidate_with_outer_stats(
+        outer_ndv: f64,
+        apply_rows: f64,
+        ordered: bool,
+    ) -> physical::PhysicalApply {
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let ctx = DispatchContext::new(&allocator, &coster, 1.0)
+            .with_apply_cache_capacity(1024)
+            .with_ordering_index_selectivity_ratio(0.5);
+        let column = tidb_expr::column::Column::new(
+            1, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        let mut outer = dual(&allocator, 100.0);
+        outer.base_mut().base.set_schema(Some(tidb_expr::schema::Schema::new(vec![column.clone()])));
+        outer.base_mut().base.set_stats(Some(StatsInfo::new(100.0, [(1, outer_ndv)])));
+        let mut base = BaseLogicalPlan::new(&allocator, "Apply", 0);
+        base.base.set_schema(outer.schema().cloned());
+        base.base.set_stats(Some(StatsInfo::new(apply_rows, [(1, outer_ndv)])));
+        base.set_children(vec![outer, dual(&allocator, 10.0)]);
+        let mut apply = crate::logical::LogicalApply::new(base, crate::find_best_task::LogicalJoinType::Inner);
+        apply.is_lateral = true;
+        apply.cor_cols = vec![tidb_expr::column::CorrelatedColumn::new(column)];
+        let prop = PhysicalProperty {
+            expected_cnt: 5.0,
+            sort_items: if ordered { vec![SortItem::new(1, false)] } else { vec![] },
+            ..Default::default()
+        };
+        let (mut candidates, _) = exhaust_physical_plans(&LogicalPlan::Apply(apply), &prop, &ctx).unwrap();
+        let PhysicalPlan::Apply(apply) = candidates.remove(0).remove(0) else { panic!("Apply candidate") };
+        apply
+    }
+
+    #[test]
+    fn apply_cache_eligibility_uses_outer_input_not_apply_output() {
+        assert!(!apply_candidate_with_outer_stats(100.0, 1000.0, true).can_use_cache);
+        assert!(apply_candidate_with_outer_stats(70.0, 10.0, true).can_use_cache);
+    }
+
+    #[test]
+    fn unordered_apply_keeps_outer_expected_count_unbounded() {
+        let unordered = apply_candidate_with_outer_stats(70.0, 10.0, false);
+        let ordered = apply_candidate_with_outer_stats(70.0, 10.0, true);
+        assert_eq!(unordered.hash_join.base.child_req_prop(0).unwrap().expected_cnt, f64::MAX);
+        assert_eq!(ordered.hash_join.base.child_req_prop(0).unwrap().expected_cnt, 95.0);
+    }
+
     #[test]
     fn a_hash_join_candidate_retains_the_sessions_concurrency() {
         // Go `NewPhysicalHashJoin` copies
@@ -4868,6 +5115,8 @@ mod tests {
             let join = LogicalPlan::Join(LogicalJoin {
                 base,
                 equal_cond_out_cnt: 0.8,
+                left_properties: vec![vec![left.clone()]],
+                right_properties: vec![vec![right.clone()]],
                 equal_conditions: vec![ScalarFunction::new(
                     tidb_ast::CiString::new("eq"),
                     FieldType::new(FieldTypeCode::Tiny),
@@ -4982,8 +5231,8 @@ mod tests {
     #[test]
     fn read_from_storage_tiflash_selects_the_tiflash_table_path() {
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::PREFER_TIFLASH;
         use crate::logical::DataSource;
+        use crate::logical::data_source::PREFER_TIFLASH;
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
@@ -5044,8 +5293,8 @@ mod tests {
         // table scan's ranges with `(5, +inf]`; an indexed `b = 7` fills
         // the index scan's ranges with the point.
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -5242,14 +5491,44 @@ mod tests {
     }
 
     #[test]
+    fn version_zero_binary_common_handle_keeps_its_index_suffix() {
+        use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+        let ty = FieldType::new(FieldTypeCode::LongLong);
+        let declared = tidb_expr::column::Column::new(1, ty);
+        let mut binary = FieldType::new(FieldTypeCode::VarString);
+        binary.add_flags(FieldTypeFlags::BINARY);
+        let handle = tidb_expr::column::Column::new(2, binary);
+        let source = crate::logical::DataSource {
+            is_common_handle: true,
+            common_handle_version: 0,
+            common_handle_cols: vec![handle],
+            common_handle_lens: vec![3],
+            ..Default::default()
+        };
+        let index = crate::plan_builder::catalog::SourceIndex {
+            columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+                name: "a".into(),
+                offset: 0,
+                length: -1,
+            }],
+            ..Default::default()
+        };
+        let mut prefix = vec![(declared, -1)];
+        let suffix = source.handle_cols_to_append(&index, &prefix);
+        prefix.extend(suffix);
+        assert_eq!(prefix.len(), 2);
+        assert_eq!(prefix[1].1, 3);
+    }
+
+    #[test]
     fn a_secondary_index_range_reaches_common_handle_columns() {
         // Go's `fillIndexPath` appends the complete clustered common handle
         // to a non-unique secondary index.  A tuple comparison therefore
         // becomes one lexicographic range per deciding handle column rather
         // than stopping after the declared `a` key part.
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
         use tidb_expr::constant::Constant;
@@ -5441,6 +5720,8 @@ mod tests {
 
         ds.indexes = vec![index];
         ds.table_stats = Some(StatsInfo::new(10.0, []));
+        let estimate = crate::cardinality::row_count_column::RowEstimate::new(2.0, 1.0, 4.0);
+        ds.derived_index_paths.entry(0).or_default().row_estimate = Some(estimate);
         let mut plan = LogicalPlan::DataSource(ds);
         let context = crate::logical::rule_tests::test_context(&allocator);
         plan.recursive_derive_stats_with_context(&[], &context)
@@ -5448,7 +5729,13 @@ mod tests {
         let LogicalPlan::DataSource(source) = &mut plan else {
             unreachable!()
         };
-        assert_eq!(source.index_path_single_scan.get(&0), Some(&false));
+        assert_eq!(
+            source
+                .derived_index_paths
+                .get(&0)
+                .and_then(|path| path.is_single_scan),
+            Some(false)
+        );
         source.cols_requiring_full_len = Some(Vec::new());
         plan.recursive_derive_stats_with_context(&[], &context)
             .unwrap();
@@ -5456,13 +5743,24 @@ mod tests {
             unreachable!()
         };
         assert_eq!(
-            source.index_path_single_scan.get(&0),
-            Some(&false),
+            source.derived_index_paths.get(&0).and_then(|path| path.is_single_scan),
+            Some(false),
             "final pruning must not change the path retained by join reorder"
         );
         assert_eq!(
-            source.clone_shallow().index_path_single_scan,
-            source.index_path_single_scan
+            source.clone_shallow().derived_index_paths[&0].row_estimate,
+            source.derived_index_paths[&0].row_estimate
+        );
+        assert_eq!(
+            source.clone_shallow().derived_index_paths[&0].is_single_scan,
+            source.derived_index_paths[&0].is_single_scan
+        );
+        let mut cloned = source.clone_shallow();
+        cloned.derived_index_paths.get_mut(&0).unwrap().row_estimate = None;
+        assert_eq!(
+            source.derived_index_paths[&0].row_estimate,
+            Some(estimate),
+            "a cloned datasource owns its derived state"
         );
         source.base.base.set_stats(None);
         plan.recursive_derive_stats_with_context(&[], &context)
@@ -5471,9 +5769,14 @@ mod tests {
             unreachable!()
         };
         assert_eq!(
-            source.index_path_single_scan.get(&0),
-            Some(&true),
+            source.derived_index_paths.get(&0).and_then(|path| path.is_single_scan),
+            Some(true),
             "reinitialized statistics derive a new path from current requirements"
+        );
+        assert_eq!(
+            source.derived_index_paths[&0].row_estimate,
+            Some(estimate),
+            "covering derivation preserves access estimates and risk bounds"
         );
         source.base.base.set_stats(None);
         let mut context = context;
@@ -5483,7 +5786,13 @@ mod tests {
         let LogicalPlan::DataSource(source) = &plan else {
             unreachable!()
         };
-        assert_eq!(source.index_path_single_scan.get(&0), Some(&false));
+        assert_eq!(
+            source
+                .derived_index_paths
+                .get(&0)
+                .and_then(|path| path.is_single_scan),
+            Some(false)
+        );
     }
 
     #[test]
@@ -5494,8 +5803,8 @@ mod tests {
         // `BuildIndexLookUpTask` — while a covering index still plans the
         // plain IndexReader.
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -5503,7 +5812,8 @@ mod tests {
 
         let allocator = PlanIdAllocator::new();
         let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
         let build = |index_columns: Vec<SourceIndexColumn>| {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
             base.base.set_stats(Some(StatsInfo::new(50.0, [])));
@@ -5557,7 +5867,11 @@ mod tests {
             length: -1,
         }]);
         let task = find_best_task(&narrow, &order_by_b, &mut ctx).expect("plans");
-        let Some(PhysicalPlan::IndexLookUpReader(lookup)) = task.plan() else {
+        let reader = task.plan().and_then(|plan| match plan {
+            PhysicalPlan::Projection(_) => plan.children().first(),
+            _ => Some(plan),
+        });
+        let Some(PhysicalPlan::IndexLookUpReader(lookup)) = reader else {
             panic!("an IndexLookUpReader, got {:?}", task.plan());
         };
         assert!(lookup.keep_order, "the double read carries the order");
@@ -5632,8 +5946,8 @@ mod tests {
     #[test]
     fn a_prefix_index_matches_partial_order_and_carries_the_match_result() {
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{FieldType, FieldTypeCode};
 
@@ -5670,16 +5984,24 @@ mod tests {
         let partial = PhysicalProperty {
             task_tp: TaskType::CopMultiRead,
             partial_order_info: Some(crate::physical_property::PartialOrderInfo {
-                sort_items: vec![SortItem::from_column(column, false)],
+                sort_items: vec![SortItem::from_column(column.clone(), false)],
             }),
             ..PhysicalProperty::default()
         };
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+            .with_column_ids(&column_ids)
+            .with_partial_ordered_index_for_topn(true);
         let task =
             find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
                 .expect("partial-order index path plans");
+        let task_kind = match &task {
+            Task::Root(_) => "root",
+            Task::Cop(_) => "cop",
+            Task::Mpp(_) => "mpp",
+        };
         let Task::Cop(cop) = task else {
-            panic!("the partial-order child remains a cop task");
+            panic!("the partial-order child remains a cop task, got {task_kind}");
         };
         assert!(cop.keep_order);
         let result = cop
@@ -5753,6 +6075,7 @@ mod tests {
                     .unique_id = 99;
             }
             let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+                .with_column_ids(&column_ids)
                 .with_partial_ordered_index_for_topn(true);
             let _ =
                 find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
@@ -5766,7 +6089,7 @@ mod tests {
                     .unwrap();
             assert_eq!(
                 task.invalid(),
-                forced && !no_order && matches,
+                !forced || (!no_order && matches),
                 "forced={forced}, no-order={no_order}, matched={matches}"
             );
         }
@@ -5777,6 +6100,7 @@ mod tests {
         source.force_no_keep_order_index_ids.clear();
         let other = source.clone();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+            .with_column_ids(&column_ids)
             .with_partial_ordered_index_for_topn(true);
         let _ = find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
             .unwrap();
@@ -5784,11 +6108,11 @@ mod tests {
             task_tp: TaskType::CopMultiRead,
             ..PhysicalProperty::default()
         };
-        assert!(!find_best_task_4_logical_data_source_without_enforcer(
-            &other, &ordinary, &mut ctx
-        )
-        .unwrap()
-        .invalid());
+        assert!(
+            !find_best_task_4_logical_data_source_without_enforcer(&other, &ordinary, &mut ctx)
+                .unwrap()
+                .invalid()
+        );
 
         // Skyline marks the path even when CopMultiRead conversion is later
         // refused because the common handle makes the index covering.
@@ -5798,21 +6122,22 @@ mod tests {
         covering.common_handle_cols = covering.base.base.schema().unwrap().columns.clone();
         covering.common_handle_lens = vec![-1];
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+            .with_column_ids(&column_ids)
             .with_partial_ordered_index_for_topn(true);
-        assert!(find_best_task_4_logical_data_source_without_enforcer(
-            &covering, &partial, &mut ctx
-        )
-        .unwrap()
-        .invalid());
+        assert!(
+            find_best_task_4_logical_data_source_without_enforcer(&covering, &partial, &mut ctx)
+                .unwrap()
+                .invalid()
+        );
         let single = PhysicalProperty {
             task_tp: TaskType::CopSingleRead,
             ..PhysicalProperty::default()
         };
-        assert!(find_best_task_4_logical_data_source_without_enforcer(
-            &covering, &single, &mut ctx
-        )
-        .unwrap()
-        .invalid());
+        assert!(
+            find_best_task_4_logical_data_source_without_enforcer(&covering, &single, &mut ctx)
+                .unwrap()
+                .invalid()
+        );
 
         // Go returns an empty-range dual before matching order or marking
         // forced paths. An impossible predicate needs no index ordering.
@@ -5839,6 +6164,7 @@ mod tests {
             .col
             .unique_id = 99;
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
+            .with_column_ids(&column_ids)
             .with_partial_ordered_index_for_topn(true);
         let empty =
             find_best_task_4_logical_data_source_without_enforcer(&source, &unmatched, &mut ctx)
@@ -5848,8 +6174,8 @@ mod tests {
 
     #[test]
     fn a_constant_index_prefix_is_skipped_when_matching_order() {
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -5957,8 +6283,8 @@ mod tests {
     #[test]
     fn index_join_keeps_a_usable_prefix_when_trailing_columns_are_pruned() {
         use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
         use crate::logical::DataSource;
+        use crate::logical::data_source::DataSourceColumn;
         use crate::physical_property::IndexJoinRuntimeProp;
         use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
         use tidb_datatype::{FieldType, FieldTypeCode};
@@ -6069,11 +6395,11 @@ mod tests {
         // floor disappears once all equality keys are usable, when Fix44855
         // is disabled, or when statistics are pseudo.
         assert_eq!(
-            index_join_probe_access_rows_floor(&source, &[first.clone()], &runtime, true),
+            index_join_probe_access_rows_floor(&source, &[first.clone()], &runtime, true, 0.0),
             Some(2.0)
         );
         assert_eq!(
-            index_join_probe_access_rows_floor(&source, &[first, second], &runtime, true),
+            index_join_probe_access_rows_floor(&source, &[first, second], &runtime, true, 0.0),
             None
         );
         assert_eq!(
@@ -6082,6 +6408,7 @@ mod tests {
                 &[Column::new(11, FieldType::new(FieldTypeCode::LongLong))],
                 &runtime,
                 false,
+                0.0,
             ),
             None
         );
@@ -6095,6 +6422,7 @@ mod tests {
                 &[Column::new(11, FieldType::new(FieldTypeCode::LongLong))],
                 &runtime,
                 true,
+                0.0,
             ),
             None
         );
@@ -6630,8 +6958,8 @@ mod tests {
     fn admits_index_join_inner_child_pattern_matches_go() {
         use crate::find_best_task::LogicalJoinType;
         use crate::logical::{
-            data_source::PREFER_TIFLASH, DataSource, LogicalAggregation, LogicalJoin, LogicalSort,
-            LogicalUnionScan,
+            DataSource, LogicalAggregation, LogicalJoin, LogicalSort, LogicalUnionScan,
+            data_source::PREFER_TIFLASH,
         };
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;

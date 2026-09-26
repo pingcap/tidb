@@ -709,6 +709,7 @@ pub fn predicate_simplification(ctx: &RuleContext<'_>, mut plan: LogicalPlan) ->
             .collect(),
     );
     if let LogicalPlan::DataSource(source) = &mut plan {
+        source.derived_access_paths = None;
         source.pushed_down_conds = apply_predicate_simplification(
             ctx,
             std::mem::take(&mut source.pushed_down_conds),

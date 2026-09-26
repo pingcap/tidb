@@ -104,7 +104,6 @@ pub mod main_flags;
 mod mysql_connection;
 mod query_metrics;
 pub mod server_metrics;
-mod topsql_metrics;
 mod mysql_tls;
 mod native_password;
 mod node_config;
@@ -271,7 +270,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     tidb_stats_handle_metrics::init_dashboard_series();
     tidb_dxf::metrics::init_dashboard_series();
     tidb_stmtsummary::metrics::init_dashboard_series();
-    topsql_metrics::init_dashboard_series();
+    tidb_util::topsql_reporter::metrics::init_metrics_vars();
     tidb_txnkv::client_go_metrics::init_dashboard_series();
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`

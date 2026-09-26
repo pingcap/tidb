@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::adaptive_limit::{AdaptiveLimitConfig, AdaptiveLimitController};
 use tidb_ast::CiString;
 use tidb_datatype::{Decimal, FieldTypeCode};
 use tidb_expr::column::Column;
@@ -245,6 +246,137 @@ fn index_join_resumes_one_outer_rows_matches_across_requested_chunks() {
         join.close().unwrap();
         assert_eq!(join.tracker.bytes_consumed(), 0);
     }
+}
+
+#[test]
+fn adaptive_index_join_reserves_outer_rows_and_counts_output_before_fanout_finishes() {
+    let types = vec![long()];
+    let plan = IndexLookupPlan {
+        lookup_is_left: false,
+        probe_keys: vec![0],
+        probe_key_domains: vec![IndexProbeKeyDomain {
+            field_type: long(),
+            prefix_length: -1,
+        }],
+        source: IndexLookupSource::Composite {
+            exec: Box::new(RowSource::new(vec![vec![Datum::Int(1)]; 3], 1)),
+            probes: Arc::new(std::sync::Mutex::new(Default::default())),
+        },
+        outer_not_null: Vec::new(),
+        inner_not_null: Vec::new(),
+        probe_bounds: Vec::new(),
+    };
+    let mut join = JoinExec::new_index_lookup(
+        ExecutorMeta::new(schema_of(2), 1, CHUNK, CHUNK),
+        JoinKind::Inner,
+        vec![eq_on(0, 0, 1)],
+        Box::new(RowSource::new(vec![vec![Datum::Int(1)]; 3], 1)),
+        types.clone(),
+        types,
+        NoColumns,
+        StatementMemory::default(),
+        plan,
+    );
+    join.set_index_lookup_concurrency(2);
+    join.set_index_join_batch_size(2);
+    let controller = AdaptiveLimitController::for_index_join(AdaptiveLimitConfig {
+        demand_rows: 2,
+        initial_outer_window: 2,
+        max_outer_window: 4,
+        initial_lookup_window: 2,
+        max_lookup_window: 4,
+        initial_lookup_batch_size: 2,
+        max_lookup_batch_size: 2,
+    });
+    join.set_adaptive_limit_controller(Arc::clone(&controller));
+    let runtime_sink = Arc::new(std::sync::Mutex::new(None));
+    join.set_adaptive_limit_runtime_sink(Arc::clone(&runtime_sink));
+    join.open().unwrap();
+
+    let mut req = join.new_chunk();
+    req.set_required_rows(2, CHUNK);
+    join.next(&mut req).unwrap();
+    assert_eq!(req.num_rows(), 2);
+    assert_eq!(
+        (0..req.num_rows())
+            .map(|row| req.get_row(row).get_int64(0))
+            .collect::<Vec<_>>(),
+        [1, 1]
+    );
+    let snapshot = controller.snapshot();
+    assert_eq!(snapshot.output_rows, 2);
+    assert_eq!(snapshot.outer_fetched, 2);
+    assert_eq!(snapshot.outer_consumed, 0);
+    assert_eq!(snapshot.outer_outstanding_at_stop, 2);
+    assert!(snapshot.stopped);
+    join.close().unwrap();
+    assert_eq!(
+        runtime_sink
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|runtime| runtime.snapshot),
+        Some(controller.snapshot())
+    );
+}
+
+#[test]
+fn adaptive_index_join_releases_null_outer_rows_and_grows_on_zero_output() {
+    let types = vec![long()];
+    let plan = IndexLookupPlan {
+        lookup_is_left: false,
+        probe_keys: vec![0],
+        probe_key_domains: vec![IndexProbeKeyDomain {
+            field_type: long(),
+            prefix_length: -1,
+        }],
+        source: IndexLookupSource::Composite {
+            exec: Box::new(RowSource::new(vec![vec![Datum::Int(1)]], 1)),
+            probes: Arc::new(std::sync::Mutex::new(Default::default())),
+        },
+        outer_not_null: vec![0],
+        inner_not_null: Vec::new(),
+        probe_bounds: Vec::new(),
+    };
+    let mut join = JoinExec::new_index_lookup(
+        ExecutorMeta::new(schema_of(2), 1, CHUNK, CHUNK),
+        JoinKind::Inner,
+        vec![eq_on(0, 0, 1)],
+        Box::new(RowSource::new(
+            vec![vec![Datum::Null], vec![Datum::Null]],
+            1,
+        )),
+        types.clone(),
+        types,
+        NoColumns,
+        StatementMemory::default(),
+        plan,
+    );
+    join.set_index_lookup_concurrency(2);
+    join.set_index_join_batch_size(2);
+    let controller = AdaptiveLimitController::for_index_join(AdaptiveLimitConfig {
+        demand_rows: 2,
+        initial_outer_window: 2,
+        max_outer_window: 4,
+        initial_lookup_window: 2,
+        max_lookup_window: 4,
+        initial_lookup_batch_size: 2,
+        max_lookup_batch_size: 2,
+    });
+    join.set_adaptive_limit_controller(Arc::clone(&controller));
+    join.open().unwrap();
+
+    let mut req = join.new_chunk();
+    join.next(&mut req).unwrap();
+    assert_eq!(req.num_rows(), 0);
+    let snapshot = controller.snapshot();
+    assert_eq!(snapshot.outer_fetched, 2);
+    assert_eq!(snapshot.outer_consumed, 2);
+    assert_eq!(snapshot.output_rows, 0);
+    assert_eq!(snapshot.outer_window, 4);
+    assert_eq!(snapshot.outer_reserved, 0);
+    controller.stop();
+    join.close().unwrap();
 }
 
 fn schema_of(width: usize) -> Schema {

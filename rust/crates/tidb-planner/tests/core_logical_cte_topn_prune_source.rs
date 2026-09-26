@@ -73,6 +73,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
     static COLUMN_ALLOCATOR: tidb_planner::expression_rewriter::ColumnIdAllocator =
         tidb_planner::expression_rewriter::ColumnIdAllocator::new();
     RuleContext {
+        estimator_options: Default::default(),
         allocator,
         column_allocator: &COLUMN_ALLOCATOR,
         builder: &PreservingFunctionBuilder,
@@ -82,11 +83,13 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         // Go's `AllowDeriveTopN` defaults ON.
         allow_derive_topn: true,
         allow_agg_push_down: false,
+        expr_pushdown_blacklist: Default::default(),
         disabled_rules: Default::default(),
         statistics_load: None,
         partition_pruning: None,
         opt_index_prune_threshold: 20,
         opt_prefix_index_single_scan: true,
+        index_merge_enabled: true,
         range_max_size: 0,
         selectivity_factor: tidb_planner::cost_factors::SELECTION_FACTOR,
         range_fallback_handler: None,
@@ -97,6 +100,8 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         enable_null_aware_anti_join: true,
         enable_no_decorrelate_in_select: false,
         join_reorder_threshold: 0,
+        group_ndv_skew_ratio: 0.0,
+        scale_ndv_skew_ratio: tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         advanced_join_reorder: true,
         cartesian_join_order_threshold: 0.0,
         join_reorder_through_proj: false,

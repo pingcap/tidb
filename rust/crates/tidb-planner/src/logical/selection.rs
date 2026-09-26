@@ -190,16 +190,26 @@ impl LogicalSelection {
     /// (`logical_selection.go:227`): the child's profile scaled by
     /// [`SELECTION_FACTOR`], with the group NDVs dropped.
     ///
-    /// # Narrowing
-    ///
-    /// Go's `StatsInfo.Scale(sessionVars, factor)` consults
-    /// `sessionVars.GetOptimizerFactor` before multiplying; there is no session
-    /// here, so the constant factor is applied directly. `GroupNDVs` is not a
-    /// field of this port's [`StatsInfo`], so "set to nil" is vacuous.
+    /// Uses the default NDV skew blend for dependency-closed callers. The
+    /// recursive planner uses the session-aware entry point below.
     pub fn derive_stats(
         &mut self,
         child_stats: &[StatsInfo],
         reloads: &[bool],
+    ) -> Option<(StatsInfo, bool)> {
+        self.derive_stats_with_scale_ndv_skew_ratio(
+            child_stats,
+            reloads,
+            crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+        )
+    }
+
+    /// Go selection Scale uses the current session's NDV skew blend.
+    pub fn derive_stats_with_scale_ndv_skew_ratio(
+        &mut self,
+        child_stats: &[StatsInfo],
+        reloads: &[bool],
+        skew_ratio: f64,
     ) -> Option<(StatsInfo, bool)> {
         let reload = reloads.len() == 1 && reloads[0];
         if !reload {
@@ -208,13 +218,8 @@ impl LogicalSelection {
             }
         }
         let child = &child_stats[0];
-        let scaled = StatsInfo::new(
-            child.row_count() * SELECTION_FACTOR,
-            child
-                .col_ndvs()
-                .iter()
-                .map(|(id, ndv)| (*id, ndv * SELECTION_FACTOR)),
-        );
+        let mut scaled = child.scale(SELECTION_FACTOR, skew_ratio);
+        scaled.set_group_ndvs(Vec::new());
         self.base.base.set_stats(Some(scaled.clone()));
         Some((scaled, true))
     }

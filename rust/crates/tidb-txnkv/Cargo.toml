@@ -24,6 +24,7 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
+tidb-hack = { path = "../tidb-hack" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-vardef = { path = "../tidb-vardef" }

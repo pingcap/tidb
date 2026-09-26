@@ -38,6 +38,7 @@
 //!   this operator holds the handle COLUMNS, which is what the ported bodies
 //!   need, plus [`DataSource::handle_is_int`].
 
+#[cfg(test)]
 use tidb_datatype::{Collation, Datum};
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::normal_form::split_cnf_items;
@@ -182,6 +183,9 @@ pub struct DataSource {
     pub common_handle_version: u16,
     /// Go `TableInfo.TempTableType != model.TempTableNone`.
     pub is_temporary: bool,
+    /// Go `TableInfo.TempTableType == model.TempTableLocal`, for optimizer
+    /// rules that treat LOCAL and GLOBAL temporary tables differently.
+    pub is_local_temporary: bool,
     /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
     pub is_cached: bool,
     /// Whether Go `TableInfo.Affinity` is non-nil.
@@ -247,14 +251,11 @@ pub struct DataSource {
     pub table_stats: Option<StatsInfo>,
     /// Go table access path's already-derived `CountAfterAccess`.
     pub table_path_count_after_access: Option<f64>,
-    /// Go `AccessPath.IsSingleScan`, fixed when stats are first derived.
-    /// Later pruning must not change the reader family of an existing path.
-    pub index_path_single_scan: std::collections::BTreeMap<i64, bool>,
-    /// Go index access paths' already-derived `CountAfterAccess`, by index id.
-    pub index_path_count_after_access: std::collections::BTreeMap<i64, f64>,
-    /// Unadjusted index cardinality bounds retained for Go skyline risk comparison.
-    pub index_path_row_estimates:
-        std::collections::BTreeMap<i64, crate::cardinality::row_count_column::RowEstimate>,
+    /// Candidates retained by logical derivation; physical search consumes them.
+    pub derived_access_paths: Option<crate::access_path::DerivedAccessPaths>,
+    /// Occurrence-local ordinary index records, keyed by catalog ID.
+    /// Declared key slots precede statistics, estimates and covering decisions.
+    pub derived_index_paths: std::collections::BTreeMap<i64, crate::access_path::IndexPathState>,
     /// Go ColAndIdxExistenceMap.HasAnalyzed, independent of payload eviction.
     pub analyzed_index_ids: std::collections::BTreeSet<i64>,
     /// The table/session facts that Go retains on `PhysicalTableScan` for
@@ -314,6 +315,141 @@ impl DataSource {
             .iter()
             .position(|column| column.name.eq_ignore_ascii_case(&index_column.name))?;
         self.base.base.schema()?.columns.get(position)
+    }
+
+    /// Go `IndexInfo2FullCols`: retain unresolved positions and normalize
+    /// full-length prefixes before either pruning or range construction.
+    #[must_use]
+    pub fn declared_index_columns(
+        &self,
+        index: &crate::plan_builder::catalog::SourceIndex,
+    ) -> Vec<Option<(Column, i64)>> {
+        index
+            .columns
+            .iter()
+            .map(|key| {
+                self.schema_column_for_index_column(key)
+                    .cloned()
+                    .map(|column| {
+                        let length = if column
+                            .ret_type
+                            .as_ref()
+                            .is_some_and(|ty| ty.flen() == key.length)
+                        {
+                            tidb_datatype::UNSPECIFIED_LENGTH
+                        } else {
+                            key.length
+                        };
+                        (column, length)
+                    })
+            })
+            .collect()
+    }
+
+    /// Go plan building initializes full declared keys before pruning and
+    /// statistics loading; ranger resolves the current schema again later.
+    pub fn initialize_index_columns(&mut self) {
+        for path in &self.enumerated_paths {
+            let position = match path {
+                crate::access_path::PossiblePath::Index { index }
+                | crate::access_path::PossiblePath::Table {
+                    primary_index: Some(index),
+                    ..
+                } => *index,
+                _ => continue,
+            };
+            let Some(index) = self.indexes.get(position) else {
+                continue;
+            };
+            let columns = self.declared_index_columns(index);
+            self.derived_index_paths
+                .entry(index.id)
+                .or_default()
+                .declared_columns = Some(columns);
+        }
+    }
+
+    /// Go `HandleColsToAppend`: the suffix ranger may use beyond a complete
+    /// declared secondary-index key. Missing declared columns or any duplicate
+    /// handle column suppress the entire suffix so its dimensions stay aligned.
+    #[must_use]
+    pub fn handle_cols_to_append(
+        &self,
+        index: &crate::plan_builder::catalog::SourceIndex,
+        declared: &[(Column, i64)],
+    ) -> Vec<(Column, i64)> {
+        if index.unique || index.primary || declared.len() != index.columns.len() {
+            return Vec::new();
+        }
+        if self.is_common_handle {
+            if self.common_handle_cols.is_empty()
+                || self.common_handle_cols.len() != self.common_handle_lens.len()
+                || index.global
+                || index.is_multi_valued
+                || index.is_columnar
+                || self.has_v0_new_collation_string_handle()
+                || self.common_handle_cols.iter().any(|handle| {
+                    declared
+                        .iter()
+                        .any(|(column, _)| column.unique_id == handle.unique_id)
+                })
+            {
+                return Vec::new();
+            }
+            return self
+                .common_handle_cols
+                .iter()
+                .cloned()
+                .zip(self.common_handle_lens.iter().copied())
+                .collect();
+        }
+        let Some(handle) = self
+            .base
+            .base
+            .schema()
+            .and_then(|schema| self.get_pk_is_handle_col(schema))
+        else {
+            return Vec::new();
+        };
+        if handle.ret_type.as_ref().is_some_and(|ty| ty.is_unsigned())
+            || declared.iter().any(|(column, _)| {
+                column.id == EXTRA_HANDLE_ID || column.unique_id == handle.unique_id
+            })
+        {
+            return Vec::new();
+        }
+        vec![(handle.clone(), tidb_datatype::UNSPECIFIED_LENGTH)]
+    }
+
+    /// Go `HasV0NewCollationStringHandle`: only non-binary strings use
+    /// unrestored collation weights in version-zero common handles.
+    #[must_use]
+    pub fn has_v0_new_collation_string_handle(&self) -> bool {
+        self.common_handle_version == 0
+            && tidb_datatype::new_collation_enabled()
+            && self.common_handle_cols.iter().any(|column| {
+                column.ret_type.as_ref().is_some_and(|ty| {
+                    ty.eval_type() == tidb_datatype::EvalType::String
+                        && !ty.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
+                })
+            })
+    }
+
+    /// Usable leading index columns plus Go's eligible appended handle suffix.
+    /// This is the ranger layout; physical scan output may need more columns.
+    #[must_use]
+    pub fn index_range_columns(
+        &self,
+        index: &crate::plan_builder::catalog::SourceIndex,
+    ) -> Vec<(Column, i64)> {
+        let mut columns = self
+            .declared_index_columns(index)
+            .into_iter()
+            .map_while(std::convert::identity)
+            .collect::<Vec<_>>();
+        let suffix = self.handle_cols_to_append(index, &columns);
+        columns.extend(suffix);
+        columns
     }
 
     /// Go `DataSource.Init(ctx, offset)` (`logical_datasource.go:155`).
@@ -401,11 +537,20 @@ impl DataSource {
     ///
     /// Returns the predicates the PARENT must still apply, which is Go's first
     /// return value.
-    pub fn predicate_push_down_local(&mut self, predicates: Vec<Expression>) -> Vec<Expression> {
+    pub fn predicate_push_down_local(
+        &mut self,
+        predicates: Vec<Expression>,
+        blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    ) -> Vec<Expression> {
+        self.derived_access_paths = None;
         self.all_conds = predicates;
         let (pushable, not_pushable): (Vec<_>, Vec<_>) =
             self.all_conds.iter().cloned().partition(|predicate| {
-                crate::pushdown::can_exprs_push_down_tikv(std::slice::from_ref(predicate))
+                crate::pushdown::can_exprs_push_down(
+                    std::slice::from_ref(predicate),
+                    tidb_expr::infer_pushdown::PushDownStore::Unspecified,
+                    blacklist,
+                )
             });
         self.pushed_down_conds = pushable;
         not_pushable
@@ -480,6 +625,7 @@ impl DataSource {
             !removed_ids.contains(&index_id)
                 && (!partial_index_used_hint || self.forced_index_ids.contains(&index_id))
         };
+        self.derived_access_paths = None;
         self.enumerated_paths.retain(|path| match path {
             crate::access_path::PossiblePath::Index { index } => self
                 .indexes
@@ -665,55 +811,32 @@ impl DataSource {
             }
         }
     }
-
-    /// Go `DataSource.DeriveStats(...)` (`logical_datasource.go:336`), which
-    /// forwards to `utilfuncp.DeriveStats4DataSource(ds)`.
-    ///
-    /// # Blocked
-    ///
-    /// `DeriveStats4DataSource` (`pkg/planner/core/stats.go`) needs the
-    /// statistics handle, the histogram collection, and selectivity
-    /// estimation. The dependency-closed part — a data source with no
-    /// conditions has exactly its table profile — is what runs here, and the
-    /// filtered case returns the table profile UNSCALED with `false`, so a
-    /// caller can tell it was not estimated.
-    pub fn derive_stats(&mut self) -> Option<(StatsInfo, bool)> {
-        let table_stats = self.table_stats.clone()?;
-        // Go `deriveStatsByFilter` (`pkg/planner/core/stats.go:576`) scales the
-        // table profile by `cardinality.Selectivity` over the pushed-down
-        // conditions. Master's walk turns `not(isnull(col))` into the column's
-        // not-null range and counts it from the histogram, i.e. a ratio of
-        // `(total - null_count) / total`; `isnull(col)` alone counts
-        // `null_count / total`. Other condition shapes in this port keep the
-        // unscaled table profile they had before this correction.
-        let mut ratio = 1.0;
-        for condition in &self.pushed_down_conds {
-            if let Some(selectivity) =
-                is_null_condition_selectivity(condition, &table_stats)
-            {
-                ratio *= selectivity;
-            }
-        }
-        let scaled = if ratio < 1.0 {
-            table_stats.scale_by_expect_cnt(table_stats.row_count() * ratio, 1.0)
-        } else {
-            table_stats.clone()
-        };
-        self.base.base.set_stats(Some(scaled.clone()));
-        Some((scaled, self.all_conds.is_empty()))
-    }
 }
 
-/// The isnull/not-isnull arm of Go master `cardinality.Selectivity`
+/// Test oracle for the isnull/not-isnull arm of Go master `cardinality.Selectivity`
 /// (`pkg/planner/cardinality/selectivity.go`): master's ranger turns
 /// `not(isnull(col))` into the column's not-null range and
-/// `GetRowCountByColumnRanges` counts it from the histogram, so the condition
-/// selects `(total - null_count) / total` rows; `isnull(col)` alone selects
-/// `null_count / total`. Returns `None` for every other shape so the caller
-/// keeps its previous estimate.
-pub(crate) fn is_null_condition_selectivity(
+/// `GetRowCountByColumnRanges` estimates it against `HistColl.RealtimeCount`
+/// and `HistColl.ModifyCount`. `isnull(col)` alone uses the histogram's null
+/// count. Production datasource derivation uses the shared Selectivity path;
+/// this narrow helper is retained only for the range-estimator regression tests.
+#[cfg(test)]
+fn is_null_condition_selectivity(
     condition: &Expression,
     stats: &StatsInfo,
+) -> Option<f64> {
+    is_null_condition_selectivity_with_options(
+        condition,
+        stats,
+        crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+    )
+}
+
+#[cfg(test)]
+fn is_null_condition_selectivity_with_options(
+    condition: &Expression,
+    stats: &StatsInfo,
+    options: crate::cardinality::row_count_estimator::EstimatorOptions,
 ) -> Option<f64> {
     let Expression::ScalarFunction(function) = condition else {
         return None;
@@ -736,8 +859,9 @@ pub(crate) fn is_null_condition_selectivity(
         return None;
     };
     let hist_coll = stats.hist_coll()?;
-    let column_stats = hist_coll.histogram(column.unique_id)?;
-    let total = stats.row_count();
+    let column_stats = hist_coll.histogram_for_estimation(column.unique_id)?;
+    let realtime_row_count = hist_coll.realtime_count();
+    let total = realtime_row_count as f64;
     if total <= 0.0 {
         return None;
     }
@@ -758,15 +882,15 @@ pub(crate) fn is_null_condition_selectivity(
             column_stats,
             &ranges,
             Collation::Binary,
-            total as i64,
-            0,
+            realtime_row_count,
+            hist_coll.modify_count(),
             false,
-            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
-        );
+            options,
+        )
+        .ok()?;
         Some((estimate.est / total).clamp(0.0, 1.0))
     } else {
-        let null_ratio =
-            (column_stats.histogram.null_count as f64 / total).clamp(0.0, 1.0);
+        let null_ratio = (column_stats.histogram.null_count as f64 / total).clamp(0.0, 1.0);
         Some(null_ratio)
     }
 }
@@ -822,6 +946,7 @@ impl DataSource {
             is_common_handle: self.is_common_handle,
             common_handle_version: self.common_handle_version,
             is_temporary: self.is_temporary,
+            is_local_temporary: self.is_local_temporary,
             is_cached: self.is_cached,
             has_affinity: self.has_affinity,
             index_lookup_push_down_session: self.index_lookup_push_down_session,
@@ -851,9 +976,8 @@ impl DataSource {
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             table_stats: self.table_stats.clone(),
             table_path_count_after_access: self.table_path_count_after_access,
-            index_path_single_scan: self.index_path_single_scan.clone(),
-            index_path_count_after_access: self.index_path_count_after_access.clone(),
-            index_path_row_estimates: self.index_path_row_estimates.clone(),
+            derived_index_paths: self.derived_index_paths.clone(),
+            derived_access_paths: self.derived_access_paths.clone(),
             analyzed_index_ids: self.analyzed_index_ids.clone(),
             table_scan_penalty: self.table_scan_penalty,
             has_tiflash_replica: self.has_tiflash_replica,
@@ -900,7 +1024,7 @@ fn index_covers_expression_column(
         .is_some_and(|position| index_covers_column(ds, index, position, ignore_len))
 }
 
-pub(crate) fn index_covers_condition(
+pub fn index_covers_condition(
     ds: &crate::logical::DataSource,
     index: &crate::plan_builder::catalog::SourceIndex,
     condition: &tidb_expr::expression::Expression,
@@ -992,8 +1116,8 @@ mod tests {
         // range estimate for such a histogram runs through the same
         // OutOfRangeRowCount heuristic master applies to
         // `not(isnull(col))`'s [MinNotNull, MaxValue] range.
-        let hist_coll = HistColl::new(false, row_count as i64, std::iter::empty())
-            .with_histograms([(
+        let hist_coll =
+            HistColl::new(false, row_count as i64, std::iter::empty()).with_histograms([(
                 1,
                 Arc::new(crate::cardinality::row_count_estimator::ColumnStats {
                     histogram: Histogram {
@@ -1021,12 +1145,11 @@ mod tests {
     }
 
     #[test]
-    fn not_isnull_selects_the_histogram_not_null_ratio() {
+    fn not_isnull_uses_histogram_range_selectivity() {
         // Go master `deriveStatsByFilter` scales the datasource profile by
-        // `cardinality.Selectivity` over the pushed conditions; master counts
-        // `not(isnull(col))` as the column's not-null range, i.e.
-        // (total - null_count) / total, and `isnull(col)` alone as
-        // null_count / total.
+        // `cardinality.Selectivity` over the pushed conditions. The negative
+        // predicate uses the histogram range estimate; `isnull(col)` uses its
+        // null count.
         let stats = profile(1_000.0, 100);
         let column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
         let condition = call(
@@ -1038,9 +1161,9 @@ mod tests {
         // Master counts the condition over the not-null range through
         // `Histogram.OutOfRangeRowCount`; the wiring must answer the same
         // column-estimator value.
-        let column_stats = stats
-            .hist_coll()
-            .and_then(|h| h.histogram(column.unique_id))
+        let hist_coll = stats.hist_coll().expect("histogram collection");
+        let column_stats = hist_coll
+            .histogram(column.unique_id)
             .expect("column histogram");
         let ranges = vec![crate::cardinality::row_count_estimator::ColumnRange {
             low: Datum::MinNotNull,
@@ -1052,12 +1175,13 @@ mod tests {
             column_stats,
             &ranges,
             Collation::Binary,
-            1000,
-            0,
+            hist_coll.realtime_count(),
+            hist_coll.modify_count(),
             false,
             crate::cardinality::row_count_estimator::EstimatorOptions::default(),
-        );
-        let expected = (estimate.est / 1000.0).clamp(0.0, 1.0);
+        )
+        .unwrap();
+        let expected = (estimate.est / hist_coll.realtime_count() as f64).clamp(0.0, 1.0);
         assert!(
             (selectivity - expected).abs() < 1e-9,
             "selectivity {selectivity} vs estimator {expected}"
@@ -1068,6 +1192,60 @@ mod tests {
         let selectivity = is_null_condition_selectivity(&condition, &stats)
             .expect("isnull(col) is an isnull-class condition");
         assert!((selectivity - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn not_isnull_uses_histogram_realtime_count_after_expected_count_scaling() {
+        let table_stats = profile(1_000.0, 100);
+        // Go StatsInfo.ScaleByExpectCnt retains the HistColl; cardinality
+        // selectivity still estimates against HistColl.RealtimeCount.
+        let scaled_stats = table_stats.scale_by_expect_cnt(100.0, 1.0);
+        let column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+        let condition = call(
+            "not",
+            vec![call("isnull", vec![Expression::Column(column.clone())])],
+        );
+        let actual = is_null_condition_selectivity(&condition, &scaled_stats)
+            .expect("not(isnull(col)) is an isnull-class condition");
+
+        let hist_coll = table_stats.hist_coll().expect("histogram collection");
+        let column_stats = hist_coll
+            .histogram(column.unique_id)
+            .expect("column histogram");
+        let ranges = [crate::cardinality::row_count_estimator::ColumnRange {
+            low: Datum::MinNotNull,
+            high: Datum::MaxValue,
+            low_exclude: false,
+            high_exclude: false,
+        }];
+        let estimate = crate::cardinality::row_count_estimator::get_column_row_count(
+            column_stats,
+            &ranges,
+            Collation::Binary,
+            hist_coll.realtime_count(),
+            hist_coll.modify_count(),
+            false,
+            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        )
+        .unwrap();
+        let expected = (estimate.est / hist_coll.realtime_count() as f64).clamp(0.0, 1.0);
+        let wrong_count_estimate = crate::cardinality::row_count_estimator::get_column_row_count(
+            column_stats,
+            &ranges,
+            Collation::Binary,
+            scaled_stats.row_count() as i64,
+            hist_coll.modify_count(),
+            false,
+            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        )
+        .unwrap();
+        let wrong_count = (wrong_count_estimate.est / scaled_stats.row_count()).clamp(0.0, 1.0);
+
+        assert!((actual - expected).abs() < 1e-9, "{actual} vs {expected}");
+        assert_ne!(
+            expected, wrong_count,
+            "fixture must distinguish the Go input count"
+        );
     }
 
     #[test]
@@ -1089,12 +1267,10 @@ mod tests {
 
         let plain_column = call(
             "isnull",
-            vec![Expression::Constant(
-                tidb_expr::constant::Constant::new(
-                    tidb_datatype::Datum::Int(1),
-                    FieldType::new(FieldTypeCode::LongLong),
-                ),
-            )],
+            vec![Expression::Constant(tidb_expr::constant::Constant::new(
+                tidb_datatype::Datum::Int(1),
+                FieldType::new(FieldTypeCode::LongLong),
+            ))],
         );
         assert_eq!(is_null_condition_selectivity(&plain_column, &stats), None);
     }

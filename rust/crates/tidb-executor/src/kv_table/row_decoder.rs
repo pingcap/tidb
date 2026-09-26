@@ -22,6 +22,7 @@ use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::CommonHandle;
 
+use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
 use super::table_meta::NOT_NULL_FLAG;
 use super::{KvColumn, KvTableError, PreparedPointGetDecodeContext, RowDecodeContext, TableHandle};
 
@@ -78,6 +79,7 @@ pub struct RowDecoder {
     changing_dependencies: BTreeMap<usize, usize>,
     pk_handle_offset: Option<usize>,
     common_handle_offsets: Vec<usize>,
+    common_handle_prefix_lengths: Vec<i64>,
     use_new_collation: bool,
     keep: Option<Vec<ProjectedColumn>>,
     context: RowDecodeContext,
@@ -129,6 +131,7 @@ pub struct PreparedPointGetRowDecoder {
     columns: Vec<PreparedPointGetColumn>,
     stored_column_types: BTreeMap<i64, FieldType>,
     common_handle_offsets: Vec<usize>,
+    common_handle_parts: Vec<usize>,
     /// Whether the projection contains a column supplied by the clustered
     /// handle. Most YCSB projections do not select the key, so parsing the
     /// common-handle bytes for every row would be needless work.
@@ -161,9 +164,38 @@ impl PreparedPointGetRowDecoder {
         common_handle_offsets: &[usize],
         output_offsets: &[usize],
     ) -> Result<Self, KvTableError> {
-        let common_handle_column_ids: Vec<i64> = common_handle_offsets
+        let prefix_lengths = vec![UNSPECIFIED_LENGTH; common_handle_offsets.len()];
+        Self::new_with_handle_prefixes(
+            columns,
+            pk_handle_offset,
+            common_handle_offsets,
+            &prefix_lengths,
+            output_offsets,
+        )
+    }
+
+    /// Compiles a point-get decoder that preserves primary-key prefix values
+    /// from row storage rather than replacing them with their truncated handle.
+    pub fn new_with_handle_prefixes(
+        columns: &[KvColumn],
+        pk_handle_offset: Option<usize>,
+        common_handle_offsets: &[usize],
+        common_handle_prefix_lengths: &[i64],
+        output_offsets: &[usize],
+    ) -> Result<Self, KvTableError> {
+        if common_handle_offsets.len() != common_handle_prefix_lengths.len() {
+            return Err(KvTableError::Decode(
+                "common-handle prefix metadata does not match its columns".to_owned(),
+            ));
+        }
+        let common_handle_parts: Vec<usize> = common_handle_prefix_lengths
             .iter()
-            .filter_map(|offset| columns.get(*offset).map(|column| column.id))
+            .enumerate()
+            .filter_map(|(part, length)| (*length == UNSPECIFIED_LENGTH).then_some(part))
+            .collect();
+        let common_handle_column_ids: Vec<i64> = common_handle_parts
+            .iter()
+            .filter_map(|part| columns.get(common_handle_offsets[*part]).map(|column| column.id))
             .collect();
         let projected = output_offsets
             .iter()
@@ -187,6 +219,17 @@ impl PreparedPointGetRowDecoder {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let projected = projected
+            .into_iter()
+            .map(|mut output| {
+                if output.common_handle_part.is_some_and(|part| {
+                    common_handle_prefix_lengths[part] != UNSPECIFIED_LENGTH
+                }) {
+                    output.common_handle_part = None;
+                }
+                output
+            })
+            .collect::<Vec<_>>();
         let stored_column_types = projected
             .iter()
             .filter(|column| !column.from_handle)
@@ -218,6 +261,7 @@ impl PreparedPointGetRowDecoder {
             columns: projected,
             stored_column_types,
             common_handle_offsets: common_handle_offsets.to_vec(),
+            common_handle_parts,
             needs_handle,
             has_origin_defaults,
             v2_columns,
@@ -242,8 +286,10 @@ impl PreparedPointGetRowDecoder {
                 TableHandle::Common(encoded) => {
                     let common = CommonHandle::new(encoded.clone())
                         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                    let parts = (0..self.common_handle_offsets.len())
-                        .filter_map(|part| common.encoded_column(part).map(<[u8]>::to_vec))
+                    let parts = self
+                        .common_handle_parts
+                        .iter()
+                        .filter_map(|part| common.encoded_column(*part).map(<[u8]>::to_vec))
                         .collect();
                     Ok(tidb_codec::Handle::Common(parts))
                 }
@@ -343,10 +389,13 @@ impl RowDecoder {
         generated: GeneratedColumnSelection,
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
+        let common_handle_prefix_lengths =
+            vec![UNSPECIFIED_LENGTH; common_handle_offsets.len()];
         Self::build(
             Arc::new(columns),
             pk_handle_offset,
             common_handle_offsets,
+            common_handle_prefix_lengths,
             generated,
             None,
             new_collation_enabled(),
@@ -364,10 +413,13 @@ impl RowDecoder {
         offsets: &[usize],
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
+        let common_handle_prefix_lengths =
+            vec![UNSPECIFIED_LENGTH; common_handle_offsets.len()];
         Self::build(
             Arc::new(columns),
             pk_handle_offset,
             common_handle_offsets,
+            common_handle_prefix_lengths,
             generated,
             Some(offsets),
             new_collation_enabled(),
@@ -379,6 +431,7 @@ impl RowDecoder {
         columns: Arc<Vec<KvColumn>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
+        common_handle_prefix_lengths: Vec<i64>,
         keep: Option<&[usize]>,
         use_new_collation: bool,
         context: RowDecodeContext,
@@ -387,6 +440,7 @@ impl RowDecoder {
             columns,
             pk_handle_offset,
             common_handle_offsets,
+            common_handle_prefix_lengths,
             GeneratedColumnSelection::Virtual,
             keep,
             use_new_collation,
@@ -398,6 +452,7 @@ impl RowDecoder {
         columns: Arc<Vec<KvColumn>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
+        common_handle_prefix_lengths: Vec<i64>,
         use_new_collation: bool,
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
@@ -405,6 +460,7 @@ impl RowDecoder {
             columns,
             pk_handle_offset,
             common_handle_offsets,
+            common_handle_prefix_lengths,
             GeneratedColumnSelection::All,
             None,
             use_new_collation,
@@ -416,13 +472,15 @@ impl RowDecoder {
         columns: Arc<Vec<KvColumn>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
+        common_handle_prefix_lengths: Vec<i64>,
         generated: GeneratedColumnSelection,
         keep: Option<&[usize]>,
         use_new_collation: bool,
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
         let width = columns.len();
-        if pk_handle_offset.is_some_and(|offset| offset >= width)
+        if common_handle_offsets.len() != common_handle_prefix_lengths.len()
+            || pk_handle_offset.is_some_and(|offset| offset >= width)
             || common_handle_offsets.iter().any(|offset| *offset >= width)
         {
             return Err(KvTableError::Decode(
@@ -529,7 +587,9 @@ impl RowDecoder {
             .chain(
                 common_handle_offsets
                     .iter()
-                    .filter_map(|offset| columns.get(*offset).map(|column| column.id)),
+                    .zip(&common_handle_prefix_lengths)
+                    .filter(|(_, length)| **length == UNSPECIFIED_LENGTH)
+                    .filter_map(|(offset, _)| columns.get(*offset).map(|column| column.id)),
             )
             .collect();
         let v2_fast_path = generated_offsets.is_empty()
@@ -549,6 +609,7 @@ impl RowDecoder {
             changing_dependencies: BTreeMap::new(),
             pk_handle_offset,
             common_handle_offsets,
+            common_handle_prefix_lengths,
             use_new_collation,
             keep: keep.map(projection_columns),
             context,
@@ -672,6 +733,7 @@ impl RowDecoder {
             &self.columns,
             self.pk_handle_offset,
             &self.common_handle_offsets,
+            &self.common_handle_prefix_lengths,
             &mut values,
             handle,
             HandleDecodeContext {
@@ -811,8 +873,16 @@ impl RowDecoder {
                     let common = tidb_txnkv::CommonHandle::new(encoded.clone())
                         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
                     tidb_codec::Handle::Common(
-                        (0..self.common_handle_offsets.len())
-                            .filter_map(|part| common.encoded_column(part).map(<[u8]>::to_vec))
+                        self.common_handle_offsets
+                            .iter()
+                            .enumerate()
+                            .filter(|(position, _)| {
+                                self.common_handle_prefix_lengths.get(*position).copied()
+                                    == Some(UNSPECIFIED_LENGTH)
+                            })
+                            .filter_map(|(part, _)| {
+                                common.encoded_column(part).map(<[u8]>::to_vec)
+                            })
                             .collect(),
                     )
                 }
@@ -866,6 +936,7 @@ pub(crate) fn fill_handle_columns(
     columns: &[KvColumn],
     pk_handle_offset: Option<usize>,
     common_handle_offsets: &[usize],
+    common_handle_prefix_lengths: &[i64],
     row: &mut [Datum],
     handle: &TableHandle,
     zone: &SessionTimeZone,
@@ -875,6 +946,7 @@ pub(crate) fn fill_handle_columns(
         columns,
         pk_handle_offset,
         common_handle_offsets,
+        common_handle_prefix_lengths,
         row,
         handle,
         HandleDecodeContext {
@@ -895,6 +967,7 @@ fn fill_handle_columns_if(
     columns: &[KvColumn],
     pk_handle_offset: Option<usize>,
     common_handle_offsets: &[usize],
+    common_handle_prefix_lengths: &[i64],
     row: &mut [Datum],
     handle: &TableHandle,
     context: HandleDecodeContext<'_>,
@@ -920,7 +993,7 @@ fn fill_handle_columns_if(
         }
         TableHandle::Common(bytes) => {
             let mut rest: &[u8] = bytes;
-            for offset in common_handle_offsets {
+            for (position, offset) in common_handle_offsets.iter().enumerate() {
                 let (remaining, value) = tidb_codec::decode_one(rest)
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
                 rest = remaining;
@@ -928,7 +1001,12 @@ fn fill_handle_columns_if(
                 // handle column whose collation key loses information. The
                 // original bytes are carried in the row value; decoding the
                 // handle here would replace them with the sort key.
-                if selected(*offset)
+                let prefix_length = common_handle_prefix_lengths
+                    .get(position)
+                    .copied()
+                    .unwrap_or(UNSPECIFIED_LENGTH);
+                if prefix_length == UNSPECIFIED_LENGTH
+                    && selected(*offset)
                     && !columns[*offset]
                         .field_type
                         .need_restored_data_with_collation(context.use_new_collation)

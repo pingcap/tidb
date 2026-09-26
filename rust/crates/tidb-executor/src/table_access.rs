@@ -103,6 +103,13 @@ pub trait TableAccess {
         None
     }
 
+    /// Rows read by a clean local clustered or secondary-index scan when
+    /// this execution has no coprocessor counters. Implementations must return
+    /// `None` when the count could include transaction-staged or remote rows.
+    fn local_index_usage_rows(&self) -> Option<u64> {
+        None
+    }
+
     /// Records the physical scan estimate selected by the access-path coster.
     /// It changes no rows and exists so later operator negotiation can make
     /// the same partial/final aggregation choice as the optimizer.

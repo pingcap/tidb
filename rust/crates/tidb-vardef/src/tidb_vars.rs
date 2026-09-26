@@ -571,6 +571,9 @@ pub const TIDB_PAGING_SIZE_BYTES: &str = "tidb_paging_size_bytes";
 /// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 /// Go `TiDBEnableCascadesPlanner`.
 pub const TIDB_ENABLE_CASCADES_PLANNER: &str = "tidb_enable_cascades_planner";
+/// TiDBEnableAdaptiveLimitScan enables bounded admission for eligible ordered LIMIT index lookups.
+/// Go `TiDBEnableAdaptiveLimitScan`.
+pub const TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN: &str = "tidb_enable_adaptive_limit_scan";
 /// TiDBSkipUTF8Check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 /// the input string values are valid, we can skip the check.
 /// Go `TiDBSkipUTF8Check`.

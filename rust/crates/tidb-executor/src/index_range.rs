@@ -1296,6 +1296,149 @@ fn points_for_condition(
     Some(column_points)
 }
 
+/// Run Go's error-producing `buildFromIn` path for a candidate IN predicate
+/// whose AST values cannot use the literal fast path below. Go's condition
+/// checker sends an IN expression to this builder only when every list item
+/// is already an `expression.Constant`; an unresolved parameter marker is
+/// still a constant, but a failed column or scalar expression is not. The AST
+/// point adapter intentionally represents comparison-bound evaluation
+/// failures as no range, matching Go `buildFromBinOp`; eligible IN evaluation
+/// failures instead set `ErrUnsupportedType` and must reach selectivity's
+/// fallback.
+fn validate_in_builder_errors(
+    condition: &Expr,
+    column: &RangeColumn,
+    resolver: &dyn ColumnResolver,
+) -> Result<(), tidb_planner::ranger::points::PointBuilderError> {
+    let Expr::In { expr, list, .. } = condition else {
+        return Ok(());
+    };
+    if !is_column(expr, &column.name) {
+        return Ok(());
+    }
+    let Some(has_unresolved_parameter) = classify_in_list(list, resolver) else {
+        // Go's condition checker declines the entire IN predicate when any
+        // list item is not an expression.Constant, so its point builder never
+        // reports an error for this shape.
+        return Ok(());
+    };
+    if !has_unresolved_parameter {
+        // Successful AST range construction already handled ordinary
+        // literals and bound parameters. Avoid rebuilding a typed IN
+        // expression when no parameter evaluation failed.
+        return Ok(());
+    }
+
+    // A collation mismatch normally removes this predicate from Go's access
+    // conditions. The AST resolver cannot derive that mismatch when a list
+    // value itself failed to resolve, though; preserve the builder's
+    // error-producing IN evaluation path in that case.
+
+    let expression = rewrite_expr_resolved(condition, &resolver).map_err(|_| {
+        tidb_planner::ranger::points::PointBuilderError::Unsupported(format!(
+            "expr:{condition:?} is not evaluated"
+        ))
+    })?;
+    let evaluate = |expression: &Expression| resolver.eval_constant(expression);
+    let mut builder = tidb_planner::ranger::points::PointBuilder::new(&evaluate);
+    let new_type = tidb_planner::ranger::ranger::new_field_type(&column.field_type);
+    let _ = builder.build(&expression, &new_type, column.prefix_len, false);
+    if let Some(error) = builder.err.take() {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn is_unresolved_parameter_constant(expr: &Expr) -> bool {
+    match expr {
+        Expr::ParamMarker { .. } => true,
+        Expr::Paren(inner) => is_unresolved_parameter_constant(inner),
+        _ => false,
+    }
+}
+
+/// Whether every IN-list item is a Go constant, and whether one failed only
+/// because its parameter marker has no current execution value. A `None`
+/// result means Go's condition checker would leave the whole predicate as a
+/// filter before asking `buildFromIn` to construct points.
+fn classify_in_list(list: &[Expr], resolver: &dyn ColumnResolver) -> Option<bool> {
+    let mut has_unresolved_parameter = false;
+    for value in list {
+        if constant_value(value, resolver).is_some() {
+            continue;
+        }
+        if is_unresolved_parameter_constant(value) {
+            has_unresolved_parameter = true;
+            continue;
+        }
+        return None;
+    }
+    Some(has_unresolved_parameter)
+}
+
+/// Whether one Boolean branch can contribute a range over this column. AND
+/// needs either side to narrow the column; OR needs both sides, matching
+/// Go's condition checker before `BuildColumnRange` receives the predicate.
+fn may_build_range_on_column(
+    condition: &Expr,
+    column: &RangeColumn,
+    resolver: &dyn ColumnResolver,
+) -> bool {
+    if points_for_condition(
+        condition,
+        column,
+        resolver,
+        resolver.like_default_escape(),
+        false,
+    )
+    .is_some()
+    {
+        return true;
+    }
+    match condition {
+        Expr::Paren(inner) => may_build_range_on_column(inner, column, resolver),
+        Expr::In { expr, list, .. } => {
+            is_column(expr, &column.name) && classify_in_list(list, resolver) == Some(true)
+        }
+        Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
+            may_build_range_on_column(lhs, column, resolver)
+                || may_build_range_on_column(rhs, column, resolver)
+        }
+        Expr::Binary(BinaryOp::LogicOr, lhs, rhs) => {
+            may_build_range_on_column(lhs, column, resolver)
+                && may_build_range_on_column(rhs, column, resolver)
+        }
+        _ => false,
+    }
+}
+
+fn validate_nested_in_builder_errors(
+    condition: &Expr,
+    column: &RangeColumn,
+    resolver: &dyn ColumnResolver,
+) -> Result<(), tidb_planner::ranger::points::PointBuilderError> {
+    match condition {
+        Expr::Paren(inner) => validate_nested_in_builder_errors(inner, column, resolver),
+        Expr::In { .. } => validate_in_builder_errors(condition, column, resolver),
+        Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
+            if may_build_range_on_column(lhs, column, resolver) {
+                validate_nested_in_builder_errors(lhs, column, resolver)?;
+            }
+            if may_build_range_on_column(rhs, column, resolver) {
+                validate_nested_in_builder_errors(rhs, column, resolver)?;
+            }
+            Ok(())
+        }
+        Expr::Binary(BinaryOp::LogicOr, lhs, rhs)
+            if may_build_range_on_column(condition, column, resolver) =>
+        {
+            validate_nested_in_builder_errors(lhs, column, resolver)?;
+            validate_nested_in_builder_errors(rhs, column, resolver)
+        }
+        _ => Ok(()),
+    }
+}
+
 /// The raw endpoints one condition puts on one column, before the
 /// bounds-nothing check above.
 /// Whether an `ENUM` column compared against this constant is the `ETInt`
@@ -1730,14 +1873,16 @@ fn points_on_column(
             && is_column(&args[0], name) =>
         {
             // Go's builtin ISNULL is lowered to the same ast.IsNull scalar
-            // function as the SQL `IS NULL` form. Its expression-level
-            // rewrite can carry an implicit cast (for example when combined
-            // with a numeric IN list), so keep the conservative full range
-            // here rather than narrowing a prefix scan on the raw AST.
+            // function as the SQL `IS NULL` form. A numeric IN predicate in
+            // the same conjunction may be cast and retained as a residual,
+            // but that does not change ISNULL's exact NULL point.
             Some(ColumnPoints {
-                points: full_range(),
-                eq_or_in: false,
-                reserve: true,
+                points: vec![
+                    Point::start(Datum::Null, false),
+                    Point::end(Datum::Null, false),
+                ],
+                eq_or_in: true,
+                reserve: false,
                 finished: false,
             })
         }
@@ -1756,6 +1901,19 @@ fn is_isnull_function_on_column(expr: &Expr, name: &str) -> bool {
             && args.len() == 1
             && is_column(&args[0], name)
     )
+}
+
+/// Whether this condition is the exact NULL test Go's ranger can consume
+/// without rechecking, even when the index stores only a prefix.
+fn is_null_test_on_column(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Is {
+            expr,
+            target: IsTarget::Null,
+            not: false,
+        } => is_column(expr, name),
+        _ => is_isnull_function_on_column(expr, name),
+    }
 }
 
 fn is_in_on_column(expr: &Expr, name: &str) -> bool {
@@ -1864,7 +2022,10 @@ fn build_cnf_ranges<'a>(
             // conjunct unconsumed is how this builder keeps it: it re-surfaces
             // in `IndexRanges::residual`, and no other key part can consume it
             // because `points_for_condition` matches by column name.
-            if key_part_is_full_length(key_part) && !column.reserve {
+            if (key_part_is_full_length(key_part)
+                || is_null_test_on_column(condition, &key_part.name))
+                && !column.reserve
+            {
                 consumed[i] = true;
             }
             access_count += 1;
@@ -2352,8 +2513,9 @@ pub(crate) fn detach_conds_for_column<'a>(
     column: &RangeColumn,
     conditions: &[&'a Expr],
     resolver: &dyn ColumnResolver,
-) -> IndexRanges<'a> {
-    detach_conds_for_column_with_context(column, conditions, resolver, RangeContext::default()).0
+) -> Result<IndexRanges<'a>, tidb_planner::ranger::points::PointBuilderError> {
+    detach_conds_for_column_with_context(column, conditions, resolver, RangeContext::default())
+        .map(|(built, _)| built)
 }
 
 pub(crate) fn detach_conds_for_column_with_context<'a>(
@@ -2361,20 +2523,16 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
     conditions: &[&'a Expr],
     resolver: &dyn ColumnResolver,
     context: RangeContext<'_>,
-) -> (IndexRanges<'a>, bool) {
+) -> Result<(IndexRanges<'a>, bool), tidb_planner::ranger::points::PointBuilderError> {
     // `buildColumnRange` (`ranger.go:491-526`) intersects the point set of
     // EVERY condition it took, with no equality prefix and no per-column walk
     // -- there is only one column, so `a IN (1,2,3) AND a > 1` narrows to
     // `[2,2], [3,3]` rather than leaving the `>` behind as a filter.
     //
-    // Points stay in RAW VALUE space here. This detacher serves row-count
-    // ESTIMATION against column histograms, whose bounds are written values;
-    // Go passes `convertToSortKey = true` into the same ranger entry because
-    // ITS histograms are read back in collation-key form, so both sides of
-    // that comparison live in the key domain. This tier's statistics compare
-    // written datums -- `l_shipinstruct = '...'` estimated 1499051 rows
-    // before the key conversion arrived here and 1 row after, while Go
-    // prints 1499051.50.
+    // Build points in the same collation-key domain as Go's BuildColumnRange.
+    // Rust's column histogram bounds are collation keys too, so preserving
+    // that representation here is required for the estimator to compare the
+    // query range and histogram in the same domain.
     let mut points = full_range();
     let mut access_count = 0;
     let mut residual = Vec::new();
@@ -2387,7 +2545,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
             column,
             resolver,
             resolver.like_default_escape(),
-            false,
+            true,
         ) {
             Some(column_points) => {
                 points = intersection(
@@ -2401,12 +2559,25 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
                 access.push(*condition);
                 access_count += 1;
             }
-            None => residual.push(*condition),
+            None => {
+                // `points_for_condition` intentionally uses `None` for both
+                // non-access shapes and failed IN values. Ask Go's typed
+                // PointBuilder only for the latter AST shape; this preserves
+                // its distinct `ErrUnsupportedType` behavior without adding
+                // a second rewrite/sort to successful long IN lists.
+                validate_nested_in_builder_errors(condition, column, resolver)?;
+                residual.push(*condition);
+            }
         }
     }
     let mut ranges = Vec::new();
     if access_count > 0 {
-        convert_points_in_place(&mut points, &column.field_type);
+        // Go converts string points to sort keys in `builder.build`, then
+        // changes the field type to binary before `points2Ranges`. The points
+        // may already be collation-key bytes (not SQL text), so applying the
+        // original string type here would reinterpret those bytes as text.
+        let range_field_type = binary_collate_field_type(&column.field_type);
+        convert_points_in_place(&mut points, &range_field_type);
         // Reuse Go's conversion and budget check before materializing ranges.
         // Column histograms use raw values, so no index sort-key conversion.
         let native_points = points
@@ -2419,31 +2590,19 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
             .collect();
         let native = tidb_planner::ranger::ranger::points_to_ranges(
             native_points,
-            &column.field_type,
+            &range_field_type,
             context.max_size,
             &mut None,
         );
         let (built, fallback) = match native {
             Ok(result) => result,
-            // An unsupported conversion contributes no statistics node.
-            Err(_) => {
-                return (
-                    IndexRanges {
-                        ranges: Vec::new(),
-                        access_count: 0,
-                        column_count: 0,
-                        access_columns: Vec::new(),
-                        eq_or_in_count: 0,
-                        residual: conditions.to_vec(),
-                        access: Vec::new(),
-                    },
-                    false,
-                )
-            }
+            // Go `BuildColumnRange` returns conversion failures through
+            // `getMaskAndRanges` to the outer selectivity fallback.
+            Err(error) => return Err(error),
         };
         if fallback {
             context.record_fallback();
-            return (
+            return Ok((
                 IndexRanges {
                     ranges: Vec::new(),
                     access_count: 0,
@@ -2454,7 +2613,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
                     access: Vec::new(),
                 },
                 true,
-            );
+            ));
         }
         ranges = built
             .into_iter()
@@ -2469,7 +2628,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
             ranges = union_ranges(ranges, true);
         }
     }
-    (
+    Ok((
         IndexRanges {
             ranges,
             access_count,
@@ -2486,7 +2645,7 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
             access,
         },
         false,
-    )
+    ))
 }
 
 /// Builds the ranges for a row-valued `IN` over the leading index columns.
@@ -2725,19 +2884,123 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index<'a>(
 pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
     index_columns: &[RangeColumn],
     conjuncts: &[&'a Expr],
-    zone: &tidb_datatype::SessionTimeZone,
+    resolver: &dyn ColumnResolver,
     context: RangeContext<'_>,
     schema_columns: &[RangeColumn],
-) -> Option<(IndexRanges<'a>, bool, i32)> {
+) -> Result<Option<(IndexRanges<'a>, bool, i32)>, tidb_planner::ranger::points::PointBuilderError> {
     struct Resolver<'a> {
         columns: &'a [RangeColumn],
-        zone: &'a tidb_datatype::SessionTimeZone,
+        resolver: &'a dyn ColumnResolver,
     }
     impl tidb_expr::rewriter::ColumnResolver for Resolver<'_> {
-        fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-            self.zone.clone()
+        fn rewrite_grouping(
+            &self,
+            args: &[Expression],
+        ) -> Result<Expression, tidb_expr::EvalError> {
+            self.resolver.rewrite_grouping(args)
         }
+
+        fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+            self.resolver.time_zone()
+        }
+
+        fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+            self.resolver.param_value(order)
+        }
+
+        fn date_modes(&self) -> tidb_datatype::DateModes {
+            self.resolver.date_modes()
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            self.resolver.connection_charset_info()
+        }
+
+        fn like_default_escape(&self) -> u8 {
+            self.resolver.like_default_escape()
+        }
+
+        fn no_unsigned_subtraction(&self) -> bool {
+            self.resolver.no_unsigned_subtraction()
+        }
+
+        fn div_precision_increment(&self) -> u32 {
+            self.resolver.div_precision_increment()
+        }
+
+        fn tidb_info_len(&self) -> usize {
+            self.resolver.tidb_info_len()
+        }
+
+        fn current_database(&self) -> Option<String> {
+            self.resolver.current_database()
+        }
+
+        fn fold_mode(&self) -> tidb_expr::ConstantFoldMode {
+            self.resolver.fold_mode()
+        }
+
+        fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+            self.resolver.fold_constant(expression, mode);
+        }
+
+        fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+            self.resolver.eval_constant(expression)
+        }
+
+        fn comparison_context(&self) -> Option<&dyn tidb_expr::Columns> {
+            self.resolver.comparison_context()
+        }
+
+        fn resolve_column(&self, path: &[String]) -> Option<tidb_expr::column::Column> {
+            self.resolver.resolve_column(path).or_else(|| {
+                // The standalone resolver used by ranger unit tests has no
+                // column map. Keep this helper's schema fallback for those
+                // callers while honoring the live resolver whenever it can
+                // resolve the path (including its qualifiers and metadata).
+                if path.len() != 1 {
+                    return None;
+                }
+                let (index, field_type, unique_id) = self.resolve(path)?;
+                let mut column = tidb_expr::column::Column::new(unique_id, field_type);
+                column.index = index as i64;
+                Some(column)
+            })
+        }
+
+        fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
+            self.resolver
+                .resolve_expression(path)
+                .or_else(|| self.resolve_column(path).map(Expression::Column))
+        }
+
+        fn clause_message(&self) -> &'static str {
+            self.resolver.clause_message()
+        }
+
+        fn orig_name(&self, path: &[String]) -> Option<String> {
+            self.resolver.orig_name(path)
+        }
+
+        fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
+            self.resolver.resolve_constant(path)
+        }
+
+        fn has_resolved_constants(&self) -> bool {
+            self.resolver.has_resolved_constants()
+        }
+
+        fn resolve_default(&self, path: &[String]) -> Option<Expression> {
+            self.resolver.resolve_default(path)
+        }
+
         fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+            if let Some(resolved) = self.resolver.resolve(path) {
+                return Some(resolved);
+            }
+            if path.len() != 1 {
+                return None;
+            }
             let name = path.last()?;
             let position = self
                 .columns
@@ -2752,14 +3015,17 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
     }
     let resolver = Resolver {
         columns: schema_columns,
-        zone,
+        resolver,
     };
     let rewritten = conjuncts
         .iter()
-        .map(|condition| rewrite_expr_resolved(condition, &resolver).ok())
-        .collect::<Vec<_>>();
-    let conditions = rewritten.iter().flatten().cloned().collect::<Vec<_>>();
-    let columns = index_columns
+        .map(|condition| {
+            rewrite_expr_resolved(condition, &resolver)
+                .map_err(tidb_planner::ranger::points::PointBuilderError::Eval)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let conditions = rewritten.clone();
+    let Some(columns) = index_columns
         .iter()
         .map(|column| {
             let position = schema_columns
@@ -2771,35 +3037,43 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
             result.ret_type = Some(column.field_type.clone());
             Some(result)
         })
-        .collect::<Option<Vec<_>>>()?;
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(None);
+    };
     let lengths = index_columns
         .iter()
         .map(|column| column.prefix_len)
         .collect::<Vec<_>>();
+    let evaluate =
+        |expression: &tidb_expr::expression::Expression| resolver.eval_constant(expression);
     let detached = match context.fallback_handler {
-        Some(handler) => tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler(
+        Some(handler) => {
+            tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler_in(
+                &conditions,
+                &columns,
+                &lengths,
+                context.max_size,
+                handler,
+                &evaluate,
+            )
+        }
+        None => tidb_planner::ranger::detacher::detach_cond_and_build_range_for_index_in(
             &conditions,
             &columns,
             &lengths,
             context.max_size,
-            handler,
+            &evaluate,
         ),
-        None => tidb_planner::ranger::detacher::detach_cond_and_build_range_for_index(
-            &conditions,
-            &columns,
-            &lengths,
-            context.max_size,
-        ),
-    }
-    .ok()?;
+    }?;
     if detached.access_conds.is_empty() {
-        return None;
+        return Ok(None);
     }
     let residual = conjuncts
         .iter()
         .zip(&rewritten)
         .filter_map(|(original, expression)| match expression {
-            Some(expression)
+            expression
                 if detached
                     .access_conds
                     .iter()
@@ -2832,7 +3106,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
         .map(|range| range.low_val.len())
         .max()
         .unwrap_or(0);
-    Some((
+    Ok(Some((
         IndexRanges {
             ranges: detached
                 .ranges
@@ -2853,7 +3127,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
         },
         detached.is_dnf_cond,
         i32::try_from(detached.min_access_conds_for_dnf_cond).unwrap_or(i32::MAX),
-    ))
+    )))
 }
 
 fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
@@ -2992,13 +3266,16 @@ mod tests {
                 let built = detach_conjuncts_and_build_range_for_index_with_context(
                     &index,
                     &[predicate],
-                    &tidb_datatype::SessionTimeZone::utc(),
+                    &tidb_expr::rewriter::ZonedNoResolver::new(
+                        tidb_datatype::SessionTimeZone::utc(),
+                    ),
                     RangeContext {
                         max_size: quota,
                         fallback_handler: None,
                     },
                     &index,
                 )
+                .unwrap()
                 .map(|(built, _, _)| built);
                 if quota == 0 {
                     let built = built.unwrap();
@@ -3031,13 +3308,14 @@ mod tests {
             let built = detach_conjuncts_and_build_range_for_index_with_context(
                 &index,
                 &conjuncts,
-                &tidb_datatype::SessionTimeZone::utc(),
+                &tidb_expr::rewriter::ZonedNoResolver::new(tidb_datatype::SessionTimeZone::utc()),
                 RangeContext {
                     max_size: quota,
                     fallback_handler: None,
                 },
                 &index,
             )
+            .unwrap()
             .map(|(built, _, _)| built)
             .unwrap();
             assert_eq!(built.column_count, columns_used, "quota={quota}");
@@ -3718,7 +3996,7 @@ mod tests {
                 &[("a", ft(tidb_datatype::FieldTypeCode::VarString), 2)],
                 "isnull(a) or a in (1,2,3,4)",
             ),
-            "[NULL,+inf]"
+            "<no range>"
         );
     }
 
@@ -3731,7 +4009,10 @@ mod tests {
     ///   index idx_c(c(2)), index idx_d(d(2)))
     /// ```
     ///
-    /// with `tidb_opt_prefix_index_single_scan = 1`.
+    /// with `tidb_opt_prefix_index_single_scan = 1`. The no-access OR row is
+    /// `None` here: this helper reports only useful index ranges, while Go's
+    /// lower-level ranger returns the full range alongside zero access
+    /// conditions (covered by `tidb-planner`'s ranger parity test).
     ///
     /// The declared `(2)` reaches the builder now. The `IS NOT NULL` cases
     /// remain access conditions, and the `ISNULL(a) AND a IN (...)` shape is
@@ -3740,7 +4021,7 @@ mod tests {
         (&["a"], "a is null", "[NULL,NULL]"),
         // accessConds is empty here: Go detaches nothing and falls back to the
         // full range, which this crate reports as "<no range>".
-        (&["a"], "isnull(a) or a in (1,2,3,4)", "[NULL,+inf]"),
+        (&["a"], "isnull(a) or a in (1,2,3,4)", "<no range>"),
         (&["a"], "isnull(a) and a in (1,2,3,4)", "[NULL,NULL]"),
         (&["a"], "a is not null", "[-inf,+inf]"),
         (
@@ -3779,6 +4060,40 @@ mod tests {
             GO_PREFIX_INDEX_RANGE.len(),
             mismatches.join("\n")
         );
+    }
+
+    #[test]
+    fn isnull_function_uses_exact_prefix_range_and_keeps_unindexable_in_filter() {
+        let index = [RangeColumn {
+            name: "a".to_owned(),
+            field_type: ft(tidb_datatype::FieldTypeCode::VarString),
+            prefix_len: 2,
+        }];
+        for (predicate, residual_count) in [("isnull(a)", 0), ("isnull(a) and a in (1,2,3,4)", 1)] {
+            let statement =
+                tidb_parser::parse(&format!("SELECT * FROM t WHERE {predicate}")).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let where_clause = select.where_clause.as_ref().unwrap();
+            let mut conjuncts = Vec::new();
+            collect_conjuncts(where_clause, &mut conjuncts);
+            let built = detach_conjuncts_and_build_range_for_index(
+                &index,
+                &conjuncts,
+                &tidb_expr::rewriter::ZonedNoResolver::new(tidb_datatype::SessionTimeZone::utc()),
+            )
+            .expect("ISNULL provides an exact NULL range");
+            assert_eq!(render(&built.ranges), "[NULL,NULL]", "{predicate}");
+            assert_eq!(built.access_count, 1, "{predicate}");
+            assert_eq!(built.residual.len(), residual_count, "{predicate}");
+            if residual_count == 1 {
+                assert!(matches!(built.residual[0], Expr::In { .. }));
+            }
+        }
     }
 
     /// The endpoint CUT itself, which `GO_PREFIX_INDEX_RANGE` does not

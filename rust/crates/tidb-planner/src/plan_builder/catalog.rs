@@ -95,6 +95,8 @@ pub struct SourceColumn {
     /// Go `ColumnInfo.State == model.StatePublic`. A non-public column is
     /// still SCANNED but is `NotExplicitUsable` in the output names.
     pub is_public: bool,
+    /// Go `ColumnInfo.IsGenerated`, including stored generated columns.
+    pub is_generated: bool,
     /// Go `ColumnInfo.Hidden`: never expanded by `*`, never user-referencable.
     pub is_hidden: bool,
     /// Go `col.IsGenerated() && !col.GeneratedStored`: a virtual generated
@@ -115,6 +117,7 @@ impl Default for SourceColumn {
             offset: 0,
             ret_type: FieldType::new(FieldTypeCode::Unspecified),
             is_public: true,
+            is_generated: false,
             is_hidden: false,
             is_virtual_generated: false,
             generated_expr: None,
@@ -194,6 +197,11 @@ pub struct SourceTable {
     pub partition_def_idx: Option<usize>,
     /// Whether Go `TableInfo.GetPartitionInfo()` is non-nil.
     pub is_partitioned: bool,
+    /// Go `PartitionExpr.Expr` is a single column reference. Batch point-get
+    /// eligibility on partitioned tables uses this same fast-plan condition.
+    pub partition_expression_is_column: bool,
+    /// Whether the partition metadata includes Go's online DROP overlap map.
+    pub partition_is_reorganizing: bool,
     /// Go `TableInfo.GetPartitionInfo().Definitions[i].Name.O`.
     pub partition_definition_names: Vec<String>,
     /// Go `TableInfo.GetPartitionInfo().Definitions[i].ID`.
@@ -210,6 +218,8 @@ pub struct SourceTable {
     pub common_handle_version: u16,
     /// Go `TableInfo.TempTableType != model.TempTableNone`.
     pub is_temporary: bool,
+    /// Go `TableInfo.TempTableType == model.TempTableLocal`.
+    pub is_local_temporary: bool,
     /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
     pub is_cached: bool,
     /// Whether Go `TableInfo.Affinity` is non-nil.

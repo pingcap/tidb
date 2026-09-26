@@ -71,6 +71,7 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
         offset,
         ret_type,
         is_public: true,
+        is_generated: false,
         is_hidden: false,
         is_virtual_generated: false,
         generated_expr: None,
@@ -1119,4 +1120,25 @@ fn test_an_aggregate_order_by_term_is_appended_as_a_hidden_field() {
         "the appended field holds the aggregate expression, got {:?}",
         appended.expr
     );
+}
+
+#[test]
+fn aggregation_build_initializes_declared_index_keys_before_statistics() {
+    let harness = Harness::new();
+    let (plan, _) = harness
+        .builder()
+        .build_select(&parse_select("SELECT b, COUNT(*) FROM t GROUP BY b"))
+        .unwrap();
+    let mut seen = false;
+    plan.walk_preorder(&mut |node| {
+        if let LogicalPlan::DataSource(source) = node {
+            seen = true;
+            let path = &source.derived_index_paths[&1];
+            let declared = path.declared_columns.as_ref().unwrap();
+            assert_eq!(declared.len(), 1);
+            assert_eq!(declared[0].as_ref().unwrap().0.id, 2);
+            assert!(path.row_estimate.is_none());
+        }
+    });
+    assert!(seen);
 }

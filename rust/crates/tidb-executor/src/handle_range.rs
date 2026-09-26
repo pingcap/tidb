@@ -197,9 +197,8 @@ pub(crate) fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
 /// path's ranges from it. This tier's `CREATE TABLE` stores no `KvIndex` for
 /// a clustered key -- the record key itself enforces it, and a stored index
 /// would be physically maintained as a duplicate -- so the same metadata is
-/// synthesized here from the handle offsets. A clustered key part never has a
-/// prefix ([`crate::ddl::index_prefix::clustered_prefix_unsupported`]), so
-/// whole-column parts are the faithful reconstruction. Id `0` collides with
+/// synthesized here from the handle offsets. Prefix lengths are carried
+/// alongside those offsets in the table metadata. Id `0` collides with
 /// no stored index (the DDL allocates from 1), so a statistics lookup under
 /// it misses and the estimate is the pseudo one -- exactly what Go computes
 /// for an unanalyzed primary.
@@ -219,10 +218,7 @@ pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow:
         comment: String::new(),
         unique: true,
         column_offsets: table.common_handle_offsets().to_vec(),
-        prefix_lengths: vec![
-            crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-            table.common_handle_offsets().len()
-        ],
+        prefix_lengths: table.common_handle_prefix_lengths().to_vec(),
         visible: true,
         global: false,
         global_index_version: 0,
@@ -238,7 +234,7 @@ pub(crate) fn handle_range_row_count(
     ranges: &[IndexRange],
     stats: Option<&TableStatistics>,
     trigger_load: bool,
-) -> f64 {
+) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let realtime = realtime_row_count(stats);
     if let Some(index) = clustered_primary_metadata(table) {
         return crate::access_cost::index_range_row_count(
@@ -251,7 +247,7 @@ pub(crate) fn handle_range_row_count(
         );
     }
     let Some(column) = handle_column(table) else {
-        return realtime;
+        return Ok(realtime);
     };
     let unsigned = column.field_type.is_unsigned();
     let column_ranges = ranges
@@ -274,7 +270,7 @@ pub(crate) fn handle_range_row_count(
             }
         })
         .collect::<Vec<_>>();
-    get_row_count_by_column_ranges(
+    Ok(get_row_count_by_column_ranges(
         stats.and_then(|stats| stats.column_for_estimation(column.id)),
         &column_ranges,
         column.field_type.collation(),
@@ -282,8 +278,8 @@ pub(crate) fn handle_range_row_count(
         stats.map_or(0, |stats| stats.modify_count),
         true,
         EstimatorOptions::default(),
-    )
-    .est
+    )?
+    .est)
 }
 
 /// The primary-key column that IS the row handle, when the table has one and
@@ -437,7 +433,8 @@ pub(crate) fn record_key_ranges(
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
     keep_order: bool,
-) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError> {
+) -> Result<Option<Vec<(Key, Key)>>, tidb_planner::cardinality::row_count_estimator::EstimationError>
+{
     match record_key_range_value_halves(table, ranges, zone)? {
         Some([signed_half, unsigned_half]) => {
             if keep_order {
@@ -474,7 +471,7 @@ fn common_handle_record_key_ranges(
     table: &KvTable,
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Vec<(Key, Key)>, tidb_codec::CodecError> {
+) -> Result<Vec<(Key, Key)>, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let ids = table.record_physical_ids();
     let mut key_ranges = Vec::with_capacity(ranges.len() * ids.len());
     for id in ids {
@@ -506,7 +503,10 @@ pub(crate) fn record_key_range_value_halves(
     table: &KvTable,
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Option<[Vec<(Key, Key)>; 2]>, tidb_codec::CodecError> {
+) -> Result<
+    Option<[Vec<(Key, Key)>; 2]>,
+    tidb_planner::cardinality::row_count_estimator::EstimationError,
+> {
     // DDL does not materialize the clustered PRIMARY as a secondary index.
     // The table path still carries the common-handle column offsets, and Go's
     // `CommonHandleRangesToKVRanges` uses those record keys directly.

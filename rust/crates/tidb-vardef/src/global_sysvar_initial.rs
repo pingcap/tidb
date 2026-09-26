@@ -33,6 +33,8 @@ pub const ROW_FORMAT_VERSION: &str = "tidb_row_format_version";
 pub const TXN_ASSERTION_LEVEL: &str = "tidb_txn_assertion_level";
 /// System variable controlling the mutation checker.
 pub const ENABLE_MUTATION_CHECKER: &str = "tidb_enable_mutation_checker";
+/// Ordered LIMIT lookup admission controller, enabled for fresh TiKV installs.
+pub const ENABLE_ADAPTIVE_LIMIT_SCAN: &str = "tidb_enable_adaptive_limit_scan";
 /// System variable controlling pessimistic fair locking.
 pub const PESSIMISTIC_TRANSACTION_FAIR_LOCKING: &str = "tidb_pessimistic_txn_fair_locking";
 
@@ -99,6 +101,11 @@ pub fn global_system_variable_initial_value(
             };
         }
         ENABLE_MUTATION_CHECKER => value = ON.to_owned(),
+        ENABLE_ADAPTIVE_LIMIT_SCAN => {
+            if environment.store_is_tikv {
+                value = ON.to_owned();
+            }
+        }
         PESSIMISTIC_TRANSACTION_FAIR_LOCKING => {
             value = if environment.next_gen {
                 OFF.to_owned()

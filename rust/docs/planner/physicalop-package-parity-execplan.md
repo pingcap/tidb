@@ -8447,6 +8447,7 @@ unchanged. The package inventory is revalidated against the new pin below.
 - [x] Retain master's ForcePartialOrder state across candidate enumeration.
 - [x] Verify forced/no-order/nonmatching cases, SQL results and required gates.
 - [x] Prepare the validated checkpoint for commit/push; package acceptance stays open.
+- [x] (2026-09-24) Match Go `skylinePruning.keepIndex`: keep the successful partial-order match separate from ordinary sort items and retain explicitly forced paths. The focused dispatcher suite passes all 45 tests.
 
 ### Surprises & Discoveries
 
@@ -8465,7 +8466,12 @@ matching forced path during skyline pruning, then rejects later ordinary/full
 order candidates for that path. Rust enumerates partial candidates first, but
 did not retain that mark. A regression now requests a partial path followed by
 an ordinary path in one search, with forced/unforced, NO_ORDER_INDEX and
-unmatched-property variants.
+unmatched-property variants. Auditing the same Go `keepIndex` expression found
+two more conditions lost in Rust's candidate pruning: successful
+`PartialOrderInfo` matches do not populate ordinary `SortItems`, and an explicit
+force-index hint must retain an otherwise empty path. Both are now represented
+in the dispatcher and the synthetic regression expects an unforced, empty path
+to prune just as Go does.
 
 ### Decision Log
 

@@ -71,6 +71,7 @@ impl KvTable {
             self.columns.clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
+            self.common_handle_prefix_lengths.clone(),
             keep,
             self.use_new_collation,
             context.clone(),
@@ -87,6 +88,7 @@ impl KvTable {
             self.columns.clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
+            self.common_handle_prefix_lengths.clone(),
             self.use_new_collation,
             context.clone(),
         )
@@ -1711,6 +1713,7 @@ impl KvTable {
             super::row_decoder::fill_handle_columns(
                 &self.columns,
                 self.pk_handle_offset,
+                &[],
                 &[],
                 &mut row,
                 handle,
@@ -5028,6 +5031,16 @@ impl crate::table_access::TableAccess for TableScanExec {
         self.remote
             .as_ref()
             .map(RemoteRowCursor::cop_count_and_rows)
+    }
+
+    fn local_index_usage_rows(&self) -> Option<u64> {
+        if self.remote.is_some()
+            || self.partial_remote.is_some()
+            || self.table.has_dirty_content(&self.statement.staged_writes)
+        {
+            return None;
+        }
+        Some(self.scanned.get())
     }
 
     /// Go `checkColCanUseIndex`: a record-key walk ranks by the clustered

@@ -452,11 +452,9 @@ fn the_handle_range_corpus_matches_go() {
     // `-TableRowIDScan(Probe)     33.33
     // ```
     //
-    // This tier retains a classified estimate/residual-selection difference
-    // and prints 10.00, but the former source-only assertion was obsolete: a
-    // lookup has two physical source children, and its deepest node is the
-    // row probe rather than the index range. Pin the complete lookup shape so
-    // the access choice and compound range remain visible.
+    // Compare both children: the row probe is the deepest node, while the
+    // appended-handle range belongs to the index build side. Master retains
+    // a root projection above this lookup; operator IDs are not significant.
     let rows = row_text(session.run("EXPLAIN SELECT c FROM sbtest1 WHERE id > 0 AND k = 4"));
     let lookup = rows
         .iter()
@@ -464,14 +462,14 @@ fn the_handle_range_corpus_matches_go() {
         .expect("the mixed predicate uses a non-covering index lookup");
     let lookup_rows = &rows[lookup..lookup + 3];
     assert!(lookup_rows[0][0].contains("IndexLookUp_"));
-    assert_eq!(lookup_rows[0][1], "10.00");
+    assert_eq!(lookup_rows[0][1], "33.33");
     assert!(lookup_rows[1][0].contains("IndexRangeScan_"));
     assert!(lookup_rows[1][0].ends_with("(Build)"));
-    assert_eq!(lookup_rows[1][1], "10.00");
+    assert_eq!(lookup_rows[1][1], "33.33");
     assert!(lookup_rows[1][4].starts_with("range:(4 0,4 +inf]"));
     assert!(lookup_rows[2][0].contains("TableRowIDScan_"));
     assert!(lookup_rows[2][0].ends_with("(Probe)"));
-    assert_eq!(lookup_rows[2][1], "10.00");
+    assert_eq!(lookup_rows[2][1], "33.33");
 }
 
 /// The sysbench WRITE shapes, as the source row of their plan.

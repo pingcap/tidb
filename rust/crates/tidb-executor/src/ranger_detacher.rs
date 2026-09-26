@@ -206,7 +206,8 @@ mod tests {
             &column,
             &[&low, &high, &residual],
             &tidb_expr::rewriter::ZonedNoResolver::new(SessionTimeZone::utc()),
-        );
+        )
+        .expect("valid column range");
         assert_eq!(detached.access_count, 2);
         assert_eq!(detached.residual, vec![&residual]);
         assert_eq!(

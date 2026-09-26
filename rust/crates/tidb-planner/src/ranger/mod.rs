@@ -105,7 +105,7 @@ pub mod stats_bridge {
     /// `None` preserves the ordinary secondary-index behavior.
     #[must_use]
     pub fn pseudo_count_by_index_ranges(
-        ranges: &super::types::Ranges,
+        ranges: &[super::types::Range],
         table_row_count: f64,
         unique_columns: Option<usize>,
     ) -> f64 {
@@ -116,37 +116,17 @@ pub mod stats_bridge {
             for i in 0..ran.low_val.len().min(ran.high_val.len()) {
                 let low_kind = bound_kind(&ran.low_val[i]);
                 let high_kind = bound_kind(&ran.high_val[i]);
-                let low = if low_kind == PseudoBoundKind::Value {
-                    match datum_to_scalar(&ran.low_val[i]) {
-                        Some(v) => v,
-                        None => {
-                            columns.push(ScalarRange {
-                                low: 0.0,
-                                high: 0.0,
-                                low_kind: PseudoBoundKind::MinNotNull,
-                                high_kind: PseudoBoundKind::MaxValue,
-                            });
-                            continue;
-                        }
-                    }
-                } else {
+                // Go's pseudo estimator uses only bound kinds and equality,
+                // never numeric distance. Preserve collation-aware comparison
+                // instead of converting strings or wide integers through f64.
+                let low = 0.0;
+                let high = if ran.low_val[i]
+                    .compare(&ran.high_val[i], ran.collators[i])
+                    .is_ok_and(|order| order == std::cmp::Ordering::Equal)
+                {
                     0.0
-                };
-                let high = if high_kind == PseudoBoundKind::Value {
-                    match datum_to_scalar(&ran.high_val[i]) {
-                        Some(v) => v,
-                        None => {
-                            columns.push(ScalarRange {
-                                low: 0.0,
-                                high: 0.0,
-                                low_kind: PseudoBoundKind::MinNotNull,
-                                high_kind: PseudoBoundKind::MaxValue,
-                            });
-                            continue;
-                        }
-                    }
                 } else {
-                    0.0
+                    1.0
                 };
                 columns.push(ScalarRange {
                     low,
@@ -264,4 +244,38 @@ pub mod stats_bridge {
             .collect();
         pseudo_row_count_by_signed_int_ranges(&mapped, table_row_count)
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn pseudo_index_bounds_preserve_datum_equality() {
+            let text = |value: &str| {
+                Datum::String(tidb_datatype::StringDatum::new(
+                    value.as_bytes().to_vec(),
+                    tidb_datatype::Collation::Binary,
+                ))
+            };
+            for (low, high, expected) in [
+                (text("a"), text("a"), 10.0),
+                (text("a"), text("z"), 250.0),
+                (Datum::UInt(u64::MAX - 1), Datum::UInt(u64::MAX), 250.0),
+            ] {
+                let ranges = vec![super::super::types::Range {
+                    low_val: vec![low],
+                    high_val: vec![high],
+                    collators: vec![tidb_datatype::Collation::Binary],
+                    low_exclude: false,
+                    high_exclude: false,
+                }];
+                assert_eq!(
+                    pseudo_count_by_index_ranges(&ranges, 10000.0, None),
+                    expected,
+                    "{ranges:?}"
+                );
+            }
+        }
+    }
+
 }

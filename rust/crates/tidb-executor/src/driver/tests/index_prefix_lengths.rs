@@ -11,15 +11,13 @@
 //! * A length TiDB ACCEPTS is stored and honoured, on a SECONDARY index.
 //!   What the resulting index then answers is pinned next door, in
 //!   [`super::index_prefix_reads`]. The one form still refused is a prefix
-//!   on a clustered PRIMARY KEY, for the reason
-//!   [`crate::ddl::index_prefix::clustered_prefix_unsupported`] gives.
+//!   on a clustered PRIMARY KEY, whose row handle carries the cut value while
+//!   the full column value stays in the row.
 //!
 //! Every case was captured from real TiDB through `gorun` first. Mirrors Go
 //! `pkg/ddl/index.go`'s `checkIndexColumn`.
 
 use super::*;
-use crate::ddl::index_prefix::clustered_prefix_unsupported;
-
 fn create_error(sql: &str) -> DriverError {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(sql, &mut catalog).expect_err("this statement must be refused")
@@ -170,18 +168,27 @@ fn a_real_prefix_on_a_secondary_index_is_built_and_recorded() {
     }
 }
 
-/// A prefix on a CLUSTERED PRIMARY KEY is still refused, and refused by its
-/// own name. Captured from real TiDB: `create table p (a varchar(20),
-/// primary key (a(3)))` is CLUSTERED, and then rejects `'abcxyz'` after
-/// `'abcdef'` -- the ROW IDENTIFIER is the cut value, so there is no row to
-/// go back to for the whole one. Pinned so the secondary-index work cannot
-/// be mistaken for having covered it.
+/// A clustered primary-key prefix is part of the common handle, while table
+/// metadata retains the prefix length needed by reads and index encoding.
 #[test]
-fn a_prefix_primary_key_is_still_refused() {
-    assert!(matches!(
-        create_error("CREATE TABLE t (a VARCHAR(20), PRIMARY KEY (a(3)))"),
-        DriverError::Unsupported(reason) if reason == clustered_prefix_unsupported()
-    ));
+fn a_prefix_primary_key_is_stored_on_the_common_handle() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE t (a VARCHAR(20), b INT, PRIMARY KEY (a(3), b) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    let crate::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
+        panic!("the table is not storage-backed");
+    };
+    assert_eq!(table.common_handle_offsets(), &[0, 1]);
+    assert_eq!(table.common_handle_prefix_lengths(), &[3, -1]);
+    let primary = table
+        .indexes()
+        .iter()
+        .find(|index| index.name == "PRIMARY")
+        .expect("clustered primary metadata is present");
+    assert_eq!(primary.prefix_lengths, [3, -1]);
 }
 
 /// `CREATE INDEX` and `ALTER TABLE ... ADD INDEX` reach the same rules, so a

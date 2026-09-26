@@ -202,3 +202,22 @@ acquisitions, capacity three), fixes cancellation notification transfer, and
 owns dispatcher waiter registrations through admission and shutdown. All 38
 Rust KV source tests and the five original master limiter tests pass; exact
 commands, red/green evidence and remaining gates are in that ExecPlan.
+
+## Handle accounting revalidation, 2026-09-25
+
+The 30-artifact inventory is unchanged between the September 22 pin and
+current master 633a9e37f1c796ac81c203dc107025e7e65385f0. Memory-ownership review
+found the existing MemAwareHandleMap implementation was not source-faithful:
+it rescanned all entries twice per insertion and reported per-entry shallow
+bytes rather than checkpointed allocations. It now delegates to tidb-hack
+MemAwareMap with separate source handle domains and partitions. Exact Go
+checkpoint/layout values, replacement/range/clone tests and all 38 KV source
+tests pass. Original release benchmark completes its million-handle case in
+207.83 ms; a bounded 10,000-integer old/new comparison measured 105.656 ms
+versus 173.792 us. These are microbenchmarks, not SQL workload evidence.
+
+Exact commands, fail-before proof and logs are in the structural audit's
+“Handle-map accounting foundation” section. Lint passes. This does not close
+the package integration/build gates described above, and the historical Ready
+label must not be read as a current whole-package completion claim. No new
+package commit or push was made.

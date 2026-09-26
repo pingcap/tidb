@@ -160,9 +160,8 @@ mod registry_tests {
 
     /// The assembled registry stays name-ordered so binary search remains
     /// valid, and every sysvar Go's registry carries that this port carries
-    /// too resolves here — including the two late additions Go registers at
-    /// `sysvar.go:982` (columnar storage, Global Bool ON) and `sysvar.go:2294`
-    /// (query cop store limit, Global+Session Unsigned 0..256, default 15).
+    /// too resolves here — including later additions for columnar storage,
+    /// query cop store limit, and adaptive LIMIT scan.
     #[test]
     fn registry_is_name_ordered_and_carries_the_late_additions() {
         let mut sorted_names: Vec<&str> = SYS_VARS.iter().map(|v| v.name).collect();
@@ -187,5 +186,13 @@ mod registry_tests {
         assert!(matches!(cop.var_type, VarType::Unsigned));
         assert_eq!(cop.min_value, 0_i64);
         assert_eq!(cop.max_value, 256_u64);
+
+        let adaptive_limit = SYS_VARS
+            .iter()
+            .find(|v| v.name == "tidb_enable_adaptive_limit_scan")
+            .expect("tidb_enable_adaptive_limit_scan in registry");
+        assert_eq!(adaptive_limit.scope, 3_u8);
+        assert_eq!(adaptive_limit.value, "OFF");
+        assert!(matches!(adaptive_limit.var_type, VarType::Bool));
     }
 }

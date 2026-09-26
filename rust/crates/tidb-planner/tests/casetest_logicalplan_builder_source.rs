@@ -88,6 +88,7 @@ fn integer_column(code: FieldTypeCode, unsigned: bool) -> SourceColumn {
         ret_type,
         is_public: true,
         is_hidden: false,
+        is_generated: false,
         is_virtual_generated: false,
         generated_expr: None,
     }

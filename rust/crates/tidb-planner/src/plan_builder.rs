@@ -2464,6 +2464,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             is_common_handle: table.is_common_handle,
             common_handle_version: table.common_handle_version,
             is_temporary: table.is_temporary,
+            is_local_temporary: table.is_local_temporary,
             is_cached: table.is_cached,
             has_affinity: table.has_affinity,
             index_lookup_push_down_session: self.index_lookup_push_down_session,
@@ -2609,6 +2610,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .base
             .set_schema(Some(Schema::new(schema_columns)));
         data_source.base.base.set_output_names(names);
+        data_source.initialize_index_columns();
 
         // boundary: `tableInfo.IsView()` / `IsSequence()` (`:5047`, `:5081`),
         // `tableHasDirtyContent` and the `LogicalUnionScan` it wraps (`:5312`).

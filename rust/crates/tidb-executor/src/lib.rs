@@ -39,7 +39,9 @@
 //! only one.
 //!
 //! DEFERRED (documented): the Go `context.Context`/`sessionctx` propagation,
-//! runtime stats, the SQL killer, `Detach`, and parallel projection.
+//! TopSQL registration, RU tracking, `Detach`, and parallel projection.
+//! Ordinary executor timing and row counts use the statement's Go-compatible
+//! `RuntimeStatsColl` when execution-info collection is enabled.
 
 pub mod base_join_probe;
 pub mod concurrent_entry_map;
@@ -53,6 +55,7 @@ pub mod tagged_ptr;
 
 pub mod access_cost;
 pub mod access_path;
+pub(crate) mod adaptive_limit;
 pub mod admin_check;
 pub mod worker_pool;
 
@@ -166,6 +169,7 @@ mod tests_table_part1_source;
 mod tests_table_part2_source;
 mod tidb_decode_key;
 pub mod union_all;
+pub mod used_stats;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod expand;
 pub mod fts_like_rewrite;

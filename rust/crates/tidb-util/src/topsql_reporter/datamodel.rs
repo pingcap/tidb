@@ -30,9 +30,10 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 
+use super::metrics::{IGNORE_EXCEED_PLAN_COUNTER, IGNORE_EXCEED_SQL_COUNTER};
 use crate::topsql_state::{self, DEF_TIDB_TOP_SQL_REPORT_INTERVAL_SECONDS};
 use crate::topsql_stmtstats::StatementStatsItem;
 
@@ -44,15 +45,6 @@ pub const KEY_OTHERS: &[u8] = b"";
 /// Go `maxTsItemsCapacity`: a protection against excessive memory usage
 /// caused by an incorrect configuration.
 pub const MAX_TS_ITEMS_CAPACITY: i64 = 1000;
-
-/// boundary: Go `reporter/metrics.IgnoreExceedSQLCounter`, a prometheus
-/// counter. `tidb-util` carries no metric registry for the reporter, so the
-/// two ignore counters become process counters with the same names and the
-/// same increment points.
-pub static IGNORE_EXCEED_SQL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// boundary: Go `reporter/metrics.IgnoreExceedPlanCounter`.
-pub static IGNORE_EXCEED_PLAN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// boundary: Go `collector.SQLCPUTimeRecord`, declared locally rather than
 /// pulling in `pkg/util/topsql/collector` (whose profiler machinery is not
@@ -609,7 +601,7 @@ impl NormalizedSqlMap {
                 .max_collect
                 .load(Ordering::SeqCst)
         {
-            IGNORE_EXCEED_SQL_COUNTER.fetch_add(1, Ordering::Relaxed);
+            IGNORE_EXCEED_SQL_COUNTER.inc();
             return;
         }
         if !data.contains_key(sql_digest) {
@@ -691,7 +683,7 @@ impl NormalizedPlanMap {
                 .max_collect
                 .load(Ordering::SeqCst)
         {
-            IGNORE_EXCEED_PLAN_COUNTER.fetch_add(1, Ordering::Relaxed);
+            IGNORE_EXCEED_PLAN_COUNTER.inc();
             return;
         }
         if !data.contains_key(plan_digest) {

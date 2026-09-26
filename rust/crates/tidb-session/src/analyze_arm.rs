@@ -101,6 +101,12 @@ fn merge_partial_statistics(
     merged
         .index_stats_existence
         .append(&mut fresh.index_stats_existence);
+    merged
+        .column_fm_sketches
+        .append(&mut fresh.column_fm_sketches);
+    merged
+        .index_fm_sketches
+        .append(&mut fresh.index_fm_sketches);
     merged.pseudo = merged.row_count == 0
         || (merged.column_stats_existence.values().all(|exists| !exists)
             && merged.index_stats_existence.values().all(|exists| !exists));
@@ -125,6 +131,193 @@ fn merge_independent_index_statistics(
     merged.pseudo = merged.row_count == 0
         || (merged.column_stats_existence.values().all(|exists| !exists)
             && merged.index_stats_existence.values().all(|exists| !exists));
+    merged
+}
+
+/// Rebuilds dynamic-mode global statistics from the physical partition
+/// statistics, the same source used by Go's `MergePartitionStats2GlobalStats`.
+fn merge_partitioned_global_statistics(
+    table: &tidb_executor::kv_table::KvTable,
+    partitions: &[(i64, Arc<tidb_executor::access_cost::TableStatistics>)],
+    previous: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
+    options: &tidb_executor::analyze::AnalyzeOptions,
+    time_zone: &tidb_datatype::SessionTimeZone,
+) -> Result<tidb_executor::access_cost::TableStatistics, DriverError> {
+    let row_count = partitions
+        .iter()
+        .fold(0_i64, |count, (_, stats)| count.saturating_add(stats.row_count.max(0)));
+    let modify_count = partitions
+        .iter()
+        .fold(0_i64, |count, (_, stats)| count.saturating_add(stats.modify_count.max(0)));
+    let mut global = previous
+        .as_deref()
+        .cloned()
+        .unwrap_or_else(|| tidb_executor::access_cost::TableStatistics::new(
+            row_count,
+            modify_count,
+            Default::default(),
+            Default::default(),
+        ));
+    global.row_count = row_count;
+    global.modify_count = modify_count;
+    global.version = partitions.iter().map(|(_, stats)| stats.version).max().unwrap_or(0);
+    global.last_analyze_version = partitions
+        .iter()
+        .map(|(_, stats)| stats.last_analyze_version)
+        .max()
+        .unwrap_or(0);
+    global.pseudo = false;
+    global.cache_pseudo = false;
+
+    let bucket_count = usize::try_from(options.num_buckets.max(1)).unwrap_or(256);
+    let topn_count = u32::try_from(options.num_topn.max(0)).unwrap_or(0);
+    let killer = tidb_util::sqlkiller::SqlKiller::default();
+
+    for column in table.visible_columns() {
+        let items = partitions
+            .iter()
+            .filter_map(|(_, stats)| {
+                let column_stats = stats.columns.get(&column.id)?;
+                Some((
+                    column_stats,
+                    stats.column_fm_sketches.get(&column.id).cloned(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if items.len() != partitions.len() || items.is_empty() {
+            continue;
+        }
+        let fm_sketch = merge_fm_sketches(items.iter().filter_map(|(_, sketch)| sketch.as_ref()));
+        let partition_items = items
+            .iter()
+            .map(|(stats, fm_sketch)| tidb_stats::PartitionStatsItem {
+                histogram: stats.histogram.clone(),
+                cmsketch: stats.cms.clone(),
+                topn: stats.topn.clone(),
+                fm_sketch: fm_sketch.clone(),
+            })
+            .collect();
+        let source = items[0].0;
+        let merged = tidb_stats::merge_partition_stats_item(
+            Some(time_zone),
+            source.stats_ver,
+            topn_count,
+            bucket_count,
+            row_count,
+            &column.field_type,
+            false,
+            tidb_stats::GlobalStatsMergeMode::Blocking,
+            1,
+            partition_items,
+            &killer,
+        )
+        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+        if let Some(histogram) = merged.histogram {
+            global.columns.insert(
+                column.id,
+                tidb_planner::cardinality::row_count_estimator::ColumnStats {
+                    histogram,
+                    topn: merged.topn,
+                    cms: merged.cmsketch,
+                    stats_ver: source.stats_ver,
+                    unsigned: column.field_type.is_unsigned(),
+                },
+            );
+            global.column_stats_existence.insert(column.id, true);
+            if let Some(status) = partitions
+                .iter()
+                .find_map(|(_, stats)| stats.column_load_status.get(&column.id).copied())
+            {
+                global.column_load_status.insert(column.id, status);
+            }
+        }
+        if let Some(fm_sketch) = fm_sketch {
+            global.column_fm_sketches.insert(column.id, fm_sketch);
+        }
+    }
+
+    for index in table.indexes() {
+        let items = partitions
+            .iter()
+            .filter_map(|(_, stats)| {
+                let index_stats = stats.indexes.get(&index.id)?;
+                Some((
+                    index_stats,
+                    stats.index_fm_sketches.get(&index.id).cloned(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if items.len() != partitions.len() || items.is_empty() {
+            continue;
+        }
+        let fm_sketch = merge_fm_sketches(items.iter().filter_map(|(_, sketch)| sketch.as_ref()));
+        let partition_items = items
+            .iter()
+            .map(|(stats, fm_sketch)| tidb_stats::PartitionStatsItem {
+                histogram: stats.histogram.clone(),
+                cmsketch: stats.cms.clone(),
+                topn: stats.topn.clone(),
+                fm_sketch: fm_sketch.clone(),
+            })
+            .collect();
+        let source = items[0].0;
+        let field_type = index
+            .column_offsets
+            .first()
+            .and_then(|offset| table.columns().get(*offset))
+            .map(|column| &column.field_type)
+            .ok_or_else(|| DriverError::unsupported("global index has no leading column"))?;
+        let merged = tidb_stats::merge_partition_stats_item(
+            Some(time_zone),
+            source.stats_ver,
+            topn_count,
+            bucket_count,
+            row_count,
+            field_type,
+            true,
+            tidb_stats::GlobalStatsMergeMode::Blocking,
+            1,
+            partition_items,
+            &killer,
+        )
+        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+        if let Some(histogram) = merged.histogram {
+            global.indexes.insert(
+                index.id,
+                tidb_planner::cardinality::row_count_estimator::IndexStats {
+                    histogram,
+                    topn: merged.topn,
+                    cms: merged.cmsketch,
+                    stats_ver: source.stats_ver,
+                    num_columns: source.num_columns,
+                    unique: source.unique,
+                },
+            );
+            global.index_stats_existence.insert(index.id, true);
+            if let Some(status) = partitions
+                .iter()
+                .find_map(|(_, stats)| stats.index_load_status.get(&index.id).copied())
+            {
+                global.index_load_status.insert(index.id, status);
+            }
+        }
+        if let Some(fm_sketch) = fm_sketch {
+            global.index_fm_sketches.insert(index.id, fm_sketch);
+        }
+    }
+    Ok(global)
+}
+
+fn merge_fm_sketches<'a>(
+    sketches: impl IntoIterator<Item = &'a tidb_stats::FmSketch>,
+) -> Option<tidb_stats::FmSketch> {
+    let mut merged = None;
+    for sketch in sketches {
+        match &mut merged {
+            Some(destination) => tidb_stats::merge_fm_sketch(Some(destination), Some(sketch)),
+            None => merged = Some(sketch.clone()),
+        }
+    }
     merged
 }
 
@@ -700,34 +893,43 @@ impl Session {
                             partition_statistics.push((physical_id, Arc::new(statistics)));
                         }
 
-                        // Go's static pruning mode analyzes the physical partitions
-                        // and deliberately does not merge a logical-table histogram.
-                        // Dynamic pruning performs that merge; analyzing the same
-                        // complete row set here gives its planner the same global
-                        // distribution without inventing a second statistics store.
+                        // Static pruning analyzes physical partitions only. Dynamic
+                        // pruning merges those partition statistics into the logical
+                        // table, including untouched partitions during a partial
+                        // `ANALYZE TABLE ... PARTITION`.
                         let global_statistics = if ctx.static_partition_prune() {
                             None
                         } else {
-                            let mut global = (*table).clone();
-                            let options = &resolution.physical[0];
-                            let mut effective = options.effective;
-                            effective.memory_quota = statement.options.memory_quota;
-                            let selected = selections
-                                .get(&table_id)
-                                .expect("the logical table selection exists");
-                            let statistics = analyze_kv_table_columns(
-                                &mut global,
-                                &effective,
-                                global_count,
-                                &ctx,
-                                selected.as_ref(),
-                            )
-                            .map_err(|error| DriverError::unsupported(error.to_string()))?;
-                            Some(Arc::new(merge_partial_statistics(
-                                catalog.table_statistics(table_id),
-                                statistics,
-                                selected.is_some(),
-                            )))
+                            let definitions = &table
+                                .partition()
+                                .expect("partition statistics require partition metadata")
+                                .definitions;
+                            let all_partition_statistics = definitions
+                                .iter()
+                                .filter_map(|definition| {
+                                    partition_statistics
+                                        .iter()
+                                        .find(|(id, _)| *id == definition.id)
+                                        .map(|(_, stats)| (definition.id, Arc::clone(stats)))
+                                        .or_else(|| {
+                                            catalog
+                                                .table_statistics(definition.id)
+                                                .map(|stats| (definition.id, stats))
+                                        })
+                                })
+                                .collect::<Vec<_>>();
+                            if all_partition_statistics.len() != definitions.len() {
+                                catalog.table_statistics(table_id)
+                            } else {
+                                let options = &resolution.physical[0].effective;
+                                Some(Arc::new(merge_partitioned_global_statistics(
+                                    &table,
+                                    &all_partition_statistics,
+                                    catalog.table_statistics(table_id),
+                                    options,
+                                    &session_time_zone,
+                                )?))
+                            }
                         };
                         #[cfg(test)]
                         inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
@@ -766,6 +968,7 @@ impl Session {
             execution?;
             for (&physical_id, statistics) in &analyzed {
                 catalog.set_table_statistics(physical_id, Arc::clone(statistics));
+                catalog.clear_stats_modify_count(physical_id);
             }
             if statement.persist_options {
                 for options in &resolution.physical {

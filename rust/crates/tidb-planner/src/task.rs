@@ -48,6 +48,26 @@ use tidb_expr::expression::Expression;
 
 mod virtual_columns;
 
+/// The statistics settings from Go's statement PlanContext that must survive
+/// candidate dispatch and task composition until root conversion.
+#[derive(Clone, Debug)]
+pub struct TaskStatsContext {
+    /// Go CopTask.TblColHists: the source population, before access/filter scaling.
+    pub root_filter_stats: Option<Arc<crate::stats_info::StatsInfo>>,
+    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    pub scale_ndv_skew_ratio: f64,
+}
+
+impl Default for TaskStatsContext {
+    fn default() -> Self {
+        Self {
+            root_filter_stats: None,
+            estimator_options: Default::default(),
+            scale_ndv_skew_ratio: crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+        }
+    }
+}
+
 /// The bottom-up feedback produced by an inner data source planned under an
 /// index-join runtime property. This is the ported slice of Go
 /// `physicalop.IndexJoinInfo` consumed when the physical index join attaches.
@@ -235,6 +255,9 @@ pub struct MppTask {
     /// Go `RootTaskConds`: TableScan filters TiFlash cannot take, executed
     /// in a TiDB-side Selection when the task converts to root.
     pub root_task_conds: Vec<Expression>,
+    /// Immutable session estimator settings used if root conversion must
+    /// estimate `root_task_conds`, Go `PlanContext`'s session snapshot.
+    pub stats_context: TaskStatsContext,
     // boundary: `tblColHists *statistics.HistColl` — row-width statistics,
     // unported.
     /// Go `Warnings`.
@@ -265,11 +288,19 @@ impl MppTask {
             part_tp,
             hash_cols,
             root_task_conds: Vec::new(),
+            stats_context: TaskStatsContext::default(),
             warnings: SimpleWarnings::default(),
         };
         let sources: Vec<SimpleWarnings> = warnings.into_iter().collect();
         task.warnings.copy_from(sources.iter());
         task
+    }
+
+    /// Carry the statement's estimator configuration across task composition.
+    #[must_use]
+    pub fn with_stats_context(mut self, context: TaskStatsContext) -> Self {
+        self.stats_context = context;
+        self
     }
 
     /// Go `GetPartitionType`.
@@ -305,8 +336,16 @@ impl MppTask {
     /// root conversion has the same reader boundary as Go's
     /// `GenerateRootMPPTasks` path.
     pub fn into_root_task(
+        self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> Result<Task, PlanError> {
+        self.into_root_task_in(allocator, &crate::ranger::points::evaluate_static)
+    }
+
+    fn into_root_task_in(
         mut self,
         allocator: &crate::plan_base::PlanIdAllocator,
+        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         let mut plan = self
             .plan
@@ -364,9 +403,25 @@ impl MppTask {
         }
         let conds = std::mem::take(&mut self.root_task_conds);
         Ok(Task::Root(CopTask::handle_root_task_conds(
-            conds, root, allocator,
+            conds,
+            root,
+            allocator,
+            self.stats_context,
+            evaluate,
         )))
     }
+}
+
+/// Property feedback retained from merge candidate convergence.
+#[derive(Clone, Debug)]
+pub struct IndexMergeOrder {
+    /// Source matching used advisory rather than required sort items.
+    pub advisory: bool,
+    /// One source property result for each partial plan, in the same order.
+    pub partial_matches: Vec<crate::physical_property::PhysicalPropMatchResult>,
+    /// Required merge order. Advisory order does not order the final reader.
+    /// Go carries these ByItems on the partial scans before reader conversion.
+    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
 }
 
 /// Go `physicalop.CopTask` (`task_base.go:367-430`): a task running in the
@@ -400,9 +455,13 @@ pub struct CopTask {
     pub idx_merge_is_intersection: bool,
     /// Go `IdxMergeAccessMVIndex`.
     pub idx_merge_access_mv_index: bool,
+    /// Merge ordering feedback used by parent LIMIT/TopN attachment.
+    pub idx_merge_order: Option<IndexMergeOrder>,
     /// Go `RootTaskConds`: selections carrying virtual columns, which cannot
     /// push to TiKV.
     pub root_task_conds: Vec<Expression>,
+    /// Immutable session estimator settings used for root-only conditions.
+    pub stats_context: TaskStatsContext,
     /// Go `ExpectCnt`: the upper task's expected row count, `0` for
     /// unlimited; decides paging distsql.
     pub expect_cnt: u64,
@@ -414,7 +473,6 @@ pub struct CopTask {
     pub partial_order_match_result: Option<crate::physical_property::PartialOrderMatchResult>,
     // boundary: `ExtraHandleCol`,
     // `TblColHists`, `TblCols`,
-    // `IdxMergeMatchWithAdvisorySortItems`, `IdxMergePartPlansMatchResults`,
     // `PhysPlanPartInfo`,
     /// Go `Warnings`.
     pub warnings: SimpleWarnings,
@@ -480,10 +538,9 @@ impl CopTask {
             (self.table_plan.as_deref_mut(), self.index_plan.as_deref())
         {
             let index_stats = index.base().base.stats_info().cloned();
-            // Go calls `FinishIndexPlan` before adding table filters. Rust's
-            // DataSource conversion builds the same tree in one pass, so a
-            // table-side Selection may already be present: the index stats
-            // still belong to the bottom row-ID scan, not to that filter.
+            // Go calls FinishIndexPlan before datasource table filters are
+            // attached. Other task transformations may retain a wrapper;
+            // index output stats still belong to the bottom row-ID scan.
             fn set_bottom_stats(
                 plan: &mut PhysicalPlan,
                 stats: Option<crate::stats_info::StatsInfo>,
@@ -515,14 +572,17 @@ impl CopTask {
     /// conditions that could not push down (virtual columns) become a
     /// `PhysicalSelection` at root, `FromDataSource`, its stats scaled by
     /// `cardinality.Selectivity(ctx, t.TblColHists, t.RootTaskConds, nil)`.
-    /// The child plan's profile carries that HistColl, so the same call runs
-    /// here through the Selectivity port; Go's own error fallback
+    /// The retained source profile supplies the histogram population; the
+    /// reader profile is only the output being scaled. Go's error fallback
     /// (`cost.SelectionFactor`) applies only when the estimate cannot be
-    /// computed. The skew ratio is Go's default 1.0.
+    /// computed. The immutable settings come from the task's statement
+    /// snapshot, because conversion may occur after the dispatcher returns.
     fn handle_root_task_conds(
         conds: Vec<Expression>,
         mut root: RootTask,
         allocator: &crate::plan_base::PlanIdAllocator,
+        stats_context: TaskStatsContext,
+        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
     ) -> RootTask {
         if conds.is_empty() {
             return root;
@@ -530,18 +590,28 @@ impl CopTask {
         let Some(plan) = root.take_plan() else {
             return root;
         };
-        let selectivity = plan
-            .stats_info()
-            .and_then(|stats| crate::logical::rewrite::analyzed_filter_selectivity(stats, &conds))
-            .filter(|value| *value > 0.0)
+        let selectivity = stats_context
+            .root_filter_stats
+            .as_deref()
+            .or_else(|| plan.stats_info())
+            .and_then(|stats| {
+                crate::logical::rewrite::analyzed_filter_selectivity_with_evaluator(
+                    stats,
+                    &conds,
+                    stats_context.estimator_options,
+                    evaluate,
+                )
+            })
             .unwrap_or(crate::cost_factors::SELECTION_FACTOR);
         let mut base = crate::physical::BasePhysicalPlan::new(
             allocator,
             "Selection",
             plan.query_block_offset(),
         );
-        base.base
-            .set_stats(plan.stats_info().map(|stats| stats.scale(selectivity, 1.0)));
+        base.base.set_stats(
+            plan.stats_info()
+                .map(|stats| stats.scale(selectivity, stats_context.scale_ndv_skew_ratio)),
+        );
         base.base.set_schema(plan.schema().cloned());
         base.set_children(vec![plan]);
         let selection = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
@@ -732,8 +802,16 @@ impl CopTask {
     }
 
     pub fn convert_to_root_task_impl(
+        self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> Result<Task, PlanError> {
+        self.convert_to_root_task_impl_in(allocator, &crate::ranger::points::evaluate_static)
+    }
+
+    fn convert_to_root_task_impl_in(
         mut self,
         allocator: &crate::plan_base::PlanIdAllocator,
+        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         let origin = self
             .table_plan
@@ -753,7 +831,7 @@ impl CopTask {
             self.need_extra_proj = true;
             self.origin_schema = origin;
         }
-        self.convert_expanded_to_root_task(allocator)
+        self.convert_expanded_to_root_task(allocator, evaluate)
     }
 
     fn project_origin_schema(
@@ -785,7 +863,9 @@ impl CopTask {
     fn convert_expanded_to_root_task(
         mut self,
         allocator: &crate::plan_base::PlanIdAllocator,
+        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
+        let stats_context = self.stats_context.clone();
         if !self.idx_merge_part_plans.is_empty() {
             let partial_plans_raw = std::mem::take(&mut self.idx_merge_part_plans);
             let first = partial_plans_raw
@@ -808,7 +888,13 @@ impl CopTask {
                     is_intersection_type: self.idx_merge_is_intersection,
                     access_mv_index: self.idx_merge_access_mv_index,
                     pushed_limit: None,
-                    by_items: Vec::new(),
+                    by_items: if self.keep_order {
+                        self.idx_merge_order
+                            .take()
+                            .map_or_else(Vec::new, |order| order.by_items)
+                    } else {
+                        Vec::new()
+                    },
                     keep_order: self.keep_order,
                 });
             let reader = if self.need_extra_proj {
@@ -824,7 +910,11 @@ impl CopTask {
             }
             let conds = std::mem::take(&mut self.root_task_conds);
             return Ok(Task::Root(Self::handle_root_task_conds(
-                conds, root, allocator,
+                conds,
+                root,
+                allocator,
+                stats_context,
+                evaluate,
             )));
         }
         if self.index_plan.is_some() && self.table_plan.is_some() {
@@ -832,9 +922,13 @@ impl CopTask {
             return self
                 .build_index_look_up_task(allocator)
                 .map(|task| match task {
-                    Task::Root(root) => {
-                        Task::Root(Self::handle_root_task_conds(conds, root, allocator))
-                    }
+                    Task::Root(root) => Task::Root(Self::handle_root_task_conds(
+                        conds,
+                        root,
+                        allocator,
+                        stats_context,
+                        evaluate,
+                    )),
                     other => other,
                 });
         }
@@ -890,7 +984,11 @@ impl CopTask {
             }
             let conds = std::mem::take(&mut self.root_task_conds);
             return Ok(Task::Root(Self::handle_root_task_conds(
-                conds, root, allocator,
+                conds,
+                root,
+                allocator,
+                stats_context,
+                evaluate,
             )));
         }
         self.finish_index_plan();
@@ -979,7 +1077,11 @@ impl CopTask {
         }
         let conds = std::mem::take(&mut self.root_task_conds);
         Ok(Task::Root(Self::handle_root_task_conds(
-            conds, root, allocator,
+            conds,
+            root,
+            allocator,
+            stats_context,
+            evaluate,
         )))
     }
 
@@ -1103,16 +1205,34 @@ impl Task {
         self.copy().into_root_task(allocator)
     }
 
+    /// Borrowed conversion using the current statement evaluator.
+    pub(crate) fn convert_to_root_task_in(
+        &self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    ) -> Result<Task, PlanError> {
+        self.copy().into_root_task_in(allocator, evaluate)
+    }
+
+    /// Owned conversion using the current statement evaluator.
+    pub(crate) fn into_root_task_in(
+        self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    ) -> Result<Task, PlanError> {
+        match self {
+            Task::Root(task) => Ok(Task::Root(task)),
+            Task::Cop(task) => task.convert_to_root_task_impl_in(allocator, evaluate),
+            Task::Mpp(task) => task.into_root_task_in(allocator, evaluate),
+        }
+    }
+
     /// Owned form of conversion: no extra plan-tree copy at task attachment.
     pub fn into_root_task(
         self,
         allocator: &crate::plan_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
-        match self {
-            Task::Root(task) => Ok(Task::Root(task)),
-            Task::Cop(task) => task.convert_to_root_task_impl(allocator),
-            Task::Mpp(task) => task.into_root_task(allocator),
-        }
+        self.into_root_task_in(allocator, &crate::ranger::points::evaluate_static)
     }
 
     /// Go `AppendWarning(err)`.
@@ -1149,6 +1269,110 @@ mod tests {
                 ),
             ])));
         PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 0 })
+    }
+
+    #[test]
+    fn root_conversion_uses_statement_values_for_root_filters() {
+        use crate::cardinality::row_count_estimator::ColumnStats;
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::constant::{Constant, ParamMarker};
+        let allocator = PlanIdAllocator::new();
+        let ty = FieldType::new(FieldTypeCode::LongLong);
+        let mut parameter = Constant::new(Datum::Null, ty.clone());
+        parameter.param_marker = Some(ParamMarker { order: 0 });
+        let condition =
+            Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+                tidb_ast::CiString::new("eq"),
+                ty.clone(),
+                vec![
+                    Expression::Column(tidb_expr::column::Column::new(1, ty)),
+                    Expression::Constant(parameter),
+                ],
+            ));
+        let histogram = std::sync::Arc::new(ColumnStats {
+            histogram: tidb_stats::Histogram {
+                ndv: 10,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 100,
+                    repeat: 10,
+                    ndv: 10,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(10),
+                }],
+                ..Default::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        });
+        let mut plan = table_scan_with_rows(100.0);
+        plan.base_mut()
+            .base
+            .set_schema(Some(tidb_expr::schema::Schema::new(vec![
+                tidb_expr::column::Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
+            ])));
+        plan.set_stats(Some(StatsInfo::new(100.0, [(1, 10.0)]).with_hist_coll(
+            crate::stats_info::HistColl::new(false, 100, []).with_histograms([(1, histogram)]),
+        )));
+        let mpp = Task::Mpp(MppTask {
+            plan: Some(Box::new(plan.clone())),
+            root_task_conds: vec![condition.clone()],
+            ..Default::default()
+        });
+        let task = Task::Cop(CopTask {
+            table_plan: Some(Box::new(plan)),
+            root_task_conds: vec![condition],
+            ..Default::default()
+        });
+        let evaluate = |expression: &Expression| match expression {
+            Expression::Constant(value) if value.param_marker.is_some() => Ok(Datum::Int(3)),
+            _ => crate::ranger::points::evaluate_static(expression),
+        };
+        fn filter_rows(plan: &PhysicalPlan) -> Option<f64> {
+            if let PhysicalPlan::Selection(selection) = plan {
+                if selection.from_data_source {
+                    return plan.stats_info().map(|stats| stats.row_count());
+                }
+            }
+            plan.children().iter().find_map(filter_rows)
+        }
+        for task in [task, mpp] {
+            let converted = task
+                .copy()
+                .into_root_task_in(&allocator, &evaluate)
+                .unwrap();
+            assert_eq!(
+                converted.plan().unwrap().stats_info().unwrap().row_count(),
+                10.0
+            );
+            assert!(matches!(converted.plan(), Some(PhysicalPlan::Selection(_))));
+
+            let mut base = crate::physical::BasePhysicalPlan::new(&allocator, "Selection", 0);
+            base.base
+                .set_stats(task.plan().and_then(PhysicalPlan::stats_info).cloned());
+            let parent = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                base,
+                conditions: vec![],
+                from_data_source: false,
+            });
+            let attached =
+                attach2_task_in(parent, vec![task.copy()], None, &allocator, 1.0, &evaluate, &Default::default())
+                    .unwrap();
+            let attached = attached.into_root_task_in(&allocator, &evaluate).unwrap();
+            assert_eq!(filter_rows(attached.plan().unwrap()), Some(10.0));
+
+            let property = crate::physical_property::PhysicalProperty {
+                sort_items: vec![crate::physical_property::SortItem::new(1, false)],
+                ..Default::default()
+            };
+            let enforced =
+                crate::enforce::enforce_property_in(&property, task, &allocator, &evaluate)
+                    .unwrap();
+            let filter = &enforced.plan().unwrap().children()[0];
+            assert!(matches!(filter, PhysicalPlan::Selection(_)));
+            assert_eq!(filter.stats_info().unwrap().row_count(), 10.0);
+        }
     }
 
     fn table_scan_with_rows(rows: f64) -> PhysicalPlan {
@@ -1855,6 +2079,233 @@ mod tests {
     }
 
     #[test]
+    fn root_task_filter_preserves_go_one_row_floor() {
+        use crate::cardinality::row_count_estimator::ColumnStats;
+        use crate::stats_info::HistColl;
+        use std::sync::Arc;
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::{Expression, ScalarFunction};
+        use tidb_stats::histogram::{Bucket, Histogram};
+
+        let unique_id = 1;
+        let histogram = Histogram {
+            id: unique_id,
+            ndv: 10,
+            last_update_version: 1,
+            buckets: vec![Bucket {
+                count: 100,
+                repeat: 10,
+                ndv: 10,
+                lower_bound: Datum::Int(1),
+                upper_bound: Datum::Int(10),
+            }],
+            ..Histogram::default()
+        };
+        let hist_coll = HistColl::new(false, 100, [])
+            .with_histograms([(
+                unique_id,
+                Arc::new(ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(0);
+        let stats = StatsInfo::new(100.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
+        let mut scan = table_scan_with_rows(100.0);
+        scan.base_mut().base.set_stats(Some(stats));
+
+        let compare = |name: &str, value| {
+            let long = FieldType::new(FieldTypeCode::LongLong);
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                long.clone(),
+                vec![
+                    Expression::Column(column_with_id(unique_id)),
+                    Expression::Constant(Constant::new(Datum::Int(value), long)),
+                ],
+            ))
+        };
+        let task = Task::Cop(CopTask {
+            table_plan: Some(Box::new(scan)),
+            root_task_conds: vec![compare("gt", 10), compare("lt", 1)],
+            ..CopTask::default()
+        });
+        let converted = task
+            .convert_to_root_task(&PlanIdAllocator::new())
+            .expect("root conditions convert to a selection");
+        let rows = converted
+            .plan()
+            .and_then(PhysicalPlan::stats_info)
+            .expect("selection stats")
+            .row_count();
+        assert_eq!(
+            rows, 1.0,
+            "Go Selectivity floors a recognized estimate at 1 / RealtimeCount"
+        );
+    }
+
+    #[test]
+    fn root_task_conversion_retains_statement_ndv_scaling() {
+        for ratio in [0.0, 0.5, 1.0] {
+            let stats_context = TaskStatsContext {
+                scale_ndv_skew_ratio: ratio,
+                ..Default::default()
+            };
+            let stats = StatsInfo::new(1_000.0, [(1, 10.0)]);
+            let mut scan = table_scan_with_rows(1_000.0);
+            scan.set_stats(Some(stats.clone()));
+            let conditions = vec![Expression::Column(column_with_id(1))];
+            let tasks = [
+                Task::Cop(CopTask {
+                    table_plan: Some(Box::new(scan.clone())),
+                    root_task_conds: conditions.clone(),
+                    stats_context: stats_context.clone(),
+                    ..Default::default()
+                }),
+                Task::Cop(CopTask {
+                    index_plan: Some(Box::new(scan.clone())),
+                    root_task_conds: conditions.clone(),
+                    stats_context: stats_context.clone(),
+                    ..Default::default()
+                }),
+                Task::Cop(CopTask {
+                    table_plan: Some(Box::new(scan.clone())),
+                    idx_merge_part_plans: vec![scan.clone()],
+                    root_task_conds: conditions.clone(),
+                    stats_context: stats_context.clone(),
+                    ..Default::default()
+                }),
+                Task::Cop(CopTask {
+                    table_plan: Some(Box::new(scan.clone())),
+                    idx_merge_part_plans: vec![scan.clone(), scan.clone()],
+                    idx_merge_is_intersection: true,
+                    root_task_conds: conditions.clone(),
+                    stats_context: stats_context.clone(),
+                    ..Default::default()
+                }),
+                Task::Mpp(MppTask {
+                    plan: Some(Box::new(scan)),
+                    root_task_conds: conditions,
+                    stats_context: stats_context.clone(),
+                    ..Default::default()
+                }),
+            ];
+            for task in tasks {
+                let root = task.into_root_task(&PlanIdAllocator::new()).unwrap();
+                let actual = root.plan().unwrap().stats_info().unwrap();
+                let expected = stats.scale(crate::cost_factors::SELECTION_FACTOR, ratio);
+                assert_eq!(actual.row_count(), expected.row_count());
+                assert_eq!(actual.col_ndv(1), expected.col_ndv(1), "ratio {ratio}");
+            }
+        }
+    }
+
+    #[test]
+    fn root_task_filter_uses_the_task_session_estimator_options() {
+        use crate::cardinality::row_count_estimator::{ColumnStats, EstimatorOptions};
+        use crate::stats_info::HistColl;
+        use std::sync::Arc;
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::{Expression, ScalarFunction};
+        use tidb_stats::histogram::{Bucket, Histogram};
+
+        let unique_id = 1;
+        let histogram = Histogram {
+            id: unique_id,
+            ndv: 10,
+            last_update_version: 1,
+            buckets: vec![Bucket {
+                count: 100,
+                repeat: 10,
+                ndv: 10,
+                lower_bound: Datum::Int(1),
+                upper_bound: Datum::Int(10),
+            }],
+            ..Histogram::default()
+        };
+        let hist_coll = HistColl::new(false, 1_000, [])
+            .with_histograms([(
+                unique_id,
+                Arc::new(ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(2_000);
+        let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
+        let compare = |name: &str, value| {
+            let long = FieldType::new(FieldTypeCode::LongLong);
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                long.clone(),
+                vec![
+                    Expression::Column(column_with_id(unique_id)),
+                    Expression::Constant(Constant::new(Datum::Int(value), long)),
+                ],
+            ))
+        };
+        let conditions = vec![compare("gt", 12), compare("lt", 15)];
+        let estimate = |estimator_options, input_rows: f64| {
+            let mut scan = table_scan_with_rows(1_000.0);
+            scan.base_mut().base.set_stats(Some(
+                table_stats.scale(input_rows / table_stats.row_count(), 1.0),
+            ));
+            let task = CopTask {
+                table_plan: Some(Box::new(scan)),
+                root_task_conds: conditions.clone(),
+                stats_context: TaskStatsContext {
+                    root_filter_stats: Some(Arc::new(table_stats.clone())),
+                    estimator_options,
+                    ..Default::default()
+                },
+                ..CopTask::default()
+            };
+            let Task::Root(root) = Task::Cop(task)
+                .into_root_task(&PlanIdAllocator::new())
+                .expect("cop task converts")
+            else {
+                panic!("cop task must convert to a root task");
+            };
+            root.get_plan()
+                .stats_info()
+                .expect("selection stats")
+                .row_count()
+        };
+
+        let baseline = estimate(EstimatorOptions::default(), 1_000.0);
+        let risk_adjusted = estimate(
+            EstimatorOptions {
+                risk_range_skew_ratio: 0.5,
+                ..EstimatorOptions::default()
+            },
+            1_000.0,
+        );
+        let determinate = estimate(
+            EstimatorOptions {
+                risk_range_skew_ratio: 0.5,
+                allow_use_modify_count: false,
+                ..EstimatorOptions::default()
+            },
+            1_000.0,
+        );
+
+        assert!(
+            (estimate(EstimatorOptions::default(), 100.0) - baseline * 0.1).abs() < 1e-9,
+            "the table histogram population must stay unchanged when the reader is scaled"
+        );
+        assert!(risk_adjusted > baseline);
+        assert_ne!(risk_adjusted, determinate);
+    }
+
+    #[test]
     fn an_index_only_cop_task_converts_into_an_index_reader() {
         // `convertToRootTaskImpl`'s index branch (`task_base.go:563`): the
         // pushed-down index plan wraps in a PhysicalIndexReader carrying its
@@ -2135,6 +2586,9 @@ fn attach_hash_agg_to_mpp(
     mpp: MppTask,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
     allocator: &crate::plan_base::PlanIdAllocator,
+    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    group_ndv_skew_ratio: f64,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<Task, PlanError> {
     let PhysicalPlan::HashAgg(hash_agg) = &plan else {
         unreachable!("MPP HashAgg attachment received a non-HashAgg plan");
@@ -2201,6 +2655,7 @@ fn attach_hash_agg_to_mpp(
                 column_ids,
                 plan,
                 allocator,
+                blacklist,
             )? else {
                 return Ok(Task::invalid_task());
             };
@@ -2270,13 +2725,14 @@ fn attach_hash_agg_to_mpp(
                 column_ids,
                 plan,
                 allocator,
+                blacklist,
             )?;
             let task = if let Some(partial) = partial {
                 attach_plan_to_task(partial, Task::Mpp(mpp))
             } else {
                 Task::Mpp(mpp)
             };
-            let task = task.into_root_task(allocator)?;
+            let task = task.into_root_task_in(allocator, evaluate)?;
             let task = attach_plan_to_task(final_agg, task);
             if let Some(projection) = avg_projection.take() {
                 Ok(attach_plan_to_task(PhysicalPlan::Projection(projection), task))
@@ -2325,6 +2781,7 @@ fn attach_hash_agg_to_mpp(
                 column_ids,
                 plan,
                 allocator,
+                blacklist,
             )?;
             if can_use_three_stage {
                 let Some(partial) = partial else {
@@ -2334,14 +2791,16 @@ fn attach_hash_agg_to_mpp(
                     let child = mpp.plan.as_deref().ok_or_else(|| {
                         PlanError::internal("scalar MPP aggregate has no child plan")
                     })?;
-                    let Some(split) = crate::final_mode_agg::adjust_three_stage_multi_distinct(
-                        partial,
-                        final_agg,
-                        child,
-                        &grouping_sets,
-                        column_ids,
-                        allocator,
-                    )?
+                    let Some(split) =
+                        crate::final_mode_agg::adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
+                            partial,
+                            final_agg,
+                            child,
+                            &grouping_sets,
+                            column_ids,
+                            allocator,
+                            group_ndv_skew_ratio,
+                        )?
                     else {
                         return Ok(Task::invalid_task());
                     };
@@ -2600,6 +3059,223 @@ fn sink_into_index_look_up(
     sunk
 }
 
+/// Go `sinkIntoIndexMerge`: limit handles only when the table probe is a
+/// bare scan. A root Selection or table filter must run before truncation.
+fn sink_into_index_merge(
+    limit: &crate::physical::PhysicalLimit,
+    task: &mut Task,
+    allocator: &crate::plan_base::PlanIdAllocator,
+) -> bool {
+    let Task::Root(root) = task else { return false };
+    let Some(mut plan) = root.take_plan() else {
+        return false;
+    };
+    let reader = match &mut plan {
+        PhysicalPlan::IndexMergeReader(reader) => Some(reader),
+        PhysicalPlan::Projection(projection) => match projection.base.children_mut().first_mut() {
+            Some(PhysicalPlan::IndexMergeReader(reader)) => Some(reader),
+            _ => None,
+        },
+        _ => None,
+    };
+    let sunk = if let Some(reader) = reader {
+        if matches!(
+            reader.table_plan.as_deref(),
+            Some(PhysicalPlan::TableScan(_))
+        ) {
+            reader.pushed_limit = Some(crate::physical::PushedDownLimit {
+                offset: limit.offset,
+                count: limit.count,
+            });
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if sunk {
+        let output = limit.base.base.schema();
+        let actual = plan.schema();
+        let need_projection = output.map_or(0, |schema| schema.len())
+            != actual.map_or(0, |schema| schema.len())
+            || output
+                .into_iter()
+                .flat_map(|schema| &schema.columns)
+                .zip(actual.into_iter().flat_map(|schema| &schema.columns))
+                .any(|(left, right)| left.unique_id != right.unique_id);
+        if need_projection {
+            let mut base = crate::physical::BasePhysicalPlan::new(
+                allocator,
+                "Projection",
+                limit.base.base.query_block_offset(),
+            );
+            base.base.set_stats(limit.base.base.stats_info().cloned());
+            base.base.set_schema(output.cloned());
+            let exprs = output
+                .into_iter()
+                .flat_map(|schema| &schema.columns)
+                .cloned()
+                .map(Expression::Column)
+                .collect();
+            base.set_children(vec![plan]);
+            plan = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+                base,
+                exprs,
+                calculate_no_delay: false,
+                avoid_column_evaluator: false,
+            });
+        }
+    }
+    root.set_plan(plan);
+    sunk
+}
+
+/// Go's merge-specific branch of `attach2Task4PhysicalLimit`. Union may cap
+/// each partial; intersection must finish membership before limiting handles.
+fn attach_limit_to_index_merge(
+    plan: PhysicalPlan,
+    mut cop: CopTask,
+    allocator: &crate::plan_base::PlanIdAllocator,
+    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+) -> Result<Task, PlanError> {
+    let PhysicalPlan::Limit(limit) = &plan else {
+        unreachable!()
+    };
+    let push_limit = |child: PhysicalPlan| {
+        let count = limit.offset.wrapping_add(limit.count);
+        let mut base = crate::physical::BasePhysicalPlan::new(
+            allocator,
+            "Limit",
+            limit.base.base.query_block_offset(),
+        );
+        base.base.set_stats(
+            child
+                .stats_info()
+                .map(|stats| stats.derive_limit_stats(count as f64)),
+        );
+        base.base.set_schema(child.schema().cloned());
+        base.set_children(vec![child]);
+        PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+            base,
+            partition_by: limit.partition_by.clone(),
+            offset: 0,
+            count,
+            prefix_col: None,
+            prefix_len: 0,
+        })
+    };
+    if cop.root_task_conds.is_empty() {
+        if cop.index_plan_finished && (cop.idx_merge_is_intersection || !cop.keep_order) {
+            if let Some(table) = cop.table_plan.take() {
+                cop.table_plan = Some(Box::new(push_limit(*table)));
+            }
+        } else if !cop.idx_merge_is_intersection && !cop.index_plan_finished {
+            cop.idx_merge_part_plans = std::mem::take(&mut cop.idx_merge_part_plans)
+                .into_iter()
+                .map(push_limit)
+                .collect();
+        }
+    }
+    let mut task = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
+    if sink_into_index_merge(limit, &mut task, allocator) || !limit.partition_by.is_empty() {
+        return Ok(task);
+    }
+    Ok(attach_plan_to_task(plan, task))
+}
+
+/// Go `handleAdvisorySortItemsForIndexMerge`: preserve each partial's property
+/// feedback until the parent TopN attaches to the unfinished cop task.
+fn attach_advisory_topn_to_index_merge(
+    topn: &crate::physical::PhysicalTopN,
+    mut cop: CopTask,
+    allocator: &crate::plan_base::PlanIdAllocator,
+    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+) -> Result<Task, PlanError> {
+    let order = cop
+        .idx_merge_order
+        .as_ref()
+        .expect("advisory merge order was checked");
+    if order.partial_matches.len() != cop.idx_merge_part_plans.len() {
+        return Err(PlanError::internal(
+            "merge property results do not match partial plans",
+        ));
+    }
+    let by_exprs: Vec<_> = topn.by_items.iter().map(|item| item.expr.clone()).collect();
+    let columns = tidb_expr::simple_expr::extract_columns_from_expressions(&by_exprs, None);
+    let count = topn.offset.wrapping_add(topn.count);
+    let mut partials = Vec::with_capacity(cop.idx_merge_part_plans.len());
+    for (child, matched) in std::mem::take(&mut cop.idx_merge_part_plans)
+        .into_iter()
+        .zip(&order.partial_matches)
+    {
+        if matched.matched() {
+            let mut base = crate::physical::BasePhysicalPlan::new(
+                allocator,
+                "Limit",
+                topn.base.base.query_block_offset(),
+            );
+            base.base.set_stats(
+                child
+                    .stats_info()
+                    .map(|stats| stats.derive_limit_stats(count as f64)),
+            );
+            base.base.set_schema(child.schema().cloned());
+            base.set_children(vec![child]);
+            partials.push(PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                base,
+                partition_by: topn.partition_by.clone(),
+                offset: 0,
+                count,
+                prefix_col: None,
+                prefix_len: 0,
+            }));
+        } else if can_push_to_index_plan(Some(&child), &columns) {
+            partials.push(merge_partial_topn(topn, child, allocator));
+        } else {
+            partials.push(child);
+        }
+    }
+    cop.idx_merge_part_plans = partials;
+    if let Some(table) = cop.table_plan.take() {
+        cop.table_plan = Some(Box::new(merge_partial_topn(topn, *table, allocator)));
+    }
+    let converted = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
+    if !topn.partition_by.is_empty() {
+        return Ok(converted);
+    }
+    Ok(attach_plan_to_task(
+        PhysicalPlan::TopN(topn.clone()),
+        converted,
+    ))
+}
+
+// Advisory order currently originates from column-only TopN items, so no
+// heavy-function projection split is needed on these partial plans.
+fn merge_partial_topn(
+    topn: &crate::physical::PhysicalTopN,
+    child: PhysicalPlan,
+    allocator: &crate::plan_base::PlanIdAllocator,
+) -> PhysicalPlan {
+    let count = topn.offset.wrapping_add(topn.count);
+    let mut pushed = topn.clone();
+    pushed.base = crate::physical::BasePhysicalPlan::new(
+        allocator,
+        "TopN",
+        topn.base.base.query_block_offset(),
+    );
+    pushed.base.base.set_stats(
+        child
+            .stats_info()
+            .map(|stats| stats.derive_limit_stats(count as f64)),
+    );
+    pushed.base.base.set_schema(child.schema().cloned());
+    pushed.base.set_children(vec![child]);
+    pushed.offset = 0;
+    pushed.count = count;
+    PhysicalPlan::TopN(pushed)
+}
+
 /// Go `canPushToIndexPlan` (`core/task.go`): every referenced column must be
 /// supplied by the open index half as a full, non-prefix column.
 fn can_push_to_index_plan(
@@ -2624,6 +3300,8 @@ fn attach_agg_over_cop(
     mut cop: CopTask,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
     allocator: &crate::plan_base::PlanIdAllocator,
+    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<Task, PlanError> {
     let Some(column_ids) = column_ids else {
         return Err(PlanError::internal(
@@ -2635,7 +3313,7 @@ fn attach_agg_over_cop(
     let ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
     let query_block_offset = plan.query_block_offset();
     let (partial, final_plan) =
-        crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator)?;
+        crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator, blacklist)?;
     let Some(mut partial) = partial else {
         // Go `attach2Task4PhysicalHashAgg`: a TiKV cop aggregate whose split
         // is impossible (e.g. DISTINCT with tidb_opt_distinct_agg_push_down
@@ -2684,7 +3362,7 @@ fn attach_agg_over_cop(
             ));
         }
     }
-    let t = Task::Cop(cop).into_root_task(allocator)?;
+    let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
     Ok(attach_plan_to_task(final_plan, t))
 }
 
@@ -2962,11 +3640,50 @@ fn heavy_topn_split(
     Some((projection, pushed, global))
 }
 
+/// Attaches a physical plan with Go's default group-NDV skew ratio.
 pub fn attach2_task(
+    plan: PhysicalPlan,
+    tasks: Vec<Task>,
+    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    allocator: &crate::plan_base::PlanIdAllocator,
+) -> Result<Task, PlanError> {
+    attach2_task_with_group_ndv_skew_ratio(
+        plan,
+        tasks,
+        column_ids,
+        allocator,
+        tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+    )
+}
+
+/// Attaches a physical plan using the statement's group-NDV estimation ratio.
+pub fn attach2_task_with_group_ndv_skew_ratio(
+    plan: PhysicalPlan,
+    tasks: Vec<Task>,
+    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+    allocator: &crate::plan_base::PlanIdAllocator,
+    group_ndv_skew_ratio: f64,
+) -> Result<Task, PlanError> {
+    attach2_task_in(
+        plan,
+        tasks,
+        column_ids,
+        allocator,
+        group_ndv_skew_ratio,
+        &crate::ranger::points::evaluate_static,
+        &Default::default(),
+    )
+}
+
+/// Attaches a candidate without losing the statement evaluation context at conversion.
+pub(crate) fn attach2_task_in(
     plan: PhysicalPlan,
     mut tasks: Vec<Task>,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
     allocator: &crate::plan_base::PlanIdAllocator,
+    group_ndv_skew_ratio: f64,
+    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<Task, PlanError> {
     // The caller hands over owned candidate tasks. Go copies task headers
     // while sharing plan pointers; moving these tasks avoids cloning Rust's
@@ -2986,17 +3703,17 @@ pub fn attach2_task(
         // `CanExprsPushDown` admits every condition, and converts otherwise.
         PhysicalPlan::Selection(_) => match &first {
             Task::Root(_) | Task::Cop(_) => {
-                let converted = first.into_root_task(allocator)?;
+                let converted = first.into_root_task_in(allocator, evaluate)?;
                 Ok(attach_plan_to_task(plan, converted))
             }
             Task::Mpp(_) => {
                 let PhysicalPlan::Selection(selection) = &plan else {
                     unreachable!("the arm matched Selection");
                 };
-                if crate::pushdown::can_exprs_push_down_tiflash(&selection.conditions) {
+                if crate::pushdown::can_exprs_push_down(&selection.conditions, tidb_expr::infer_pushdown::PushDownStore::TiFlash, blacklist) {
                     Ok(attach_plan_to_task(plan, first))
                 } else {
-                    let converted = first.into_root_task(allocator)?;
+                    let converted = first.into_root_task_in(allocator, evaluate)?;
                     Ok(attach_plan_to_task(plan, converted))
                 }
             }
@@ -3005,7 +3722,7 @@ pub fn attach2_task(
         // a root task and attach. The TiFlash MPP arm is absent with that
         // tier.
         PhysicalPlan::Window(_) | PhysicalPlan::Shuffle(_) | PhysicalPlan::ShuffleReceiver(_) => {
-            let converted = first.copy().convert_to_root_task(allocator)?;
+            let converted = first.copy().convert_to_root_task_in(allocator, evaluate)?;
             Ok(attach_plan_to_task(plan, converted))
         }
         // Go attach2Task4PhysicalExpand retains an MPP child on TiFlash;
@@ -3013,7 +3730,7 @@ pub fn attach2_task(
         PhysicalPlan::Expand(_) => {
             let task = match first.copy() {
                 mpp @ Task::Mpp(_) => mpp,
-                other => other.convert_to_root_task(allocator)?,
+                other => other.convert_to_root_task_in(allocator, evaluate)?,
             };
             Ok(attach_plan_to_task(plan, task))
         }
@@ -3027,7 +3744,7 @@ pub fn attach2_task(
         // gate and converts when a projection cannot be pushed.
         PhysicalPlan::Projection(_) => match &first {
             Task::Root(_) => {
-                let converted = first.into_root_task(allocator)?;
+                let converted = first.into_root_task_in(allocator, evaluate)?;
                 Ok(attach_plan_to_task(plan, converted))
             }
             Task::Cop(cop_ref) => {
@@ -3036,7 +3753,7 @@ pub fn attach2_task(
                 };
                 let pushable = cop_ref.root_task_conds.is_empty()
                     && cop_ref.idx_merge_part_plans.is_empty()
-                    && crate::pushdown::can_exprs_push_down_tikv(&projection.exprs);
+                    && crate::pushdown::can_exprs_push_down(&projection.exprs, tidb_expr::infer_pushdown::PushDownStore::TiKv, blacklist);
                 if pushable {
                     let Task::Cop(mut cop) = first else {
                         unreachable!("the arm matched Cop");
@@ -3052,7 +3769,7 @@ pub fn attach2_task(
                     }
                     Ok(attach_plan_to_task(plan, Task::Cop(cop)))
                 } else {
-                    let converted = first.into_root_task(allocator)?;
+                    let converted = first.into_root_task_in(allocator, evaluate)?;
                     Ok(attach_plan_to_task(plan, converted))
                 }
             }
@@ -3060,10 +3777,10 @@ pub fn attach2_task(
                 let PhysicalPlan::Projection(projection) = &plan else {
                     unreachable!("the arm matched Projection");
                 };
-                if crate::pushdown::can_exprs_push_down_tiflash(&projection.exprs) {
+                if crate::pushdown::can_exprs_push_down(&projection.exprs, tidb_expr::infer_pushdown::PushDownStore::TiFlash, blacklist) {
                     Ok(attach_plan_to_task(plan, first))
                 } else {
-                    let converted = first.into_root_task(allocator)?;
+                    let converted = first.into_root_task_in(allocator, evaluate)?;
                     Ok(attach_plan_to_task(plan, converted))
                 }
             }
@@ -3081,7 +3798,10 @@ pub fn attach2_task(
                 unreachable!("the arm matched Limit");
             };
             let t = match first {
-                Task::Root(_) => first.into_root_task(allocator)?,
+                Task::Root(_) => first.into_root_task_in(allocator, evaluate)?,
+                Task::Cop(cop) if !cop.idx_merge_part_plans.is_empty() => {
+                    return attach_limit_to_index_merge(plan, cop, allocator, evaluate);
+                }
                 Task::Cop(_) => {
                     let Task::Cop(mut cop) = first else {
                         unreachable!("the arm matched Cop");
@@ -3120,7 +3840,7 @@ pub fn attach2_task(
                         };
                         cop = pushed_cop;
                     }
-                    let mut t = Task::Cop(cop).into_root_task(allocator)?;
+                    let mut t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
                     // `sunk = sinkIntoIndexLookUp(p, t)`: a converted double
                     // read absorbs the limit itself.
                     if sink_into_index_look_up(limit, &mut t, allocator) {
@@ -3164,7 +3884,7 @@ pub fn attach2_task(
                             .cloned();
                         pushed_limit.base.base.set_schema(child_schema);
                     }
-                    pushed_task.into_root_task(allocator)?
+                    pushed_task.into_root_task_in(allocator, evaluate)?
                 }
             };
             // "Skip limit with partition on the root."
@@ -3178,7 +3898,7 @@ pub fn attach2_task(
         // ANY task kind — a cop/MPP child propagates
         // `convert_to_root_task`'s reader-building refusal.
         PhysicalPlan::MaxOneRow(_) => {
-            let converted = first.into_root_task(allocator)?;
+            let converted = first.into_root_task_in(allocator, evaluate)?;
             Ok(attach_plan_to_task(plan, converted))
         }
         // An ExchangeSender is born at root conversion (and at MPP fragment
@@ -3190,7 +3910,7 @@ pub fn attach2_task(
         // `PhysicalLock` has no override: the default convert-then-attach
         // body, exactly as `PhysicalMaxOneRow`'s arm above.
         PhysicalPlan::Lock(_) => {
-            let converted = first.into_root_task(allocator)?;
+            let converted = first.into_root_task_in(allocator, evaluate)?;
             Ok(attach_plan_to_task(plan, converted))
         }
         // `attach2Task4PhysicalUnionAll` (`task.go:1573`): convert EVERY
@@ -3210,6 +3930,13 @@ pub fn attach2_task(
                 if plan.base().base.tp() == "PartitionUnion" {
                     return Ok(Task::invalid_task());
                 }
+                let stats_context = tasks
+                    .iter()
+                    .find_map(|task| match task {
+                        Task::Mpp(mpp) => Some(mpp.stats_context.clone()),
+                        _ => None,
+                    })
+                    .expect("the MPP branch contains an MPP task");
                 let mut child_plans = Vec::with_capacity(tasks.len());
                 for task in tasks {
                     let Task::Mpp(mut mpp) = task else {
@@ -3225,16 +3952,19 @@ pub fn attach2_task(
                 }
                 let mut mpp_plan = plan;
                 mpp_plan.base_mut().set_children(child_plans);
-                return Ok(Task::Mpp(MppTask::new(
-                    mpp_plan,
-                    crate::physical_property::MppPartitionType::Any,
-                    [],
-                )));
+                return Ok(Task::Mpp(
+                    MppTask::new(
+                        mpp_plan,
+                        crate::physical_property::MppPartitionType::Any,
+                        [],
+                    )
+                    .with_stats_context(stats_context),
+                ));
             }
             let mut plan = plan;
             let mut children = Vec::with_capacity(tasks.len());
             for task in tasks.drain(..) {
-                let Task::Root(mut converted) = task.into_root_task(allocator)? else {
+                let Task::Root(mut converted) = task.into_root_task_in(allocator, evaluate)? else {
                     return Err(PlanError::internal(
                         "convert_to_root_task answered a non-root task",
                     ));
@@ -3259,12 +3989,12 @@ pub fn attach2_task(
                 .drain(..1)
                 .next()
                 .ok_or_else(|| PlanError::internal("attach2Task4PhysicalApply needs two tasks"))?;
-            let Task::Root(mut left) = first.into_root_task(allocator)? else {
+            let Task::Root(mut left) = first.into_root_task_in(allocator, evaluate)? else {
                 return Err(PlanError::internal(
                     "convert_to_root_task answered a non-root task",
                 ));
             };
-            let Task::Root(mut right) = second.into_root_task(allocator)? else {
+            let Task::Root(mut right) = second.into_root_task_in(allocator, evaluate)? else {
                 return Err(PlanError::internal(
                     "convert_to_root_task answered a non-root task",
                 ));
@@ -3316,6 +4046,7 @@ pub fn attach2_task(
             };
             let partition_type = last.partition_type();
             let hash_cols = last.hash_cols.clone();
+            let stats_context = last.stats_context.clone();
             let mut child_plans = Vec::with_capacity(all.len());
             let mut warnings = Vec::with_capacity(all.len());
             for task in all {
@@ -3330,12 +4061,10 @@ pub fn attach2_task(
             }
             let mut sequence = plan;
             sequence.base_mut().set_children(child_plans);
-            Ok(Task::Mpp(MppTask::new_with_hash_cols(
-                sequence,
-                partition_type,
-                hash_cols,
-                warnings,
-            )))
+            Ok(Task::Mpp(
+                MppTask::new_with_hash_cols(sequence, partition_type, hash_cols, warnings)
+                    .with_stats_context(stats_context),
+            ))
         }
         // `attach2Task4PhysicalTopN` (`task.go:1249`), the SIMPLE path:
         // when the by-items carry columns, pass the TiKV gate, and the cop
@@ -3409,7 +4138,7 @@ pub fn attach2_task(
                         )));
                     }
 
-                    let converted = Task::Cop(cop).into_root_task(allocator)?;
+                    let converted = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
                     return Ok(attach_plan_to_task(
                         PhysicalPlan::TopN(partial_topn),
                         converted,
@@ -3418,7 +4147,7 @@ pub fn attach2_task(
                 first = Task::Cop(cop);
             }
             let t = match first {
-                Task::Root(_) => first.into_root_task(allocator)?,
+                Task::Root(_) => first.into_root_task_in(allocator, evaluate)?,
                 Task::Cop(_) => {
                     let Task::Cop(mut cop) = first else {
                         unreachable!("the arm matched Cop");
@@ -3429,16 +4158,24 @@ pub fn attach2_task(
                         tidb_expr::simple_expr::extract_columns_from_expressions(&by_exprs, None);
                     let need_push_down = !columns.is_empty();
                     let pushable = need_push_down
-                        && crate::pushdown::can_exprs_push_down_tikv(&by_exprs)
+                        && crate::pushdown::can_exprs_push_down(&by_exprs, tidb_expr::infer_pushdown::PushDownStore::TiKv, blacklist)
                         && cop.root_task_conds.is_empty();
                     if pushable {
+                        if !cop.index_plan_finished && !cop.idx_merge_is_intersection {
+                            if cop.idx_merge_order.as_ref().is_some_and(|order| {
+                                order.advisory
+                                    && !order.partial_matches.iter().all(|result| result.matched())
+                            }) {
+                                return attach_advisory_topn_to_index_merge(topn, cop, allocator, evaluate);
+                            }
+                        }
                         if !cop.index_plan_finished
                             && !can_push_to_index_plan(cop.index_plan.as_deref(), &columns)
                         {
                             cop.finish_index_plan();
                         }
                         if cop.plan().is_none() {
-                            let converted = Task::Cop(cop).convert_to_root_task(allocator)?;
+                            let converted = Task::Cop(cop).convert_to_root_task_in(allocator, evaluate)?;
                             if !topn.partition_by.is_empty() {
                                 return Ok(converted);
                             }
@@ -3461,7 +4198,7 @@ pub fn attach2_task(
                             if !topn.partition_by.is_empty() {
                                 return Ok(pushed_task);
                             }
-                            let converted = pushed_task.into_root_task(allocator)?;
+                            let converted = pushed_task.into_root_task_in(allocator, evaluate)?;
                             return Ok(attach_plan_to_task(
                                 PhysicalPlan::TopN(global),
                                 converted,
@@ -3497,7 +4234,7 @@ pub fn attach2_task(
                         };
                         cop = pushed_cop;
                     }
-                    Task::Cop(cop).into_root_task(allocator)?
+                    Task::Cop(cop).into_root_task_in(allocator, evaluate)?
                 }
                 Task::Mpp(mpp) => {
                     let by_exprs: Vec<tidb_expr::expression::Expression> =
@@ -3506,7 +4243,7 @@ pub fn attach2_task(
                         tidb_expr::simple_expr::extract_columns_from_expressions(&by_exprs, None);
                     let need_push_down = !columns.is_empty();
                     let pushable = need_push_down
-                        && crate::pushdown::can_exprs_push_down_tiflash(&by_exprs)
+                        && crate::pushdown::can_exprs_push_down(&by_exprs, tidb_expr::infer_pushdown::PushDownStore::TiFlash, blacklist)
                         && !contains_virtual_column_in_plan(
                             &by_exprs,
                             mpp.plan.as_deref().ok_or_else(|| {
@@ -3533,7 +4270,7 @@ pub fn attach2_task(
                             if !topn.partition_by.is_empty() {
                                 return Ok(pushed_task);
                             }
-                            let converted = pushed_task.into_root_task(allocator)?;
+                            let converted = pushed_task.into_root_task_in(allocator, evaluate)?;
                             return Ok(attach_plan_to_task(
                                 PhysicalPlan::TopN(global),
                                 converted,
@@ -3575,9 +4312,9 @@ pub fn attach2_task(
                                 .cloned();
                             pushed_topn.base.base.set_schema(child_schema);
                         }
-                        pushed_task.into_root_task(allocator)?
+                        pushed_task.into_root_task_in(allocator, evaluate)?
                     } else {
-                        Task::Mpp(mpp).into_root_task(allocator)?
+                        Task::Mpp(mpp).into_root_task_in(allocator, evaluate)?
                     }
                 }
             };
@@ -3597,31 +4334,39 @@ pub fn attach2_task(
                     || !cop.root_task_conds.is_empty()
                     || !cop.idx_merge_part_plans.is_empty()
                 {
-                    let t = Task::Cop(cop).into_root_task(allocator)?;
+                    let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
                     Ok(attach_plan_to_task(plan, t))
                 } else {
-                    attach_agg_over_cop(plan, cop, column_ids, allocator)
+                    attach_agg_over_cop(plan, cop, column_ids, allocator, evaluate, blacklist)
                 }
             }
             Task::Mpp(mpp) => {
-                let converted = Task::Mpp(mpp).into_root_task(allocator)?;
+                let converted = Task::Mpp(mpp).into_root_task_in(allocator, evaluate)?;
                 Ok(attach_plan_to_task(plan, converted))
             }
-            root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task(allocator)?)),
+            root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task_in(allocator, evaluate)?)),
         },
         // `attach2Task4PhysicalHashAgg` (`task.go:2162`): same split, gated
         // only on root-side filters and index merge.
         PhysicalPlan::HashAgg(_) => match first {
             Task::Cop(cop) => {
                 if cop.root_task_conds.is_empty() && cop.idx_merge_part_plans.is_empty() {
-                    attach_agg_over_cop(plan, cop, column_ids, allocator)
+                    attach_agg_over_cop(plan, cop, column_ids, allocator, evaluate, blacklist)
                 } else {
-                    let t = Task::Cop(cop).into_root_task(allocator)?;
+                    let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
                     Ok(attach_plan_to_task(plan, t))
                 }
             }
-            Task::Mpp(mpp) => attach_hash_agg_to_mpp(plan, mpp, column_ids, allocator),
-            root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task(allocator)?)),
+            Task::Mpp(mpp) => attach_hash_agg_to_mpp(
+                plan,
+                mpp,
+                column_ids,
+                allocator,
+                evaluate,
+                group_ndv_skew_ratio,
+                blacklist,
+            ),
+            root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task_in(allocator, evaluate)?)),
         },
         // `attach2Task4PhysicalHashJoin` (`task.go:211`): convert BOTH
         // children — Go converts the RIGHT one first — wire them in, and
@@ -3637,11 +4382,11 @@ pub fn attach2_task(
                 .ok_or_else(|| PlanError::internal("physical join needs two tasks"))?;
             // Go merge converts left first; hash converts right first.
             let (left, right) = if matches!(plan, PhysicalPlan::MergeJoin(_)) {
-                let left = first.into_root_task(allocator)?;
-                (left, second.into_root_task(allocator)?)
+                let left = first.into_root_task_in(allocator, evaluate)?;
+                (left, second.into_root_task_in(allocator, evaluate)?)
             } else {
-                let right = second.into_root_task(allocator)?;
-                (first.into_root_task(allocator)?, right)
+                let right = second.into_root_task_in(allocator, evaluate)?;
+                (first.into_root_task_in(allocator, evaluate)?, right)
             };
             let Task::Root(mut right) = right else {
                 return Err(PlanError::internal(
@@ -3685,10 +4430,10 @@ pub fn attach2_task(
                 _ => return Err(PlanError::internal("invalid IndexJoin inner child index")),
             };
             // Go converts outer first and replays its warnings first.
-            let Task::Root(mut outer) = outer.into_root_task(allocator)? else {
+            let Task::Root(mut outer) = outer.into_root_task_in(allocator, evaluate)? else {
                 unreachable!()
             };
-            let Task::Root(mut inner) = inner.into_root_task(allocator)? else {
+            let Task::Root(mut inner) = inner.into_root_task_in(allocator, evaluate)? else {
                 unreachable!()
             };
             let info = inner.index_join_info.take().ok_or_else(|| {
@@ -4327,7 +5072,15 @@ mod attach_tests {
             enable_3_stage_multi_distinct_agg: true,
             ..PhysicalHashAgg::default()
         });
+        let source_stats = StatsInfo::new(12.0, [(1, 3.0), (2, 5.0), (3, 7.0)])
+            .with_stats_version(2)
+            .with_hist_coll(crate::stats_info::HistColl::new(false, 12, []))
+            .with_group_ndvs(vec![crate::cardinality::ndv::GroupNdv {
+                columns: vec![1, 2],
+                ndv: 8.0,
+            }]);
         let mut child_base = op_with_stats("Dual", 12.0);
+        child_base.base.set_stats(Some(source_stats.clone()));
         child_base.base.set_schema(Some(Schema::new(vec![
             distinct_a.clone(),
             distinct_b.clone(),
@@ -4392,6 +5145,21 @@ mod attach_tests {
         };
         assert_eq!(expand.level_exprs.len(), 2);
         assert_eq!(expand.base.base.schema().map(Schema::len), Some(4));
+        // Go adjust3StagePhaseAgg replicates rows, then the projection and
+        // partial aggregation derive from that same expanded profile.
+        let expanded_stats = expand.base.base.stats_info().expect("Expand statistics");
+        assert_eq!(expanded_stats.row_count(), 24.0);
+        assert_eq!(expanded_stats.col_ndvs(), source_stats.col_ndvs());
+        assert_eq!(expanded_stats.group_ndvs(), source_stats.group_ndvs());
+        assert_eq!(expanded_stats.hist_coll(), source_stats.hist_coll());
+        assert_eq!(expanded_stats.stats_version(), source_stats.stats_version());
+        assert_eq!(projection.base.base.stats_info(), Some(expanded_stats));
+        assert_eq!(partial.base.base.stats_info().unwrap().row_count(), 8.0);
+        assert_eq!(
+            expand.base.children()[0].stats_info(),
+            Some(&source_stats),
+            "expansion must not mutate its child's profile",
+        );
     }
 
     #[test]
@@ -4947,6 +5715,143 @@ mod attach_tests {
             matches!(plan.children().first(), Some(PhysicalPlan::TableReader(_))),
             "the selection sits ABOVE the reader"
         );
+    }
+
+    #[test]
+    fn merge_limit_attachment_respects_union_intersection_and_table_filters() {
+        let allocator = PlanIdAllocator::new();
+        let scan = || {
+            PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                base: op_with_stats("TableScan", 20.0),
+                table_id: 42,
+                ..Default::default()
+            })
+        };
+        for intersection in [false, true] {
+            for filtered in [false, true] {
+                for keep_order in [false, true] {
+                    let mut table = scan();
+                    if filtered {
+                        let mut base = op_with_stats("Selection", 10.0);
+                        base.set_children(vec![table]);
+                        table = PhysicalPlan::Selection(PhysicalSelection {
+                            base,
+                            ..Default::default()
+                        });
+                    }
+                    let cop = CopTask {
+                        table_plan: Some(Box::new(table)),
+                        index_plan_finished: filtered,
+                        keep_order,
+                        idx_merge_part_plans: vec![scan(), scan()],
+                        idx_merge_is_intersection: intersection,
+                        ..Default::default()
+                    };
+                    let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                        base: op_with_stats("Limit", 3.0),
+                        offset: 2,
+                        count: 3,
+                        ..Default::default()
+                    });
+                    let task = attach2_task(limit, vec![Task::Cop(cop)], None, &allocator).unwrap();
+                    let mut plan = task.plan().unwrap();
+                    if filtered {
+                        assert!(
+                            matches!(plan, PhysicalPlan::Limit(_)),
+                            "residual filters require a root limit"
+                        );
+                        plan = &plan.children()[0];
+                    }
+                    let PhysicalPlan::IndexMergeReader(reader) = plan else {
+                        panic!("pure merge table scans must embed the root limit: {plan:?}");
+                    };
+                    assert_eq!(reader.pushed_limit.is_some(), !filtered);
+                    if let Some(limit) = reader.pushed_limit {
+                        assert_eq!((limit.offset, limit.count), (2, 3));
+                    }
+                    for partial in &reader.partial_plans_raw {
+                        assert_eq!(
+                            matches!(partial, PhysicalPlan::Limit(_)),
+                            !intersection && !filtered
+                        );
+                        if let PhysicalPlan::Limit(limit) = partial {
+                            assert_eq!((limit.offset, limit.count), (0, 5));
+                        }
+                    }
+                    assert_eq!(
+                        matches!(reader.table_plan.as_deref(), Some(PhysicalPlan::Limit(_))),
+                        filtered && (intersection || !keep_order)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn merge_limit_keeps_root_filters_and_restores_column_order() {
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::{column::Column, constant::Constant};
+        let allocator = PlanIdAllocator::new();
+        let ty = FieldType::new(FieldTypeCode::LongLong);
+        let columns = vec![Column::new(1, ty.clone()), Column::new(2, ty.clone())];
+        let scan = || {
+            let mut base = op_with_stats("TableScan", 20.0);
+            base.base.set_schema(Some(Schema::new(columns.clone())));
+            PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                base,
+                table_id: 42,
+                ..Default::default()
+            })
+        };
+        for root_filter in [false, true] {
+            let mut cop = CopTask {
+                table_plan: Some(Box::new(scan())),
+                idx_merge_part_plans: vec![scan(), scan()],
+                ..Default::default()
+            };
+            if root_filter {
+                cop.root_task_conds.push(Expression::Constant(Constant::new(
+                    Datum::Int(1),
+                    ty.clone(),
+                )));
+            }
+            let mut base = op_with_stats("Limit", 3.0);
+            base.base
+                .set_schema(Some(Schema::new(columns.iter().rev().cloned().collect())));
+            let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                base,
+                offset: 1,
+                count: 3,
+                ..Default::default()
+            });
+            let task = attach2_task(limit, vec![Task::Cop(cop)], None, &allocator).unwrap();
+            let plan = task.plan().unwrap();
+            if root_filter {
+                assert!(matches!(plan, PhysicalPlan::Limit(_)));
+                assert!(matches!(&plan.children()[0], PhysicalPlan::Selection(_)));
+                let PhysicalPlan::IndexMergeReader(reader) = &plan.children()[0].children()[0] else {
+                    panic!("merge below root filter")
+                };
+                assert!(reader.pushed_limit.is_none());
+                assert!(reader
+                    .partial_plans_raw
+                    .iter()
+                    .all(|partial| !matches!(partial, PhysicalPlan::Limit(_))));
+            } else {
+                let PhysicalPlan::Projection(projection) = plan else {
+                    panic!("reordered output needs a projection")
+                };
+                assert_eq!(projection.exprs.len(), 2);
+                for (expr, expected) in projection.exprs.iter().zip(columns.iter().rev()) {
+                    let Expression::Column(column) = expr else { panic!("column projection") };
+                    assert_eq!(column.unique_id, expected.unique_id);
+                }
+                let PhysicalPlan::IndexMergeReader(reader) = &plan.children()[0] else {
+                    panic!("merge below projection")
+                };
+                assert!(reader.pushed_limit.is_some());
+            }
+        }
     }
 
     #[test]

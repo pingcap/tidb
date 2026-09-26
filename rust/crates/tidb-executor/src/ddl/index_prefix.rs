@@ -50,9 +50,8 @@
 //! ([`crate::kv_table::KvIndex::covers`],
 //! [`crate::kv_table::KvIndex::ordered_column_offsets`],
 //! [`crate::kv_table::KvIndex::has_prefix`], and the ranger's endpoint
-//! cutting). Those exist now for SECONDARY indexes; a prefix on a clustered
-//! PRIMARY KEY is a different problem and stays refused, see
-//! [`clustered_prefix_unsupported`].
+//! cutting). The clustered-primary path uses the same cut for the record
+//! handle and keeps the original prefixed column value in the row.
 
 use tidb_datatype::FieldType;
 
@@ -463,27 +462,6 @@ pub fn driver_error(error: PrefixError) -> crate::DriverError {
         PrefixError::FunctionalIndexOnBlob => crate::DriverError::FunctionalIndexOnBlob,
         PrefixError::TooLongKey { length, max } => crate::DriverError::TooLongKey { length, max },
     }
-}
-
-/// The one prefix form still refused, and why it is a DIFFERENT problem from
-/// the secondary-index prefix this module now admits.
-///
-/// A prefix on a SECONDARY index cuts the entry, and every read that needs
-/// the whole value goes back to the row for it -- which is what
-/// [`crate::index_prefix_cut`], [`crate::kv_table::KvIndex::covers`] and
-/// [`crate::kv_table::KvIndex::ordered_column_offsets`] between them arrange.
-///
-/// A prefix on a CLUSTERED PRIMARY KEY cuts the ROW IDENTIFIER: captured from
-/// real TiDB, `create table p (a varchar(20), primary key (a(3)))` prints
-/// `/*T![clustered_index] CLUSTERED */` and then rejects `'abcxyz'` after
-/// `'abcdef'` -- two distinct rows are two distinct handles only if the cut
-/// values differ. There is no row to go back to when the handle itself is
-/// lossy, so this is not the same fix, and admitting it on the strength of
-/// the secondary-index work would be the silent-wrong-answer shape all over
-/// again.
-#[must_use]
-pub fn clustered_prefix_unsupported() -> &'static str {
-    "a prefix-length primary key is not supported yet"
 }
 
 #[cfg(test)]

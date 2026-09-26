@@ -740,7 +740,7 @@ pub(crate) fn family_catalog() -> Vec<(String, String)> {
     for (fq, help) in tidb_meta::metrics::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in crate::topsql_metrics::histogram_definitions() {
+    for (fq, help) in tidb_util::topsql_reporter::metrics::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
     for (fq, help) in tidb_txnkv::client_go_metrics::histogram_definitions() {
@@ -921,6 +921,14 @@ mod init_tests {
     #[test]
     fn init_registers_every_family() {
         super::init();
+        tidb_util::topsql_reporter::metrics::init_metrics_vars();
+        let catalog = super::family_catalog();
+        for (name, help) in tidb_util::topsql_reporter::metrics::histogram_definitions() {
+            assert!(
+                catalog.contains(&(name.to_owned(), help.to_owned())),
+                "{name} missing from the server metric catalog"
+            );
+        }
         let body = prometheus::TextEncoder::new()
             .encode_to_string(&prometheus::gather())
             .expect("encode");
@@ -937,6 +945,8 @@ mod init_tests {
             "tidb_server_memory_quota_bytes",
             "tidb_server_internal_sessions",
             "tidb_server_active_users",
+            "tidb_topsql_report_data_total",
+            "tidb_topsql_report_duration_seconds",
         ] {
             assert!(body.contains(family), "{family} missing");
         }

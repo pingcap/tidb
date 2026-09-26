@@ -34,7 +34,7 @@
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use crate::physical_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
-use crate::task::{attach2_task, MppTask, Task};
+use crate::task::{MppTask, Task};
 use crate::task_type::TaskType;
 
 impl MppTask {
@@ -110,6 +110,7 @@ impl MppTask {
             [],
         );
         enforced.root_task_conds = self.root_task_conds.clone();
+        enforced.stats_context = self.stats_context.clone();
         enforced.warnings.copy_of(&self.warnings);
         Ok(enforced)
     }
@@ -131,11 +132,25 @@ impl MppTask {
 ///    offset, its child property `{RootTaskType, p.SortItems, MaxFloat64}`,
 ///    its `ByItems` copied from `p.SortItems`, `IsPartialSort` from
 ///    `p.IsSortItemAllForPartition()`, and attached via
-///    [`attach2_task`]'s Sort arm.
+///    [`crate::task::attach2_task`]'s Sort arm.
 pub fn enforce_property(
+    prop: &PhysicalProperty,
+    task: Task,
+    allocator: &PlanIdAllocator,
+) -> Result<Task, PlanError> {
+    enforce_property_in(
+        prop,
+        task,
+        allocator,
+        &crate::ranger::points::evaluate_static,
+    )
+}
+
+pub(crate) fn enforce_property_in(
     prop: &PhysicalProperty,
     mut task: Task,
     allocator: &PlanIdAllocator,
+    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Task, PlanError> {
     if prop.task_tp == TaskType::Mpp {
         let Task::Mpp(mpp) = &task else {
@@ -155,7 +170,7 @@ pub fn enforce_property(
         return Ok(task);
     }
     if prop.task_tp != TaskType::Mpp {
-        task = task.convert_to_root_task(allocator)?;
+        task = task.convert_to_root_task_in(allocator, evaluate)?;
     }
     let sort_req_prop = PhysicalProperty {
         task_tp: TaskType::Root,
@@ -204,7 +219,15 @@ pub fn enforce_property(
         by_items,
         is_partial_sort: prop.is_sort_item_all_for_partition(),
     });
-    attach2_task(sort, vec![task], None, allocator)
+    crate::task::attach2_task_in(
+        sort,
+        vec![task],
+        None,
+        allocator,
+        tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+        evaluate,
+        &Default::default(),
+    )
 }
 
 #[cfg(test)]
@@ -227,7 +250,12 @@ mod tests {
     #[test]
     fn mpp_enforcer_builds_the_source_exchange_pair() {
         let allocator = PlanIdAllocator::new();
-        let task = mpp_task(&allocator);
+        let source_stats = std::sync::Arc::new(crate::stats_info::StatsInfo::new(1000.0, []));
+        let task = mpp_task(&allocator).with_stats_context(crate::task::TaskStatsContext {
+            root_filter_stats: Some(source_stats.clone()),
+            scale_ndv_skew_ratio: 0.25,
+            ..Default::default()
+        });
         let mut required = PhysicalProperty::default();
         required.task_tp = TaskType::Mpp;
         required.mpp_partition_tp = MppPartitionType::Hash;
@@ -236,6 +264,10 @@ mod tests {
         let enforced = task
             .enforce_exchanger(&required, &allocator)
             .expect("hash partitioning inserts an exchange");
+        assert!(std::sync::Arc::ptr_eq(
+            enforced.stats_context.root_filter_stats.as_ref().unwrap(), &source_stats,
+        ));
+        assert_eq!(enforced.stats_context.scale_ndv_skew_ratio, 0.25);
         assert_eq!(enforced.partition_type(), MppPartitionType::Hash);
         assert_eq!(enforced.hash_cols(), required.mpp_partition_cols.as_slice());
         let Some(PhysicalPlan::ExchangeReceiver(receiver)) = enforced.plan() else {

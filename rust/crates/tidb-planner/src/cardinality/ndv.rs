@@ -74,17 +74,9 @@ pub struct GroupNdv {
 /// `column_ndvs` is the source `StatsInfo.ColNDVs` map represented as pairs;
 /// `row_count` is `StatsInfo.RowCount`; and `skew_ratio` is the caller-owned
 /// `RiskGroupNDVSkewRatio`. IDs and group columns are sorted before matching,
-/// exactly as `GetGroupNDV4Cols` sorts expression columns in Go.
-/// # No caller yet -- verdict: awaiting the join row-count input builder
-///
-/// Go's production callers are the four `EstimateColsNDVWithMatchedLen`
-/// calls in `pkg/planner/cardinality/join.go`'s `EstimateFullJoinRowCount`,
-/// which turn each side's join keys into the `(ndv, matched_len)` pair. This
-/// crate's [`crate::cardinality::join::estimate_full_join_row_count`] took
-/// those pairs as CALLER-SUPPLIED input (`JoinKeyEstimate`) when it was
-/// seeded, so the call Go makes was factored into the absent integration
-/// layer. Wiring = building `FullJoinRowCountInput` from a `StatsInfo`
-/// through this function, at the point a live join estimator lands.
+/// exactly as `GetGroupNDV4Cols` sorts expression columns in Go. Production
+/// planner calls use [`estimate_cols_ndv_with_stats`] to avoid converting the
+/// profile map into a temporary vector.
 #[must_use]
 pub fn estimate_cols_ndv_with_matched_len(
     column_ids: &[i64],
@@ -92,6 +84,46 @@ pub fn estimate_cols_ndv_with_matched_len(
     row_count: f64,
     group_ndvs: &[GroupNdv],
     skew_ratio: f64,
+) -> (f64, usize) {
+    estimate_cols_ndv_with_matched_len_lookup(
+        column_ids,
+        row_count,
+        group_ndvs,
+        skew_ratio,
+        |id| {
+            column_ndvs
+                .iter()
+                .find(|(column_id, _)| *column_id == id)
+                .map(|(_, ndv)| *ndv)
+        },
+    )
+}
+
+/// Estimates a column group directly from a live planner statistics profile.
+///
+/// This is the production entrypoint: looking up each column in the profile's
+/// map avoids materializing an intermediate column-NDV vector.
+#[must_use]
+pub fn estimate_cols_ndv_with_stats(
+    column_ids: &[i64],
+    profile: &crate::stats_info::StatsInfo,
+    skew_ratio: f64,
+) -> (f64, usize) {
+    estimate_cols_ndv_with_matched_len_lookup(
+        column_ids,
+        profile.row_count(),
+        profile.group_ndvs(),
+        skew_ratio,
+        |id| profile.col_ndvs().get(&id).copied(),
+    )
+}
+
+fn estimate_cols_ndv_with_matched_len_lookup(
+    column_ids: &[i64],
+    row_count: f64,
+    group_ndvs: &[GroupNdv],
+    skew_ratio: f64,
+    mut column_ndv: impl FnMut(i64) -> Option<f64>,
 ) -> (f64, usize) {
     if column_ids.is_empty() {
         return (1.0, 1);
@@ -108,31 +140,21 @@ pub fn estimate_cols_ndv_with_matched_len(
         return (go_max(group.ndv, 1.0), group.columns.len());
     }
 
-    let conservative_ndv = ids
-        .iter()
-        .filter_map(|id| {
-            column_ndvs
-                .iter()
-                .find(|(column_id, _)| column_id == id)
-                .map(|(_, ndv)| *ndv)
-        })
-        .filter(|ndv| *ndv > 0.0)
-        .fold(1.0, go_max);
-
     if ids.len() == 1 {
-        return (conservative_ndv, 1);
+        let ndv = column_ndv(ids[0])
+            .filter(|ndv| *ndv > 0.0)
+            .map_or(1.0, |ndv| go_max(ndv, 1.0));
+        return (ndv, 1);
     }
 
-    let mut values: Vec<f64> = ids
+    let values = ids
         .iter()
-        .filter_map(|id| {
-            column_ndvs
-                .iter()
-                .find(|(column_id, _)| column_id == id)
-                .map(|(_, ndv)| *ndv)
-        })
+        .filter_map(|id| column_ndv(*id))
         .filter(|ndv| *ndv > 0.0)
-        .collect();
+        .collect::<Vec<_>>();
+    let conservative_ndv = values.iter().copied().fold(1.0, go_max);
+
+    let mut values = values;
     values.sort_by(|left, right| right.total_cmp(left));
 
     let exponential_ndv = if values.is_empty() {

@@ -465,7 +465,7 @@ pub fn union(
 }
 
 /// Why the builder failed (Go `builder.err`).
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PointBuilderError {
     /// Go `plannererrors.ErrUnsupportedType` shapes.
     Unsupported(String),
@@ -473,6 +473,31 @@ pub enum PointBuilderError {
     Value(tidb_datatype::DatumValueError),
     /// Failure evaluating a parameter or deferred endpoint in this statement.
     Eval(tidb_expr::EvalError),
+}
+
+impl std::fmt::Display for PointBuilderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported(message) => f.write_str(message),
+            Self::Value(error) => error.fmt(f),
+            Self::Eval(error) => write!(f, "{error:?}"),
+        }
+    }
+}
+
+impl std::error::Error for PointBuilderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Value(error) => Some(error),
+            Self::Unsupported(_) | Self::Eval(_) => None,
+        }
+    }
+}
+
+impl From<tidb_codec::CodecError> for PointBuilderError {
+    fn from(error: tidb_codec::CodecError) -> Self {
+        Self::Unsupported(error.to_string())
+    }
 }
 
 impl From<tidb_datatype::DatumValueError> for PointBuilderError {

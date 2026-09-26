@@ -17,9 +17,9 @@
 //!
 //! TiDB can skip expensive histogram estimation only for a true full range
 //! that includes NULLs, and only for ordinary (non-partial, non-MV) indexes.
-//! The source helper is surrounded by statistics, ranger, and async-load
-//! owners, so this leaf carries the normalized bound metadata only. It does
-//! not estimate rows or claim the full `GetRowCountByIndexRanges` path.
+//! The executor's statistics boundary calls this policy before it queues an
+//! evicted index histogram; the leaf carries only the normalized range and
+//! index metadata needed for that decision.
 
 /// The normalized kind of a range endpoint needed by the source fast path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,17 +119,47 @@ pub fn is_full_range_including_nulls(range: &IndexRangeShape) -> bool {
 
 /// Returns whether index-row estimation may use the realtime-count fast path.
 ///
-/// # No caller yet -- verdict: awaiting `row_count_index.go`
-///
-/// Go's one production caller is `GetRowCountByIndexRanges`
+/// Go's caller is `GetRowCountByIndexRanges`
 /// (`pkg/planner/cardinality/row_count_index.go:53`), which short-circuits
 /// histogram estimation when a range covers the whole index including NULLs.
-/// That function -- the histogram-backed index row counter -- is not ported;
-/// this gate was ported first because it decides whether the histogram is
-/// consulted at all, and its difftest pins the decision table.
 #[must_use]
 pub fn can_skip_index_estimation(policy: IndexRangePolicy, ranges: &[IndexRangeShape]) -> bool {
-    !policy.has_condition
-        && !policy.is_multi_value
-        && ranges.iter().any(is_full_range_including_nulls)
+    can_skip_full_ranges(policy, ranges.iter().map(is_full_range_including_nulls))
+}
+
+fn can_skip_full_ranges(
+    policy: IndexRangePolicy,
+    mut full_ranges: impl Iterator<Item = bool>,
+) -> bool {
+    !policy.has_condition && !policy.is_multi_value && full_ranges.any(|full| full)
+}
+
+/// The same fast-path policy over borrowed datum bounds. Both storage and
+/// planner ranges can use it without allocating normalized endpoint vectors.
+pub fn can_skip_datum_index_estimation<'a>(
+    policy: IndexRangePolicy,
+    ranges: impl IntoIterator<
+        Item = (
+            &'a [tidb_datatype::Datum],
+            &'a [tidb_datatype::Datum],
+            bool,
+            bool,
+        ),
+    >,
+) -> bool {
+    can_skip_full_ranges(
+        policy,
+        ranges
+            .into_iter()
+            .map(|(low, high, low_exclude, high_exclude)| {
+                !low.is_empty()
+                    && low.len() == high.len()
+                    && !low_exclude
+                    && !high_exclude
+                    && low.iter().all(tidb_datatype::Datum::is_null)
+                    && high
+                        .iter()
+                        .all(|value| matches!(value, tidb_datatype::Datum::MaxValue))
+            }),
+    )
 }

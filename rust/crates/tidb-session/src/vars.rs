@@ -4661,6 +4661,12 @@ mod tests {
         // registry default -- `load_from_cluster` only overwrites names it is
         // given.
         assert_eq!(globals.get("max_allowed_packet").unwrap(), "67108864");
+        assert_eq!(
+            globals
+                .get(tidb_vardef::tidb_vars::TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN)
+                .unwrap(),
+            "OFF"
+        );
     }
 
     #[test]

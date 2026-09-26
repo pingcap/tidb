@@ -28,11 +28,11 @@ use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::extract_columns;
 use tidb_model::TableItemID;
 
-use super::data_source::DataSource;
-use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::rule::{LogicalOptRule, RuleContext};
-use super::rule_prune_indexes::prune_data_source;
 use super::LogicalPlan;
+use super::data_source::DataSource;
+use super::fold::{Descend, OwnedRewrite, fold_owned};
+use super::rule::{LogicalOptRule, RuleContext};
+use super::rule_prune_indexes::prune_data_source_with_options;
 use crate::plan_base::PlanError;
 
 /// Go `CollectColumnStatsUsage`'s statistics-loading result.
@@ -63,8 +63,10 @@ pub trait StatisticsLoadRequester {
     fn wait(&self) -> Result<(), PlanError>;
 
     /// Attach the loaded snapshot before join reorder derives path costs.
-    fn initialize(&self, plan: LogicalPlan) -> LogicalPlan {
-        plan
+    /// An estimation failure retains the plan and its original error, as
+    /// required by the logical-rule error boundary.
+    fn initialize(&self, plan: LogicalPlan) -> Result<LogicalPlan, (LogicalPlan, PlanError)> {
+        Ok(plan)
     }
 }
 
@@ -81,7 +83,7 @@ impl LogicalOptRule for SyncWaitStatsLoadPoint {
             if let Err(error) = requester.wait() {
                 return Err((plan, error));
             }
-            return Ok((requester.initialize(plan), false));
+            return requester.initialize(plan).map(|plan| (plan, false));
         }
         Ok((plan, false))
     }
@@ -100,7 +102,12 @@ impl LogicalOptRule for CollectPredicateColumnsPoint {
         ctx: &RuleContext<'_>,
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
-        let (plan, usage) = collect_column_stats_usage(plan, ctx.opt_index_prune_threshold);
+        let (plan, usage) = collect_column_stats_usage_with_options(
+            plan,
+            ctx.opt_index_prune_threshold,
+            ctx.opt_prefix_index_single_scan,
+            ctx.scale_ndv_skew_ratio,
+        );
         if let Some(requester) = ctx.statistics_load {
             if let Err(error) = requester.request(&usage) {
                 return Err((plan, error));
@@ -123,16 +130,23 @@ struct InterestingColumnsDown {
 
 struct InterestingColumnPruner {
     threshold: i32,
+    prefix_single_scan: bool,
+    scale_ndv_skew_ratio: f64,
     kept_index_ids: HashMap<i64, HashSet<i64>>,
 }
 
 /// Recompute Go's asked-group NDVs after attaching a loaded table histogram.
 pub fn refresh_source_group_ndvs(source: &mut DataSource) {
-    InterestingColumnPruner::refresh_group_ndvs(source);
+    refresh_source_group_ndvs_with_scale_ratio(source, crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO);
+}
+
+/// Refresh loaded group profiles with the statement's NDV scale blend.
+pub fn refresh_source_group_ndvs_with_scale_ratio(source: &mut DataSource, ratio: f64) {
+    InterestingColumnPruner::refresh_group_ndvs(source, ratio);
 }
 
 impl InterestingColumnPruner {
-    fn record_asked_groups(source: &mut DataSource, groups: &[Vec<Column>]) {
+    fn record_asked_groups(source: &mut DataSource, groups: &[Vec<Column>], scale_ndv_skew_ratio: f64) {
         if tidb_util::filter::is_system_schema(&tidb_mysql::to_lowercase(&source.db_name)) {
             return;
         }
@@ -145,7 +159,7 @@ impl InterestingColumnPruner {
                 .filter(|group| group.iter().all(|column| schema.contains(column)))
                 .cloned(),
         );
-        Self::refresh_group_ndvs(source);
+        Self::refresh_group_ndvs(source, scale_ndv_skew_ratio);
     }
 
     /// Go `getGroupNDVs` (`pkg/planner/core/stats.go:491`): every loaded
@@ -153,7 +167,7 @@ impl InterestingColumnPruner {
     /// asked column groups publishes its own NDV as that group's exact NDV.
     /// A join or aggregation above the source then estimates from the
     /// composite NDV instead of the largest single-column NDV.
-    fn refresh_group_ndvs(source: &mut DataSource) {
+    fn refresh_group_ndvs(source: &mut DataSource, scale_ndv_skew_ratio: f64) {
         let Some(table_stats) = source.table_stats.as_mut() else {
             return;
         };
@@ -200,7 +214,7 @@ impl InterestingColumnPruner {
                         group.ndv,
                         table_row_count,
                         stats.row_count(),
-                        crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+                        scale_ndv_skew_ratio,
                     ),
                 })
                 .collect();
@@ -306,7 +320,9 @@ impl InterestingColumnPruner {
 
     fn prune_source(&mut self, source: &mut DataSource, down: &InterestingColumnsDown) {
         source.interesting_columns = Self::collect_for_source(source, down);
-        if let Some(kept) = prune_data_source(source, self.threshold) {
+        if let Some(kept) =
+            prune_data_source_with_options(source, self.threshold, self.prefix_single_scan)
+        {
             self.kept_index_ids
                 .entry(source.physical_table_id)
                 .or_default()
@@ -330,7 +346,7 @@ impl OwnedRewrite for InterestingColumnPruner {
         }
         match node {
             LogicalPlan::DataSource(source) => {
-                Self::record_asked_groups(source, &down.asked_col_groups);
+                Self::record_asked_groups(source, &down.asked_col_groups, self.scale_ndv_skew_ratio);
                 if self.threshold >= 0 {
                     self.prune_source(source, &down);
                 }
@@ -338,11 +354,11 @@ impl OwnedRewrite for InterestingColumnPruner {
             }
             LogicalPlan::IndexScan(scan) => {
                 if let Some(source) = scan.source.as_deref_mut() {
-                    Self::record_asked_groups(source, &down.asked_col_groups);
+                    Self::record_asked_groups(source, &down.asked_col_groups, self.scale_ndv_skew_ratio);
                     // Go does not populate InterestingColumns for scan-source
                     // wrappers in `CollectColumnStatsUsage`.
                     if self.threshold >= 0 {
-                        if let Some(kept) = prune_data_source(source, self.threshold) {
+                        if let Some(kept) = prune_data_source_with_options(source, self.threshold, self.prefix_single_scan) {
                             self.kept_index_ids
                                 .entry(source.physical_table_id)
                                 .or_default()
@@ -355,9 +371,9 @@ impl OwnedRewrite for InterestingColumnPruner {
             }
             LogicalPlan::TableScan(scan) => {
                 if let Some(source) = scan.source.as_deref_mut() {
-                    Self::record_asked_groups(source, &down.asked_col_groups);
+                    Self::record_asked_groups(source, &down.asked_col_groups, self.scale_ndv_skew_ratio);
                     if self.threshold >= 0 {
-                        if let Some(kept) = prune_data_source(source, self.threshold) {
+                        if let Some(kept) = prune_data_source_with_options(source, self.threshold, self.prefix_single_scan) {
                             self.kept_index_ids
                                 .entry(source.physical_table_id)
                                 .or_default()
@@ -671,8 +687,19 @@ pub fn collect_column_stats_usage(
     plan: LogicalPlan,
     opt_index_prune_threshold: i32,
 ) -> (LogicalPlan, ColumnStatsUsage) {
+    collect_column_stats_usage_with_options(plan, opt_index_prune_threshold, false, crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO)
+}
+
+fn collect_column_stats_usage_with_options(
+    plan: LogicalPlan,
+    opt_index_prune_threshold: i32,
+    prefix_single_scan: bool,
+    scale_ndv_skew_ratio: f64,
+) -> (LogicalPlan, ColumnStatsUsage) {
     let mut preparation = InterestingColumnPruner {
         threshold: opt_index_prune_threshold,
+        prefix_single_scan,
+        scale_ndv_skew_ratio,
         kept_index_ids: HashMap::new(),
     };
     let (plan, ()) = fold_owned(&mut preparation, plan, InterestingColumnsDown::default());
@@ -1053,10 +1080,13 @@ mod tests {
                 Ok(())
             }
 
-            fn initialize(&self, plan: LogicalPlan) -> LogicalPlan {
+            fn initialize(
+                &self,
+                plan: LogicalPlan,
+            ) -> Result<LogicalPlan, (LogicalPlan, PlanError)> {
                 assert_eq!(self.waits.get(), 1);
                 self.initializations.set(self.initializations.get() + 1);
-                plan
+                Ok(plan)
             }
         }
 
@@ -1084,6 +1114,59 @@ mod tests {
     }
 
     #[test]
+    fn sync_wait_preserves_statistics_initialization_errors_and_plan() {
+        struct Requester {
+            fail_wait: bool,
+            initializations: Cell<usize>,
+        }
+        impl StatisticsLoadRequester for Requester {
+            fn request(&self, _: &ColumnStatsUsage) -> Result<(), PlanError> {
+                Ok(())
+            }
+            fn wait(&self) -> Result<(), PlanError> {
+                if self.fail_wait {
+                    Err(PlanError::internal_coded("wait failed"))
+                } else {
+                    Ok(())
+                }
+            }
+            fn initialize(
+                &self,
+                plan: LogicalPlan,
+            ) -> Result<LogicalPlan, (LogicalPlan, PlanError)> {
+                self.initializations.set(self.initializations.get() + 1);
+                Err((plan, PlanError::internal_coded("estimation failed")))
+            }
+        }
+        for fail_wait in [true, false] {
+            let allocator = PlanIdAllocator::new();
+            let requester = Requester {
+                fail_wait,
+                initializations: Cell::new(0),
+            };
+            let mut context = test_context(&allocator);
+            context.statistics_load = Some(&requester);
+            let plan = source(1, 7, &[(11, 1)]);
+            let (returned, error) = SyncWaitStatsLoadPoint
+                .optimize(&context, plan)
+                .expect_err("failed statistics must prevent further optimization");
+            let LogicalPlan::DataSource(returned) = returned else {
+                panic!("failed plan must be preserved");
+            };
+            assert_eq!(returned.table_id, 7);
+            assert_eq!(
+                error,
+                PlanError::internal_coded(if fail_wait {
+                    "wait failed"
+                } else {
+                    "estimation failed"
+                })
+            );
+            assert_eq!(requester.initializations.get(), usize::from(!fail_wait));
+        }
+    }
+
+    #[test]
     fn a_matching_index_ndv_becomes_the_source_group_ndv() {
         let mut plan = source(1, 7, &[(11, 1), (12, 2)]);
         let LogicalPlan::DataSource(source) = &mut plan else {
@@ -1103,7 +1186,7 @@ mod tests {
             .base
             .set_stats(Some(StatsInfo::new(100.0, [(1, 50.0), (2, 40.0)])));
 
-        InterestingColumnPruner::refresh_group_ndvs(source);
+        InterestingColumnPruner::refresh_group_ndvs(source, crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO);
 
         let table_stats = source.table_stats.as_ref().expect("table statistics");
         assert_eq!(table_stats.group_ndvs().len(), 1);

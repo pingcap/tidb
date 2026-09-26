@@ -77,6 +77,9 @@ pub struct Ver2Coster {
     session_factors: CostFactorVars,
     session: CostSessionOpts,
     cost_option: Option<crate::cost_usage::PlanCostOption>,
+    // Go stores costs on physical nodes. EXPLAIN uses a temporary cache over
+    // its immutable retained tree so child rendering reuses recursive costs.
+    explain_costs: Option<std::cell::RefCell<std::collections::HashMap<usize, CostVer2>>>,
 }
 
 impl TaskCoster for Ver2Coster {
@@ -88,6 +91,19 @@ impl TaskCoster for Ver2Coster {
             Task::Mpp(_) => task
                 .plan()
                 .map_or(f64::MAX, |plan| self.price(plan, TaskType::Mpp).value()),
+            // Go getTaskPlanCost prices unfinished merge partials alone;
+            // after table-side attachment it includes both phases.
+            Task::Cop(cop) if !cop.idx_merge_part_plans.is_empty() => {
+                let mut cost = cop.idx_merge_part_plans.iter()
+                    .map(|partial| self.price(partial, TaskType::CopSingleRead).value())
+                    .sum::<f64>();
+                if cop.index_plan_finished {
+                    if let Some(table) = &cop.table_plan {
+                        cost += self.price(table, TaskType::CopSingleRead).value();
+                    }
+                }
+                cost
+            }
             Task::Cop(cop) => match (&cop.index_plan, &cop.table_plan) {
                 (Some(index), Some(table)) if cop.index_plan_finished => {
                     crate::cost_usage::sum_cost_ver2(&[
@@ -119,6 +135,7 @@ impl Ver2Coster {
             session_factors,
             session,
             cost_option: None,
+            explain_costs: None,
         }
     }
 
@@ -130,7 +147,17 @@ impl Ver2Coster {
             session_factors: env.cost_factors.clone(),
             session: env.session,
             cost_option: None,
+            explain_costs: None,
         }
+    }
+
+    /// Cache costs while rendering one immutable retained plan forest.
+    /// Create a fresh coster for each EXPLAIN; do not reuse it after the forest
+    /// is changed or dropped. Node addresses preserve identity across readers.
+    #[must_use]
+    pub fn with_explain_cache(mut self) -> Self {
+        self.explain_costs = Some(Default::default());
+        self
     }
 
     /// Prices one physical plan with the same recursive operator dispatch the
@@ -252,6 +279,25 @@ impl Ver2Coster {
     /// `IndexLookUpReader` through every operator on its table side until it
     /// reaches the `PhysicalTableScan`.
     fn price_with_scan_context(
+        &self,
+        plan: &PhysicalPlan,
+        task_type: TaskType,
+        is_child_of_inl: Option<bool>,
+    ) -> CostVer2 {
+        let key = std::ptr::from_ref(plan) as usize;
+        if let Some(cache) = &self.explain_costs {
+            if let Some(cost) = cache.borrow().get(&key) {
+                return cost.clone();
+            }
+        }
+        let cost = self.price_uncached(plan, task_type, is_child_of_inl);
+        if let Some(cache) = &self.explain_costs {
+            cache.borrow_mut().insert(key, cost.clone());
+        }
+        cost
+    }
+
+    fn price_uncached(
         &self,
         plan: &PhysicalPlan,
         task_type: TaskType,
@@ -1007,6 +1053,59 @@ mod tests {
         let mut task = crate::task::RootTask::default();
         task.set_plan(plan);
         Task::Root(task)
+    }
+
+    #[test]
+    fn explain_cache_retains_reader_context_without_repricing_children() {
+        let mut base = BasePhysicalPlan::with_id(1, "TableScan", 0);
+        base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+        base.base.set_schema(Some(Schema::new(vec![Column::new(
+            1, FieldType::new(FieldTypeCode::LongLong),
+        )])));
+        let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            base,
+            ..Default::default()
+        });
+        let plan = PhysicalPlan::TableReader(crate::physical::PhysicalTableReader {
+            table_plan: Some(Box::new(scan)),
+            ..Default::default()
+        });
+        let coster = Ver2Coster::default().with_explain_cache();
+        let root_cost = coster.plan_cost(&plan, TaskType::Root, false).value();
+        let PhysicalPlan::TableReader(reader) = &plan else { unreachable!() };
+        let scan = reader.table_plan.as_deref().unwrap();
+        let scan_key = std::ptr::from_ref(scan) as usize;
+        let cached = coster.explain_costs.as_ref().unwrap().borrow()[&scan_key].value();
+        assert_eq!(coster.plan_cost(scan, TaskType::Root, false).value(), cached);
+        assert_eq!(coster.explain_costs.as_ref().unwrap().borrow().len(), 2);
+        assert_eq!(root_cost, Ver2Coster::default().plan_cost(&plan, TaskType::Root, false).value());
+    }
+
+    #[test]
+    fn merge_cop_cost_follows_index_and_table_phases() {
+        let coster = Ver2Coster::default();
+        let partial = point(1, true);
+        let table = point(2, true);
+        let partial_cost = coster.price(&partial, TaskType::CopSingleRead).value();
+        let table_cost = coster.price(&table, TaskType::CopSingleRead).value();
+        assert!(partial_cost > 0.0 && table_cost > 0.0);
+        let mut cop = crate::task::CopTask {
+            idx_merge_part_plans: vec![partial.clone(), partial],
+            table_plan: Some(Box::new(table)),
+            ..Default::default()
+        };
+        // Go getTaskPlanCost handles a nil live plan as unfinished merge:
+        // all partial work counts, while table work starts in the next phase.
+        assert!(cop.plan().is_none());
+        assert_eq!(
+            coster.task_cost(&Task::Cop(cop.clone())).unwrap(),
+            2.0 * partial_cost
+        );
+        cop.finish_index_plan();
+        assert_eq!(
+            coster.task_cost(&Task::Cop(cop)).unwrap(),
+            2.0 * partial_cost + table_cost
+        );
     }
 
     #[test]

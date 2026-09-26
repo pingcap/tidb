@@ -146,6 +146,8 @@ pub(crate) struct Savepoint {
     /// in the transaction membuffer Go truncates back to the checkpoint, so
     /// they roll back with everything else, while the table map does not.
     local_temporary: Vec<(String, String, tidb_executor::KvTable)>,
+    /// The Go `TxnCtx.TableDeltaMap` alongside the row checkpoint.
+    table_delta: std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
     /// The session's GLOBAL temporary rows at the savepoint.
     ///
     /// These are transactional in Go with no exception at all: a global
@@ -605,6 +607,7 @@ impl Session {
                 // A local temporary table's rows are not in that copy -- they
                 // are in the session -- so they are put back by hand.
                 if let Some(txn) = self.txn.take() {
+                    self.clear_table_delta();
                     if let Some(process) = &self.process {
                         process
                             .registry()
@@ -655,6 +658,7 @@ impl Session {
         self.begin_implicit_transaction()?;
         let local_temporary = self.local_temporary_tables.clone();
         let global_temporary = self.global_temporary_data.clone();
+        let table_delta = self.table_delta_savepoint();
         let Some(txn) = &mut self.txn else {
             return Ok(());
         };
@@ -666,6 +670,7 @@ impl Session {
             image,
             local_temporary,
             global_temporary,
+            table_delta,
         });
         Ok(())
     }
@@ -695,9 +700,11 @@ impl Session {
         txn.working = txn.savepoints[index].image.clone();
         let local_temporary = txn.savepoints[index].local_temporary.clone();
         let global_temporary = txn.savepoints[index].global_temporary.clone();
+        let table_delta = txn.savepoints[index].table_delta.clone();
         txn.savepoints.truncate(index + 1);
         self.restore_local_temporary_rows(local_temporary);
         self.global_temporary_data = global_temporary;
+        self.restore_table_delta_savepoint(table_delta);
         Ok(())
     }
 
@@ -749,6 +756,7 @@ impl Session {
         let mut shared = match self.lock_catalog() {
             Ok(shared) => shared,
             Err(error) => {
+                self.clear_table_delta();
                 if let Some(process) = &self.process {
                     process.registry().transaction_finished(process.id());
                 }
@@ -757,6 +765,7 @@ impl Session {
         };
         if shared.version() != txn.base_version {
             drop(shared);
+            self.clear_table_delta();
             if let Some(process) = &self.process {
                 process.registry().transaction_finished(process.id());
             }
@@ -769,6 +778,9 @@ impl Session {
         let commit_ts = shared.allocate_tso();
         shared.record_commit(commit_ts);
         drop(shared);
+        if self.stats_collector.is_none() {
+            self.publish_table_delta();
+        }
         self.set_last_txn_info_committed(txn.start_ts, commit_ts);
         self.current_tso().clear();
         if let Some(process) = &self.process {

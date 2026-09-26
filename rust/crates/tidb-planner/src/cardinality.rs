@@ -35,6 +35,47 @@ pub mod uniform;
 /// deliberately caps the calculation at four values.
 pub const MAX_EXPONENTIAL_BACKOFF_COLS: usize = 4;
 
+/// Go `AdjustRowCountForAppendedHandleColumns`' row-estimate arithmetic.
+///
+/// `handle_selectivities` contains the valid per-column estimates for the
+/// appended handle dimensions, sorted here in the source's ascending order.
+/// `full_point_cap` is present only when every range covers the declared
+/// index columns and complete appended handle as a Go point under the
+/// default `tidb_regard_null_as_point=ON` ranger setting.
+#[must_use]
+pub fn adjust_row_count_for_appended_handle_columns(
+    prefix_count: row_count_column::RowEstimate,
+    handle_selectivities: &[f64],
+    full_point_cap: Option<f64>,
+) -> row_count_column::RowEstimate {
+    let mut selectivities = handle_selectivities.to_vec();
+    selectivities.sort_by(f64::total_cmp);
+
+    let mut adjusted = prefix_count;
+    if !selectivities.is_empty() {
+        // The declared-index prefix occupies the weight-one slot. The first
+        // handle selectivity therefore starts at one-half, followed by one-
+        // quarter and one-eighth; any further handle columns affect the
+        // independence lower estimate but not the damped estimate.
+        let mut backoff_inputs = Vec::with_capacity(selectivities.len() + 1);
+        backoff_inputs.push(1.0);
+        backoff_inputs.extend(selectivities.iter().copied());
+        let factor = apply_exponential_backoff(&backoff_inputs, 0.0, 1.0);
+        adjusted.est *= factor;
+        adjusted.est = go_max(adjusted.est, go_min(prefix_count.est, 1.0));
+
+        let independent_factor = selectivities.iter().product::<f64>();
+        adjusted.min_est = go_min(adjusted.min_est * independent_factor, adjusted.est);
+    }
+
+    if let Some(point_cap) = full_point_cap {
+        adjusted.est = go_min(adjusted.est, point_cap);
+        adjusted.min_est = go_min(adjusted.min_est, adjusted.est);
+        adjusted.max_est = go_min(adjusted.max_est, point_cap);
+    }
+    adjusted
+}
+
 // Go's math.Max/math.Min differ from Rust's primitive methods for NaN and
 // signed zero. Keep the source operation's special cases local to this leaf
 // instead of silently inheriting a different clamp contract.
@@ -69,6 +110,58 @@ fn go_min(x: f64, y: f64) -> f64 {
         x
     } else {
         y
+    }
+}
+
+#[cfg(test)]
+mod appended_handle_tests {
+    use super::adjust_row_count_for_appended_handle_columns;
+    use crate::cardinality::row_count_column::RowEstimate;
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn appended_handle_selectivities_use_damping_and_independence_bounds() {
+        let estimate = adjust_row_count_for_appended_handle_columns(
+            RowEstimate::new(100.0, 70.0, 140.0),
+            &[0.25, 0.01],
+            None,
+        );
+
+        close(
+            estimate.est,
+            100.0 * 0.01_f64.sqrt() * 0.25_f64.sqrt().sqrt(),
+        );
+        close(estimate.min_est, 70.0 * 0.01 * 0.25);
+        assert_eq!(estimate.max_est, 140.0);
+    }
+
+    #[test]
+    fn full_appended_handle_points_cap_the_estimate_to_range_count() {
+        let estimate = adjust_row_count_for_appended_handle_columns(
+            RowEstimate::new(100.0, 70.0, 140.0),
+            &[0.01],
+            Some(2.0),
+        );
+
+        assert_eq!(estimate.est, 2.0);
+        close(estimate.min_est, 0.7);
+        assert_eq!(estimate.max_est, 2.0);
+    }
+
+    #[test]
+    fn damping_does_not_floor_a_sub_one_prefix_estimate_upward() {
+        let estimate = adjust_row_count_for_appended_handle_columns(
+            RowEstimate::new(0.5, 0.25, 0.75),
+            &[0.01],
+            None,
+        );
+
+        assert_eq!(estimate.est, 0.5);
+        close(estimate.min_est, 0.0025);
+        assert_eq!(estimate.max_est, 0.75);
     }
 }
 

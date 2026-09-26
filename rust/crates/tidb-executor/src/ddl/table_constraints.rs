@@ -59,9 +59,8 @@ pub(crate) const PRI_KEY_FLAG: u32 = 1 << 1;
 ///
 /// A key part's declared LENGTH (`KEY idx (a(3))`) is stored on the index and
 /// honoured by the encoding and the read path -- see
-/// [`crate::ddl::index_prefix`]. A length on a clustered PRIMARY KEY is still
-/// refused, for the reason
-/// [`crate::ddl::index_prefix::clustered_prefix_unsupported`] gives.
+/// [`crate::ddl::index_prefix`]. A clustered PRIMARY KEY prefix is part of
+/// the common handle; its original value remains in the stored row.
 ///
 /// DEFERRED (documented): FULLTEXT, VECTOR and COLUMNAR indexes and index
 /// options, all rejected rather than silently created as a plain index.
@@ -908,6 +907,7 @@ pub(crate) fn primary_key_column(
                         }
                         found = Some(PrimaryKeyDecl {
                             columns: vec![def.name.clone()],
+                            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                             storage,
                         });
                     }
@@ -937,6 +937,7 @@ pub(crate) fn primary_key_column(
             return Err(DriverError::MultiplePrimaryKey);
         }
         let mut names = Vec::with_capacity(index.parts.len());
+        let mut prefix_lengths = Vec::with_capacity(index.parts.len());
         let mut part_lengths: Vec<(&tidb_datatype::FieldType, i64)> =
             Vec::with_capacity(index.parts.len());
         for part in &index.parts {
@@ -958,23 +959,15 @@ pub(crate) fn primary_key_column(
                 .ok_or(DriverError::unsupported(
                     "the primary key names a column the table does not define",
                 ))?;
-            // A clustered primary key whose handle is a CUT value is a
-            // different problem from a cut secondary-index entry: there is no
-            // row to go back to for the whole value. See
-            // `index_prefix::clustered_prefix_unsupported`.
-            if crate::ddl::index_prefix::key_part_length_with_max(
+            let prefix_length = crate::ddl::index_prefix::key_part_length_with_max(
                 field_type,
                 crate::ddl::index_prefix::IndexedColumn::Named(name),
                 *prefix_len,
                 true,
                 max_index_length,
-            )? != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
-            {
-                return Err(DriverError::unsupported(
-                    crate::ddl::index_prefix::clustered_prefix_unsupported(),
-                ));
-            }
-            part_lengths.push((field_type, crate::ddl::index_prefix::UNSPECIFIED_LENGTH));
+            )?;
+            prefix_lengths.push(prefix_length);
+            part_lengths.push((field_type, prefix_length));
             names.push(name.clone());
         }
         // Go `buildIndexColumns`: a primary key's parts are summed like any
@@ -993,6 +986,7 @@ pub(crate) fn primary_key_column(
         .map_err(crate::ddl::index_prefix::driver_error)?;
         found = Some(PrimaryKeyDecl {
             columns: names,
+            prefix_lengths,
             storage: index.options.primary_key_storage,
         });
     }
@@ -1008,6 +1002,8 @@ pub(crate) fn primary_key_column(
 pub(crate) struct PrimaryKeyDecl {
     /// The key columns in declaration order.
     pub(crate) columns: Vec<String>,
+    /// Go `IndexColumn.Length` for each primary-key column.
+    pub(crate) prefix_lengths: Vec<i64>,
     /// Go `ast.IndexOption.PrimaryKeyTp`: an explicit `CLUSTERED` or
     /// `NONCLUSTERED`, or `None` for Go's `PrimaryKeyTypeDefault`, which
     /// defers to `@@tidb_enable_clustered_index`.

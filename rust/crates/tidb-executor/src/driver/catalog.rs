@@ -24,7 +24,7 @@
 
 use super::*;
 use crate::kv_table::TableCharset;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use tidb_hack::GoToLower;
 
 // Cache versions must distinguish independently rebuilt catalogs and schema
@@ -270,6 +270,9 @@ pub struct Catalog {
     /// `mysql.stats_*` on its own cadence (see `tidb-exec`'s `stats_watch`),
     /// so the two are published independently.
     statistics: Arc<StatisticsCache>,
+    /// Go's committed-but-not-yet-flushed `statsDeltaMap`, represented here
+    /// on the catalog image so transaction rollback discards its own writes.
+    pending_stats_modify_count: HashMap<i64, i64>,
     statistics_view: Option<Arc<StatisticsView>>,
     statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
     /// In-process backing for pinned Go's shared `mysql.analyze_options`
@@ -510,6 +513,7 @@ impl CatalogSnapshot {
             analyze_options: Arc::clone(&owner.analyze_options),
             commit_history: Arc::clone(&owner.commit_history),
             temporary_sweep: self.temporary_sweep.clone(),
+            pending_stats_modify_count: owner.pending_stats_modify_count.clone(),
         }
     }
 }
@@ -608,6 +612,7 @@ impl Default for Catalog {
             table_id_names: Arc::default(),
             shadowed_by_local_temporary: Vec::new(),
             statistics: Arc::default(),
+            pending_stats_modify_count: HashMap::new(),
             statistics_view: None,
             statistics_schemas: Arc::default(),
             analyze_options: Arc::default(),
@@ -1394,6 +1399,7 @@ impl Catalog {
                                 offset,
                                 ret_type: column.field_type.clone(),
                                 is_public: true,
+                                is_generated: column.generated.is_some(),
                                 is_hidden: table.is_hidden(offset),
                                 is_virtual_generated: column
                                     .generated
@@ -1437,7 +1443,9 @@ impl Catalog {
                                 is_columnar: false,
                                 is_multi_valued: table.mv_key_part_source(index.id).is_some(),
                                 global: index.global,
-                                condition_expr_string: String::new(),
+                                condition_expr_string: table
+                                    .partial_index_condition_string(index.id)
+                                    .unwrap_or_default(),
                                 affect_column_offsets: Vec::new(),
                             })
                             .collect::<Vec<_>>();
@@ -1460,6 +1468,17 @@ impl Catalog {
                             db_name: database.name.clone(),
                             physical_table_id: table.table_id,
                             is_partitioned: table.partition().is_some(),
+                            partition_expression_is_column: table.partition().is_some_and(
+                                |partition| {
+                                    matches!(
+                                        partition.expr,
+                                        tidb_expr::expression::Expression::Column(_)
+                                    )
+                                },
+                            ),
+                            partition_is_reorganizing: table.partition().is_some_and(|partition| {
+                                !partition.overlapping_dropping_partition_indices.is_empty()
+                            }),
                             partition_definition_names: table
                                 .partition()
                                 .map(|partition| {
@@ -1486,6 +1505,8 @@ impl Catalog {
                             is_common_handle: !table.common_handle_offsets().is_empty(),
                             common_handle_version: table.common_handle_version(),
                             is_temporary: table.is_temporary(),
+                            is_local_temporary: table.temp_table_type()
+                                == tidb_model::TempTableType::LOCAL,
                             is_cached: table.cache_status()
                                 != tidb_model::TableCacheStatusType::DISABLE,
                             has_affinity: table.has_affinity(),
@@ -1755,6 +1776,22 @@ impl Catalog {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(table_id, statistics);
+    }
+
+    /// Records committed modifications for Go `statsDeltaMap`. The value is
+    /// the number of rows modified, while `stats_row_count` supplies the net
+    /// row count when the delta is flushed.
+    pub fn record_stats_modify_count(&mut self, table_id: i64, modified: i64) {
+        if modified > 0 {
+            let pending = self.pending_stats_modify_count.entry(table_id).or_default();
+            *pending = pending.wrapping_add(modified);
+        }
+    }
+
+    /// ANALYZE scans the current table image and resets its stats-meta
+    /// modification count, so deltas from before that scan are consumed.
+    pub fn clear_stats_modify_count(&mut self, table_id: i64) {
+        self.pending_stats_modify_count.remove(&table_id);
     }
 
     /// Reads one persisted ANALYZE-options row by physical ID.
@@ -2228,29 +2265,71 @@ impl Catalog {
     /// `mysql.stats_meta`, and `GetStatsTable` (`pkg/planner/core/stats/stats.go`)
     /// then plans from that real count with the pseudo distribution — rule 3
     /// marks the unloaded table `Pseudo` while keeping `RealtimeCount`. The
-    /// embedded tier reads the count from the table's key range at flush
-    /// time. Tables that already carry statistics (ANALYZEd) are left alone,
-    /// and empty tables stay on the pure pseudo fallback (rule 2), which is
-    /// also where Go lands when the delta has not been flushed yet.
+    /// embedded tier reads the net count from the table at flush time and
+    /// applies committed modification counts to analyzed stats as Go's stats
+    /// delta collector does.
     pub fn flush_stats_delta(&mut self) {
-        let mut targets: Vec<(String, String)> = Vec::new();
+        self.flush_stats_delta_inner(None);
+    }
+
+    /// Flushes only selected physical table IDs, as Go's
+    /// `FLUSH STATS_DELTA db.tbl` and `db.*` do.
+    pub fn flush_stats_delta_for(&mut self, table_ids: &[i64]) {
+        let target_ids = table_ids.iter().copied().collect();
+        self.flush_stats_delta_inner(Some(&target_ids));
+    }
+
+    fn flush_stats_delta_inner(&mut self, target_ids: Option<&HashSet<i64>>) {
+        let mut targets: Vec<(String, String, Vec<i64>)> = Vec::new();
+        let mut partitioned_tables = Vec::new();
         for database in self.database_names() {
             for name in self.table_names(&database).unwrap_or_default() {
-                targets.push((database.clone(), name));
+                let (table_id, physical_ids) = match self.get_in(&database, &name) {
+                    Some(TableEntry::Kv(table)) => (
+                        table.table_id,
+                        table
+                            .partition()
+                            .map_or_else(|| vec![table.table_id], |partition| {
+                                partition.physical_ids()
+                            }),
+                    ),
+                    _ => continue,
+                };
+                if physical_ids.len() > 1 {
+                    partitioned_tables.push((table_id, physical_ids.clone()));
+                }
+                let selected_ids: Vec<i64> = physical_ids
+                    .into_iter()
+                    .filter(|id| target_ids.is_none_or(|ids| ids.contains(id)))
+                    .collect();
+                if !selected_ids.is_empty() {
+                    targets.push((database.clone(), name, selected_ids));
+                }
             }
         }
         let mut flushed: Vec<(i64, i64)> = Vec::new();
-        for (database, name) in targets {
+        for (database, name, physical_ids) in targets {
             if let Some(TableEntry::Kv(table)) = self.get_mut_in(&database, &name) {
-                if table.partition().is_some() {
-                    continue;
-                }
-                let table_id = table.table_id;
-                if let Ok(count) = Arc::make_mut(table).stats_row_count() {
-                    flushed.push((table_id, count));
+                let table = Arc::make_mut(table);
+                for physical_id in physical_ids {
+                    if let Ok(count) = table.stats_row_count_for_physical_id(physical_id) {
+                        flushed.push((physical_id, count));
+                    }
                 }
             }
         }
+        let pending = if let Some(target_ids) = target_ids {
+            target_ids
+                .iter()
+                .filter_map(|table_id| {
+                    self.pending_stats_modify_count
+                        .remove(table_id)
+                        .map(|count| (*table_id, count))
+                })
+                .collect()
+        } else {
+            std::mem::take(&mut self.pending_stats_modify_count)
+        };
         if flushed.is_empty() {
             return;
         }
@@ -2260,18 +2339,72 @@ impl Catalog {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (table_id, count) in flushed {
-            if count <= 0 || values.contains_key(&table_id) {
+            let modify_count = pending.get(&table_id).copied().unwrap_or(0);
+            if let Some(current) = values.get(&table_id) {
+                if modify_count == 0 && current.row_count == count {
+                    continue;
+                }
+                let mut statistics = (**current).clone();
+                statistics.row_count = count.max(0);
+                statistics.modify_count = statistics.modify_count.saturating_add(modify_count);
+                values.insert(table_id, Arc::new(statistics));
                 continue;
             }
-            values.insert(
-                table_id,
-                Arc::new(crate::access_cost::TableStatistics::new(
-                    count,
-                    0,
-                    BTreeMap::new(),
-                    BTreeMap::new(),
-                )),
-            );
+            if count <= 0 {
+                continue;
+            }
+            let Some(table) = self.physical_kv_table_by_id(table_id) else {
+                continue;
+            };
+            let columns = table
+                .visible_columns()
+                .iter()
+                .map(|column| (column.id, false))
+                .collect();
+            let indexes = table
+                .indexes()
+                .iter()
+                .map(|index| (index.id, false))
+                .collect();
+            let mut statistics = crate::access_cost::TableStatistics::new(
+                count,
+                modify_count,
+                BTreeMap::new(),
+                BTreeMap::new(),
+            )
+            .with_stats_existence(columns, indexes);
+            // This is a real stats_meta row with an unanalyzed distribution.
+            // Go's cached Table is not a synthetic PseudoTable, even though
+            // GetStatsTable gives the optimizer a pseudo-stat copy.
+            statistics.cache_pseudo = false;
+            values.insert(table_id, Arc::new(statistics));
+        }
+
+        // Dynamic partition pruning reads the logical table's merged global
+        // statistics. Keep its realtime metadata in sync with physical
+        // partition deltas while preserving the analyzed global histograms.
+        for (table_id, physical_ids) in partitioned_tables {
+            let Some(current) = values.get(&table_id) else {
+                continue;
+            };
+            let (row_count, modify_count) =
+                physical_ids
+                    .iter()
+                    .fold((0_i64, 0_i64), |(rows, modifications), physical_id| {
+                        values.get(physical_id).map_or((rows, modifications), |stats| {
+                            (
+                                rows.saturating_add(stats.row_count.max(0)),
+                                modifications.saturating_add(stats.modify_count.max(0)),
+                            )
+                        })
+                    });
+            if current.row_count == row_count && current.modify_count == modify_count {
+                continue;
+            }
+            let mut statistics = (**current).clone();
+            statistics.row_count = row_count;
+            statistics.modify_count = modify_count;
+            values.insert(table_id, Arc::new(statistics));
         }
     }
 
@@ -3962,7 +4095,8 @@ mod planner_view_tests {
         .unwrap();
         assert_eq!(before_write, original.metadata_version());
         crate::run_create_table_on("CREATE TABLE left_branch(a INT)", &mut original).unwrap();
-        crate::run_create_table_on("CREATE TABLE right_branch(a VARCHAR(10))", &mut branch).unwrap();
+        crate::run_create_table_on("CREATE TABLE right_branch(a VARCHAR(10))", &mut branch)
+            .unwrap();
         assert_ne!(original.metadata_version(), branch.metadata_version());
         let mut rebuilt = Catalog::default();
         crate::run_create_table_on("CREATE TABLE epoch(a INT, b INT)", &mut rebuilt).unwrap();

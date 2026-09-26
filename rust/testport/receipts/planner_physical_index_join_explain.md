@@ -149,3 +149,20 @@ git diff --check
 # clean
 ```
 
+## 2026-09-23 follow-up: range spelling follows the selected probe branch
+
+Go's integer-handle table path uses `indexJoinIntPKRangeInfo` and renders
+bare outer keys; other index-join probes use `indexJoinPathRangeInfo` and
+render `eq(inner, outer)` pairs. Rust now carries the branch selected during
+inner-path construction through the physical join to explain rendering. The
+new `index_join_range_info_uses_the_go_spelling_for_the_chosen_probe` test
+asserts both strings.
+
+```text
+cargo test --offline --locked --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib explain::tests:: -- --test-threads=1
+# 10 passed, including the two range spellings
+```
+
+This covers the formatter branch; TPC-DS q12/q19 end-to-end plan comparisons
+and the complete `pkg/planner/core` package acceptance remain open.

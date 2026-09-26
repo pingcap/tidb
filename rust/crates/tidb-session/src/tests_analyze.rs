@@ -452,7 +452,7 @@ fn static_partition_analyze_inherits_and_updates_only_named_partition_options() 
 /// The row decoder used by `ANALYZE` evaluates generated columns instead of
 /// refusing the table or sampling the stored placeholder for a virtual one.
 #[test]
-fn analyze_materializes_virtual_and_stored_generated_columns() {
+fn analyze_publishes_stored_but_not_virtual_generated_column_histograms() {
     let mut session = Session::new();
     session
         .run(
@@ -485,7 +485,15 @@ fn analyze_materializes_virtual_and_stored_generated_columns() {
                     table
                         .columns
                         .iter()
-                        .map(|column| column.id)
+                        .map(|column| {
+                            (
+                                column.id,
+                                column
+                                    .generated
+                                    .as_ref()
+                                    .is_some_and(|generated| !generated.stored),
+                            )
+                        })
                         .collect::<Vec<_>>(),
                 )
             };
@@ -494,10 +502,11 @@ fn analyze_materializes_virtual_and_stored_generated_columns() {
                 .expect("ANALYZE publishes table statistics");
             assert_eq!(statistics.row_count, 4);
             assert_eq!(column_ids.len(), 3);
-            for column_id in column_ids {
-                assert!(
+            for (column_id, virtual_column) in column_ids {
+                assert_eq!(
                     statistics.columns.contains_key(&column_id),
-                    "ANALYZE omitted generated column id {column_id}"
+                    !virtual_column,
+                    "unexpected histogram for generated column id {column_id}"
                 );
             }
             Ok(())

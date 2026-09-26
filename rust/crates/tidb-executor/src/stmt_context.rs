@@ -14,6 +14,7 @@
 
 //! The per-statement evaluation context, which is Go's `StatementContext`.
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -347,6 +348,8 @@ pub struct StmtContextSessionState {
     pub resource_group_name: String,
     /// Captured storage-engine policy.
     pub isolation_read_engines: String,
+    /// Go `SessionVars.SelectLimit`, used to suppress the fast point-plan path.
+    pub select_limit: u64,
     /// Captured connection character set.
     pub connection_charset: String,
     /// Captured connection collation.
@@ -370,6 +373,7 @@ impl Default for StmtContextSessionState {
             sequences: Arc::default(),
             resource_group_name: "default".to_owned(),
             isolation_read_engines: "tikv,tiflash,tidb".to_owned(),
+            select_limit: u64::MAX,
             connection_charset: "utf8mb4".to_owned(),
             connection_collation: "utf8mb4_bin".to_owned(),
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
@@ -417,6 +421,8 @@ pub struct StmtContextData {
     /// How many coprocessor-equivalent evaluations are open on this thread.
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
     cop_eval_depth: Arc<AtomicU32>,
+    /// Go `StatementContext.UsedStatsInfo`, keyed by physical table ID.
+    used_stats_info: Arc<Mutex<BTreeMap<i64, crate::used_stats::UsedStatsInfoForTable>>>,
     /// Shared by every rebuilt executor of one statement attempt. Go emits
     /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
     /// lock retries use their separate after-retry breakpoint.
@@ -503,6 +509,8 @@ pub struct StmtContextData {
     /// Go `SessionVars.IsolationReadEngines`, in the session variable's
     /// canonical comma-separated spelling.
     isolation_read_engines: String,
+    /// Go `SessionVars.SelectLimit`; `u64::MAX` is the unlimited sentinel.
+    select_limit: u64,
     /// Go `BuildContext.GetCharsetInfo`: the statement snapshot of
     /// `@@character_set_connection` and `@@collation_connection`.
     connection_charset: String,
@@ -687,6 +695,10 @@ pub struct StmtContextData {
     /// fraction of an order-preserving access range expected to be scanned
     /// before the first LIMIT row is found.
     ordering_index_selectivity_ratio: f64,
+    /// Go `SessionVars.OptOrderingIdxSelThresh`: when a datasource has any
+    /// sufficiently selective access path, index scans keep their original
+    /// row estimate instead of applying `ExpectedCnt`.
+    ordering_index_selectivity_threshold: f64,
     /// Go `SessionVars.AllowProjectionPushDown`
     /// (`@@tidb_opt_projection_push_down`, default `ON`).
     allow_projection_push_down: bool,
@@ -699,6 +711,8 @@ pub struct StmtContextData {
     /// Go `SessionVars.LimitPushDownThreshold`
     /// (`@@tidb_opt_limit_push_down_threshold`, default `5000`).
     limit_push_down_threshold: u64,
+    /// Go `SessionVars.EnableAdaptiveLimitScan` (`@@tidb_enable_adaptive_limit_scan`).
+    enable_adaptive_limit_scan: bool,
     /// The statement snapshot of Go `SessionVars.OptimizerFixControl`.
     ///
     /// Keeping the parsed map on the context makes planner decisions consume
@@ -874,6 +888,9 @@ pub struct StmtContextData {
     /// Go `StmtCtx.IndexUsageCollector`, allocated for one statement from
     /// the session-local collector when execution-info collection is on.
     index_usage_collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
+    /// Go `StmtCtx.RuntimeStatsColl`, present only when instance-level
+    /// execution-info collection is enabled.
+    executor_runtime_stats_source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
     /// Go `SessionVars.TxnCtx.TableDeltaMap` for the open transaction.
     table_delta: Option<Arc<tidb_stats_handle_usage::TableDeltaMap>>,
     /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
@@ -1138,6 +1155,16 @@ context_configuration! {
         self
     }
 
+    /// Installs Go `StmtCtx.RuntimeStatsColl`'s executor-stat source.
+    #[must_use]
+    pub fn with_executor_runtime_stats_source(
+        mut self,
+        source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+    ) -> Self {
+        self.executor_runtime_stats_source = source;
+        self
+    }
+
     /// Installs Go `SessionVars.TxnCtx.TableDeltaMap`.
     #[must_use]
     pub fn with_table_delta(mut self, delta: Arc<tidb_stats_handle_usage::TableDeltaMap>) -> Self {
@@ -1253,6 +1280,13 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_opt_ordering_index_selectivity_threshold` for this statement.
+    #[must_use]
+    pub fn with_ordering_index_selectivity_threshold(mut self, threshold: f64) -> Self {
+        self.ordering_index_selectivity_threshold = threshold;
+        self
+    }
+
     /// Sets `@@tidb_opt_projection_push_down` for this statement.
     #[must_use]
     pub fn with_projection_push_down(mut self, allow: bool) -> Self {
@@ -1278,6 +1312,13 @@ context_configuration! {
     #[must_use]
     pub fn with_limit_push_down_threshold(mut self, threshold: u64) -> Self {
         self.limit_push_down_threshold = threshold;
+        self
+    }
+
+    /// Sets `@@tidb_enable_adaptive_limit_scan` for this statement.
+    #[must_use]
+    pub fn with_enable_adaptive_limit_scan(mut self, enabled: bool) -> Self {
+        self.enable_adaptive_limit_scan = enabled;
         self
     }
 
@@ -1778,6 +1819,7 @@ impl StmtContext {
             in_explain_stmt: false,
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
+            used_stats_info: Arc::default(),
             before_executor_first_run: session.before_executor_first_run,
             index_force: Arc::default(),
             breakpoint_notify_func: session.breakpoint_notify_func,
@@ -1813,6 +1855,7 @@ impl StmtContext {
             not_fill_cache: false,
             dist_sql_scan_concurrency: DEFAULT_DIST_SQL_SCAN_CONCURRENCY,
             isolation_read_engines: session.isolation_read_engines,
+            select_limit: session.select_limit,
             connection_charset: session.connection_charset,
             connection_collation: session.connection_collation,
             rand_session: None,
@@ -1864,11 +1907,14 @@ impl StmtContext {
                 tidb_vardef::defaults::DEF_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD,
             advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             ordering_index_selectivity_ratio: 0.01,
+            ordering_index_selectivity_threshold:
+                tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH,
             allow_projection_push_down: true,
             enable_inl_join_inner_multi_pattern: true,
             enable_null_aware_anti_join: true,
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
                 as u64,
+            enable_adaptive_limit_scan: tidb_vardef::defaults::DEF_TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
             index_lookup_push_down_session:
                 tidb_planner::access_path::IndexLookupPushDownSession::default(),
@@ -1928,6 +1974,7 @@ impl StmtContext {
             operator_num: Arc::default(),
             column_stats_usage: None,
             index_usage_collector: None,
+            executor_runtime_stats_source: None,
             table_delta: None,
             plan_replayer_capture_enabled: false,
             table_runtime_statistics: Arc::default(),
@@ -2395,6 +2442,65 @@ impl StmtContext {
         self.index_usage_collector.as_ref()
     }
 
+    /// Returns Go `StmtCtx.RuntimeStatsColl`'s executor-stat source, when
+    /// statement execution-info collection is enabled.
+    #[must_use]
+    pub fn executor_runtime_stats_source(
+        &self,
+    ) -> Option<&Arc<dyn crate::executor::ExecutorRuntimeStatsSource>> {
+        self.executor_runtime_stats_source.as_ref()
+    }
+
+    /// Records one non-full-load statistics item, matching Go's
+    /// `recordUsedItemStatsStatus` statement-local ledger.
+    pub fn record_used_stats_status(
+        &self,
+        physical_table_id: i64,
+        table_name: &str,
+        version: u64,
+        realtime_count: i64,
+        modify_count: i64,
+        item_id: i64,
+        is_index: bool,
+        status: &str,
+    ) {
+        if physical_table_id <= 0 || item_id <= 0 {
+            return;
+        }
+        let mut used_stats = self
+            .used_stats_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = used_stats.entry(physical_table_id).or_insert_with(|| {
+            crate::used_stats::UsedStatsInfoForTable {
+                name: table_name.to_owned(),
+                version,
+                realtime_count,
+                modify_count,
+                ..crate::used_stats::UsedStatsInfoForTable::default()
+            }
+        });
+        let statuses = if is_index {
+            &mut entry.index_stats_load_status
+        } else {
+            &mut entry.column_stats_load_status
+        };
+        statuses.insert(item_id, status.to_owned());
+    }
+
+    /// Returns the statuses Go attaches to a physical table's scan plan.
+    #[must_use]
+    pub fn used_stats_info(
+        &self,
+        physical_table_id: i64,
+    ) -> Option<crate::used_stats::UsedStatsInfoForTable> {
+        self.used_stats_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&physical_table_id)
+            .cloned()
+    }
+
     /// Go `session.UpdateColStatsUsage`: all items from one planning pass get
     /// the same timestamp before the session collector is unlocked.
     pub fn update_col_stats_usage(&self, items: impl IntoIterator<Item = tidb_model::TableItemID>) {
@@ -2613,6 +2719,12 @@ impl StmtContext {
         self.ordering_index_selectivity_ratio
     }
 
+    /// Go `SessionVars.OptOrderingIdxSelThresh`.
+    #[must_use]
+    pub fn ordering_index_selectivity_threshold(&self) -> f64 {
+        self.ordering_index_selectivity_threshold
+    }
+
     /// Go `SessionVars.AllowProjectionPushDown`.
     #[must_use]
     pub fn allow_projection_push_down(&self) -> bool {
@@ -2641,6 +2753,12 @@ impl StmtContext {
     #[must_use]
     pub fn limit_push_down_threshold(&self) -> u64 {
         self.limit_push_down_threshold
+    }
+
+    /// Go `SessionVars.EnableAdaptiveLimitScan`.
+    #[must_use]
+    pub fn enable_adaptive_limit_scan(&self) -> bool {
+        self.enable_adaptive_limit_scan
     }
 
     /// The statement's parsed optimizer-fix controls.
@@ -2964,6 +3082,12 @@ impl StmtContext {
     #[must_use]
     pub fn static_partition_prune(&self) -> bool {
         self.static_partition_prune
+    }
+
+    /// Go `SessionVars.SelectLimit`; `u64::MAX` means no session-level cap.
+    #[must_use]
+    pub fn select_limit(&self) -> u64 {
+        self.select_limit
     }
 
     /// Whether `ONLY_FULL_GROUP_BY` is in effect for this statement.

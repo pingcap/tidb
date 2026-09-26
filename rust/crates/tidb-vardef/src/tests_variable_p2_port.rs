@@ -173,6 +173,11 @@ fn global_system_variable_initial_value_table() {
             super::global_sysvar_initial::ON,
         ),
         (
+            super::global_sysvar_initial::ENABLE_ADAPTIVE_LIMIT_SCAN,
+            super::global_sysvar_initial::OFF,
+            super::global_sysvar_initial::ON,
+        ),
+        (
             super::global_sysvar_initial::PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
             // BoolToOnOff(DefTiDBPessimisticTransactionFairLocking)
             "OFF",

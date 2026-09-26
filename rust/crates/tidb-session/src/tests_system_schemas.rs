@@ -569,6 +569,747 @@ fn tidb_index_usage_reads_the_shared_collector_for_every_catalog_index() {
     assert_eq!(rows[1], ["primary", "0", "0", "0", "0", "<nil>"]);
 }
 
+/// Go `TestIndexUsageReporterWithRealData` exercises the reporter through a
+/// point-read executor. The in-process Rust store can verify statement and
+/// row accounting for the clustered-handle case; it has no KV RPCs to count.
+#[test]
+fn tidb_index_usage_records_a_clustered_point_read() {
+    use std::sync::Arc;
+
+    let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
+    collector.start_worker();
+    let mut session = Session::new();
+    session.set_index_usage_collector(Arc::clone(&collector));
+    session.set_session_index_usage_collector(collector.spawn_session_collector());
+    session
+        .run("CREATE TABLE usage_point (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO usage_point VALUES (1, 7)")
+        .unwrap();
+
+    let (table_id, primary_id) = {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "usage_point").unwrap()
+        else {
+            panic!("usage_point must be a stored table");
+        };
+        (table.table_id, 0)
+    };
+    assert_eq!(
+        row_text(session.run("SELECT v FROM usage_point WHERE id = 1")),
+        [["7"]]
+    );
+
+    drop(session);
+    collector.close();
+
+    let usage = collector.get_index_usage(table_id, primary_id);
+    assert_eq!(usage.query_total, 1);
+    assert_eq!(usage.kv_req_total, 0);
+    assert_eq!(usage.row_access_total, 1);
+    assert_eq!(usage.percentage_access, [0, 1, 0, 0, 0, 0, 0]);
+}
+
+/// Go `TestIndexUsageReporterWithClusterIndex` exercises clustered integer
+/// and common handles, plus a nonclustered string primary index. A hinted OR
+/// IndexMerge combines integer-handle ranges with a secondary-index range.
+#[test]
+fn tidb_index_usage_records_clustered_handle_and_primary_index_reads() {
+    use std::sync::Arc;
+
+    let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
+    collector.start_worker();
+    let mut session = Session::new();
+    session.set_index_usage_collector(Arc::clone(&collector));
+    session.set_session_index_usage_collector(collector.spawn_session_collector());
+    session
+        .run("CREATE TABLE usage_cluster_int (id INT PRIMARY KEY, a INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE usage_cluster_common (id CHAR(255) PRIMARY KEY, a INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE usage_cluster_nonclustered (id CHAR(255) PRIMARY KEY NONCLUSTERED, a INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE usage_cluster_merge (id INT PRIMARY KEY, a INT, UNIQUE KEY idx_a(a))")
+        .unwrap();
+
+    let integer_rows = (0..100)
+        .map(|id| format!("({id}, {id})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let common_rows = (0..100)
+        .map(|id| format!("('{id}', {id})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    session
+        .run(&format!(
+            "INSERT INTO usage_cluster_int VALUES {integer_rows}"
+        ))
+        .unwrap();
+    session
+        .run(&format!(
+            "INSERT INTO usage_cluster_common VALUES {common_rows}"
+        ))
+        .unwrap();
+    session
+        .run(&format!(
+            "INSERT INTO usage_cluster_nonclustered VALUES {common_rows}"
+        ))
+        .unwrap();
+    session
+        .run(&format!(
+            "INSERT INTO usage_cluster_merge VALUES {integer_rows}"
+        ))
+        .unwrap();
+    for table in [
+        "usage_cluster_int",
+        "usage_cluster_common",
+        "usage_cluster_nonclustered",
+        "usage_cluster_merge",
+    ] {
+        session.run(&format!("ANALYZE TABLE {table}")).unwrap();
+    }
+
+    let table_index = |name: &str| {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", name).unwrap() else {
+            panic!("{name} must be a stored table");
+        };
+        let primary_id = table
+            .indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case("primary"))
+            .map_or(0, |index| index.id);
+        (table.table_id, primary_id)
+    };
+    let int_key = table_index("usage_cluster_int");
+    let common_key = table_index("usage_cluster_common");
+    let nonclustered_key = table_index("usage_cluster_nonclustered");
+    let merge_key = table_index("usage_cluster_merge");
+    let merge_index_id = {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) =
+            catalog.table_in("test", "usage_cluster_merge").unwrap()
+        else {
+            panic!("usage_cluster_merge must be a stored table");
+        };
+        table
+            .indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case("idx_a"))
+            .expect("idx_a metadata")
+            .id
+    };
+
+    let mut common_range_ids = (0..100)
+        .map(|id| id.to_string())
+        .filter(|id| id.as_str() >= "30")
+        .collect::<Vec<_>>();
+    common_range_ids.sort();
+    let common_range_rows = common_range_ids
+        .iter()
+        .map(|id| vec![id.clone()])
+        .collect::<Vec<_>>();
+    let int_range_rows = (30..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>();
+    let int_batch_rows = [1, 3, 5, 9]
+        .map(|id| vec![id.to_string(), id.to_string()])
+        .to_vec();
+    let common_batch_rows = ["1", "3", "5", "9"]
+        .map(|id| vec![id.to_owned(), id.to_owned()])
+        .to_vec();
+    let merge_rows = (0..100)
+        .filter(|id| *id < 5 || *id >= 30)
+        .map(|id| vec![id.to_string(), id.to_string()])
+        .collect::<Vec<_>>();
+    let cases = vec![
+        (
+            "SELECT id FROM usage_cluster_int WHERE id >= 30",
+            "TableReader",
+            int_range_rows,
+        ),
+        (
+            "SELECT id FROM usage_cluster_common WHERE id >= \"30\"",
+            "TableReader",
+            common_range_rows.clone(),
+        ),
+        (
+            "SELECT id FROM usage_cluster_nonclustered WHERE id >= \"30\"",
+            "IndexRangeScan",
+            common_range_rows,
+        ),
+        (
+            "SELECT * FROM usage_cluster_int WHERE id = 1",
+            "Point_Get",
+            vec![vec!["1".to_owned(), "1".to_owned()]],
+        ),
+        (
+            "SELECT * FROM usage_cluster_common WHERE id = \"1\"",
+            "Point_Get",
+            vec![vec!["1".to_owned(), "1".to_owned()]],
+        ),
+        (
+            "SELECT * FROM usage_cluster_int WHERE id IN (1, 3, 5, 9)",
+            "Batch_Point_Get",
+            int_batch_rows,
+        ),
+        (
+            "SELECT * FROM usage_cluster_common WHERE id IN (\"1\", \"3\", \"5\", \"9\")",
+            "Batch_Point_Get",
+            common_batch_rows,
+        ),
+        (
+            "SELECT /*+ USE_INDEX_MERGE(usage_cluster_merge) */ * FROM usage_cluster_merge WHERE id >= 30 OR id < 5 OR a >= 50",
+            "IndexMerge",
+            merge_rows,
+        ),
+    ];
+
+    for (index, (sql, expected_plan, expected_rows)) in cases.iter().enumerate() {
+        let plan = row_text(session.run(&format!("EXPLAIN {sql}")));
+        assert!(
+            plan.iter()
+                .any(|row| row.first().is_some_and(|name| name.contains(expected_plan))),
+            "expected {expected_plan} for {sql}: {plan:?}"
+        );
+        let assert_rows = |mut actual: Vec<Vec<String>>| {
+            let mut expected = expected_rows.clone();
+            if *expected_plan == "IndexMerge" {
+                actual.sort();
+                expected.sort();
+            }
+            assert_eq!(actual, expected, "{sql}");
+        };
+        assert_rows(row_text(session.run(sql)));
+
+        let statement = format!("cluster_index_usage_{index}");
+        session
+            .run(&format!("PREPARE {statement} FROM '{sql}'"))
+            .unwrap();
+        for _ in 0..2 {
+            assert_rows(row_text(session.run(&format!("EXECUTE {statement}"))));
+        }
+        session
+            .run(&format!("DEALLOCATE PREPARE {statement}"))
+            .unwrap();
+    }
+
+    drop(session);
+    collector.close();
+
+    let int_usage = collector.get_index_usage(int_key.0, int_key.1);
+    assert_eq!(int_usage.query_total, 9, "{int_usage:?}");
+    assert_eq!(int_usage.row_access_total, 225, "{int_usage:?}");
+    assert_eq!(int_usage.kv_req_total, 0);
+    assert_eq!(int_usage.percentage_access, [0, 3, 3, 0, 0, 3, 0]);
+
+    let common_usage = collector.get_index_usage(common_key.0, common_key.1);
+    assert_eq!(common_usage.query_total, 9, "{common_usage:?}");
+    assert_eq!(common_usage.row_access_total, 243, "{common_usage:?}");
+    assert_eq!(common_usage.kv_req_total, 0);
+    assert_eq!(common_usage.percentage_access, [0, 3, 3, 0, 0, 3, 0]);
+
+    let nonclustered_usage = collector.get_index_usage(nonclustered_key.0, nonclustered_key.1);
+    assert_eq!(nonclustered_usage.query_total, 3, "{nonclustered_usage:?}");
+    assert_eq!(
+        nonclustered_usage.row_access_total, 228,
+        "{nonclustered_usage:?}"
+    );
+    assert_eq!(nonclustered_usage.kv_req_total, 0);
+    assert_eq!(nonclustered_usage.percentage_access, [0, 0, 0, 0, 0, 3, 0]);
+
+    let merge_pk_usage = collector.get_index_usage(merge_key.0, merge_key.1);
+    assert_eq!(merge_pk_usage.query_total, 3, "{merge_pk_usage:?}");
+    assert_eq!(merge_pk_usage.row_access_total, 225, "{merge_pk_usage:?}");
+    assert_eq!(merge_pk_usage.kv_req_total, 0);
+    assert_eq!(merge_pk_usage.percentage_access, [0, 0, 3, 0, 0, 3, 0]);
+
+    let merge_secondary_usage = collector.get_index_usage(merge_key.0, merge_index_id);
+    assert_eq!(
+        merge_secondary_usage.query_total, 3,
+        "{merge_secondary_usage:?}"
+    );
+    assert_eq!(
+        merge_secondary_usage.row_access_total, 150,
+        "{merge_secondary_usage:?}"
+    );
+    assert_eq!(merge_secondary_usage.kv_req_total, 0);
+    assert_eq!(
+        merge_secondary_usage.percentage_access,
+        [0, 0, 0, 0, 0, 3, 0]
+    );
+}
+
+/// Go `TestIndexUsageReporterWithPartitionTable` checks that reads on a
+/// partition-local index are attributed to the logical table and index for
+/// range, point, batch-point, and prepared executions.
+#[test]
+fn tidb_index_usage_records_a_partition_local_index_read() {
+    use std::sync::Arc;
+
+    let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
+    collector.start_worker();
+    let mut session = Session::new();
+    session.set_index_usage_collector(Arc::clone(&collector));
+    session.set_session_index_usage_collector(collector.spawn_session_collector());
+    session
+        .run(
+            "CREATE TABLE usage_partition_local (id INT, UNIQUE KEY idx_id(id)) \
+             PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (50), \
+             PARTITION pmax VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    let rows = (0..100)
+        .map(|id| format!("({id})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    session
+        .run(&format!("INSERT INTO usage_partition_local VALUES {rows}"))
+        .unwrap();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    session.run("ANALYZE TABLE usage_partition_local").unwrap();
+
+    let (table_id, index_id) = {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) =
+            catalog.table_in("test", "usage_partition_local").unwrap()
+        else {
+            panic!("usage_partition_local must be a stored table");
+        };
+        (table.table_id, table.indexes()[0].id)
+    };
+    let range_sql = "SELECT id FROM usage_partition_local WHERE id >= 30";
+    let selection_sql = "SELECT id FROM usage_partition_local WHERE id - 95 >= 0 AND id >= 90";
+    let point_sql = "SELECT * FROM usage_partition_local WHERE id = 1";
+    let batch_sql = "SELECT * FROM usage_partition_local WHERE id IN (1, 3, 5, 9)";
+    let explain =
+        |session: &mut Session, sql: &str| row_text(session.run(&format!("EXPLAIN {sql}")));
+
+    let range_plan = explain(&mut session, range_sql);
+    assert!(
+        range_plan
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(|name| name.starts_with("PartitionUnion")),
+        "a range spanning two partitions must use PartitionUnion: {range_plan:?}"
+    );
+    assert!(range_plan.iter().any(|row| row
+        .get(3)
+        .is_some_and(|objects| objects.contains("index:idx_id"))));
+    let range_result = row_text(session.run(range_sql));
+    assert_eq!(
+        range_result,
+        (30..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>()
+    );
+
+    let selection_plan = explain(&mut session, selection_sql);
+    assert!(
+        selection_plan.iter().any(|row| row
+            .get(3)
+            .is_some_and(|objects| objects.contains("index:idx_id"))),
+        "the single-partition range must use idx_id: {selection_plan:?}"
+    );
+    assert_eq!(
+        row_text(session.run(selection_sql)),
+        (95..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>()
+    );
+
+    let point_plan = explain(&mut session, point_sql);
+    assert!(
+        point_plan
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(|name| name.starts_with("Point_Get")),
+        "a unique partition-local equality should use Point_Get: {point_plan:?}"
+    );
+    assert_eq!(row_text(session.run(point_sql)), [["1"]]);
+
+    let batch_plan = explain(&mut session, batch_sql);
+    assert!(
+        batch_plan
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(|name| name.starts_with("Batch_Point_Get")),
+        "a unique partition-local IN predicate should use Batch_Point_Get: {batch_plan:?}"
+    );
+    assert_eq!(
+        row_text(session.run(batch_sql)),
+        [["1"], ["3"], ["5"], ["9"]]
+    );
+
+    for (statement, sql, expected) in [
+        (
+            "partition_range",
+            range_sql,
+            (30..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>(),
+        ),
+        (
+            "partition_selection",
+            selection_sql,
+            (95..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>(),
+        ),
+        ("partition_point", point_sql, vec![vec!["1".to_owned()]]),
+        (
+            "partition_batch",
+            batch_sql,
+            vec![
+                vec!["1".to_owned()],
+                vec!["3".to_owned()],
+                vec!["5".to_owned()],
+                vec!["9".to_owned()],
+            ],
+        ),
+    ] {
+        session
+            .run(&format!("PREPARE {statement} FROM '{sql}'"))
+            .unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                row_text(session.run(&format!("EXECUTE {statement}"))),
+                expected
+            );
+        }
+        session
+            .run(&format!("DEALLOCATE PREPARE {statement}"))
+            .unwrap();
+    }
+
+    drop(session);
+    collector.close();
+
+    let usage = collector.get_index_usage(table_id, index_id);
+    assert_eq!(
+        usage.query_total, 12,
+        "range={range_plan:?}; selection={selection_plan:?}; point={point_plan:?}; batch={batch_plan:?}; usage={usage:?}"
+    );
+    assert_eq!(usage.row_access_total, 255, "usage={usage:?}");
+    assert_eq!(usage.kv_req_total, 0, "in-process scans issue no KV RPCs");
+    assert_eq!(usage.percentage_access, [0, 3, 3, 0, 3, 3, 3]);
+}
+
+/// Go `TestIndexUsageReporterWithRealData` exercises index readers, lookup,
+/// point readers, and a hinted AND IndexMerge over analyzed unique indexes.
+#[test]
+fn tidb_index_usage_records_real_data_reads() {
+    use std::sync::Arc;
+
+    let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
+    collector.start_worker();
+    let mut session = Session::new();
+    session.set_index_usage_collector(Arc::clone(&collector));
+    session.set_session_index_usage_collector(collector.spawn_session_collector());
+    session
+        .run(
+            "CREATE TABLE usage_real_data (id_1 INT, id_2 INT, \
+             UNIQUE KEY idx_1(id_1), UNIQUE KEY idx_2(id_2))",
+        )
+        .unwrap();
+    let rows = (0..100)
+        .map(|id| format!("({id}, {id})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    session
+        .run(&format!("INSERT INTO usage_real_data VALUES {rows}"))
+        .unwrap();
+    session.run("ANALYZE TABLE usage_real_data").unwrap();
+
+    let (table_id, index_1_id, index_2_id) = {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) =
+            catalog.table_in("test", "usage_real_data").unwrap()
+        else {
+            panic!("usage_real_data must be a stored table");
+        };
+        let index_id = |name: &str| {
+            table
+                .indexes()
+                .iter()
+                .find(|index| index.name.eq_ignore_ascii_case(name))
+                .unwrap_or_else(|| panic!("missing {name} index"))
+                .id
+        };
+        (table.table_id, index_id("idx_1"), index_id("idx_2"))
+    };
+
+    let cases = vec![
+        (
+            "SELECT id_1 FROM usage_real_data WHERE id_1 >= 30",
+            "IndexReader",
+            (30..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>(),
+        ),
+        (
+            "SELECT id_1 FROM usage_real_data WHERE id_1 - 95 >= 0 AND id_1 >= 90",
+            "IndexReader",
+            (95..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>(),
+        ),
+        (
+            "SELECT id_2 FROM usage_real_data USE INDEX (idx_1) \
+             WHERE id_1 >= 30 AND id_1 - 50 >= 0",
+            "IndexLookUp",
+            (50..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>(),
+        ),
+        (
+            "SELECT /*+ USE_INDEX_MERGE(usage_real_data, idx_1, idx_2) */ id_2 \
+             FROM usage_real_data WHERE id_1 >= 30 AND id_2 >= 80 AND id_2 - 95 >= 0",
+            "IndexMerge",
+            (95..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>(),
+        ),
+        (
+            "SELECT * FROM usage_real_data WHERE id_1 = 1",
+            "Point_Get",
+            vec![vec!["1".to_owned(), "1".to_owned()]],
+        ),
+        (
+            "SELECT id_1 FROM usage_real_data \
+             WHERE id_1 = 1 OR id_1 = 50 OR id_1 = 25",
+            "Batch_Point_Get",
+            vec![
+                vec!["1".to_owned()],
+                vec!["25".to_owned()],
+                vec!["50".to_owned()],
+            ],
+        ),
+    ];
+    for (sql, expected_plan, expected_rows) in &cases {
+        let plan = row_text(session.run(&format!("EXPLAIN {sql}")));
+        assert!(
+            plan.iter()
+                .any(|row| row.first().is_some_and(|name| name.contains(expected_plan))),
+            "expected {expected_plan} for {sql}: {plan:?}"
+        );
+        assert_eq!(row_text(session.run(sql)), *expected_rows, "{sql}");
+    }
+
+    for (index, (sql, _, expected_rows)) in cases.iter().enumerate() {
+        let statement = format!("usage_real_data_{index}");
+        session
+            .run(&format!("PREPARE {statement} FROM '{sql}'"))
+            .unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                row_text(session.run(&format!("EXECUTE {statement}"))),
+                *expected_rows,
+                "{sql}"
+            );
+        }
+        session
+            .run(&format!("DEALLOCATE PREPARE {statement}"))
+            .unwrap();
+    }
+
+    drop(session);
+    collector.close();
+
+    let index_1_usage = collector.get_index_usage(table_id, index_1_id);
+    assert_eq!(index_1_usage.query_total, 18, "{index_1_usage:?}");
+    assert_eq!(index_1_usage.row_access_total, 672, "{index_1_usage:?}");
+    assert_eq!(index_1_usage.kv_req_total, 0);
+    assert_eq!(index_1_usage.percentage_access, [0, 3, 3, 3, 0, 9, 0]);
+
+    let index_2_usage = collector.get_index_usage(table_id, index_2_id);
+    assert_eq!(index_2_usage.query_total, 3, "{index_2_usage:?}");
+    assert_eq!(index_2_usage.row_access_total, 60, "{index_2_usage:?}");
+    assert_eq!(index_2_usage.kv_req_total, 0);
+    assert_eq!(index_2_usage.percentage_access, [0, 0, 0, 0, 3, 0, 0]);
+}
+
+/// Go `generateIndexMergePath` does not build OR or normal-index AND merges on
+/// LOCAL temporary tables. GLOBAL temporary tables remain a separate case.
+#[test]
+fn tidb_index_merge_is_not_planned_for_local_temporary_tables() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TEMPORARY TABLE index_merge_tmp (a INT, b INT, KEY ia(a), KEY ib(b))")
+        .unwrap();
+
+    for sql in [
+        "SELECT /*+ USE_INDEX_MERGE(index_merge_tmp, ia, ib) */ * \
+         FROM index_merge_tmp WHERE a = 1 OR b = 2",
+        "SELECT /*+ USE_INDEX_MERGE(index_merge_tmp, ia, ib) */ * \
+         FROM index_merge_tmp WHERE a = 1 AND b = 2",
+    ] {
+        let plan = row_text(session.run(&format!("EXPLAIN {sql}")));
+        assert!(
+            !plan
+                .iter()
+                .any(|row| row.first().is_some_and(|line| line.contains("IndexMerge"))),
+            "IndexMerge must not be generated for a LOCAL temporary table: {plan:?}"
+        );
+    }
+}
+
+/// Go `TestIndexUsageReporterWithGlobalIndex` checks global-index point reads
+/// on a partitioned table. The reporter must still publish under the logical
+/// table ID and the global index's metadata ID.
+#[test]
+fn tidb_index_usage_records_a_partitioned_global_index_point_read() {
+    use std::sync::Arc;
+
+    let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
+    collector.start_worker();
+    let mut session = Session::new();
+    session.set_index_usage_collector(Arc::clone(&collector));
+    session.set_session_index_usage_collector(collector.spawn_session_collector());
+    session
+        .run(
+            "CREATE TABLE usage_global_index (pk INT PRIMARY KEY, id INT, \
+             UNIQUE KEY idx_id(id) GLOBAL) PARTITION BY RANGE (pk) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20), \
+             PARTITION p2 VALUES LESS THAN (50), PARTITION pmax VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    let rows = (0..100)
+        .map(|id| format!("({id}, {id})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    session
+        .run(&format!("INSERT INTO usage_global_index VALUES {rows}"))
+        .unwrap();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    session.run("ANALYZE TABLE usage_global_index").unwrap();
+
+    let (table_id, index_id) = {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) =
+            catalog.table_in("test", "usage_global_index").unwrap()
+        else {
+            panic!("usage_global_index must be a stored table");
+        };
+        let index = table
+            .indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case("idx_id"))
+            .expect("global index metadata");
+        assert!(index.unique && index.global);
+        (table.table_id, index.id)
+    };
+    let plan = row_text(
+        session
+            .run("EXPLAIN SELECT pk, id FROM usage_global_index USE INDEX (idx_id) WHERE id = 1"),
+    );
+    assert!(
+        plan.first()
+            .and_then(|row| row.first())
+            .is_some_and(|name| name.starts_with("Point_Get")),
+        "a unique global-index point predicate should use Point_Get: {plan:?}"
+    );
+    assert!(
+        plan.iter().any(|row| row
+            .get(3)
+            .is_some_and(|objects| objects.contains("index:idx_id"))),
+        "global-index point read must use idx_id: {plan:?}"
+    );
+    assert_eq!(
+        row_text(
+            session.run("SELECT pk, id FROM usage_global_index USE INDEX (idx_id) WHERE id = 1",)
+        ),
+        [["1", "1"]]
+    );
+    let primary_hint_plan = row_text(
+        session
+            .run("EXPLAIN SELECT pk, id FROM usage_global_index USE INDEX (PRIMARY) WHERE id = 1"),
+    );
+    assert!(
+        primary_hint_plan
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(|name| name.starts_with("PartitionUnion")),
+        "an index hint that excludes the global index must keep static pruning: {primary_hint_plan:?}"
+    );
+    session.run("SET @@sql_select_limit = 1").unwrap();
+    let select_limit_plan = row_text(
+        session
+            .run("EXPLAIN SELECT pk, id FROM usage_global_index USE INDEX (idx_id) WHERE id = 1"),
+    );
+    assert!(
+        select_limit_plan
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(|name| name.starts_with("PartitionUnion")),
+        "sql_select_limit suppresses Go's fast-plan path: {select_limit_plan:?}"
+    );
+    session.run("SET @@sql_select_limit = DEFAULT").unwrap();
+    session
+        .run("SET @@tidb_opt_fix_control = '52592:ON'")
+        .unwrap();
+    let fix_control_plan = row_text(
+        session
+            .run("EXPLAIN SELECT pk, id FROM usage_global_index USE INDEX (idx_id) WHERE id = 1"),
+    );
+    assert!(
+        fix_control_plan
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(|name| name.starts_with("PartitionUnion")),
+        "FIX_52592 suppresses Go's fast-plan path: {fix_control_plan:?}"
+    );
+    session.run("SET @@tidb_opt_fix_control = DEFAULT").unwrap();
+    let batch_plan = row_text(
+        session
+            .run("EXPLAIN SELECT pk, id FROM usage_global_index IGNORE INDEX (PRIMARY) WHERE id IN (1, 3, 5, 9)"),
+    );
+    assert!(
+        batch_plan
+            .first()
+            .and_then(|row| row.first())
+            .is_some_and(|name| name.starts_with("Batch_Point_Get")),
+        "a static unique global-index IN predicate should use Batch_Point_Get: {batch_plan:?}"
+    );
+    assert!(
+        batch_plan.iter().any(|row| row
+            .get(3)
+            .is_some_and(|objects| objects.contains("index:idx_id"))),
+        "global-index batch point read must use idx_id: {batch_plan:?}"
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT pk, id FROM usage_global_index IGNORE INDEX (PRIMARY) WHERE id IN (1, 3, 5, 9)",
+        )),
+        [["1", "1"], ["3", "3"], ["5", "5"], ["9", "9"]]
+    );
+
+    session
+        .run("PREPARE global_point FROM 'SELECT pk, id FROM usage_global_index USE INDEX (idx_id) WHERE id = 1'")
+        .unwrap();
+    for _ in 0..2 {
+        assert_eq!(row_text(session.run("EXECUTE global_point")), [["1", "1"]]);
+    }
+    session.run("DEALLOCATE PREPARE global_point").unwrap();
+    session
+        .run("PREPARE global_batch FROM 'SELECT pk, id FROM usage_global_index IGNORE INDEX (PRIMARY) WHERE id IN (1, 3, 5, 9)'")
+        .unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            row_text(session.run("EXECUTE global_batch")),
+            [["1", "1"], ["3", "3"], ["5", "5"], ["9", "9"]]
+        );
+    }
+    session.run("DEALLOCATE PREPARE global_batch").unwrap();
+
+    drop(session);
+    collector.close();
+
+    let usage = collector.get_index_usage(table_id, index_id);
+    assert_eq!(
+        usage.query_total, 6,
+        "plan={plan:?}; batch_plan={batch_plan:?}; usage={usage:?}"
+    );
+    assert_eq!(usage.row_access_total, 15);
+}
+
 /// Pinned Go routes `TIDB_STATEMENTS_STATS` through the ordinary cumulative
 /// statement-summary reader, including the full session query path used by
 /// workload-repository sampling.

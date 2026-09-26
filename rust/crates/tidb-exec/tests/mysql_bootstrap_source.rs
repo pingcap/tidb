@@ -289,6 +289,9 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
     // global-scope system variable in the captured fixture.
     const GLOBAL_VARIABLES_FIXTURE: &str =
         include_str!("../src/mysql_bootstrap/global_variables_fixture.tsv");
+    assert!(GLOBAL_VARIABLES_FIXTURE
+        .lines()
+        .any(|line| line == "tidb_enable_adaptive_limit_scan\tON"));
     let global_variable_rows = GLOBAL_VARIABLES_FIXTURE
         .lines()
         .filter(|line| !line.is_empty())

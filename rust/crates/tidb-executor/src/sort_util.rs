@@ -99,22 +99,29 @@ pub fn err_fail_to_add_chunk() -> ExecError {
     ExecError::SpillFailed("fail to add chunk".to_owned())
 }
 
-/// Recovers one Go-style executor worker panic and turns it into the error
-/// that the worker's result channel would carry.
+/// Recovers one Go-style executor panic and turns it into its query error.
 ///
 /// Go's `processPanicAndLog` calls `util.GetRecoverError`: string panic values
 /// retain their text, while non-string values use a stable formatted fallback.
-/// The Rust task must be caught before it unwinds through the persistent
-/// executor pool, otherwise the pool thread exits and its receiver reports a
-/// misleading "dropped result" error.
+pub(crate) fn recover_executor_panic<T>(
+    operation: impl FnOnce() -> Result<T, ExecError>,
+) -> Result<T, ExecError> {
+    catch_unwind(AssertUnwindSafe(operation)).map_err(|payload| {
+        tidb_util::traceevent::dump_flight_recorder_to_logger("GetRecoverError");
+        ExecError::internal(panic_message(payload.as_ref()))
+    })?
+}
+
+/// Recovers a worker panic before it unwinds through the persistent executor
+/// pool, where the receiver would otherwise report a misleading "dropped
+/// result" error.
 pub(crate) fn recover_worker_panic<T>(
     operation: impl FnOnce() -> Result<T, ExecError>,
 ) -> Result<T, ExecError> {
-    catch_unwind(AssertUnwindSafe(operation))
-        .map_err(|payload| ExecError::internal(worker_panic_message(payload.as_ref())))?
+    recover_executor_panic(operation)
 }
 
-fn worker_panic_message(payload: &(dyn Any + Send)) -> String {
+fn panic_message(payload: &(dyn Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         return (*message).to_owned();
     }

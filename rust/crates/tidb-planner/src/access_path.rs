@@ -20,7 +20,7 @@
 
 use crate::{
     cardinality::{
-        live_index_optimizer::{estimate_proven_point_rows, LiveIndexCandidate},
+        live_index_optimizer::{LiveIndexCandidate, estimate_proven_point_rows},
         row_count_estimator::IndexRangeDatums,
     },
     tikv_scan_spec::{
@@ -29,7 +29,194 @@ use crate::{
     },
 };
 
-use tidb_datatype::Collation;
+
+pub(crate) mod index_merge;
+pub(crate) mod ordinary;
+
+/// Statement inputs to logical access-path derivation, independent of physical
+/// properties, plan allocation and task costing. Range fallback side effects
+/// remain attached to the same statement as the expression evaluator.
+pub(crate) struct AccessPathDerivationContext<'a> {
+    pub opt_prefix_index_single_scan: bool,
+    pub expr_pushdown_blacklist: &'a tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    pub selectivity_factor: f64,
+    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    pub range_max_size: i64,
+    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    pub expression_evaluator: &'a crate::ranger::points::ExpressionEvaluator<'a>,
+}
+
+impl AccessPathDerivationContext<'_> {
+    pub(crate) fn detach_index_range(
+        &self,
+        conditions: &[tidb_expr::expression::Expression],
+        columns: &[tidb_expr::column::Column],
+        lengths: &[i64],
+    ) -> Result<crate::ranger::detacher::DetachRangeResult, crate::ranger::points::PointBuilderError>
+    {
+        match self.range_fallback_handler {
+            Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler_in(
+                conditions,
+                columns,
+                lengths,
+                self.range_max_size,
+                handler,
+                self.expression_evaluator,
+            ),
+            None => crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+                conditions,
+                columns,
+                lengths,
+                self.range_max_size,
+                self.expression_evaluator,
+            ),
+        }
+    }
+}
+
+/// Occurrence-local state for one ordinary index access path. Go retains
+/// these fields together on `util.AccessPath`; a datasource occurrence owns
+/// the record independently of shared catalog metadata.
+#[derive(Clone, Debug, Default)]
+pub struct IndexPathState {
+    /// Logically detached ranges and filter stages shared by ordinary and merge paths.
+    pub filled: Option<ordinary::FilledIndexPath>,
+    /// Go's FullIdxCols/FullIdxColLens at plan construction, before ranger
+    /// appends handles. None denotes the static metadata-only pruning path;
+    /// unresolved positions remain None instead of shortening the key.
+    pub declared_columns: Option<Vec<Option<(tidb_expr::column::Column, i64)>>>,
+    /// Access estimate and its skyline risk bounds, adjusted together.
+    pub row_estimate: Option<crate::cardinality::row_count_column::RowEstimate>,
+    /// Go `IsSingleScan`, evaluated during pruning and refreshed at the first
+    /// logical statistics derivation, before final column pruning.
+    /// None means the covering decision has not been derived yet.
+    pub is_single_scan: Option<bool>,
+}
+
+impl IndexPathState {
+    /// Go `CountAfterAccess`, from the same estimate as its uncertainty bounds.
+    #[must_use]
+    pub fn count_after_access(&self) -> Option<f64> {
+        self.row_estimate.map(|estimate| estimate.est)
+    }
+}
+
+/// Candidate identities and merge alternatives retained after logical derivation.
+/// Ordinary index identities refer to the datasource's filled index states.
+#[derive(Clone, Debug)]
+pub enum DerivedAccessPath {
+    /// An ordinary table/index candidate from the logical pruning boundary.
+    Ordinary(PossiblePath),
+    /// OR alternatives converge only when physical properties are known.
+    Union(index_merge::UnionIndexMergePath),
+    /// AND partials retain residual predicates for table-side attachment.
+    Intersection(index_merge::IntersectionIndexMergePath),
+}
+
+/// Go's post-derivation PossibleAccessPaths and their shared minimum selectivity.
+#[derive(Clone, Debug)]
+pub struct DerivedAccessPaths {
+    /// Integer/common-handle state derived before property search.
+    pub table_path: Option<ordinary::FilledTablePath>,
+    /// Ordinary and merge candidates compete through one retained collection.
+    pub paths: Vec<DerivedAccessPath>,
+    /// Includes merge estimates before ordered-index expected-count adjustment.
+    pub min_selectivity: f64,
+}
+
+pub(crate) fn derive_access_paths(
+    source: &mut crate::logical::DataSource,
+    context: &AccessPathDerivationContext<'_>,
+    index_merge_enabled: bool,
+    prefix_single_scan: bool,
+    use_plan_cache: bool,
+) -> Result<DerivedAccessPaths, crate::plan_base::PlanError> {
+    let table_path = source
+        .enumerated_paths
+        .iter()
+        .find_map(|path| match path {
+            PossiblePath::Table { primary_index, .. } => Some(*primary_index),
+            _ => None,
+        })
+        .map(|primary| ordinary::fill_table_path(source, primary, context))
+        .transpose()?;
+    ordinary::fill_ordinary_index_paths(source, context, prefix_single_scan)?;
+    let mut paths = source
+        .enumerated_paths
+        .iter()
+        .cloned()
+        .map(DerivedAccessPath::Ordinary)
+        .collect::<Vec<_>>();
+    let mut min_selectivity = source
+        .table_stats
+        .as_ref()
+        .filter(|stats| stats.row_count() > 0.0)
+        .and_then(|stats| {
+            source
+                .enumerated_paths
+                .iter()
+                .filter_map(|path| match path {
+                    PossiblePath::Index { index } => source
+                        .indexes
+                        .get(*index)
+                        .and_then(|index| source.derived_index_paths.get(&index.id))
+                        .and_then(|path| {
+                            path.filled
+                                .as_ref()
+                                .and_then(|filled| filled.count_after_index)
+                                .or_else(|| path.count_after_access())
+                        }),
+                    PossiblePath::Table { .. } => table_path
+                        .as_ref()
+                        .and_then(|path| path.count_after_access)
+                        .or(source.table_path_count_after_access),
+                    PossiblePath::TiFlashTable => source.table_path_count_after_access,
+                })
+                .map(|rows| rows / stats.row_count())
+                .reduce(f64::min)
+        })
+        .unwrap_or(source.access_path_min_selectivity)
+        .min(1.0);
+    if index_merge_enabled || !source.index_merge_hints.is_empty() {
+        let mut merges = Vec::new();
+        for path in index_merge::prepare_union_index_merge_paths(source, context, use_plan_cache)? {
+            merges.push(DerivedAccessPath::Union(path));
+        }
+        if let Some(path) =
+            index_merge::prepare_intersection_index_merge_path(source, context, use_plan_cache)?
+        {
+            merges.push(DerivedAccessPath::Intersection(path));
+        }
+        if !merges.is_empty() && !source.index_merge_hints.is_empty() {
+            paths.clear();
+            min_selectivity = 1.0;
+        }
+        if let Some(stats) = source
+            .table_stats
+            .as_ref()
+            .filter(|stats| stats.row_count() > 0.0)
+        {
+            for path in &merges {
+                let rows = match path {
+                    // Go's unfinished PartialAlternativeIndexPaths reads
+                    // CountAfterIndex (still zero) in getGeneralAttributesFromPaths.
+                    // Convergence later creates concrete PartialIndexPaths whose
+                    // CountAfterAccess is used for physical conversion.
+                    DerivedAccessPath::Union(_) => 0.0,
+                    DerivedAccessPath::Intersection(path) => path.count_after_access,
+                    DerivedAccessPath::Ordinary(_) => unreachable!(),
+                };
+                min_selectivity = min_selectivity.min(rows / stats.row_count());
+            }
+        }
+        paths.extend(merges);
+    }
+    Ok(DerivedAccessPaths {
+        table_path,
+        paths,
+        min_selectivity,
+    })
+}
 
 /// Go AccessPath.SplitCorColAccessCondFromFilters. Extends an equality
 /// prefix through correlated equalities, optionally ending in a range.
@@ -140,24 +327,6 @@ pub enum PointRangePath {
     },
 }
 
-fn is_point_range(range: &IndexRangeDatums, nullable: bool) -> bool {
-    if range.low_exclude || range.high_exclude || range.low.len() != range.high.len() {
-        return false;
-    }
-    if range.low.iter().any(tidb_datatype::Datum::is_min_not_null)
-        || range.high.iter().any(tidb_datatype::Datum::is_max_value)
-    {
-        return false;
-    }
-    if !nullable && range.low.iter().any(tidb_datatype::Datum::is_null) {
-        return false;
-    }
-    range.low.iter().zip(&range.high).all(|(low, high)| {
-        low.compare(high, Collation::Binary)
-            .is_ok_and(|order| order.is_eq())
-    })
-}
-
 /// Reports whether every source range is a point accepted by this path.
 ///
 /// This is Go `AccessPath.OnlyPointRange`: integer handles use
@@ -167,9 +336,9 @@ fn is_point_range(range: &IndexRangeDatums, nullable: bool) -> bool {
 #[must_use]
 pub fn only_point_ranges(path: PointRangePath, ranges: &[IndexRangeDatums]) -> bool {
     ranges.iter().all(|range| match path {
-        PointRangePath::IntHandle => is_point_range(range, true),
+        PointRangePath::IntHandle => range.is_point(true),
         PointRangePath::Index { column_count } => {
-            is_point_range(range, false) && range.high.len() == column_count
+            range.is_point(false) && range.high_val.len() == column_count
         }
     })
 }
@@ -710,8 +879,9 @@ mod tests {
 
     fn range(low: Datum, high: Datum) -> IndexRangeDatums {
         IndexRangeDatums {
-            low: vec![low],
-            high: vec![high],
+            collators: vec![tidb_datatype::Collation::Binary; 1],
+            low_val: vec![low],
+            high_val: vec![high],
             low_exclude: false,
             high_exclude: false,
         }

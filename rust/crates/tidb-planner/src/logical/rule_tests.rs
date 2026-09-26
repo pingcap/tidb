@@ -63,6 +63,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
     static COLUMN_ALLOCATOR: crate::expression_rewriter::ColumnIdAllocator =
         crate::expression_rewriter::ColumnIdAllocator::new();
     RuleContext {
+        estimator_options: Default::default(),
         allocator,
         column_allocator: &COLUMN_ALLOCATOR,
         builder: &TEST_BUILDER,
@@ -71,11 +72,13 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         plan_cache_marker: None,
         // Go's `AllowDeriveTopN` defaults ON in `sessionVars`.
         allow_derive_topn: true,
+        expr_pushdown_blacklist: Default::default(),
         disabled_rules: DisabledLogicalRules::default(),
         statistics_load: None,
         partition_pruning: None,
         opt_index_prune_threshold: 20,
         opt_prefix_index_single_scan: true,
+        index_merge_enabled: true,
         range_max_size: 0,
         selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
         range_fallback_handler: None,
@@ -86,6 +89,8 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         enable_null_aware_anti_join: true,
         enable_no_decorrelate_in_select: false,
         join_reorder_threshold: 0,
+        group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+        scale_ndv_skew_ratio: crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         allow_agg_push_down: false,
         advanced_join_reorder: true,
         cartesian_join_order_threshold: 0.0,

@@ -51,10 +51,10 @@
 //! `pkg/sessionctx/vardef/tidb_vars.go`. Callers that later gain real session
 //! variables set the struct instead of changing a formula.
 
-use crate::cardinality::row_size::{get_avg_row_size_data_in_disk_by_rows, RowSizeColumn};
+use crate::cardinality::row_size::{RowSizeColumn, get_avg_row_size_data_in_disk_by_rows};
 use crate::cost_usage::{
-    add_cost_without_trace, div_cost_ver2, mul_cost_ver2, new_cost_ver2, new_zero_cost_ver2,
-    sum_cost_ver2, trace_cost, CostVer2, CostVer2Factor, PlanCostOption, ZERO_COST_VER2,
+    CostVer2, CostVer2Factor, PlanCostOption, ZERO_COST_VER2, add_cost_without_trace,
+    div_cost_ver2, mul_cost_ver2, new_cost_ver2, new_zero_cost_ver2, sum_cost_ver2, trace_cost,
 };
 use crate::physical_table_reader::StoreType;
 use crate::task_type::TaskType;
@@ -93,11 +93,7 @@ pub fn plan_avg_row_size(columns: &[RowSizeColumn], hist_coll: Option<(bool, i64
 /// one row, because a zero-cost operator makes plan choice unstable.
 #[must_use]
 pub fn cardinality(stats_count: f64) -> f64 {
-    if stats_count <= 0.0 {
-        1.0
-    } else {
-        stats_count
-    }
+    if stats_count <= 0.0 { 1.0 } else { stats_count }
 }
 
 /// The `costVer2Factors` table. Values are `defaultVer2Factors`.
@@ -270,11 +266,20 @@ impl Ver2Factors {
 /// already applied here.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CostSessionOpts {
+    /// Session settings consumed by TiDB's histogram cardinality estimators.
+    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    /// Correlation settings consumed by ordered scan row-count adjustment.
+    pub correlation_options: crate::cardinality::cross_estimation::CorrelationOptions,
     /// `tidb_hash_join_concurrency`, resolved and stamped on each
     /// `PhysicalHashJoin` candidate when it is built.
     pub hash_join_concurrency: f64,
     /// Session inputs for shuffle planning alongside the cost settings.
     pub shuffle_options: crate::physical::shuffle_optimize::ShuffleOptions,
+    /// Go `SessionVars.RiskGroupNDVSkewRatio`, shared by logical, physical,
+    /// and cost cardinality estimates.
+    pub group_ndv_skew_ratio: f64,
+    /// Go SessionVars.RiskScaleNDVSkewRatio for filtered/scaled profiles.
+    pub scale_ndv_skew_ratio: f64,
     /// `tidb_distsql_scan_concurrency`.
     pub distsql_scan_concurrency: f64,
     /// `tidb_index_lookup_concurrency`, resolved.
@@ -313,8 +318,12 @@ pub struct CostSessionOpts {
 impl Default for CostSessionOpts {
     fn default() -> Self {
         Self {
+            estimator_options: Default::default(),
+            correlation_options: Default::default(),
             hash_join_concurrency: 5.0,
             shuffle_options: Default::default(),
+            group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+            scale_ndv_skew_ratio: crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
             distsql_scan_concurrency: 15.0,
             index_lookup_concurrency: 5.0,
             index_lookup_join_concurrency: 5.0,

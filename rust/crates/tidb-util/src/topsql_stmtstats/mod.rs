@@ -15,8 +15,8 @@
 //! Go `pkg/util/topsql/stmtstats` lands as a complete package: the per-session
 //! statement statistics counter (`stmtstats.go`), the Top-RU data types
 //! (`rustats.go`), the once-a-second background aggregator (`aggregator.go`),
-//! and the kv-dimension execution counter (`kv_exec_count.go`), with all 37 of
-//! the package's test functions.
+//! and the kv-dimension execution counter (`kv_exec_count.go`), with all 36
+//! Go unit tests.
 //!
 //! A session holds a [`StatementStats`] and reports statement begin/finish
 //! through [`StatementObserver`]. Top-SQL counters accumulate into
@@ -36,19 +36,17 @@
 //! - **client-go/v2 `util.RUDetails`** → the canonical [`RuDetails`] from the
 //!   workspace `tikv-client`, preserving its shared live counters and merge
 //!   behavior.
-//! - **`pkg/util/execdetails` `RUV2Metrics`/`RUV2Weights`** → the shared live
-//!   [`RuV2Metrics`] and [`RuV2Weights`] implementation in
-//!   [`crate::ruv2_metrics`]. `tidb-exec` re-exports the same types, so Top-SQL
-//!   and executor accounting observe the same counters and label behavior.
+//! - **RU-v2 statement accounting** → [`ExecFinishInfo::total_ru_v2`], the
+//!   finalized statement total supplied at execution finish. In-flight Top-RU
+//!   sampling is v1-only, matching `currentRUTotal` in Go.
 //! - **client-go/v2 `tikvrpc` + `tikvrpc/interceptor`** → [`RpcInterceptor`],
 //!   which keeps client-go's wrap-a-handler shape but is generic over the
 //!   request, response, and error types, so `kv_exec_count.go` ports in full
 //!   instead of being dropped.
 //! - **`rmclient.RUVersion`** (PD client) → [`RuVersion`], the same integer
 //!   enum with the same zero-is-unspecified normalization.
-//! - **`topsql/reporter/metrics`** → dropped telemetry. The two ignore-counters
-//!   the RU key cap feeds become [`RuDropStats`], returned from
-//!   [`Aggregator::drain_and_push_ru`]; the drop policy is unchanged.
+//! - **`topsql/reporter/metrics`** → the matching process-wide Prometheus
+//!   counter handles, owned by [`crate::topsql_reporter::metrics`].
 //! - **Go's `context.Context` on `ExecBeginInfo`** exists only for one
 //!   `Ctx.Value(util.RUDetailsCtxKey)` lookup at begin time, so that lookup is
 //!   hoisted into [`ExecBeginInfo::ru_details`].
@@ -81,7 +79,6 @@
 mod aggregator;
 mod kv_exec_count;
 mod rustats;
-mod ruv2_metrics;
 mod stmtstats;
 #[cfg(test)]
 mod test_support;
@@ -89,14 +86,13 @@ mod test_support;
 pub use aggregator::{
     bind_ru_version_provider, close_aggregator, register_collector, register_ru_collector,
     setup_aggregator, unregister_collector, unregister_ru_collector, Aggregator, Collector,
-    RuCollector, RuDropStats, MAX_RU_KEYS_PER_AGGREGATE, MAX_STMT_STATS_SIZE,
+    RuCollector, MAX_RU_KEYS_PER_AGGREGATE, MAX_STMT_STATS_SIZE,
 };
 pub use kv_exec_count::{KvExecCounter, RpcInterceptor, KV_EXEC_COUNTER_INTERCEPTOR_NAME};
 pub use rustats::{
     default_ru_version, normalize_ru_version, ExecutionContext, RuIncrement, RuIncrementMap, RuKey,
     RuVersion, RuVersionProvider,
 };
-pub use ruv2_metrics::{total_ru, RuV2Metrics, RuV2Weights};
 pub use stmtstats::{
     create_statement_stats, new_sql_plan_digest, BinaryDigest, ExecBeginInfo, ExecFinishInfo,
     KvStatementStatsItem, SqlPlanDigest, StatementObserver, StatementStats, StatementStatsInner,

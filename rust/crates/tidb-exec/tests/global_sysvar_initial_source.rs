@@ -16,8 +16,8 @@
 
 use tidb_exec::global_sysvar_initial::{
     global_system_variable_initial_value, GlobalSysvarEnvironment, ASSERTION_FAST,
-    ASSERTION_STRICT, ENABLE_1PC, ENABLE_ASYNC_COMMIT, ENABLE_AUTO_ANALYZE,
-    ENABLE_MUTATION_CHECKER, MEM_OOM_ACTION, OFF, ON, OOM_ACTION_LOG,
+    ASSERTION_STRICT, ENABLE_1PC, ENABLE_ADAPTIVE_LIMIT_SCAN, ENABLE_ASYNC_COMMIT,
+    ENABLE_AUTO_ANALYZE, ENABLE_MUTATION_CHECKER, MEM_OOM_ACTION, OFF, ON, OOM_ACTION_LOG,
     PESSIMISTIC_TRANSACTION_FAIR_LOCKING, ROW_FORMAT_V2, ROW_FORMAT_VERSION, TXN_ASSERTION_LEVEL,
 };
 
@@ -40,6 +40,10 @@ fn global_initial_values_match_source_table() {
     );
     assert_eq!(
         global_system_variable_initial_value(ENABLE_1PC, OFF, test_classic),
+        OFF
+    );
+    assert_eq!(
+        global_system_variable_initial_value(ENABLE_ADAPTIVE_LIMIT_SCAN, OFF, test_classic),
         OFF
     );
     assert_eq!(
@@ -84,6 +88,10 @@ fn global_initial_values_preserve_environment_branches() {
     );
     assert_eq!(
         global_system_variable_initial_value(ENABLE_1PC, OFF, tikv),
+        ON
+    );
+    assert_eq!(
+        global_system_variable_initial_value(ENABLE_ADAPTIVE_LIMIT_SCAN, OFF, tikv),
         ON
     );
 

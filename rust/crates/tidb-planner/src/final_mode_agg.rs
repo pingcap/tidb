@@ -442,6 +442,27 @@ pub fn adjust_three_stage_multi_distinct(
     column_ids: &ColumnIdAllocator,
     plan_ids: &crate::plan_base::PlanIdAllocator,
 ) -> Result<Option<MultiDistinctThreeStageAggSplit>, crate::plan_base::PlanError> {
+    adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
+        partial,
+        final_agg,
+        child,
+        grouping_sets,
+        column_ids,
+        plan_ids,
+        tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+    )
+}
+
+/// Builds the three-stage MPP rewrite using the statement's group-NDV ratio.
+pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
+    partial: crate::physical::PhysicalPlan,
+    final_agg: crate::physical::PhysicalPlan,
+    child: &crate::physical::PhysicalPlan,
+    grouping_sets: &[Vec<Column>],
+    column_ids: &ColumnIdAllocator,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+    group_ndv_skew_ratio: f64,
+) -> Result<Option<MultiDistinctThreeStageAggSplit>, crate::plan_base::PlanError> {
     use crate::physical::{BasePhysicalPlan, PhysicalHashAgg, PhysicalPlan, PhysicalProjection};
     use crate::physical::expand::PhysicalExpand;
     use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder};
@@ -497,11 +518,14 @@ pub fn adjust_three_stage_multi_distinct(
         "Expand",
         child.query_block_offset(),
     );
-    expand_base.base.set_stats(
-        child
-            .stats_info()
-            .map(|stats| stats.scale(grouping_sets.len() as f64, 1.0)),
-    );
+    // Go adjust3StagePhaseAgg clones via Scale(1), then changes only rows:
+    // replicated grouping-set rows do not introduce new distinct values.
+    let expanded_stats = child.stats_info().map(|stats| {
+        let mut expanded = stats.scale(1.0, 1.0);
+        expanded.set_row_count(stats.row_count() * grouping_sets.len() as f64);
+        expanded
+    });
+    expand_base.base.set_stats(expanded_stats.clone());
     expand_base.base.set_schema(Some(expand_schema.clone()));
     let expand = PhysicalPlan::Expand(PhysicalExpand {
         base: expand_base,
@@ -519,7 +543,8 @@ pub fn adjust_three_stage_multi_distinct(
         &mut partial_hash,
         grouping_sets,
         &grouping_id_col,
-        child.stats_info(),
+        expanded_stats.as_ref(),
+        group_ndv_skew_ratio,
     );
 
     let eval_ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
@@ -577,7 +602,7 @@ pub fn adjust_three_stage_multi_distinct(
         "Projection",
         child.query_block_offset(),
     );
-    projection_base.base.set_stats(child.stats_info().cloned());
+    projection_base.base.set_stats(expanded_stats);
     projection_base
         .base
         .set_schema(Some(Schema::new(projection_columns)));
@@ -682,6 +707,7 @@ fn scale_three_stage_multi_distinct_stats(
     grouping_sets: &[Vec<Column>],
     grouping_id_col: &Column,
     child_stats: Option<&StatsInfo>,
+    group_ndv_skew_ratio: f64,
 ) {
     let Some(child_stats) = child_stats else {
         return;
@@ -706,7 +732,12 @@ fn scale_three_stage_multi_distinct_stats(
         .map(|set| {
             let mut ids: Vec<_> = set.iter().map(|column| column.unique_id).collect();
             ids.extend(normal_group_ids.iter().copied());
-            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&ids, child_stats)
+            crate::cardinality::derive_stats::
+                estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                    &ids,
+                    child_stats,
+                    group_ndv_skew_ratio,
+                )
                 .0
         })
         .sum::<f64>();
@@ -733,9 +764,10 @@ fn scale_three_stage_multi_distinct_stats(
                             let before_len = intersection_ids.len();
                             intersection_ids.extend_from_slice(&group.columns[index..]);
                             let (increment, _) = crate::cardinality::derive_stats::
-                                estimate_cols_ndv_with_matched_len(
+                                estimate_cols_ndv_with_matched_len_and_skew_ratio(
                                     &intersection_ids,
                                     child_stats,
+                                    group_ndv_skew_ratio,
                                 );
                             ndv += increment;
                             intersection_ids.truncate(before_len);
@@ -1372,8 +1404,8 @@ fn contain_correlated_column(exprs: &[Expression]) -> bool {
 pub fn check_agg_can_push_cop_tikv(
     agg_funcs: &[AggFuncDesc],
     group_by_items: &[Expression],
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> bool {
-    let blacklist = HashMap::new();
     for agg_func in agg_funcs {
         if contain_virtual_column(&agg_func.base.args)
             || contain_correlated_column(&agg_func.base.args)
@@ -1383,14 +1415,18 @@ pub fn check_agg_can_push_cop_tikv(
         if !tidb_expr::aggregation::check_agg_push_down(
             agg_func,
             tidb_expr::infer_pushdown::PushDownStore::TiKv,
-            &blacklist,
+            blacklist,
         ) {
             return false;
         }
         // Go passes `aggFunc.Name == ast.AggFuncSum` as `canEnumPush`, a
         // TiFlash-only enum carve-out (`canExprPushDown`); for TiKV the
         // plain check is the same function.
-        if !crate::pushdown::can_exprs_push_down_tikv(&agg_func.base.args) {
+        if !crate::pushdown::can_exprs_push_down(
+            &agg_func.base.args,
+            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            blacklist,
+        ) {
             return false;
         }
         if !agg_func.order_by_items.is_empty() {
@@ -1399,7 +1435,11 @@ pub fn check_agg_can_push_cop_tikv(
                 .iter()
                 .map(|item| item.expr.clone())
                 .collect();
-            if !crate::pushdown::can_exprs_push_down_tikv(&exprs) {
+            if !crate::pushdown::can_exprs_push_down(
+                &exprs,
+                tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                blacklist,
+            ) {
                 return false;
             }
         }
@@ -1428,7 +1468,11 @@ pub fn check_agg_can_push_cop_tikv(
     if contain_virtual_column(group_by_items) {
         return false;
     }
-    crate::pushdown::can_exprs_push_down_tikv(group_by_items)
+    crate::pushdown::can_exprs_push_down(
+        group_by_items,
+        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        blacklist,
+    )
 }
 
 /// Go `checkCanPushDownToMPP` together with the TiFlash branch of
@@ -1438,8 +1482,8 @@ pub fn check_agg_can_push_cop_tikv(
 pub fn check_agg_can_push_mpp(
     agg_funcs: &[AggFuncDesc],
     group_by_items: &[Expression],
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> bool {
-    let blacklist = HashMap::new();
     for agg_func in agg_funcs {
         if contain_virtual_column(&agg_func.base.args)
             || contain_correlated_column(&agg_func.base.args)
@@ -1456,9 +1500,13 @@ pub fn check_agg_can_push_mpp(
             || !tidb_expr::aggregation::check_agg_push_down(
                 agg_func,
                 tidb_expr::infer_pushdown::PushDownStore::TiFlash,
-                &blacklist,
+                blacklist,
             )
-            || !crate::pushdown::can_exprs_push_down_tiflash(&agg_func.base.args)
+            || !crate::pushdown::can_exprs_push_down(
+                &agg_func.base.args,
+                tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+                blacklist,
+            )
         {
             return false;
         }
@@ -1467,12 +1515,20 @@ pub fn check_agg_can_push_mpp(
             .iter()
             .map(|item| item.expr.clone())
             .collect();
-        if !crate::pushdown::can_exprs_push_down_tiflash(&order_by_exprs) {
+        if !crate::pushdown::can_exprs_push_down(
+            &order_by_exprs,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            blacklist,
+        ) {
             return false;
         }
     }
     !contain_virtual_column(group_by_items)
-        && crate::pushdown::can_exprs_push_down_tiflash(group_by_items)
+        && crate::pushdown::can_exprs_push_down(
+            group_by_items,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            blacklist,
+        )
 }
 
 /// Go `BasePhysicalAgg.NewPartialAggregate` (`base_physical_agg.go:279`) for
@@ -1490,6 +1546,7 @@ pub fn new_partial_aggregate(
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
     plan_ids: &crate::plan_base::PlanIdAllocator,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
@@ -1497,7 +1554,7 @@ pub fn new_partial_aggregate(
     ),
     crate::plan_base::PlanError,
 > {
-    new_partial_aggregate_with_mode(ctx, alloc, plan, plan_ids, false)
+    new_partial_aggregate_with_mode(ctx, alloc, plan, plan_ids, false, blacklist)
 }
 
 /// Go `BasePhysicalAgg.NewPartialAggregate(kv.TiFlash, true)` for an MPP
@@ -1509,6 +1566,7 @@ pub fn new_partial_aggregate_mpp(
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
     plan_ids: &crate::plan_base::PlanIdAllocator,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
@@ -1516,7 +1574,7 @@ pub fn new_partial_aggregate_mpp(
     ),
     crate::plan_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, true, true)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, true, true, blacklist)
 }
 
 /// Go `NewPartialAggregate(kv.TiFlash, false)` for the MPP-TiDB mode: the
@@ -1527,6 +1585,7 @@ pub fn new_partial_aggregate_mpp_tidb(
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
     plan_ids: &crate::plan_base::PlanIdAllocator,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
@@ -1534,7 +1593,7 @@ pub fn new_partial_aggregate_mpp_tidb(
     ),
     crate::plan_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, true, false)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, true, false, blacklist)
 }
 
 fn new_partial_aggregate_with_mode(
@@ -1543,6 +1602,7 @@ fn new_partial_aggregate_with_mode(
     plan: crate::physical::PhysicalPlan,
     plan_ids: &crate::plan_base::PlanIdAllocator,
     is_mpp: bool,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
@@ -1550,7 +1610,7 @@ fn new_partial_aggregate_with_mode(
     ),
     crate::plan_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, false, is_mpp)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, false, is_mpp, blacklist)
 }
 
 fn new_partial_aggregate_for_store(
@@ -1560,6 +1620,7 @@ fn new_partial_aggregate_for_store(
     plan_ids: &crate::plan_base::PlanIdAllocator,
     is_tiflash: bool,
     is_mpp: bool,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
@@ -1583,9 +1644,9 @@ fn new_partial_aggregate_for_store(
         }
     };
     let can_push = if is_tiflash {
-        check_agg_can_push_mpp(agg_funcs, group_by_items)
+        check_agg_can_push_mpp(agg_funcs, group_by_items, blacklist)
     } else {
-        check_agg_can_push_cop_tikv(agg_funcs, group_by_items)
+        check_agg_can_push_cop_tikv(agg_funcs, group_by_items, blacklist)
     };
     if !can_push {
         return Ok((None, plan));
@@ -1668,7 +1729,6 @@ fn new_partial_aggregate_for_store(
     }
     Ok((Some(partial), final_plan))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1693,6 +1753,30 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_admission_uses_published_policy_for_each_store_and_expression() {
+        use tidb_expr::infer_pushdown::blacklist_store_mask;
+        let a = bigint_col(1);
+        let sum = agg(names::SUM, &a, false);
+        let blacklist = HashMap::from([("sum".into(), blacklist_store_mask("tikv"))]);
+        assert!(!check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist));
+        assert!(check_agg_can_push_mpp(std::slice::from_ref(&sum), &[], &blacklist));
+        let blacklist = HashMap::from([("sum".into(), blacklist_store_mask("tiflash"))]);
+        assert!(check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist));
+        assert!(!check_agg_can_push_mpp(std::slice::from_ref(&sum), &[], &blacklist));
+        let expr = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+            tidb_ast::CiString::new("gt"), FieldType::new(FieldTypeCode::LongLong),
+            vec![Expression::Column(a.clone()), Expression::Column(a.clone())],
+        ));
+        let count = AggFuncDesc::new(&ctx(), names::COUNT, vec![expr.clone()], false).unwrap();
+        let blacklist = HashMap::from([("gt.gtint".into(), blacklist_store_mask("tikv,tiflash,tidb"))]);
+        for check in [check_agg_can_push_cop_tikv, check_agg_can_push_mpp] {
+            assert!(check(std::slice::from_ref(&count), &[], &Default::default()));
+            assert!(!check(std::slice::from_ref(&count), &[], &blacklist));
+            assert!(!check(std::slice::from_ref(&sum), std::slice::from_ref(&expr), &blacklist));
+        }
+    }
+
+    #[test]
     fn cop_aggregation_requires_client_request_support() {
         let a = bigint_col(1);
         for name in [
@@ -1709,11 +1793,11 @@ mod tests {
                 vec![Expression::Column(a.clone())]
             };
             let descriptor = AggFuncDesc::new(&ctx(), name, args, false).unwrap();
-            assert!(!check_agg_can_push_cop_tikv(&[descriptor], &[]), "{name}");
+            assert!(!check_agg_can_push_cop_tikv(&[descriptor], &[], &Default::default()), "{name}");
         }
         for name in [names::COUNT, names::SUM, names::AVG, names::MIN, names::MAX] {
             assert!(
-                check_agg_can_push_cop_tikv(&[agg(name, &a, false)], &[]),
+                check_agg_can_push_cop_tikv(&[agg(name, &a, false)], &[], &Default::default()),
                 "{name}"
             );
         }

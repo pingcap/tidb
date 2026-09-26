@@ -18,7 +18,6 @@ use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use super::ruv2_metrics::{RuV2Metrics, RuV2Weights};
 use super::stmtstats::BinaryDigest;
 use tikv_client::RuDetails;
 
@@ -87,19 +86,15 @@ pub struct RuKey {
 
 /// Go `ExecutionContext`: the RU sampling state for one active SQL execution.
 ///
-/// Go's `*util.RUDetails` and `*execdetails.RUV2Metrics` pointers are shared
-/// with the executing statement, so both are `Arc` here; Go's nil is `None`.
+/// Go's `*util.RUDetails` pointer is shared with the executing statement, so
+/// it is an `Arc` here; Go's nil is `None`.
 #[derive(Debug, Default)]
 pub struct ExecutionContext {
     /// Go `ExecutionContext.RUDetails`, cached at begin time to avoid
     /// per-tick `context.Value()` lookups.
     pub ru_details: Option<Arc<RuDetails>>,
-    /// Go `ExecutionContext.RUV2Metrics`.
-    pub ruv2_metrics: Option<Arc<RuV2Metrics>>,
     /// Go `ExecutionContext.Key`.
     pub key: RuKey,
-    /// Go `ExecutionContext.RUV2Weights`.
-    pub ruv2_weights: RuV2Weights,
     /// Go `ExecutionContext.LastRUTotal`.
     pub last_ru_total: f64,
     /// Go `ExecutionContext.RUVersion`.

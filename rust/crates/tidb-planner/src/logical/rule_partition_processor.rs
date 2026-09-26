@@ -51,6 +51,7 @@ fn resolve_index_hints_for_partition(
         is_common_handle: source.is_common_handle,
         common_handle_version: source.common_handle_version,
         is_temporary: source.is_temporary,
+        is_local_temporary: source.is_local_temporary,
         is_cached: source.is_cached,
         has_affinity: source.has_affinity,
         ..Default::default()
@@ -70,6 +71,7 @@ fn resolve_index_hints_for_partition(
         source.tikv_in_isolation_read,
         &source.isolation_read_engines_value,
     )?;
+    source.derived_access_paths = None;
     source.enumerated_paths = resolution.paths;
     source.forced_index_ids = resolution.forced_index_ids;
     source.force_keep_order_index_ids = resolution.force_keep_order_index_ids;
@@ -154,6 +156,7 @@ fn make_children(
             continue;
         };
         let mut child = source.clone_shallow();
+        child.derived_access_paths = None;
         child.partition_def_idx = Some(index);
         child.physical_table_id = physical_id;
         if let Some(partition_name) = source.partition_definition_names.get(index) {
@@ -199,6 +202,7 @@ fn prune_data_source(
     if source.partition_definition_ids.is_empty() {
         return Ok(LogicalPlan::DataSource(source));
     }
+    source.derived_access_paths = None;
     source.pushed_down_conds =
         apply_predicate_simplification(ctx, source.pushed_down_conds, false, None);
     source.all_conds = apply_predicate_simplification(ctx, source.all_conds, false, None);

@@ -380,17 +380,30 @@ impl LogicalProjection {
     ///
     /// # Blocked
     ///
-    /// Go calls `cardinality.EstimateColsNDVWithMatchedLen(sctx, cols,
-    /// childSchema[0], childProfile)` per expression. That estimator needs the
-    /// session and the child histogram collection; without it, a column whose
-    /// expression reads exactly ONE child column adopts that column's NDV —
-    /// which is what the Go estimator returns in that case — and every other
-    /// column is left out of the map rather than guessed.
+    /// Go calls `cardinality.EstimateColsNDVWithMatchedLen` per expression.
+    /// The context-aware body below uses the same estimator and session ratio;
+    /// the no-context wrapper supplies Go's default ratio.
     pub fn derive_stats(
         &mut self,
         child_stats: &[StatsInfo],
         self_schema: &Schema,
         reloads: &[bool],
+    ) -> Option<(StatsInfo, bool)> {
+        self.derive_stats_with_group_ndv_skew_ratio(
+            child_stats,
+            self_schema,
+            reloads,
+            tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+        )
+    }
+
+    /// Go `LogicalProjection.DeriveStats` with its session group-NDV ratio.
+    pub fn derive_stats_with_group_ndv_skew_ratio(
+        &mut self,
+        child_stats: &[StatsInfo],
+        self_schema: &Schema,
+        reloads: &[bool],
+        group_ndv_skew_ratio: f64,
     ) -> Option<(StatsInfo, bool)> {
         let child = child_stats
             .first()
@@ -411,11 +424,17 @@ impl LogicalProjection {
             // (`logical_projection.go:296`).
             let output = &self_schema.columns[i];
             let read = extract_columns(expr);
-            if read.len() == 1 {
-                if let Some(ndv) = child.col_ndvs().get(&read[0].unique_id) {
-                    col_ndvs.push((output.unique_id, *ndv));
-                }
-            }
+            let input_ids = read
+                .iter()
+                .map(|column| column.unique_id)
+                .collect::<Vec<_>>();
+            let (ndv, _) = crate::cardinality::derive_stats::
+                estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                    &input_ids,
+                    child,
+                    group_ndv_skew_ratio,
+                );
+            col_ndvs.push((output.unique_id, ndv));
         }
         let mut stats = StatsInfo::new(child.row_count(), col_ndvs);
         stats.set_group_ndvs(group_ndvs);

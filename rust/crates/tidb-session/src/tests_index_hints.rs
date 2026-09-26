@@ -874,3 +874,585 @@ fn tidb_enable_index_merge_controls_automatic_or_paths() {
         "OFF must remove automatic IndexMerge candidates"
     );
 }
+
+#[test]
+fn hinted_index_merge_intersection_retains_residual_predicates_when_disabled() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE im_and (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia(a), KEY ib(b))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO im_and VALUES (1,1,2),(2,1,0),(3,0,2),(4,1,2)")
+        .unwrap();
+    session.run("SET tidb_enable_index_merge = OFF").unwrap();
+    let query = "SELECT /*+ USE_INDEX_MERGE(im_and, ia, ib) */ id FROM im_and WHERE a = 1 AND b = 2 AND id + 1 > 2";
+    let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+    assert!(
+        plan.iter()
+            .flatten()
+            .any(|cell| cell.contains("IndexMerge")),
+        "{plan:?}"
+    );
+    let builds = plan
+        .iter()
+        .filter(|row| row[0].contains("Selection") && row[0].contains("(Build)"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        builds.len(),
+        2,
+        "Go filters the handle expression on both partial indexes: {plan:?}"
+    );
+    assert!(builds.iter().all(|row| row[1] == "8.00"));
+    assert!(plan
+        .iter()
+        .filter(|row| row[0].contains("IndexRangeScan"))
+        .all(|row| row[1] == "10.00"));
+    assert!(plan
+        .iter()
+        .filter(|row| row[0].contains("IndexMerge") || row[0].contains("TableRowIDScan"))
+        .all(|row| row[1] == "1.00"));
+    assert_eq!(row_text(session.run(query)), vec![vec!["4".to_owned()]]);
+    assert_eq!(
+        row_text(session.run(&format!("{query} LIMIT 1"))),
+        vec![vec!["4".to_owned()]]
+    );
+    session
+        .run("INSERT INTO mysql.expr_pushdown_blacklist VALUES ('gt','tikv','test')")
+        .unwrap();
+    session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+    let blacklisted = row_text(session.run(&format!("EXPLAIN {query}")));
+    assert!(
+        blacklisted
+            .iter()
+            .all(|row| !(row[0].contains("Selection") && row[0].contains("(Build)"))),
+        "blacklisted residual must not be covered by either partial index: {blacklisted:?}"
+    );
+    assert!(
+        blacklisted
+            .iter()
+            .any(|row| row[0].contains("Selection") && row[1] == "0.80" && row[2] == "root"),
+        "Go retains the residual on the root task: {blacklisted:?}"
+    );
+    assert_eq!(row_text(session.run(query)), vec![vec!["4".to_owned()]]);
+}
+
+#[test]
+fn hinted_index_merge_intersection_preserves_prefix_rechecks() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE im_prefix (id BIGINT PRIMARY KEY, a VARCHAR(20), b BIGINT, KEY ia(a(2)), KEY ib(b))").unwrap();
+    session
+        .run("INSERT INTO im_prefix VALUES (1,'abc',2),(2,'abd',2),(3,'abc',3),(4,'abc',2)")
+        .unwrap();
+    let query = "SELECT /*+ USE_INDEX_MERGE(im_prefix, ia, ib) */ id FROM im_prefix WHERE a = 'abc' AND b = 2";
+    let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+    assert!(
+        plan.iter()
+            .flatten()
+            .any(|cell| cell.contains("IndexMerge")),
+        "{plan:?}"
+    );
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("Selection") && row[0].contains("(Probe)")),
+        "the prefix predicate needs a full-value recheck: {plan:?}"
+    );
+    let mut rows = row_text(session.run(query));
+    rows.sort();
+    assert_eq!(rows, vec![vec!["1".to_owned()], vec!["4".to_owned()]]);
+}
+
+#[test]
+fn skyline_keeps_indexes_with_incomparable_access_columns() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE skyline_columns (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, c BIGINT, payload BIGINT, KEY iab(a,b), KEY ic(c))").unwrap();
+    let rows = (0..1000)
+        .map(|n| format!("({n},1,1,{n},{n})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO skyline_columns VALUES {rows}"))
+        .unwrap();
+    session.run("ANALYZE TABLE skyline_columns").unwrap();
+    let query = "SELECT payload FROM skyline_columns WHERE a=1 AND b=1 AND c=7";
+    let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+    assert!(
+        plan.iter()
+            .flatten()
+            .any(|cell| cell.contains("index:ic(c)")),
+        "incomparable access-column sets must reach Go's skyline comparison: {plan:?}"
+    );
+    assert_eq!(row_text(session.run(query)), vec![vec!["7".to_owned()]]);
+}
+
+#[test]
+fn single_index_union_requires_an_explicit_merge_hint() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE im_same (id BIGINT PRIMARY KEY, a BIGINT, payload BIGINT, KEY ia(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO im_same VALUES (1,1,10),(2,2,20),(3,3,30),(4,1,40)")
+        .unwrap();
+    session.run("SET tidb_enable_index_merge=ON").unwrap();
+    for (hint, expected_merge) in [("", false), ("/*+ USE_INDEX_MERGE(im_same, ia) */", true)] {
+        let query = format!("SELECT {hint} payload FROM im_same WHERE a=1 OR a=2");
+        let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+        assert_eq!(
+            plan.iter()
+                .flatten()
+                .any(|cell| cell.contains("IndexMerge")),
+            expected_merge,
+            "{plan:?}"
+        );
+        let mut rows = row_text(session.run(&query));
+        rows.sort();
+        assert_eq!(
+            rows,
+            vec![
+                vec!["10".to_owned()],
+                vec!["20".to_owned()],
+                vec!["40".to_owned()]
+            ]
+        );
+    }
+}
+
+#[test]
+fn union_merge_limit_caps_partials_and_deduplicates_before_offset() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE im_limit(id INT PRIMARY KEY, a INT, b INT, KEY ia(a), KEY ib(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO im_limit VALUES(1,1,0),(2,0,2),(3,1,2),(4,1,0),(5,0,2),(6,0,0)")
+        .unwrap();
+    let query =
+        "SELECT /*+ USE_INDEX_MERGE(im_limit,ia,ib) */ id FROM im_limit WHERE a=1 OR b=2 LIMIT 1,3";
+    let unlimited = row_text(session.run(&format!(
+        "EXPLAIN FORMAT='brief' {}",
+        query.trim_end_matches(" LIMIT 1,3")
+    )));
+    assert!(
+        unlimited
+            .iter()
+            .filter(|row| row[0].contains("IndexMerge") || row[0].contains("TableRowIDScan"))
+            .all(|row| row[1] == "19.99"),
+        "{unlimited:?}"
+    );
+    let grouped = row_text(session.run("EXPLAIN FORMAT='brief' SELECT /*+ USE_INDEX_MERGE(im_limit,ia,ib) */ id FROM im_limit WHERE a=1 OR a=2 OR b=2"));
+    assert!(
+        grouped
+            .iter()
+            .filter(|row| row[0].contains("IndexMerge") || row[0].contains("TableRowIDScan"))
+            .all(|row| row[1] == "259.75"),
+        "{grouped:?}"
+    );
+    let plan = row_text(session.run(&format!("EXPLAIN FORMAT='brief' {query}")));
+    assert!(
+        plan.iter().any(|row| row[0].contains("IndexMerge")
+            && row[4].contains("limit embedded(offset:1, count:3)")),
+        "{plan:?}"
+    );
+    assert_eq!(
+        plan.iter()
+            .filter(|row| row[0].contains("Limit(Build)"))
+            .count(),
+        2,
+        "{plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|row| row[0].contains("Limit(Probe)")),
+        "{plan:?}"
+    );
+    assert!(
+        plan.iter()
+            .filter(|row| row[0].contains("IndexRangeScan"))
+            .all(|row| row[1] == "2.00"),
+        "{plan:?}"
+    );
+    assert!(
+        plan.iter()
+            .filter(|row| row[0].contains("IndexMerge") || row[0].contains("TableRowIDScan"))
+            .all(|row| row[1] == "4.00"),
+        "{plan:?}"
+    );
+    let rows = row_text(session.run(query));
+    assert_eq!(rows.len(), 3);
+    let ids: std::collections::BTreeSet<_> = rows
+        .iter()
+        .map(|row| row[0].parse::<i64>().unwrap())
+        .collect();
+    assert_eq!(
+        ids.len(),
+        3,
+        "union deduplicates before applying offset/count"
+    );
+    assert!(ids.iter().all(|id| (1..=5).contains(id)));
+}
+
+#[test]
+fn ordered_union_merge_preserves_direction_dedup_and_limit() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE ordered_union(id INT PRIMARY KEY,a INT,b INT,c INT,KEY ia(a,c),KEY ib(b,c))").unwrap();
+    session.run("INSERT INTO ordered_union VALUES(1,1,0,40),(2,0,2,10),(3,1,2,30),(4,1,0,20),(5,0,2,50),(6,0,0,0)").unwrap();
+    for (suffix, expected, partial_rows, probe_rows) in [
+        (
+            "ORDER BY c",
+            vec![
+                vec!["2", "10"],
+                vec!["4", "20"],
+                vec!["3", "30"],
+                vec!["1", "40"],
+                vec!["5", "50"],
+            ],
+            "10.00",
+            "19.99",
+        ),
+        (
+            "ORDER BY c DESC",
+            vec![
+                vec!["5", "50"],
+                vec!["1", "40"],
+                vec!["3", "30"],
+                vec!["4", "20"],
+                vec!["2", "10"],
+            ],
+            "10.00",
+            "19.99",
+        ),
+        (
+            "ORDER BY c LIMIT 1,3",
+            vec![vec!["4", "20"], vec!["3", "30"], vec!["1", "40"]],
+            "2.00",
+            "4.00",
+        ),
+        (
+            "ORDER BY c DESC LIMIT 3",
+            vec![vec!["5", "50"], vec!["1", "40"], vec!["3", "30"]],
+            "1.50",
+            "3.00",
+        ),
+    ] {
+        let query = format!("SELECT /*+ USE_INDEX_MERGE(ordered_union,ia,ib) */ id,c FROM ordered_union WHERE a=1 OR b=2 {suffix}");
+        let plan = row_text(session.run(&format!("EXPLAIN FORMAT='brief' {query}")));
+        assert!(
+            !plan
+                .iter()
+                .any(|row| row[0].contains("Sort") || row[0].contains("TopN")),
+            "{plan:?}"
+        );
+        let scans: Vec<_> = plan
+            .iter()
+            .filter(|row| row[0].contains("IndexRangeScan"))
+            .collect();
+        assert_eq!(scans.len(), 2, "{plan:?}");
+        for scan in scans {
+            assert_eq!(scan[1], partial_rows, "{plan:?}");
+            assert!(scan[4].contains("keep order:true"), "{plan:?}");
+            assert_eq!(
+                scan[4].contains("desc"),
+                suffix.contains("DESC"),
+                "{plan:?}"
+            );
+        }
+        assert!(
+            plan.iter()
+                .any(|row| row[0].contains("IndexMerge") && row[1] == probe_rows),
+            "{plan:?}"
+        );
+        assert_eq!(row_text(session.run(&query)), expected, "{suffix}");
+    }
+    let hidden = "SELECT /*+ USE_INDEX_MERGE(ordered_union,ia,ib) */ id FROM ordered_union WHERE a=1 OR b=2 ORDER BY c DESC LIMIT 3";
+    let hidden_plan = row_text(session.run(&format!("EXPLAIN FORMAT='brief' {hidden}")));
+    assert!(hidden_plan.iter().any(|row| row[0].contains("IndexMerge")), "{hidden_plan:?}");
+    assert!(!hidden_plan.iter().any(|row| row[0].contains("Sort") || row[0].contains("TopN")), "{hidden_plan:?}");
+    assert_eq!(
+        row_text(session.run(hidden)),
+        vec![vec!["5"], vec!["1"], vec!["3"]]
+    );
+    session
+        .run("CREATE TABLE ordered_handle(id INT PRIMARY KEY,a INT,b INT,KEY ia(a),KEY ib(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO ordered_handle VALUES(5,0,2),(1,1,0),(3,1,2),(2,0,2),(4,1,0)")
+        .unwrap();
+    let handles = "SELECT /*+ USE_INDEX_MERGE(ordered_handle,ia,ib) */ id FROM ordered_handle WHERE a=1 OR b=2 ORDER BY id LIMIT 1,3";
+    let handle_plan = row_text(session.run(&format!("EXPLAIN FORMAT='brief' {handles}")));
+    assert!(
+        !handle_plan
+            .iter()
+            .any(|row| row[0].contains("Sort") || row[0].contains("TopN")),
+        "{handle_plan:?}"
+    );
+    assert_eq!(
+        row_text(session.run(handles)),
+        vec![vec!["2"], vec!["3"], vec!["4"]]
+    );
+}
+
+#[test]
+fn merge_table_probe_preserves_residual_topn_and_offset() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE im_probe (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, c BIGINT, KEY ia(a), KEY ib(b))").unwrap();
+    session.run("INSERT INTO im_probe VALUES (1,1,2,10),(2,1,2,20),(3,1,2,30),(4,1,2,40),(5,1,2,50),(6,1,2,60)").unwrap();
+    for batch in [3, 20_000] {
+        session
+            .run(&format!("SET tidb_index_lookup_size={batch}"))
+            .unwrap();
+        let query = "SELECT /*+ USE_INDEX_MERGE(im_probe, ia, ib) */ id FROM im_probe WHERE a=1 AND b=2 AND c>20 ORDER BY c DESC LIMIT 1,2";
+        let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+        assert!(
+            plan.iter().any(|row| row[0].contains("IndexMerge")),
+            "{plan:?}"
+        );
+        assert!(
+            plan.iter().any(|row| row[0].contains("TopN")
+                && row[0].contains("(Probe)")
+                && row[4].contains("offset:0, count:3")),
+            "{plan:?}"
+        );
+        assert_eq!(
+            row_text(session.run(query)),
+            vec![vec!["5".to_owned()], vec!["4".to_owned()]]
+        );
+    }
+}
+
+/// Go pkg/executor/test/indexmergereadtest.TestIssues70910.
+#[test]
+fn ordered_index_merge_limit_exceeds_initial_heap_allocation() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT, b INT, c INT, INDEX idx1(a,c), INDEX idx2(b,c))")
+        .unwrap();
+    for start in (0..3000).step_by(500) {
+        let values = (start..start + 500)
+            .map(|i| format!("(1,1,{i})"))
+            .collect::<Vec<_>>()
+            .join(",");
+        session
+            .run(&format!("INSERT INTO t(a,b,c) VALUES {values}"))
+            .unwrap();
+    }
+    for (direction, offset, count) in [("ASC", 0, 2000), ("ASC", 1500, 1100), ("DESC", 1500, 1100)]
+    {
+        let query = format!("SELECT /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * FROM t WHERE a=1 OR b=1 ORDER BY c {direction} LIMIT {offset},{count}");
+        let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+        assert!(
+            plan.iter().any(|row| row[0].contains("IndexMerge")),
+            "{plan:?}"
+        );
+        assert!(
+            !plan
+                .iter()
+                .any(|row| row[0].contains("TopN") || row[0].contains("Sort")),
+            "{plan:?}"
+        );
+        let rows = row_text(session.run(&query));
+        assert_eq!(rows.len(), count);
+        for (index, row) in rows.iter().enumerate() {
+            let value = if direction == "ASC" {
+                offset + index
+            } else {
+                2999 - offset - index
+            };
+            assert_eq!(row[2], value.to_string());
+        }
+    }
+}
+
+#[test]
+fn union_merge_retains_source_or_for_uncovered_branch_predicates() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE union_residual(id bigint primary key,a bigint,b bigint,c bigint,key ia(a),key ib(b))").unwrap();
+    session
+        .run("INSERT INTO union_residual VALUES (1,1,0,1),(2,1,0,3),(3,0,2,1),(4,1,2,3)")
+        .unwrap();
+    for (indexes, predicate, expected) in [
+        (
+            "ia,ib",
+            "(a=1 AND c>2) OR b=2",
+            vec![vec!["2"], vec!["3"], vec!["4"]],
+        ),
+        (
+            "primary,ib",
+            "(id=1 AND c>2) OR b=2",
+            vec![vec!["3"], vec!["4"]],
+        ),
+        (
+            "primary,ib",
+            "(id<3 AND id+1>2) OR b=2",
+            vec![vec!["2"], vec!["3"], vec!["4"]],
+        ),
+        (
+            "primary,ib",
+            "(id< -3 AND c>2) OR b=2",
+            vec![vec!["3"], vec!["4"]],
+        ),
+        (
+            "ia,ib",
+            "(a=1 AND id+1>2) OR b=2",
+            vec![vec!["2"], vec!["3"], vec!["4"]],
+        ),
+    ] {
+        let query = format!("SELECT /*+ USE_INDEX_MERGE(union_residual,{indexes}) */ id FROM union_residual WHERE {predicate}");
+        let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+        assert!(
+            plan.iter()
+                .any(|row| row[0].contains("IndexMerge") && row[4].contains("type: union")),
+            "Go retains the range-producing branch and rechecks the source OR: {query}: {plan:?}"
+        );
+        let probe = plan
+            .iter()
+            .find(|row| row[0].contains("TableRowIDScan"))
+            .unwrap();
+        if predicate == "(a=1 AND c>2) OR b=2" {
+            assert_eq!(probe[1], "19.99", "{plan:?}");
+        } else if predicate == "(id=1 AND c>2) OR b=2" {
+            assert_eq!(probe[1], "11.00", "{plan:?}");
+        } else if predicate == "(id<3 AND id+1>2) OR b=2" {
+            assert_eq!(probe[1], "13.00", "{plan:?}");
+        }
+        if predicate == "(id< -3 AND c>2) OR b=2" {
+            assert_eq!(probe[1], "3340.00", "{plan:?}");
+        }
+        if predicate.contains("id+1") {
+            assert!(
+                plan.iter()
+                    .any(|row| row[0].contains("Selection") && row[4].contains("plus(")),
+                "branch residual must survive physical conversion: {plan:?}"
+            );
+        }
+        let mut rows = row_text(session.run(&query));
+        rows.sort();
+        assert_eq!(rows, expected, "{query}: {plan:?}");
+        let limited = row_text(session.run(&format!("{query} ORDER BY id LIMIT 2 OFFSET 1")));
+        assert_eq!(
+            limited,
+            expected.into_iter().skip(1).take(2).collect::<Vec<_>>(),
+            "{query}"
+        );
+    }
+    session
+        .run("INSERT INTO mysql.expr_pushdown_blacklist VALUES ('gt','tikv','union residual')")
+        .unwrap();
+    session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+    for (indexes, predicate, expected) in [
+        (
+            "ia,ib",
+            "(a=1 AND c>2) OR b=2",
+            vec![vec!["2"], vec!["3"], vec!["4"]],
+        ),
+        (
+            "primary,ib",
+            "(id=1 AND c>2) OR b=2",
+            vec![vec!["3"], vec!["4"]],
+        ),
+    ] {
+        let query = format!("SELECT /*+ USE_INDEX_MERGE(union_residual,{indexes}) */ id FROM union_residual WHERE {predicate}");
+        let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+        assert!(
+            plan.iter().any(|row| row[0].contains("IndexMerge")),
+            "{plan:?}"
+        );
+        assert!(
+            plan.iter().any(|row| row[0].contains("Selection")
+                && row[2] == "root"
+                && row[4].contains("or(")),
+            "{plan:?}"
+        );
+        let mut rows = row_text(session.run(&query));
+        rows.sort();
+        assert_eq!(rows, expected);
+    }
+    session
+        .run("DELETE FROM mysql.expr_pushdown_blacklist")
+        .unwrap();
+    session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+    session
+        .run("ANALYZE TABLE union_residual ALL COLUMNS")
+        .unwrap();
+    let query = "SELECT /*+ USE_INDEX_MERGE(union_residual,primary,ib) */ id FROM union_residual WHERE (id=1 AND c>2) OR b=2";
+    let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+    let partial = plan
+        .iter()
+        .find(|row| row[0].contains("TableRangeScan"))
+        .unwrap();
+    assert_eq!(
+        partial[1], "1.00",
+        "table partial must estimate its own range: {plan:?}"
+    );
+    let partial = plan
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap();
+    assert_eq!(
+        partial[1], "2.00",
+        "TopN-only index statistics must reach branch estimation: {plan:?}"
+    );
+    let mut rows = row_text(session.run(query));
+    rows.sort();
+    assert_eq!(rows, vec![vec!["3"], vec!["4"]]);
+    session
+        .run("ALTER TABLE union_residual ADD INDEX ibc(b,c)")
+        .unwrap();
+    let query = "SELECT /*+ USE_INDEX_MERGE(union_residual,primary,ibc) */ id FROM union_residual WHERE (id=1 AND c>2) OR b=2";
+    let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+    let partial = plan
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap();
+    assert_eq!(
+        partial[1], "2.00",
+        "new index branch must use its own column statistics: {plan:?}"
+    );
+    let mut rows = row_text(session.run(query));
+    rows.sort();
+    assert_eq!(rows, vec![vec!["3"], vec!["4"]]);
+}
+
+#[test]
+fn union_merge_completes_composite_ranges_from_top_level_predicates() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE union_cnf(id bigint primary key,a bigint,b bigint,c bigint,d bigint,key iab(a,b),key iac(a,c))").unwrap();
+    session
+        .run("INSERT INTO union_cnf VALUES (1,1,2,0,9),(2,1,0,3,8),(3,2,2,3,7),(4,1,4,5,6)")
+        .unwrap();
+    let query = "SELECT /*+ USE_INDEX_MERGE(union_cnf,iab,iac) */ id FROM union_cnf WHERE a=1 AND (b=2 OR c=3)";
+    let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("IndexMerge") && row[4].contains("type: union")),
+        "{plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|row| row[0].contains("Selection")),
+        "Go removes a=1 after every selected branch absorbs it: {plan:?}"
+    );
+    let probe = plan.iter().find(|row| row[0].contains("TableRowIDScan")).unwrap();
+    assert_eq!(probe[1], "8.00", "{plan:?}");
+    for partial in plan.iter().filter(|row| row[0].contains("IndexRangeScan")) {
+        assert_eq!(partial[1], "0.10", "{plan:?}");
+    }
+    let mut rows = row_text(session.run(query));
+    rows.sort();
+    assert_eq!(rows, vec![vec!["1"], vec!["2"]]);
+    for (extra, expected) in [
+        (" AND d>8", vec![vec!["1"]]),
+        (" AND (b=0 OR c=0)", vec![vec!["1"], vec!["2"]]),
+        (" ORDER BY id LIMIT 1 OFFSET 1", vec![vec!["2"]]),
+    ] {
+        let sql = format!("{query}{extra}");
+        let plan = row_text(session.run(&format!("EXPLAIN {sql}")));
+        assert!(
+            plan.iter()
+                .any(|row| row[0].contains("IndexMerge") && row[4].contains("type: union")),
+            "{sql}: {plan:?}"
+        );
+        let mut rows = row_text(session.run(&sql));
+        rows.sort();
+        assert_eq!(rows, expected, "{sql}: {plan:?}");
+    }
+}

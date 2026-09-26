@@ -23,16 +23,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_datatype::Datum;
 use tidb_planner::cardinality::pseudo::{
-    pseudo_row_count_by_index_ranges, pseudo_selectivity, IndexRange as PseudoIndexRange,
-    PseudoBoundKind, PseudoColumn, PseudoFunctionKind, PseudoIndex, PseudoPredicate, ScalarRange,
+    IndexRange as PseudoIndexRange, PseudoBoundKind, PseudoColumn, PseudoFunctionKind, PseudoIndex,
+    PseudoPredicate, ScalarRange, pseudo_row_count_by_index_ranges, pseudo_selectivity,
 };
 use tidb_planner::cardinality::row_count_column::RowEstimate;
 use tidb_planner::cardinality::row_count_estimator::{
-    get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, ColumnStats,
-    EstimatorOptions, IndexRangeDatums, IndexStats,
+    ColumnRange, ColumnStats, EstimatorOptions, IndexRangeDatums, IndexRowCounts, IndexStats,
+    RecursiveIndexStats, IndexEstimationStats, get_index_row_count, get_row_count_by_column_ranges,
 };
 use tidb_planner::selectivity_greedy::{
-    combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
+    ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType, combine_selectivity,
 };
 
 use crate::kv_table::{IndexRange, KvIndex, KvTable};
@@ -85,6 +85,10 @@ pub struct TableStatistics {
     pub columns: BTreeMap<i64, ColumnStats>,
     /// Index statistics by index ID.
     pub indexes: BTreeMap<i64, IndexStats>,
+    /// Go `Column.FMSketch`, retained for global partition-stat merges.
+    pub column_fm_sketches: BTreeMap<i64, tidb_stats::FmSketch>,
+    /// Go `Index.FMSketch`, retained for global partition-stat merges.
+    pub index_fm_sketches: BTreeMap<i64, tidb_stats::FmSketch>,
     /// Go `Column.StatsLoadedStatus`, retained separately from the estimator's
     /// reduced column shape.
     pub column_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
@@ -108,10 +112,7 @@ impl TableStatistics {
             .column_load_status
             .get(&id)
             .is_some_and(|status| status.is_essential_stats_loaded());
-        (!self.pseudo
-            && column.total_row_count() != 0.0
-            && (essential || column.histogram.ndv <= 0))
-            .then_some(column)
+        column.is_valid_for_estimation(self.pseudo, essential).then_some(column)
     }
 
     /// Whether this is Go's synthetic cached `PseudoTable`, as opposed to a
@@ -241,6 +242,8 @@ impl TableStatistics {
             stats_ver: 0,
             columns,
             indexes,
+            column_fm_sketches: BTreeMap::new(),
+            index_fm_sketches: BTreeMap::new(),
             column_load_status,
             index_load_status,
             column_stats_existence,
@@ -271,6 +274,17 @@ impl TableStatistics {
     ) -> Self {
         self.column_stats_existence = columns;
         self.index_stats_existence = indexes;
+        self
+    }
+
+    /// Retains per-item FM sketches used when Go merges partition histograms.
+    pub fn with_fm_sketches(
+        mut self,
+        columns: BTreeMap<i64, tidb_stats::FmSketch>,
+        indexes: BTreeMap<i64, tidb_stats::FmSketch>,
+    ) -> Self {
+        self.column_fm_sketches = columns;
+        self.index_fm_sketches = indexes;
         self
     }
 
@@ -458,6 +472,51 @@ fn queue_column_stats_load_if_invalid(
     }
 }
 
+/// Go scales only fully loaded MV indexes. Their own entry counts must not
+/// be mistaken for analyzed table rows when selecting the scaling baseline.
+fn index_row_counts(stats: &TableStatistics, table: &KvTable, index: &KvIndex) -> IndexRowCounts {
+    let mut counts = IndexRowCounts::unscaled(stats.row_count, stats.modify_count);
+    if table.mv_key_part_source(index.id).is_none()
+        || !stats
+            .index_load_status
+            .get(&index.id)
+            .is_some_and(|status| status.is_full_load())
+    {
+        return counts;
+    }
+    let analyzed = stats
+        .columns
+        .iter()
+        .find_map(|(id, column)| {
+            stats
+                .column_load_status
+                .get(id)
+                .is_some_and(|status| status.is_full_load())
+                .then(|| column.total_row_count())
+        })
+        .or_else(|| {
+            stats.indexes.iter().find_map(|(id, index)| {
+                (table.mv_key_part_source(*id).is_none()
+                    && stats
+                        .index_load_status
+                        .get(id)
+                        .is_some_and(|status| status.is_full_load()))
+                .then(|| index.total_row_count())
+            })
+        })
+        .unwrap_or(-1.0);
+    let total = stats
+        .indexes
+        .get(&index.id)
+        .map_or(0.0, IndexStats::total_row_count);
+    if analyzed > 0.0 && total > 0.0 {
+        let scale = total / analyzed;
+        counts.index_realtime = (stats.row_count as f64 * scale) as i64;
+        counts.index_modify = (stats.modify_count as f64 * scale) as i64;
+    }
+    counts
+}
+
 pub(crate) fn index_row_count(
     index: &KvIndex,
     table: &KvTable,
@@ -465,10 +524,40 @@ pub(crate) fn index_row_count(
     stats: Option<&TableStatistics>,
     realtime: f64,
     trigger_load: bool,
-) -> RowEstimate {
+) -> Result<RowEstimate, tidb_planner::cardinality::row_count_estimator::EstimationError> {
+    index_row_count_with_options(
+        index,
+        table,
+        ranges,
+        stats,
+        realtime,
+        trigger_load,
+        EstimatorOptions::default(),
+    )
+}
+
+fn index_row_count_with_options(
+    index: &KvIndex,
+    table: &KvTable,
+    ranges: &[IndexRange],
+    stats: Option<&TableStatistics>,
+    realtime: f64,
+    trigger_load: bool,
+    options: EstimatorOptions,
+) -> Result<RowEstimate, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
-        return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
+        return Ok(RowEstimate::default_est(pseudo_index_row_count(
+            index, ranges, realtime,
+        )));
     };
+    // Go `GetRowCountByIndexRanges` checks this before `IndexStatsIsInvalid`:
+    // a full range over an ordinary index includes every table row, so the
+    // table's realtime count is exact and an evicted index histogram must not
+    // be queued just to rediscover it.
+    if can_skip_index_estimation(index, table, ranges) {
+        return Ok(RowEstimate::default_est(stats.row_count as f64));
+    }
+    let index_column_offsets = index_column_offsets_for_ranges(index, table, ranges);
     // Go `IndexStatsIsInvalid` queues incomplete statistics for loading, but
     // rejects estimation only when the object is missing or TotalRowCount is
     // zero. A load-status flag alone does not make a retained payload invalid.
@@ -501,30 +590,106 @@ pub(crate) fn index_row_count(
         // clustered_primary_metadata`]) always lands here on an analyzed
         // table: its key columns are analyzed, its index id is stored
         // nowhere.
-        if let Some(estimate) = partial_stats_index_row_count(index, table, ranges, stats, realtime)
-        {
-            return estimate;
+        if let Some(estimate) = partial_stats_index_row_count(
+            table,
+            &index_column_offsets,
+            ranges,
+            stats,
+            realtime,
+            options,
+        )? {
+            return Ok(estimate);
         }
-        return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
+        return Ok(RowEstimate::default_est(pseudo_index_row_count(
+            index, ranges, realtime,
+        )));
     };
     let datum_ranges: Vec<IndexRangeDatums> = ranges
         .iter()
         .map(|range| IndexRangeDatums {
-            low: range.low.clone(),
-            high: range.high.clone(),
+            collators: index_column_offsets
+                .iter()
+                .take(range.low.len())
+                .map(|offset| table.columns[*offset].field_type.collation())
+                .collect(),
+            low_val: range.low.clone(),
+            high_val: range.high.clone(),
             low_exclude: range.low_exclusive,
             high_exclude: range.high_exclusive,
         })
         .collect();
     // The per-column histograms `expBackoffEstimation` consults, positionally
-    // by index column -- Go's `HistColl.ColUniqueID2IdxIDs` walk. Without
-    // them a range that pins a PREFIX of a composite index has only the index
-    // histogram to go on and misses the leading column's TopN, which is an
-    // exact count where it hits. A column with no histogram is `None`, which
-    // the estimator skips exactly as the source does.
-    let column_stats: Vec<Option<&ColumnStats>> = index
-        .column_offsets
+    // by physical index key column -- Go's `HistColl.ColUniqueID2IdxIDs` walk.
+    // A non-unique secondary key can include the clustered handle after its
+    // declared columns; those dimensions participate when the range contains
+    // them, even though the index histogram itself covers only the declaration.
+    let context = index_estimation_stats(table, stats, index);
+    let column_stats = &context.columns;
+    let virtual_columns = index_column_offsets
         .iter()
+        .map(|offset| {
+            table
+                .columns
+                .get(*offset)
+                .is_some_and(crate::generated_column::is_virtual)
+        })
+        .collect::<Vec<_>>();
+    let has_multicolumn_range = ranges.iter().any(|range| range.low.len() > 1);
+    let recursive_indexes: Vec<Vec<RecursiveIndexStats<'_>>> = index_column_offsets
+        .iter()
+        .enumerate()
+        .map(|(position, offset)| {
+            // V2 consults alternatives only after column statistics fail;
+            // V1 prefers the first suffix index even with usable columns.
+            if position >= column_stats.len()
+                || !has_multicolumn_range
+                || (column_stats[position].is_some()
+                    && !(index_stats.stats_ver == 1 && index_stats.cms.is_some()))
+            {
+                return Vec::new();
+            }
+            let mut candidates = table
+                .indexes()
+                .iter()
+                .filter_map(|candidate| {
+                    // HistColl.ColUniqueID2IdxIDs maps only leading columns:
+                    // one-dimensional bounds cannot query a suffix histogram.
+                    if candidate.column_offsets.first() != Some(offset) {
+                        return None;
+                    }
+                    stats.indexes.get(&candidate.id)?;
+                    Some((
+                        candidate.id,
+                        index_estimation_stats(table, stats, candidate),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_by_key(|(id, _)| *id);
+            candidates
+                .into_iter()
+                .map(|(_, candidate)| candidate)
+                .collect()
+        })
+        .collect();
+    get_index_row_count(
+        &context,
+        &virtual_columns,
+        &recursive_indexes,
+        &datum_ranges,
+        options,
+    )
+}
+
+fn index_estimation_stats<'a>(
+    table: &KvTable,
+    stats: &'a TableStatistics,
+    index: &KvIndex,
+) -> IndexEstimationStats<'a> {
+    // Go fillIndexPath extends Idx2ColUniqueIDs with eligible handle columns
+    // before logical selectivity or cloned merge paths consult the collection.
+    let mut mapped_offsets = index.column_offsets.clone();
+    mapped_offsets.extend(appended_handle_offsets_for_index(index, table));
+    let columns = mapped_offsets.iter()
         .map(|offset| {
             table
                 .columns
@@ -532,16 +697,137 @@ pub(crate) fn index_row_count(
                 .and_then(|column| stats.column_for_estimation(column.id))
         })
         .collect();
-    let mut estimate = get_index_row_count_for_stats_v2(
-        index_stats,
-        &column_stats,
-        &datum_ranges,
-        stats.row_count,
-        stats.modify_count,
-        estimator_options(),
+    let mut context = IndexEstimationStats::new(
+        stats.indexes.get(&index.id),
+        columns,
+        index_row_counts(stats, table, index),
     );
-    estimate.clamp(0.0, realtime.max(0.0));
-    estimate
+    if context
+        .index
+        .is_some_and(|index| index.stats_ver == 1 && index.cms.is_some())
+    {
+        context.column_ndvs = mapped_offsets.iter()
+            .map(|offset| {
+                table
+                    .columns
+                    .get(*offset)
+                    .and_then(|column| stats.columns.get(&column.id))
+                    .map(|column| column.histogram.ndv)
+            })
+            .collect();
+        context.column_is_handle = mapped_offsets.iter()
+            .map(|offset| table.pk_handle_offset() == Some(*offset))
+            .collect();
+    }
+    context.policy = tidb_planner::cardinality::index_range_policy::IndexRangePolicy {
+        has_condition: table
+            .partial_index_condition_string(index.id)
+            .is_some_and(|condition| !condition.is_empty()),
+        is_multi_value: table.mv_key_part_source(index.id).is_some(),
+    };
+    context
+}
+
+/// Go `canSkipIndexEstimation` at the live statistics boundary.
+fn can_skip_index_estimation(index: &KvIndex, table: &KvTable, ranges: &[IndexRange]) -> bool {
+    use tidb_planner::cardinality::index_range_policy::{
+        can_skip_datum_index_estimation, IndexRangePolicy,
+    };
+
+    let policy = IndexRangePolicy {
+        has_condition: table
+            .partial_index_condition_string(index.id)
+            .is_some_and(|condition| !condition.is_empty()),
+        is_multi_value: table.mv_key_part_source(index.id).is_some(),
+    };
+    can_skip_datum_index_estimation(
+        policy,
+        ranges.iter().map(|range| {
+            (
+                range.low.as_slice(),
+                range.high.as_slice(),
+                range.low_exclusive,
+                range.high_exclusive,
+            )
+        }),
+    )
+}
+
+/// Go `DataSource.HandleColsToAppend`, reduced to the offsets needed by the
+/// statistics range walk. The planner bridge uses the same eligibility rules
+/// while it builds the actual estimate-only range columns.
+fn appended_handle_offsets_for_index(index: &KvIndex, table: &KvTable) -> Vec<usize> {
+    if index.unique || index.clustered_primary || index.global {
+        return Vec::new();
+    }
+    if index
+        .column_offsets
+        .iter()
+        .any(|offset| table.columns.get(*offset).is_none())
+    {
+        return Vec::new();
+    }
+
+    let common_handle = table.common_handle_offsets();
+    if !common_handle.is_empty() {
+        if table.mv_key_part_source(index.id).is_some()
+            || common_handle
+                .iter()
+                .any(|offset| index.column_offsets.contains(offset))
+        {
+            return Vec::new();
+        }
+        if table.common_handle_version() == 0
+            && tidb_datatype::new_collation_enabled()
+            && common_handle.iter().any(|offset| {
+                table.columns.get(*offset).is_some_and(|column| {
+                    column.field_type.eval_type() == tidb_datatype::EvalType::String
+                        && !column
+                            .field_type
+                            .has_flag(tidb_datatype::FieldTypeFlags::BINARY)
+                })
+            })
+        {
+            return Vec::new();
+        }
+        return common_handle.to_vec();
+    }
+
+    let Some(handle_offset) = table.pk_handle_offset() else {
+        return Vec::new();
+    };
+    let Some(handle) = table.columns.get(handle_offset) else {
+        return Vec::new();
+    };
+    if handle.field_type.is_unsigned() || index.column_offsets.contains(&handle_offset) {
+        return Vec::new();
+    }
+    vec![handle_offset]
+}
+
+/// Index key columns represented by these ranges: declared columns, followed
+/// by as many eligible handle dimensions as the range set contains.
+fn index_column_offsets_for_ranges(
+    index: &KvIndex,
+    table: &KvTable,
+    ranges: &[IndexRange],
+) -> Vec<usize> {
+    let declared_count = index.column_offsets.len();
+    let range_width = ranges
+        .iter()
+        .map(|range| range.low.len().max(range.high.len()))
+        .max()
+        .unwrap_or(0);
+    let mut offsets = index.column_offsets.clone();
+    if range_width <= declared_count {
+        return offsets;
+    }
+    let appended = appended_handle_offsets_for_index(index, table);
+    let appended_count = range_width - declared_count;
+    if appended_count <= appended.len() {
+        offsets.extend(appended.into_iter().take(appended_count));
+    }
+    offsets
 }
 
 /// Go's path `CountAfterAccess` for an already-built index range set.
@@ -552,8 +838,167 @@ pub(crate) fn index_range_row_count(
     stats: Option<&TableStatistics>,
     realtime: f64,
     trigger_load: bool,
-) -> f64 {
-    index_row_count(index, table, ranges, stats, realtime, trigger_load).est
+) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
+    Ok(index_row_count(index, table, ranges, stats, realtime, trigger_load)?.est)
+}
+
+/// Go `core/stats.go:detachCondAndBuildRangeForPath` when the physical index
+/// key has handle columns after the declared index columns. The index
+/// histogram only covers the declared prefix; estimate that prefix first,
+/// then apply Go's damped handle selectivities using the full ranges.
+pub(crate) fn index_row_count_with_appended_handle_columns(
+    index: &KvIndex,
+    table: &KvTable,
+    ranges: &[tidb_planner::ranger::types::Range],
+    appended_handle_offsets: &[usize],
+    stats: Option<&TableStatistics>,
+    realtime: f64,
+    trigger_load: bool,
+) -> Result<RowEstimate, tidb_planner::cardinality::row_count_estimator::EstimationError> {
+    let declared_columns = index.column_offsets.len();
+    let full_width = declared_columns + appended_handle_offsets.len();
+    let includes_appended_handle = !appended_handle_offsets.is_empty()
+        && ranges.iter().any(|range| {
+            range.low_val.len() > declared_columns || range.high_val.len() > declared_columns
+        });
+    if !includes_appended_handle {
+        let ranges = ranges
+            .iter()
+            .map(|range| IndexRange {
+                low: range.low_val.clone(),
+                high: range.high_val.clone(),
+                low_exclusive: range.low_exclude,
+                high_exclusive: range.high_exclude,
+            })
+            .collect::<Vec<_>>();
+        return index_row_count(index, table, &ranges, stats, realtime, trigger_load);
+    }
+
+    // Go `pruneEstimateRange`: histogram bounds must end at the declared
+    // index prefix. Truncating a bound removes its exclusion flag because
+    // that flag belongs to the discarded last dimension; then ranges that
+    // collapse to one prefix are unioned before counting.
+    let prefix_ranges = ranges
+        .iter()
+        .map(|range| {
+            let width = declared_columns
+                .min(range.low_val.len())
+                .min(range.high_val.len());
+            tidb_planner::ranger::types::Range {
+                low_val: range.low_val[..width].to_vec(),
+                high_val: range.high_val[..width].to_vec(),
+                collators: range.collators[..width.min(range.collators.len())].to_vec(),
+                low_exclude: range.low_exclude && range.low_val.len() <= declared_columns,
+                high_exclude: range.high_exclude && range.high_val.len() <= declared_columns,
+            }
+        })
+        .collect::<Vec<_>>();
+    let prefix_ranges = tidb_planner::ranger::ranger::union_ranges(prefix_ranges, false)?;
+    let prefix_ranges = prefix_ranges
+        .iter()
+        .map(|range| IndexRange {
+            low: range.low_val.clone(),
+            high: range.high_val.clone(),
+            low_exclusive: range.low_exclude,
+            high_exclusive: range.high_exclude,
+        })
+        .collect::<Vec<_>>();
+    let prefix_estimate =
+        index_row_count(index, table, &prefix_ranges, stats, realtime, trigger_load)?;
+    if realtime <= 0.0 {
+        return Ok(prefix_estimate);
+    }
+
+    let mut handle_selectivities = Vec::with_capacity(appended_handle_offsets.len());
+    for (offset, column_offset) in appended_handle_offsets.iter().copied().enumerate() {
+        let dimension = declared_columns + offset;
+        if ranges
+            .iter()
+            .any(|range| range.low_val.len() <= dimension || range.high_val.len() <= dimension)
+        {
+            continue;
+        }
+        let Some(column) = table.columns.get(column_offset) else {
+            continue;
+        };
+        let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
+            continue;
+        };
+        if trigger_load {
+            queue_column_stats_load_if_invalid(
+                table,
+                stats,
+                column.id,
+                stats.columns.get(&column.id),
+            );
+        }
+        let Some(column_stats) = stats.column_for_estimation(column.id) else {
+            continue;
+        };
+        let column_ranges = ranges
+            .iter()
+            .map(|range| tidb_planner::ranger::types::Range {
+                low_val: vec![range.low_val[dimension].clone()],
+                high_val: vec![range.high_val[dimension].clone()],
+                collators: vec![
+                    range
+                        .collators
+                        .get(dimension)
+                        .copied()
+                        .unwrap_or_else(|| column.field_type.collation()),
+                ],
+                low_exclude: range.low_exclude && dimension + 1 == range.low_val.len(),
+                high_exclude: range.high_exclude && dimension + 1 == range.high_val.len(),
+            })
+            .collect::<Vec<_>>();
+        let Ok(merged_ranges) = tidb_planner::ranger::ranger::union_ranges(column_ranges, false)
+        else {
+            continue;
+        };
+        let column_ranges = merged_ranges
+            .iter()
+            .map(
+                |range| tidb_planner::cardinality::row_count_estimator::ColumnRange {
+                    low: range.low_val[0].clone(),
+                    high: range.high_val[0].clone(),
+                    low_exclude: range.low_exclude,
+                    high_exclude: range.high_exclude,
+                },
+            )
+            .collect::<Vec<_>>();
+        if column_ranges.is_empty() {
+            continue;
+        }
+        let Ok(row_count) = get_row_count_by_column_ranges(
+            Some(column_stats),
+            &column_ranges,
+            column.field_type.collation(),
+            realtime as i64,
+            stats.modify_count,
+            false,
+            estimator_options(),
+        ) else {
+            continue;
+        };
+        let selectivity = row_count.est / realtime;
+        if selectivity > 0.0 && selectivity < 1.0 {
+            handle_selectivities.push(selectivity);
+        }
+    }
+
+    let full_points = ranges.iter().all(|range| {
+        range.low_val.len() == full_width
+            && range.high_val.len() == full_width
+            && range.collators.len() >= full_width
+            && range.is_point(true)
+    });
+    Ok(
+        tidb_planner::cardinality::adjust_row_count_for_appended_handle_columns(
+            prefix_estimate,
+            &handle_selectivities,
+            full_points.then_some(ranges.len() as f64),
+        ),
+    )
 }
 
 /// The stats-less index estimate: Go `getPseudoRowCountByIndexRanges`
@@ -574,17 +1019,17 @@ pub(crate) fn index_range_row_count(
 /// (`hasColumnStats`), or some range is the full one
 /// (`ranger.HasFullRange(indexRanges, false)`); both fall to the pseudo rate.
 fn partial_stats_index_row_count(
-    index: &KvIndex,
     table: &KvTable,
+    index_column_offsets: &[usize],
     ranges: &[IndexRange],
     stats: &TableStatistics,
     realtime: f64,
-) -> Option<RowEstimate> {
+    options: EstimatorOptions,
+) -> Result<Option<RowEstimate>, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     if realtime <= 0.0 {
-        return Some(RowEstimate::default_est(0.0));
+        return Ok(Some(RowEstimate::default_est(0.0)));
     }
-    let columns: Vec<(Option<&ColumnStats>, tidb_datatype::Collation)> = index
-        .column_offsets
+    let columns: Vec<(Option<&ColumnStats>, tidb_datatype::Collation)> = index_column_offsets
         .iter()
         .map(|offset| {
             let column = table.columns.get(*offset);
@@ -596,87 +1041,48 @@ fn partial_stats_index_row_count(
             )
         })
         .collect();
-    if index.column_offsets.iter().all(|offset| {
+    if index_column_offsets.iter().all(|offset| {
         table
             .columns
             .get(*offset)
             .is_none_or(|column| !stats.columns.contains_key(&column.id))
     }) {
-        return None;
+        return Ok(None);
     }
     // Go `ColumnStatsIsInvalid`: every indexed column that is missing or not
     // fully loaded is queued for the async loader while the estimate proceeds.
     for (offset, (column_stats, _)) in columns.iter().enumerate() {
         let column_id = table
             .columns
-            .get(index.column_offsets[offset])
+            .get(index_column_offsets[offset])
             .map(|column| column.id)
             .unwrap_or(0);
         queue_column_stats_load_if_invalid(table, stats, column_id, *column_stats);
     }
     if ranges.iter().any(|range| range.is_full_range(false)) {
-        return None;
+        return Ok(None);
     }
-    // Go: a single-column index is directly the column estimate.
-    if index.column_offsets.len() == 1 {
-        let (column_stats, collation) = &columns[0];
-        let column_ranges: Vec<ColumnRange> = ranges
-            .iter()
-            .map(|range| ColumnRange {
-                low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
-                high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
-                low_exclude: range.low_exclusive,
-                high_exclude: range.high_exclusive,
-            })
-            .collect();
-        return Some(RowEstimate::default_est(
-            get_row_count_by_column_ranges(
-                *column_stats,
-                &column_ranges,
-                *collation,
-                stats.row_count,
-                stats.modify_count,
-                false,
-                estimator_options(),
-            )
-            .est,
-        ));
-    }
-    let mut total = 0.0;
-    let mut max_count = 0.0;
-    for range in ranges {
-        let mut selectivity = 1.0;
-        let mut corr_selectivity = 1.0f64;
-        for (position, low) in range.low.iter().enumerate() {
-            let last = position == range.low.len() - 1;
-            let column_range = ColumnRange {
-                low: low.clone(),
-                high: range.high.get(position).cloned().unwrap_or(Datum::MaxValue),
-                low_exclude: last && range.low_exclusive,
-                high_exclude: last && range.high_exclusive,
-            };
-            let (column_stats, collation) = columns.get(position)?;
-            // Go: "GetRowCountByColumnRanges handles invalid stats
-            // internally by using pseudo estimation".
-            let count = get_row_count_by_column_ranges(
-                *column_stats,
-                &[column_range],
-                *collation,
-                stats.row_count,
-                stats.modify_count,
-                false,
-                estimator_options(),
-            )
-            .est;
-            let temp_selectivity = count / realtime;
-            selectivity *= temp_selectivity;
-            corr_selectivity = corr_selectivity.min(temp_selectivity);
-        }
-        total += selectivity * realtime;
-        max_count += corr_selectivity * realtime;
-    }
-    total = total.clamp(1.0, realtime);
-    Some(RowEstimate::new(total, total, max_count))
+    let ranges = ranges
+        .iter()
+        .map(|range| IndexRangeDatums {
+            collators: columns
+                .iter()
+                .take(range.low.len())
+                .map(|(_, collation)| *collation)
+                .collect(),
+            low_val: range.low.clone(),
+            high_val: range.high.clone(),
+            low_exclude: range.low_exclusive,
+            high_exclude: range.high_exclusive,
+        })
+        .collect::<Vec<_>>();
+    tidb_planner::cardinality::row_count_estimator::get_index_row_count_with_partial_stats(
+        &columns,
+        &ranges,
+        stats.row_count,
+        stats.modify_count,
+        options,
+    )
 }
 
 fn pseudo_index_row_count(index: &KvIndex, ranges: &[IndexRange], realtime: f64) -> f64 {
@@ -842,7 +1248,7 @@ pub(crate) fn selectivity_with_range_context(
 ) -> f64 {
     let mut conjuncts = Vec::new();
     crate::plan_trace::collect_and(predicate, &mut conjuncts);
-    selectivity_of_conjuncts_with_defaults(
+    selectivity_of_conjuncts_with_range_context(
         &conjuncts,
         table,
         resolver,
@@ -850,6 +1256,132 @@ pub(crate) fn selectivity_with_range_context(
         defaults,
         range_context,
     )
+}
+
+/// Estimates a predicate and reports the statistics nodes the estimator
+/// actually consumes to the statement-local used-statistics ledger.
+pub(crate) fn selectivity_with_range_context_observing(
+    predicate: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+    observe: &mut dyn FnMut(i64, bool),
+) -> f64 {
+    let mut conjuncts = Vec::new();
+    crate::plan_trace::collect_and(predicate, &mut conjuncts);
+    selectivity_of_conjuncts_with_range_context_observing(
+        &conjuncts,
+        table,
+        resolver,
+        stats,
+        defaults,
+        range_context,
+        observe,
+    )
+}
+
+/// Estimates selected conditions with Go's full histogram `Selectivity`
+/// machinery, preserving their existing CNF boundaries and the statement's
+/// range budget/fallback state.
+pub(crate) fn selectivity_of_conjuncts_with_range_context(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+) -> f64 {
+    let mut observe = |_: i64, _: bool| {};
+    selectivity_of_conjuncts_with_range_context_observing(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        defaults,
+        range_context,
+        &mut observe,
+    )
+}
+
+/// Estimates conditions and reports every non-full-load statistics item the
+/// source-shaped estimator actually builds a node for.
+pub(crate) fn selectivity_of_conjuncts_with_range_context_observing(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+    observe: &mut dyn FnMut(i64, bool),
+) -> f64 {
+    try_selectivity_of_conjuncts_with_defaults_observing(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        true,
+        defaults,
+        range_context,
+        observe,
+    )
+    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
+}
+
+/// Estimates filters before access paths have been filled. Go passes nil
+/// `filledPaths` to `cardinality.Selectivity` at this point, so a clustered
+/// PRIMARY index remains eligible as a statistics node.
+pub(crate) fn selectivity_with_range_context_without_filled_paths_observing(
+    predicate: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+    observe: &mut dyn FnMut(i64, bool),
+) -> f64 {
+    let mut conjuncts = Vec::new();
+    crate::plan_trace::collect_and(predicate, &mut conjuncts);
+    try_selectivity_of_conjuncts_with_defaults_observing(
+        &conjuncts,
+        table,
+        resolver,
+        stats,
+        false,
+        defaults,
+        range_context,
+        observe,
+    )
+    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
+}
+
+/// Estimates datasource filters with the access paths TiDB has already filled.
+/// The appended common-handle columns retain their physical prefix lengths,
+/// matching `deriveStatsByFilter(..., AllPossibleAccessPaths)` in Go.
+pub(crate) fn selectivity_with_filled_path_context_observing(
+    predicate: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+    filled_path_appended_columns: &BTreeMap<i64, Vec<(usize, i64)>>,
+    observe: &mut dyn FnMut(i64, bool),
+) -> f64 {
+    let mut conjuncts = Vec::new();
+    crate::plan_trace::collect_and(predicate, &mut conjuncts);
+    try_selectivity_of_conjuncts_with_filled_paths_observing(
+        &conjuncts,
+        table,
+        resolver,
+        stats,
+        defaults,
+        range_context,
+        filled_path_appended_columns,
+        observe,
+    )
+    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
 }
 
 /// [`selectivity`] over conditions already split out of the `AND` tree, which
@@ -925,6 +1457,73 @@ fn selectivity_of_conjuncts_with_defaults(
     defaults: SelectivityDefaults,
     range_context: crate::index_range::RangeContext<'_>,
 ) -> f64 {
+    // Go core derives filter statistics with the fixed SelectionFactor on error.
+    // Recursive terms must return the error before this outer fallback is applied.
+    try_selectivity_of_conjuncts_with_defaults(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        defaults,
+        range_context,
+    )
+    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
+}
+
+fn try_selectivity_of_conjuncts_with_defaults(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
+    let mut observe = |_: i64, _: bool| {};
+    try_selectivity_of_conjuncts_with_defaults_observing(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        true,
+        defaults,
+        range_context,
+        &mut observe,
+    )
+}
+
+fn try_selectivity_of_conjuncts_with_defaults_observing(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    has_filled_paths: bool,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+    observe: &mut dyn FnMut(i64, bool),
+) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
+    selectivity_of_conjuncts_with_path_context(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        has_filled_paths,
+        defaults,
+        range_context,
+        None,
+        observe,
+    )
+}
+
+fn try_selectivity_of_conjuncts_with_filled_paths_observing(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+    filled_path_appended_columns: &BTreeMap<i64, Vec<(usize, i64)>>,
+    observe: &mut dyn FnMut(i64, bool),
+) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     selectivity_of_conjuncts_with_path_context(
         conjuncts,
         table,
@@ -933,6 +1532,8 @@ fn selectivity_of_conjuncts_with_defaults(
         true,
         defaults,
         range_context,
+        Some(filled_path_appended_columns),
+        observe,
     )
 }
 
@@ -954,7 +1555,10 @@ fn selectivity_of_conjuncts_without_paths(
         false,
         SelectivityDefaults::default(),
         crate::index_range::RangeContext::default(),
+        None,
+        &mut |_, _| {},
     )
+    .unwrap()
 }
 
 /// Materializes planner-owned constant columns before the ranger sees them.
@@ -1015,11 +1619,13 @@ fn selectivity_of_conjuncts_with_path_context(
     has_filled_paths: bool,
     defaults: SelectivityDefaults,
     range_context: crate::index_range::RangeContext<'_>,
-) -> f64 {
+    filled_path_appended_columns: Option<&BTreeMap<i64, Vec<(usize, i64)>>>,
+    observe: &mut dyn FnMut(i64, bool),
+) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let realtime = realtime_row_count(stats);
     // `selectivity.go:61`: no rows or no conditions is 100% selectivity.
     if conjuncts.is_empty() || realtime <= 0.0 {
-        return 1.0;
+        return Ok(1.0);
     }
     let materialized = conjuncts
         .iter()
@@ -1069,7 +1675,7 @@ fn selectivity_of_conjuncts_with_path_context(
                     if let Some(column) = column {
                         equality_columns.insert(column.lower_name.clone());
                         if column.unique_key_flag {
-                            return 1.0 / realtime;
+                            return Ok(1.0 / realtime);
                         }
                     }
                 }
@@ -1114,12 +1720,23 @@ fn selectivity_of_conjuncts_with_path_context(
                 }
             }
         }
-        return pseudo_selectivity(
+        let selectivity = pseudo_selectivity(
             &predicates,
             &indexes,
             realtime as i64,
             defaults.selectivity_factor,
         );
+        // With no persisted histograms, Go's stats initialization still
+        // supplies pseudo column objects. That routes real stats_meta tables
+        // through Selectivity's common one-row floor even though Rust keeps
+        // their histogram maps empty. Preserve that floor for this equivalent
+        // empty-collection path; the >63-expression path retains Go's direct
+        // pseudoSelectivity return above.
+        return Ok(if empty_collection {
+            selectivity.max(1.0 / realtime)
+        } else {
+            selectivity
+        });
     }
 
     // Go extracts ordinary-column = correlated-column before assigning
@@ -1183,7 +1800,7 @@ fn selectivity_of_conjuncts_with_path_context(
         })
         .collect();
     if conjuncts.is_empty() {
-        return correlated_factor.max(1.0 / realtime);
+        return Ok(correlated_factor.max(1.0 / realtime));
     }
 
     // A pseudo table is not a table without statistics as far as
@@ -1234,7 +1851,7 @@ fn selectivity_of_conjuncts_with_path_context(
             &conjuncts,
             resolver,
             range_context,
-        );
+        )?;
         if range_fallback {
             continue;
         }
@@ -1266,6 +1883,7 @@ fn selectivity_of_conjuncts_with_path_context(
         let is_handle = table.pk_handle_offset() == Some(offset);
         let row_count = match loaded {
             Some(stats) => {
+                observe(column.id, false);
                 queue_column_stats_load_if_invalid(
                     table,
                     stats,
@@ -1281,8 +1899,8 @@ fn selectivity_of_conjuncts_with_path_context(
                     stats.row_count,
                     stats.modify_count,
                     is_handle,
-                    estimator_options(),
-                )
+                    defaults.estimator_options,
+                )?
                 .est
             }
             // A pseudo handle column uses Go's signed/unsigned integer range
@@ -1299,11 +1917,12 @@ fn selectivity_of_conjuncts_with_path_context(
                     realtime as i64,
                     0,
                     is_handle,
-                    estimator_options(),
-                )
+                    defaults.estimator_options,
+                )?
                 .est
             }
         };
+        if stats.is_some_and(|stats| stats.row_count == 5400) {}
         nodes.push(StatsNode {
             selectivity: (row_count / realtime).clamp(0.0, 1.0),
             ..StatsNode::new(
@@ -1377,9 +1996,40 @@ fn selectivity_of_conjuncts_with_path_context(
                 })
             })
             .collect();
-        let Some(index_columns) = index_columns else {
+        let Some(mut index_columns) = index_columns else {
             continue;
         };
+        if prefix_len == index.column_offsets.len() {
+            let appended_columns = filled_path_appended_columns
+                .and_then(|paths| paths.get(&index.id))
+                .map(|columns| columns.as_slice());
+            let appended_offsets = appended_columns.map_or_else(
+                || {
+                    appended_handle_offsets_for_index(index, table)
+                        .into_iter()
+                        .map(|offset| (offset, tidb_datatype::UNSPECIFIED_LENGTH))
+                        .collect::<Vec<_>>()
+                },
+                |columns| columns.to_vec(),
+            );
+            for (offset, physical_prefix_len) in appended_offsets {
+                if !extracted_offset_set.contains(&offset) {
+                    break;
+                }
+                let Some(column) = table.columns.get(offset) else {
+                    index_columns.clear();
+                    break;
+                };
+                index_columns.push(crate::index_range::RangeColumn {
+                    name: column.name.clone(),
+                    field_type: column.field_type.clone(),
+                    prefix_len: physical_prefix_len,
+                });
+            }
+        }
+        if index_columns.is_empty() {
+            continue;
+        }
         let schema_columns = table
             .columns
             .iter()
@@ -1394,22 +2044,25 @@ fn selectivity_of_conjuncts_with_path_context(
             crate::index_range::detach_conjuncts_and_build_range_for_index_with_context(
                 &index_columns,
                 &conjuncts,
-                &resolver.time_zone(),
+                resolver,
                 range_context,
                 &schema_columns,
-            )
+            )?
         else {
             continue;
         };
-        let row_count = index_row_count(
+        observe(index.id, true);
+        let row_count = index_row_count_with_options(
             index,
             table,
             &built.ranges,
             stats,
             realtime,
             defaults.trigger_load,
-        )
+            defaults.estimator_options,
+        )?
         .est;
+        if stats.is_some_and(|stats| stats.row_count == 5400) {}
         nodes.push(StatsNode {
             selectivity: (row_count / realtime).clamp(0.0, 1.0),
             partial_cover: is_dnf && !built.residual.is_empty(),
@@ -1429,23 +2082,34 @@ fn selectivity_of_conjuncts_with_path_context(
 
     // Go classifies only predicates left uncovered by the selected nodes.
     // The shared combiner invokes this callback after greedy coverage.
-    combine_selectivity(
+    let mut error = None;
+    let selectivity = combine_selectivity(
         &mut nodes,
         conjuncts.len(),
         correlated_factor,
         realtime as i64,
         defaults,
         |index| {
-            condition_kind(
+            if error.is_some() {
+                return ConditionKind::Other;
+            }
+            match condition_kind(
                 conjuncts[index],
                 table,
                 resolver,
                 stats,
                 defaults,
                 range_context,
-            )
+            ) {
+                Ok(kind) => kind,
+                Err(cause) => {
+                    error = Some(cause);
+                    ConditionKind::Other
+                }
+            }
         },
-    )
+    );
+    error.map_or(Ok(selectivity), Err)
 }
 
 /// Whether one statistics condition is `column IS NOT NULL` for `offset`.
@@ -1637,15 +2301,15 @@ fn dnf_selectivity(
     stats: Option<&TableStatistics>,
     defaults: SelectivityDefaults,
     range_context: crate::index_range::RangeContext<'_>,
-) -> Option<f64> {
+) -> Result<Option<f64>, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     if !dnf_columns_have_statistics(conjunct, table, resolver, stats) {
-        return None;
+        return Ok(None);
     }
     let mut items = Vec::new();
     collect_or(conjunct, &mut items);
     let items = merge_dnf_ast_items(&items, table, resolver);
     if items.len() <= 1 {
-        return None;
+        return Ok(None);
     }
     let mut selectivity = 0.0_f64;
     for item in items {
@@ -1661,17 +2325,17 @@ fn dnf_selectivity(
         }
         let mut cnf = Vec::new();
         crate::plan_trace::collect_and(strip_parens(&item), &mut cnf);
-        let current = selectivity_of_conjuncts_with_defaults(
+        let current = try_selectivity_of_conjuncts_with_defaults(
             &cnf,
             table,
             resolver,
             stats,
             defaults,
             range_context,
-        );
+        )?;
         selectivity = selectivity + current - selectivity * current;
     }
-    (selectivity != 0.0).then_some(selectivity)
+    Ok((selectivity != 0.0).then_some(selectivity))
 }
 
 // Sized forwarding adapter for the expression rewriter's generic API.
@@ -1854,31 +2518,31 @@ fn row_in_selectivity(
     stats: Option<&TableStatistics>,
     defaults: SelectivityDefaults,
     range_context: crate::index_range::RangeContext<'_>,
-) -> Option<f64> {
+) -> Result<Option<f64>, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let tidb_ast::Expr::In { expr, list, not } = strip_parens(conjunct) else {
-        return None;
+        return Ok(None);
     };
     if *not {
-        return None;
+        return Ok(None);
     }
     let tidb_ast::Expr::Row(left) = strip_parens(expr) else {
-        return None;
+        return Ok(None);
     };
     if left.is_empty() || list.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     if !dnf_columns_have_statistics(conjunct, table, resolver, stats) {
-        return None;
+        return Ok(None);
     }
 
     let mut selectivity = 0.0_f64;
     for candidate in list {
         let tidb_ast::Expr::Row(right) = strip_parens(candidate) else {
-            return None;
+            return Ok(None);
         };
         if right.len() != left.len() {
-            return None;
+            return Ok(None);
         }
         let equalities: Vec<tidb_ast::Expr> = left
             .iter()
@@ -1892,17 +2556,17 @@ fn row_in_selectivity(
             })
             .collect();
         let conjuncts: Vec<&tidb_ast::Expr> = equalities.iter().collect();
-        let current = selectivity_of_conjuncts_with_defaults(
+        let current = try_selectivity_of_conjuncts_with_defaults(
             &conjuncts,
             table,
             resolver,
             stats,
             defaults,
             range_context,
-        );
+        )?;
         selectivity = selectivity + current - selectivity * current;
     }
-    (selectivity != 0.0).then_some(selectivity)
+    Ok((selectivity != 0.0).then_some(selectivity))
 }
 
 /// Which leftover bucket one uncovered condition falls in
@@ -1918,7 +2582,7 @@ fn condition_kind(
     stats: Option<&TableStatistics>,
     defaults: SelectivityDefaults,
     range_context: crate::index_range::RangeContext<'_>,
-) -> ConditionKind {
+) -> Result<ConditionKind, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let literal = strip_parens(conjunct);
     let signed_literal = matches!(literal,
         tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Minus | tidb_ast::UnaryOp::Plus, inner)
@@ -1947,7 +2611,7 @@ fn condition_kind(
             };
             if let Some(value) = value {
                 if value == Datum::Null {
-                    return ConditionKind::ConstantFalse;
+                    return Ok(ConditionKind::ConstantFalse);
                 }
                 if let Ok(converted) = value.to_bool() {
                     let accepted = match &converted.event {
@@ -1971,17 +2635,17 @@ fn condition_kind(
                         _ => false,
                     };
                     if accepted {
-                        return if converted.value == 0 {
+                        return Ok(if converted.value == 0 {
                             ConditionKind::ConstantFalse
                         } else {
                             ConditionKind::ConstantTrue
-                        };
+                        });
                     }
                 }
             }
         }
     }
-    match conjunct {
+    Ok(match conjunct {
         // Go's `NOT LIKE` is `unaryNot(like(...))`, which the source unwraps
         // before classifying; this AST carries the negation on the node.
         tidb_ast::Expr::Like { not, .. } => {
@@ -2063,7 +2727,7 @@ fn condition_kind(
             }
         }
         tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => ConditionKind::Disjunction(
-            dnf_selectivity(conjunct, table, resolver, stats, defaults, range_context),
+            dnf_selectivity(conjunct, table, resolver, stats, defaults, range_context)?,
         ),
         tidb_ast::Expr::In { .. } => ConditionKind::Disjunction(row_in_selectivity(
             conjunct,
@@ -2072,9 +2736,9 @@ fn condition_kind(
             stats,
             defaults,
             range_context,
-        )),
+        )?),
         _ => ConditionKind::Other,
-    }
+    })
 }
 
 /// Recognize the string-match family through NOT wrappers; evaluation uses
@@ -2300,10 +2964,10 @@ fn string_match_selectivity(
 
 /// One condition as `pseudoSelectivity` reads it (`pseudo.go:44-67`).
 ///
-/// `getConstantColumnID` (`selectivity.go:615`) demands EXACTLY two arguments,
-/// one a column and one a constant, so a multi-value `IN` -- whose argument
-/// list is the column plus every value -- resolves to no column at all and
-/// cannot lower `minFactor`, even though `ast.In` has its own switch arm.
+/// `getConstantColumnID` (`selectivity.go:615`) demands exactly two expression
+/// arguments. Go represents the values of `IN (...)` as one tuple constant,
+/// so a multi-value `IN` is still a two-argument scalar function. This AST
+/// keeps the tuple values as a list; collapse that source-level shape here.
 fn pseudo_predicate(
     conjunct: &tidb_ast::Expr,
     table: &KvTable,
@@ -2324,7 +2988,9 @@ fn pseudo_predicate(
             };
             (kind, [lhs.as_ref(), rhs.as_ref()])
         }
-        tidb_ast::Expr::In { expr, list, not } if !not && list.len() == 1 => {
+        tidb_ast::Expr::In { expr, list, not }
+            if !not && !list.is_empty() && list.iter().all(is_constant_literal) =>
+        {
             (PseudoFunctionKind::Equality, [expr.as_ref(), &list[0]])
         }
         _ => return PseudoPredicate::Unresolved,
@@ -2430,6 +3096,336 @@ mod tests {
             origin_default: None,
             comment: String::new(),
             generated: None,
+        }
+    }
+
+    fn selectivity_mock_histogram(id: i64, values: &[Datum], repeat: i64) -> tidb_stats::Histogram {
+        let mut histogram = tidb_stats::Histogram {
+            id,
+            ndv: values.len() as i64,
+            ..Default::default()
+        };
+        for (index, value) in values.iter().enumerate() {
+            histogram.buckets.push(tidb_stats::Bucket {
+                count: repeat * (index as i64 + 1),
+                repeat,
+                ndv: 1,
+                lower_bound: value.clone(),
+                upper_bound: value.clone(),
+            });
+        }
+        histogram
+    }
+
+    fn selectivity_topn_with_repeats(values: &[(Datum, i64)]) -> tidb_stats::TopN {
+        let mut topn = tidb_stats::TopN::new(values.len());
+        for (value, repeat) in values {
+            let encoded = match value {
+                Datum::Bytes(bytes) => bytes.clone(),
+                _ => tidb_codec::encode_key(std::slice::from_ref(value)).unwrap(),
+            };
+            topn.append(&encoded, *repeat as u64);
+        }
+        topn.sort();
+        topn
+    }
+
+    #[test]
+    fn go_test_dnf_cond_selectivity_matches_recorded_goldens() {
+        // Go `TestDNFCondSelectivity` analyzes these eight rows and attaches
+        // one composite plus two single-column indexes before running the
+        // four cardinality-suite predicates.
+        let rows = [
+            [1, 5, 4, 4],
+            [3, 4, 1, 8],
+            [4, 2, 6, 10],
+            [6, 7, 2, 5],
+            [7, 1, 4, 9],
+            [8, 9, 8, 3],
+            [9, 1, 9, 1],
+            [10, 6, 6, 2],
+        ];
+        let mut table = KvTable::new(
+            9702,
+            ["a", "b", "c", "d"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| long_column(name, index as i64 + 1))
+                .collect(),
+        );
+        for (id, name, column_offsets) in [
+            (1, "idx_abcd", vec![0, 1, 2, 3]),
+            (2, "idx_b", vec![1]),
+            (3, "idx_d", vec![3]),
+        ] {
+            table.add_index(
+                KvIndex {
+                    id,
+                    name: name.to_owned(),
+                    comment: String::new(),
+                    unique: false,
+                    prefix_lengths: vec![-1; column_offsets.len()],
+                    column_offsets,
+                    visible: true,
+                    global: false,
+                    global_index_version: 0,
+                    clustered_primary: false,
+                },
+                false,
+            );
+        }
+
+        let columns = (0..4)
+            .map(|offset| {
+                let mut frequencies = BTreeMap::<i64, i64>::new();
+                for row in rows {
+                    *frequencies.entry(row[offset]).or_default() += 1;
+                }
+                let values = frequencies
+                    .into_iter()
+                    .map(|(value, repeat)| (Datum::Int(value), repeat))
+                    .collect::<Vec<_>>();
+                let id = offset as i64 + 1;
+                (
+                    id,
+                    ColumnStats {
+                        histogram: tidb_stats::Histogram {
+                            id,
+                            ndv: values.len() as i64,
+                            ..Default::default()
+                        },
+                        topn: Some(selectivity_topn_with_repeats(&values)),
+                        cms: None,
+                        stats_ver: 2,
+                        unsigned: false,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let indexes = [(1, vec![0, 1, 2, 3]), (2, vec![1]), (3, vec![3])]
+            .into_iter()
+            .map(|(id, offsets)| {
+                let mut frequencies = BTreeMap::<Vec<i64>, i64>::new();
+                for row in rows {
+                    let key = offsets
+                        .iter()
+                        .map(|offset| row[*offset])
+                        .collect::<Vec<_>>();
+                    *frequencies.entry(key).or_default() += 1;
+                }
+                let values = frequencies
+                    .into_iter()
+                    .map(|(key, repeat)| {
+                        let datums = key.into_iter().map(Datum::Int).collect::<Vec<_>>();
+                        (
+                            Datum::Bytes(tidb_codec::encode_key(&datums).unwrap()),
+                            repeat,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                (
+                    id,
+                    IndexStats {
+                        histogram: tidb_stats::Histogram {
+                            id,
+                            ndv: values.len() as i64,
+                            ..Default::default()
+                        },
+                        topn: Some(selectivity_topn_with_repeats(&values)),
+                        cms: None,
+                        stats_ver: 2,
+                        num_columns: offsets.len(),
+                        unique: false,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let stats = TableStatistics::new(8, 0, columns, indexes);
+        let resolver = NamedColumnResolver { table: &table };
+        let cases = [
+            ("b > 7 or c < 4", 0.34375),
+            ("d < 5 or b > 6", 0.625),
+            ("a > 8 or d < 4 or c > 7 or b < 5", 0.82421875),
+            ("a < 8 and (b > 10 or c < 3 or b > 4) and a > 2", 0.3125),
+        ];
+        for (condition, expected) in cases {
+            let statement =
+                tidb_parser::parse(&format!("SELECT * FROM t WHERE {condition}")).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let actual = selectivity(
+                select.where_clause.as_ref().unwrap(),
+                &table,
+                &resolver,
+                Some(&stats),
+            );
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{condition}: expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn go_test_selectivity_matches_mock_hist_coll_before_and_after_growth() {
+        // Go `prepareSelectivity` builds 54 values repeated 10 times in each
+        // of five column histograms, plus 3 repeated-60 composite-index
+        // histogram entries over `(c,d)` and `(d,e)`.
+        let table = {
+            let mut table = KvTable::new(
+                9701,
+                ["a", "b", "c", "d", "e"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, name)| long_column(name, index as i64 + 1))
+                    .collect(),
+            );
+            table.set_pk_handle_offset(0);
+            for (id, name, columns) in [(1, "idx_cd", vec![2, 3]), (2, "idx_de", vec![3, 4])] {
+                table.add_index(
+                    KvIndex {
+                        id,
+                        name: name.to_owned(),
+                        comment: String::new(),
+                        unique: false,
+                        column_offsets: columns,
+                        prefix_lengths: vec![-1, -1],
+                        visible: true,
+                        global: false,
+                        global_index_version: 0,
+                        clustered_primary: false,
+                    },
+                    false,
+                );
+            }
+            table
+        };
+        let values = (0..54).map(Datum::Int).collect::<Vec<_>>();
+        let columns = values
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let id = index as i64 + 1;
+                (
+                    id,
+                    ColumnStats {
+                        histogram: selectivity_mock_histogram(id, &values, 10),
+                        topn: None,
+                        cms: None,
+                        stats_ver: 0,
+                        unsigned: false,
+                    },
+                )
+            })
+            .take(5)
+            .collect::<BTreeMap<_, _>>();
+        let index_values = (0..9)
+            .map(|value| {
+                Datum::Bytes(
+                    tidb_codec::encode_key(&[Datum::Int(value / 3), Datum::Int(value % 3)])
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let indexes = (1..=2)
+            .map(|id| {
+                (
+                    id,
+                    IndexStats {
+                        histogram: selectivity_mock_histogram(id, &index_values, 60),
+                        topn: None,
+                        cms: None,
+                        stats_ver: 0,
+                        num_columns: 2,
+                        unique: false,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut stats = TableStatistics::new(540, 0, columns, indexes);
+
+        let mut long_expr = String::from("0 < a and a = 1 ");
+        for index in 1..64 {
+            long_expr.push_str(&format!(" and a > {index} "));
+        }
+        let cases = [
+            ("a > 0 and a < 2".to_owned(), 0.01851851851, 0.01851851851),
+            ("a >= 1 and a < 2".to_owned(), 0.01851851851, 0.01851851851),
+            (
+                "a >= 1 and b > 1 and a < 2".to_owned(),
+                0.018017832647462276,
+                0.018518518518518517,
+            ),
+            (
+                "a >= 1 and c > 1 and a < 2".to_owned(),
+                0.006358024691358024,
+                0.011302469135802469,
+            ),
+            (
+                "a >= 1 and c >= 1 and a < 2".to_owned(),
+                0.012530864197530862,
+                0.017475308641975308,
+            ),
+            ("d = 0 and e = 1".to_owned(), 0.11111111111, 0.11111111111),
+            ("b > 1".to_owned(), 0.9729629629629629, 1.0),
+            (
+                "a > 1 and b < 2 and c > 3 and d < 4 and e > 5".to_owned(),
+                0.001851851851851852,
+                0.11122575925925926,
+            ),
+            (long_expr, 0.001, 0.001),
+        ];
+        let resolver = NamedColumnResolver { table: &table };
+        let defaults = SelectivityDefaults {
+            estimator_options: EstimatorOptions {
+                risk_range_skew_ratio: 0.3,
+                ..EstimatorOptions::default()
+            },
+            ..SelectivityDefaults::default()
+        };
+        for (condition, expected, expected_after_growth) in cases {
+            let statement =
+                tidb_parser::parse(&format!("SELECT * FROM t WHERE {condition}")).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let predicate = select.where_clause.as_ref().unwrap();
+            let actual = selectivity_with_range_context(
+                predicate,
+                &table,
+                &resolver,
+                Some(&stats),
+                defaults,
+                crate::index_range::RangeContext::default(),
+            );
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{condition}: expected {expected}, got {actual}"
+            );
+
+            stats.row_count = 5400;
+            stats.modify_count = 48600;
+            let actual_after_growth = selectivity_with_range_context(
+                predicate,
+                &table,
+                &resolver,
+                Some(&stats),
+                defaults,
+                crate::index_range::RangeContext::default(),
+            );
+            assert!(
+                (actual_after_growth - expected_after_growth).abs() < 1e-9,
+                "{condition} after stats growth: expected {expected_after_growth}, got {actual_after_growth}"
+            );
+            stats.row_count = 540;
+            stats.modify_count = 0;
         }
     }
 
@@ -3103,9 +4099,11 @@ mod tests {
 
     #[test]
     fn dnf_missing_column_statistics_uses_remaining_condition_factor() {
+        let mut timestamp_column = long_column("n", 3);
+        timestamp_column.field_type = FieldType::new(tidb_datatype::FieldTypeCode::Timestamp);
         let table = KvTable::with_storage(
             91,
-            vec![long_column("a", 1), long_column("b", 2)],
+            vec![long_column("a", 1), long_column("b", 2), timestamp_column],
             Box::new(MemTableStorage::new()),
         );
         let column = ColumnStats {
@@ -3188,6 +4186,28 @@ mod tests {
                 Some(&synthetic)
             ));
         }
+
+        // Go issue 22134: the new column has no object in HistColl yet; DNF
+        // recursion must stop instead of repeatedly revisiting it.
+        let statement =
+            tidb_parser::parse("SELECT * FROM t WHERE n = '2000-01-01' OR n = '2000-01-02'")
+                .unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
+        let actual = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        assert!(
+            actual.is_finite() && (0.0..=1.0).contains(&actual),
+            "missing-statistics timestamp DNF returned {actual}"
+        );
     }
 
     #[test]
@@ -3931,7 +4951,8 @@ mod tests {
             Some(&stats),
             defaults,
             crate::index_range::RangeContext::default(),
-        );
+        )
+        .unwrap();
         // A malformed pattern is Go's error arm: the whole estimation
         // declines and the condition falls to the string-match default tail.
         assert_eq!(kind, ConditionKind::StringMatch(None));
@@ -4121,6 +5142,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn column_range_conversion_error_reaches_selectivity_fallback() {
+        struct RawParameterResolver<'a> {
+            table: &'a KvTable,
+        }
+        impl ColumnResolver for RawParameterResolver<'_> {
+            fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+                NamedColumnResolver { table: self.table }.resolve(path)
+            }
+
+            fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+                (order == 0).then(|| Datum::new_raw(b"unsupported")).ok_or(
+                    tidb_expr::EvalError::Unsupported("unbound prepared parameter"),
+                )
+            }
+
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+        }
+
+        let table = KvTable::new(9604, vec![long_column("a", 1)]);
+        let resolver = RawParameterResolver { table: &table };
+        let statement = tidb_parser::parse("SELECT * FROM t WHERE a = ?").unwrap();
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("query");
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("select");
+        };
+        let predicate = select.where_clause.as_ref().unwrap();
+        let error = try_selectivity_of_conjuncts_with_defaults(
+            &[predicate],
+            &table,
+            &resolver,
+            None,
+            SelectivityDefaults::default(),
+            crate::index_range::RangeContext::default(),
+        )
+        .expect_err("column statistics must return BuildColumnRange errors");
+        assert!(matches!(
+            error,
+            tidb_planner::cardinality::row_count_estimator::EstimationError::Range(
+                tidb_planner::ranger::points::PointBuilderError::Value(_)
+            )
+        ));
+        assert_eq!(selectivity(predicate, &table, &resolver, None), 0.8);
+    }
+
     /// `cardinality.Selectivity` treats `IS NOT NULL` as the pseudo column
     /// range `(NULL,+inf]`. It is not an index access condition, but it still
     /// owns a statistics node and therefore removes one pseudo NULL bucket.
@@ -4221,8 +5291,29 @@ mod index_async_load_queue_tests {
     use crate::kv_table::KvColumn;
     use crate::kv_table::KvTable;
     use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_expr::rewriter::ColumnResolver;
     use tidb_model::TableItemID;
     use tidb_stats::Histogram;
+
+    struct JsonColumnResolver<'a> {
+        table: &'a KvTable,
+    }
+
+    impl ColumnResolver for JsonColumnResolver<'_> {
+        fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+            let name = path.last()?;
+            self.table
+                .columns
+                .iter()
+                .enumerate()
+                .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+                .map(|(offset, column)| (offset, column.field_type.clone(), column.id))
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
+        }
+    }
 
     fn queue_test_table(columns: Vec<KvColumn>) -> KvTable {
         use std::sync::atomic::{AtomicI64, Ordering};
@@ -4284,6 +5375,513 @@ mod index_async_load_queue_tests {
         }
     }
 
+    #[test]
+    fn recursive_index_statistics_only_estimate_the_leading_column() {
+        let mut table = queue_test_table(vec![
+            long_column("a", 1),
+            long_column("b", 2),
+            long_column("c", 3),
+        ]);
+        let index = |id, offsets| KvIndex {
+            id,
+            name: format!("idx_{id}"),
+            comment: String::new(),
+            unique: false,
+            column_offsets: offsets,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        let histogram = |id, first_low, first_high| IndexStats {
+            histogram: Histogram {
+                id,
+                ndv: 100,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 1_000,
+                    repeat: 1,
+                    ndv: 100,
+                    lower_bound: Datum::Bytes(
+                        tidb_codec::encode_key(&[Datum::Int(first_low), Datum::Int(1)]).unwrap(),
+                    ),
+                    upper_bound: Datum::Bytes(
+                        tidb_codec::encode_key(&[Datum::Int(first_high), Datum::Int(100)]).unwrap(),
+                    ),
+                }],
+                ..Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            num_columns: 2,
+            unique: false,
+        };
+        let main_index = index(7, vec![0, 1]);
+        table.add_index(main_index.clone(), false);
+        let mut stats = TableStatistics::new(
+            1_000,
+            0,
+            BTreeMap::new(),
+            BTreeMap::from([(7, histogram(7, 1, 100))]),
+        );
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        let ranges = [IndexRange {
+            low: vec![Datum::Int(1), Datum::Int(2)],
+            high: vec![Datum::Int(1), Datum::Int(8)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let baseline =
+            index_row_count(&main_index, &table, &ranges, Some(&stats), 1_000.0, false).unwrap();
+        // Go ColUniqueID2IdxIDs only maps c to (c,b). Its byte histogram
+        // cannot answer a standalone bound on b, even though b is in the key.
+        table.add_index(index(1, vec![2, 1]), false);
+        stats.indexes.insert(1, histogram(1, 1_000, 2_000));
+        let with_nonleading_index =
+            index_row_count(&main_index, &table, &ranges, Some(&stats), 1_000.0, false).unwrap();
+        assert_eq!(with_nonleading_index.est, baseline.est);
+        assert_eq!(with_nonleading_index.min_est, baseline.min_est);
+        assert_eq!(with_nonleading_index.max_est, baseline.max_est);
+        // With b leading, the same distribution is eligible and supplies
+        // the missing column estimate.
+        table.add_index(index(2, vec![1, 2]), false);
+        stats.indexes.insert(2, histogram(2, 1_000, 2_000));
+        let with_leading_index =
+            index_row_count(&main_index, &table, &ranges, Some(&stats), 1_000.0, false).unwrap();
+        // Two contributing columns activate Go's index-NDV bound: 1000 / 100.
+        assert_eq!(with_leading_index.max_est, 10.0);
+        assert_ne!(with_leading_index.max_est, baseline.max_est);
+    }
+
+    #[test]
+    fn unknown_values_in_composite_index_ranges_match_go() {
+        let mut table = queue_test_table(vec![long_column("a", 1), long_column("b", 2)]);
+        let index = KvIndex {
+            id: 7,
+            name: "idx_ab".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0, 1],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        table.add_index(index.clone(), false);
+        let mut topn = tidb_stats::TopN::new(10);
+        for value in 0..10 {
+            let encoded = tidb_codec::encode_key(&[Datum::Int(value), Datum::Int(value)]).unwrap();
+            topn.append(&encoded, 1);
+        }
+        topn.sort();
+        let index_stats = IndexStats {
+            histogram: tidb_stats::Histogram {
+                id: 7,
+                ndv: 10,
+                ..Default::default()
+            },
+            topn: Some(topn),
+            cms: None,
+            stats_ver: 2,
+            num_columns: 2,
+            unique: false,
+        };
+        let mut stats =
+            TableStatistics::new(20, 10, BTreeMap::new(), BTreeMap::from([(7, index_stats)]));
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        let range = |low, high| {
+            [IndexRange {
+                low: vec![Datum::Int(low)],
+                high: vec![Datum::Int(high)],
+                low_exclusive: false,
+                high_exclusive: false,
+            }]
+        };
+        assert_eq!(
+            index_row_count(&index, &table, &range(30, 30), Some(&stats), 20.0, false)
+                .unwrap()
+                .est,
+            1.0
+        );
+        assert_eq!(
+            index_row_count(&index, &table, &range(9, 30), Some(&stats), 20.0, false)
+                .unwrap()
+                .est,
+            2.0
+        );
+    }
+
+    #[test]
+    fn multivalued_index_counts_scale_with_table_growth() {
+        let mut json_column = long_column("j", 2);
+        json_column.field_type = FieldType::new(FieldTypeCode::Json);
+        let mut table = queue_test_table(vec![long_column("a", 1), json_column]);
+        let index = KvIndex {
+            id: 7,
+            name: "mv_j".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![1],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        table.add_index(index.clone(), false);
+        let column = ColumnStats {
+            histogram: Histogram {
+                id: 1,
+                ndv: 100,
+                last_update_version: 1,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 1_000,
+                    repeat: 1,
+                    ndv: 100,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(100),
+                }],
+                ..Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        let mut topn = tidb_stats::cmsketch::TopN::new(1);
+        topn.append(&tidb_codec::encode_key(&[Datum::Int(1)]).unwrap(), 50);
+        let index_stats = IndexStats {
+            histogram: Histogram {
+                id: 7,
+                ndv: 100,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 4_950,
+                    repeat: 50,
+                    ndv: 99,
+                    lower_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(2)]).unwrap()),
+                    upper_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(100)]).unwrap()),
+                }],
+                ..Histogram::default()
+            },
+            topn: Some(topn),
+            cms: None,
+            stats_ver: 2,
+            num_columns: 1,
+            unique: false,
+        };
+        let mut stats = TableStatistics::new(
+            1_500,
+            100,
+            BTreeMap::from([(1, column)]),
+            BTreeMap::from([(7, index_stats)]),
+        );
+        stats.pseudo = false;
+        stats
+            .column_load_status
+            .insert(1, tidb_stats::StatsLoadedStatus::full_load());
+        stats
+            .index_load_status
+            .insert(7, tidb_stats::StatsLoadedStatus::full_load());
+        let point = [IndexRange {
+            low: vec![Datum::Int(1)],
+            high: vec![Datum::Int(1)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        // Ordinary indexes deliberately keep Go's unscaled-count behavior.
+        assert_eq!(
+            index_row_count(&index, &table, &point, Some(&stats), 1_500.0, false)
+                .unwrap()
+                .est,
+            15.0
+        );
+        table.set_mv_key_part_source(7, "j".to_owned());
+        let counts = index_row_counts(&stats, &table, &index);
+        assert_eq!((counts.table_realtime, counts.table_modify), (1_500, 100));
+        assert_eq!((counts.index_realtime, counts.index_modify), (7_500, 500));
+        stats.index_load_status.remove(&7);
+        assert_eq!(
+            index_row_count(&index, &table, &point, Some(&stats), 1_500.0, false)
+                .unwrap()
+                .est,
+            15.0
+        );
+        stats
+            .index_load_status
+            .insert(7, tidb_stats::StatsLoadedStatus::full_load());
+        // 1000 table rows became 1500: 5000 index entries scale to 7500,
+        // and the 50-entry TopN point scales by the same 1.5 growth factor.
+        assert_eq!(
+            index_row_count(&index, &table, &point, Some(&stats), 1_500.0, false)
+                .unwrap()
+                .est,
+            75.0
+        );
+        let full = [IndexRange {
+            low: vec![Datum::Null],
+            high: vec![Datum::MaxValue],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        assert_eq!(
+            index_row_count(&index, &table, &full, Some(&stats), 1_500.0, false)
+                .unwrap()
+                .est,
+            7_500.0
+        );
+        stats.column_load_status.clear();
+        // The MV index itself cannot serve as the analyzed TABLE row count.
+        assert_eq!(
+            index_row_count(&index, &table, &point, Some(&stats), 1_500.0, false)
+                .unwrap()
+                .est,
+            15.0
+        );
+    }
+
+    /// Go `AdjustRowCountForAppendedHandleColumns`: an equality on the
+    /// declared index prefix remains the base estimate, while the appended
+    /// signed handle's own histogram damps the estimate for its range.
+    #[test]
+    fn appended_handle_range_damps_the_declared_index_prefix_estimate() {
+        let mut table = queue_test_table(vec![long_column("a", 1), long_column("id", 2)]);
+        table.set_pk_handle_offset(1);
+        let index = KvIndex {
+            id: 7,
+            name: "idx_a".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        table.add_index(index.clone(), false);
+
+        let column_stats = |id, ndv, upper| ColumnStats {
+            histogram: Histogram {
+                id,
+                ndv,
+                last_update_version: 1,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 1_000,
+                    repeat: 1,
+                    ndv,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(upper),
+                }],
+                ..Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        let mut topn = tidb_stats::cmsketch::TopN::new(1);
+        topn.append(&tidb_codec::encode_key(&[Datum::Int(1)]).unwrap(), 100);
+        topn.sort();
+        let index_stats = IndexStats {
+            histogram: Histogram {
+                id: 7,
+                ndv: 9,
+                last_update_version: 1,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 900,
+                    repeat: 1,
+                    ndv: 9,
+                    lower_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(2)]).unwrap()),
+                    upper_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(100)]).unwrap()),
+                }],
+                ..Histogram::default()
+            },
+            topn: Some(topn),
+            cms: None,
+            stats_ver: 2,
+            num_columns: 1,
+            unique: false,
+        };
+        let mut stats = TableStatistics::new(
+            1_000,
+            0,
+            BTreeMap::from([
+                (1, column_stats(1, 10, 1_000)),
+                (2, column_stats(2, 1_000, 1_000)),
+            ]),
+            BTreeMap::from([(7, index_stats)]),
+        );
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        for id in [1, 2] {
+            stats
+                .column_load_status
+                .insert(id, tidb_stats::StatsLoadedStatus::full_load());
+        }
+        stats
+            .index_load_status
+            .insert(7, tidb_stats::StatsLoadedStatus::full_load());
+
+        let invalid_prefix = IndexRange {
+            low: vec![Datum::Int(1)],
+            high: vec![Datum::Raw(vec![1])],
+            low_exclusive: false,
+            high_exclusive: false,
+        };
+        assert!(matches!(
+            index_row_count(
+                &index,
+                &table,
+                &[invalid_prefix],
+                Some(&stats),
+                1_000.0,
+                false
+            ),
+            Err(
+                tidb_planner::cardinality::row_count_estimator::EstimationError::Codec(
+                    tidb_codec::CodecError::InvalidEncoding("unsupported raw datum")
+                )
+            )
+        ));
+        let invalid_appended = tidb_planner::ranger::types::Range {
+            low_val: vec![Datum::Raw(vec![1]), Datum::Int(1)],
+            high_val: vec![Datum::Raw(vec![1]), Datum::Int(100)],
+            collators: vec![tidb_datatype::Collation::Binary; 2],
+            low_exclude: false,
+            high_exclude: false,
+        };
+        for statistics in [Some(&stats), None] {
+            assert!(matches!(
+                index_row_count_with_appended_handle_columns(
+                    &index,
+                    &table,
+                    std::slice::from_ref(&invalid_appended),
+                    &[1],
+                    statistics,
+                    1_000.0,
+                    false
+                ),
+                Err(
+                    tidb_planner::cardinality::row_count_estimator::EstimationError::Codec(
+                        tidb_codec::CodecError::InvalidEncoding("unsupported raw datum")
+                    )
+                )
+            ));
+        }
+
+        // Go ignores a failed suffix union after successfully estimating the prefix.
+        let invalid_suffix = tidb_planner::ranger::types::Range {
+            low_val: vec![Datum::Int(1), Datum::Raw(vec![1])],
+            high_val: vec![Datum::Int(2), Datum::Raw(vec![1])],
+            collators: vec![tidb_datatype::Collation::Binary; 2],
+            low_exclude: false,
+            high_exclude: false,
+        };
+        let suffix_fallback = index_row_count_with_appended_handle_columns(
+            &index,
+            &table,
+            &[invalid_suffix],
+            &[1],
+            Some(&stats),
+            1_000.0,
+            false,
+        )
+        .unwrap();
+        let prefix_only = index_row_count(
+            &index,
+            &table,
+            &[IndexRange {
+                low: vec![Datum::Int(1)],
+                high: vec![Datum::Int(2)],
+                low_exclusive: false,
+                high_exclusive: false,
+            }],
+            Some(&stats),
+            1_000.0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                suffix_fallback.est,
+                suffix_fallback.min_est,
+                suffix_fallback.max_est
+            ),
+            (prefix_only.est, prefix_only.min_est, prefix_only.max_est)
+        );
+
+        let prefix_range = IndexRange {
+            low: vec![Datum::Int(1)],
+            high: vec![Datum::Int(1)],
+            low_exclusive: false,
+            high_exclusive: false,
+        };
+        let prefix = index_row_count(
+            &index,
+            &table,
+            &[prefix_range],
+            Some(&stats),
+            1_000.0,
+            false,
+        )
+        .unwrap();
+        let full_range = tidb_planner::ranger::types::Range {
+            low_val: vec![Datum::Int(1), Datum::Int(1)],
+            high_val: vec![Datum::Int(1), Datum::Int(100)],
+            collators: vec![
+                table.columns[0].field_type.collation(),
+                table.columns[1].field_type.collation(),
+            ],
+            low_exclude: false,
+            high_exclude: false,
+        };
+        let adjusted = index_row_count_with_appended_handle_columns(
+            &index,
+            &table,
+            &[full_range],
+            &[1],
+            Some(&stats),
+            1_000.0,
+            false,
+        )
+        .unwrap();
+
+        assert!(prefix.est > 1.0, "prefix estimate={:?}", prefix);
+        assert!(
+            adjusted.est < prefix.est,
+            "handle range should lower the estimate: prefix={prefix:?}, adjusted={adjusted:?}"
+        );
+        assert_eq!(adjusted.max_est, prefix.max_est);
+        assert!(adjusted.min_est <= adjusted.est);
+
+        let full_points = [10, 11].map(|handle| tidb_planner::ranger::types::Range {
+            low_val: vec![Datum::Int(1), Datum::Int(handle)],
+            high_val: vec![Datum::Int(1), Datum::Int(handle)],
+            collators: vec![
+                table.columns[0].field_type.collation(),
+                table.columns[1].field_type.collation(),
+            ],
+            low_exclude: false,
+            high_exclude: false,
+        });
+        let point_estimate = index_row_count_with_appended_handle_columns(
+            &index,
+            &table,
+            &full_points,
+            &[1],
+            Some(&stats),
+            1_000.0,
+            false,
+        )
+        .unwrap();
+        assert!(point_estimate.est <= 2.0, "{point_estimate:?}");
+        assert!(point_estimate.max_est <= 2.0, "{point_estimate:?}");
+    }
+
     /// Go `IndexStatsIsInvalid` (`pkg/statistics/index.go:132`): estimating
     /// over an index whose statistics are NOT fully loaded queues that index
     /// into `AsyncLoadHistogramNeededItems` so the async loader can fetch the
@@ -4321,7 +5919,7 @@ mod index_async_load_queue_tests {
         let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
         needed.delete(item);
 
-        let estimate = index_row_count(&index, &table, &[], Some(&stats), 10.0, true);
+        let estimate = index_row_count(&index, &table, &[], Some(&stats), 10.0, true).unwrap();
         assert!(
             estimate.est >= 0.0,
             "the estimate still answers the pseudo rate"
@@ -4359,9 +5957,237 @@ mod index_async_load_queue_tests {
             low_exclusive: false,
             high_exclusive: false,
         }];
-        let estimate = index_row_count(&index, &table, &ranges, Some(&stats), 10.0, true);
+        let estimate = index_row_count(&index, &table, &ranges, Some(&stats), 10.0, true).unwrap();
         assert_eq!(estimate.est, pseudo_index_row_count(&index, &ranges, 10.0));
         needed.delete(item);
+    }
+
+    #[test]
+    fn ordinary_index_estimation_dispatches_version_one_cms_ranges() {
+        let mut table = queue_test_table(vec![long_column("a", 1)]);
+        let index = KvIndex {
+            id: 7,
+            name: "ia".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0],
+            prefix_lengths: vec![-1],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        table.add_index(index.clone(), false);
+        let key = |value| tidb_codec::encode_key(&[Datum::Int(value)]).unwrap();
+        let mut cms = tidb_stats::CmsSketch::new(5, 2048);
+        for (value, count) in [1, 2, 7, 13, 77].into_iter().enumerate() {
+            cms.insert_bytes_by_count(&key(value as i64), count);
+        }
+        let index_stats = IndexStats {
+            histogram: tidb_stats::Histogram {
+                id: 7,
+                ndv: 5,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 100,
+                    repeat: 77,
+                    ndv: 5,
+                    lower_bound: Datum::Bytes(key(0)),
+                    upper_bound: Datum::Bytes(key(4)),
+                }],
+                ..Default::default()
+            },
+            cms: Some(cms),
+            topn: None,
+            stats_ver: 1,
+            num_columns: 1,
+            unique: false,
+        };
+        let mut stats = TableStatistics::new(
+            200,
+            100,
+            BTreeMap::new(),
+            BTreeMap::from([(7, index_stats)]),
+        );
+        let ranges = [IndexRange {
+            low: vec![Datum::Int(1)],
+            high: vec![Datum::Int(3)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let estimate = index_row_count(&index, &table, &ranges, Some(&stats), 200.0, false).unwrap();
+        assert!((estimate.est - 22.0).abs() < 1e-10, "{estimate:?}");
+        stats.row_count = 10;
+        let estimate = index_row_count(&index, &table, &ranges, Some(&stats), 10.0, false).unwrap();
+        assert!((estimate.est - 22.0).abs() < 1e-10, "V1 retains its analyzed-count cap after deletes: {estimate:?}");
+    }
+
+    /// Go `TestCanSkipIndexEstimation`: a full ordinary-index range already
+    /// has an exact row count, so estimating its histogram must neither run
+    /// nor enqueue an evicted histogram for loading.
+    #[test]
+    fn full_index_range_skips_evicted_histogram_load() {
+        let mut table = queue_test_table(vec![long_column("a", 1)]);
+        let index = KvIndex {
+            id: 7,
+            name: "idx_a".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        table.add_index(index.clone(), false);
+        let index_stats = IndexStats {
+            histogram: tidb_stats::Histogram {
+                id: 7,
+                ndv: 50,
+                null_count: 10,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 50,
+                    repeat: 1,
+                    ndv: 50,
+                    lower_bound: Datum::Bytes(vec![1]),
+                    upper_bound: Datum::Bytes(vec![50]),
+                }],
+                ..Default::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            num_columns: 1,
+            unique: false,
+        };
+        let mut stats =
+            TableStatistics::new(60, 0, BTreeMap::new(), BTreeMap::from([(7, index_stats)]));
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        stats
+            .index_load_status
+            .insert(7, tidb_stats::StatsLoadedStatus::all_evicted());
+        let item = TableItemID {
+            table_id: table.table_id,
+            id: 7,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        needed.delete(item);
+
+        let full_range = [IndexRange {
+            low: vec![Datum::Null],
+            high: vec![Datum::MaxValue],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let estimate =
+            index_row_count(&index, &table, &full_range, Some(&stats), 60.0, true).unwrap();
+        assert_eq!(estimate.est, 60.0);
+        assert!(
+            !needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == item),
+            "a full-range estimate must return before queueing an evicted index"
+        );
+
+        let not_null_range = [IndexRange {
+            low: vec![Datum::MinNotNull],
+            high: vec![Datum::MaxValue],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let _ = index_row_count(&index, &table, &not_null_range, Some(&stats), 60.0, true).unwrap();
+        assert!(
+            needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == item),
+            "a full not-null range excludes NULLs and must use the ordinary load path"
+        );
+        needed.delete(item);
+
+        for narrowed_range in [
+            IndexRange {
+                low: vec![Datum::Int(1)],
+                high: vec![Datum::Int(10)],
+                low_exclusive: false,
+                high_exclusive: false,
+            },
+            IndexRange {
+                low: vec![Datum::Null],
+                high: vec![Datum::MaxValue],
+                low_exclusive: true,
+                high_exclusive: false,
+            },
+        ] {
+            let narrowed = [narrowed_range];
+            let _ = index_row_count(&index, &table, &narrowed, Some(&stats), 60.0, true).unwrap();
+            assert!(
+                needed
+                    .all_items()
+                    .iter()
+                    .any(|loaded| loaded.table_item_id == item),
+                "bounded and exclusive-NULL ranges must not use the full-range shortcut"
+            );
+            needed.delete(item);
+        }
+
+        table.set_mv_key_part_source(7, "j".to_owned());
+        let _ = index_row_count(&index, &table, &full_range, Some(&stats), 60.0, true).unwrap();
+        assert!(
+            needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == item),
+            "a multi-valued index can contain multiple entries per row"
+        );
+        needed.delete(item);
+
+        let mut partial_table = queue_test_table(vec![long_column("a", 1)]);
+        partial_table.add_index(index.clone(), false);
+        let partial_item = TableItemID {
+            table_id: partial_table.table_id,
+            id: 7,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+        needed.delete(partial_item);
+        let statement = tidb_parser::parse("SELECT * FROM t WHERE a > 1").unwrap();
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("query");
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("select");
+        };
+        partial_table
+            .add_partial_index_condition(
+                7,
+                "idx_a",
+                select.where_clause.as_ref().unwrap(),
+                &tidb_datatype::SessionTimeZone::utc(),
+                b'\\',
+            )
+            .unwrap();
+        let _ = index_row_count(
+            &index,
+            &partial_table,
+            &full_range,
+            Some(&stats),
+            60.0,
+            true,
+        )
+        .unwrap();
+        assert!(
+            needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == partial_item),
+            "a partial index does not contain every table row"
+        );
+        needed.delete(partial_item);
     }
 
     /// An index whose statistics ARE fully loaded is not queued: the gate
@@ -4424,7 +6250,8 @@ mod index_async_load_queue_tests {
                 high_exclusive: false,
             }];
             let actual =
-                crate::handle_range::handle_range_row_count(&table, &ranges, Some(&stats), false);
+                crate::handle_range::handle_range_row_count(&table, &ranges, Some(&stats), false)
+                    .unwrap();
             assert!((actual - expected).abs() < 1e-12, "ndv={ndv}: {actual}");
         }
         needed.delete(item);
@@ -4542,6 +6369,44 @@ mod index_async_load_queue_tests {
             FieldTypeCode::Json,
             "fixture: the column is JSON-typed"
         );
+        let mut stats = TableStatistics::new(100, 0, BTreeMap::new(), BTreeMap::new());
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        stats.column_stats_existence.insert(3, true);
+        stats
+            .column_load_status
+            .insert(3, tidb_stats::StatsLoadedStatus::all_evicted());
+        let statement = tidb_parser::parse("SELECT * FROM t WHERE j IS NULL").unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
+        let item = tidb_model::TableItemID {
+            table_id: table.table_id,
+            id: 3,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        needed.delete(item);
+        let estimate = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &JsonColumnResolver { table: &table },
+            Some(&stats),
+        );
+        let queued = needed
+            .all_items()
+            .iter()
+            .any(|loaded| loaded.table_item_id == item);
+        needed.delete(item);
+        assert!(!queued, "JSON columns must not request histogram loading");
+        assert_eq!(
+            estimate, 0.8,
+            "the skipped JSON predicate uses Go's default factor"
+        );
     }
 
     #[test]
@@ -4574,7 +6439,7 @@ mod index_async_load_queue_tests {
         let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
         needed.delete(item);
 
-        let _ = index_row_count(&index, &table, &[], Some(&stats), 10.0, true);
+        let _ = index_row_count(&index, &table, &[], Some(&stats), 10.0, true).unwrap();
         assert!(
             !needed
                 .all_items()

@@ -199,6 +199,12 @@ fn estimate_cols_ndv_with_matched_len_blends_by_group_skew_ratio() {
     );
 }
 
+#[test]
+fn single_column_ndv_keeps_the_source_one_value_floor() {
+    let ndv = estimate_cols_ndv_with_matched_len(&[1], &[(1, 0.5)], 100.0, &[], 1.0);
+    assert_eq!(ndv, (1.0, 1));
+}
+
 /// GO PORT of `pkg/planner/cardinality/ndv_test.go:58
 /// TestOptScaleNDVSkewRatioSetVar`.
 ///
@@ -209,7 +215,7 @@ fn estimate_cols_ndv_with_matched_len_blends_by_group_skew_ratio() {
 /// (ndv_test.go:88-94). Pins that raising the scale-NDV skew ratio pulls the
 /// aggregate estimate toward the skewed (row-count-proportional) extreme.
 #[test]
-#[ignore = "go-parity-gap: needs live EXPLAIN planning with analyze-built histograms and set_var hints"]
+#[ignore = "executed through tidb_session::tests_explain::ndv_skew_hint_changes_distinct_estimates_after_analyze"]
 fn opt_scale_ndv_skew_ratio_set_var_changes_distinct_aggregate_estimates() {}
 
 /// GO PORT of `pkg/planner/cardinality/ndv_test.go:79 TestIssue54812`.
@@ -221,5 +227,5 @@ fn opt_scale_ndv_skew_ratio_set_var_changes_distinct_aggregate_estimates() {}
 /// Selection 100.00 over TableFullScan 1100.00 -- the selection rows scaled by
 /// the distinct-group NDV instead of collapsing onto it.
 #[test]
-#[ignore = "go-parity-gap: needs live EXPLAIN goldens over the analyze/stats pipeline"]
+#[ignore = "executed through tidb_session::tests_explain::ndv_skew_distinct_aggregation_preserves_selection_rows"]
 fn issue_54812_distinct_hashagg_scales_selection_rows() {}

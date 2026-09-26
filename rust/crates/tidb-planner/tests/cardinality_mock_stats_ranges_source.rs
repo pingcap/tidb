@@ -33,8 +33,8 @@
 
 use tidb_datatype::{Collation, Datum};
 use tidb_planner::cardinality::row_count_estimator::{
-    get_column_row_count, get_index_row_count_for_stats_v2, ColumnRange, ColumnStats, EstimatorOptions,
-    IndexColumnStats, IndexRangeDatums, IndexStats,
+    ColumnRange, ColumnStats, EstimatorOptions, IndexColumnStats, IndexRangeDatums, IndexRowCounts,
+    IndexStats, get_column_row_count, get_index_row_count_for_stats_v2,
 };
 use tidb_stats::histogram::Histogram;
 
@@ -92,6 +92,7 @@ fn column_row_count(
         false,
         EstimatorOptions::default(),
     )
+    .unwrap()
 }
 
 #[test]
@@ -165,7 +166,10 @@ fn out_of_range_estimation_matches_recorded_suite_estimates() {
             "MaxEst must be >= Est for [{start}, {end}]"
         );
         assert!(estimate.min_est >= 0.0, "MinEst must be >= 0");
-        assert!(estimate.max_est >= estimate.min_est, "MaxEst must be >= MinEst");
+        assert!(
+            estimate.max_est >= estimate.min_est,
+            "MaxEst must be >= MinEst"
+        );
     }
 }
 
@@ -258,7 +262,12 @@ fn risk_range_skew_ratio_raises_out_of_range_column_estimates() {
 
     let baseline = get_column_row_count(
         &column,
-        &[ColumnRange::new(Datum::Int(12), Datum::Int(15), false, false)],
+        &[ColumnRange::new(
+            Datum::Int(12),
+            Datum::Int(15),
+            false,
+            false,
+        )],
         Collation::Binary,
         realtime,
         modify,
@@ -267,10 +276,16 @@ fn risk_range_skew_ratio_raises_out_of_range_column_estimates() {
             risk_range_skew_ratio: 0.0,
             ..EstimatorOptions::default()
         },
-    );
+    )
+    .unwrap();
     let raised = get_column_row_count(
         &column,
-        &[ColumnRange::new(Datum::Int(12), Datum::Int(15), false, false)],
+        &[ColumnRange::new(
+            Datum::Int(12),
+            Datum::Int(15),
+            false,
+            false,
+        )],
         Collation::Binary,
         realtime,
         modify,
@@ -279,7 +294,8 @@ fn risk_range_skew_ratio_raises_out_of_range_column_estimates() {
             risk_range_skew_ratio: 0.5,
             ..EstimatorOptions::default()
         },
-    );
+    )
+    .unwrap();
 
     assert!(
         raised.est > baseline.est,
@@ -305,12 +321,16 @@ fn risk_range_skew_ratio_out_of_range_sequence_is_monotone() {
     let realtime = 100 * 10;
     let modify = realtime * 2;
 
-    let empty_realtime =
-        column_row_count(&column, 12, 15, 0, 0);
+    let empty_realtime = column_row_count(&column, 12, 15, 0, 0);
     let ratio_of = |ratio: f64| {
         get_column_row_count(
             &column,
-            &[ColumnRange::new(Datum::Int(12), Datum::Int(15), false, false)],
+            &[ColumnRange::new(
+                Datum::Int(12),
+                Datum::Int(15),
+                false,
+                false,
+            )],
             Collation::Binary,
             realtime,
             modify,
@@ -320,6 +340,7 @@ fn risk_range_skew_ratio_out_of_range_sequence_is_monotone() {
                 ..EstimatorOptions::default()
             },
         )
+        .unwrap()
     };
 
     assert!(empty_realtime.est < ratio_of(0.0).est);
@@ -342,7 +363,12 @@ fn out_of_range_ge_vs_between_right_uncertainty_band() {
         (
             get_column_row_count(
                 &column,
-                &[ColumnRange::new(Datum::Int(100), Datum::Int(i64::MAX), false, false)],
+                &[ColumnRange::new(
+                    Datum::Int(100),
+                    Datum::Int(i64::MAX),
+                    false,
+                    false,
+                )],
                 Collation::Binary,
                 realtime,
                 modify,
@@ -351,10 +377,16 @@ fn out_of_range_ge_vs_between_right_uncertainty_band() {
                     risk_range_skew_ratio: ratio,
                     ..EstimatorOptions::default()
                 },
-            ),
+            )
+            .unwrap(),
             get_column_row_count(
                 &column,
-                &[ColumnRange::new(Datum::Int(100), Datum::Int(102), false, false)],
+                &[ColumnRange::new(
+                    Datum::Int(100),
+                    Datum::Int(102),
+                    false,
+                    false,
+                )],
                 Collation::Binary,
                 realtime,
                 modify,
@@ -363,7 +395,8 @@ fn out_of_range_ge_vs_between_right_uncertainty_band() {
                     risk_range_skew_ratio: ratio,
                     ..EstimatorOptions::default()
                 },
-            ),
+            )
+            .unwrap(),
         )
     };
 
@@ -389,7 +422,17 @@ fn risk_eq_skew_ratio_raises_index_equal_estimates_for_unseen_value() {
     // (the `analyze ... with 0 topn` phase). A nine-row histogram holding
     // values {1:4, 2:2, 3:1, 4:1, 5:1}; probing unseen value 6 lands in the
     // uniform fallback whose skew blend grows with RiskEqSkewRatio.
-    let mut histogram = mock_stats_histogram(1, &[Datum::Int(1), Datum::Int(2), Datum::Int(3), Datum::Int(4), Datum::Int(5)], 4);
+    let mut histogram = mock_stats_histogram(
+        1,
+        &[
+            Datum::Int(1),
+            Datum::Int(2),
+            Datum::Int(3),
+            Datum::Int(4),
+            Datum::Int(5),
+        ],
+        4,
+    );
     histogram.buckets[1].repeat = 2;
     histogram.buckets[1].count = 6;
     histogram.buckets[2].repeat = 1;
@@ -408,8 +451,9 @@ fn risk_eq_skew_ratio_raises_index_equal_estimates_for_unseen_value() {
     };
     let columns: IndexColumnStats<'_> = vec![None];
     let range_for = |value: i64| IndexRangeDatums {
-        low: vec![Datum::Int(value)],
-        high: vec![Datum::Int(value)],
+        collators: vec![tidb_datatype::Collation::Binary; 1],
+        low_val: vec![Datum::Int(value)],
+        high_val: vec![Datum::Int(value)],
         low_exclude: false,
         high_exclude: false,
     };
@@ -418,14 +462,16 @@ fn risk_eq_skew_ratio_raises_index_equal_estimates_for_unseen_value() {
         get_index_row_count_for_stats_v2(
             &index,
             &columns,
+            &[],
+            &[],
             &[range_for(6)],
-            9,
-            0,
+            IndexRowCounts::unscaled(9, 0),
             EstimatorOptions {
                 risk_eq_skew_ratio: ratio,
                 ..EstimatorOptions::default()
             },
         )
+        .unwrap()
         .est
     };
     assert!(estimate_at(0.0) < estimate_at(0.5));
@@ -460,16 +506,19 @@ fn index_estimation_survives_empty_idx_to_col_mapping() {
     let estimate = get_index_row_count_for_stats_v2(
         &index,
         &columns,
+        &[],
+        &[],
         &[IndexRangeDatums {
-            low: vec![Datum::Int(1000)],
-            high: vec![Datum::Int(2000)],
+            collators: vec![tidb_datatype::Collation::Binary; 1],
+            low_val: vec![Datum::Int(1000)],
+            high_val: vec![Datum::Int(2000)],
             low_exclude: false,
             high_exclude: false,
         }],
-        50,
-        0,
+        IndexRowCounts::unscaled(50, 0),
         EstimatorOptions::default(),
-    );
+    )
+    .unwrap();
     assert!(estimate.est > 0.0, "must return a small positive estimate");
     assert!(estimate.est < 50.0);
 }
@@ -488,45 +537,74 @@ fn index_estimation_survives_empty_idx_to_col_mapping() {
 /// then `show stats_topn` and two EXPLAIN-form brief probes against
 /// cardinality_suite_out.json's first book (eq estimate 2.00 hitting the
 /// case-insensitive TopN pair, gt spanning it). Pins new-collation sort-key
-/// bounds flowing into point/range estimation.
+/// bounds flowing into point/range estimation. All three output fixtures are
+/// exercised by `tidb_session::topn_assisted_string_match` after SQL ANALYZE;
+/// Go's explicit `LoadNeededHistograms` lifecycle remains open.
 #[test]
-#[ignore = "go-parity-gap: needs store-backed ANALYZE with new-collation collators plus EXPLAIN goldens"]
+#[ignore = "SQL ANALYZE, TopN keys and EXPLAIN goldens are covered; explicit histogram reload remains open"]
 fn collation_column_estimate_matches_recorded_plans() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:455
 /// TestEstimationForUnknownValues`.
 ///
-/// Two analyze rounds around inserted rows 10..19, then pins GetRowCountByColumnRanges
-/// on points/ranges (30==2.0 uniform slice of 20 rows; [9,30]==4.0 spanning the
-/// post-analyze ten rows), GetRowCountByIndexRanges on the composite (1.0/2.0),
-/// a single-NULL analyze giving 1.0 over [1,30], and an unanalyzed int column
-/// whose out-of-range equal estimate is 0.001 while its index returns 1.0.
+/// The live session lifecycle is covered by
+/// `tidb_session::tests_explain::unknown_value_estimates_follow_analyze_and_truncate_lifecycle`;
+/// direct composite-index range estimates use the production estimator in
+/// `tidb_executor::access_cost::index_async_load_queue_tests::unknown_values_in_composite_index_ranges_match_go`.
 #[test]
-#[ignore = "go-parity-gap: interleaves live INSERT/TRUNCATE/ANALYZE deltas through the stats handle"]
+#[ignore = "mapped to active session lifecycle and executor estimator regressions"]
 fn estimation_for_unknown_values_across_analyze_rounds() {}
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:541
-/// TestCanSkipIndexEstimation`.
-///
-/// Mocks 50 loaded column histograms + one all-evicted index histogram so a
-/// full `[NULL,+inf)` range must return RealtimeCount via canSkipIndexEstimation
-/// BEFORE IndexStatsIsInvalid queues the evicted item into
-/// asyncload.AsyncLoadHistogramNeededItems (`:604` asserts absence); sibling
-/// ranges ([MinNotNull,+inf) with 10 NULLs, bounded [1,10], `(NULL,+inf]`)
-/// must bypass the fast path.
-#[test]
-#[ignore = "go-parity-gap: fast-path short-circuit lives above GetRowCountByIndexRanges next to the async-load registry"]
-fn can_skip_index_estimation_short_circuits_before_async_load() {}
+// Go `TestCanSkipIndexEstimation` (`selectivity_test.go:541`) is exercised
+// through the production statistics boundary at
+// `tidb_executor::access_cost::index_async_load_queue_tests::full_index_range_skips_evicted_histogram_load`.
+// That regression checks the exact RealtimeCount result, that the full range
+// does not queue its evicted index, and that full-not-null, bounded,
+// exclusive-NULL, partial-index, and multi-valued-index cases do not take the
+// shortcut.
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:703
 /// TestEstimationForUnknownValuesAfterModify`.
 ///
-/// Post-analyze equality estimates for found value 5 (exactly 10.0), unseen
-/// value 11 with zero modify count (fallback 1.0), and unseen value 15 after
-/// +200 modified rows (strictly between 1.0 and 10.0).
+/// The analyzed v2 histogram has ten values, each repeated ten times, over
+/// 100 analyzed rows. Reuse that histogram with Go's post-insert stats metadata
+/// (RealtimeCount=300, ModifyCount=200): a known value stays at 10, unknown
+/// value 11 with no modifications falls back to 1, and unknown value 15 after
+/// modifications is strictly between 1 and 10. The live ANALYZE, committed
+/// insert delta, and histogram-refresh lifecycle also runs through
+/// `tidb_session::tests_explain::unknown_value_estimates_follow_modify_delta_lifecycle`.
 #[test]
-#[ignore = "go-parity-gap: needs live modify-count accounting between ANALYZE rounds"]
-fn estimation_for_unknown_values_after_modify_stays_bounded() {}
+fn estimation_for_unknown_values_after_modify_stays_bounded() {
+    // Go's default ANALYZE TopN capacity retains all ten values here, leaving
+    // an empty histogram with its original NDV and 100 analyzed TopN rows.
+    let histogram = Histogram::new(1, 10, 0, 0, 0, 0);
+    let mut topn = tidb_stats::TopN::new(10);
+    for value in 1..=10 {
+        let encoded = tidb_codec::encode_key(&[Datum::Int(value)]).unwrap();
+        topn.append(&encoded, 10);
+    }
+    topn.sort();
+    let analyzed_column = ColumnStats {
+        histogram,
+        topn: Some(topn),
+        cms: None,
+        stats_ver: 2,
+        unsigned: false,
+    };
+
+    let known = column_row_count(&analyzed_column, 5, 5, 100, 0);
+    assert_eq!(known.est, 10.0);
+
+    let unknown_without_modifications = column_row_count(&analyzed_column, 11, 11, 100, 0);
+    assert_eq!(unknown_without_modifications.est, 1.0);
+
+    let unknown_after_modifications = column_row_count(&analyzed_column, 15, 15, 300, 200);
+    assert!(
+        unknown_after_modifications.est > 1.0 && unknown_after_modifications.est < 10.0,
+        "post-modification unseen value should be between fallback and observed frequency: {:?}",
+        unknown_after_modifications
+    );
+}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:757
 /// TestNewIndexWithoutStats`.
@@ -537,7 +615,7 @@ fn estimation_for_unknown_values_after_modify_stays_bounded() {}
 /// same equals with real statistics. Pins skyline pruning across access-path
 /// row counts via EXPLAIN containment checks.
 #[test]
-#[ignore = "go-parity-gap: skyline access-path pruning is decided in plan building, not range estimation"]
+#[ignore = "executed through tidb_session::tests_explain::new_index_without_stats_skyline_choice_matches_go"]
 fn new_index_without_stats_skyline_choice() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:788 TestIssue57948`.
@@ -546,21 +624,16 @@ fn new_index_without_stats_skyline_choice() {}
 /// `where b = 5` must pick idxb even though its statistics predate the index
 /// registration ordering issue.
 #[test]
-#[ignore = "go-parity-gap: skyline choice needs plan-level access-path candidates"]
+#[ignore = "executed through tidb_session::tests_explain::single_new_index_with_column_stats_is_chosen"]
 fn issue_57948_single_statistics_index_is_chosen() {}
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:806
-/// TestVirtualColumnIndexEstimation` (issue #69134).
-///
-/// Composite index iabd(a,b,virtual d): exponential backoff over a/b alone
-/// would over-estimate (~45) vs actual 10, so estimation falls back to the
-/// index histogram (<25); the real-column control keeps the clamped backoff
-/// (>10); leading virtual-column indexes propagate recursive estimates and
-/// need failpoint `...cardinality/afterRecursiveIndexEstimation` to prove the
-/// fallback chain (:942-963).
-#[test]
-#[ignore = "go-parity-gap: needs EXPLAIN ANALYZE plus the afterRecursiveIndexEstimation failpoint"]
-fn virtual_column_index_estimation_falls_back_to_index_stats() {}
+// Go TestVirtualColumnIndexEstimation (issue #69134) is exercised through
+// tidb-session::tests_explain::virtual_column_index_estimation_preserves_the_selective_suffix.
+// The native estimator's missing-virtual, missing-ordinary, TopN-only, and
+// recursive-success branches are covered by
+// row_count_estimator::recursive_index_estimation_tests::missing_virtual_column_requires_index_histogram_fallback.
+// Recursive error injection belongs to TestNewIndexWithColumnStats below;
+// its error-propagation coverage remains open.
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:924
 /// TestNewIndexWithColumnStats`.
@@ -568,20 +641,64 @@ fn virtual_column_index_estimation_falls_back_to_index_stats() {}
 /// Identical data tables t (column stats only) and t2 (no stats at all):
 /// index scans on newly created idxa(a) must differ, with t's estimate within
 /// 0.1 of the true affected rows because column statistics supplement the
-/// missing index statistics.
+/// missing index statistics. SQL/ANALYZE execution is mapped to
+/// `tidb_session::tests_explain::newly_created_index_estimates_from_existing_column_statistics`.
 #[test]
-#[ignore = "go-parity-gap: needs cross-table EXPLAIN ANALYZE comparisons"]
+#[ignore = "executed through the session's SQL/ANALYZE path"]
 fn new_index_with_column_stats_supplements_missing_index_stats() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:960
 /// TestEstimationUniqueKeyEqualConds`.
 ///
 /// Unique key(b) analyzed with cmsketch width 4 depth 1: index point lookups
-/// of present values return exactly 1.0 via the unique full-length range path,
-/// and pk-is-handle column probes match them at 1.0.
+/// of present values return exactly 1.0 via the unique full-length range path.
+/// Go's shortcut is independent of the CMSketch contents, so this estimator
+/// fixture exercises the same row-count branch without emulating ANALYZE's
+/// sketch construction.
 #[test]
-#[ignore = "go-parity-gap: needs cmsketch-shaped ANALYZE output wired through GetRowCountByIndexRanges"]
-fn unique_key_equal_conds_return_exact_counts() {}
+fn unique_key_equal_conds_return_exact_counts() {
+    let values = int_values(1, 7);
+    let column = column_stats(mock_stats_histogram(1, &values, 1));
+    let index = IndexStats {
+        histogram: Histogram::new(7, 7, 0, 0, 1, 0),
+        topn: None,
+        cms: None,
+        stats_ver: 2,
+        num_columns: 1,
+        unique: true,
+    };
+    for value in [7, 6] {
+        let estimate = get_index_row_count_for_stats_v2(
+            &index,
+            &vec![None],
+            &[],
+            &[],
+            &[IndexRangeDatums {
+                collators: vec![tidb_datatype::Collation::Binary; 1],
+                low_val: vec![Datum::Int(value)],
+                high_val: vec![Datum::Int(value)],
+                low_exclude: false,
+                high_exclude: false,
+            }],
+            IndexRowCounts::unscaled(7, 0),
+            EstimatorOptions::default(),
+        )
+        .expect("the closed unique point range is estimable");
+        assert_eq!(estimate.est, 1.0, "value={value}");
+
+        let column_estimate = get_column_row_count(
+            &column,
+            &[ColumnRange::point(Datum::Int(value))],
+            Collation::Binary,
+            7,
+            0,
+            true,
+            EstimatorOptions::default(),
+        )
+        .expect("the primary-key handle point is estimable");
+        assert_eq!(column_estimate.est, 1.0, "pk handle value={value}");
+    }
+}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:994
 /// TestColumnIndexNullEstimation`.
@@ -589,17 +706,21 @@ fn unique_key_equal_conds_return_exact_counts() {}
 /// Five NULL-bearing rows across idx_b(b)/idx_c_a(c,a): recorded plans pin
 /// NULL point ranges (IndexRangeScan range:[NULL,NULL] == 4.00), NULL column
 /// probes, and non-null interval estimates from cardinality_suite_out.json.
+/// The ten SQL plan cases are exercised through
+/// `tidb_session::tests_explain::null_column_and_index_ranges_match_cardinality_goldens`.
 #[test]
-#[ignore = "go-parity-gap: NULL-range plans require the executor-side index reader stack"]
+#[ignore = "executed through the session's SQL/EXPLAIN path"]
 fn column_index_null_estimation_matches_recorded_plans() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1027
 /// TestUniqCompEqualEst`.
 ///
 /// Clustered primary key(a,b) under EnableClusteredIndexDefModeOn: the suite
-/// pins the Point_Get operator reading range:[1 3,1 3] with 1.00 rows.
+/// pins the Point_Get operator reading range:[1 3,1 3] with 1.00 rows. The
+/// complete equality is exercised through
+/// `tidb_session::tests_explain::clustered_composite_primary_key_equality_matches_go_point_get`.
 #[test]
-#[ignore = "go-parity-gap: clustered point-get planning is outside this crate"]
+#[ignore = "executed through the session's SQL/EXPLAIN path"]
 fn uniq_comp_equal_estimate_resolves_to_point_get() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1051 TestSelectivity`.
@@ -611,7 +732,7 @@ fn uniq_comp_equal_estimate_resolves_to_point_get() {}
 /// before and after inflating RealtimeCount 10x/ModifyCount 9x, under
 /// tidb_opt_risk_range_skew_ratio = 0.3.
 #[test]
-#[ignore = "go-parity-gap: Selectivity() needs expression parsing -> mask/range extraction"]
+#[ignore = "executed with the exact AST/statistics fixture in tidb_executor::access_cost::tests::go_test_selectivity_matches_mock_hist_coll_before_and_after_growth"]
 fn selectivity_over_mocked_hist_coll_matches_recorded_ratios() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1146
@@ -621,9 +742,11 @@ fn selectivity_over_mocked_hist_coll_matches_recorded_ratios() {}
 /// golden 0.34375/0.625/...) over four columns plus idx(b)/idx(d); also guards
 /// regressions for _tidb_rowid DNF, unloaded timestamp columns preventing
 /// infinite recursion (issue 22134), and blob/decimal/timestamp NOT-BETWEEN
-/// tuples (issue 27294).
+/// tuples (issue 27294). The numeric goldens and missing-statistics guard run
+/// in `tidb_executor::access_cost`; all three planner smoke cases run through
+/// `tidb_session::tests_explain::dnf_selectivity_safety_cases_match_go_smoke_coverage`.
 #[test]
-#[ignore = "go-parity-gap: DNF independence needs expression extraction over parsed conditions"]
+#[ignore = "executed with Go's cardinality-suite goldens and planner smoke cases in tidb_executor and tidb_session"]
 fn dnf_cond_selectivity_uses_independence_assumption() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1215
@@ -634,7 +757,7 @@ fn dnf_cond_selectivity_uses_independence_assumption() {}
 /// repeat over CMS noise); issue 22466 keeps TableFullScan 5.00 after
 /// re-analyzing only index b.
 #[test]
-#[ignore = "go-parity-gap: CMS query max failpoint hook not ported"]
+#[ignore = "split across row_count_estimator::cross_validation_wins_over_a_maximally_noisy_cms and tidb_session::tests_explain::composite_index_estimate_and_empty_index_stats_match_go"]
 fn index_estimation_cross_validates_against_cms_maximum() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1243
@@ -643,7 +766,7 @@ fn index_estimation_cross_validates_against_cms_maximum() {}
 /// datetime histogram with years 3580..4862 must survive range detaching of
 /// '8499-01-23'..'9961-07-23' without overflow and load its statistics.
 #[test]
-#[ignore = "go-parity-gap: datetime range detaching needs the time-type ranger"]
+#[ignore = "session covers range execution after ANALYZE; Go's explicit LoadNeededHistograms lifecycle is not ported"]
 fn range_step_overflow_on_datetime_histogram() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1465
@@ -655,18 +778,13 @@ fn range_step_overflow_on_datetime_histogram() {}
 /// estimates assisted by TopN (e.g. like '%111%' reads 30.00) through
 /// tidb_default_string_match_selectivity=0.
 #[test]
-#[ignore = "go-parity-gap: LIKE-pattern selectivity rides on evaluated constant patterns"]
+#[ignore = "executed through the production SQL/ANALYZE path in tidb_session::topn_assisted_string_match"]
 fn topn_assisted_string_match_estimation_golden_suite() {}
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1489
-/// TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation`.
-///
-/// 95/100 'other value' rows: with tidb_default_string_match_selectivity=0.8
-/// the TableReader estimate is 80 while the TopN-assisted mode lands near the
-/// true 5; the smaller absolute error decides.
-#[test]
-#[ignore = "go-parity-gap: session variable routing into string-match selectivity"]
-fn default_string_match_selectivity_zero_improves_like_estimates() {}
+/// Go `pkg/planner/cardinality/selectivity_test.go:1418`,
+/// `TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation`, is exercised
+/// through its active session/EXPLAIN path in
+/// `tidb_session::tests_explain::default_string_match_selectivity_zero_improves_like_estimates`.
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1519
 /// TestStringMatchSelectivityDoesNotRestoreTransientHistogramBoundsSelection`.
@@ -676,28 +794,103 @@ fn default_string_match_selectivity_zero_improves_like_estimates() {}
 /// cached bounds selection untouched by a simulated concurrent VecEvalBool
 /// that narrowed Bounds.sel to {4,5}.
 #[test]
-#[ignore = "go-parity-gap: filter-driven selectivity needs vectorized evaluation"]
+#[ignore = "Rust's immutable HistColl equivalent is covered by logical::rewrite::analyzed_filter_selectivity_tests::string_match_estimation_does_not_mutate_shared_histogram"]
 fn string_match_selectivity_keeps_transient_bounds_selection() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1629
 /// TestGlobalStatsOutOfRangeEstimationAfterDelete`.
 ///
-/// Range-partitioned table (p0..p4) analyzed with samplerate, half deleted:
-/// thirteen recorded plans verify global-stats out-of-range handling in
-/// dynamic prune mode before AND after re-analyzing partition p4.
+/// Range-partitioned table (p0..p4) analyzed with samplerate, then partially
+/// deleted: all thirteen recorded estimates, partition sets, and full-scan row
+/// counts are exercised through `tidb_session::tests_explain::
+/// global_partition_out_of_range_estimates_survive_delete_and_partition_analyze`.
 #[test]
-#[ignore = "go-parity-gap: global (merged) stats and dynamic partition pruning are unported"]
+#[ignore = "covered by the production SQL/ANALYZE session regression"]
 fn global_stats_out_of_range_after_partition_delete() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1695 TestIssue39593`.
 ///
-/// Twenty composite point ranges over mocked key(a,b) (columns NDV 54 repeat
-/// 10, index NDV 9 repeat 60, RealtimeCount 540, maps generated from offsets)
-/// damp to ~462.6 +- 1 through exponential backoff; multiplying RealtimeCount
-/// by ten raises the same sweep to ~5400 +- 1.
+/// Twenty leading-prefix point ranges over mocked key(a,b) (columns NDV 54,
+/// repeat 10; index NDV 9, repeat 60; RealtimeCount 540) estimate ~462.6 +- 1,
+/// and the same ranges estimate ~5400 +- 1 after the table RealtimeCount grows
+/// tenfold. The Go fixture leaves the index StatsVer at its zero value, so this
+/// is the legacy index-histogram path, despite supplying its column map.
 #[test]
-#[ignore = "go-parity-gap: v2 index dispatch needs Idx2ColUniqueIDs-leading-column plumbing"]
-fn issue_39593_composite_point_ranges_damped_by_backoff() {}
+fn issue_39593_composite_prefix_point_ranges_match_estimates() {
+    // The Go fixture has five uniform column histograms (NDV 54, repeat 10),
+    // a two-column index histogram over all 3x3 encoded pairs (NDV 9, repeat
+    // 60), and twenty leading-column point ranges. Supply the same ordered
+    // index-to-column mapping the Go HistColl carries. The mock Index leaves
+    // StatsVer at its zero value, so Go does not dispatch to v2 backoff here.
+    let values = int_values(0, 54);
+    let first = column_stats(mock_stats_histogram(1, &values, 10));
+    let second = column_stats(mock_stats_histogram(2, &values, 10));
+    let mut encoded_pairs = Vec::with_capacity(9);
+    for left in 0..3 {
+        for right in 0..3 {
+            encoded_pairs.push(Datum::Bytes(
+                tidb_codec::encode_key(&[Datum::Int(left), Datum::Int(right)])
+                    .expect("composite key encodes"),
+            ));
+        }
+    }
+    let index = IndexStats {
+        histogram: mock_stats_histogram(1, &encoded_pairs, 60),
+        topn: None,
+        cms: None,
+        // Go's mock `statistics.Index` omits StatsVer here, so it is version 0.
+        stats_ver: 0,
+        num_columns: 2,
+        unique: false,
+    };
+    let columns: IndexColumnStats<'_> = vec![Some(&first), Some(&second)];
+    let ranges = (1..=20)
+        .map(|value| IndexRangeDatums {
+            collators: vec![tidb_datatype::Collation::Binary; 1],
+            low_val: vec![Datum::Int(value)],
+            high_val: vec![Datum::Int(value)],
+            low_exclude: false,
+            high_exclude: false,
+        })
+        .collect::<Vec<_>>();
+
+    let before_growth = get_index_row_count_for_stats_v2(
+        &index,
+        &columns,
+        &[],
+        &[],
+        &ranges,
+        IndexRowCounts::unscaled(540, 0),
+        EstimatorOptions::default(),
+    )
+    .expect("the composite point sweep is estimable");
+    assert!(
+        (before_growth.est - 462.6).abs() <= 1.0,
+        "Go TestIssue39593 baseline estimate: {}",
+        before_growth.est
+    );
+
+    let after_growth = get_index_row_count_for_stats_v2(
+        &index,
+        &columns,
+        &[],
+        &[],
+        &ranges,
+        IndexRowCounts {
+            table_realtime: 5_400,
+            table_modify: 0,
+            index_realtime: 5_400,
+            index_modify: 0,
+        },
+        EstimatorOptions::default(),
+    )
+    .expect("scaled composite point sweep is estimable");
+    assert!(
+        (after_growth.est - 5_400.0).abs() <= 1.0,
+        "Go TestIssue39593 scaled estimate: {}",
+        after_growth.est
+    );
+}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1743
 /// TestIndexRangeEstimationWithAppendedHandleColumn`.
@@ -706,7 +899,7 @@ fn issue_39593_composite_point_ranges_damped_by_backoff() {}
 /// handle column, and `a = 1 and b = 2 and id = 3` still estimates 1.00 with
 /// stats:partial markers instead of panicking.
 #[test]
-#[ignore = "go-parity-gap: fillIndexPath handle appending lives in core access-path construction"]
+#[ignore = "executed with partial column statistics in tidb_session::tests_explain::appended_handle_range_uses_partial_column_statistics"]
 fn index_range_estimation_with_appended_handle_column() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1793
@@ -717,7 +910,7 @@ fn index_range_estimation_with_appended_handle_column() {}
 /// point handle IN-lists get credit down to 2.00; unsigned handles never
 /// extend the range ([5,5]) because signed key encoding wraps at MaxInt64.
 #[test]
-#[ignore = "go-parity-gap: truncated/pruned index+handle range merge logic is planner-owned"]
+#[ignore = "execution ranges and estimates are covered in tidb_session::tests_explain::truncated_integer_handle_ranges_match_go_cardinality_estimates"]
 fn index_range_estimation_with_truncated_handle_range() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1876
@@ -728,70 +921,61 @@ fn index_range_estimation_with_truncated_handle_range() {}
 /// tuple comparisons spanning index+handle columns must not read past the
 /// per-appended-column length slice (issue #70532).
 #[test]
-#[ignore = "go-parity-gap: prefixed common-handle range building is planner-owned"]
+#[ignore = "execution and cardinality assertions are covered in tidb_session::tests_explain::prefixed_common_handle_ranges_match_go_cardinality_cases"]
 fn index_range_estimation_with_prefixed_common_handle() {}
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1936
-/// TestDeriveTablePathStatsNoAccessConds`.
-///
-/// A DataSource built from `select * from t` and optimized collects no access
-/// conditions, so deriveTablePathStats leaves CountAfterAccess at the mocked
-/// RealtimeCount 1000.
+/// Go `TestDeriveTablePathStatsNoAccessConds`'s CountAfterAccess assertion is
+/// exercised in `tidb_executor::driver::planner_bridge::statistics_initialization_error_tests::unfiltered_table_path_count_uses_realtime_row_count`.
 #[test]
-#[ignore = "go-parity-gap: recursive stats derivation over logical plans is not implemented"]
+#[ignore = "covered at the production stats-initialization boundary"]
 fn derive_table_path_stats_keeps_count_after_access_without_conditions() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2018
 /// TestIndexJoinInnerRowCountUpperBound`.
 ///
-/// Mocked 500000-row stats (NDV 500) drive three recorded index-join plans
-/// whose inner side row counts cap at 4000/2000 via the upper-bound formula.
+/// Mocked 500000-row stats (NDV 500) drive two recorded index-join plans,
+/// separated by SET Fix44855=ON. The active session test compares every
+/// original EXPLAIN cell, including the 500000000-to-2000000 scan-row cap.
 #[test]
-#[ignore = "go-parity-gap: index-join inner row count caps apply during join task building"]
+#[ignore = "covered by tidb_session::tests_explain::index_join_inner_row_count_upper_bound_matches_go"]
 fn index_join_inner_row_count_upper_bound_golden() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2089
 /// TestOrderingIdxSelectivityThreshold` and `:2173
 /// TestOrderingIdxSelectivityRatio`.
 ///
-/// Mocked 100000-row / 1000-row stats suites run 32 and 21 recorded queries
-/// exercising tidb_opt_ordering_index_selectivity_threshold/_ratio over ORDER
-/// BY-matching indexes ib/ic.
+/// Mocked 100000-row / 1000-row suites run all 32 and 21 source statements:
+/// 28 and 15 complete EXPLAIN plans plus 10 setting changes. Active mappings:
+/// tidb_session::tests_explain::ordering_index_selectivity_threshold_matches_go_fixture
+/// and ordering_index_selectivity_ratio_matches_go_fixture. The fixtures are
+/// read directly from Go's cardinality_suite_out.json without plan normalization.
 #[test]
-#[ignore = "go-parity-gap: ordering-index cost factors live in find-best-task/cost model"]
+#[ignore = "executed through both complete ordering-index session fixtures"]
 fn ordering_idx_selectivity_threshold_and_ratio_suites() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2256
 /// TestOrderingIdxSelectivityRatioForJoin`, `:2296 ...ForMergeJoin`, and
 /// `:2360 ...ForApply`.
 ///
-/// Live analyzed tables force index joins, merge joins, or Apply+Limit under
+/// Analyzed join tables and mocked Apply histograms force the source shapes under
 /// discouraging cost factors; explain format=verbose costs must be identical
 /// for ratio -1/0 and strictly increasing across 0 -> 0.5 -> 1 whenever an
 /// ordering index supplies the ORDER BY.
 #[test]
-#[ignore = "go-parity-gap: verbose-plan costing across join/apply shapes needs the optimizer loop"]
+#[ignore = "executed through tests_explain::ordering_ratio_increases_index_join_cost, ordering_ratio_increases_merge_join_cost and ordering_ratio_increases_apply_cost with the complete Go fixtures"]
 fn ordering_idx_selectivity_ratio_cost_monotonicity_for_join_shapes() {}
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2477
-/// TestCrossValidationSelectivity`.
-///
-/// Clustered PK(a,b) analyzed at v2: `a = 1 and b > 0 and b < 1000 and c >
-/// 1000` pins TableRangeScan range:(1 0,1 1000) at 2.00 with the residual c
-/// predicate as Selection 1.00.
+/// Go `TestCrossValidationSelectivity` is exercised through
+/// `tidb_session::tests_explain::cross_validation_on_clustered_pk_range_matches_go`.
 #[test]
-#[ignore = "go-parity-gap: clustered composite-key range scan planning is outside this crate"]
+#[ignore = "covered at the SQL planner/EXPLAIN boundary"]
 fn cross_validation_selectivity_on_clustered_pk_range() {}
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2498
-/// TestIgnoreRealtimeStats`.
-///
-/// tidb_opt_objective moderate/determinate switches RealtimeCount usage: an
-/// unanalyzed table shows TableFullScan 11.00 vs 10000 pseudo; after ANALYZE
-/// both agree (2.73/11.00); inserting four rows scales only moderate to 15.00/
-/// 3.72 while determinate stays frozen.
+/// Go `TestIgnoreRealtimeStats`'s post-ANALYZE realtime-count behavior is
+/// exercised in
+/// `tidb_session::tests_explain::determinate_objective_uses_analyzed_row_count_after_inserts`.
 #[test]
-#[ignore = "go-parity-gap: optimizer objective mode gates realtime stats at plan time"]
+#[ignore = "partial SQL coverage; cluster stats-delta/cache refresh lifecycle remains open"]
 fn ignore_realtime_stats_by_optimizer_objective() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2567
@@ -810,9 +994,12 @@ fn subset_idx_cardinality_after_async_stats_load() {}
 /// Pseudo-stat table with ten rows: `a IN (1..8)` records Selection 1.00 over
 /// TableFullScan 10.00 stats:pseudo and must survive InitStatsLite/InitStats
 /// refreshes unchanged; ColAndIdxExistenceMap ends populated but with no
-/// analyzed columns.
+/// analyzed columns. The initial post-delta EXPLAIN for both columns is
+/// exercised by `tidb_session::tests_explain::builtin_in_estimate_without_stats_keeps_selection_floor`;
+/// Rust's stats-handle InitStatsLite/InitStats refresh lifecycle is still not
+/// wired into that session path.
 #[test]
-#[ignore = "go-parity-gap: recorded floor comes from Selectivity()/plan composition over pseudo stats"]
+#[ignore = "Go's repeated stats initialization and ColAndIdxExistenceMap assertions are not wired through the Rust session"]
 fn builtin_in_estimate_without_stats_keeps_selection_floor() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2754
@@ -820,11 +1007,51 @@ fn builtin_in_estimate_without_stats_keeps_selection_floor() {}
 ///
 /// Single-bucket index (analyze with 0 topn, 1 buckets): probing [2,3] stays
 /// inside the bucket where widening applies; counts must rise monotonically
-/// across session ratios 0/0.5/1 with global-set and default-session values
-/// behaving like the plain estimator.
+/// across ratios 0/0.5/1. The Rust fixture exercises the production estimator
+/// directly; global/session DEFAULT semantics are also exercised at the
+/// session SQL boundary in `tests_explain`.
 #[test]
-#[ignore = "go-parity-gap: within-bucket skew widening dispatch sits behind live-analyzed v1/v2 index stats"]
-fn risk_range_skew_ratio_widens_within_bucket_estimates() {}
+fn risk_range_skew_ratio_widens_within_bucket_estimates() {
+    let low = tidb_codec::encode_key(&[Datum::Int(1)]).unwrap();
+    let high = tidb_codec::encode_key(&[Datum::Int(5)]).unwrap();
+    let mut histogram = Histogram::new(7, 5, 0, 0, 1, 0);
+    histogram.append_bucket(Datum::Bytes(low), Datum::Bytes(high), 10, 2);
+    let index = IndexStats {
+        histogram,
+        topn: None,
+        cms: None,
+        stats_ver: 2,
+        num_columns: 1,
+        unique: false,
+    };
+    let range = IndexRangeDatums {
+        collators: vec![tidb_datatype::Collation::Binary; 1],
+        low_val: vec![Datum::Int(2)],
+        high_val: vec![Datum::Int(3)],
+        low_exclude: false,
+        high_exclude: false,
+    };
+    let estimate = |risk_range_skew_ratio| {
+        get_index_row_count_for_stats_v2(
+            &index,
+            &vec![None],
+            &[],
+            &[],
+            std::slice::from_ref(&range),
+            IndexRowCounts::unscaled(10, 0),
+            EstimatorOptions {
+                risk_range_skew_ratio,
+                ..EstimatorOptions::default()
+            },
+        )
+        .unwrap()
+        .est
+    };
+    let zero = estimate(0.0);
+    let half = estimate(0.5);
+    let one = estimate(1.0);
+    assert!(zero < half && half < one, "0={zero}, 0.5={half}, 1={one}");
+}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2942
 /// TestLastBucketEndValueHeuristic`.
@@ -834,16 +1061,104 @@ fn risk_range_skew_ratio_widens_within_bucket_estimates() {}
 /// trip the heuristic lifting the estimate to ~100.09 while mid-histogram
 /// value 3 reads ~109.99; index paths mirror both numbers.
 #[test]
-#[ignore = "go-parity-gap: needs the merged 5-bucket histogram shape produced by live ANALYZE"]
-fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {}
+fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
+    // Reproduce the sufficient statistics from Go's ANALYZE fixture directly:
+    // 100 rows for values 1..10, one row for 11, five buckets, no TopN.
+    // The final bucket's repeat is stale after 100 concentrated inserts.
+    let mut column_histogram = Histogram::new(1, 11, 0, 0, 5, 0);
+    for (low, high, cumulative, repeat, ndv) in [
+        (1, 2, 200, 100, 2),
+        (3, 4, 400, 100, 2),
+        (5, 6, 600, 100, 2),
+        (7, 8, 800, 100, 2),
+        (9, 11, 1001, 1, 3),
+    ] {
+        column_histogram.append_bucket_with_ndv(
+            Datum::Int(low),
+            Datum::Int(high),
+            cumulative,
+            repeat,
+            ndv,
+        );
+    }
+    let column = column_stats(column_histogram);
+    let point_count = |value, realtime, modify| {
+        get_column_row_count(
+            &column,
+            &[ColumnRange::point(Datum::Int(value))],
+            Collation::Binary,
+            realtime,
+            modify,
+            false,
+            EstimatorOptions::default(),
+        )
+        .unwrap()
+    };
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:3039 TestIssue64137`.
-///
-/// Ten thousand rows for a=1 analyzed with single-value TopN: out-of-range
-/// a=99999999 estimates 24.00 via the small-NDV out-of-range band while a=1
-/// keeps the exact 12000.00.
+    let baseline = point_count(11, 1001, 0);
+    assert_eq!(baseline.est, 1.0);
+    let insufficient_growth = point_count(11, 1011, 10);
+    assert!((insufficient_growth.est - baseline.est).abs() < 0.5);
+    let enough_growth = point_count(11, 1101, 100);
+    assert!(
+        (enough_growth.est - 100.09).abs() < 0.1,
+        "{enough_growth:?}"
+    );
+    let ordinary_value = point_count(3, 1101, 100);
+    assert!(
+        (ordinary_value.est - 109.99).abs() < 0.1,
+        "{ordinary_value:?}"
+    );
+
+    let encode = |value| {
+        Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(value)]).expect("index key encodes"))
+    };
+    let mut index_histogram = Histogram::new(1, 11, 0, 0, 5, 0);
+    for (low, high, cumulative, repeat, ndv) in [
+        (1, 2, 200, 100, 2),
+        (3, 4, 400, 100, 2),
+        (5, 6, 600, 100, 2),
+        (7, 8, 800, 100, 2),
+        (9, 11, 1001, 1, 3),
+    ] {
+        index_histogram.append_bucket_with_ndv(encode(low), encode(high), cumulative, repeat, ndv);
+    }
+    let index = IndexStats {
+        histogram: index_histogram,
+        topn: None,
+        cms: None,
+        stats_ver: 2,
+        num_columns: 1,
+        unique: false,
+    };
+    let estimate_index = |value, realtime, modify| {
+        get_index_row_count_for_stats_v2(
+            &index,
+            &vec![None],
+            &[],
+            &[],
+            &[IndexRangeDatums {
+                collators: vec![tidb_datatype::Collation::Binary; 1],
+                low_val: vec![Datum::Int(value)],
+                high_val: vec![Datum::Int(value)],
+                low_exclude: false,
+                high_exclude: false,
+            }],
+            IndexRowCounts::unscaled(realtime, modify),
+            EstimatorOptions::default(),
+        )
+        .unwrap()
+    };
+    assert!((estimate_index(11, 1101, 100).est - 100.09).abs() < 0.1);
+    assert!((estimate_index(3, 1101, 100).est - 109.99).abs() < 0.1);
+}
+
+/// Go `TestIssue64137`'s SQL estimator assertions are exercised in
+/// `tidb-session::tests_explain::small_ndv_out_of_range_index_reader_rows_match_go`.
+/// That session test supplies Go's post-`StatsHandle.Update` metadata because
+/// this source-shaped harness cannot run the domain stats-delta worker.
 #[test]
-#[ignore = "go-parity-gap: index-reader row counts need TopN-stripped analyze output"]
+#[ignore = "covered at the SQL estimator boundary; source mock lacks refreshed stats metadata"]
 fn issue_64137_small_ndv_out_of_range_index_reader_rows() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:3069

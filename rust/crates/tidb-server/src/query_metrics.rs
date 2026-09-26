@@ -102,7 +102,9 @@ pub(crate) fn note_connection_start() {
 /// session opened).
 pub(crate) fn note_connection_end() {
     let group = CONNECTION_RESOURCE_GROUP.with(|group| group.borrow().clone());
-    crate::server_metrics::CONN_GAUGE.with_label_values(&[&group]).dec();
+    crate::server_metrics::CONN_GAUGE
+        .with_label_values(&[&group])
+        .dec();
 }
 
 /// The resource group label Go reads from the session vars at the dispatch
@@ -114,7 +116,11 @@ pub(crate) fn current_connection_resource_group() -> String {
 /// Go `conn.go:461-470` `moveResourceGroupCounter`: a group switch moves
 /// the connection gauge between labels exactly once.
 fn note_resource_group_move(previous: &str, current: &str) {
-    let previous = if previous.is_empty() { "default" } else { previous };
+    let previous = if previous.is_empty() {
+        "default"
+    } else {
+        previous
+    };
     if previous != current {
         crate::server_metrics::CONN_GAUGE
             .with_label_values(&[previous])

@@ -445,10 +445,6 @@ fn merge_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
     if join.keys_contain_enum_or_set || join.has_null_eq {
         return Vec::new();
     }
-    // Go only enumerates merge join when the property carries sort items.
-    if prop.is_sort_item_empty() {
-        return Vec::new();
-    }
     let mut out = Vec::new();
     for lhs_property in &join.left_properties {
         let offsets = max_sort_prefix(lhs_property, &join.left_keys);
@@ -504,17 +500,9 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         {
             continue;
         }
-        // Go's tryToGetIndexJoin enumerates candidates only for inner paths
-        // whose access columns can cover the join keys.
-        let inner_properties = if outer_idx == 0 { &join.right_properties } else { &join.left_properties };
-        let inner_keys = if outer_idx == 0 { &join.right_keys } else { &join.left_keys };
-        let has_matching_index = inner_properties.iter().any(|order| {
-            order.len() >= inner_keys.len()
-                && order.iter().zip(inner_keys.iter()).all(|(col, key)| col == key)
-        });
-        if !has_matching_index {
-            continue;
-        }
+        // Go enumerates both probe families here. The inner DataSource later
+        // decides whether its paths can use the runtime keys, including a
+        // usable leading subset; provided sort orders cannot decide that.
         let mut child_props = [PhysicalProperty::default(), PhysicalProperty::default()];
         // The OUTER side is re-planned under the SAME property. This is the
         // line that keeps a parent merge join alive above an index join.
@@ -541,8 +529,8 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
         // `table_range_scan` flag rather than as a property field.
-        for table_range_scan in [true] {
-            for kind in [IndexJoinKind::IndexJoin] {
+        for table_range_scan in [true, false] {
+            for kind in [IndexJoinKind::IndexJoin, IndexJoinKind::IndexHashJoin] {
                 let mut child_roles = [LeafRole::Plain, LeafRole::Plain];
                 child_roles[1 - outer_idx] = LeafRole::IndexJoinProbe { table_range_scan };
                 out.push(EnumeratedJoin {
@@ -688,8 +676,10 @@ pub(crate) fn project_one_join(
 }
 
 pub mod candidate;
+mod candidate_preparation;
 pub mod coster;
 pub mod dispatch;
+pub mod index_merge_intersection;
 pub mod index_merge_union;
 
 #[cfg(test)]
@@ -698,8 +688,8 @@ mod tests {
     use crate::physical_property::CteProducerStatus;
 
     #[test]
-    fn every_join_candidate_preserves_cte_and_no_cop_requirements() {
-        let join = LogicalJoin {
+    fn natural_merge_join_does_not_require_parent_order() {
+        let mut join = LogicalJoin {
             join_type: LogicalJoinType::Inner,
             left_keys: vec![1],
             right_keys: vec![2],
@@ -712,6 +702,35 @@ mod tests {
             keys_contain_enum_or_set: false,
             has_na_keys: false,
         };
+        let prop = PhysicalProperty::default();
+        let candidates = merge_join_candidates(&join, &prop);
+        assert_eq!(candidates.len(), 1);
+        for (child, key) in candidates[0].child_props.iter().zip([1, 2]) {
+            assert_eq!(child.sort_items, vec![SortItem::new(key, false)]);
+            assert!(!child.can_add_enforcer);
+        }
+        join.right_properties.clear();
+        assert!(
+            merge_join_candidates(&join, &prop).is_empty(),
+            "an unordered parent does not authorize enforced child sorts"
+        );
+    }
+
+    #[test]
+    fn every_join_candidate_preserves_cte_and_no_cop_requirements() {
+        let join = LogicalJoin {
+            join_type: LogicalJoinType::Inner,
+            left_keys: vec![1],
+            right_keys: vec![2],
+            left_schema: vec![1],
+            right_schema: vec![2],
+            left_properties: Vec::new(),
+            right_properties: Vec::new(),
+            force_merge: false,
+            has_null_eq: false,
+            keys_contain_enum_or_set: false,
+            has_na_keys: false,
+        };
         let prop = PhysicalProperty {
             cte_producer_status: CteProducerStatus::AllCteCanMpp,
             no_cop_push_down: true,
@@ -719,6 +738,19 @@ mod tests {
         };
         let candidates = exhaust_join(&join, &prop, true);
         assert!(!candidates.is_empty());
+        // Go enumerates both probe paths and join families before the inner
+        // datasource checks available access paths; sort properties are not
+        // a prerequisite for considering a runtime probe.
+        for outer_idx in [0, 1] {
+            for table_range_scan in [true, false] {
+                for kind in [IndexJoinKind::IndexJoin, IndexJoinKind::IndexHashJoin] {
+                    assert!(candidates.iter().any(|candidate| matches!(candidate.strategy,
+                        JoinStrategy::Index { outer_idx: outer, table_range_scan: table, kind: actual, .. }
+                            if outer == outer_idx && table == table_range_scan && actual == kind
+                    )));
+                }
+            }
+        }
         for candidate in candidates {
             for child in candidate.child_props {
                 assert_eq!(child.cte_producer_status, CteProducerStatus::AllCteCanMpp);

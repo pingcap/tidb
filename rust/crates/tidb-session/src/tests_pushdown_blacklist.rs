@@ -231,11 +231,12 @@ fn blacklisting_an_aggregate_function_keeps_the_whole_aggregate_at_the_root() {
 
     let after = plan(&mut session, "SELECT sum(b) FROM t GROUP BY a");
     assert!(
-        !after.contains("data:HashAgg") && !after.contains("cop[tikv]"),
+        !after.contains("data:HashAgg") && after.matches("HashAgg").count() == 1,
         "a blacklisted aggregate stays whole at the root:\n{after}"
     );
     assert!(
-        after.contains("HashAgg") && after.contains("funcs:sum(test.t.b)"),
+        after.contains("funcs:sum(Column#8)")
+            && after.contains("cast(test.t.b, decimal(10,0) BINARY)->Column#8"),
         "and it is still one aggregate over the scanned column:\n{after}"
     );
     let mut rows = row_text(session.run("SELECT sum(b) FROM t GROUP BY a"));
@@ -278,4 +279,108 @@ fn a_reload_on_one_session_changes_what_another_plans() {
         !after.contains("IndexRangeScan"),
         "the OTHER session must see the reload:\n{after}"
     );
+}
+
+#[test]
+fn tikv_only_blacklist_keeps_ordinary_scan_residuals_at_root() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE residual_policy(id bigint primary key,a bigint,b bigint,key ia(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO residual_policy VALUES (1,1,1),(2,1,3),(3,2,5)")
+        .unwrap();
+    let queries = [
+        (
+            "SELECT id FROM residual_policy IGNORE INDEX(ia) WHERE b+1>2",
+            vec![vec!["2"], vec!["3"]],
+        ),
+        (
+            "SELECT id FROM residual_policy FORCE INDEX(ia) WHERE a=1 AND id+1>2",
+            vec![vec!["2"]],
+        ),
+        (
+            "SELECT b FROM residual_policy FORCE INDEX(ia) WHERE a=1 AND b+1>2",
+            vec![vec!["3"]],
+        ),
+        (
+            "SELECT id FROM residual_policy FORCE INDEX(ia) WHERE a=1 AND id+1>2 AND id+2<6",
+            vec![vec!["2"]],
+        ),
+        (
+            "SELECT b FROM residual_policy FORCE INDEX(ia) WHERE a=1 AND id+1>2 AND id+2<6 AND b+2<6",
+            vec![vec!["3"]],
+        ),
+    ];
+    session
+        .run("INSERT INTO mysql.expr_pushdown_blacklist VALUES ('gt','tikv','test')")
+        .unwrap();
+    session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+    for (query, expected) in queries {
+        let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+        assert!(
+            plan.iter().any(|row| row[0].contains("Selection")
+                && row[2] == "root"
+                && row[4].contains("gt(")),
+            "{query}: {plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .all(|row| row[2] != "cop[tikv]" || !row[4].contains("gt(")),
+            "{query}: {plan:?}"
+        );
+        if query.contains("FORCE INDEX") {
+            assert!(
+                plan.iter().any(|row| row[0].contains("IndexRangeScan")),
+                "{plan:?}"
+            );
+        }
+        let expected_rows = if query.contains("AND b+2<6") {
+            "5.12"
+        } else if query.contains("AND id+2<6") {
+            "6.40"
+        } else if query.contains("FORCE INDEX") {
+            "8.00"
+        } else {
+            "8000.00"
+        };
+        assert!(
+            plan.iter().any(|row| row[0].contains("Selection")
+                && row[1] == expected_rows
+                && row[2] == "root"),
+            "Go residual estimate: {plan:?}"
+        );
+        assert_eq!(row_text(session.run(query)), expected);
+    }
+}
+
+#[test]
+fn analyzed_root_filter_uses_table_histogram_population() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE analyzed_residual(id bigint primary key,a bigint,b bigint,key ia(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO analyzed_residual VALUES (1,1,1),(2,1,3),(3,2,5)")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE analyzed_residual ALL COLUMNS")
+        .unwrap();
+    session
+        .run("INSERT INTO mysql.expr_pushdown_blacklist VALUES ('gt','tikv','test')")
+        .unwrap();
+    session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+    let query = "SELECT b FROM analyzed_residual FORCE INDEX(ia) WHERE a=1 AND b>2";
+    let rows = row_text(session.run(&format!("EXPLAIN {query}")));
+    assert!(
+        rows.iter()
+            .any(|row| row[0].contains("Selection") && row[1] == "1.33" && row[2] == "root"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row[0].contains("IndexLookUp") && row[1] == "2.00"),
+        "{rows:?}"
+    );
+    assert_eq!(row_text(session.run(query)), vec![vec!["3"]]);
 }

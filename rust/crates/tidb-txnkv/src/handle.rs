@@ -697,22 +697,89 @@ impl<V> HandleMap<V> {
     }
 }
 
-/// Handle map with insertion-time shallow memory deltas.
-///
-/// Like Go's `MemAwareHandleMap`, values and heap objects reachable through
-/// values are deliberately excluded from accounting.
-#[derive(Debug, Clone, Default)]
+// Go uses arbitrary encoded bytes in a string key, not a []byte key.
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+struct EncodedHandleKey(Vec<u8>);
+
+impl tidb_hack::MapValueLayout for EncodedHandleKey {
+    const SOURCE_SIZE: usize = 16;
+    const SOURCE_ALIGN: usize = 8;
+}
+
+struct StrHandleValue<V> {
+    handle: Handle,
+    value: V,
+}
+
+impl<V: tidb_hack::MapValueLayout> tidb_hack::MapValueLayout for StrHandleValue<V> {
+    const SOURCE_ALIGN: usize = if V::SOURCE_ALIGN > 8 {
+        V::SOURCE_ALIGN
+    } else {
+        8
+    };
+    const SOURCE_SIZE: usize = {
+        let value_offset = (16 + V::SOURCE_ALIGN - 1) / V::SOURCE_ALIGN * V::SOURCE_ALIGN;
+        // Go pads a trailing zero-sized field in a nonempty struct.
+        let value_size = if V::SOURCE_SIZE == 0 {
+            1
+        } else {
+            V::SOURCE_SIZE
+        };
+        (value_offset + value_size + Self::SOURCE_ALIGN - 1) / Self::SOURCE_ALIGN
+            * Self::SOURCE_ALIGN
+    };
+}
+
+/// Go's handle map with independent checkpointed allocation accounting for
+/// integer/common handles and each physical partition. Referenced payloads
+/// remain the caller's accounting responsibility.
 pub struct MemAwareHandleMap<V> {
-    entries: HandleMap<V>,
+    ints: tidb_hack::MemAwareMap<i64, V>,
+    strs: tidb_hack::MemAwareMap<EncodedHandleKey, StrHandleValue<V>>,
+    partition_ints: HashMap<i64, tidb_hack::MemAwareMap<i64, V>>,
+    partition_strs: HashMap<i64, tidb_hack::MemAwareMap<EncodedHandleKey, StrHandleValue<V>>>,
     accounted_bytes: i64,
 }
 
-impl<V> MemAwareHandleMap<V> {
-    /// Creates an empty map.
+impl<V: tidb_hack::MapValueLayout> Default for MemAwareHandleMap<V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<V: tidb_hack::MapValueLayout + Clone> Clone for MemAwareHandleMap<V> {
+    fn clone(&self) -> Self {
+        let mut copy = Self::new();
+        self.range(|handle, value| {
+            copy.set(handle.clone(), value.clone());
+            true
+        });
+        copy.accounted_bytes = self.accounted_bytes;
+        copy
+    }
+}
+
+impl<V: tidb_hack::MapValueLayout + fmt::Debug> fmt::Debug for MemAwareHandleMap<V> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut map = formatter.debug_map();
+        self.range(|handle, value| {
+            map.entry(handle, value);
+            true
+        });
+        map.finish()
+    }
+}
+
+impl<V: tidb_hack::MapValueLayout> MemAwareHandleMap<V> {
+    /// Creates an empty map. V describes its Go size/alignment, as it does
+    /// for the shared MemAwareMap; Rust container layout is not substituted.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            entries: HandleMap::new(),
+            ints: tidb_hack::MemAwareMap::new(0),
+            strs: tidb_hack::MemAwareMap::new(0),
+            partition_ints: HashMap::new(),
+            partition_strs: HashMap::new(),
             accounted_bytes: 0,
         }
     }
@@ -720,22 +787,93 @@ impl<V> MemAwareHandleMap<V> {
     /// Returns a value by source handle identity.
     #[must_use]
     pub fn get(&self, handle: &Handle) -> Option<&V> {
-        self.entries.get(handle)
+        let partition = match handle {
+            Handle::Partition(partition) => Some(partition.partition_id()),
+            _ => None,
+        };
+        if let Some(value) = handle.int_value() {
+            let map = match partition {
+                Some(id) => self.partition_ints.get(&id)?,
+                None => &self.ints,
+            };
+            map.get(&value)
+        } else {
+            let map = match partition {
+                Some(id) => self.partition_strs.get(&id)?,
+                None => &self.strs,
+            };
+            map.get(&EncodedHandleKey(handle.encoded()))
+                .map(|entry| &entry.value)
+        }
     }
 
-    /// Inserts or overwrites a value and returns the shallow accounting delta.
+    /// Inserts or replaces a value and returns Go's checkpointed allocation
+    /// delta. No existing entries are traversed to account for an insertion.
     pub fn set(&mut self, handle: impl Into<Handle>, value: V) -> i64 {
-        let before = self.entries.mem_usage();
-        self.entries.set(handle, value);
-        let after = self.entries.mem_usage();
-        let delta = after.saturating_sub(before);
+        let handle = handle.into();
+        let partition = match &handle {
+            Handle::Partition(partition) => Some(partition.partition_id()),
+            _ => None,
+        };
+        let delta = if let Some(key) = handle.int_value() {
+            let map = match partition {
+                Some(id) => self
+                    .partition_ints
+                    .entry(id)
+                    .or_insert_with(|| tidb_hack::MemAwareMap::new(0)),
+                None => &mut self.ints,
+            };
+            map.set(key, value)
+        } else {
+            let map = match partition {
+                Some(id) => self
+                    .partition_strs
+                    .entry(id)
+                    .or_insert_with(|| tidb_hack::MemAwareMap::new(0)),
+                None => &mut self.strs,
+            };
+            map.set(
+                EncodedHandleKey(handle.encoded()),
+                StrHandleValue { handle, value },
+            )
+        };
         self.accounted_bytes = self.accounted_bytes.saturating_add(delta);
         delta
     }
 
-    /// Iterates entries until `visit` returns false.
-    pub fn range(&self, visit: impl FnMut(&Handle, &V) -> bool) {
-        self.entries.range(visit);
+    /// Iterates until the callback returns false. Like Go, each handle domain
+    /// has its own traversal; no cross-domain ordering is promised.
+    pub fn range(&self, mut visit: impl FnMut(&Handle, &V) -> bool) {
+        for (key, value) in self.ints.iter() {
+            if !visit(&Handle::from(IntHandle::new(*key)), value) {
+                return;
+            }
+        }
+        for (_, entry) in self.strs.iter() {
+            if !visit(&entry.handle, &entry.value) {
+                return;
+            }
+        }
+        for (id, map) in &self.partition_ints {
+            for (key, value) in map.iter() {
+                if !visit(
+                    &Handle::from(PartitionHandle::new(
+                        *id,
+                        Some(Handle::from(IntHandle::new(*key))),
+                    )),
+                    value,
+                ) {
+                    return;
+                }
+            }
+        }
+        for map in self.partition_strs.values() {
+            for (_, entry) in map.iter() {
+                if !visit(&entry.handle, &entry.value) {
+                    return;
+                }
+            }
+        }
     }
 
     /// Returns the sum of insertion deltas.
@@ -749,6 +887,68 @@ impl<V> MemAwareHandleMap<V> {
 mod tests {
     use super::*;
     use tidb_codec::encode_key;
+
+    #[test]
+    fn mem_aware_handle_map_accounts_at_source_checkpoints_per_partition() {
+        let mut map = MemAwareHandleMap::new();
+        let mut total = 0;
+        for common in [false, true] {
+            for partition in [None, Some(41), Some(42)] {
+                for index in 0..32 {
+                    let handle = if common {
+                        Handle::from(
+                            CommonHandle::new(encode_key(&[Datum::Int(index)]).unwrap()).unwrap(),
+                        )
+                    } else {
+                        Handle::from(IntHandle::new(index))
+                    };
+                    let handle = partition.map_or(handle.clone(), |id| {
+                        Handle::from(PartitionHandle::new(id, Some(handle)))
+                    });
+                    let delta = map.set(handle.clone(), index);
+                    // Exact Go-master oracle for MemAwareHandleMap[int64].
+                    let expected = match (common, index) {
+                        (false, 15) => 259,
+                        (false, 31) => 444,
+                        (true, 15) => 694,
+                        (true, 31) => 1071,
+                        _ => 0,
+                    };
+                    assert_eq!(delta, expected);
+                    total += delta;
+                    assert_eq!(map.set(handle.clone(), index + 1), 0);
+                    assert_eq!(map.get(&handle), Some(&(index + 1)));
+                }
+            }
+        }
+        assert_eq!(map.accounted_bytes(), total);
+        let mut copy = map.clone();
+        assert_eq!(copy.accounted_bytes(), total);
+        let mut visited = 0;
+        map.range(|handle, value| {
+            assert_eq!(copy.get(handle), Some(value));
+            visited += 1;
+            true
+        });
+        assert_eq!(visited, 192);
+        assert_eq!(copy.set(IntHandle::new(0), 99), 0);
+        assert_eq!(map.get(&Handle::from(IntHandle::new(0))), Some(&1));
+        let mut stopped = 0;
+        map.range(|_, _| {
+            stopped += 1;
+            false
+        });
+        assert_eq!(stopped, 1);
+
+        let mut empty_values = MemAwareHandleMap::new();
+        for index in 0..16 {
+            let handle = CommonHandle::new(encode_key(&[Datum::Int(index)]).unwrap()).unwrap();
+            assert_eq!(
+                empty_values.set(handle, ()),
+                if index == 15 { 694 } else { 0 }
+            );
+        }
+    }
 
     #[test]
     fn handle_semantics_are_source_complete_without_panics() {

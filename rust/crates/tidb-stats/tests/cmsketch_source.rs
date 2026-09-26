@@ -1157,15 +1157,55 @@ fn source_query_value_supports_all_typed_datums_and_nil_cms_topn_hits() {
     let mut topn = TopN::new(1);
     topn.append(&encoded, 77);
     topn.sort();
-    assert_eq!(query_value(None, Some(&topn), &value, &Utc).unwrap(), 77);
+    assert_eq!(query_value(None, Some(&topn), &value, None).unwrap(), 77);
 
     let mut cms = CmsSketch::new(5, 2_048);
     cms.insert_bytes(&encoded);
-    assert_eq!(query_value(Some(&cms), None, &value, &Utc).unwrap(), 1);
+    assert_eq!(query_value(Some(&cms), None, &value, None).unwrap(), 1);
     assert!(
-        std::panic::catch_unwind(|| { query_value(None, None, &value, &Utc).unwrap() }).is_err()
+        std::panic::catch_unwind(|| { query_value(None, None, &value, None).unwrap() }).is_err()
     );
 }
+
+#[test]
+fn source_query_value_flattens_temporal_values_before_sketch_lookup() {
+    use tidb_datatype::{MySqlDuration, SessionTimeZone, Time, TimeType};
+    let timezone = SessionTimeZone::Fixed {
+        name: "+08:00".into(),
+        offset_secs: 8 * 3600,
+    };
+    let timestamp =
+        Time::from_date_checked(2020, 1, 1, 8, 0, 0, 0, TimeType::Timestamp, 0).unwrap();
+    let utc = Time::from_date_checked(2020, 1, 1, 0, 0, 0, 0, TimeType::Timestamp, 0).unwrap();
+    let cases = [
+        (
+            Datum::Duration(MySqlDuration::from_raw_parts(2_000_000_000, 0)),
+            Datum::Int(2_000_000_000),
+        ),
+        (
+            Datum::Time(timestamp),
+            Datum::UInt(utc.to_packed_uint().unwrap()),
+        ),
+    ];
+    for (value, flattened) in cases {
+        // Go tablecodec.flatten supplies Int/UInt to codec.EncodeValue;
+        // encoding the original temporal datum uses different type flags.
+        let encoded = tidb_codec::encode_value(&[flattened]).unwrap();
+        let mut cms = CmsSketch::new(5, 2048);
+        cms.insert_bytes_by_count(&encoded, 7);
+        assert_eq!(
+            query_value(Some(&cms), None, &value, Some(&timezone)).unwrap(),
+            7
+        );
+        let mut topn = TopN::new(1);
+        topn.append(&encoded, 9);
+        assert_eq!(
+            query_value(None, Some(&topn), &value, Some(&timezone)).unwrap(),
+            9
+        );
+    }
+}
+
 
 #[test]
 fn source_query_bytes_failpoint_returns_the_scripted_go_int_conversion() {

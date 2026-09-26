@@ -33,6 +33,7 @@ use crate::plan_base::PlanIdAllocator;
 use crate::stats_info::StatsInfo;
 
 use super::apply::LogicalApply;
+use super::aggregation::LogicalAggregation;
 use super::data_source::DataSource;
 use super::join::LogicalJoin;
 use super::projection::LogicalProjection;
@@ -72,6 +73,16 @@ fn stated_source(
 
 fn derive(plan: &mut LogicalPlan) -> Result<(StatsInfo, bool), crate::plan_base::PlanError> {
     plan.recursive_derive_stats(&[])
+}
+
+fn derive_with_group_ndv_skew_ratio(
+    plan: &mut LogicalPlan,
+    ratio: f64,
+    allocator: &PlanIdAllocator,
+) -> Result<(StatsInfo, bool), crate::plan_base::PlanError> {
+    let mut context = super::rule_tests::test_context(allocator);
+    context.group_ndv_skew_ratio = ratio;
+    plan.recursive_derive_stats_with_context(&[], &context)
 }
 
 /// `col(left) = col(right)` as the `ScalarFunction` an `EqualCondition`
@@ -191,6 +202,102 @@ fn a_join_reproduces_gos_equal_cond_out_cnt() {
         "Go's full-join estimate is 1000, got {}",
         stats.row_count()
     );
+}
+
+#[test]
+fn a_join_uses_the_session_group_ndv_skew_ratio() {
+    // Go passes RiskGroupNDVSkewRatio through EstimateFullJoinRowCount to
+    // EstimateColsNDVWithMatchedLen. With columns at NDV 1000 and 500, the
+    // ratio 0 estimate uses 1000; ratio 1 uses 1000 * sqrt(500).
+    let derive_join = |ratio| {
+        let allocator = PlanIdAllocator::new();
+        let left = stated_source(
+            &allocator,
+            &[1, 2],
+            100_000.0,
+            &[(1, 1000.0), (2, 500.0)],
+        );
+        let right = stated_source(
+            &allocator,
+            &[11, 12],
+            100_000.0,
+            &[(11, 1000.0), (12, 500.0)],
+        );
+        let mut join = LogicalJoin::new(
+            base(&allocator, "Join", Some(schema_of(&[1, 2, 11, 12]))),
+            LogicalJoinType::Inner,
+        );
+        join.equal_conditions = vec![eq_condition(1, 11), eq_condition(2, 12)];
+        let mut plan = LogicalPlan::Join(join);
+        plan.set_children(vec![left, right]);
+        derive_with_group_ndv_skew_ratio(&mut plan, ratio, &allocator)
+            .expect("the keyed join derives")
+            .0
+            .row_count()
+    };
+
+    let conservative = derive_join(0.0);
+    let exponential = derive_join(1.0);
+    let expected_conservative = 100_000.0 * 100_000.0 / 1000.0;
+    let expected_exponential = 100_000.0 * 100_000.0 / (1000.0 * 500.0_f64.sqrt());
+    assert!((conservative - expected_conservative).abs() < 1e-6);
+    assert!((exponential - expected_exponential).abs() < 1e-6);
+}
+
+#[test]
+fn a_group_by_uses_the_session_group_ndv_skew_ratio() {
+    let derive_aggregation = |ratio| {
+        let allocator = PlanIdAllocator::new();
+        let source = stated_source(
+            &allocator,
+            &[1, 2],
+            100_000.0,
+            &[(1, 1000.0), (2, 500.0)],
+        );
+        let mut aggregation = LogicalAggregation::new(
+            base(&allocator, "Aggregation", Some(schema_of(&[100]))),
+            Vec::new(),
+            vec![Expression::Column(column(1)), Expression::Column(column(2))],
+        );
+        aggregation.base.base.set_schema(Some(schema_of(&[100])));
+        let mut plan = LogicalPlan::Aggregation(aggregation);
+        plan.set_children(vec![source]);
+        derive_with_group_ndv_skew_ratio(&mut plan, ratio, &allocator)
+            .expect("the grouped aggregation derives")
+            .0
+            .row_count()
+    };
+
+    let conservative = derive_aggregation(0.0);
+    let exponential = derive_aggregation(1.0);
+    assert!((conservative - 1000.0).abs() < f64::EPSILON);
+    assert!((exponential - 1000.0 * 500.0_f64.sqrt()).abs() < 1e-6);
+}
+
+#[test]
+fn a_multi_column_projection_uses_the_session_group_ndv_skew_ratio() {
+    let derive_projection = |ratio| {
+        let allocator = PlanIdAllocator::new();
+        let source = stated_source(
+            &allocator,
+            &[1, 2],
+            100_000.0,
+            &[(1, 1000.0), (2, 500.0)],
+        );
+        let projection = LogicalProjection::new(
+            base(&allocator, "Projection", Some(schema_of(&[100]))),
+            vec![Expression::ScalarFunction(eq_condition(1, 2))],
+        );
+        let mut plan = LogicalPlan::Projection(projection);
+        plan.set_children(vec![source]);
+        derive_with_group_ndv_skew_ratio(&mut plan, ratio, &allocator)
+            .expect("the projection derives")
+            .0
+            .col_ndvs()[&100]
+    };
+
+    assert!((derive_projection(0.0) - 1000.0).abs() < f64::EPSILON);
+    assert!((derive_projection(1.0) - 1000.0 * 500.0_f64.sqrt()).abs() < 1e-6);
 }
 
 #[test]

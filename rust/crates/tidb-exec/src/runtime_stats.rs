@@ -997,6 +997,20 @@ impl RuntimeStats for BasicRuntimeStats {
     }
 }
 
+impl tidb_executor::executor::ExecutorRuntimeStats for BasicRuntimeStats {
+    fn record_open(&self, elapsed: StdDuration) {
+        BasicRuntimeStats::record_open(self, elapsed);
+    }
+
+    fn record_next(&self, elapsed: StdDuration, rows: i64) {
+        BasicRuntimeStats::record(self, elapsed, rows);
+    }
+
+    fn record_close(&self, elapsed: StdDuration) {
+        BasicRuntimeStats::record_close(self, elapsed);
+    }
+}
+
 /// Go `RootRuntimeStats`: combines the shared basic stats with the
 /// registered per-kind group stats.
 #[derive(Default)]
@@ -1308,6 +1322,16 @@ impl RuntimeStatsColl {
             .expect("RuntimeStatsColl mutex poisoned")
             .cop_stats
             .contains_key(&plan_id)
+    }
+}
+
+impl tidb_executor::executor::ExecutorRuntimeStatsSource for RuntimeStatsColl {
+    fn for_executor(
+        &self,
+        plan_id: i64,
+    ) -> Option<Arc<dyn tidb_executor::executor::ExecutorRuntimeStats>> {
+        self.get_basic_runtime_stats(plan_id, true)
+            .map(|stats| stats as Arc<dyn tidb_executor::executor::ExecutorRuntimeStats>)
     }
 }
 
@@ -1795,6 +1819,37 @@ impl RuntimeStats for RuRuntimeStats {
 mod tests {
     use super::*;
     use crate::exec_details::{ReqDetailInfo, ResolveLockDetail, TiKVExecDetails, WriteDetail};
+
+    #[test]
+    fn executor_runtime_source_shares_go_basic_stats_with_statement_collector() {
+        let collector = RuntimeStatsColl::new(None);
+        let stats =
+            tidb_executor::executor::ExecutorRuntimeStatsSource::for_executor(&collector, 17)
+                .expect("executor registration creates Go basic stats");
+        tidb_executor::executor::ExecutorRuntimeStats::record_open(
+            stats.as_ref(),
+            StdDuration::from_nanos(2),
+        );
+        tidb_executor::executor::ExecutorRuntimeStats::record_next(
+            stats.as_ref(),
+            StdDuration::from_nanos(3),
+            4,
+        );
+        tidb_executor::executor::ExecutorRuntimeStats::record_close(
+            stats.as_ref(),
+            StdDuration::from_nanos(5),
+        );
+
+        let basic = collector
+            .get_basic_runtime_stats(17, false)
+            .expect("registered basic stats remain in the collector");
+        assert_eq!(basic.get_act_rows(), 4);
+        assert_eq!(basic.get_time(), 10);
+        assert_eq!(
+            collector.get_root_stats(17).lock().unwrap().string(),
+            "time:10ns, open:2ns, close:5ns, loops:1"
+        );
+    }
 
     /// Go `mockExecutorExecutionSummary`.
     fn mock_executor_execution_summary(

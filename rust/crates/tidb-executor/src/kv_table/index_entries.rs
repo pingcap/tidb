@@ -347,12 +347,14 @@ impl KvTable {
                     columns: self
                         .common_handle_offsets()
                         .iter()
-                        .map(|offset| CodecIndexColumn {
+                        .enumerate()
+                        .map(|(position, offset)| CodecIndexColumn {
                             offset: *offset,
-                            // A clustered primary key may not declare a prefix
-                            // (`ddl::index_prefix::clustered_prefix_unsupported`),
-                            // so the whole column is always stored.
-                            length: UNSPECIFIED_LENGTH,
+                            length: self
+                                .common_handle_prefix_lengths()
+                                .get(position)
+                                .copied()
+                                .unwrap_or(UNSPECIFIED_LENGTH),
                             use_changing_type: false,
                         })
                         .collect(),

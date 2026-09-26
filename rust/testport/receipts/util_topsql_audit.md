@@ -1,10 +1,13 @@
 # `pkg/util/topsql` — Go-master parity audit
 
 Comparison source: Go `origin/master` at commit
-`42db2099af50704e424b792626f10a87f4247413` (2026-09-02). The only commit
-touching this package after the Rust extraction point is
-`17b780783925eea71af5e2bdd1a0b1c171efc650` (`topsql: reduce reporter loss,
-fix panic accounting, and enforce statement stats cap`).
+`56970b286a362b1f0b150c7665453c8f5ff997a9` (2026-09-23). Since the earlier
+audit at `42db2099af50704e424b792626f10a87f4247413`, three commits touched
+this package: `17b780783925eea71af5e2bdd1a0b1c171efc650` (report backpressure,
+panic accounting, and stats cap), `8bccb81a1c0a81d33ebca76545e465535e374870`
+(remove deprecated RU-v2 plumbing), and
+`51263506a5005ca119f3a191a21c3ea91a419b16` (report finalized RU-v2
+consumption).
 
 This receipt records the complete source inventory and the behavior that can
 be implemented in the current Rust owners. It does not claim that all of Go's
@@ -14,7 +17,7 @@ top-level wiring remain explicit integration boundaries.
 ## Complete Go package inventory
 
 The package has exactly 47 tracked artifacts: 19 production Go files, 20 Go
-test/harness files, and 8 Bazel build files, totaling 14,542 Go/Bazel lines.
+test/harness files, and 8 Bazel build files, totaling 14,133 Go/Bazel lines.
 Every production file, test, benchmark, generated Top-RU case carrier, mock,
 fixture/support artifact, and build target was read and enumerated before
 editing. There is no `doc.go`, `testdata` fixture tree, generated production
@@ -32,12 +35,12 @@ source, or platform-specific Go variant.
 | `collector/mock/BUILD.bazel` | 17 |
 | `collector/mock/mock.go` | 228 |
 | `reporter/BUILD.bazel` | 78 |
-| `reporter/datamodel.go` | 815 |
-| `reporter/datamodel_test.go` | 663 |
+| `reporter/datamodel.go` | 761 |
+| `reporter/datamodel_test.go` | 543 |
 | `reporter/datasink.go` | 152 |
 | `reporter/datasink_test.go` | 326 |
 | `reporter/main_test.go` | 33 |
-| `reporter/metrics/BUILD.bazel` | 22 |
+| `reporter/metrics/BUILD.bazel` | 24 |
 | `reporter/metrics/metrics.go` | 82 |
 | `reporter/metrics/metrics_test.go` | 29 |
 | `reporter/mock/BUILD.bazel` | 17 |
@@ -46,23 +49,23 @@ source, or platform-specific Go variant.
 | `reporter/pubsub.go` | 407 |
 | `reporter/pubsub_test.go` | 739 |
 | `reporter/report_ticker.go` | 55 |
-| `reporter/reporter.go` | 452 |
-| `reporter/reporter_test.go` | 1,538 |
+| `reporter/reporter.go` | 445 |
+| `reporter/reporter_test.go` | 1,473 |
 | `reporter/ru_datamodel.go` | 699 |
 | `reporter/ru_datamodel_test.go` | 766 |
-| `reporter/ru_window_aggregator.go` | 261 |
-| `reporter/ru_window_aggregator_test.go` | 981 |
-| `reporter/single_target.go` | 451 |
-| `reporter/single_target_test.go` | 273 |
+| `reporter/ru_window_aggregator.go` | 243 |
+| `reporter/ru_window_aggregator_test.go` | 949 |
+| `reporter/single_target.go` | 432 |
+| `reporter/single_target_test.go` | 224 |
 | `reporter/topru_case_runner_test.go` | 283 |
 | `reporter/topru_generated_cases_test.go` | 136 |
 | `state/BUILD.bazel` | 24 |
 | `state/state.go` | 173 |
 | `state/state_test.go` | 87 |
 | `stmtstats/BUILD.bazel` | 52 |
-| `stmtstats/aggregator.go` | 295 |
+| `stmtstats/aggregator.go` | 290 |
 | `stmtstats/aggregator_bench_test.go` | 156 |
-| `stmtstats/aggregator_test.go` | 667 |
+| `stmtstats/aggregator_test.go` | 625 |
 | `stmtstats/kv_exec_count.go` | 76 |
 | `stmtstats/kv_exec_count_test.go` | 45 |
 | `stmtstats/main_test.go` | 33 |
@@ -70,17 +73,17 @@ source, or platform-specific Go variant.
 | `stmtstats/stmtstats.go` | 454 |
 | `stmtstats/stmtstats_test.go` | 1,212 |
 
-The inventory contains 291 production declarations, 145 test declarations
-(including 9 benchmarks), and all 145 named source tests were checked against
-their Rust owner or an explicit boundary. The generated Top-RU cases are
-source-shaped test data, not generated production code.
+The current tree contains 114 named tests (plus four `TestMain` harnesses) and
+9 benchmarks. Each was checked against its Rust owner or an explicit boundary.
+The generated Top-RU cases are source-shaped test data, not generated
+production code.
 
 ## Rust ownership and parity decisions
 
 Rust ownership is split between `tidb-util::topsql_state`,
-`topsql_stmtstats/{aggregator,kv_exec_count,ru_details,rustats,ruv2_metrics,stmtstats}`
-and `topsql_reporter/{datamodel,ru_datamodel,ru_window_aggregator}`. The
-reporter module documents that it is a data-model layer only. Go's
+`topsql_stmtstats/{aggregator,kv_exec_count,rustats,stmtstats}`, the separate
+`tidb-util::ruv2_metrics` execution implementation, and
+`topsql_reporter/{datamodel,metrics,ru_datamodel,ru_window_aggregator}`. Go's
 `collector/cpu.go`, top-level `topsql.go`, `reporter/datasink.go`,
 `reporter/pubsub.go`, `reporter/reporter.go`, `reporter/single_target.go`,
 their mocks, and the gRPC/profiler consumers have no dependency-closed Rust
@@ -107,15 +110,71 @@ Commit `17b7807839` makes four relevant changes:
   accounts panics as failed reports. Rust has no `SingleTargetDataSink` or
   gRPC agent owner, so this transport behavior remains an integration boundary.
 
-The Go `reporter/metrics` leaf now also exposes and initializes
-`IgnoreReportDataByBackpressureCounter` with the
-`ignore_report_data_by_backpressure` label. Its package regression verifies
-that the bound counter is usable and increments monotonically. The parent
-reporter worker that must increment this handle remains an explicit boundary.
+### Complete `reporter/metrics` leaf
+
+`pkg/util/topsql/reporter/metrics` has three tracked artifacts: its 82-line
+`metrics.go`, 29-line `metrics_test.go`, and 24-line `BUILD.bazel`; it has no
+generated input. Its `TestIgnoreReportDataByBackpressureCounter` verifies
+that the report-backpressure handle is available and increments by one.
+Rust owns the leaf in `tidb-util::topsql_reporter::metrics`, with all 11
+ignored-counter handles, 10 report-duration observers, and four report-data
+observers bound to the same three Prometheus families and label combinations.
+The server registers those families from this owner, so there is no second
+TopSQL metric definition in `tidb-server`. The SQL/plan admission caps, RU
+aggregation cap, and late compacted RU drops increment their corresponding
+handles. Rust leaf tests check every label series, histogram family definition,
+and the backpressure counter increment contract against Go. The parent
+reporter worker that must increment that handle on channel drops and observe
+report timings remains unavailable; the `reporter` package is still
+incomplete.
+
+Validation for this leaf:
+
+- `go test ./pkg/util/topsql/reporter/metrics -count=1` — passed.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_reporter:: -- --test-threads=1` — 69 passed.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib topsql -- --test-threads=1` — 115 passed.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_stmtstats::aggregator::tests::drain_push_ru_caps_at_max -- --exact` — passed.
+- `cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` and the equivalent `-p tidb-server --all-targets` — passed.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --lib server_metrics::init_tests::init_registers_every_family -- --exact` — passed.
+- `make -o tools/bin/revive lint` — passed using the already-installed pinned linter.
+- Scoped `rustfmt --check` and `git diff --check` — passed.
+
+No Go or Bazel files changed in this leaf update, so `make bazel_prepare` was
+not required. The workspace-wide `cargo fmt --all -- --check` still reports
+pre-existing formatting differences outside this change.
 
 No Rust-only TopSQL behavior was found that could be removed without deleting
 the only executable owner of a Go contract. The Rust mutex-backed maps and
-process counters are representation choices, not extra wire or SQL behavior.
+Prometheus-backed telemetry preserve the Go-visible behavior without adding
+wire or SQL behavior.
+
+## Current-master RU-v2 finish accounting (`2026-09-23`)
+
+Current Go no longer stores `RUV2Metrics` or `RUV2Weights` in
+`ExecBeginInfo`/`ExecutionContext`. `currentRUTotal` returns zero for RU-v2, so
+in-flight Top-RU samples are v1-only. At statement finish, the executor
+finalizes RU-v2 counters, computes `TotalRUV2`, and passes that scalar through
+`ExecFinishInfo`; `addRUOnFinishLocked` uses it for RU-v2 and keeps the existing
+`RUDetails` RRU+WRU calculation for v1.
+
+Rust now follows that collector contract: `ExecBeginInfo` and
+`ExecutionContext` carry no RU-v2 metrics/weights, `ExecFinishInfo` carries
+`total_ru_v2`, and RU-v2 sampling returns zero until finish. The former Rust
+tests for live RU-v2 metrics and drain-only counters were removed and replaced
+with coverage for zero in-flight RU-v2 and finalized finish totals for both RU
+versions. The TiDB Rust execution adapter that computes and supplies the
+finalized value is still absent, as are the reporter, profiler, and top-level
+integration owners; this remains audit evidence, not a complete Go-package
+transcreation claim.
+
+Validation for this current-master delta:
+
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_stmtstats:: -- --test-threads=1` — passed; all 41 statement-stats owner tests.
+- `rustfmt --edition 2021 crates/tidb-util/src/topsql_stmtstats/mod.rs crates/tidb-util/src/topsql_stmtstats/rustats.rs crates/tidb-util/src/topsql_stmtstats/stmtstats.rs` — passed.
+- `git diff --check` — passed.
+
+No Go, Bazel, or module files changed, so `make bazel_prepare` was not
+required.
 
 ## Rust-only diagnostic alignment (`2026-09-06`)
 

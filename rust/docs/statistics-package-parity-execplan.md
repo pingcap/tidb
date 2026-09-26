@@ -10,6 +10,8 @@ Rust must make the same statistics-loading and planning decisions as the pinned 
 
 ## Progress
 
+- [x] (2026-09-25, follow-up source pin 633a9e37f1c796ac81c203dc107025e7e65385f0) Correct QueryValue's shared dependency to tablecodec.EncodeValue, including temporal flattening, instead of raw codec.EncodeValue. Reuse the existing SessionTimeZone/encode_table_value interface. Cardinality now consumes this helper and the shared EnumRangeValues. CMS source 33 and scalar enumeration source 3 pass; Go verifies duration/date/time point and range counts plus +08:00 timestamp CMS/TopN lookup. Full details and exact commands are in rust/docs/planner/access-path-structural-parity-audit.md under Shared version-1 statistics dependencies. This supersedes any inference that the prior string-only QueryValue test covered temporal encoding; it does not establish whole-package or planner time-zone parity.
+
 - [x] (2026-08-29) Persisted analyze snapshot metadata and matched outdated-statistics pseudo policy.
 - [x] (2026-08-29) Added exact secondary-index reads and per-item histogram, bucket, TopN, and CMS loading.
 - [x] (2026-08-29) Added logical predicate-column demand collection, including lineage, physical-table visitation, and operator counting.

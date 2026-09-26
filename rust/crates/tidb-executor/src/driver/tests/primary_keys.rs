@@ -126,8 +126,6 @@ fn unsupported_constraints_are_rejected() {
     for ddl in [
         // Two primary keys is not a table.
         "CREATE TABLE c (a BIGINT PRIMARY KEY, b BIGINT PRIMARY KEY)",
-        // A prefix-length primary key needs prefix index support.
-        "CREATE TABLE c (a VARCHAR(10), PRIMARY KEY (a(3)))",
     ] {
         assert!(
             crate::run_create_table_on(ddl, &mut catalog).is_err(),

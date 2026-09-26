@@ -201,6 +201,8 @@ pub struct ExplainOperator {
     pub label: String,
     /// Optimizer-estimated output row count.
     pub estimated_rows: Option<f64>,
+    /// Cost from the statement's physical-plan cost model; absent for logical nodes.
+    pub estimated_cost: Option<f64>,
     /// Rows produced by this physical operator during `EXPLAIN ANALYZE`.
     pub actual_rows: Option<u64>,
     /// Collected runtime information; absent when this operator was not metered.
@@ -224,6 +226,7 @@ impl ExplainOperator {
             id,
             label: String::new(),
             estimated_rows: None,
+            estimated_cost: None,
             actual_rows: None,
             execution_info: None,
             task: ExplainTask::Root,
@@ -423,7 +426,7 @@ impl Explain {
         Ok(ExplainSchema { field_names: names })
     }
 
-    /// Renders ROW/BRIEF/PLAN_CACHE/PLAN_TREE from the retained physical tree.
+    /// Renders ROW/VERBOSE/BRIEF/PLAN_CACHE/PLAN_TREE from the retained physical tree.
     pub fn render_result(
         &mut self,
         context: &mut ExplainContext,
@@ -432,6 +435,7 @@ impl Explain {
         if !matches!(
             self.format,
             ExplainFormat::Row
+                | ExplainFormat::Verbose
                 | ExplainFormat::Brief
                 | ExplainFormat::PlanCache
                 | ExplainFormat::PlanTree
@@ -470,6 +474,12 @@ fn render_operator(
         row.push(operator.estimated_rows.map_or_else(
             || "N/A".to_owned(),
             |estimated_rows| format!("{estimated_rows:.2}"),
+        ));
+    }
+    if format == ExplainFormat::Verbose {
+        row.push(operator.estimated_cost.map_or_else(
+            || "N/A".to_owned(),
+            |cost| format!("{cost:.2}"),
         ));
     }
     if runtime {

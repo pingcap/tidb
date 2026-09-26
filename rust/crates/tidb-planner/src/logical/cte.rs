@@ -241,8 +241,8 @@ impl LogicalCTE {
     /// Row counts: a non-distinct recursive CTE adds the recursive part's rows;
     /// a `DISTINCT` one takes `distinct_row_count`, which is Go's
     /// `cardinality.EstimateColsNDVWithMatchedLen` over this operator's whole
-    /// schema — a NAMED boundary, and `None` leaves the seed's count rather
-    /// than guessing.
+    /// schema. If the caller has not precomputed it, the context-aware body
+    /// uses the supplied session ratio.
     ///
     /// This also writes THROUGH [`Self::seed_stat`], which is what makes every
     /// [`LogicalCTETable`] for the same storage see the seed profile.
@@ -254,6 +254,28 @@ impl LogicalCTE {
         self_schema: &Schema,
         distinct_row_count: Option<f64>,
         reloads: &[bool],
+    ) -> (StatsInfo, bool) {
+        self.derive_stats_with_group_ndv_skew_ratio(
+            seed,
+            seed_schema,
+            recursive,
+            self_schema,
+            distinct_row_count,
+            reloads,
+            tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+        )
+    }
+
+    /// Go `LogicalCTE.DeriveStats` with its session group-NDV ratio.
+    pub fn derive_stats_with_group_ndv_skew_ratio(
+        &mut self,
+        seed: &StatsInfo,
+        seed_schema: &Schema,
+        recursive: Option<(&StatsInfo, &Schema)>,
+        self_schema: &Schema,
+        distinct_row_count: Option<f64>,
+        reloads: &[bool],
+        group_ndv_skew_ratio: f64,
     ) -> (StatsInfo, bool) {
         let reload = reloads.len() == 1 && reloads[0];
         if !reload {
@@ -300,10 +322,13 @@ impl LogicalCTE {
                         .iter()
                         .map(|column| column.unique_id)
                         .collect::<Vec<_>>();
-                    crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(
-                        &columns, &profile,
-                    )
-                    .0
+                    crate::cardinality::derive_stats::
+                        estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                            &columns,
+                            &profile,
+                            group_ndv_skew_ratio,
+                        )
+                        .0
                 });
             } else {
                 row_count += recur.row_count();
