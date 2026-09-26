@@ -569,14 +569,17 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 		oldTable := tbl.OldTable
 		var statsErr error = nil
 		if oldTable.Stats != nil {
+			targetStats := *oldTable.Stats
+			targetStats.DatabaseName = tbl.TargetDBName().O
+			targetStats.TableName = tbl.Table.Name.O
 			log.Info("start loads analyze after validate checksum",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
 			// NOTICE: skip updating cache after load stats from json
-			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), oldTable.Stats, 0); statsErr != nil {
-				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(statsErr))
+			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), &targetStats, 0); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", &targetStats), zap.Error(statsErr))
 			}
 			log.Info("restore stat done",
 				zap.Stringer("table", oldTable.Info.Name),
