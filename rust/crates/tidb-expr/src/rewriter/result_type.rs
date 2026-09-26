@@ -230,7 +230,12 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
         CastType::DateTime { .. } => "cast_datetime",
         CastType::Time { .. } => "cast_time",
         CastType::Year => "cast_year",
-        CastType::Double | CastType::Float => "cast_double",
+        CastType::Double => "cast_double",
+        // go's FLOAT(p<=24) cast is its OWN signature (`builtinCastRealAsFloatSig`-shape):
+        // its out-of-range behavior differs from DOUBLE -- a TEXT source raises
+        // 1690 `constant 1e+300 overflows float` while a REAL source answers 0 --
+        // so it cannot share the cast_double node, whose DOUBLE arm clamps.
+        CastType::Float => "cast_float",
         CastType::Json => "cast_json",
         CastType::Vector { .. } => "cast_vector",
     };
