@@ -1,0 +1,16 @@
+create table locate_source(id int primary key, s varchar(20) collate utf8mb4_0900_ai_ci);
+insert into locate_source values(1,'é'),(2,'É'),(3,'e'),(4,'café'),(5,'CAFE'),(6,'xéx'),(7,'xyz');
+create table locate_scalar like locate_source;
+create table locate_vector like locate_source;
+insert into locate_scalar select * from locate_source;
+insert into locate_vector select * from locate_source;
+set tidb_enable_vectorized_expression=0;
+select id,locate('e',s),locate('e',s,2) from locate_scalar order by id;
+delete from locate_scalar where locate('e',s)=0;
+select id from locate_scalar order by id;
+set tidb_enable_vectorized_expression=1;
+select id,locate('e',s),locate('e',s,2) from locate_vector order by id;
+delete from locate_vector where locate('e',s)=0;
+select id from locate_vector order by id;
+drop table locate_source, locate_scalar, locate_vector;
+set tidb_enable_vectorized_expression=default;
