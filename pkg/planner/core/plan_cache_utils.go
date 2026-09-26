@@ -377,6 +377,7 @@ func newPlanCacheKeyWithMatchedBinding(
 		_, timezoneOffset = time.Now().In(vars.TimeZone).Zone()
 	}
 	connCharset, connCollation := vars.GetCharsetInfo()
+	defaultWeekFormat := sctx.GetExprCtx().GetEvalCtx().GetDefaultWeekFormatMode()
 
 	// not allow to share the same plan among different users for safety.
 	var userName, hostName string
@@ -398,6 +399,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	hashLen += len(defaultWeekFormat) + len(vars.DefaultCollationForUTF8MB4) + 2
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
@@ -411,6 +413,8 @@ func newPlanCacheKeyWithMatchedBinding(
 	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
 	// txn status
 	hashLen += 6
+	// divPrecisionIncrement affects decimal division result types and constant folding.
+	hashLen += 8
 
 	hash := make([]byte, 0, hashLen)
 	// hashInitCap is not used, just for test purposes
@@ -428,6 +432,12 @@ func newPlanCacheKeyWithMatchedBinding(
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = codec.EncodeInt(hash, int64(vars.DivPrecisionIncrement))
+	// These settings affect folded WEEK values and uncollated _utf8mb4 literals.
+	hash = append(hash, defaultWeekFormat...)
+	hash = append(hash, 0)
+	hash = append(hash, vars.DefaultCollationForUTF8MB4...)
+	hash = append(hash, 0)
 	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {

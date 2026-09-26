@@ -82,6 +82,76 @@ func TestDropPrepare(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestPlanCacheDivPrecisionIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, query := range []string{"select 1/3", "select a/? from t", "select a/3 from t"} {
+		t.Run(query, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table if not exists t (a int)")
+			tk.MustExec("delete from t")
+			tk.MustExec("insert into t values (1)")
+			tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+			tk.MustExec("set div_precision_increment=4")
+			tk.MustExec("prepare stmt from '" + query + "'")
+			execute := "execute stmt"
+			if query == "select a/? from t" {
+				tk.MustExec("set @a=3")
+				execute += " using @a"
+			}
+			for _, tc := range []struct {
+				precision string
+				result    string
+				cached    string
+			}{
+				{"4", "0.3333", "0"},
+				{"8", "0.33333333", "0"},
+				{"1", "0.3", "0"},
+				{"30", "0.333333333333333333333333333333", "0"},
+				{"4", "0.3333", "1"},
+			} {
+				tk.MustExec("set div_precision_increment=" + tc.precision)
+				tk.MustQuery(execute).Check(testkit.Rows(tc.result))
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(tc.cached))
+				tk.MustQuery(execute).Check(testkit.Rows(tc.result))
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			}
+		})
+	}
+}
+
+func TestPlanCacheExpressionSessionSettings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_settings(a int)")
+	tk.MustExec("insert into t_settings values (1), (2)")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+	for _, tc := range []struct {
+		variable, query string
+		values, wants   []string
+	}{
+		{"default_week_format", "select count(*) from t_settings where week('2008-02-20')=8", []string{"0", "1", "0"}, []string{"0", "2", "0"}},
+		{"default_collation_for_utf8mb4", "select _utf8mb4'A'=_utf8mb4'a'", []string{"utf8mb4_bin", "utf8mb4_general_ci", "utf8mb4_bin"}, []string{"0", "1", "0"}},
+		{"div_precision_increment", "select cast(avg(a) as char) from t_settings", []string{"4", "8", "4"}, []string{"1.5000", "1.50000000", "1.5000"}},
+	} {
+		t.Run(tc.variable, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+			tk.MustExec("set " + tc.variable + "='" + tc.values[0] + "'")
+			tk.MustExec("prepare st_settings from \"" + tc.query + "\"")
+			for i, value := range tc.values {
+				tk.MustExec("set " + tc.variable + "='" + value + "'")
+				tk.MustQuery("execute st_settings").Check(testkit.Rows(tc.wants[i]))
+				tk.MustQuery("execute st_settings").Check(testkit.Rows(tc.wants[i]))
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			}
+			tk.MustExec("deallocate prepare st_settings")
+		})
+	}
+}
+
 func BenchmarkNewPlanCacheKey(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
