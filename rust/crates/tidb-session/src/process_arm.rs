@@ -45,6 +45,41 @@ impl Session {
                             ))
                         }
                     };
+        // go `globalconn.ParseConnID` + `SimpleExec.execKillStmt`: the plain
+        // KILL decodes the id through the global-conn encoding BEFORE any
+        // lookup. A 32-bit id carrying the 64-bit marker bit warns
+        // "truncated" and does nothing; out-of-range ids warn the parse
+        // failure. `KILL TIDB ...` skips the global decode entirely.
+        if !kill.tidb_extension {
+            if target & 0x8000_0000_0000_0000 > 0 {
+                self.append_warning(
+                    crate::WarningLevel::Warning,
+                    1105,
+                    "Parse ConnectionID failed: unexpected connectionID exceeds int64".to_owned(),
+                );
+                return Ok(Some(StmtOutput::Affected(0)));
+            }
+            if target & 0x1 > 0 {
+                if target & 0xFFFF_FFFF_0000_0000 == 0 {
+                    self.append_warning(
+                        crate::WarningLevel::Warning,
+                        1105,
+                        "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. \
+                         Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill \
+                         without truncating ConnectionID."
+                            .to_owned(),
+                    );
+                    return Ok(Some(StmtOutput::Affected(0)));
+                }
+            } else if target & 0xFFFF_FFFF_0000_0000 > 0 {
+                self.append_warning(
+                    crate::WarningLevel::Warning,
+                    1105,
+                    "Parse ConnectionID failed: unexpected connectionID exceeds uint32".to_owned(),
+                );
+                return Ok(Some(StmtOutput::Affected(0)));
+            }
+        }
         // Captured from TiDB: KILL of an id this server does not
         // hold is NOT an error -- it answers OK, having done
         // nothing. (1094 `Unknown thread id` belongs to EXPLAIN
