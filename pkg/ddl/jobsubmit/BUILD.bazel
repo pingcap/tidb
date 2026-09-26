@@ -44,7 +44,7 @@ go_test(
         "table_mode_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         ":jobsubmit",
         "//pkg/ddl/serverstate",

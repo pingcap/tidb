@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // onAlterTableMode should only be called by alterTableMode, will call updateVersionAndTableInfo
@@ -33,6 +34,17 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 	tbInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, err
+	}
+
+	// tbInfo is read fresh from the job's own metadata mutator, so this
+	// read is atomic with respect to any other concurrent DDL job on the
+	// same table (the job scheduler serializes them). Rejecting here, rather
+	// than relying only on a caller-side pre-check, closes the race where a
+	// concurrent schema change lands after the caller's own check but before
+	// this job actually runs.
+	if args.ExpectedRevision != nil && tbInfo.Revision != *args.ExpectedRevision {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInfoSchemaChanged.GenWithStackByArgs()
 	}
 
 	switch tbInfo.Mode {
@@ -76,11 +88,24 @@ func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) err
 }
 
 // AlterTableMode creates a DDL job for alter table mode.
-func AlterTableMode(de Executor, sctx sessionctx.Context, mode model.TableMode, schemaID, tableID int64) error {
+//
+// expectedRevision is optional (pass none, or a single value): when given,
+// the job is rejected with dbterror.ErrInfoSchemaChanged unless the table's
+// Revision, read atomically at job-execution time, still matches. Callers
+// that captured a table schema snapshot earlier and only later request the
+// mode switch should pass the snapshot's Revision to detect and reject a
+// schema change that raced ahead of them.
+func AlterTableMode(de Executor, sctx sessionctx.Context, mode model.TableMode, schemaID, tableID int64, expectedRevision ...uint64) error {
+	if len(expectedRevision) > 1 {
+		return errors.Errorf("AlterTableMode: at most one expectedRevision is allowed, got %d", len(expectedRevision))
+	}
 	args := &model.AlterTableModeArgs{
 		TableMode: mode,
 		SchemaID:  schemaID,
 		TableID:   tableID,
+	}
+	if len(expectedRevision) == 1 {
+		args.ExpectedRevision = &expectedRevision[0]
 	}
 	return de.AlterTableMode(sctx, args)
 }
