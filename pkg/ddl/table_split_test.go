@@ -565,3 +565,29 @@ func TestTableSplitPolicyRejectSplitIndexPrimaryOnClustered(t *testing.T) {
 		primary key (id) clustered
 	) split index `+"`PRIMARY`"+` between (0) and (1000000) regions 4`, errno.ErrForbiddenDDL)
 }
+
+func TestTableSplitPolicyConvertsStringLiteralBounds(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
+
+	// String literal bounds for an integer handle column must be accepted and
+	// persisted with the same conversion behavior as the one-shot SPLIT TABLE
+	// statement. See https://github.com/pingcap/tidb/issues/71395.
+	tk.MustExec("drop table if exists t_lit")
+	tk.MustExec(`create table t_lit (id bigint primary key) split between ('0') and ('10000') regions 4`)
+	tbl := external.GetTableByName(t, tk, "test", "t_lit")
+	require.NotNil(t, tbl.Meta().TableSplitPolicy)
+	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+	// Unconvertible bounds must fail the DDL rather than persisting a policy
+	// that is silently skipped when it is applied later.
+	tk.MustGetErrCode(`create table t_lit_create_bad (
+		id bigint primary key
+	) split between ('abc') and ('10000') regions 4`, errno.WarnDataTruncated)
+
+	tk.MustExec("drop table if exists t_lit_alter_bad")
+	tk.MustExec("create table t_lit_alter_bad (id bigint primary key)")
+	tk.MustGetErrCode("alter table t_lit_alter_bad split between ('abc') and ('10000') regions 4", errno.WarnDataTruncated)
+}
