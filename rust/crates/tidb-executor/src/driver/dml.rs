@@ -684,6 +684,7 @@ fn run_insert_with_physical(
             zone: ctx.session_zone(),
             no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
             div_precision_increment: ctx.div_precision_increment(),
+            clause_message: "field list",
         };
         for (index, values) in insert.rows.iter().enumerate() {
             let width = values.len();
@@ -1766,6 +1767,7 @@ fn prepare_on_duplicate_assignments(
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
+        clause_message: "field list",
     };
     let mut prepared = Vec::with_capacity(assignments.len());
     for assignment in assignments {
@@ -1868,6 +1870,7 @@ fn apply_on_duplicate(
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
+        clause_message: "field list",
     };
     let mut updated = existing.clone();
     for assignment in &prepared.assignments {
@@ -2991,6 +2994,7 @@ fn run_update_with_physical(
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
+        clause_message: "field list",
     };
     let mut assignments = Vec::with_capacity(update.assignments.len());
     for (assignment_index, assignment) in update.assignments.iter().enumerate() {
@@ -3820,6 +3824,7 @@ fn run_delete_with_physical(
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
+        clause_message: "expression",
     };
     let predicate = match &delete.where_clause {
         Some(expr) => Some(DmlExpression::build(

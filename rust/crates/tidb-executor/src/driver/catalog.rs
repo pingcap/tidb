@@ -3020,9 +3020,18 @@ pub(crate) struct TableResolver<'a> {
     pub(crate) zone: tidb_expr::SessionTimeZone,
     pub(crate) no_unsigned_subtraction: bool,
     pub(crate) div_precision_increment: u32,
+    /// Go `clauseMsg` for this resolver's statement clause: the write lists
+    /// (`INSERT VALUES`, `ON DUPLICATE KEY UPDATE`, `UPDATE ... SET`) name
+    /// `field list`, while a site whose unresolved columns a DIFFERENT clause
+    /// names keeps the generic `expression` spelling.
+    pub(crate) clause_message: &'static str,
 }
 
 impl ColumnResolver for TableResolver<'_> {
+    fn clause_message(&self) -> &'static str {
+        self.clause_message
+    }
+
     fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
         tidb_expr::Columns::param_value(&self.constant_context, order)
     }

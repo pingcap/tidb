@@ -336,6 +336,10 @@ impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
     fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
         self.base.eval_constant(expression)
     }
+
+    fn clause_message(&self) -> &'static str {
+        self.base.clause_message()
+    }
 }
 
 /// Finds and materializes every named DEFAULT in one scalar expression using
@@ -423,8 +427,17 @@ pub(crate) fn rewrite_with_prepared_defaults(
         base: resolver,
         defaults: std::cell::RefCell::new(defaults.iter().cloned().collect()),
     };
-    let rewritten = rewrite_expr_resolved(expr, &resolver)
-        .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+    let rewritten = rewrite_expr_resolved(expr, &resolver).map_err(|error| match error {
+        // Every caller rewrites a write-list context (INSERT VALUES, `ON
+        // DUPLICATE KEY UPDATE` assignments, `UPDATE ... SET`), where go
+        // names ErrBadField's clause `field list` — not the generic
+        // `expression` an unevaluated residual would report.
+        tidb_expr::EvalError::UnknownColumn(column) => DriverError::UnknownColumnInClause {
+            column: column.to_lowercase(),
+            clause: "field list".to_owned(),
+        },
+        other => DriverError::Exec(ExecError::Eval(other)),
+    })?;
     if !resolver.defaults.borrow().is_empty() {
         return Err(DriverError::unsupported(
             "prepared DEFAULT leaves did not match the expression",
