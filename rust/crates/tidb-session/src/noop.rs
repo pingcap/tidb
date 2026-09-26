@@ -116,7 +116,20 @@ impl Session {
     ) -> Result<(), DriverError> {
         match self.noop_funcs_mode(global) {
             NoopFuncsMode::On => Ok(()),
-            NoopFuncsMode::Off => Err(DriverError::FunctionsNoopImpl(clause)),
+            NoopFuncsMode::Off => {
+                // go appends the statement error into the warning buffer as
+                // well (driver_tidb.go:376's error door), so SHOW WARNINGS
+                // after the refused statement carries the same 1235 row.
+                self.append_warning(
+                    WarningLevel::Error,
+                    1235,
+                    format!(
+                        "function {clause} has only noop implementation in tidb now, use \
+                         tidb_enable_noop_functions to enable these functions"
+                    ),
+                );
+                Err(DriverError::FunctionsNoopImpl(clause))
+            }
             NoopFuncsMode::Warn => {
                 self.append_warning(
                     WarningLevel::Warning,
