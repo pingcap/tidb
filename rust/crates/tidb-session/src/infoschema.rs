@@ -1785,6 +1785,50 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
     // not an information_schema row.
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        // go seeds metrics_schema/performance_schema/sys with SYSTEM VIEW
+        // rows (InnoDB/Compact, every storage cell zero, ids from its
+        // bootstrap block) -- the seeded placeholder tables render the same
+        // shape instead of BASE TABLE rows.
+        if matches!(
+            schema.to_ascii_lowercase().as_str(),
+            "metrics_schema" | "performance_schema" | "sys"
+        ) {
+            let table = match catalog.table_in(&schema, &table_name) {
+                Some(TableEntry::Kv(table)) => table,
+                _ => continue,
+            };
+            rows.push(vec![
+                text(CATALOG),
+                text(&schema),
+                text(&table_name),
+                text("SYSTEM VIEW"),
+                text("InnoDB"),
+                Datum::Int(10),
+                text("Compact"),
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Null,
+                crate::datetime_datum(0),
+                Datum::Null,
+                Datum::Null,
+                text("utf8mb4_bin"),
+                Datum::Null,
+                text(""),
+                text(""),
+                Datum::Int(table.table_id),
+                Datum::Null,
+                text("NONCLUSTERED"),
+                Datum::Null,
+                text("Normal"),
+                Datum::Null,
+                text(""),
+            ]);
+            continue;
+        }
         let table = match catalog.table_in(&schema, &table_name) {
             Some(TableEntry::Kv(table)) => table,
             Some(TableEntry::View(_)) => {
@@ -1846,6 +1890,17 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
         ("performance_schema", "PERFORMANCE_SCHEMA", PERFORMANCE_SCHEMA_TABLES, "1970-01-01 08:00:00", false),
         ("sys", "sys", SYS_TABLES, "2026-09-24 18:05:56", true),
     ] {
+        let created = tidb_datatype::parse_time(
+            created,
+            tidb_datatype::TimeType::DateTime,
+            0,
+            false,
+            true,
+            false,
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .map(|parsed| tidb_datatype::Datum::Time(parsed.time))
+        .unwrap_or(tidb_datatype::Datum::Null);
         for (table_name, table_id) in tables {
             let mut row = vec![
                 text(CATALOG),
@@ -1858,13 +1913,13 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             ];
             if is_view {
                 row.extend(std::iter::repeat_n(Datum::Null, 13));
-                row.push(text(created));
+                row.push(created.clone());
                 row.extend(std::iter::repeat_n(Datum::Null, 7));
                 row.push(text("VIEW"));
             } else {
                 row.extend(std::iter::repeat_n(Datum::Int(0), 6));
                 row.push(Datum::Null);
-                row.push(text(created));
+                row.push(created.clone());
                 row.extend(std::iter::repeat_n(Datum::Null, 2));
                 row.push(text("utf8mb4_bin"));
                 row.push(Datum::Null);

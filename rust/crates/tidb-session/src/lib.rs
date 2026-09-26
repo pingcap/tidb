@@ -2622,7 +2622,7 @@ fn go_uptime_string(seconds: i64) -> String {
 
 /// A `DATETIME` cell for a unix timestamp, in the node's own clock -- Go's
 /// `types.NewTime(types.FromGoTime(time.Unix(ts, 0)), mysql.TypeDatetime, 0)`.
-fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
+pub(crate) fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
     use chrono::{Datelike, TimeZone, Timelike};
     // go renders these datetimes through the node's own clock (`FromGoTime`),
     // i.e. the system's local zone -- the UTC read answered 13:07 where the
