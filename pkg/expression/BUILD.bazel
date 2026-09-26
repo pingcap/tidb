@@ -166,6 +166,7 @@ go_test(
         "builtin_ilike_test.go",
         "builtin_info_test.go",
         "builtin_info_vec_test.go",
+        "builtin_json_pretty_issue71436_test.go",
         "builtin_json_test.go",
         "builtin_json_vec_test.go",
         "builtin_like_test.go",
