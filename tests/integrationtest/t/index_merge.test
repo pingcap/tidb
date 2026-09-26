@@ -1,4 +1,5 @@
 --echo ///// SUBQUERY
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 0;
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
@@ -75,6 +76,7 @@ using
 explain format = 'plan_tree' select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 drop global binding for select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 1;
 
 --echo ///// CREATE TABLE/VIEW
 drop table if exists t1;
