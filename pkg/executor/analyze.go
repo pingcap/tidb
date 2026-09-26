@@ -320,6 +320,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return err
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
+	warnUnusedNDVRate(sessionVars, tasks)
 
 	if len(tasks) == 0 {
 		return nil
@@ -564,6 +565,37 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 			msg = "skip analyze locked table: %s"
 		}
 		sessionVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf(msg, tables))
+	}
+}
+
+// warnUnusedNDVRate warns when the tables and partitions to analyze ask for an
+// NDVRATE below 1, in the statement or in saved options, but none samples rows
+// because none has more than tidb_analyze_sampled_ndv_threshold rows.
+func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask) {
+	// Zero turns sampled NDV off, so skip the warning.
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	if threshold == 0 {
+		return
+	}
+	requested, used := false, false
+	for _, task := range tasks {
+		// Multi-valued and special global index tasks never sample.
+		if task.taskType != colTask {
+			continue
+		}
+		// The builder sends NdvRate only above the threshold. Reuse its decision so
+		// a statement that samples any table or partition gets no false warning.
+		if task.colExec.analyzePB.ColReq.NdvRate != nil {
+			used = true
+		}
+		if rate := math.Float64frombits(task.colExec.opts[ast.AnalyzeOptNDVRate]); rate > 0 && rate < 1 {
+			requested = true
+		}
+	}
+	if requested && !used {
+		sessionVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+			"NDVRATE is not used because no table or partition has more rows than %s(%d)",
+			vardef.TiDBAnalyzeSampledNDVThreshold, threshold))
 	}
 }
 

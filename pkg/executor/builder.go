@@ -3548,7 +3548,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
-	if rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate]); rate > 0 && rate < 1 {
+	if rate := chooseNDVRate(opts, count); rate < 1 {
 		e.analyzePB.ColReq.NdvRate = &rate
 	}
 	if task.TblInfo != nil {
@@ -3559,6 +3559,18 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	b.err = tables.SetPBColumnsDefaultValue(b.sctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+// chooseNDVRate returns the fraction of rows that TiKV processes for NDV. While
+// tidb_analyze_sampled_ndv_threshold is not 0, a table or partition with more
+// rows than it uses its NDVRATE option. Others use full input.
+func chooseNDVRate(opts map[ast.AnalyzeOptionType]uint64, count int64) float64 {
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate])
+	if threshold == 0 || count <= threshold || rate <= 0 {
+		return 1
+	}
+	return rate
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.

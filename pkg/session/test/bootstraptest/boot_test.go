@@ -831,7 +831,8 @@ func testTiDBOptRangeMaxCountWhenUpgrading(t *testing.T) {
 			store, dom := session.CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 			se := session.CreateSessionAndSetID(t, store)
-			previousVersion := session.CurrentBootstrapVersion - 1
+			// Version 318 adds tidb_opt_range_max_count.
+			previousVersion := int64(317)
 			txn, err := store.Begin()
 			require.NoError(t, err)
 			m := meta.NewMutator(txn)
