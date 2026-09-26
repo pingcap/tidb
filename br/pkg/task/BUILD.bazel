@@ -135,10 +135,12 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/backup",
+        "//br/pkg/checkpoint",
         "//br/pkg/config",
         "//br/pkg/conn",
         "//br/pkg/errors",
         "//br/pkg/gc",
+        "//br/pkg/glue",
         "//br/pkg/gluetidb",
         "//br/pkg/gluetidb/mock",
         "//br/pkg/metautil",
