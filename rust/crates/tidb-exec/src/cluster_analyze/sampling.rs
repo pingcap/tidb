@@ -390,7 +390,6 @@ pub(crate) fn analyze_table<C, L, P>(
     snapshot: u64,
     selected_columns: Option<&std::collections::HashSet<i64>>,
     concurrency: u64,
-    flags: u64,
     timeout: std::time::Duration,
     killer: &tidb_util::sqlkiller::SqlKiller,
     resource_group: &str,
@@ -404,6 +403,8 @@ where
     let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
     let _cancel_guard = SamplingCancellation::start(killer, cancellation.clone())?;
     let plan = super::cluster_analyze_plan(table, selected_columns)?;
+    let virtuals =
+        super::virtual_samples::VirtualSamples::new(table, &plan, &statement.eval_context)?;
     let schema = SamplingSchema::new(table, &plan)?;
     let options = &statement.options;
     let rate = options.sample_rate.unwrap_or_else(|| {
@@ -413,8 +414,8 @@ where
         &plan,
         options,
         rate,
-        flags,
-        statement.time_zone.dag_zone().1,
+        statement.eval_context.push_down_flags(),
+        statement.eval_context.session_zone().dag_zone().1,
     )?;
     let mut collector = collect_regions(
         opener,
@@ -432,11 +433,7 @@ where
         progress,
     )?;
     for (position, index) in plan.indexes().iter().enumerate() {
-        if !index
-            .prefix_lengths
-            .iter()
-            .any(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH)
-        {
+        if !index_requires_ndv_scan(table, &plan, index) {
             continue;
         }
         let primary = table.is_common_handle
@@ -457,11 +454,56 @@ where
         )?;
         collector.replace_special_index_stats(plan.index_slot(position), null_count, sketch);
     }
-    let run = tidb_executor::analyze::AnalyzeRun::start(&plan, options, realtime_count)?;
+    finish_samples(
+        &virtuals,
+        physical_id,
+        statement,
+        realtime_count,
+        snapshot,
+        &plan,
+        &schema,
+        collector,
+    )
+}
+
+pub(super) fn finish_samples(
+    virtuals: &super::virtual_samples::VirtualSamples,
+    physical_id: i64,
+    statement: &super::AnalyzeStatement,
+    realtime_count: Option<i64>,
+    snapshot: u64,
+    plan: &AnalyzePlan,
+    schema: &SamplingSchema,
+    collector: tidb_stats::row_sample_collector::RowSampleCollector,
+) -> Result<super::AnalyzeReport, AnalyzeError> {
+    let run = tidb_executor::analyze::AnalyzeRun::start(plan, &statement.options, realtime_count)?;
+    let timezone = statement.eval_context.session_zone();
     let analyzed = run.finish_collector(collector, |row| {
-        schema.decode_handle(row, &statement.time_zone)
+        let handle = schema.decode_handle(row, &timezone)?;
+        virtuals.materialize(row, &statement.eval_context)?;
+        Ok(handle)
     })?;
     Ok(super::report_from_analyzed(analyzed, physical_id, snapshot))
+}
+
+/// Go analyzes NDV from stored index keys whenever row sampling cannot
+/// reproduce the encoded key's distribution in TiKV.
+pub(super) fn index_requires_ndv_scan(
+    table: &TableInfo,
+    plan: &AnalyzePlan,
+    index: &tidb_executor::analyze::AnalyzedIndex,
+) -> bool {
+    index
+        .prefix_lengths
+        .iter()
+        .any(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH)
+        || index.column_positions.iter().any(|position| {
+            let id = plan.columns()[*position].id;
+            table.cols().iter_deref().any(|column| {
+                let column = column.read();
+                column.id == id && column.is_virtual_generated()
+            })
+        })
 }
 
 fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_distsql::IsolationLevel) {
@@ -569,7 +611,7 @@ where
     outcome
 }
 
-/// Go analyzeIndexNDVPushDown uses index keys for prefix NDV. A single
+/// Go analyzeIndexNDVPushDown uses index keys for prefix and virtual-column NDV. A single
 /// column's NULL range has a separate histogram and never enters its sketch.
 fn collect_index_ndv<C, L, P>(
     opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
@@ -612,8 +654,8 @@ where
         } else {
             tipb::AnalyzeType::TypeIndex
         } as i32),
-        flags: Some(statement.push_down_flags),
-        time_zone_offset: Some(statement.time_zone.dag_zone().1),
+        flags: Some(statement.eval_context.push_down_flags()),
+        time_zone_offset: Some(statement.eval_context.session_zone().dag_zone().1),
         idx_req: Some(tipb::AnalyzeIndexReq {
             bucket_size: Some(1),
             num_columns: Some(index.column_positions.len() as i32),

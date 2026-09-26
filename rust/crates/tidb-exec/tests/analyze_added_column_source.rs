@@ -198,3 +198,71 @@ fn a_column_added_after_the_rows_analyzes_as_its_origin_default() {
         "the TopN entry is not the column's default value 5"
     );
 }
+
+#[test]
+fn virtual_index_samples_are_materialized_from_stored_base_columns() {
+    let statement =
+        tidb_parser::parse("CREATE TABLE t(a INT, v INT AS (a+1), KEY iv(v), KEY ie((a+2)))")
+            .unwrap();
+    let tidb_ast::Stmt::Ddl(ddl) = statement else {
+        panic!("DDL")
+    };
+    let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
+        panic!("CREATE TABLE")
+    };
+    let mut table =
+        build_table_info(create, "utf8mb4", "utf8mb4_bin", ClusteredIndexDefMode::On).unwrap();
+    table.id = 4242;
+    let a = table
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "a")
+        .unwrap()
+        .read()
+        .id;
+    let mut store = RowStore::default();
+    for (handle, value) in [1, 2, 2, 3].into_iter().enumerate() {
+        let key = encode_row_key(
+            table.id,
+            &tidb_codec::encode_key(&[Datum::Int(handle as i64)]).unwrap(),
+        );
+        let value = encode_table_row(None, &[Datum::Int(value)], &[a], true, None).unwrap();
+        store.pairs.insert(key, value);
+    }
+    let report = analyze_table(
+        &mut store,
+        &table,
+        &AnalyzeOptions::default(),
+        Some(4),
+        100,
+        None,
+    )
+    .unwrap();
+    assert_eq!(report.stats.columns.len(), 1);
+    assert_eq!(report.stats.columns[0].id, a);
+    assert_eq!(report.stats.indexes.len(), 2);
+    for index in &report.stats.indexes {
+        let metadata = table
+            .indices
+            .iter_deref()
+            .find(|metadata| metadata.read().id == index.id)
+            .unwrap();
+        let increment = if metadata.read().name.lowercase() == "iv" {
+            1
+        } else {
+            2
+        };
+        assert_eq!(index.histogram.ndv, 3);
+        assert_eq!(index.histogram.null_count, 0);
+        let mut topn = index.topn.clone().unwrap();
+        topn.sort();
+        for (value, count) in [(1, 1), (2, 2), (3, 1)] {
+            assert_eq!(
+                topn.query_bytes(
+                    &tidb_codec::encode_key(&[Datum::Int(value + increment)]).unwrap()
+                ),
+                Some(count)
+            );
+        }
+    }
+}

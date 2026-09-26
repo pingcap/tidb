@@ -2909,3 +2909,22 @@ EXPLAIN tests and lint pass. ANALYZE has 20 passing tests and one identical
 baseline partition-global-statistics failure. Cluster virtual evaluation,
 special-index NDV collection and virtual histogram publication remain open;
 the structural audit records exact code boundaries, commands and limitations.
+
+
+Cluster virtual-sample checkpoint (2026-09-25): cluster schema projection now
+retains expression-index inputs; compiled virtual evaluation, independent index
+NDV/null counts, shared histogram suppression and shared statement context follow
+Go's ownership. Encoded NULL/populated collectors, nested selected columns,
+timezones and paged stored rows pass. Validation: 42 exec, eight shared builder,
+42 session expression-index and three isolated storage tests; server check, Go
+oracles and lint pass. Session ANALYZE retains its baseline partition failure;
+aggregate storage tests remain blocked by unrelated stale DDL warning fields.
+Exact commands, temporary test-target procedure and limits are in the structural
+audit. Live TiKV loading, memory/error variants and whole-package/workload gates
+remain open.
+
+Latest reference refresh for the cluster virtual-sample checkpoint: origin/master
+advanced to `8936d7bdcb13a4fc767de42489aace2711c2c6fd`. The entire
+`pkg/planner/cardinality` tree and `pkg/executor/analyze_col_sampling.go` are
+unchanged from pin `633a9e37f1c796ac81c203dc107025e7e65385f0`; Go oracle
+execution above remains on that earlier pinned snapshot.

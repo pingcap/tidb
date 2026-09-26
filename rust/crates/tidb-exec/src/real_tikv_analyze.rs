@@ -1353,7 +1353,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
             let modify_count = partitions.iter().fold(0_i64, |total, partition| {
                 total.wrapping_add(partition.modify_count)
             });
-            let items = match &resolved.statement.time_zone {
+            let items = match &resolved.statement.eval_context.session_zone() {
                 SessionTimeZone::Local => merge_global_items_async(
                     &mut snapshot,
                     &loader,
@@ -1426,7 +1426,7 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
                 .iter()
                 .filter_map(|(_, stats)| stats.as_ref())
                 .fold(0_i64, |total, stats| total.wrapping_add(stats.modify_count));
-            let items = match &resolved.statement.time_zone {
+            let items = match &resolved.statement.eval_context.session_zone() {
                 SessionTimeZone::Local => merge_global_items(
                     Some(&chrono::Local),
                     &partitions,
@@ -2224,7 +2224,6 @@ fn commit_cluster_analyze_target<
                 opener.pd(),
                 timeout,
             ),
-            statement.push_down_flags,
             timeout,
             killer,
             resource_group,
@@ -2540,8 +2539,7 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
         enable_async_merge_global_stats: true,
         partition_merge_concurrency: 1,
         scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
-        push_down_flags: tidb_executor::StmtContext::for_query().push_down_flags(),
-        time_zone: tidb_datatype::SessionTimeZone::utc(),
+        eval_context: tidb_executor::StmtContext::for_query().into(),
         options: Default::default(),
     };
     selected_columns(snapshot, catalog, table, &statement)
@@ -2880,8 +2878,7 @@ mod tests {
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
             scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
-            push_down_flags: tidb_executor::StmtContext::for_query().push_down_flags(),
-            time_zone: tidb_datatype::SessionTimeZone::utc(),
+            eval_context: tidb_executor::StmtContext::for_query().into(),
             options: Default::default(),
         }
     }

@@ -27,6 +27,7 @@
 //! publishing approximate encodings as usable statistics.
 
 pub(crate) mod sampling;
+mod virtual_samples;
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -207,6 +208,8 @@ pub(crate) fn analyze_physical_table_with_progress<S: PagedMetaSnapshot>(
 ) -> Result<AnalyzeReport, AnalyzeError> {
     let plan = cluster_analyze_plan(table, selected_column_ids)?;
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
+    let eval_context = tidb_executor::StmtContext::for_query();
+    let virtuals = virtual_samples::VirtualSamples::new(table, &plan, &eval_context)?;
 
     let names: Vec<&str> = plan
         .columns()
@@ -245,6 +248,7 @@ pub(crate) fn analyze_physical_table_with_progress<S: PagedMetaSnapshot>(
                         .unwrap_or_else(|| column.absent_value.clone()),
                 );
             }
+            virtuals.materialize(&mut columns, &eval_context)?;
             run.push(&columns)?;
         }
         progress(i64::try_from(page.len()).unwrap_or(i64::MAX));
@@ -422,20 +426,10 @@ fn cluster_analyze_plan(
     let mut by_offset: BTreeMap<i64, usize> = BTreeMap::new();
     for column in table.cols().iter_deref() {
         let column = column.read();
-        if column.state != SchemaState::PUBLIC || column.hidden {
+        if column.state != SchemaState::PUBLIC {
             continue;
         }
         if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
-            continue;
-        }
-        // A VIRTUAL generated column has no bytes in the stored row to
-        // sample -- its value lives only in the writer's evaluation, which
-        // this scan cannot reproduce. Go gives it no histogram either
-        // (`analyze_col.go` :755-758); the difference is that Go keeps going
-        // and so does this plan now, rather than refusing every ANALYZE of
-        // any table that carries one. A STORED generated column stays a
-        // normal column: its value IS in the row.
-        if column.is_virtual_generated() {
             continue;
         }
         let qualified = format!("`{}`.`{}`", table.name.original(), column.name.original());
@@ -493,9 +487,8 @@ fn cluster_analyze_plan(
                 table.name.original()
             )));
         }
-        // An index whose key parts are virtual generated columns reads values
-        // the stored row does not carry. Prefix values are cut below with the
-        // same rule as Go's sampling builder.
+        // Selected columns carry the virtual values evaluated after sample
+        // decoding. Prefix values are truncated by the shared sample builder.
         let covers_unsampled_part = index.columns.iter_deref().any(|index_column| {
             let index_column = index_column.read();
             !by_offset.contains_key(&index_column.offset)
@@ -531,7 +524,14 @@ fn cluster_analyze_plan(
         });
     }
 
-    Ok(AnalyzePlan::new(columns, indexes, table.name.original())?)
+    Ok(
+        AnalyzePlan::new(columns, indexes, table.name.original())?.with_virtual_columns(
+            table.cols().iter_deref().filter_map(|column| {
+                let column = column.read();
+                column.is_virtual_generated().then_some(column.id)
+            }),
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -549,6 +549,223 @@ mod tests {
     use tidb_model::index::{IndexColumn, IndexInfo};
     use tidb_model::table_info::TableInfo;
     use tidb_model::SchemaState;
+
+    fn virtual_sample_table() -> TableInfo {
+        let a = ColumnInfo {
+            offset: 0,
+            ..ColumnInfo::new(1, "a", FieldType::new(FieldTypeCode::LongLong))
+        };
+        let v = ColumnInfo {
+            offset: 1,
+            hidden: true,
+            generated_expr_string: "`a` + 2".to_owned(),
+            ..ColumnInfo::new(2, "_V$_ie_0", FieldType::new(FieldTypeCode::LongLong))
+        };
+        TableInfo {
+            id: 42,
+            name: tidb_ast::CiString::new("t"),
+            columns: vec![a, v].into(),
+            indices: vec![IndexInfo {
+                id: 7,
+                name: tidb_ast::CiString::new("ie"),
+                state: SchemaState::PUBLIC,
+                columns: vec![IndexColumn {
+                    offset: 1,
+                    length: UNSPECIFIED_LENGTH,
+                    ..Default::default()
+                }]
+                .into(),
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cluster_sample_plan_retains_virtual_index_inputs() {
+        let table = virtual_sample_table();
+        let plan = cluster_analyze_plan(&table, None).unwrap();
+        assert_eq!(plan.columns().len(), 2);
+        assert_eq!(plan.indexes().len(), 1);
+        assert_eq!(plan.indexes()[0].column_positions, vec![1]);
+    }
+
+    #[test]
+    fn cluster_virtual_samples_replace_null_placeholders_and_omit_column_histograms() {
+        use tidb_stats::row_sample_collector::{
+            RowSampleCollector, RowSampleCollectorProto, RowSampleProto, SamplePolicy,
+        };
+        for all_null in [false, true] {
+            let table = virtual_sample_table();
+            let plan = cluster_analyze_plan(&table, None).unwrap();
+            assert_eq!(plan.indexes().len(), 1);
+            assert!(super::sampling::index_requires_ndv_scan(
+                &table,
+                &plan,
+                &plan.indexes()[0]
+            ));
+            let schema = super::sampling::SamplingSchema::new(&table, &plan).unwrap();
+            let mut statement =
+                super::lower_analyze(&tidb_parser::parse("ANALYZE TABLE t").unwrap(), "test")
+                    .unwrap()
+                    .unwrap()
+                    .remove(0);
+            statement.options.sample_rate = Some(1.0);
+            let proto = RowSampleCollectorProto {
+                count: 4,
+                null_counts: vec![if all_null { 4 } else { 0 }, 4],
+                total_sizes: vec![if all_null { 0 } else { 4 }, 0],
+                fm_sketches: vec![
+                    Some(tidb_stats::FmSketchProto {
+                        mask: 0,
+                        hashset: if all_null { vec![] } else { vec![1, 2, 3] },
+                    }),
+                    None,
+                ],
+                samples: [1, 2, 2, 3]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(handle, a)| RowSampleProto {
+                        row: [
+                            if all_null { Datum::Null } else { Datum::Int(a) },
+                            Datum::Null,
+                            Datum::Int(handle as i64),
+                        ]
+                        .iter()
+                        .map(|value| tidb_codec::encode_value(std::slice::from_ref(value)).unwrap())
+                        .collect(),
+                        weight: 0,
+                    })
+                    .collect(),
+            };
+            let mut collector = RowSampleCollector::from_proto(
+                &proto,
+                SamplePolicy::Bernoulli { sample_rate: 1.0 },
+                super::SampleMemoryQuota::unlimited(),
+            )
+            .unwrap();
+            let mut sketch = tidb_stats::FmSketch::new(1000);
+            if !all_null {
+                sketch.insert_hashes([3, 4, 5]);
+            }
+            collector.replace_special_index_stats(
+                plan.index_slot(0),
+                if all_null { 4 } else { 0 },
+                sketch,
+            );
+            let virtuals =
+                super::virtual_samples::VirtualSamples::new(&table, &plan, &statement.eval_context)
+                    .unwrap();
+            let result = super::sampling::finish_samples(
+                &virtuals,
+                42,
+                &statement,
+                Some(4),
+                100,
+                &plan,
+                &schema,
+                collector,
+            )
+            .unwrap();
+            assert_eq!(result.stats.columns.len(), 1);
+            assert_eq!(result.stats.columns[0].id, 1);
+            let index = &result.stats.indexes[0];
+            assert_eq!(index.id, 7);
+            assert_eq!(index.histogram.ndv, if all_null { 0 } else { 3 });
+            assert_eq!(index.histogram.null_count, if all_null { 4 } else { 0 });
+            if all_null {
+                assert!(index.topn.is_none());
+                continue;
+            }
+            let mut topn = index.topn.clone().unwrap();
+            topn.sort();
+            for (value, count) in [(3, 1), (4, 2), (5, 1)] {
+                assert_eq!(
+                    topn.query_bytes(&tidb_codec::encode_key(&[Datum::Int(value)]).unwrap()),
+                    Some(count)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn selected_virtual_samples_resolve_nested_dependencies_in_sample_order() {
+        let mut table = virtual_sample_table();
+        let a = table.cols().get(0).unwrap().read().clone();
+        let mut v = table.cols().get(1).unwrap().read().clone();
+        v.offset = 2;
+        let unused = ColumnInfo {
+            offset: 1,
+            ..ColumnInfo::new(3, "unused", FieldType::new(FieldTypeCode::LongLong))
+        };
+        let w = ColumnInfo {
+            offset: 3,
+            generated_expr_string: "`_V$_ie_0` * 2".to_owned(),
+            ..ColumnInfo::new(4, "w", FieldType::new(FieldTypeCode::LongLong))
+        };
+        table.columns = vec![a, unused, v, w].into();
+        table
+            .indices
+            .get(0)
+            .unwrap()
+            .write()
+            .columns
+            .get(0)
+            .unwrap()
+            .write()
+            .offset = 3;
+        let selected = [1, 2, 4].into_iter().collect();
+        let plan = cluster_analyze_plan(&table, Some(&selected)).unwrap();
+        assert_eq!(
+            plan.columns()
+                .iter()
+                .map(|column| column.id)
+                .collect::<Vec<_>>(),
+            [1, 2, 4]
+        );
+        assert_eq!(plan.indexes()[0].column_positions, [2]);
+        let context = tidb_executor::StmtContext::for_query();
+        let virtuals =
+            super::virtual_samples::VirtualSamples::new(&table, &plan, &context).unwrap();
+        let mut row = vec![Datum::Int(2), Datum::Null, Datum::Null];
+        virtuals.materialize(&mut row, &context).unwrap();
+        assert_eq!(row, [Datum::Int(2), Datum::Int(4), Datum::Int(8)]);
+        let mut run =
+            tidb_executor::analyze::AnalyzeRun::start(&plan, &AnalyzeOptions::default(), None)
+                .unwrap();
+        run.push(&row).unwrap();
+        assert_eq!(
+            run.finish()
+                .unwrap()
+                .columns
+                .iter()
+                .map(|column| column.id)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+    }
+
+    #[test]
+    fn virtual_samples_use_the_reading_statement_timezone() {
+        let table = virtual_sample_table();
+        table.columns.get(1).unwrap().write().generated_expr_string =
+            "hour(timestamp '2020-01-01 10:00:00+00:00')".to_owned();
+        let plan = cluster_analyze_plan(&table, None).unwrap();
+        for (hours, expected) in [(0, 10), (5, 15), (-8, 2)] {
+            let context = tidb_executor::StmtContext::for_query().with_time_zone(
+                tidb_datatype::SessionTimeZone::Fixed {
+                    name: String::new(),
+                    offset_secs: hours * 3600,
+                },
+            );
+            let virtuals =
+                super::virtual_samples::VirtualSamples::new(&table, &plan, &context).unwrap();
+            let mut row = vec![Datum::Int(1), Datum::Null];
+            virtuals.materialize(&mut row, &context).unwrap();
+            assert_eq!(row[1], Datum::Int(expected));
+        }
+    }
 
     #[test]
     fn sampling_request_keeps_common_handle_order_and_index_slots() {

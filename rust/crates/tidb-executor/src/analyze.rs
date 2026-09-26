@@ -190,6 +190,29 @@ impl AnalyzeOptions {
     }
 }
 
+/// Shared statement authority retained by ANALYZE without formatting its internals.
+#[derive(Clone)]
+pub struct AnalyzeEvalContext(crate::StmtContext);
+
+impl std::fmt::Debug for AnalyzeEvalContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnalyzeEvalContext").finish_non_exhaustive()
+    }
+}
+
+impl std::ops::Deref for AnalyzeEvalContext {
+    type Target = crate::StmtContext;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<crate::StmtContext> for AnalyzeEvalContext {
+    fn from(context: crate::StmtContext) -> Self {
+        Self(context)
+    }
+}
+
 /// One table an `ANALYZE TABLE` statement names, with the knobs it carries.
 #[derive(Clone, Debug)]
 pub struct AnalyzeStatement {
@@ -232,10 +255,8 @@ pub struct AnalyzeStatement {
     pub partition_merge_concurrency: usize,
     /// Session ANALYZE coprocessor concurrency; nonpositive selects adaptive sizing.
     pub scan_concurrency: i64,
-    /// Statement flags sent to TiKV's sampling processor.
-    pub push_down_flags: u64,
-    /// Statement timezone used to decode column TopN candidates.
-    pub time_zone: tidb_datatype::SessionTimeZone,
+    /// Shared statement evaluation and warning context for virtual sample values.
+    pub eval_context: AnalyzeEvalContext,
     /// The effective knobs.
     pub options: AnalyzeOptions,
 }
@@ -555,8 +576,7 @@ pub fn lower_analyze_admin(
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
             scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
-            push_down_flags: crate::StmtContext::for_query().push_down_flags(),
-            time_zone: tidb_datatype::SessionTimeZone::utc(),
+            eval_context: crate::StmtContext::for_query().into(),
             options,
         });
     }
@@ -661,6 +681,7 @@ pub struct AnalyzePlan {
     /// Column positions covered by a single-column unique index, which is
     /// what switches a column's TopN off.
     unique_covered: Vec<bool>,
+    virtual_columns: std::collections::HashSet<i64>,
 }
 
 impl AnalyzePlan {
@@ -694,7 +715,16 @@ impl AnalyzePlan {
             columns,
             indexes,
             unique_covered,
+            virtual_columns: Default::default(),
         })
+    }
+
+    /// Retains virtual values in samples and index keys while suppressing their
+    /// column-histogram build tasks, as Go's sampling builder does.
+    #[must_use]
+    pub fn with_virtual_columns(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
+        self.virtual_columns = ids.into_iter().collect();
+        self
     }
 
     /// The analyzed columns, in the order [`AnalyzeRun::push`] expects a
@@ -1036,6 +1066,9 @@ impl<'a> AnalyzeRun<'a> {
     ) -> Result<AnalyzedTable, AnalyzeError> {
         let mut columns = Vec::with_capacity(plan.columns.len());
         for (position, column) in plan.columns.iter().enumerate() {
+            if plan.virtual_columns.contains(&column.id) {
+                continue;
+            }
             let slot = &slot_stats[position];
             let mut collected = SampleCollector {
                 samples: Vec::new(),

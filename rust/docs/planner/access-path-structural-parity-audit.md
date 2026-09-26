@@ -3366,3 +3366,57 @@ Validation:
 Performance has not been measured. Hidden sample values now incur analysis work
 required for their index distributions. No sysbench/TPC-C/TPC-H/YCSB result or
 full-package completion is claimed.
+
+### Cluster virtual sample lifecycle (2026-09-25)
+
+The previous local fix exposed the cluster adapter's same visible/stored-only
+schema assumption. `cluster_analyze_plan` now retains selected public hidden and
+virtual columns. A shared `AnalyzePlan` virtual-column set suppresses their
+histogram build tasks, matching Go `subBuildWorker`; both local and cluster
+publication therefore receive only real column histograms. The local adapter
+retains linear source-column mapping rather than scanning metadata for every
+built column.
+
+`cluster_analyze/virtual_samples.rs` builds expressions once against the selected
+physical sample schema using the existing generated-column implementation.
+Cluster sampling prepares this before opening requests, decodes returned NULL
+placeholders, and materializes their values under the reading statement context.
+Ordinary tables take a no-virtual fast path. The paged snapshot adapter uses the
+same materialization owner. Virtual index key parts now enter the existing
+independent NDV/null-count scan alongside prefix indexes; row samples still build
+the index histogram/TopN. The original Go sequence and ownership are in
+`pkg/executor/analyze_col_sampling.go` (virtual decoding, special-index results,
+and virtual-column build-task suppression).
+
+The server now retains one shared statement evaluation context in AnalyzeStatement
+rather than separate flag and timezone snapshots. Coprocessor requests, sample
+decoding/evaluation and global-statistics merging derive their policy from it;
+the routed session drains its warnings even when analysis returns an error.
+AnalyzeEvalContext's Debug wrapper does not expose statement internals.
+
+Evidence and limits:
+
+- Restoring the previous hidden/virtual schema exclusion makes `cluster_sample_plan_retains_virtual_index_inputs` fail with one column versus two. The corrected schema passes. This was a targeted restoration of the old gate, not a claim that every intermediate working-tree version compiled.
+- Encoded collector fixtures start virtual values as NULL. Both all-NULL and populated inputs produce the expected index NULL count, NDV and TopN without virtual column histograms. Separate fixtures cover selected physical positions, nested virtual dependencies and reading timezones UTC/+05/-08.
+- The stored-row fixture scans only persisted base columns and reconstructs visible virtual and hidden expression-index values through the paged adapter. Exact TopN distributions agree with the Go oracle used in the preceding checkpoint.
+- No live TiKV network/storage lifecycle was run. General generated-column conversion/error-code fidelity and decoded-sample memory accounting are not proven by these fixtures. The snapshot fixture adapter retains its existing UTC/default-context API. No whole-package or workload-performance completion is claimed.
+
+Commands and outcomes:
+
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --lib cluster_sample_plan_retains_virtual_index_inputs -- --test-threads=1` — old gate fails; fixed gate passes within the suite below.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --lib analyze -- --test-threads=1` — 42 passed, including 14 cluster sampling tests.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib analyze:: -- --test-threads=1` — eight passed.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib expression_index -- --test-threads=1` — 42 passed, including the original NULL-expression SQL fixture.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_analyze -- --test-threads=1` — 20 passed; the previously reproduced baseline partition-global-statistics failure remains.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --test all analyze_added_column_source -- --test-threads=1` — aggregate compilation blocked by eight stale `DdlWrite.warning` / `DdlPlan::AlreadySatisfied.warning` references in existing DDL tests. These files are unchanged by this checkpoint.
+- To verify the affected fixture without altering those unrelated tests, temporarily add `[[test]] name = "analyze_added_column_source", path = "tests/analyze_added_column_source.rs"` to tidb-exec/Cargo.toml, run `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --test analyze_added_column_source -- --test-threads=1`, then restore the manifest. All three tests passed; no Cargo manifest change is retained.
+- `cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-server` — passed.
+- Pinned Go tree: `GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^(TestUninitializedStats|TestRustExpressionIndexAnalyzeReference)$' -count=1` — passed; failpoints disabled afterward.
+- `make lint` and `git diff --check` — passed. No Go/Bazel input changes; bazel_prepare not required.
+
+Reference refresh before commit: `git fetch origin master hparser-integration`
+advanced Go master to `8936d7bdcb13a4fc767de42489aace2711c2c6fd`.
+`git diff --name-only 633a9e37f1c796ac81c203dc107025e7e65385f0 origin/master -- pkg/planner/cardinality pkg/executor/analyze_col_sampling.go`
+returned no paths. The Go oracle execution remains explicitly pinned to the
+earlier snapshot; this comparison verifies the relevant reference files did
+not change.

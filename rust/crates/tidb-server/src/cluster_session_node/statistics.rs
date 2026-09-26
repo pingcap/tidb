@@ -365,8 +365,7 @@ impl ClusterServerSession {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY);
-            statement.push_down_flags = self.session.analyze_push_down_flags();
-            statement.time_zone = self.session.session_time_zone();
+            statement.eval_context = self.session.analyze_statement_context().into();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
             // Go resolves and samples temporary tables through the session's
@@ -412,6 +411,7 @@ impl ClusterServerSession {
             })
             .map_err(|error| SqlQueryError::unknown(error.rendered_message()))
             .and_then(|result| result);
+            self.session.drain_context_warnings(&statement.eval_context);
             let report = analyzed?;
             if report.predicate_columns_empty {
                 self.session.append_routed_warning(

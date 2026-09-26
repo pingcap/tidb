@@ -125,13 +125,12 @@ pub fn analyze_kv_table_columns(
 
     let mut columns = BTreeMap::new();
     let mut column_fm_sketches = BTreeMap::new();
-    for (position, built) in analyzed.columns.into_iter().enumerate() {
-        let column = &table.columns()[source_positions[position]];
-        // Go analyzeColumnsPushdownV2 omits virtual-column histograms.
-        // Their materialized sample values are still needed for index keys.
-        if crate::generated_column::is_virtual(column) {
-            continue;
-        }
+    let source_columns = source_positions
+        .iter()
+        .map(|position| &table.columns()[*position])
+        .filter(|column| !crate::generated_column::is_virtual(*column));
+    for (built, column) in analyzed.columns.into_iter().zip(source_columns) {
+        debug_assert_eq!(built.id, column.id);
         let unsigned = column.field_type.is_unsigned();
         if let Some(sketch) = built.fm_sketch.clone() {
             column_fm_sketches.insert(built.id, sketch);
@@ -361,6 +360,16 @@ fn kv_analyze_plan(
         source_indexes.push(source_index);
     }
 
-    AnalyzePlan::new(columns, indexes, &table.name)
-        .map(|plan| (plan, source_positions, source_indexes))
+    AnalyzePlan::new(columns, indexes, &table.name).map(|plan| {
+        (
+            plan.with_virtual_columns(
+                physical_columns
+                    .iter()
+                    .filter(|column| crate::generated_column::is_virtual(*column))
+                    .map(|column| column.id),
+            ),
+            source_positions,
+            source_indexes,
+        )
+    })
 }

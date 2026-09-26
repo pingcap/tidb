@@ -556,10 +556,10 @@ impl Session {
         context
     }
 
-    /// Captures the statement flags used by a server-owned ANALYZE request.
+    /// Shares evaluation policy and warnings with server-owned ANALYZE sampling.
     #[must_use]
-    pub fn analyze_push_down_flags(&self) -> u64 {
-        self.statement_context(false).push_down_flags()
+    pub fn analyze_statement_context(&self) -> tidb_executor::StmtContext {
+        self.statement_context(false)
     }
 
     /// Starts a statement executed by a server-owned route and returns the

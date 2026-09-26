@@ -1168,7 +1168,7 @@ fn issue_64137_small_ndv_out_of_range_index_reader_rows() {}
 /// after explain-analyze triggers loading, show stats_histograms must not list
 /// allEvicted states and replans must never print unInitialized.
 #[test]
-#[ignore = "local SQL fixture executed by tidb-session tests_explain::expression_index_statistics_remain_initialized; cluster virtual-sample evaluation and loading remain open"]
+#[ignore = "local SQL fixture executed by tidb-session tests_explain::expression_index_statistics_remain_initialized; cluster collector/storage fixtures cover virtual samples, live TiKV loading remains open"]
 fn uninitialized_expr_index_stats_finish_loading() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:3093
