@@ -1977,6 +1977,7 @@ pub enum SimpleSig {
     /// comparison's collation id, as in the string comparisons: `_ci`
     /// collations fold case before the wildcard match, `_bin` is exact.
     Like(i32),
+    RegexpLike(i32),
     /// `InInt` — n-ary membership, `tested IN (e1, e2, ...)`.
     ///
     /// Go's cop evaluates this through the shared `expression` package
@@ -2504,6 +2505,7 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::StringIsNull => SimpleSig::StringIsNull,
             tipb::ScalarFuncSig::TimeIsNull => SimpleSig::TimeIsNull,
             tipb::ScalarFuncSig::LikeSig => SimpleSig::Like(collation_of(expr)),
+            tipb::ScalarFuncSig::RegexpLikeSig => SimpleSig::RegexpLike(collation_of(expr)),
             tipb::ScalarFuncSig::JsonMemberOfSig => SimpleSig::JsonMemberOfSig,
             tipb::ScalarFuncSig::CastIntAsInt => SimpleSig::CastIntAsInt,
             tipb::ScalarFuncSig::CastRealAsInt => SimpleSig::CastRealAsInt,
@@ -4795,6 +4797,30 @@ pub fn eval_expr(
                         &fold(&pattern),
                         escape_char,
                     )))
+                }
+                SimpleSig::RegexpLike(collation) => {
+                    // Go `builtinRegexpLikeSig`: (target, pattern), a SEARCH
+                    // match (not anchored). Case handling follows the
+                    // comparison's collation -- `_ci` compiles the pattern
+                    // case-insensitively, `_bin` is exact -- the same fold
+                    // rule the LikeSig arm applies.
+                    let target =
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone);
+                    let pattern =
+                        eval_bytes(children.get(1), row, div_precision_increment, time_zone);
+                    let (Some(target), Some(pattern)) = (target, pattern) else {
+                        return Ok(None);
+                    };
+                    let target_text = std::str::from_utf8(&target).unwrap_or_default();
+                    let pattern_text = std::str::from_utf8(&pattern).unwrap_or_default();
+                    let collator = tidb_datatype::get_collator_by_id(*collation);
+                    let case_insensitive = collator.compare(b"a", b"A").is_eq();
+                    let mut builder = regex::RegexBuilder::new(pattern_text);
+                    builder.case_insensitive(case_insensitive);
+                    match builder.build() {
+                        Ok(re) => Some(i128::from(re.is_match(target_text))),
+                        Err(_) => None,
+                    }
                 }
                 SimpleSig::InInt => {
                     // `builtinInIntSig.evalInt`: TRUE on any match; otherwise
