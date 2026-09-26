@@ -297,7 +297,9 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
 	for _, pbSketch := range pbCollector.FmSketch {
-		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
+		sketch := FMSketchFromProto(pbSketch)
+		sketch.maxSize = MaxSketchSize
+		s.FMSketches = append(s.FMSketches, sketch)
 	}
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
@@ -369,16 +371,7 @@ func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 
 // MergeCollector merges the collectors to a final one.
 func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
-	s.Count += subCollector.Base().Count
-	for i, fms := range subCollector.Base().FMSketches {
-		s.FMSketches[i].MergeFMSketch(fms)
-	}
-	for i, nullCount := range subCollector.Base().NullCount {
-		s.NullCount[i] += nullCount
-	}
-	for i, totSize := range subCollector.Base().TotalSizes {
-		s.TotalSizes[i] += totSize
-	}
+	s.mergeBase(subCollector.Base())
 	oldSampleNum := len(s.Samples)
 	for _, sample := range subCollector.Base().Samples {
 		s.sampleZippedRow(sample)
@@ -463,18 +456,32 @@ func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 
 // MergeCollector merges the collectors to a final one.
 func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
-	s.Count += subCollector.Base().Count
-	for i := range subCollector.Base().FMSketches {
-		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
-	}
-	for i := range subCollector.Base().NullCount {
-		s.NullCount[i] += subCollector.Base().NullCount[i]
-	}
-	for i := range subCollector.Base().TotalSizes {
-		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
-	}
-	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
+	s.mergeBase(subCollector.Base())
+	s.Samples = append(s.Samples, subCollector.Base().Samples...)
 	s.MemSize += subCollector.Base().MemSize
+}
+
+func (s *baseCollector) mergeBase(other *baseCollector) {
+	// A worker that received no response has no sketches. Every response has
+	// them, even for an empty Region, and the first one starts the merge.
+	if len(other.FMSketches) == 0 {
+		return
+	}
+	if len(s.FMSketches) == 0 {
+		s.Count = other.Count
+		s.NullCount = append(s.NullCount[:0], other.NullCount...)
+		s.TotalSizes = append(s.TotalSizes[:0], other.TotalSizes...)
+		for _, sketch := range other.FMSketches {
+			s.FMSketches = append(s.FMSketches, sketch.Copy())
+		}
+		return
+	}
+	for i, sketch := range s.FMSketches {
+		sketch.MergeFMSketch(other.FMSketches[i])
+		s.NullCount[i] += other.NullCount[i]
+		s.TotalSizes[i] += other.TotalSizes[i]
+	}
+	s.Count += other.Count
 }
 
 // Base implements the interface RowSampleCollector.
