@@ -633,6 +633,52 @@ SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t8
 		tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
 	}
 
+	// issue-36386-volatile-group-by-projection
+	{
+		tk := prepareSharedTestKit(t)
+		checkQuery := func(query, cascades string) {
+			planRows := tk.MustQuery("explain format='plan_tree' " + query).Rows()
+			require.GreaterOrEqual(t, len(planRows), 3, cascades)
+			require.Contains(t, fmt.Sprint(planRows[0]), "Projection", cascades)
+			require.NotContains(t, fmt.Sprint(planRows[0]), "rand()", cascades)
+			require.Contains(t, fmt.Sprint(planRows[1]), "HashAgg", cascades)
+			require.Contains(t, fmt.Sprint(planRows[2]), "rand()", cascades)
+
+			for range 20 {
+				rows := tk.MustQuery(query).Rows()
+				seen := make(map[string]struct{}, len(rows))
+				for _, row := range rows {
+					key := fmt.Sprint(row[0])
+					require.NotContainsf(t, seen, key, "cascades=%s rows=%v", cascades, rows)
+					seen[key] = struct{}{}
+				}
+			}
+		}
+		for _, cascades := range []string{"off", "on"} {
+			tk.MustExec(fmt.Sprintf("set @@tidb_enable_cascades_planner = %s", cascades))
+			tk.MustExec("drop table if exists foo")
+			tk.MustExec("create table foo(a int, b int, c int, d int)")
+			tk.MustExec("insert into foo values(1,1,1,10),(2,2,2,2),(3,1,1,10),(3,2,2,2)")
+
+			query := "select /* issue:36386 */ b*floor(2*rand()) as e, count(d) from foo group by e"
+			checkQuery(query, cascades)
+
+			tk.MustExec("set @@sql_mode = ''")
+			query = "select /* issue:36386 */ b*floor(2*rand()) + 1 as e, count(d) from foo group by b*floor(2*rand())"
+			checkQuery(query, cascades)
+
+			tk.MustExec("drop table if exists ta")
+			tk.MustExec("create table ta(a int, b int)")
+			planRows := tk.MustQuery("explain format='plan_tree' select @n:=@n+1 as e from ta group by e").Rows()
+			require.GreaterOrEqual(t, len(planRows), 2, cascades)
+			require.Contains(t, fmt.Sprint(planRows[0]), "Projection", cascades)
+			require.Contains(t, fmt.Sprint(planRows[0]), "setvar", cascades)
+			require.Contains(t, fmt.Sprint(planRows[1]), "HashAgg", cascades)
+			tk.MustExec("set @@sql_mode = default")
+		}
+		tk.MustExec("set @@tidb_enable_cascades_planner = off")
+	}
+
 	// abs-max-binary-literal-group-by-unique-key
 	{
 		tk := prepareSharedTestKit(t)
