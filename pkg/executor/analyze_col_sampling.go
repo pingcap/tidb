@@ -216,9 +216,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	totalLen := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-	for range totalLen {
-		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
-	}
 
 	sc := e.ctx.GetSessionVars().StmtCtx
 
@@ -638,9 +635,6 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	})
 	// Keep one private collector per merge worker and flush it when taskCh is closed.
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-	for range totalLen {
-		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
-	}
 	// Early-return paths need to release the worker-local collector explicitly.
 	cleanupCollector := func() {
 		e.memTracker.Release(retCollector.Base().MemSize)
