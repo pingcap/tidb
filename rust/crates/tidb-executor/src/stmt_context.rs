@@ -4381,6 +4381,18 @@ impl Columns for StmtContext {
             .truncate(bookmark);
     }
 
+    fn take_warnings_since(&self, bookmark: usize) -> Vec<(u16, String)> {
+        let mut warnings = self
+            .warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let taken = warnings
+            .drain(bookmark..)
+            .map(|(_, code, message)| (code, message))
+            .collect();
+        taken
+    }
+
     /// The same three mode bits the WRITE path reads from
     /// [`Self::write_conversion_flags`], handed to expression evaluation so a
     /// `CAST` to a temporal type answers under the session's SQL mode.
