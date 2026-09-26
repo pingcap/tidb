@@ -636,9 +636,55 @@ fn dnf_independence_selectivity(
             return Ok(None);
         }
     }
+    // Go skips the whole DNF when any referenced column has no stats
+    // (`continue OUTER`), leaving the condition to the string-match/
+    // generic defaults.
+    for column in tidb_expr::simple_expr::extract_columns(condition) {
+        if table_stats.col_ndv(column.unique_id) <= 0.0 {
+            return Ok(None);
+        }
+    }
+    // Go `MergeDNFItems4Col` (`ranger/detacher.go:1191`): single-column
+    // range-buildable DNF items group by column and re-compose into one DNF
+    // per column, so an `a in (...) or a in (...)` prices ONCE through the
+    // column's ranges instead of product-pairing every disjunct (TPC-DS
+    // q41's eight-branch category/color/units/size DNF estimated 4.9x Go).
+    // The composed single-column DNF re-enters the estimator through the
+    // single-column `or` arm, which answers from the histogram without
+    // recursing here.
+    let mut merged: Vec<Expression> = Vec::new();
+    let mut col2items: std::collections::BTreeMap<i64, Vec<Expression>> = Default::default();
+    for item in &items {
+        let cols = tidb_expr::simple_expr::extract_columns(item);
+        if cols.len() != 1 {
+            merged.push(item.clone());
+            continue;
+        }
+        let checker = crate::ranger::checker::ConditionChecker {
+            checker_col: Some(&cols[0]),
+            length: tidb_datatype::UNSPECIFIED_LENGTH,
+            opt_prefix_index_single_scan: false,
+        };
+        let (is_access, _) = checker.check(item);
+        if !is_access {
+            merged.push(item.clone());
+            continue;
+        }
+        col2items
+            .entry(cols[0].unique_id)
+            .or_default()
+            .push(item.clone());
+    }
+    for group in col2items.into_values() {
+        if let Some(composed) = tidb_expr::simple_expr::compose_dnf_condition(group.clone()) {
+            merged.push(composed);
+        } else {
+            merged.extend(group);
+        }
+    }
     let mut selectivity = 0.0_f64;
-    for item in items {
-        let cnf = flatten_boolean_conditions(&item, "and");
+    for item in &merged {
+        let cnf = flatten_boolean_conditions(item, "and");
         let cur = try_analyzed_filter_selectivity_in(table_stats, &cnf, options, evaluate)?
             .unwrap_or(crate::cost_factors::SELECTION_FACTOR);
         selectivity = selectivity + cur - selectivity * cur;
