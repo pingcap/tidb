@@ -1130,21 +1130,14 @@ impl LogicalJoin {
                 self.join_type, self.from_decorrelated_apply
             );
         }
+        // Go `LogicalJoin.DeriveStats` (`logical_join.go:580`): semi and
+        // anti-semi take the preserved side times SelectionFactor. The q78
+        // MergeJoin's unscaled display is a GO-SIDE ANOMALY (a cached-stats
+        // path this port does not reproduce); mirroring it with an unscaled
+        // anti-semi regressed TPC-DS q16/q69/q94's join orders (in-vivo: the
+        // Go q16 anti-semi estimates 1537.74 = 1922.18 * 0.8).
         let stats = match self.join_type {
-            // Go's effective behavior for an APPLY-decorrelated anti-semi
-            // join (NOT EXISTS, TPC-DS q78): the output equals the preserved
-            // side's estimate -- EXPLAIN shows MergeJoin(anti semi join) at
-            // the left's row count with no SelectionFactor in the chain. A
-            // directly-built AntiSemi keeps the source's
-            // `* cost.SelectionFactor` (logical_join.go:580); the blanket
-            // unscale regressed TPC-DS q16/q69/q87/q94.
-            LogicalJoinType::AntiSemi if self.from_decorrelated_apply => StatsInfo::new(
-                left.row_count(),
-                left.col_ndvs()
-                    .iter()
-                    .map(|(id, ndv)| (*id, *ndv)),
-            ),
-            LogicalJoinType::AntiSemi | LogicalJoinType::Semi => StatsInfo::new(
+            LogicalJoinType::Semi | LogicalJoinType::AntiSemi => StatsInfo::new(
                 left.row_count() * SELECTION_FACTOR,
                 left.col_ndvs()
                     .iter()
