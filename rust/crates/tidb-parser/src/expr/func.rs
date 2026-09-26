@@ -775,6 +775,17 @@ impl Parser {
             args.push(self.parse_expr(prec::NONE)?);
             while self.is_op(",") {
                 self.bump();
+                // go's DATE_ADD/DATE_SUB production requires the second
+                // operand to START with INTERVAL: yacc fails AT the
+                // offending token (`date_add(1.25, -3.75)` anchors near
+                // "-3.75)"), never after parsing it -- so the lookahead
+                // check fires here, before the operand is consumed.
+                if matches!(name.to_ascii_uppercase().as_str(), "DATE_ADD" | "DATE_SUB")
+                    && !(self.peek().kind == TokenKind::Keyword
+                        && self.peek().text.eq_ignore_ascii_case("INTERVAL"))
+                {
+                    return Err(self.err_here("expected INTERVAL"));
+                }
                 args.push(self.parse_expr(prec::NONE)?);
             }
         }
@@ -827,6 +838,15 @@ impl Parser {
         let origin_position = self.peek().offset;
         let name = self.bump().text;
         self.expect_op("(")?;
+        // go's grammar splits this family: CURRENT_TIMESTAMP/LOCALTIME/
+        // LOCALTIMESTAMP/CURRENT_TIME/UTC_TIME/UTC_TIMESTAMP/CURTIME accept
+        // ONE optional fsp (`now(1)`; a second argument fails AT the comma),
+        // but CURRENT_DATE/UTC_DATE/CURRENT_ROLE/CURRENT_USER only have the
+        // bare `()` production -- ANY argument fails AT the first argument
+        // token (`current_user(1)` anchors col near "1)", not after it).
+        if is_datetime_no_arg_func(&name) && !self.is_op(")") {
+            return Err(self.err_here("expected )"));
+        }
         let mut args = Vec::new();
         if !self.is_op(")") {
             if self.peek().kind != TokenKind::IntLit {
@@ -957,6 +977,18 @@ fn is_interval_unit(unit: &str) -> bool {
             | "SQL_TSI_MONTH"
             | "SQL_TSI_QUARTER"
             | "SQL_TSI_YEAR"
+    )
+}
+
+/// Whether `name`'s go grammar has ONLY the bare `()` call form (no fsp
+/// production at all): any argument fails AT the first argument token.
+/// Oracle-pinned: `utc_date(1)` anchors near "1)", `current_user(1)` near
+/// "1)", while `current_time(1)` evaluates and `current_time(1, 2)` fails
+/// AT the comma.
+pub(super) fn is_datetime_no_arg_func(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "CURRENT_DATE" | "UTC_DATE" | "CURRENT_ROLE" | "CURRENT_USER"
     )
 }
 

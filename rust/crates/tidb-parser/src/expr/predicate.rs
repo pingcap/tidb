@@ -133,7 +133,7 @@ impl Parser {
             [] => Ok(Some(0)),
             [b'\\'] => Ok(None),
             [b] => Ok(Some(*b)),
-            _ => Err(self.err_here("[parser:1210]Incorrect arguments to ESCAPE")),
+            _ => Err(self.err_coded(1210, "Incorrect arguments to ESCAPE")),
         }
     }
 
