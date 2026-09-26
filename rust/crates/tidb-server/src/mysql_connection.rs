@@ -1396,6 +1396,19 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     }
+    // Go `clientConn.setConn` (pkg/server/conn.go): the handshake's collation
+    // id seeds character_set_client, collation_connection and
+    // character_set_results. A pymysql client's utf8mb4 handshake therefore
+    // governs connection comparisons with utf8mb4_general_ci -- not this
+    // server's bin default. The three names ride the session's own SET NAMES
+    // validation; a registry miss leaves the defaults untouched (the client
+    // asked for something this server does not know).
+    if let Ok(collation) = tidb_datatype::get_collation_by_id(response.collation as i32) {
+        let _ = engine.execute(&format!(
+            "SET NAMES '{}' COLLATE '{}'",
+            collation.charset_name, collation.name
+        ));
+    }
     write_ok(
         &mut output,
         response_sequence,
