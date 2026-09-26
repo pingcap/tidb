@@ -7320,7 +7320,7 @@
           },
           "lines": false,
           "linewidth": 1,
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": false
           },
@@ -7434,7 +7434,7 @@
           },
           "lines": false,
           "linewidth": 1,
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": false
           },
@@ -7533,7 +7533,7 @@
           },
           "lines": false,
           "linewidth": 1,
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": false
           },
@@ -7632,7 +7632,7 @@
           },
           "lines": false,
           "linewidth": 1,
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": false
           },
@@ -22883,7 +22883,7 @@
           },
           "lines": false,
           "linewidth": 1,
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": true
           },
@@ -23013,7 +23013,7 @@
           },
           "lines": false,
           "linewidth": 1,
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": true
           },
@@ -23368,7 +23368,7 @@
           },
           "lines": true,
           "linewidth": 0,
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": true
           },

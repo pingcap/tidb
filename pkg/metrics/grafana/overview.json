@@ -3882,7 +3882,7 @@
           "lines": true,
           "linewidth": 0,
           "links": [],
-          "nullPointMode": "connected",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": true
           },
@@ -3981,7 +3981,7 @@
           "lines": true,
           "linewidth": 1,
           "links": [],
-          "nullPointMode": "connected",
+          "nullPointMode": "null as zero",
           "options": {
             "alertThreshold": true
           },
