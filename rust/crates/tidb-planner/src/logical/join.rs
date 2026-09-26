@@ -1124,22 +1124,27 @@ impl LogicalJoin {
         let left = &child_stats[0];
         let right = &child_stats[1];
         self.equal_cond_out_cnt = equal_cond_out_cnt;
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            eprintln!(
+                "[JDERIVE] type={:?} from_apply={}",
+                self.join_type, self.from_decorrelated_apply
+            );
+        }
         let stats = match self.join_type {
-            // Go's effective behavior for an anti-semi join (the NOT EXISTS
-            // decorrelation, TPC-DS q78): the output equals the preserved
+            // Go's effective behavior for an APPLY-decorrelated anti-semi
+            // join (NOT EXISTS, TPC-DS q78): the output equals the preserved
             // side's estimate -- EXPLAIN shows MergeJoin(anti semi join) at
-            // the left's row count and the cost_trace prices it at the raw
-            // table count, with no SelectionFactor anywhere in the chain
-            // (LogicalJoin.DeriveStats's `* cost.SelectionFactor` branch is
-            // never reached for the decorrelated shape). The port priced it
-            // 0.8x and every downstream estimate inherited the factor.
-            LogicalJoinType::AntiSemi => StatsInfo::new(
+            // the left's row count with no SelectionFactor in the chain. A
+            // directly-built AntiSemi keeps the source's
+            // `* cost.SelectionFactor` (logical_join.go:580); the blanket
+            // unscale regressed TPC-DS q16/q69/q87/q94.
+            LogicalJoinType::AntiSemi if self.from_decorrelated_apply => StatsInfo::new(
                 left.row_count(),
                 left.col_ndvs()
                     .iter()
                     .map(|(id, ndv)| (*id, *ndv)),
             ),
-            LogicalJoinType::Semi => StatsInfo::new(
+            LogicalJoinType::AntiSemi | LogicalJoinType::Semi => StatsInfo::new(
                 left.row_count() * SELECTION_FACTOR,
                 left.col_ndvs()
                     .iter()

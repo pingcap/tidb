@@ -103,6 +103,14 @@ impl DecorrelateSolver {
         mut apply: LogicalApply,
         group_by_column: &mut BTreeSet<i64>,
     ) -> Result<LogicalPlan, PlanError> {
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            eprintln!(
+                "[APPLYENTRY] type={:?} cor_cols={} no_decorrelate={}",
+                apply.join.join_type,
+                apply.cor_cols.len(),
+                apply.no_decorrelate
+            );
+        }
         let outer_schema = apply
             .base()
             .children()
@@ -148,7 +156,21 @@ impl DecorrelateSolver {
         }
         if apply.cor_cols.is_empty() {
             // Go: "If the inner plan is non-correlated, the apply will be
-            // simplified to join."
+            // simplified to join." An anti-semi join produced here estimates
+            // as the preserved side verbatim (TPC-DS q78's NOT EXISTS:
+            // MergeJoin at the left's row count, no SelectionFactor), which
+            // the join's derive reproduces only through this marker.
+            apply.join.from_decorrelated_apply = matches!(
+                apply.join.join_type,
+                crate::find_best_task::LogicalJoinType::Semi
+                    | crate::find_best_task::LogicalJoinType::AntiSemi
+            );
+            if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+                eprintln!(
+                    "[DECORR] join_type={:?} marked={}",
+                    apply.join.join_type, apply.join.from_decorrelated_apply
+                );
+            }
             return Self::optimize_children(ctx, LogicalPlan::Join(apply.join), group_by_column);
         }
         if apply.no_decorrelate {
