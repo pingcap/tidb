@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -96,6 +97,87 @@ func TestMarkRestoreConcurrencyPerStoreAdjusted(t *testing.T) {
 
 	require.Equal(t, uint(132), cfg.ConcurrencyPerStore.Value)
 	require.True(t, cfg.ConcurrencyPerStore.Modified)
+}
+
+func TestWarnSystemTablesForExplicitPiTRFilter(t *testing.T) {
+	tests := []struct {
+		name       string
+		filterStr  []string
+		explicit   bool
+		withSys    bool
+		wantWarned bool
+	}{
+		{
+			name:       "default filter is not user explicit",
+			filterStr:  []string{"*.*"},
+			explicit:   false,
+			withSys:    true,
+			wantWarned: false,
+		},
+		{
+			name:       "user table filter keeps system table restore setting",
+			filterStr:  []string{"test.*"},
+			explicit:   true,
+			withSys:    true,
+			wantWarned: false,
+		},
+		{
+			name:       "wildcard explicit filter warns about system table log changes",
+			filterStr:  []string{"*.*"},
+			explicit:   true,
+			withSys:    true,
+			wantWarned: true,
+		},
+		{
+			name:       "specific mysql table filter warns about system table log changes",
+			filterStr:  []string{"mysql.user"},
+			explicit:   true,
+			withSys:    true,
+			wantWarned: true,
+		},
+		{
+			name:       "workload schema filter warns about system table log changes",
+			filterStr:  []string{"workload_schema.*"},
+			explicit:   true,
+			withSys:    true,
+			wantWarned: true,
+		},
+		{
+			name:       "explicit system exclusions do not trigger warning",
+			filterStr:  []string{"*.*", "!mysql.*", "!sys.*", "!workload_schema.*"},
+			explicit:   true,
+			withSys:    true,
+			wantWarned: false,
+		},
+		{
+			name:       "warning does not enable system table snapshot restore",
+			filterStr:  []string{"mysql.*"},
+			explicit:   true,
+			withSys:    false,
+			wantWarned: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tableFilter, err := filter.Parse(tt.filterStr)
+			require.NoError(t, err)
+
+			cfg := &RestoreConfig{
+				Config: Config{
+					ExplicitFilter: tt.explicit,
+					FilterStr:      tt.filterStr,
+					TableFilter:    tableFilter,
+				},
+				RestoreCommonConfig: RestoreCommonConfig{
+					WithSysTable: tt.withSys,
+				},
+			}
+
+			require.Equal(t, tt.wantWarned, warnSystemTablesForExplicitPiTRFilter(cfg))
+			require.Equal(t, tt.withSys, cfg.WithSysTable)
+		})
+	}
 }
 
 func TestCheckLogRange(t *testing.T) {
