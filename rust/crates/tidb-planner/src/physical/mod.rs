@@ -3418,7 +3418,19 @@ pub fn get_stream_aggs(
         return Vec::new();
     }
     let group_by_cols = agg.get_group_by_cols();
-    if group_by_cols.len() != agg.group_by_items.len() {
+    // Go's column pruning removes constant group-by items WITHOUT a
+    // placeholder, so a group-less aggregate reaches this check with
+    // GroupByItems empty and enumerates StreamAgg (`count(1)` over a table
+    // scan plans StreamAgg, not HashAgg -- TPC-DS q41). The port keeps a
+    // `Constant(1)` placeholder; treating it as the group-less shape keeps
+    // the source check's meaning (the single-column group-bys still need
+    // one ordering column per item).
+    let group_less = group_by_cols.is_empty()
+        && agg
+            .group_by_items
+            .iter()
+            .all(|item| matches!(item, tidb_expr::expression::Expression::Constant(_)));
+    if !group_less && group_by_cols.len() != agg.group_by_items.len() {
         return Vec::new();
     }
     let row_count = agg
