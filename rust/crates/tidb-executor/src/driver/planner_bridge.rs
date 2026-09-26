@@ -1668,16 +1668,24 @@ impl InitStats<'_> {
                     .handle_cols
                     .iter()
                     .any(|handle| handle.unique_id == column.unique_id);
-                Some((
-                    column.unique_id,
-                    RowSizeColumnStats::new(
-                        RowSizeType::from_field_type_code(field_type.code()),
-                        loaded.histogram.tot_col_size,
-                        loaded.histogram.null_count,
+                let row_size_col = RowSizeColumnStats::new(
+                    RowSizeType::from_field_type_code(field_type.code()),
+                    loaded.histogram.tot_col_size,
+                    loaded.histogram.null_count,
+                    loaded.total_row_count(),
+                    is_handle,
+                );
+                if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                    eprintln!(
+                        "RSCOL table={} col={} total_row_count={} tot_col_size={} null_count={}",
+                        source.table_name,
+                        column.orig_name,
                         loaded.total_row_count(),
-                        is_handle,
-                    ),
-                ))
+                        loaded.histogram.tot_col_size,
+                        loaded.histogram.null_count
+                    );
+                }
+                Some((column.unique_id, row_size_col))
             })
             .collect::<Vec<_>>();
         // The planner's DataSource-statistics rule reads the loaded
