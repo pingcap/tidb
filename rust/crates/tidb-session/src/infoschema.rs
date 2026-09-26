@@ -312,6 +312,9 @@ pub fn table_rows(
     if name.eq_ignore_ascii_case("INSPECTION_RESULT") {
         return Some(inspection_result_rows());
     }
+    if name.eq_ignore_ascii_case("TIDB_INDEXES") {
+        return Some(tidb_indexes_rows(catalog, visibility));
+    }
     if name.eq_ignore_ascii_case("PARAMETERS") {
         return Some(parameters_rows());
     }
@@ -719,10 +722,36 @@ fn table_constraint_row(
 /// `GRANT SELECT ON d1.t`) sees `d1` in `SHOW DATABASES` and does NOT see it
 /// here.
 fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+    // go seeds metrics_schema/performance_schema/sys at bootstrap; the
+    // catalog here doesn't carry them as objects, so synthesize their rows
+    // (the utf8mb4/utf8mb4_bin defaults go's bootstrap settles).
+    let synthesized: Vec<Vec<Datum>> = [
+        ("METRICS_SCHEMA", "utf8mb4"),
+        ("PERFORMANCE_SCHEMA", "utf8mb4"),
+        ("sys", "utf8mb4"),
+    ]
+    .iter()
+    .map(|(display, charset)| {
+        vec![
+            text(CATALOG),
+            text(display),
+            text(charset),
+            text("utf8mb4_bin"),
+            Datum::Null,
+            Datum::Null,
+        ]
+    })
+    .collect();
     catalog
         .database_names()
         .into_iter()
         .filter(|name| visibility.allows(name, "", ANY_PRIV))
+        .filter(|name| {
+            !matches!(
+                name.to_ascii_lowercase().as_str(),
+                "metrics_schema" | "performance_schema" | "sys"
+            )
+        })
         .map(|name| {
             // Go reads `DBInfo.Charset`/`Collate`, which `CREATE DATABASE`
             // settles and `ALTER DATABASE ... CHARACTER SET` moves; reporting
@@ -740,6 +769,7 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
                 Datum::Null,
             ]
         })
+        .chain(synthesized)
         .collect()
 }
 
@@ -1040,10 +1070,78 @@ fn information_schema_tables_rows() -> Vec<Vec<Datum>> {
         .collect()
 }
 
+include!("systables.rs");
+
 fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     // Go lists information_schema's own tables first -- the schema is first
     // in `database_names` -- and every one of them, served or not.
     let mut rows = information_schema_tables_rows();
+    // go seeds metrics_schema/performance_schema/sys with their own SYSTEM
+    // VIEW / VIEW rows (the oracle cells: the epoch CREATE_TIME for the
+    // metrics/performance machinery; the view's own creation time for sys;
+    // the TIDB_TABLE_ID blocks the bootstrap assigned per schema).
+    for (schema, schema_upper, tables, created, is_view) in [
+        (
+            "metrics_schema",
+            "METRICS_SCHEMA",
+            METRICS_SCHEMA_TABLES,
+            "1970-01-01 08:00:00",
+            false,
+        ),
+        (
+            "performance_schema",
+            "PERFORMANCE_SCHEMA",
+            PERFORMANCE_SCHEMA_TABLES,
+            "1970-01-01 08:00:00",
+            false,
+        ),
+        ("sys", "sys", SYS_TABLES, "2026-09-24 18:05:56", true),
+    ] {
+        for (table_name, table_id) in tables {
+            let mut row = vec![
+                text(CATALOG),
+                text(schema_upper),
+                text(table_name),
+                if is_view {
+                    text("VIEW")
+                } else {
+                    text("SYSTEM VIEW")
+                },
+                if is_view { Datum::Null } else { text("InnoDB") },
+                if is_view { Datum::Null } else { Datum::Int(10) },
+                if is_view { Datum::Null } else { text("Compact") },
+            ];
+            if is_view {
+                row.extend(std::iter::repeat_n(Datum::Null, 13));
+                row.push(text(created));
+                row.extend(std::iter::repeat_n(Datum::Null, 7));
+                row.push(text("VIEW"));
+            } else {
+                row.extend(std::iter::repeat_n(Datum::Int(0), 6));
+                row.push(Datum::Null);
+                row.push(text(created));
+                row.extend(std::iter::repeat_n(Datum::Null, 2));
+                row.push(text("utf8mb4_bin"));
+                row.push(Datum::Null);
+                row.push(text(""));
+                row.push(text(""));
+            }
+            row.push(Datum::Int(*table_id));
+            row.push(Datum::Null);
+            row.push(text("NONCLUSTERED"));
+            row.push(Datum::Null);
+            if is_view {
+                row.push(Datum::Null);
+                row.push(Datum::Null);
+                row.push(Datum::Null);
+            } else {
+                row.push(text("Normal"));
+                row.push(Datum::Null);
+                row.push(text(""));
+            }
+            rows.push(row);
+        }
+    }
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let table = match catalog.table_in(&schema, &table_name) {
             Some(TableEntry::Kv(table)) => table,
@@ -1705,6 +1803,60 @@ fn routines_rows() -> Vec<Vec<Datum>> {
 /// No events exist in this tier.
 fn events_rows() -> Vec<Vec<Datum>> {
     Vec::new()
+}
+
+fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+    // go `SetTiDBIndexInTriangle`: every index of every visible table, one
+    // row per key part, with go's own column spellings (the expression parts
+    // carry COLUMN_NAME 'NULL' beside the expression text; the clustered
+    // table's primary reads CLUSTERED 'YES').
+    let mut rows = Vec::new();
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+            continue;
+        };
+        if let Some(offset) = table.pk_handle_offset() {
+            rows.push(vec![
+                text(&schema),
+                text(&table_name),
+                Datum::Int(0),
+                text("PRIMARY"),
+                Datum::Int(1),
+                text(&table.columns[offset].name),
+                Datum::Null,
+                text(""),
+                Datum::Null,
+                Datum::Int(0),
+                text("YES"),
+                text("YES"),
+                Datum::Int(0),
+                Datum::Null,
+            ]);
+        }
+        for index in table.indexes() {
+            for (position, offset) in index.column_offsets.iter().enumerate() {
+                let column = &table.columns[*offset];
+                let prefix = index.prefix_length(position);
+                rows.push(vec![
+                    text(&schema),
+                    text(&table_name),
+                    Datum::Int(i64::from(!index.unique)),
+                    text(&index.name),
+                    Datum::Int(position as i64 + 1),
+                    text(&column.name),
+                    if prefix > 0 { Datum::Int(prefix) } else { Datum::Null },
+                    text(&index.comment),
+                    Datum::Null,
+                    Datum::Int(index.id),
+                    text(if index.visible { "YES" } else { "NO" }),
+                    text("NO"),
+                    Datum::Int(i64::from(index.global)),
+                    Datum::Null,
+                ]);
+            }
+        }
+    }
+    rows
 }
 
 fn inspection_result_rows() -> Vec<Vec<Datum>> {

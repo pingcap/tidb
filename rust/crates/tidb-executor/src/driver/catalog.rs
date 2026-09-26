@@ -603,7 +603,7 @@ impl Default for Catalog {
             table_column_count_limit: 1017,
             policies: HashMap::new(),
             next_policy_id: 0,
-            next_database_id: 3,
+            next_database_id: 6,
             next_table_id: 0,
             version: 0,
             metadata_version: next_metadata_version(),
