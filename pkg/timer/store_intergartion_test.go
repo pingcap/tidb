@@ -823,22 +823,22 @@ func TestTableStoreManualTrigger(t *testing.T) {
 	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), dbName, tblName, nil)
 	defer timerStore.Close()
 
-	var hookReqID atomic.Pointer[string]
+	preSchedCh := make(chan *api.TimerRecord, 1)
+	schedCh := make(chan *api.TimerRecord, 1)
+	sendHookTimer := func(ctx context.Context, ch chan<- *api.TimerRecord, timer *api.TimerRecord) error {
+		select {
+		case ch <- timer.Clone():
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	hook := &mockHook{
 		preFunc: func(ctx context.Context, event api.TimerShedEvent) (r api.PreSchedEventResult, err error) {
-			timer := event.Timer()
-			require.False(t, timer.ManualProcessed)
-			require.Empty(t, timer.ManualEventID)
-			return
+			return r, sendHookTimer(ctx, preSchedCh, event.Timer())
 		},
 		schedFunc: func(ctx context.Context, event api.TimerShedEvent) error {
-			timer := event.Timer()
-			require.Equal(t, timer.ManualRequestID, timer.EventManualRequestID)
-			require.Equal(t, timer.Watermark.Unix(), timer.EventWatermark.Unix())
-			require.True(t, timer.ManualProcessed)
-			require.Equal(t, timer.EventID, timer.ManualEventID)
-			hookReqID.Store(&timer.EventManualRequestID)
-			return nil
+			return sendHookTimer(ctx, schedCh, event.Timer())
 		},
 	}
 
@@ -862,31 +862,40 @@ func TestTableStoreManualTrigger(t *testing.T) {
 
 	reqID, err := cli.ManualTriggerEvent(context.TODO(), timer.ID)
 	require.NoError(t, err)
-	start := time.Now()
-	eventID := ""
-	for eventID == "" {
-		if time.Since(start) > time.Minute {
-			require.FailNow(t, "timeout")
+
+	deadline := time.NewTimer(time.Minute)
+	defer deadline.Stop()
+	waitHookTimer := func(name string, ch <-chan *api.TimerRecord) *api.TimerRecord {
+		t.Helper()
+		select {
+		case timer := <-ch:
+			return timer
+		case <-deadline.C:
+			require.FailNow(t, "timeout waiting for "+name)
+			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
-		timer, err = cli.GetTimerByID(context.TODO(), timer.ID)
-		require.NoError(t, err)
-		require.Equal(t, reqID, timer.ManualRequestID)
-		eventID = timer.EventID
 	}
 
+	preSchedTimer := waitHookTimer("OnPreSchedEvent", preSchedCh)
+	require.Equal(t, reqID, preSchedTimer.ManualRequestID)
+	require.False(t, preSchedTimer.ManualProcessed)
+	require.Empty(t, preSchedTimer.ManualEventID)
+
+	schedTimer := waitHookTimer("OnSchedEvent", schedCh)
+	eventID := schedTimer.EventID
+	require.NotEmpty(t, eventID)
+	require.Equal(t, reqID, schedTimer.ManualRequestID)
+	require.Equal(t, schedTimer.ManualRequestID, schedTimer.EventManualRequestID)
+	require.Equal(t, schedTimer.Watermark.Unix(), schedTimer.EventWatermark.Unix())
+	require.True(t, schedTimer.ManualProcessed)
+	require.Equal(t, eventID, schedTimer.ManualEventID)
+
+	timer, err = cli.GetTimerByID(context.TODO(), timer.ID)
+	require.NoError(t, err)
 	require.Equal(t, reqID, timer.ManualRequestID)
 	require.Equal(t, eventID, timer.ManualEventID)
 	require.True(t, timer.ManualProcessed)
 	require.Equal(t, reqID, timer.EventManualRequestID)
-	start = time.Now()
-	for hookReqID.Load() == nil {
-		if time.Since(start) > time.Minute {
-			require.FailNow(t, "timeout")
-		}
-		time.Sleep(100 * time.Microsecond)
-	}
-	require.Equal(t, reqID, *hookReqID.Load())
 
 	require.NoError(t, cli.CloseTimerEvent(context.TODO(), timer.ID, timer.EventID))
 	timer, err = cli.GetTimerByID(context.TODO(), timer.ID)
