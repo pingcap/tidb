@@ -16,6 +16,7 @@ package util
 
 import (
 	"cmp"
+	"encoding/json"
 	"slices"
 
 	"github.com/pingcap/tipb/go-tipb"
@@ -53,7 +54,10 @@ type JSONColumn struct {
 	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
 	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
 	// StatsVer is a pointer here since the old version json file would not contain version information.
-	StatsVer          *int64  `json:"stats_ver"`
+	StatsVer *int64 `json:"stats_ver"`
+	// Sampled sketches use the same binary envelope as stats_fm_sketch. The
+	// fm_sketch JSON value becomes a string, which old readers must reject.
+	FMSketchData      []byte  `json:"-"`
 	NullCount         int64   `json:"null_count"`
 	TotColSize        int64   `json:"tot_col_size"`
 	LastUpdateVersion uint64  `json:"last_update_version"`
@@ -71,7 +75,44 @@ func (col *JSONColumn) TotalMemoryUsage() (size int64) {
 	if col.FMSketch != nil {
 		size += int64(col.FMSketch.Size())
 	}
-	return size
+	return size + int64(len(col.FMSketchData))
+}
+
+// MarshalJSON preserves the legacy object format unless a sampled sketch is present.
+func (col *JSONColumn) MarshalJSON() ([]byte, error) {
+	type plain JSONColumn
+	if col.FMSketchData == nil {
+		return json.Marshal((*plain)(col))
+	}
+	return json.Marshal(struct {
+		*plain
+		FMSketch []byte `json:"fm_sketch"`
+	}{(*plain)(col), col.FMSketchData})
+}
+
+// UnmarshalJSON reads both object and binary sketch forms. LOAD STATS
+// validates all binary sketches before it starts writing any table.
+func (col *JSONColumn) UnmarshalJSON(data []byte) error {
+	type plain JSONColumn
+	var decoded plain
+	value := struct {
+		*plain
+		FMSketch json.RawMessage `json:"fm_sketch"`
+	}{plain: &decoded}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if len(value.FMSketch) > 0 {
+		if value.FMSketch[0] == '"' {
+			if err := json.Unmarshal(value.FMSketch, &decoded.FMSketchData); err != nil {
+				return err
+			}
+		} else if err := json.Unmarshal(value.FMSketch, &decoded.FMSketch); err != nil {
+			return err
+		}
+	}
+	*col = JSONColumn(decoded)
+	return nil
 }
 
 // JSONPredicateColumn contains the information of the columns used in the predicate.

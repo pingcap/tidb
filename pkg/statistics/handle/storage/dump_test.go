@@ -36,6 +36,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -199,6 +200,11 @@ func TestLoadGlobalStats(t *testing.T) {
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0))
 	loadedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
+
+	// Historical dumps can contain null partitions when their metadata is missing.
+	globalStats.Partitions["p0"] = nil
+	require.NoError(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0))
+	require.Equal(t, loadedStats.Partitions["p0"], getStatsJSON(t, dom, "test", "t").Partitions["p0"])
 }
 
 func TestLastStatsHistUpdateVersionAfterLoadStats(t *testing.T) {
@@ -246,9 +252,22 @@ func TestLoadPartitionStats(t *testing.T) {
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	jsonTbl, err := dom.StatsHandle().DumpStatsToJSON("test", tableInfo, nil, true)
-	require.NoError(t, err)
 	pi := tableInfo.GetPartitionInfo()
+	// A sampled sketch is dumped in its saved binary form, which older readers reject.
+	sampled := sampledFMSketch(t, 3, 1, 2)
+	tk.MustExec("update mysql.stats_fm_sketch set value = ? where table_id = ?", sampled, pi.Definitions[0].ID)
+	dumped, err := dom.StatsHandle().DumpStatsToJSON("test", tableInfo, nil, true)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(dumped)
+	require.NoError(t, err)
+	jsonTbl := &statsutil.JSONTable{}
+	require.NoError(t, json.Unmarshal(encoded, jsonTbl))
+	var oldColumn struct {
+		FMSketch *tipb.FMSketch `json:"fm_sketch"`
+	}
+	columnJSON, err := json.Marshal(jsonTbl.Partitions["p0"].Columns["a"])
+	require.NoError(t, err)
+	require.Error(t, json.Unmarshal(columnJSON, &oldColumn))
 	originPartStats := make([]*statistics.Table, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		originPartStats = append(originPartStats, dom.StatsHandle().GetPhysicalTableStats(def.ID, tableInfo))
@@ -264,10 +283,25 @@ func TestLoadPartitionStats(t *testing.T) {
 	clearedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
+	// A sketch of an unknown format fails the load before any partition is written.
+	unknown := slices.Clone(sampled)
+	unknown[1] = 2
+	jsonTbl.Partitions["p1"].Columns["a"].FMSketchData = unknown
+	require.Error(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
+	tk.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
+	jsonTbl.Partitions["p1"].Columns["a"].FMSketchData = nil
+
 	// load stats back
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
 	// A later global merge needs the partition FM sketches of the column and the index.
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("16"))
+	want, err := statistics.DecodeFMSketch(sampled)
+	require.NoError(t, err)
+	for _, row := range tk.MustQuery("select value from mysql.stats_fm_sketch where table_id = ?", pi.Definitions[0].ID).Rows() {
+		loaded, err := statistics.DecodeFMSketch([]byte(row[0].(string)))
+		require.NoError(t, err)
+		require.Equal(t, want, loaded)
+	}
 
 	// compare
 	for i, def := range pi.Definitions {
@@ -707,4 +741,13 @@ PARTITION BY RANGE ( a ) (
 		return nil
 	})
 	require.Equal(t, statsCnt, 1)
+}
+
+// sampledFMSketch returns a saved FM sketch of 10 rows, of which selected were
+// sampled for NDV and 3 are NULL, with the given singleton hashes.
+func sampledFMSketch(t *testing.T, selected int64, hashes ...uint64) []byte {
+	wire, err := (&tipb.RowSampleCollector{Count: 10, NdvSampleCount: &selected,
+		NullCounts: []int64{3}, FmSketch: []*tipb.FMSketch{{Hashset: hashes}}}).Marshal()
+	require.NoError(t, err)
+	return append([]byte{0, 1}, wire...)
 }
