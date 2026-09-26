@@ -863,12 +863,12 @@ workLoop:
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
 			if task.isColumn {
-				if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
+				if e.tableInfo != nil && statistics.IsColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
 					numTopN = 0
 				}
 			} else {
 				idx := e.indexes[task.slicePos-colLen]
-				if isSingleColNonPrefixUniqueIndex(idx) {
+				if statistics.IsSingleColNonPrefixUniqueIndex(idx) {
 					numTopN = 0
 				}
 			}
