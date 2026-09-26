@@ -440,7 +440,7 @@ func testCheckpointRunnerRetry(
 	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, 100*time.Millisecond, 300*time.Millisecond, snapshotMetaManager)
 	require.NoError(t, err)
 
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes", "return(true)")
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes", "1*return(true)")
 	require.NoError(t, err)
 	defer func() {
 		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes")
