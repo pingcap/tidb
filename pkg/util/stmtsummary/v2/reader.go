@@ -477,8 +477,9 @@ func (c *stmtChecker) needStop(curBegin int64) bool {
 }
 
 type stmtTinyRecord struct {
-	Begin int64 `json:"begin"`
-	End   int64 `json:"end"`
+	Begin  int64  `json:"begin"`
+	End    int64  `json:"end"`
+	Digest string `json:"digest"`
 }
 
 type stmtPersistedRecord struct {
@@ -841,6 +842,15 @@ func (w *stmtParseWorker) handleLines(
 
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
+		if w.checker.digests != nil {
+			// Cheap digest pre-filter: the tiny record decodes the digest from the same
+			// JSON line, so records that cannot match skip the full unmarshal. Persistent
+			// files already carry the digest key, so old files need no migration.
+			var tiny stmtTinyRecord
+			if err := json.Unmarshal(line, &tiny); err == nil && !w.checker.isDigestValid(tiny.Digest) {
+				continue
+			}
+		}
 		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines

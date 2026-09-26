@@ -406,6 +406,18 @@ func TestHistoryReader(t *testing.T) {
 	}()
 
 	func() {
+		// Digest filter combined with a time range; the parse worker's digest
+		// pre-filter must not change the result.
+		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, set.NewStringSet("digest2"), []*StmtTimeRange{
+			{Begin: 0, End: 1672129270 - 1},
+		}, 2)
+		require.NoError(t, err)
+		defer reader.Close()
+		rows := readAllRows(t, reader)
+		require.Len(t, rows, 0)
+	}()
+
+	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 0, End: 1672128520 - 1},
 		}, 2)
