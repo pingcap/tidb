@@ -616,22 +616,77 @@ func TestCastFuncSig(t *testing.T) {
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
-			"-179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+			"-1.7976931348623157e308",
 			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(-math.MaxFloat64)}),
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
-			"-0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005",
+			"-5e-324",
 			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(-math.SmallestNonzeroFloat64)}),
 		},
 		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"1e100",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e100)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"1e20",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e20)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"1e19",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e19)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"1e15",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e15)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"10000000000",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e10)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"0.0001",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e-4)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"0.00001",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e-5)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"0.000001",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e-6)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"0.0000001",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1e-7)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"1.23456789",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1.23456789)}),
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"1.234567890123456e15",
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1234567890123456e0)}),
+		},
+		{
 			&Column{RetType: types.NewFieldType(mysql.TypeFloat), Index: 0},
-			"-340282350000000000000000000000000000000",
+			"-3.4028235e38",
 			chunk.MutRowFromDatums([]types.Datum{types.NewFloat32Datum(-math.MaxFloat32)}),
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeFloat), Index: 0},
-			"-0.000000000000000000000000000000000000000000001",
+			"-1e-45",
 			chunk.MutRowFromDatums([]types.Datum{types.NewFloat32Datum(-math.SmallestNonzeroFloat32)}),
 		},
 		// cast decimal as string.
