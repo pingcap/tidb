@@ -1374,3 +1374,50 @@ fn a_case_insensitive_column_estimates_off_the_collation_sort_key() {
         assert_eq!(selection(&mut session, sql), expected, "{sql}");
     }
 }
+
+#[test]
+fn analyze_expression_index_samples_keep_physical_column_positions() {
+    for analyze in [
+        "ANALYZE TABLE expr_samples ALL COLUMNS",
+        "ANALYZE TABLE expr_samples COLUMNS a",
+    ] {
+        let mut session = Session::new();
+        session.run("CREATE TABLE expr_samples(a INT, unused INT, v INT AS (a+1), KEY iv(v), KEY ie(a,(a+2)))").unwrap();
+        session
+            .run("INSERT INTO expr_samples(a,unused) VALUES(1,10),(2,20),(2,30),(3,40)")
+            .unwrap();
+        session.run(analyze).unwrap();
+        let shared = session.shared_catalog();
+        let catalog = shared.lock().unwrap();
+        let TableEntry::Kv(table) = catalog.table_in("test", "expr_samples").unwrap() else {
+            panic!("expected KV table")
+        };
+        let stats = catalog.table_statistics(table.table_id).unwrap();
+        for column in table.columns() {
+            if column.generated.as_ref().is_some_and(|value| !value.stored) {
+                assert!(!stats.columns.contains_key(&column.id));
+            }
+        }
+        assert_eq!(stats.indexes.len(), 2);
+        for index in table.indexes() {
+            let built = &stats.indexes[&index.id];
+            assert_eq!(built.histogram.ndv, 3);
+            assert_eq!(built.histogram.null_count, 0);
+            let topn = built.topn.as_ref().unwrap();
+            assert_eq!(topn.total_count(), 4);
+            for (a, count) in [(1, 1), (2, 2), (3, 1)] {
+                let values = if index.name == "iv" {
+                    vec![Datum::Int(a + 1)]
+                } else {
+                    vec![Datum::Int(a), Datum::Int(a + 2)]
+                };
+                assert_eq!(
+                    topn.query_bytes(&tidb_codec::encode_key(&values).unwrap()),
+                    Some(count),
+                    "{analyze}: {}",
+                    index.name
+                );
+            }
+        }
+    }
+}

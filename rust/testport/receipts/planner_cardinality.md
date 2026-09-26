@@ -2898,3 +2898,14 @@ The original pinned Go test, one new Rust session test, 14 source-mapping tests
 (with 27 ignored mappings), make lint and diff checks pass. Exact commands and
 limits are in the structural audit's subset-index lifecycle entry. The full Go
 package and workload performance gates remain incomplete.
+
+
+Expression-index prerequisite checkpoint (2026-09-25): the original
+TestUninitializedStats SQL exposed ANALYZE's visible-only sample layout, rather
+than a missing catalog loading state. Local analysis now samples hidden virtual
+values for index keys while omitting virtual-column histograms. Original SQL and
+full/selected composite-index TopN regression pass against Go evidence; 110
+EXPLAIN tests and lint pass. ANALYZE has 20 passing tests and one identical
+baseline partition-global-statistics failure. Cluster virtual evaluation,
+special-index NDV collection and virtual histogram publication remain open;
+the structural audit records exact code boundaries, commands and limitations.

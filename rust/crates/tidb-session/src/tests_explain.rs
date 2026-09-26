@@ -5571,3 +5571,37 @@ fn apply_cache_runtime_uses_repeated_outer_keys() {
     session.run("DELETE FROM mysql.opt_rule_blacklist WHERE name='decorrelate'").unwrap();
     session.run("ADMIN RELOAD OPT_RULE_BLACKLIST").unwrap();
 }
+
+/// Original Go TestUninitializedStats: an all-NULL expression index must retain
+/// initialized statistics through ANALYZE and repeated EXPLAIN ANALYZE.
+#[test]
+fn expression_index_statistics_remain_initialized() {
+    let mut session = Session::new();
+    session.run("SET NAMES utf8mb4").unwrap();
+    session.run("CREATE TABLE t1(id INT,c1 INT,c2 VARCHAR(100),PRIMARY KEY(id),KEY idx_expr ((CAST(JSON_UNQUOTE(JSON_EXTRACT(c2,_utf8mb4'$.location_id')) AS CHAR(255)) COLLATE utf8mb4_bin)))").unwrap();
+    session
+        .run(r#"INSERT INTO t1 VALUES(1,1,'{"foo": "bar"}'),(2,1,'{"foo": "bar"}')"#)
+        .unwrap();
+    session.run("ANALYZE TABLE t1").unwrap();
+    let sql = "EXPLAIN ANALYZE FORMAT='brief' SELECT /*+ use_index(t1,idx_expr) */ * FROM t1 WHERE (CAST(JSON_UNQUOTE(JSON_EXTRACT(c2,_utf8mb4'$.location_id')) AS CHAR(255)) COLLATE utf8mb4_bin) > '100' AND c2 > 'abc'";
+    let first = row_text(session.run(sql));
+    assert!(!first.is_empty());
+    let histograms = row_text(session.run("SHOW STATS_HISTOGRAMS"));
+    assert!(!histograms.is_empty());
+    assert!(
+        !histograms
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("allEvicted")),
+        "{histograms:?}"
+    );
+    let second = row_text(session.run(sql));
+    assert!(!second.is_empty());
+    assert!(
+        !second
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("unInitialized")),
+        "{second:?}"
+    );
+}

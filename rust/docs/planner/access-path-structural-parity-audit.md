@@ -3319,3 +3319,50 @@ Validation (all passed):
 No Go source, Go dependency or Bazel metadata changed, so `make bazel_prepare`
 was not required. No benchmark was run; this test-only checkpoint changes no
 production correctness, compatibility or performance behavior.
+
+### Expression-index sampling versus histogram publication (2026-09-25)
+
+The original Go `TestUninitializedStats` passed on the pinned master, but its
+Rust SQL reproduction failed during ANALYZE with the explicit refusal that a
+hidden expression column has no histogram. This precedes the loading behavior
+the fixture was intended to test. The local `kv_analyze_plan` incorrectly used
+visible columns as the sample layout. Go retains virtual values in samples for
+index keys and omits their individual column histograms.
+
+`tidb-executor/src/analyze/kv.rs` now builds its sample layout over physical
+columns, including hidden expressions, and retains the existing selected-column
+position mapping and virtual-histogram publication filter. The materialized row
+reader already evaluates these expressions. No SQL-visible hidden column or
+virtual-column histogram is introduced. The exact original JSON-expression SQL
+now passes ANALYZE, SHOW STATS_HISTOGRAMS and repeated EXPLAIN ANALYZE. An additional
+session regression checks full and selected-column analysis of a visible virtual
+index and a composite hidden expression index: exact TopN keys/counts, NDV three,
+zero NULL count and no virtual-column histograms. Go produces the same six TopN
+rows for both column-selection modes.
+
+This exposed a broader adapter mismatch, which remains OPEN: the cluster
+`cluster_analyze_plan` skips hidden/virtual columns and indexes containing them.
+Go `analyze_col_sampling.go` decodes samples, evaluates virtual columns, and uses
+independent index NDV/null-count results for indexes with virtual key parts.
+Rust `cluster_analyze/sampling.rs` currently runs those NDV tasks only for prefix
+indexes, decodes handles without virtual evaluation, and publishes every built
+column histogram through `report_from_analyzed`. Simply removing the cluster
+skip would sample NULL placeholders and publish incorrect distributions. The
+next implementation must carry a physical sample schema, evaluate virtual values
+with statement context after decoding, retain Go special-index NDV ownership,
+and omit virtual histogram persistence. The paged local-snapshot cluster adapter
+also needs the corresponding evaluation. Whole-package and cluster parity remain
+incomplete; this checkpoint does not claim otherwise.
+
+Validation:
+
+- Before fix: `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib expression_index_statistics_remain_initialized -- --test-threads=1` failed at ANALYZE with the hidden-column refusal; after fix it passes.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_explain -- --test-threads=1` — 110 passed.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_analyze -- --test-threads=1` — 20 passed, one failure: `static_partition_analyze_keeps_statistics_on_physical_partitions` reports pseudo global statistics. With the production file restored to HEAD, `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib static_partition_analyze_keeps_statistics_on_physical_partitions -- --test-threads=1` reproduces the identical failure. The fix was restored afterward. This baseline failure remains open.
+- Pinned Go tree: `GOTOOLCHAIN=go1.25.12 ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestUninitializedStats$' -count=1` — passed.
+- Pinned Go tree: `GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRustExpressionIndexAnalyzeReference$' -count=1` — full and selected-column TopN oracle passed. Failpoints disabled afterward.
+- `make lint` and `git diff --check` passed. No Go/Bazel changes, so no bazel_prepare trigger.
+
+Performance has not been measured. Hidden sample values now incur analysis work
+required for their index distributions. No sysbench/TPC-C/TPC-H/YCSB result or
+full-package completion is claimed.

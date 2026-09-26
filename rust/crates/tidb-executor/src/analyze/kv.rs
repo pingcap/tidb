@@ -19,9 +19,9 @@
 //! tier. This file is only the two translations either side of it: a
 //! `KvTable`'s columns and indexes into an [`AnalyzePlan`], and the built
 //! histograms into the map `EXPLAIN` estimates from. That split is the
-//! guarantee: the same ten rows analyzed here and analyzed through
-//! `tidb_exec::cluster_analyze` produce the same histogram, so a query does
-//! not change its plan when the storage under it does.
+//! shared computation requires the same materialized sample layout and values
+//! from both tiers; schema projection and virtual-column evaluation belong to
+//! their input adapters.
 //!
 //! # Where the result goes
 //!
@@ -33,14 +33,12 @@
 //! catalog has no other node to send them to. Writing them here would be a
 //! second copy of the same facts with no reader.
 //!
-//! # A plan position IS a row offset
+//! # Sample values and persisted column histograms
 //!
-//! A `KvTable` keeps its hidden columns contiguous at the END of `columns`
-//! (see [`crate::expression_index`]), and this plan covers every visible
-//! column -- one it cannot analyze refuses the statement rather than being
-//! skipped. So the *n*th analyzed column is the *n*th value of a scanned row,
-//! with no offset table in between, and an index over a hidden column is the
-//! one case that has no position to map to.
+//! Index keys use physical column offsets, including hidden virtual columns.
+//! The sample plan retains those values; publication omits virtual-column
+//! histograms, as Go does after evaluating virtual columns in its samples.
+//! `source_positions` maps a selected plan back to the full materialized row.
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
@@ -125,11 +123,10 @@ pub fn analyze_kv_table_columns(
     }
     let analyzed = run.finish()?;
 
-    let visible = table.visible_columns();
     let mut columns = BTreeMap::new();
     let mut column_fm_sketches = BTreeMap::new();
     for (position, built) in analyzed.columns.into_iter().enumerate() {
-        let column = &visible[source_positions[position]];
+        let column = &table.columns()[source_positions[position]];
         // Go analyzeColumnsPushdownV2 omits virtual-column histograms.
         // Their materialized sample values are still needed for index keys.
         if crate::generated_column::is_virtual(column) {
@@ -305,11 +302,11 @@ fn kv_analyze_plan(
     context: &RowDecodeContext,
     selected_column_ids: Option<&HashSet<i64>>,
 ) -> Result<(AnalyzePlan, Vec<usize>, Vec<usize>), AnalyzeError> {
-    let visible = table.visible_columns();
-    let mut columns = Vec::with_capacity(visible.len());
-    let mut source_positions = Vec::with_capacity(visible.len());
+    let physical_columns = table.columns();
+    let mut columns = Vec::with_capacity(physical_columns.len());
+    let mut source_positions = Vec::with_capacity(physical_columns.len());
     let mut remapped = BTreeMap::new();
-    for (source_position, column) in visible.iter().enumerate() {
+    for (source_position, column) in physical_columns.iter().enumerate() {
         if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
             continue;
         }
@@ -345,13 +342,6 @@ fn kv_analyze_plan(
         }
         let mut column_positions = Vec::with_capacity(index.column_offsets.len());
         for offset in &index.column_offsets {
-            if *offset >= visible.len() {
-                return Err(AnalyzeError::Unsupported(format!(
-                    "this node does not analyze index `{}` on `{}`: it covers a hidden column an \
-                     expression index was rewritten into, which has no histogram",
-                    index.name, table.name
-                )));
-            }
             let Some(position) = remapped.get(offset).copied() else {
                 continue;
             };
