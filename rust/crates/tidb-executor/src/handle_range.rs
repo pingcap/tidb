@@ -228,12 +228,13 @@ pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow:
 
 /// Go `deriveTablePathStats`' `path.CountAfterAccess` for clustered handles.
 /// `trigger_load` is false for the executor's eager precompute, which runs
-/// before index pruning; see [`crate::access_cost::index_row_count`].
+/// before index pruning; see [`crate::access_cost::index_row_count_with_options`].
 pub(crate) fn handle_range_row_count(
     table: &KvTable,
     ranges: &[IndexRange],
     stats: Option<&TableStatistics>,
     trigger_load: bool,
+    options: EstimatorOptions,
 ) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let realtime = realtime_row_count(stats);
     if let Some(index) = clustered_primary_metadata(table) {
@@ -244,6 +245,7 @@ pub(crate) fn handle_range_row_count(
             stats,
             realtime,
             trigger_load,
+            options,
         );
     }
     let Some(column) = handle_column(table) else {
@@ -277,7 +279,7 @@ pub(crate) fn handle_range_row_count(
         realtime as i64,
         stats.map_or(0, |stats| stats.modify_count),
         true,
-        EstimatorOptions::default(),
+        options,
     )?
     .est)
 }

@@ -1615,6 +1615,7 @@ fn within_bucket_range_skew_setting_changes_analyzed_index_estimate() {
         .unwrap();
     let one = estimate(&mut session);
     assert!(zero < half && half < one, "0={zero}, 0.5={half}, 1={one}");
+    assert_eq!([zero, half, one], [4.0, 6.0, 8.0], "Go session risk estimates");
 
     session
         .run("SET GLOBAL tidb_opt_risk_range_skew_ratio = 0.5")

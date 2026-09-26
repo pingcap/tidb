@@ -417,12 +417,6 @@ pub struct ScanEstimate {
     pub pseudo: bool,
 }
 
-/// The session inputs Go reads off `PlanContext`; this tier touches none of
-/// the risk variables, so they stay at their documented defaults.
-fn estimator_options() -> EstimatorOptions {
-    EstimatorOptions::default()
-}
-
 /// The table's realtime row count: `stats_meta.count` when analyzed, Go's
 /// `statistics.PseudoRowCount` when not.
 pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
@@ -517,7 +511,8 @@ fn index_row_counts(stats: &TableStatistics, table: &KvTable, index: &KvIndex) -
     counts
 }
 
-pub(crate) fn index_row_count(
+#[cfg(test)]
+fn index_row_count(
     index: &KvIndex,
     table: &KvTable,
     ranges: &[IndexRange],
@@ -536,7 +531,7 @@ pub(crate) fn index_row_count(
     )
 }
 
-fn index_row_count_with_options(
+pub(crate) fn index_row_count_with_options(
     index: &KvIndex,
     table: &KvTable,
     ranges: &[IndexRange],
@@ -838,15 +833,16 @@ pub(crate) fn index_range_row_count(
     stats: Option<&TableStatistics>,
     realtime: f64,
     trigger_load: bool,
+    options: EstimatorOptions,
 ) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
-    Ok(index_row_count(index, table, ranges, stats, realtime, trigger_load)?.est)
+    Ok(
+        index_row_count_with_options(index, table, ranges, stats, realtime, trigger_load, options)?
+            .est,
+    )
 }
 
-/// Go `core/stats.go:detachCondAndBuildRangeForPath` when the physical index
-/// key has handle columns after the declared index columns. The index
-/// histogram only covers the declared prefix; estimate that prefix first,
-/// then apply Go's damped handle selectivities using the full ranges.
-pub(crate) fn index_row_count_with_appended_handle_columns(
+#[cfg(test)]
+fn index_row_count_with_appended_handle_columns(
     index: &KvIndex,
     table: &KvTable,
     ranges: &[tidb_planner::ranger::types::Range],
@@ -854,6 +850,32 @@ pub(crate) fn index_row_count_with_appended_handle_columns(
     stats: Option<&TableStatistics>,
     realtime: f64,
     trigger_load: bool,
+) -> Result<RowEstimate, tidb_planner::cardinality::row_count_estimator::EstimationError> {
+    index_row_count_with_appended_handle_columns_and_options(
+        index,
+        table,
+        ranges,
+        appended_handle_offsets,
+        stats,
+        realtime,
+        trigger_load,
+        EstimatorOptions::default(),
+    )
+}
+
+/// Go `core/stats.go:detachCondAndBuildRangeForPath` when the physical index
+/// key has handle columns after the declared index columns. The index
+/// histogram only covers the declared prefix; estimate that prefix first,
+/// then apply Go's damped handle selectivities using the full ranges.
+pub(crate) fn index_row_count_with_appended_handle_columns_and_options(
+    index: &KvIndex,
+    table: &KvTable,
+    ranges: &[tidb_planner::ranger::types::Range],
+    appended_handle_offsets: &[usize],
+    stats: Option<&TableStatistics>,
+    realtime: f64,
+    trigger_load: bool,
+    options: EstimatorOptions,
 ) -> Result<RowEstimate, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let declared_columns = index.column_offsets.len();
     tidb_planner::cardinality::estimate_index_path_ranges(
@@ -871,7 +893,15 @@ pub(crate) fn index_row_count_with_appended_handle_columns(
                     high_exclusive: range.high_exclude,
                 })
                 .collect::<Vec<_>>();
-            index_row_count(index, table, &ranges, stats, realtime, trigger_load)
+            index_row_count_with_options(
+                index,
+                table,
+                &ranges,
+                stats,
+                realtime,
+                trigger_load,
+                options,
+            )
         },
         |dimension, ranges| {
             let column = table
@@ -905,7 +935,7 @@ pub(crate) fn index_row_count_with_appended_handle_columns(
                 realtime as i64,
                 stats.modify_count,
                 false,
-                estimator_options(),
+                options,
             )
             .ok()
         },
@@ -6162,7 +6192,9 @@ mod index_async_load_queue_tests {
                 high_exclusive: false,
             }];
             let actual =
-                crate::handle_range::handle_range_row_count(&table, &ranges, Some(&stats), false)
+                crate::handle_range::handle_range_row_count(
+                    &table, &ranges, Some(&stats), false, EstimatorOptions::default(),
+                )
                     .unwrap();
             assert!((actual - expected).abs() < 1e-12, "ndv={ndv}: {actual}");
         }

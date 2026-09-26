@@ -2876,3 +2876,12 @@ SQL evidence pin partial rows 1.41 instead of 2.00 and unchanged results. The
 structural audit records the invalid initial BatchPointGet oracle and corrected
 secondary-index fixture, exact commands and remaining package/workload gates.
 This remains package-internal evidence rather than completed transcreation.
+
+
+Statement-options checkpoint (2026-09-25): ordinary access precomputation now
+uses the same session estimator options as logical and union paths, including
+integer/common handles and appended handles. The strengthened SQL skew fixture
+fails before with 4/7.5/10 versus Go 4/6/8, then passes after. Monotonicity-only
+evidence was insufficient because a later consistency adjustment hid the missing
+snapshot. Exact commands, 180 focused tests and remaining context/package/workload
+gaps are in the structural audit. No whole-package completion is claimed.

@@ -3238,3 +3238,51 @@ Passes in 0.480s; failpoint refcount restored to zero. Logs:
 No Go/Bazel changes and no bazel_prepare trigger. Whole-package source/support
 coverage, remaining statement/loading/variant gates, and sysbench/TPC-C/TPC-H/YCSB
 measurements remain open. No performance or package-completion claim is made.
+
+
+## One statement-options snapshot for ordinary access estimates (2026-09-25)
+
+The next context audit found production defaults in access_cost::index_row_count,
+its appended-handle callback and handle_range::handle_range_row_count. Logical
+selectivity and union alternatives already read session estimator settings. Thus
+ordinary scans could carry a default estimate while their DataSource carried a
+session-adjusted estimate. fill_ordinary_index_paths' consistency correction then
+inflated the default scan estimate when it fell below the filtered row count.
+
+Both ordinary bridge paths now call the options-bearing estimator. Appended
+prefix and handle callbacks retain the same options, and integer/common-handle
+estimation forwards them to column/index estimators. Default-only conveniences
+are cfg(test), so production callers must choose a statement snapshot explicitly.
+No new session variable, estimator arithmetic or feature is introduced.
+
+The existing within_bucket_range_skew_setting_changes_analyzed_index_estimate
+SQL fixture had only checked monotonicity, which both correct and inflated
+estimates satisfy. Added exact Go-master assertions: ratios 0/0.5/1 produce
+4/6/8 rows. The regression failed before with [4,7.5,10], then passed after the
+context fix. It also retains session/global/default isolation checks. This
+supersedes the earlier weak monotonicity-only evidence for ordinary index scans.
+
+Changed files: rust/crates/tidb-executor/src/access_cost.rs,
+driver/planner_bridge.rs and handle_range.rs; rust/crates/tidb-session/src/tests_explain.rs;
+this audit, the cardinality ExecPlan and receipt.
+
+Validation from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib within_bucket_range_skew_setting -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_explain -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib access_cost:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_index_hints:: -- --test-threads=1
+    make lint
+    git diff --check
+
+EXPLAIN 109, costing 44 and hints 27 pass: 180 non-overlapping tests. Lint and
+diff checks pass. No Go/Bazel changes or bazel_prepare trigger. Go oracle from
+/private/tmp/tidb-go-master-20260923, pin 633a9e37f1c796ac81c203dc107025e7e65385f0:
+
+    GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRustIndexStatementOptionsReference$' -count=1 -v
+
+The oracle asserts the three exact scan estimates; wrapper restores failpoints.
+Logs: /private/tmp/tidb-index-options-{before,after,explain,cost,hints,lint,go}.log.
+Statement timezone and warning policy remain incomplete, as do source/support
+inventory, package gates and sysbench/TPC-C/TPC-H/YCSB measurements. This fix is
+not a complete cardinality-package transcreation or workload-performance claim.

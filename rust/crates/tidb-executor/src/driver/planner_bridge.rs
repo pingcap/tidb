@@ -1968,6 +1968,7 @@ impl InitStats<'_> {
                             &built.ranges,
                             statistics,
                             false,
+                            self.context.optimizer_cost_env().session.estimator_options,
                         )
                     })
                     .transpose()
@@ -2108,13 +2109,14 @@ impl InitStats<'_> {
                     true,
                 );
                 let estimate = (if appended_handle_columns.is_empty() {
-                    crate::access_cost::index_row_count(
+                    crate::access_cost::index_row_count_with_options(
                         index,
                         table,
                         &built.ranges,
                         statistics,
                         row_count,
                         false,
+                        self.context.optimizer_cost_env().session.estimator_options,
                     )
                 } else {
                     let ranges = built
@@ -2132,7 +2134,7 @@ impl InitStats<'_> {
                             high_exclude: range.high_exclusive,
                         })
                         .collect::<Vec<_>>();
-                    crate::access_cost::index_row_count_with_appended_handle_columns(
+                    crate::access_cost::index_row_count_with_appended_handle_columns_and_options(
                         index,
                         table,
                         &ranges,
@@ -2143,6 +2145,7 @@ impl InitStats<'_> {
                         statistics,
                         row_count,
                         false,
+                        self.context.optimizer_cost_env().session.estimator_options,
                     )
                 })
                 .map_err(estimation_error)?;
@@ -2332,11 +2335,12 @@ impl InitStats<'_> {
                                 high_exclusive: range.high_exclude,
                             })
                             .collect::<Vec<_>>();
-                        crate::access_cost::index_row_count(
+                        crate::access_cost::index_row_count_with_options(
                             metadata, table, &ranges, statistics, row_count, false,
+                            self.context.optimizer_cost_env().session.estimator_options,
                         )
                     } else {
-                        crate::access_cost::index_row_count_with_appended_handle_columns(
+                        crate::access_cost::index_row_count_with_appended_handle_columns_and_options(
                             metadata,
                             table,
                             &built.ranges,
@@ -2347,6 +2351,7 @@ impl InitStats<'_> {
                             statistics,
                             row_count,
                             false,
+                            self.context.optimizer_cost_env().session.estimator_options,
                         )
                     }
                     .map_err(estimation_error)?;
