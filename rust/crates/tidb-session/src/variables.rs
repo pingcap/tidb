@@ -1287,12 +1287,15 @@ impl Session {
                 if *scope != Some(tidb_ast::SysVarScope::Global)
                     && name.eq_ignore_ascii_case("warning_count")
                 {
-                    return Ok(Expr::Int(self.sys_warning_count().to_string()));
+                    // Both counts are Go's TypeStr session variables (MySQL
+                    // renders them as strings), so the oracle answer reads
+                    // ('1', '1') -- not integers.
+                    return Ok(Expr::String(self.sys_warning_count().to_string()));
                 }
                 if *scope != Some(tidb_ast::SysVarScope::Global)
                     && name.eq_ignore_ascii_case("error_count")
                 {
-                    return Ok(Expr::Int(self.sys_error_count().to_string()));
+                    return Ok(Expr::String(self.sys_error_count().to_string()));
                 }
                 // `@@last_plan_from_cache` is Go's `PrevFoundInPlanCache`
                 // read (`sysvar.go`'s GetSession hook), not a stored value --
