@@ -385,6 +385,15 @@ func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T)
 		"test sampling_index_prefix_col  idx 1 0 1 1 b b 0",
 	))
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
+
+	// NDVRATE samples the columns, but indexes on virtual or prefix columns are
+	// analyzed separately and read every row.
+	for _, tbl := range []string{"sampling_index_virtual_col", "sampling_index_prefix_col"} {
+		tk.MustExec("analyze table " + tbl + " with 0.5 NDVRATE")
+		lastJob := "select job_info from mysql.analyze_jobs where table_name = '" + tbl + "' and job_info like '%s' order by id desc limit 1"
+		tk.MustQuery(fmt.Sprintf(lastJob, "analyze table%")).CheckContain("0.5 ndvrate")
+		tk.MustQuery(fmt.Sprintf(lastJob, "analyze ndv for index%")).CheckNotContain("ndvrate")
+	}
 }
 
 func testSnapshotAnalyzeAndMaxTSAnalyzeHelper(analyzeSnapshot bool) func(t *testing.T) {
@@ -738,9 +747,9 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
 
-	// ANALYZE rejects every NDVRATE.
-	for _, rate := range []string{"0.1", "1"} {
-		require.ErrorContains(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"), "should be positive and not larger than 0")
+	// NDVRATE must be in (0, 1].
+	for _, rate := range []string{"0", "1.01"} {
+		require.Error(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"))
 	}
 }
 
@@ -1948,6 +1957,12 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t  ij_char 1 6 81 24 qwer qwer 0",
 		"test t  ij_char 1 7 108 27 yuiop yuiop 0",
 	))
+
+	// NDVRATE samples the columns, but multi-valued indexes are analyzed
+	// separately and read every row.
+	tk.MustExec("analyze table t with 0.5 NDVRATE")
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_name = 't' and job_info like 'analyze table%' order by id desc limit 1").CheckContain("0.5 ndvrate")
+	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name = 't' and job_info like 'analyze index ij%ndvrate%'").Check(testkit.Rows("0"))
 }
 
 func TestAnalyzePartitionVerify(t *testing.T) {
@@ -2291,4 +2306,16 @@ partition by range (a) (
 		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 0 and stats_ver = 2",
 		p1ID,
 	)).Check(testkit.Rows("4"))
+}
+
+func TestAnalyzeNDVRate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	// The mock server is a legacy peer: a sampled request may get full-input results.
+	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
+	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
 }
