@@ -92,8 +92,12 @@ const (
 )
 
 var (
-	jobV2FirstVer        = *semver.New("8.4.0")
-	globalIdxV1FirstVer  = *semver.New("8.5.6")
+	jobV2FirstVer       = *semver.New("8.4.0")
+	globalIdxV1FirstVer = *semver.New("8.5.6")
+	// tikvFullTextFirstVer is the first release whose nodes maintain a
+	// FULLTEXT index built in TiKV; older nodes would treat it as an ordinary
+	// index over the column.
+	tikvFullTextFirstVer = *semver.New("9.0.0")
 	detectJobVerInterval = 10 * time.Second
 )
 
@@ -984,6 +988,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 			model.SetJobVerInUse(model.JobVersion2)
 		}
 		model.SetGlobalIndexV1Supported(true)
+		model.SetTiKVFullTextSupported(true)
 		return
 	}
 
@@ -992,7 +997,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 	}
 
-	if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() {
+	if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() && model.GetTiKVFullTextSupported() {
 		return
 	}
 
@@ -1013,8 +1018,8 @@ func (d *ddl) detectAndUpdateJobVersion() {
 				logutil.SampleLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 			}
 			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
-			if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() {
-				logutil.DDLLogger().Info("job version in use is v2 and global index v1 supported now, stop detecting")
+			if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() && model.GetTiKVFullTextSupported() {
+				logutil.DDLLogger().Info("job version in use is v2, global index v1 and fulltext index in TiKV supported now, stop detecting")
 				return
 			}
 		}
@@ -1031,6 +1036,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	}
 	allSupportV2 := true
 	allSupportGlobalIdxV1 := true
+	allSupportTiKVFullText := true
 	for _, info := range infos {
 		// we don't store TiDB version directly, but concatenated with a MySQL version,
 		// separated by mysql.VersionSeparator.
@@ -1039,6 +1045,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		if idx < 0 {
 			allSupportV2 = false
 			allSupportGlobalIdxV1 = false
+			allSupportTiKVFullText = false
 			// see https://github.com/pingcap/tidb/issues/31823
 			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
 				zap.String("version", tidbVer))
@@ -1050,6 +1057,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		if err2 != nil {
 			allSupportV2 = false
 			allSupportGlobalIdxV1 = false
+			allSupportTiKVFullText = false
 			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
@@ -1063,7 +1071,10 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		if ver.LessThan(globalIdxV1FirstVer) {
 			allSupportGlobalIdxV1 = false
 		}
-		if !allSupportV2 && !allSupportGlobalIdxV1 {
+		if ver.LessThan(tikvFullTextFirstVer) {
+			allSupportTiKVFullText = false
+		}
+		if !allSupportV2 && !allSupportGlobalIdxV1 && !allSupportTiKVFullText {
 			break
 		}
 	}
@@ -1082,6 +1093,12 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 			zap.Bool("old", model.GetGlobalIndexV1Supported()),
 			zap.Bool("new", allSupportGlobalIdxV1))
 		model.SetGlobalIndexV1Supported(allSupportGlobalIdxV1)
+	}
+	if model.GetTiKVFullTextSupported() != allSupportTiKVFullText {
+		logutil.DDLLogger().Info("change fulltext index in TiKV support",
+			zap.Bool("old", model.GetTiKVFullTextSupported()),
+			zap.Bool("new", allSupportTiKVFullText))
+		model.SetTiKVFullTextSupported(allSupportTiKVFullText)
 	}
 	return nil
 }

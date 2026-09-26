@@ -540,7 +540,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	canUseFastCheck := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.IsColumnarIndex() {
+		if idx.MVIndex || idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() {
 			canUseFastCheck = false
 			break
 		}
@@ -720,6 +720,12 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	}
 	if index.Meta().IsColumnarIndex() {
 		b.err = errors.Errorf("columnar index `%v` is not supported for cleanup index", v.IndexName)
+		return nil
+	}
+	if index.Meta().IsTiKVFullTextIndex() {
+		// Cleanup reads the index through a coprocessor scan that would
+		// decode its terms as column values.
+		b.err = errors.Errorf("fulltext index `%v` is not supported for cleanup index", v.IndexName)
 		return nil
 	}
 	e := &CleanupIndexExec{
@@ -5005,11 +5011,32 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalInde
 	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
 	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	hasGlobalIndex := false
+	var fullTextSnapshot kv.Snapshot
+	fullTextScans := make([]*fullTextScan, partialPlanCount)
 	for i := range partialPlanCount {
 		var tempReq *tipb.DAGRequest
 		var err error
 
-		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
+		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok && is.FullText != nil {
+			// The index is read by TiDB's posting-list engine, not by a
+			// coprocessor request. It sees the statement's snapshot with the
+			// transaction's memory buffer laid over it.
+			if fullTextSnapshot == nil {
+				if fullTextSnapshot, err = b.getSnapshot(); err != nil {
+					return nil, err
+				}
+			}
+			if fullTextScans[i], err = newFullTextScan(is); err != nil {
+				return nil, err
+			}
+			partialReqs = append(partialReqs, nil)
+			descs = append(descs, false)
+			indexes = append(indexes, is.Index)
+			isCorColInPartialFilters = append(isCorColInPartialFilters, false)
+			isCorColInPartialAccess = append(isCorColInPartialAccess, false)
+			partialDataSizes = append(partialDataSizes, 0)
+			continue
+		} else if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
 			tempReq, err = buildIndexReq(b.sctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
@@ -5073,6 +5100,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalInde
 		pushedLimit:              v.PushedLimit,
 		keepOrder:                v.KeepOrder,
 		hasGlobalIndex:           hasGlobalIndex,
+		fullTextSnapshot:         fullTextSnapshot,
+		fullTextScans:            fullTextScans,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable

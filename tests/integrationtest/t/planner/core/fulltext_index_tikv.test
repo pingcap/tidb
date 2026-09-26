@@ -1,0 +1,56 @@
+# FULLTEXT index built in TiKV: MATCH ... AGAINST is answered by the index.
+
+drop table if exists articles;
+create table articles (id int primary key, k int, title varchar(200), body text, fulltext index idx_body (body), fulltext index idx_title (title) with parser ngram, key idx_k (k));
+insert into articles values
+  (1, 1, 'MySQL Tutorial', 'This tutorial provides a basic distributed sql walkthrough'),
+  (2, 2, 'How To Use MySQL Well', 'After you went through a mysql tutorial on replication'),
+  (3, 3, 'Optimizing MySQL', 'In this tutorial we show how to optimize a distributed database'),
+  (4, 4, 'MySQL vs PostgreSQL', 'This article compares mysql and postgresql storage engines'),
+  (5, 5, 'MySQL Security', 'How to secure your mysql database with proper privileges');
+
+# The index is read by the posting-list engine in TiDB; the MATCH is consumed by the path.
+explain format = 'brief' select id from articles where match(body) against('+distributed' in boolean mode);
+select id from articles where match(body) against('+distributed' in boolean mode) order by id;
+select id from articles where match(body) against('distributed postgresql' in boolean mode) order by id;
+select id from articles where match(body) against('+distributed +database' in boolean mode) order by id;
+select id from articles where match(body) against('"distributed sql"' in boolean mode) order by id;
+select id from articles where match(body) against('"sql distributed"' in boolean mode) order by id;
+select id from articles where match(body) against('+distributed -database' in boolean mode) order by id;
+select id from articles where match(body) against('distrib*' in boolean mode) order by id;
+
+# Other predicates are pushed to the table side.
+explain format = 'brief' select id from articles where match(body) against('+distributed' in boolean mode) and k > 1;
+select id from articles where match(body) against('+distributed' in boolean mode) and k > 1 order by id;
+
+# NGRAM: a search is a phrase over grams.
+explain format = 'brief' select id from articles where match(title) against('MySQL' in boolean mode);
+select id from articles where match(title) against('MySQL' in boolean mode) order by id;
+select id from articles where match(title) against('Optimi' in boolean mode) order by id;
+
+# Soundness: negation, OR, and natural language mode keep scanning.
+explain format = 'brief' select id from articles where not match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select id from articles where match(body) against('+distributed' in boolean mode) or k = 1;
+
+# Hints can force the scan.
+explain format = 'brief' select id from articles ignore index (idx_body) where match(body) against('+distributed' in boolean mode);
+select id from articles ignore index (idx_body) where match(body) against('+distributed' in boolean mode) order by id;
+
+drop table articles;
+
+# Key columns ahead of the tokenized column confine a search to one value of them, such as a tenant.
+create table tenant_docs (id int primary key, tenant_id int, body text, fulltext index idx_body (tenant_id, body));
+insert into tenant_docs values
+  (1, 1, 'distributed sql for the first tenant'),
+  (2, 1, 'another document of the first tenant'),
+  (3, 2, 'distributed sql for the second tenant'),
+  (4, 2, 'the second tenant again'),
+  (5, null, 'distributed sql without a tenant');
+explain format = 'brief' select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
+select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode) order by id;
+select id from tenant_docs where tenant_id is null and match(body) against('+distributed' in boolean mode) order by id;
+# Without one value for every key column the index cannot serve the search.
+explain format = 'brief' select id from tenant_docs where match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select id from tenant_docs where tenant_id in (1, 2) and match(body) against('+distributed' in boolean mode);
+select id from tenant_docs where tenant_id in (1, 2) and match(body) against('+distributed' in boolean mode) order by id;
+drop table tenant_docs;

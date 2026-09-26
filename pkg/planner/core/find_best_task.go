@@ -2398,6 +2398,14 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		}
 		if partPath.IsTablePath() {
 			scan = convertToPartialTableScan(ds, effectiveProp, partPath, partMatchPropResult, byItems)
+		} else if partPath.FullText != nil {
+			if !prop.IsSortItemEmpty() {
+				// The posting-list engine yields handles in handle order,
+				// never in index-column order, so it cannot keep an order
+				// even when the sort items name the indexed column.
+				return base.InvalidTask, nil
+			}
+			scan = physicalop.ConvertToFullTextIndexScan(ds, effectiveProp, partPath)
 		} else {
 			var remainingFilters []expression.Expression
 			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.PhysPlanPartInfo, effectiveProp, partPath, partMatchPropResult, byItems)

@@ -152,6 +152,9 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if err := generateIndexMergePath(ds); err != nil {
 		return nil, false, err
 	}
+	if err := generateFullTextIndexPaths(ds); err != nil {
+		return nil, false, err
+	}
 	if err := cleanAccessPathForFTS(ds); err != nil {
 		return nil, false, err
 	}

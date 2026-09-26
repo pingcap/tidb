@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2463,13 +2464,31 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	// seen so the driver runs the LIKE round for cost competition even when
 	// round 1's native plan is executable.
 	useLikeFallback := false
+	useLocalMatch := false
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
 		if er.inDirectMatchBooleanContext() {
-			if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
+			// Local no-score evaluation supersedes the ILIKE fallback for the
+			// modifiers it supports: it applies the same analyzer MySQL would,
+			// so it honours stop words, token-length limits and word
+			// boundaries that a substring ILIKE cannot express. Recorded as a
+			// relevant opt var regardless of its current value so EXPLAIN
+			// EXPLORE can enumerate the enabled state from its default OFF.
+			if expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+				sessVars.RecordRelevantOptVar(vardef.TiDBEnableLocalMatchAgainst)
+				// A FULLTEXT index built in TiKV authorises the MATCH on its
+				// own: local evaluation is the only way to read it.
+				if sessVars.EnableLocalMatchAgainst || er.tikvFullTextIndexForMatch(numCols, stackLen) != nil {
+					useLocalMatch = true
+				}
+			}
+			// The alternative-round bookkeeping below is skipped when local
+			// evaluation is taking the MATCH: it is always executable, so there
+			// is no non-viable native plan for the driver to rescue.
+			if !useLocalMatch && sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
 				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
 				useLikeFallback = true
-			} else if sessVars.EnableAlternativeLogicalPlans {
+			} else if !useLocalMatch && sessVars.EnableAlternativeLogicalPlans {
 				// Round 1 (native). Mark the build so the driver runs the LIKE
 				// round and cost-compares its plan against round 1's. If this
 				// MATCH cannot run natively, also mark the build as non-viable
@@ -2483,11 +2502,133 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		}
 	}
 
-	if useLikeFallback {
+	switch {
+	case useLocalMatch:
+		er.matchAgainstToLocalBuiltin(v, numCols, stackLen)
+	case useLikeFallback:
 		er.matchAgainstToLike(v, numCols, stackLen)
-	} else {
+	default:
 		er.matchAgainstToBuiltin(v, numCols, stackLen)
 	}
+}
+
+// tikvFullTextIndexForMatch returns the public FULLTEXT index built in TiKV
+// that tokenizes the single column a MATCH names, or nil when the MATCH names
+// several columns, a column of no base table, or a column without such an
+// index. Every such index over a column is built with the same analyzer, so
+// the first one found stands for all of them.
+func (er *expressionRewriter) tikvFullTextIndexForMatch(numCols, stackLen int) *model.IndexInfo {
+	nameStart := stackLen - numCols - 1
+	if numCols != 1 || nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil || er.planCtx.builder.is == nil {
+		return nil
+	}
+	name := er.ctxNameStk[nameStart]
+	if name == nil {
+		return nil
+	}
+	tblName := name.OrigTblName
+	if tblName.L == "" {
+		tblName = name.TblName
+	}
+	if tblName.L == "" {
+		return nil
+	}
+	dbName := name.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(er.planCtx.builder.ctx.GetSessionVars().CurrentDB)
+	}
+	tblInfo, err := er.planCtx.builder.is.TableInfoByName(dbName, tblName)
+	if err != nil {
+		return nil
+	}
+	colName := name.OrigColName
+	if colName.L == "" {
+		colName = name.ColName
+	}
+	for _, idx := range tblInfo.Indices {
+		textCol := idx.TiKVFullTextColumn()
+		if textCol != nil && idx.State == model.StatePublic && textCol.Name.L == colName.L {
+			return idx
+		}
+	}
+	return nil
+}
+
+// matchAgainstToLocalBuiltin emits the native MATCH ... AGAINST builtin marked
+// for local no-score evaluation in TiDB. Unlike matchAgainstToBuiltin it does
+// not require the modifier to survive pushdown, because the expression is
+// evaluated here rather than sent to a storage node.
+//
+// The analyzer configuration is frozen into the plan. A FULLTEXT index built
+// in TiKV over the matched column supplies it, so that the query compiles to
+// the terms the index stores; otherwise it is resolved from session variables
+// with the STANDARD parser, which matches MySQL's default for a FULLTEXT index
+// declared without WITH PARSER.
+func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
+	fullTextIndex := er.tikvFullTextIndexForMatch(numCols, stackLen)
+
+	against := er.ctxStack[stackLen-1]
+	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
+
+	args := make([]expression.Expression, 0, 1+numCols)
+	args = append(args, against)
+	args = append(args, cols...)
+
+	er.ctxStackPop(numCols + 1)
+	fn, err := er.newFunction(ast.FTSMysqlMatchAgainst, &v.Type, args...)
+	if err != nil {
+		er.err = err
+		return
+	}
+	sf, ok := fn.(*expression.ScalarFunction)
+	if !ok {
+		er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
+		return
+	}
+	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
+		er.err = err
+		return
+	}
+
+	var config fulltext.AnalyzerConfig
+	if fullTextIndex != nil {
+		config = fulltext.AnalyzerConfigFromTiKVFullTextIndex(fullTextIndex.TiKVFullText)
+	} else {
+		sessVars := er.planCtx.builder.ctx.GetSessionVars()
+		config, err = fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1)
+		if err != nil {
+			er.err = err
+			return
+		}
+	}
+	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
+
+	// Compile eagerly only when the search string is a stable constant. That
+	// surfaces BOOLEAN-syntax errors at plan time — deferring them to the first
+	// row would let an empty input, or an earlier false predicate, hide the
+	// error — and yields the estimation proxy and the matches-nothing
+	// short-circuit. For a mutable search string (`?` marker, user variable)
+	// none of that is knowable yet, so the plan carries no baked-in search
+	// value and evaluation compiles per search string instead. This is why
+	// local matching, unlike the ILIKE fallback, stays plan-cache safe.
+	if constExpr, isConst := against.(*expression.Constant); isConst &&
+		!expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
+		query, err := expression.CompileFTSMysqlMatchAgainstLocalQuery(er.sctx.GetEvalCtx(), sf, config)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if query != nil {
+			info.MatchNothing = query.MatchesNothing()
+			info.SelectivityTerm, _ = query.SelectivityTerm()
+		}
+	}
+
+	if err := expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info); err != nil {
+		er.err = err
+		return
+	}
+	er.ctxStackAppend(fn, types.EmptyName)
 }
 
 // ftsNativeViable reports whether the MATCH(...) currently being rewritten

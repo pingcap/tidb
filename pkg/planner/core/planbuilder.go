@@ -1350,6 +1350,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	var err error
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
+	fullTextIndexes := make(map[string]struct{})
 
 	// When NO_INDEX_LOOKUP_PUSHDOWN hint is specified, we should set `forceNoIndexLookUpPushDown = true` to avoid
 	// using index look up push down even if other hint or system variable `tidb_index_lookup_pushdown_policy`
@@ -1390,6 +1391,13 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 			if index.InvertedInfo != nil {
 				invertedIndexes[index.Name.L] = struct{}{}
+				continue
+			}
+			if index.IsTiKVFullTextIndex() {
+				// Its keys are analyzed terms, not column values, so it cannot
+				// serve a column-value range. MATCH ... AGAINST reaches it
+				// through its own access path, which honours the hints itself.
+				fullTextIndexes[index.Name.L] = struct{}{}
 				continue
 			}
 			if index.IsColumnarIndex() {
@@ -1481,6 +1489,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 		for _, idxName := range hint.IndexNames {
 			if _, ok := invertedIndexes[idxName.L]; ok {
+				continue
+			}
+			if _, ok := fullTextIndexes[idxName.L]; ok {
 				continue
 			}
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
@@ -1992,6 +2003,12 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			}
 		}
 		indexInfos = append(indexInfos, idxInfo)
+		if idxInfo.IsTiKVFullTextIndex() {
+			// Its entries are analyzed terms, which an index lookup would
+			// decode as column values; the executor checks it from the
+			// record side instead, so it gets no reader.
+			continue
+		}
 		// For partition tables except global index.
 		if pi := tbl.Meta().GetPartitionInfo(); pi != nil && !idxInfo.Global {
 			for _, def := range pi.Definitions {
@@ -2011,7 +2028,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 		}
 		indexLookUpReaders = append(indexLookUpReaders, reader)
 	}
-	if len(indexLookUpReaders) == 0 {
+	if len(indexLookUpReaders) == 0 && len(indexInfos) == 0 {
 		return nil, nil, nil
 	}
 	return indexLookUpReaders, indexInfos, nil
@@ -2272,7 +2289,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
 				// for mv index and ci index fail it first, then analyze those analyzable indexes.
-				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
+				if idx.MVIndex || idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
@@ -2555,6 +2572,12 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		if originIdx.IsColumnarIndex() {
 			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", originIdx.Name.L))
+			continue
+		}
+		if originIdx.IsTiKVFullTextIndex() {
+			// Its entries are analyzed terms, which say nothing about the
+			// distribution of the column they came from.
+			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {

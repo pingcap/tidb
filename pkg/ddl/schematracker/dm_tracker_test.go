@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -815,4 +816,76 @@ func TestDropMaterializedViewLogWithDependentMaterializedView(t *testing.T) {
 	err = tracker.DropMaterializedViewLog(sctx, dropStmt.(*ast.DropMaterializedViewLogStmt))
 	require.ErrorContains(t, err, "dependent materialized views exist")
 	require.NotNil(t, mustTableByName(t, tracker, "test", mlogName.O).MaterializedViewLog)
+}
+
+// TestFullTextIndexMirrorsExecutor covers the three ways a FULLTEXT index is
+// declared. On the classic kernel the executor builds it in TiKV with the
+// TiKVFullText marker; the tracker must produce the same shape, or a consumer
+// such as DM drifts from what the cluster holds.
+func TestFullTextIndexMirrorsExecutor(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	sctx := mock.NewContext()
+	p := parser.New()
+	exec := func(tracker schematracker.SchemaTracker, sql string) error {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		switch s := stmt.(type) {
+		case *ast.CreateTableStmt:
+			return tracker.CreateTable(sctx, s)
+		case *ast.CreateIndexStmt:
+			return tracker.CreateIndex(sctx, s)
+		case *ast.AlterTableStmt:
+			return tracker.AlterTable(context.Background(), sctx, s)
+		}
+		return nil
+	}
+
+	for _, tc := range []struct{ name, create, add, columns string }{
+		{
+			name:   "create table",
+			create: "create table test.t (id int primary key, body varchar(255), fulltext index idx(body) with parser ngram)",
+		},
+		{
+			name:    "key columns",
+			create:  "create table test.t (id int primary key, tenant int, body varchar(255), fulltext index idx(tenant, body) with parser ngram)",
+			columns: "`tenant`,`body`",
+		},
+		{
+			name:   "create index",
+			create: "create table test.t (id int primary key, body varchar(255))",
+			add:    "create fulltext index idx on test.t(body) with parser ngram",
+		},
+		{
+			name:   "alter table add",
+			create: "create table test.t (id int primary key, body varchar(255))",
+			add:    "alter table test.t add fulltext index idx(body) with parser ngram",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := schematracker.NewSchemaTracker(2)
+			tracker.CreateTestDB(nil)
+			require.NoError(t, exec(tracker, tc.create))
+			if tc.add != "" {
+				require.NoError(t, exec(tracker, tc.add))
+			}
+			info := mustTableByName(t, tracker, "test", "t")
+			idx := info.FindIndexByName("idx")
+			require.NotNil(t, idx)
+			require.Equal(t, ast.IndexTypeFulltext, idx.Tp)
+			require.NotNil(t, idx.TiKVFullText)
+			require.Equal(t, model.FullTextParserTypeNgramV1, idx.TiKVFullText.ParserType)
+			require.Nil(t, idx.FullTextInfo)
+			require.False(t, idx.MVIndex)
+			require.Equal(t, "body", idx.TiKVFullTextColumn().Name.L)
+			columns := tc.columns
+			if columns == "" {
+				columns = "`body`"
+			}
+			result := bytes.NewBuffer(make([]byte, 0, 512))
+			require.NoError(t, executor.ConstructResultOfShowCreateTable(sctx, info, autoid.Allocators{}, result))
+			require.Contains(t, result.String(), "FULLTEXT INDEX `idx`("+columns+") WITH PARSER NGRAM")
+		})
+	}
 }
