@@ -824,6 +824,20 @@ pub fn truncate_fold_warnings(len: usize) {
     FOLD_WARNINGS.with(|warnings| warnings.borrow_mut().truncate(len));
 }
 
+/// Re-homes the warnings a fold emitted straight into a LIVE statement
+/// context: the statement boundary's warning reset clears the live list
+/// between planning and execution, so entries appended during PLANNING
+/// never reach `SHOW WARNINGS`. Moving the fold's delta into the thread
+/// stash hands them to the record-set's post-execution drain
+/// ([`take_fold_warnings`]), which runs after the reset.
+pub fn move_live_warnings_to_stash(ctx: &dyn crate::Columns, bookmark: usize) {
+    if ctx.warning_count() > bookmark {
+        for (code, message) in ctx.take_warnings_since(bookmark) {
+            record_fold_warning(code, &message);
+        }
+    }
+}
+
 /// Drains this thread's fold warnings. The statement driver calls this right
 /// after planning, forwarding the pairs into the statement's warning buffer
 /// so `SHOW WARNINGS` and the OK packet's count see them.

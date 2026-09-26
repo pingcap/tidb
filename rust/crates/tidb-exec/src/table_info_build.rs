@@ -1262,6 +1262,18 @@ fn build_column(
             );
         }
     }
+    // go `buildFieldSimpleType`'s `ErrWarnZerofillDeprecated` (1681): every
+    // ZEROFILL column warns the deprecation notice -- and go's YEAR type
+    // carries `mysql.ZerofillFlag` intrinsically (`defaultTypeForYear`), so
+    // a bare `c_yr YEAR` column warns it too (oracle: the 25-column CREATE
+    // with exactly one YEAR column warns exactly once).
+    if column.ty.zerofill || field_type.code() == FieldTypeCode::Year {
+        context.append_warning_parts(
+            1681,
+            "The ZEROFILL attribute is deprecated and will be removed in a future release. \
+             Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.",
+        );
+    }
     // Go `checkColumnAttributes` -- each refusal carries go's own errno and
     // text (1426/1427/1291/3505); flattening them to a generic 1105 turned
     // `ENUM('x','x')` into a Rust Debug leak on the wire.

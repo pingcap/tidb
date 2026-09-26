@@ -575,6 +575,7 @@ where
             ConfiguredWritePlan::Write {
                 mutations,
                 affected_rows,
+                warnings,
             } => {
                 for mutation in mutations {
                     self.buffer.stage(mutation).map_err(|error| {
@@ -586,7 +587,7 @@ where
                 Ok(ConfiguredWriteReport {
                     affected_rows,
                     no_write: None,
-                    warnings: Vec::new(),
+                    warnings,
                     write_size: 0,
                     write_keys: 0,
                     processed_keys,

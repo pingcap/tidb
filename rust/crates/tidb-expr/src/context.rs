@@ -351,6 +351,11 @@ impl JsonError {
     pub const fn code(&self) -> u16 {
         match self {
             JsonError::InvalidText | JsonError::EmptyText => 3140,
+            // The PLAN-tier code is MySQL's nominal 3143: a constant
+            // statement (`JSON_EXTRACT('[1,2,3]', '$[1 TO 2]')`) errors
+            // through the classed terror at planning. The EXEC-tier wrap for
+            // column-sourced calls answers 1105 instead -- that mapping
+            // lives in the executor's error conversion, not here.
             JsonError::InvalidPath(_) => 3143,
             JsonError::InvalidPathMultipleSelection => 3149,
             JsonError::InvalidTypeForJson { .. } => 3146,
@@ -819,6 +824,16 @@ pub trait Columns {
 
     /// Removes warnings at and after `bookmark`.
     fn truncate_warnings(&self, _bookmark: usize) {}
+
+    /// Removes and returns the warnings at and after `bookmark`. The plan
+    /// builder's fold uses this to RE-HOME fold-time diagnostics into the
+    /// thread stash ([`crate::constant_fold::record_fold_warning`]): the
+    /// stash survives the statement boundary's warning reset, while entries
+    /// appended straight into the live list during PLANNING are cleared by
+    /// it before execution reads them.
+    fn take_warnings_since(&self, _bookmark: usize) -> Vec<(u16, String)> {
+        Vec::new()
+    }
 
     /// Go `EvalContext.GetMaxAllowedPacket`, which every result-sizing string
     /// builtin captures into its signature at BUILD time

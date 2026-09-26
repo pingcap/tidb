@@ -211,6 +211,11 @@ impl Session {
     }
 
     pub(crate) fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+        // The constant-fold stash travels thread-locally and a QueryRecordSet's
+        // finish would otherwise be its only drain -- statements that ERROR
+        // before producing one (FORMAT('x', 'y')'s 1582) would leave their
+        // fold-time warnings for the NEXT statement's drain to mis-attribute.
+        ctx.drain_fold_warnings();
         for (level, code, message) in ctx.take_warnings() {
             self.append_warning(WarningLevel::from_executor(level), code, message);
         }

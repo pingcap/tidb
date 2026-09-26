@@ -1064,8 +1064,12 @@ impl ColumnResolver for PlanScopeResolver<'_> {
                 // Go's `NewFunction` folds each builtin as it is constructed,
                 // in the live statement context; the deferred top-level fold
                 // in `rewrite_scalar_with_scope` cannot reach a closed leaf
-                // under a non-constant parent.
+                // under a non-constant parent. The fold's diagnostics re-home
+                // into the thread stash: the statement boundary's warning
+                // reset clears the live list before execution reads it.
+                let bookmark = context.warning_count();
                 tidb_expr::fold_constant_in_mode(expression, context, mode);
+                tidb_expr::constant_fold::move_live_warnings_to_stash(context, bookmark);
             }
             return;
         }
@@ -1592,11 +1596,16 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         // Go's `NewFunction` still folds those closed casts with the live
         // statement context, so warnings from constants such as `'abc' + 1`
         // and `1 / 0` belong to this construction boundary, not execution.
+        // The boundary's warning reset clears the live list after planning,
+        // so the fold's diagnostics RE-HOME into the thread stash, which the
+        // record-set drains after execution.
+        let fold_bookmark = self.ctx.warning_count();
         tidb_expr::fold_constant_in_mode(
             &mut rewritten,
             self.ctx,
             tidb_expr::ConstantFoldMode::Normal,
         );
+        tidb_expr::constant_fold::move_live_warnings_to_stash(self.ctx, fold_bookmark);
         Ok(rewritten)
     }
 

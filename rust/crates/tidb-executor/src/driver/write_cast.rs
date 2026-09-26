@@ -277,6 +277,29 @@ fn cast_value_shaped(
     let Some(event) = converted.event else {
         return Ok(converted.value);
     };
+    // go's `ProduceDecWithSpecifiedTp` names EVERY scale rounding through
+    // the column scope: `Incorrect decimal value: '<original>' for column
+    // '<col>' at row <n>` via HandleTruncate, which a write statement's
+    // IgnoreTruncateErr flag downgrades to a warning in every SQL mode
+    // (oracle: 99999.99999 -> DECIMAL(10,4) and 1.23456 -> DECIMAL(10,3)
+    // both store the rounded value beside the 1366, while a value that fits
+    // the scale exactly -- 1.5 -> DECIMAL(10,4) -- stays unremarked).
+    let decimal_rounded = matches!(
+        event,
+        tidb_datatype::ScalarConversionEvent::RoundedToScale
+    ) && field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal;
+    if decimal_rounded {
+        ctx.append_warning_parts(
+            1366,
+            &format!(
+                "Incorrect decimal value: '{}' for column '{}' at row {}",
+                datum_error_text(&source),
+                column,
+                row_index + 1,
+            ),
+        );
+        return Ok(converted.value);
+    }
     if conversion_event_is_silent(&event) {
         return Ok(converted.value);
     }

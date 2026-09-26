@@ -353,6 +353,9 @@ pub enum ConfiguredWritePlan {
         mutations: Vec<OptimisticMutation>,
         /// Rows to report in the MySQL OK packet.
         affected_rows: u64,
+        /// Truncation warnings the row conversions raised, in source row
+        /// order (go's OK-packet warning list).
+        warnings: Vec<ConfiguredWriteWarning>,
     },
     /// Publish nothing and report the source-defined affected-row count.
     NoWrite {
@@ -404,8 +407,9 @@ pub fn plan_insert(
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     let mut mutations = Vec::with_capacity(rows.len());
     let mut handles = Vec::with_capacity(rows.len());
-    for row in rows {
-        let (handle, columns) = split_row(table, row, session_tz)?;
+    let mut warnings = Vec::new();
+    for (row_index, row) in rows.iter().enumerate() {
+        let (handle, columns) = split_row(table, row, session_tz, &mut warnings, row_index + 1)?;
         if handles.contains(&handle) {
             return Err(ConfiguredWriteError::DuplicateHandle(handle));
         }
@@ -431,6 +435,7 @@ pub fn plan_insert(
     Ok(ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        warnings,
     })
 }
 
@@ -451,8 +456,8 @@ pub fn plan_insert_ignore<S: WritePlanningSnapshot>(
     let mut warnings = Vec::new();
     let mut affected_rows = 0;
 
-    for row in rows {
-        let (handle, columns) = split_row(table, row, session_tz)?;
+    for (row_index, row) in rows.iter().enumerate() {
+        let (handle, columns) = split_row(table, row, session_tz, &mut warnings, row_index + 1)?;
         let record_key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
         let conflict = if staged_or_snapshot(snapshot, &staged, &record_key, call)?.is_some() {
             Some((handle.to_string(), "PRIMARY".to_owned()))
@@ -517,12 +522,14 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     let mut staged = TransactionMutationBuffer::new();
     let mut affected_rows = 0;
+    let mut warnings = Vec::new();
     for row in rows {
         let plan = plan_replace_row(snapshot, &staged, table, row, call, session_tz)?;
         match plan {
             ConfiguredWritePlan::Write {
                 mutations,
                 affected_rows: row_affected,
+                warnings: row_warnings,
             } => {
                 for mutation in mutations {
                     staged
@@ -530,6 +537,7 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
                         .map_err(ConfiguredWriteError::Staging)?;
                 }
                 affected_rows += row_affected;
+                warnings.extend(row_warnings);
             }
             ConfiguredWritePlan::NoWrite {
                 affected_rows: row_affected,
@@ -549,6 +557,7 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
         Ok(ConfiguredWritePlan::Write {
             mutations: staged.into_mutations(),
             affected_rows,
+            warnings,
         })
     }
 }
@@ -561,7 +570,8 @@ fn plan_replace_row<S: WritePlanningSnapshot>(
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
-    let (handle, columns) = split_row(table, row, session_tz)?;
+    let mut replace_warnings = Vec::new();
+    let (handle, columns) = split_row(table, row, session_tz, &mut replace_warnings, 1)?;
     let record_key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
     let mut conflicts = BTreeMap::new();
     if let Some(stored) = staged_or_snapshot(snapshot, staged, &record_key, call)? {
@@ -607,15 +617,19 @@ fn plan_replace_row<S: WritePlanningSnapshot>(
         mutations.extend(deletes);
     }
     let ConfiguredWritePlan::Write {
-        mutations: inserts, ..
+        mutations: inserts,
+        affected_rows: insert_affected,
+        warnings: insert_warnings,
     } = plan_insert(table, std::slice::from_ref(row), session_tz)?
     else {
         unreachable!("a replacement INSERT always publishes");
     };
     mutations.extend(inserts);
+    replace_warnings.extend(insert_warnings);
     Ok(ConfiguredWritePlan::Write {
         mutations,
-        affected_rows: conflict_count.saturating_add(1),
+        affected_rows: conflict_count.saturating_add(insert_affected),
+        warnings: replace_warnings,
     })
 }
 
@@ -699,12 +713,19 @@ pub fn plan_update(
     // dispatches on the assigned column's own scalar type
     // (`plan_typed_add`), matching Go's generic `+` applied to each of
     // `BIGINT`/`INT`, `BIGINT UNSIGNED`, `DECIMAL`, and `DOUBLE`.
+    let mut update_warnings = Vec::new();
     let new_value = match assignment {
         // Shares the exact coercion the INSERT path applies
         // (`configured_stored_value`): the same type check, range check,
         // truncation, and `NULL`-into-nullable-column rule, so `SET col = ?`
         // admits and refuses exactly what `INSERT ... (col) VALUES (?)` does.
-        ConfiguredAssignment::Set(value) => configured_stored_value(assigned, &value, session_tz)?,
+        ConfiguredAssignment::Set(value) => configured_stored_value(
+            assigned,
+            &value,
+            session_tz,
+            &mut update_warnings,
+            1,
+        )?,
         ConfiguredAssignment::Add(addend) => plan_typed_add(assigned, &stored_value, &addend)?,
     };
     // An UPDATE whose value does not change writes nothing (Go `AddTouchedRows`
@@ -774,6 +795,7 @@ pub fn plan_update(
     Ok(ConfiguredWritePlan::Write {
         mutations,
         affected_rows: 1,
+        warnings: update_warnings,
     })
 }
 
@@ -793,6 +815,7 @@ fn plan_on_duplicate_update(
     stored: &[u8],
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let mut od_warnings = Vec::new();
     let stored_row = decode_stored_row(table, stored)?;
     let mut updated = stored_row.clone();
     for assignment in assignments {
@@ -819,7 +842,7 @@ fn plan_on_duplicate_update(
                     })?
             }
             ConfiguredOnDuplicateValue::Set(value) => {
-                configured_stored_value(column, value, session_tz)?
+                configured_stored_value(column, value, session_tz, &mut od_warnings, 1)?
             }
             ConfiguredOnDuplicateValue::Add(value) => plan_typed_add(column, &current, value)?,
         };
@@ -868,6 +891,7 @@ fn plan_on_duplicate_update(
         // Go's duplicate-update path reports two affected rows only when it
         // changes the conflicting record.
         affected_rows: 2,
+        warnings: od_warnings,
     })
 }
 
@@ -881,7 +905,8 @@ fn plan_on_duplicate_row<S: WritePlanningSnapshot>(
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
-    let (handle, columns) = split_row(table, row, session_tz)?;
+    let mut od_warnings = Vec::new();
+    let (handle, columns) = split_row(table, row, session_tz, &mut od_warnings, 1)?;
     let record_key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
     if let Some(stored) = staged_or_snapshot(snapshot, staged, &record_key, call)? {
         return plan_on_duplicate_update(table, handle, &columns, assignments, &stored, session_tz);
@@ -926,11 +951,13 @@ pub fn plan_insert_on_duplicate<S: WritePlanningSnapshot>(
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     let mut staged = TransactionMutationBuffer::new();
     let mut affected_rows = 0;
+    let mut warnings = Vec::new();
     for row in rows {
         match plan_on_duplicate_row(snapshot, &staged, table, row, assignments, call, session_tz)? {
             ConfiguredWritePlan::Write {
                 mutations,
                 affected_rows: row_affected,
+                warnings: row_warnings,
             } => {
                 for mutation in mutations {
                     staged
@@ -938,6 +965,7 @@ pub fn plan_insert_on_duplicate<S: WritePlanningSnapshot>(
                         .map_err(ConfiguredWriteError::Staging)?;
                 }
                 affected_rows += row_affected;
+                warnings.extend(row_warnings);
             }
             ConfiguredWritePlan::NoWrite {
                 affected_rows: row_affected,
@@ -957,6 +985,7 @@ pub fn plan_insert_on_duplicate<S: WritePlanningSnapshot>(
         Ok(ConfiguredWritePlan::Write {
             mutations: staged.into_mutations(),
             affected_rows,
+            warnings,
         })
     }
 }
@@ -995,6 +1024,7 @@ pub fn plan_delete(
     Ok(ConfiguredWritePlan::Write {
         mutations,
         affected_rows: 1,
+        warnings: Vec::new(),
     })
 }
 
@@ -1060,13 +1090,31 @@ fn admit_decimal_value(
     bytes: &[u8],
     precision: u32,
     scale: u32,
+    warnings: &mut Vec<ConfiguredWriteWarning>,
+    row_index: usize,
 ) -> Result<Decimal, ConfiguredWriteError> {
     let (parsed, _warning) = Decimal::parse_mysql(&String::from_utf8_lossy(bytes));
-    parsed.fit_precision_scale(precision, scale).ok_or_else(|| {
+    let fitted = parsed.fit_precision_scale(precision, scale).ok_or_else(|| {
         ConfiguredWriteError::DecimalOutOfRange {
             column: column.name().to_owned(),
         }
-    })
+    })?;
+    // go `ProduceDecWithSpecifiedTp`: a scale/precision fit that CHANGED the
+    // value (fractional rounding) is a 1366 truncation the column scope
+    // names -- `Incorrect decimal value: '<text>' for column '<col>' at row
+    // <n>` -- while the rounded value still stores.
+    if parsed != fitted {
+        warnings.push(ConfiguredWriteWarning {
+            code: 1366,
+            message: format!(
+                "Incorrect decimal value: '{}' for column '{}' at row {}",
+                String::from_utf8_lossy(bytes),
+                column.name(),
+                row_index,
+            ),
+        });
+    }
+    Ok(fitted)
 }
 
 /// Admits a bound literal into a `DATE`/`DATETIME`/`TIMESTAMP`/`TIME` column,
@@ -1317,6 +1365,8 @@ fn split_row(
     table: &ConfiguredTable,
     row: &ConfiguredInsertRow,
     session_tz: &SessionTimeZone,
+    warnings: &mut Vec<ConfiguredWriteWarning>,
+    row_index: usize,
 ) -> Result<(i64, Vec<(i64, Datum)>), ConfiguredWriteError> {
     let mut handle = 0;
     let mut columns = Vec::with_capacity(row.values().len());
@@ -1330,7 +1380,7 @@ fn split_row(
             ConfiguredColumnKind::Stored => {
                 columns.push((
                     column.id(),
-                    configured_stored_value(column, value, session_tz)?,
+                    configured_stored_value(column, value, session_tz, warnings, row_index)?,
                 ));
             }
         }
@@ -1390,6 +1440,8 @@ fn configured_stored_value(
     column: &ConfiguredColumn,
     value: &PreparedBindValue,
     session_tz: &SessionTimeZone,
+    warnings: &mut Vec<ConfiguredWriteWarning>,
+    row_index: usize,
 ) -> Result<Datum, ConfiguredWriteError> {
     if matches!(value, PreparedBindValue::Null) {
         return if column.is_nullable() {
@@ -1468,7 +1520,12 @@ fn configured_stored_value(
                 return Err(type_mismatch(column, false));
             };
             Ok(Datum::Decimal(admit_decimal_value(
-                column, bytes, precision, scale,
+                column,
+                bytes,
+                precision,
+                scale,
+                warnings,
+                row_index,
             )?))
         }
         scalar_type @ (ConfiguredScalarType::Date
@@ -2108,12 +2165,13 @@ where
         ConfiguredWritePlan::Write {
             mutations,
             affected_rows,
+            warnings,
         } => {
             let (write_size, write_keys) = mutation_write_details(&mutations);
             Ok(ConfiguredWriteOutcome::Published {
                 outcome: Box::new(transaction.commit(mutations, call)?),
                 affected_rows,
-                warnings: Vec::new(),
+                warnings,
                 write_size,
                 write_keys,
                 processed_keys,
