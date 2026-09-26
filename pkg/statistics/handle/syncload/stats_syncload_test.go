@@ -78,6 +78,16 @@ func TestConcurrentLoadHist(t *testing.T) {
 func TestConcurrentLoadHistTimeout(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
+	// Disable the stats sync-load worker so that the concurrent load requests triggered by
+	// `analyze table t` (and the lease-based reload) cannot fully load the columns asynchronously.
+	// Otherwise, once a column becomes IsFullLoad, removeHistLoadedColumns filters it out and
+	// SendLoadRequests returns nil, making `require.Error(rs)` flaky (see pingcap/tidb#68364).
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
+	config.StoreGlobalConfig(newConfig)
+	defer config.StoreGlobalConfig(originConfig)
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
