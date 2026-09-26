@@ -80,6 +80,7 @@ go_test(
         "//pkg/testkit/analyzehelper",
         "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
     ],
 )
