@@ -99,6 +99,12 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
 		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
 	})
+
+	t.Run("exhausted set TS retries are non-retryable", func(t *testing.T) {
+		err := errdef.ErrSetTSBeforeImport.GenWithStackByArgs("00000000-0000-0000-0000-000000000000", 20, context.DeadlineExceeded)
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(errors.Annotate(err, "wrapped")))
+	})
 }
 
 func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
