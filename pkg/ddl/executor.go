@@ -1525,6 +1525,9 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
 	}
+	if err := checkRecoverTableForeignKeys(is, schema.Name.L, tbInfo); err != nil {
+		return err
+	}
 
 	// for "flashback table xxx to yyy"
 	// Note: this case only allow change table name, schema remains the same.
