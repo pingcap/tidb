@@ -1438,11 +1438,12 @@ func GetAccurateCmpType(ctx EvalContext, lhs, rhs Expression) types.EvalType {
 		cmpType = types.ETVectorFloat32
 	} else if (lhsEvalType.IsStringKind() && lhsFieldType.GetType() == mysql.TypeJSON) || (rhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) {
 		cmpType = types.ETJson
-	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.GetType()) || types.IsTypeTime(rhsFieldType.GetType())) {
+	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.GetType()) || types.IsTypeTime(rhsFieldType.GetType()) ||
+		isTemporalTimestampAdd(lhs) || isTemporalTimestampAdd(rhs)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
-		if lhsFieldType.GetType() == rhsFieldType.GetType() {
+		if lhsFieldType.GetType() == rhsFieldType.GetType() && types.IsTypeTime(lhsFieldType.GetType()) {
 			cmpType = lhsFieldType.EvalType()
 		} else {
 			cmpType = types.ETDatetime
@@ -1483,6 +1484,15 @@ func GetAccurateCmpType(ctx EvalContext, lhs, rhs Expression) types.EvalType {
 		}
 	}
 	return cmpType
+}
+
+func isTemporalTimestampAdd(expr Expression) bool {
+	scalarFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	timestampAdd, ok := scalarFunc.Function.(*builtinTimestampAddSig)
+	return ok && timestampAdd.compareAsDatetime
 }
 
 // GetCmpFunction get the compare function according to two arguments.

@@ -880,7 +880,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_TimeToSec:
 		f = &builtinTimeToSecSig{base}
 	case tipb.ScalarFuncSig_TimestampAdd:
-		f = &builtinTimestampAddSig{base}
+		f = &builtinTimestampAddSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ToDays:
 		f = &builtinToDaysSig{base}
 	case tipb.ScalarFuncSig_ToSeconds:
