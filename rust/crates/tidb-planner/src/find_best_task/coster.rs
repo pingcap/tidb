@@ -730,9 +730,14 @@ impl Ver2Coster {
                 // `p.Children()[0]` for the child cardinality
                 // (`plan_cost_ver2.go:561`).
                 let child_rows = Self::rows(&plan.children()[0]);
+                // Go's pruned group-less aggregate carries NO group-by items
+                // (the pruning removes constants without a placeholder), so
+                // its group cost is zero; the Constant(1) placeholder is not
+                // a real grouping column.
                 let group_scalar: Vec<bool> = agg
                     .group_by_items
                     .iter()
+                    .filter(|item| !matches!(item, tidb_expr::expression::Expression::Constant(_)))
                     .map(|item| {
                         matches!(item, tidb_expr::expression::Expression::ScalarFunction(_))
                     })
@@ -758,9 +763,12 @@ impl Ver2Coster {
                 // `p.Children()[0]` for the child cardinality
                 // (`plan_cost_ver2.go:561`).
                 let child_rows = Self::rows(&plan.children()[0]);
+                // The same placeholder-stripping as the StreamAgg arm: the
+                // Constant(1) is not a grouping column on go master either.
                 let group_scalar: Vec<bool> = agg
                     .group_by_items
                     .iter()
+                    .filter(|item| !matches!(item, tidb_expr::expression::Expression::Constant(_)))
                     .map(|item| {
                         matches!(item, tidb_expr::expression::Expression::ScalarFunction(_))
                     })
