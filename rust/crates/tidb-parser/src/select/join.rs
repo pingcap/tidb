@@ -560,7 +560,13 @@ impl Parser {
         while self.peek_n(n).kind == TokenKind::Op && self.peek_n(n).text == "(" {
             n += 1;
         }
-        n > 0 && (self.is_kw_at(n, "SELECT") || self.is_kw_at(n, "WITH"))
+        // go's `parseTableSource` accepts `VALUES ROW(...), ...` as a
+        // derived-table payload too (the oracle parses the payload and only
+        // fails at a following column-alias list).
+        n > 0
+            && (self.is_kw_at(n, "SELECT")
+                || self.is_kw_at(n, "WITH")
+                || self.is_kw_at(n, "VALUES"))
     }
 
     /// Whether the current tokens start Go's structural parenthesized-join
