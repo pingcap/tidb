@@ -1739,8 +1739,15 @@ func (e *TikvRegionPeersExtractor) Extract(ctx base.PlanContext,
 	remained, regionIDSkipRequest, regionIDs := e.extractCol(ctx, schema, names, predicates, "region_id", false)
 	remained, storeIDSkipRequest, storeIDs := e.extractCol(ctx, schema, names, remained, "store_id", false)
 	e.RegionIDs, e.StoreIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs)
+	// PD region/store IDs are nonzero. An extracted predicate with no valid
+	// IDs is unsatisfiable, not an unfiltered request for all peers.
+	isZero := func(id uint64) bool { return id == 0 }
+	e.RegionIDs = slices.DeleteFunc(e.RegionIDs, isZero)
+	e.StoreIDs = slices.DeleteFunc(e.StoreIDs, isZero)
 
-	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest
+	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest ||
+		(len(regionIDs) > 0 && len(e.RegionIDs) == 0) ||
+		(len(storeIDs) > 0 && len(e.StoreIDs) == 0)
 	if e.SkipRequest {
 		return nil
 	}
