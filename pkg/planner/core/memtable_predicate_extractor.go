@@ -504,6 +504,13 @@ func (helper extractHelper) extractLikePattern(
 		// collation may require a case-sensitive match of the original value.
 		return true, pattern, fn.FuncName.L == ast.Like && toLower
 	case ast.Regexp, ast.RegexpLike:
+		// The case-folding information_schema path cannot preserve REGEXP
+		// semantics: lower-casing changes escapes such as \D, and forcing (?i)
+		// can exclude valid matches of negated classes such as [^A-Z]. Leave the
+		// original predicate to scalar evaluation, including its match options.
+		if toLower {
+			return false, "", false
+		}
 		return true, datums[0].GetString(), false
 	default:
 		return false, "", false
