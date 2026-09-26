@@ -49,6 +49,29 @@ func FoldConstant(ctx BuildContext, expr Expression) Expression {
 	return e
 }
 
+// cloneFoldedBranchForMetadataOverride copies branches selected by special
+// folding before FoldConstant applies the parent expression metadata to the
+// returned expression.
+func cloneFoldedBranchForMetadataOverride(expr Expression) Expression {
+	switch e := expr.(type) {
+	case *Column:
+		cloned := e.Clone().(*Column)
+		cloned.RetType = e.RetType.Clone()
+		return cloned
+	case *CorrelatedColumn:
+		cloned := e.Clone().(*CorrelatedColumn)
+		cloned.RetType = e.RetType.Clone()
+		return cloned
+	case *ScalarFunction:
+		cloned := e.Clone().(*ScalarFunction)
+		cloned.RetType = e.RetType.Clone()
+		cloned.Function.setRetTp(cloned.RetType)
+		return cloned
+	default:
+		return expr
+	}
+}
+
 func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	arg0 := expr.GetArgs()[0]
 	if constArg, isConst := arg0.(*Constant); isConst {
@@ -170,7 +193,11 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			return expr, false
 		}
 		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, expr) {
-			return function(ctx, x)
+			foldedExpr, isDeferred := function(ctx, x)
+			if foldedExpr != x {
+				foldedExpr = cloneFoldedBranchForMetadataOverride(foldedExpr)
+			}
+			return foldedExpr, isDeferred
 		}
 
 		args := x.GetArgs()
