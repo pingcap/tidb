@@ -69,6 +69,60 @@ func TestDefaultDDLWeights(t *testing.T) {
 }
 
 func TestCalculate(t *testing.T) {
+	t.Run("pointer and value APIs preserve prior arithmetic bits", func(t *testing.T) {
+		check := func(units StmtUnits, weights StmtWeights) {
+			t.Helper()
+			beforeUnits, beforeWeights := units, weights
+			want, wantOK := referenceCalculate(units, weights)
+			got, ok := units.Calculate(&weights)
+			if ok != wantOK || math.Float64bits(got.TotalRU) != math.Float64bits(want.TotalRU) {
+				t.Fatalf("pointer result = %+v/%v, reference = %+v/%v, units=%+v weights=%+v", got, ok, want, wantOK, units, weights)
+			}
+			got, ok = Calculate(units, weights)
+			if ok != wantOK || math.Float64bits(got.TotalRU) != math.Float64bits(want.TotalRU) {
+				t.Fatalf("value result = %+v/%v, reference = %+v/%v", got, ok, want, wantOK)
+			}
+			for _, pair := range [][2]any{{beforeUnits, units}, {beforeWeights, weights}} {
+				before, after := reflect.ValueOf(pair[0]), reflect.ValueOf(pair[1])
+				for i := range before.NumField() {
+					if math.Float64bits(before.Field(i).Float()) != math.Float64bits(after.Field(i).Float()) {
+						t.Fatalf("input mutated at %s", before.Type().Field(i).Name)
+					}
+				}
+			}
+		}
+		base := StmtUnits{CPUWork: 1, ScanBytes: 2, NetBytes: 3, CrossAZNetBytes: 1,
+			FrontendCompileBytes: 4, HashStateRows: 5, JoinOutputRows: 6,
+			WriteStatement: 7, OperatorNum: 8, WriteKeys: 9, WriteBytes: 10}
+		check(base, DefaultWeights())
+		// Visit every unit and every coefficient, including unused coefficients.
+		for _, value := range []float64{0, math.Copysign(0, -1), math.SmallestNonzeroFloat64,
+			math.Nextafter(1, 0), math.Nextafter(1, 2), 1 << 53, math.MaxFloat64,
+			-math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
+			for i := range reflect.TypeFor[StmtUnits]().NumField() {
+				units := base
+				reflect.ValueOf(&units).Elem().Field(i).SetFloat(value)
+				check(units, DefaultWeights())
+			}
+			for i := range reflect.TypeFor[StmtWeights]().NumField() {
+				weights := DefaultWeights()
+				reflect.ValueOf(&weights).Elem().Field(i).SetFloat(value)
+				check(base, weights)
+				check(StmtUnits{}, weights)
+			}
+		}
+		negativeZero := StmtUnits{}
+		for i := range reflect.TypeFor[StmtUnits]().NumField() {
+			reflect.ValueOf(&negativeZero).Elem().Field(i).SetFloat(math.Copysign(0, -1))
+		}
+		allPositiveWeights := DefaultWeights()
+		allPositiveWeights.CrossAZNetByte = 1
+		check(negativeZero, allPositiveWeights)
+		check(StmtUnits{CPUWork: 1 << 53, ScanBytes: 1, NetBytes: 1}, DefaultWeights())
+		check(StmtUnits{CPUWork: math.SmallestNonzeroFloat64}, StmtWeights{CPUWork: 0.5})
+		check(StmtUnits{CPUWork: math.MaxFloat64}, StmtWeights{CPUWork: 2})
+	})
+
 	units := StmtUnits{
 		CPUWork: 1, ScanBytes: 2, NetBytes: 3, FrontendCompileBytes: 4,
 		HashStateRows: 5, JoinOutputRows: 6, WriteStatement: 7,
@@ -118,6 +172,29 @@ func TestCalculateRejectsInvalidInput(t *testing.T) {
 }
 
 func TestStmtUnitsValid(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value float64
+		valid bool
+	}{
+		{name: "positive zero", value: 0, valid: true},
+		{name: "negative zero", value: math.Copysign(0, -1), valid: true},
+		{name: "smallest positive", value: math.SmallestNonzeroFloat64, valid: true},
+		{name: "largest finite", value: math.MaxFloat64, valid: true},
+		{name: "negative finite", value: -math.SmallestNonzeroFloat64},
+		{name: "positive infinity", value: math.Inf(1)},
+		{name: "negative infinity", value: math.Inf(-1)},
+		{name: "not a number", value: math.NaN()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (StmtUnits{CPUWork: tc.value}).Valid(); got != tc.valid {
+				t.Fatalf("StmtUnits.Valid() = %v for %v, want %v", got, tc.value, tc.valid)
+			}
+			if got := (StmtWeights{CPUWork: tc.value}).valid(); got != tc.valid {
+				t.Fatalf("StmtWeights.valid() = %v for %v, want %v", got, tc.value, tc.valid)
+			}
+		})
+	}
 	if !(StmtUnits{}).Valid() {
 		t.Fatal("zero StmtUnits should be valid")
 	}
@@ -188,4 +265,36 @@ func TestCrossAZNetwork(t *testing.T) {
 	if _, ok := Calculate(StmtUnits{}, weights); ok {
 		t.Fatal("negative cross-AZ weight")
 	}
+}
+
+// referenceCalculate pins the pre-pointer arithmetic and independently validates inputs.
+func referenceCalculate(units StmtUnits, weights StmtWeights) (StmtResult, bool) {
+	valid := func(value any) bool {
+		fields := reflect.ValueOf(value)
+		for i := range fields.NumField() {
+			v := fields.Field(i).Float()
+			if v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+				return false
+			}
+		}
+		return true
+	}
+	if units.CrossAZNetBytes > units.NetBytes || !valid(units) || !valid(weights) {
+		return StmtResult{}, false
+	}
+	totalRU := weights.CPUWork*units.CPUWork +
+		weights.ScanByte*units.ScanBytes +
+		weights.NetByte*units.NetBytes +
+		weights.CrossAZNetByte*units.CrossAZNetBytes +
+		weights.FrontendCompileByte*units.FrontendCompileBytes +
+		weights.HashStateRow*units.HashStateRows +
+		weights.JoinOutputRow*units.JoinOutputRows +
+		weights.WriteStatement*units.WriteStatement +
+		weights.OperatorNum*units.OperatorNum +
+		weights.WriteKey*units.WriteKeys +
+		weights.WriteByte*units.WriteBytes
+	if totalRU < 0 || math.IsNaN(totalRU) || math.IsInf(totalRU, 0) {
+		return StmtResult{}, false
+	}
+	return StmtResult{TotalRU: totalRU}, true
 }

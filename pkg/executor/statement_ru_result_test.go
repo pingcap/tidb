@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -218,7 +219,7 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 
 func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 	t.Run("frontend missing is zero only for ResultOnly", func(t *testing.T) {
-		finalized, ok := (statementRUCalculator{units: ruv2.StmtUnits{
+		finalized, ok := (&statementRUCalculator{units: ruv2.StmtUnits{
 			ScanBytes: 10,
 			NetBytes:  20,
 		}}).finalize()
@@ -410,7 +411,7 @@ func TestStatementRUUsesConfig(t *testing.T) {
 		totalBefore := testutil.ToFloat64(metrics.RUV2Total)
 		tidbBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))
 		tikvBefore := testutil.ToFloat64(metrics.RUV2ByEngineTiKV)
-		publishStatementRUMetricsSafely(finalized)
+		publishStatementRUMetricsSafely(&finalized)
 		require.InDelta(t, 2903, testutil.ToFloat64(metrics.RUV2Total)-totalBefore, 1e-9)
 		require.InDelta(t, 329, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))-tidbBefore, 1e-9)
 		require.InDelta(t, 2574, testutil.ToFloat64(metrics.RUV2ByEngineTiKV)-tikvBefore, 1e-9)
@@ -418,6 +419,86 @@ func TestStatementRUUsesConfig(t *testing.T) {
 }
 
 func TestStatementRUResultValueContracts(t *testing.T) {
+	t.Run("pointer calculation preserves prior terminal bits", func(t *testing.T) {
+		t.Cleanup(config.RestoreFunc())
+		base := statementRUCalculator{
+			units: ruv2.StmtUnits{CPUWork: 6, HashStateRows: 6, OperatorNum: 6,
+				JoinOutputRows: 6, ScanBytes: 8, NetBytes: 9, CrossAZNetBytes: 1,
+				FrontendCompileBytes: 4, WriteStatement: 1, WriteKeys: 5, WriteBytes: 7},
+			compute: [statementRUEngineCount]statementRUComputeUnits{
+				{cpuWork: 1, hashStateRows: 1, operatorNum: 1, joinOutputRows: 1},
+				{cpuWork: 2, hashStateRows: 2, operatorNum: 2, joinOutputRows: 2},
+				{cpuWork: 3, hashStateRows: 3, operatorNum: 3, joinOutputRows: 3,
+					scanBytes: 3, netBytes: 3, crossAZNetBytes: 1},
+			},
+		}
+		check := func(calculator statementRUCalculator, weights ruv2.StmtWeights) {
+			t.Helper()
+			// Each call replaces the config, so a stale weights snapshot is detected.
+			config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.StmtWeights = weights })
+			for _, full := range []bool{false, true} {
+				calculator.report = nil
+				if full {
+					calculator.report = new(statementRUFullReport)
+					calculator.report.add(statementRUTiDB, statementRUProjection, ruv2.StmtUnits{CPUWork: 11})
+				}
+				before := calculator
+				var reportBefore statementRUFullReport
+				if full {
+					reportBefore = *calculator.report
+				}
+				want, wantOK := statementRUReferenceFinalize(calculator, weights)
+				got, ok := calculator.finalize()
+				require.Equal(t, wantOK, ok)
+				requireStatementRUBitsEqual(t, want, got)
+				requireStatementRUBitsEqual(t, before, calculator)
+				if full {
+					requireStatementRUBitsEqual(t, reportBefore, *calculator.report)
+					if ok {
+						require.NotSame(t, calculator.report, got.report)
+						calculator.report.units[statementRUTiDB][statementRUProjection].CPUWork = 99
+						requireStatementRUBitsEqual(t, want, got)
+					}
+				}
+			}
+		}
+		weights := ruv2.DefaultWeights()
+		weights.CrossAZNetByte = 2
+		check(base, weights)
+		for _, value := range []float64{0, math.Copysign(0, -1), math.SmallestNonzeroFloat64,
+			math.Nextafter(1, 0), math.Nextafter(1, 2), 1 << 53, math.MaxFloat64,
+			-math.SmallestNonzeroFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
+			for i := range reflect.TypeFor[ruv2.StmtUnits]().NumField() {
+				calculator := base
+				reflect.ValueOf(&calculator.units).Elem().Field(i).SetFloat(value)
+				check(calculator, weights)
+			}
+			for engine := range statementRUEngineCount {
+				for field := range 7 {
+					calculator := base
+					compute := &calculator.compute[engine]
+					fields := []*float64{&compute.cpuWork, &compute.hashStateRows, &compute.operatorNum,
+						&compute.joinOutputRows, &compute.scanBytes, &compute.netBytes, &compute.crossAZNetBytes}
+					*fields[field] = value
+					check(calculator, weights)
+				}
+			}
+			for i := range reflect.TypeFor[ruv2.StmtWeights]().NumField() {
+				changed := weights
+				reflect.ValueOf(&changed).Elem().Field(i).SetFloat(value)
+				check(base, changed)
+				check(statementRUCalculator{}, changed)
+			}
+		}
+		negativeZero := statementRUCalculator{}
+		for i := range reflect.TypeFor[ruv2.StmtUnits]().NumField() {
+			reflect.ValueOf(&negativeZero.units).Elem().Field(i).SetFloat(math.Copysign(0, -1))
+		}
+		check(negativeZero, weights)
+		check(statementRUCalculator{units: ruv2.StmtUnits{CPUWork: 1 << 53, ScanBytes: 1, NetBytes: 1}}, weights)
+		check(statementRUCalculator{units: ruv2.StmtUnits{CPUWork: math.SmallestNonzeroFloat64}}, ruv2.StmtWeights{CPUWork: 0.5})
+	})
+
 	t.Run("frontend compile bytes follow plan cache hits", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		vars := fixture.stmt.Ctx.GetSessionVars()
@@ -491,7 +572,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		finalized, ok := calculator.finalize()
 		require.True(t, ok)
 		finalized.sqlType = "commit"
-		publishStatementRUMetricsSafely(finalized)
+		publishStatementRUMetricsSafely(&finalized)
 		require.InDelta(t, finalized.result.TotalRU,
 			testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("commit"))-writeBefore, 1e-9)
 		require.InDelta(t, finalized.result.TotalRU-4,
@@ -554,7 +635,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		finalized, ok := calculator.finalize()
 		require.True(t, ok)
 		tikvBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(metrics.LblEngineTiKV))
-		publishStatementRUMetricsSafely(finalized)
+		publishStatementRUMetricsSafely(&finalized)
 		require.InDelta(t, float64(30),
 			testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore, 1e-9)
 	})
@@ -596,7 +677,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 			snapshot = published
 		})
 		totalBefore := testutil.ToFloat64(metrics.RUV2Total)
-		publishStatementRUFinalizedSnapshot(fixture.stmt, finalized)
+		publishStatementRUFinalizedSnapshot(fixture.stmt, &finalized)
 
 		require.Equal(t, int64(1), calibrationCount.Load())
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
@@ -735,4 +816,125 @@ func TestStatementRUTTLJobEligibility(t *testing.T) {
 			require.Equal(t, ttlBefore+ttlDelta, testutil.ToFloat64(metrics.RUV2TTLTotal))
 		})
 	}
+}
+
+// These reference helpers retain the value-based arithmetic before the pointer experiment.
+func statementRUReferenceCalculate(units ruv2.StmtUnits, weights ruv2.StmtWeights) (ruv2.StmtResult, bool) {
+	valid := func(value any) bool {
+		fields := reflect.ValueOf(value)
+		for i := range fields.NumField() {
+			v := fields.Field(i).Float()
+			if v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+				return false
+			}
+		}
+		return true
+	}
+	if units.CrossAZNetBytes > units.NetBytes || !valid(units) || !valid(weights) {
+		return ruv2.StmtResult{}, false
+	}
+	totalRU := weights.CPUWork*units.CPUWork +
+		weights.ScanByte*units.ScanBytes +
+		weights.NetByte*units.NetBytes +
+		weights.CrossAZNetByte*units.CrossAZNetBytes +
+		weights.FrontendCompileByte*units.FrontendCompileBytes +
+		weights.HashStateRow*units.HashStateRows +
+		weights.JoinOutputRow*units.JoinOutputRows +
+		weights.WriteStatement*units.WriteStatement +
+		weights.OperatorNum*units.OperatorNum +
+		weights.WriteKey*units.WriteKeys +
+		weights.WriteByte*units.WriteBytes
+	if totalRU < 0 || math.IsNaN(totalRU) || math.IsInf(totalRU, 0) {
+		return ruv2.StmtResult{}, false
+	}
+	return ruv2.StmtResult{TotalRU: totalRU}, true
+}
+
+func statementRUReferenceEngineResult(calculator statementRUCalculator, weights ruv2.StmtWeights) statementRUEngineResult {
+	tidb, tikv, tiflash := calculator.compute[statementRUTiDB], calculator.compute[statementRUTiKV], calculator.compute[statementRUTiFlash]
+	units := calculator.units
+	return statementRUEngineResult{
+		TiDB: weights.CPUWork*tidb.cpuWork + weights.HashStateRow*tidb.hashStateRows +
+			weights.OperatorNum*tidb.operatorNum + weights.JoinOutputRow*(units.JoinOutputRows-tiflash.joinOutputRows) +
+			weights.FrontendCompileByte*units.FrontendCompileBytes + weights.WriteStatement*units.WriteStatement,
+		TiKV: weights.CPUWork*tikv.cpuWork + weights.HashStateRow*tikv.hashStateRows +
+			weights.OperatorNum*tikv.operatorNum + weights.ScanByte*(units.ScanBytes-tiflash.scanBytes) +
+			weights.NetByte*(units.NetBytes-tiflash.netBytes) + weights.WriteKey*units.WriteKeys + weights.WriteByte*units.WriteBytes,
+		TiFlash: statementRUReferenceTiFlashRU(calculator, weights),
+	}
+}
+
+func statementRUReferenceTiFlashRU(calculator statementRUCalculator, weights ruv2.StmtWeights) float64 {
+	tiflash := calculator.compute[statementRUTiFlash]
+	return weights.CPUWork*tiflash.cpuWork + weights.HashStateRow*tiflash.hashStateRows +
+		weights.OperatorNum*tiflash.operatorNum + weights.JoinOutputRow*tiflash.joinOutputRows +
+		weights.ScanByte*tiflash.scanBytes + weights.NetByte*tiflash.netBytes + weights.CrossAZNetByte*tiflash.crossAZNetBytes
+}
+
+func statementRUReferenceFinalize(calculator statementRUCalculator, weights ruv2.StmtWeights) (statementRUFinalizedSnapshot, bool) {
+	result, ok := statementRUReferenceCalculate(calculator.units, weights)
+	if !ok {
+		return statementRUFailed(statementRUOperatorInvalid), false
+	}
+	engineRU := statementRUReferenceEngineResult(calculator, weights)
+	// TotalRU already includes the original TiFlash RU, so add only the extra
+	// (multiplier - 1) copies: total - original TiFlash RU + scaled TiFlash RU.
+	result.TotalRU += engineRU.TiFlash * (statementRUTiFlashMultiplier - 1)
+	// Keep the per-engine value consistent with the adjusted statement total.
+	engineRU.TiFlash *= statementRUTiFlashMultiplier
+	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV, engineRU.TiFlash} {
+		if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
+			return statementRUFailed(statementRUOperatorInvalid), false
+		}
+	}
+	frozenReport := calculator.report
+	if frozenReport != nil {
+		// Freeze full-mode details independently of the mutable accumulator.
+		report := *frozenReport
+		report.addStatementUnits(calculator.units)
+		frozenReport = &report
+	}
+	return statementRUFinalizedSnapshot{
+		units:            calculator.units,
+		result:           result,
+		engineRU:         engineRU,
+		report:           frozenReport,
+		calibrationState: statementRUCalibrationIncomplete,
+		sqlType:          "select",
+	}, true
+}
+
+// Compare all nested floats by bits, including signed zero and NaN payloads.
+func requireStatementRUBitsEqual(t *testing.T, want, got any) {
+	t.Helper()
+	var compare func(reflect.Value, reflect.Value)
+	compare = func(want, got reflect.Value) {
+		require.Equal(t, want.Type(), got.Type())
+		switch want.Kind() {
+		case reflect.Float64:
+			require.Equal(t, math.Float64bits(want.Float()), math.Float64bits(got.Float()))
+		case reflect.Struct:
+			for i := range want.NumField() {
+				compare(want.Field(i), got.Field(i))
+			}
+		case reflect.Array:
+			for i := range want.Len() {
+				compare(want.Index(i), got.Index(i))
+			}
+		case reflect.Pointer:
+			require.Equal(t, want.IsNil(), got.IsNil())
+			if !want.IsNil() {
+				compare(want.Elem(), got.Elem())
+			}
+		case reflect.Bool:
+			require.Equal(t, want.Bool(), got.Bool())
+		case reflect.String:
+			require.Equal(t, want.String(), got.String())
+		case reflect.Uint8:
+			require.Equal(t, want.Uint(), got.Uint())
+		default:
+			t.Fatalf("unhandled comparison kind %v", want.Kind())
+		}
+	}
+	compare(reflect.ValueOf(want), reflect.ValueOf(got))
 }
