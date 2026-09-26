@@ -575,3 +575,18 @@ whole-package inventories and live-cluster/workload gates remain open.
 CTE gate update (2026-09-26): the previously recorded planner failure is resolved.
 The shared seed and invalidation regression follows Go authority; eager optimizer
 lifecycle differences, server mocks, package inventories and workload gates remain.
+
+
+Server gate update (2026-09-26): lib-test compilation and all-target checking now
+pass after migrating the DDL mock's report contract. Injected report coverage
+checks multi-warning order, severity and statement lifetime without duplicating
+DDL planning. The schema suite exposes an existing unconditional foreign-key
+1824 refusal in the production table builder; its failing expectation is retained.
+The structural audit records exact evidence. Whole-package, live-cluster and
+workload gates remain open.
+
+The restored cluster-session group completed: 249 pass, five fail. In addition
+to foreign-key admission, failures cover CaseWhenInt coprocessor decoding,
+global-index physical-table-ID scan ownership, statistics notifier transactions
+and lock-recovery timeout identity. Keep all expectations visible; investigate
+the global-index lifecycle next. See the structural audit for commands and logs.

@@ -109,13 +109,13 @@ impl ClusterDdl for MockDdl {
             // generic DDL and its executor no-ops them: OK, nothing written.
             DdlStatement::AlterMaterializedViewNoOp { schema, view } => {
                 return Ok(ClusterDdlReport::AlreadySatisfied {
-                    warning: None,
+                    warnings: Vec::new(),
                     detail: format!("ALTER MATERIALIZED VIEW on `{schema}`.{view} changes nothing"),
                 });
             }
             DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
                 return Ok(ClusterDdlReport::AlreadySatisfied {
-                    warning: None,
+                    warnings: Vec::new(),
                     detail: format!(
                         "ALTER MATERIALIZED VIEW LOG on `{schema}`.{table} changes nothing"
                     ),
@@ -123,13 +123,13 @@ impl ClusterDdl for MockDdl {
             }
             DdlStatement::DropMaterializedViewNoOp { schema, view } => {
                 return Ok(ClusterDdlReport::AlreadySatisfied {
-                    warning: None,
+                    warnings: Vec::new(),
                     detail: format!("DROP MATERIALIZED VIEW on `{schema}`.{view} changes nothing"),
                 });
             }
             DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
                 return Ok(ClusterDdlReport::AlreadySatisfied {
-                    warning: None,
+                    warnings: Vec::new(),
                     detail: format!(
                         "DROP MATERIALIZED VIEW LOG on `{schema}`.{table} changes nothing"
                     ),
@@ -144,7 +144,7 @@ impl ClusterDdl for MockDdl {
                 if find(&mut next.databases, name).is_some() {
                     if *if_not_exists {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
-                            warning: None,
+                            warnings: Vec::new(),
                             detail: format!("database `{name}` already exists"),
                         });
                     }
@@ -172,7 +172,7 @@ impl ClusterDdl for MockDdl {
                     }
                     None if *if_exists => {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
-                            warning: None,
+                            warnings: Vec::new(),
                             detail: format!("database `{name}` does not exist"),
                         })
                     }
@@ -198,7 +198,7 @@ impl ClusterDdl for MockDdl {
                 {
                     if *if_not_exists {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
-                            warning: None,
+                            warnings: Vec::new(),
                             detail: format!("table `{schema}`.`{table}` already exists"),
                         });
                     }
@@ -405,7 +405,7 @@ impl ClusterDdl for MockDdl {
                     }
                     None if *if_exists => {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
-                            warning: None,
+                            warnings: Vec::new(),
                             detail: format!("table `{schema}`.`{table}` does not exist"),
                         })
                     }
@@ -462,8 +462,12 @@ impl ClusterDdl for MockDdl {
             // A PLACEMENT POLICY is a schema object of its own, not a change
             // to a database or table this mock models. `cluster_ddl_source`
             // owns those plans, as it does the column and truncate changes
-            // below.
-            DdlStatement::CreatePlacementPolicy { .. }
+            // below. Multi-table drops and option-only ALTERs use an injected
+            // report seam in schema_changes to check warning routing without
+            // duplicating the production planner in this catalog mock.
+            DdlStatement::DropTables { .. }
+            | DdlStatement::AcceptedNoOp { .. }
+            | DdlStatement::CreatePlacementPolicy { .. }
             | DdlStatement::AlterPlacementPolicy { .. }
             | DdlStatement::DropPlacementPolicy { .. }
             | DdlStatement::ModifyTableComment { .. }
@@ -508,7 +512,7 @@ impl ClusterDdl for MockDdl {
         Ok(ClusterDdlReport::Applied {
             schema_version,
             created_id,
-            warning: None,
+            warnings: Vec::new(),
         })
     }
 }

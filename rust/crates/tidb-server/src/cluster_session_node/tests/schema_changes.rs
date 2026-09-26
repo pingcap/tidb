@@ -18,6 +18,139 @@ use tidb_txnkv::transaction::{
     UndeterminedTransaction,
 };
 
+/// Supplies the authority's report without reimplementing its DDL planner.
+/// The session must preserve every warning, irrespective of report variant.
+struct ReportDdl {
+    statement: DdlStatement,
+    report: ClusterDdlReport,
+}
+
+impl ClusterDdl for ReportDdl {
+    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
+        match (statement, &self.statement) {
+            (
+                DdlStatement::DropTables { names, if_exists },
+                DdlStatement::DropTables {
+                    names: expected,
+                    if_exists: expected_if_exists,
+                },
+            ) => {
+                assert_eq!((names, if_exists), (expected, expected_if_exists));
+            }
+            (
+                DdlStatement::AcceptedNoOp {
+                    schema,
+                    table,
+                    warning,
+                },
+                DdlStatement::AcceptedNoOp {
+                    schema: expected_schema,
+                    table: expected_table,
+                    warning: expected_warning,
+                },
+            ) => {
+                assert_eq!(
+                    (schema, table, warning),
+                    (expected_schema, expected_table, expected_warning)
+                );
+            }
+            _ => panic!("unexpected DDL route: {statement:?}"),
+        }
+        Ok(self.report.clone())
+    }
+}
+
+#[test]
+fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
+    use tidb_exec::real_tikv_ddl::DdlWarningLevel::{Note, Warning};
+
+    let node = MockNode::start();
+    let notes = vec![
+        (Note, 1051, "Unknown table 'app.absent_a'".to_owned()),
+        (Note, 1051, "Unknown table 'app.absent_b'".to_owned()),
+    ];
+    // An applied multi-drop and an entirely suppressed multi-drop carry the
+    // same ordered notes. Neither report variant determines the level.
+    for applied in [true, false] {
+        let report = if applied {
+            ClusterDdlReport::Applied {
+                schema_version: 12,
+                created_id: None,
+                warnings: notes.clone(),
+            }
+        } else {
+            ClusterDdlReport::AlreadySatisfied {
+                detail: "missing tables".to_owned(),
+                warnings: notes.clone(),
+            }
+        };
+        let mut names = vec![
+            ("app".to_owned(), "absent_a".to_owned()),
+            ("app".to_owned(), "absent_b".to_owned()),
+        ];
+        let sql = if applied {
+            names.insert(0, ("app".to_owned(), "t".to_owned()));
+            "DROP TABLE IF EXISTS t, absent_a, absent_b"
+        } else {
+            "DROP TABLE IF EXISTS absent_a, absent_b"
+        };
+        let mut session = open_session_on_with_ddl(
+            &node,
+            Arc::new(ReportDdl {
+                statement: DdlStatement::DropTables {
+                    names,
+                    if_exists: true,
+                },
+                report,
+            }),
+        );
+        session.execute_write(sql).expect("route multi-table DROP");
+        let expected: Vec<_> = notes
+            .iter()
+            .map(|(_, code, message)| {
+                vec![
+                    Datum::Bytes(b"Note".to_vec()),
+                    Datum::Int(i64::from(*code)),
+                    Datum::Bytes(message.as_bytes().to_vec()),
+                ]
+            })
+            .collect();
+        assert_eq!(rows(&mut session, "SHOW WARNINGS"), expected);
+        assert_eq!(rows(&mut session, "SHOW WARNINGS"), expected);
+        rows(&mut session, "SELECT 1");
+        assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
+    }
+
+    let message = "ALTER TABLE WITH VALIDATION is currently unsupported".to_owned();
+    let mut session = open_session_on_with_ddl(
+        &node,
+        Arc::new(ReportDdl {
+            statement: DdlStatement::AcceptedNoOp {
+                schema: "app".to_owned(),
+                table: "t".to_owned(),
+                warning: Some((8200, message.clone())),
+            },
+            report: ClusterDdlReport::AlreadySatisfied {
+                detail: "no change".to_owned(),
+                warnings: vec![(Warning, 8200, message.clone())],
+            },
+        }),
+    );
+    session
+        .execute_write("ALTER TABLE t WITH VALIDATION")
+        .expect("route option-only ALTER");
+    assert_eq!(
+        rows(&mut session, "SHOW WARNINGS"),
+        vec![vec![
+            Datum::Bytes(b"Warning".to_vec()),
+            Datum::Int(8200),
+            Datum::Bytes(message.into_bytes()),
+        ]]
+    );
+    assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
+    assert_eq!(node.catalog.load().schema_version, 11);
+}
+
 struct UndeterminedDdl(SqlQueryError);
 
 impl ClusterDdl for UndeterminedDdl {

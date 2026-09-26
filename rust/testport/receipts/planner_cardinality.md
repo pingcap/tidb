@@ -2983,3 +2983,17 @@ slot. Eager class rebuilds invalidate every affected CTE reference instead of
 comparing row counts. Original regression, 1054 planner tests, driver/session
 suites, Go oracle, server compilation and lint pass. Exact commands and limits
 are in the structural audit. Whole-package and workload completion remain open.
+
+
+Server validation checkpoint (2026-09-26): the prior server mock compilation
+blocker is resolved and all-target checking passes. New SQL/report routing
+coverage passes; schema tests have 20 passes and one existing foreign-key
+admission failure, traced to a catalog-free unconditional 1824 response. The
+structural audit records the failure, scope and exact commands. This is
+validation infrastructure, not completion of either DDL or cardinality parity.
+
+The restored cluster-session group completed: 249 pass, five fail. In addition
+to foreign-key admission, failures cover CaseWhenInt coprocessor decoding,
+global-index physical-table-ID scan ownership, statistics notifier transactions
+and lock-recovery timeout identity. Keep all expectations visible; investigate
+the global-index lifecycle next. See the structural audit for commands and logs.

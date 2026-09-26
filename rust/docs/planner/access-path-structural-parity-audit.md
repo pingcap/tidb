@@ -3723,3 +3723,93 @@ API gate remains open. No q74 workload, live-cluster behavior, workload throughp
 full logicalop package inventory or whole cardinality package completion is
 claimed. Cache invalidation can change estimates and plan choices as intended;
 performance impact is unmeasured.
+
+
+## Server test gate and DDL report ownership (2026-09-26)
+
+The server lib-test target previously failed to compile at nine stale
+`ClusterDdlReport.warning` constructors. Updating those to the current ordered
+`warnings` list also exposed two missing `DdlStatement` match arms. The catalog
+mock now explicitly refuses multi-table drops and option-only ALTERs, like its
+other unmodeled operations. It does not acquire a second implementation of
+production DDL planning. The injected report seam in `schema_changes.rs` checks
+those SQL routes, complete per-table note ordering on Applied and AlreadySatisfied,
+Warning severity on an accepted no-op, preservation across repeated SHOW WARNINGS,
+and reset on the next ordinary statement. No production execution is changed.
+
+Validation from repository root:
+
+    cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib cluster_session_node::tests --no-run
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --lib ddl_reports_preserve_warning_order_levels_and_statement_lifetime -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --lib cluster_session_node::tests::schema_changes -- --test-threads=1
+    cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --all-targets
+    GOTOOLCHAIN=go1.25.12 make lint
+    git diff --check
+
+The first command reproduces the pre-fix compilation failure. After the change,
+the warning-routing regression, all-target check and lint pass. The schema group
+has 20 passing cases and one failure; it is not a green DDL gate. Server tests
+need the macOS physical-memory sysctl available to their statistics cache, so
+they ran outside the filesystem sandbox after the sandboxed run refused that
+query. Lint likewise needed external tool/cache access. No Go or Bazel inputs
+changed, so bazel_prepare is not triggered.
+
+The failing pre-existing `a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely`
+case expects an unsupported foreign-key refusal. Investigation found a deeper
+production gap: `table_info_build::lower_table_constraint` always returns 1824
+for a foreign key without resolving its referenced table. The fixture's parent
+`app.t` exists, so this cannot establish Go parity. Go's
+`pkg/ddl/foreign_key.go:checkTableForeignKeyValid` resolves InfoSchema, honors
+foreign_key_checks for a missing reference, handles self references and validates
+the resolved metadata. Do not replace the assertion with the unconditional
+1824 response or merely admit metadata without the corresponding DDL and write
+lifecycle. The failure remains visible for the whole DDL package work.
+
+Logs: `/private/tmp/tidb-server-mock-{before,warnings,schema,check,lint}.log`.
+This restores executable validation infrastructure and adds report-routing
+evidence; it is not whole-package parity, live-cluster validation or a benchmark.
+
+
+The cluster predicate comparison also fails before comparing results:
+`cophandler` rejects `CaseWhenInt` with its unimplemented-signature error while
+`tidb-expr::pushdown_catalog` admits that signature. The CASE aggregate used as
+this test's local oracle is now itself pushed down. This is a pushdown/decoder
+coverage gap, not observed disagreement in the predicate's evaluated values.
+The isolated existing test reproduces it against the built test executable:
+
+    rust/target/debug/build/tidb-server/650788b3d2b93e95/out/tidb_server-650788b3d2b93e95 --exact cluster_session_node::tests::unistore_cop::a_pushed_down_predicate_selects_what_local_evaluation_selects --test-threads=1
+
+The executable path is build-specific; the stable equivalent is `cargo test
+--offline --locked --manifest-path rust/Cargo.toml -p tidb-server --lib
+cluster_session_node::tests::unistore_cop::a_pushed_down_predicate_selects_what_local_evaluation_selects
+-- --exact --test-threads=1`. Log: `/private/tmp/tidb-server-mock-predicate.log`.
+A complete fix must audit producer/consumer scalar signatures and the owning Go
+expression package; suppressing this one signature or changing the oracle alone
+would not establish that contract. Refreshed Go master is still
+`8936d7bdcb13a4fc767de42489aace2711c2c6fd`; the inspected foreign-key implementation
+matches that tree, and master `dropTableObject` appends each missing-table note.
+
+
+The restored cluster-session group completed in 265.46 seconds: 249 passed,
+five failed, none ignored, with 202 unrelated tests filtered out:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --lib cluster_session_node::tests -- --test-threads=1
+
+Besides the two traced failures above, these existing cases fail and need
+production lifecycle investigation (they have not been reclassified as expected):
+
+- `global_index_statistics_match_go`: a physical-table ID output requires a
+  partition-specific scan. Trace global-index candidate/physical scan ownership
+  before altering estimates or the expected result.
+- `stats_notifier_uses_a_real_internal_transaction_like_go`: subscriber mutation
+  and event cleanup do not finish within the test's deadline.
+- `unchanged_updates_lock_only_matched_rows`: after range-lock timeout probes,
+  the point UPDATE receives generic 1105 transaction-aborted/lock-recovery-deadline
+  rather than expected 1205. Distinguish transaction/recovery lifecycle behavior
+  from timing sensitivity with isolated evidence before changing either contract.
+
+Full log: `/private/tmp/tidb-server-mock-cluster.log`. No production code changed
+in this checkpoint, and the test expectations above remain unchanged. These are
+now executable gaps rather than failures hidden behind test compilation. Prioritize
+the global-index scan ownership gap within the active cardinality integration
+work; the remaining package inventories and workload validation are still open.
