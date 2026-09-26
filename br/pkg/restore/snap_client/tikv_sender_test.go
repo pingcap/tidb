@@ -16,6 +16,7 @@ package snapclient_test
 
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"math/rand"
 	"testing"
 
@@ -618,9 +619,33 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 	for i, cs := range cases {
 		t.Log(i)
 		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, cs.files, downstreamID)
-		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable)
+		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, uuid.Nil)
 		require.NoError(t, err)
 		require.Equal(t, cs.splitKeys, splitKeys)
+		// Replanning with checkpoint filtering retains the identity of each original batch.
+		restoreID := uuid.MustParse("00010203-0405-0607-0809-0a0b0c0d0e0f")
+		originalKeys, original, err := snapclient.SortAndValidateFileRanges(createdTables, nil, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, restoreID)
+		require.NoError(t, err)
+		filteredKeys, filtered, err := snapclient.SortAndValidateFileRanges(createdTables, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, restoreID)
+		require.NoError(t, err)
+		require.Equal(t, originalKeys, filteredKeys)
+		identities := make(map[string][32]byte)
+		for _, batch := range original {
+			for _, set := range batch {
+				require.NotEqual(t, [32]byte{}, set.RestoreTaskID)
+				for _, file := range set.SSTFiles {
+					identities[file.Name] = set.RestoreTaskID
+				}
+			}
+		}
+		for _, batch := range filtered {
+			for _, set := range batch {
+				for _, file := range set.SSTFiles {
+					require.Equal(t, identities[file.Name], set.RestoreTaskID)
+				}
+			}
+		}
+
 		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))
 		for i, expectFilesGroup := range cs.tableIDWithFilesGroups {
 			actualFilesGroup := tableIDWithFilesGroups[i]
