@@ -146,6 +146,15 @@ func SubTestSampledNDV() func(*testing.T) {
 			require.Equal(t, int64(8), merged.NDV())
 			require.Equal(t, int64(20), merged.ndvCounts.nulls)
 			require.Equal(t, int64(80+30*4+24), merged.MemoryUsage())
+			data, err := EncodeFMSketch(merged)
+			require.NoError(t, err)
+			require.Error(t, new(tipb.FMSketch).Unmarshal(data))
+			restored, err := DecodeFMSketch(data)
+			require.NoError(t, err)
+			require.Equal(t, merged, restored)
+			data[1] = 2
+			_, err = DecodeFMSketch(data)
+			require.Error(t, err)
 		}
 
 		// ANALYZE merges the responses into sketches it allocated beforehand.
