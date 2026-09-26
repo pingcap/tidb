@@ -238,6 +238,9 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 		for val := range s.hashset {
 			protoSketch.Hashset = append(protoSketch.Hashset, val)
 		}
+		for val := range s.repeated {
+			protoSketch.MultiHashset = append(protoSketch.MultiHashset, val)
+		}
 	}
 	return protoSketch
 }
@@ -262,6 +265,9 @@ func EncodeFMSketch(c *FMSketch) ([]byte, error) {
 	if c == nil {
 		return nil, nil
 	}
+	if c.sample != nil {
+		return c.encodeSampled()
+	}
 	p := FMSketchToProto(c)
 	protoData, err := p.Marshal()
 	return protoData, err
@@ -271,6 +277,9 @@ func EncodeFMSketch(c *FMSketch) ([]byte, error) {
 func DecodeFMSketch(data []byte) (*FMSketch, error) {
 	if data == nil {
 		return nil, nil
+	}
+	if len(data) > 0 && data[0] == 0 {
+		return decodeSampledFMSketch(data)
 	}
 	p := &tipb.FMSketch{}
 	err := p.Unmarshal(data)
