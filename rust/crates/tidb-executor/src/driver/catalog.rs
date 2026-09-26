@@ -591,6 +591,25 @@ impl Default for Catalog {
                 tables: HashMap::new(),
             },
         );
+        // go seeds metrics_schema/performance_schema/sys at bootstrap: the
+        // schemas exist (USE/SCHEMATA/SHOW DATABASES answer them) with no
+        // served tables here -- naming one of their tables refuses with
+        // 1146 exactly like go's own absent tables do.
+        for (id, key, display) in [
+            (4, "metrics_schema", "METRICS_SCHEMA"),
+            (5, "performance_schema", "PERFORMANCE_SCHEMA"),
+            (6, "sys", "sys"),
+        ] {
+            databases.insert(
+                key.to_owned(),
+                Database {
+                    id,
+                    name: display.to_owned(),
+                    charset: TableCharset::default(),
+                    tables: HashMap::new(),
+                },
+            );
+        }
         let mut catalog = Catalog {
             databases: Arc::new(
                 databases

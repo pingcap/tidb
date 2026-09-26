@@ -3274,6 +3274,49 @@ const TIKV_STORE_STATUS_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
+const METRICS_TABLES_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "TABLE_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "PROMQL",
+        tp: FieldTypeCode::Varchar,
+        size: 2048,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "LABELS",
+        tp: FieldTypeCode::Varchar,
+        size: 2048,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "QUANTILE",
+        tp: FieldTypeCode::Double,
+        size: 22,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "COMMENT",
+        tp: FieldTypeCode::Varchar,
+        size: 2048,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
 const INSPECTION_RESULT_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
         name: "RULE",
@@ -3927,6 +3970,7 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("CLUSTER_LOG", CLUSTER_LOG_COLUMNS),
     ("TIDB_INDEXES", TIDB_INDEXES_COLUMNS),
     ("INSPECTION_RESULT", INSPECTION_RESULT_COLUMNS),
+    ("METRICS_TABLES", METRICS_TABLES_COLUMNS),
     ("TIKV_STORE_STATUS", TIKV_STORE_STATUS_COLUMNS),
     ("PARAMETERS", PARAMETERS_COLUMNS),
     ("PLUGINS", PLUGINS_COLUMNS),

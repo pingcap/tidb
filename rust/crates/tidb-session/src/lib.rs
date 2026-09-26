@@ -1392,7 +1392,11 @@ impl Session {
             .map_or(0, |since| since.as_secs() as i64);
         let mut ids: Vec<&String> = all.keys().collect();
         ids.sort();
-        ids.into_iter()
+        // The mock store's boot time reads the same registered start
+        // timestamp the tidb row carries (oracle: both rows share it).
+        let mut store_start = now;
+        let mut rows: Vec<Vec<tidb_datatype::Datum>> = ids
+            .into_iter()
             .map(|id| {
                 let info = &all[id].static_info;
                 let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
@@ -1407,6 +1411,22 @@ impl Session {
                 } else {
                     (now, String::new())
                 };
+                // go's CLUSTER_INFO VERSION cell reads the TiDB semver
+                // without the MySQL-protocol prefix or the tag's `v`
+                // (`8.4.0-...`, not `8.0.11-TiDB-v8.4.0-...`).
+                let tidb_version = info
+                    .version_info
+                    .version
+                    .split_once("-TiDB-")
+                    .map_or_else(
+                        || info.version_info.version.clone(),
+                        |(_, rest)| {
+                            rest.strip_prefix('v')
+                                .unwrap_or(rest)
+                                .to_owned()
+                        },
+                    );
+                store_start = start_time;
                 vec![
                     text("tidb"),
                     text(&tidb_domain::serverinfo_syncer::join_host_port(
@@ -1416,7 +1436,7 @@ impl Session {
                         &info.ip,
                         info.status_port,
                     )),
-                    text(&info.version_info.version),
+                    text(&tidb_version),
                     text(&info.version_info.git_hash),
                     // Go stores this as a DATETIME with no fractional part,
                     // built from the node's own clock (`types.FromGoTime`).
@@ -1425,7 +1445,22 @@ impl Session {
                     Datum::Int(info.json_server_id as i64),
                 ]
             })
-            .collect()
+            .collect();
+    // go `SetTiKVStoreInSyncer`: the unistore mock store registers as
+    // `store1` with the server's boot time and empty diagnostics (oracle:
+    // the tikv row's STATUS_ADDRESS/VERSION/GIT_HASH/UPTIME are empty and
+    // SERVER_ID is 0).
+    rows.push(vec![
+        Datum::Bytes(b"tikv".to_vec()),
+        Datum::Bytes(b"store1".to_vec()),
+        Datum::Bytes(Vec::new()),
+        Datum::Bytes(Vec::new()),
+        Datum::Bytes(Vec::new()),
+        datetime_datum(store_start),
+        Datum::Bytes(Vec::new()),
+        Datum::Int(0),
+    ]);
+    rows
     }
 
     /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
@@ -2588,11 +2623,17 @@ fn go_uptime_string(seconds: i64) -> String {
 /// A `DATETIME` cell for a unix timestamp, in the node's own clock -- Go's
 /// `types.NewTime(types.FromGoTime(time.Unix(ts, 0)), mysql.TypeDatetime, 0)`.
 fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
-    use chrono::{Datelike, Timelike};
-    let Some(moment) = chrono::DateTime::from_timestamp(unix_seconds, 0) else {
+    use chrono::{Datelike, TimeZone, Timelike};
+    // go renders these datetimes through the node's own clock (`FromGoTime`),
+    // i.e. the system's local zone -- the UTC read answered 13:07 where the
+    // oracle shows 21:07 for the same boot instant.
+    let Some(local) = chrono::Local
+        .timestamp_opt(unix_seconds, 0)
+        .single()
+        .map(|moment| moment.naive_local())
+    else {
         return tidb_datatype::Datum::Null;
     };
-    let local = moment.naive_local();
     tidb_datatype::Time::from_date_checked(
         local.year(),
         local.month() as i32,
