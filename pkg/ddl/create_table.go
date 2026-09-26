@@ -897,6 +897,8 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 		tbInfo.PreSplitRegions = ctx.GetPreSplitRegions()
 	}
 
+	// Explicit table options, including AUTO_ID_CACHE=0, override the default.
+	tbInfo.AutoIDCache = int64(ctx.GetTiDBDefaultAutoIDCache())
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
