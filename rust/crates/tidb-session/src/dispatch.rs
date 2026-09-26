@@ -1393,6 +1393,10 @@ impl Session {
         sql: &str,
         privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
+        // go's stats meta bumps the target table's row count on every INSERT
+        // (`stats_meta.count`), which `I_S.TABLES`' TABLE_ROWS reads back.
+        let current_db = self.current_db.clone();
+        let mut stats_update: Option<(String, String, i64)> = None;
         let output = execution
             .with_plan(|statement, physical| {
                 self.run_with_columns_using(sql, false, |session| {
@@ -1405,12 +1409,31 @@ impl Session {
                             message,
                         );
                     }
-                    session.execute_parsed_statement_with_dml_plan(
+                    let output = session.execute_parsed_statement_with_dml_plan(
                         sql,
                         statement.clone(),
                         Some(privilege_requests),
                         physical,
-                    )
+                    )?;
+                    if let (
+                        StmtOutput::Affected(count),
+                        tidb_ast::Stmt::Dml(dml),
+                    ) = (&output, statement)
+                    {
+                        if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
+                            let name = insert.table.last().cloned();
+                            let database = insert
+                                .table
+                                .len()
+                                .ge(&2)
+                                .then(|| insert.table[0].clone())
+                                .unwrap_or_else(|| current_db.clone());
+                            if let Some(name) = name {
+                                stats_update = Some((database, name, *count as i64));
+                            }
+                        }
+                    }
+                    Ok(output)
                 })
                 .map(|(output, _)| output)
             })
@@ -1419,6 +1442,12 @@ impl Session {
                     "cached DML plan generation changed before executor construction",
                 )
             })??;
+        if let Some((database, name, delta)) = stats_update {
+            let _ = self.with_catalog_mut(|catalog| {
+                catalog.adjust_table_row_count(&database, &name, delta);
+                Ok::<_, DriverError>(())
+            });
+        }
         self.found_in_plan_cache = execution.cache_hit();
         Ok(output)
     }

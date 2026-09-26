@@ -2608,6 +2608,26 @@ impl Catalog {
 
     /// Registers a TiKV-format-byte-backed table in `database`, or reports
     /// 1049 when that schema does not exist.
+    /// go's stats meta bumps the table's row count on every write
+    /// (`stats_meta.count`), which `I_S.TABLES`' TABLE_ROWS reads back.
+    /// A DML that changed `delta` rows adjusts the stored estimate.
+    pub fn adjust_table_row_count(&mut self, database: &str, name: &str, delta: i64) {
+        let Some(database) = Arc::make_mut(&mut self.databases).get_mut(database) else {
+            return;
+        };
+        let database = std::sync::Arc::make_mut(database);
+        let Some(entry) = database.tables.get_mut(name) else {
+            return;
+        };
+        let crate::TableEntry::Kv(table) = std::sync::Arc::make_mut(entry) else {
+            return;
+        };
+        let table = std::sync::Arc::make_mut(table);
+        let (rows, average, data, index) = table.storage_statistics();
+        let updated = (i64::try_from(rows).unwrap_or(i64::MAX) + delta).max(0) as u64;
+        table.set_storage_statistics((updated, average, data, index));
+    }
+
     pub fn register_kv_in(
         &mut self,
         database: &str,
