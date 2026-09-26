@@ -24,6 +24,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMaxOneRowNullability(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table t0(c0 int)")
+	tk.MustExec("create view v1 as select exists(select 6 from t0 union select c_0 from t0) c_2 from (select 0 c_0) subq_0")
+	tk.MustExec("create view v2 as select 7 c_1 from t0 where (select c_2 from v1)")
+	tk.MustExec("create view v3 as select (select c_2 from v1) c_3, (select 7 from v2) c_4")
+	tk.MustQuery("select c_4 from v3 where c_4 = abs(c_3)").Check(testkit.Rows())
+	tk.MustQuery("select c_4 from v3 where c_4 = abs(c_3) + 6").Check(testkit.Rows())
+	tk.MustQuery("select * from v3").Check(testkit.Rows("0 <nil>"))
+	tk.MustExec("insert into t0 values (1)")
+	tk.MustQuery("select c_4 from v3 where c_4 = abs(c_3)").Check(testkit.Rows())
+	tk.MustQuery("select * from v3").Check(testkit.Rows("1 7"))
+	tk.MustQuery("select c_4 from v3 where c_4 = abs(c_3) + 6").Check(testkit.Rows("7"))
+	tk.MustExec("insert into t0 values (2)")
+	require.EqualError(t, tk.QueryToErr("select * from v3"), "[executor:1242]Subquery returns more than 1 row")
+}
+
 func TestExplainNonEvaledSubquery(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		var (
