@@ -275,8 +275,8 @@ impl Session {
                         Some(hex) => Datum::Bytes(hex.into_bytes()),
                         None => Datum::Bytes(Vec::new()),
                     },
-                    // MEM
-                    Datum::UInt(0),
+                    // MEM: go's session baseline allocation (4096 bytes).
+                    Datum::UInt(4096),
                     // MEM_ARBITRATION
                     Datum::Null,
                     // MEM_WAIT_ARBITRATE_START
@@ -287,8 +287,9 @@ impl Session {
                     Datum::UInt(0),
                     // TxnStart
                     Datum::Bytes(Vec::new()),
-                    // RESOURCE_GROUP
-                    Datum::Bytes(Vec::new()),
+                    // RESOURCE_GROUP: go reports the session's active
+                    // resource group; this tier's default is `default`.
+                    Datum::Bytes(self.active_resource_group.as_bytes().to_vec()),
                     // SESSION_ALIAS
                     Datum::Bytes(Vec::new()),
                     // ROWS_AFFECTED
