@@ -3827,6 +3827,10 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	case *ast.RenameUserStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+		for _, pair := range raw.UserToUsers {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, pair.OldUser, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, pair.NewUser, "RESTRICTED_USER_ADMIN")
+		}
 	case *ast.GrantStmt:
 		var err error
 		b.visitInfo, err = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
