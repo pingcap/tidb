@@ -6363,6 +6363,22 @@ fn global_index_statistics_match_go() {
 
     create(&mut session, false);
     rows(&mut session, "ANALYZE TABLE global_index_stats");
+    // A global index's physical-table ID belongs to each entry, including
+    // entries selected by an explicit partition list and a descending scan.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b FROM global_index_stats PARTITION(p0,p1) USE INDEX(idx) ORDER BY b DESC"
+        )),
+        [["15"], ["3"], ["2"], ["1"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b,c FROM global_index_stats USE INDEX(idx) WHERE b < 16 ORDER BY b"
+        )),
+        [["1", "0"], ["2", "0"], ["3", "0"], ["15", "0"]]
+    );
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -6381,6 +6397,38 @@ fn global_index_statistics_match_go() {
 
     create(&mut session, true);
     rows(&mut session, "ANALYZE TABLE global_index_stats INDEX idx");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b FROM global_index_stats PARTITION(p0,p1) USE INDEX(idx) ORDER BY b DESC"
+        )),
+        [["15"], ["3"], ["2"], ["1"]]
+    );
+    rows(&mut session, "BEGIN");
+    rows(
+        &mut session,
+        "INSERT INTO global_index_stats(a,b) VALUES (4,4),(16,16)",
+    );
+    let mut unordered = displayed(rows(&mut session,
+        "SELECT b,c FROM global_index_stats USE INDEX(idx) WHERE b < 17"));
+    unordered.sort_unstable();
+    assert_eq!(unordered,
+        [["1", "0"], ["15", "0"], ["16", "0"], ["2", "0"], ["3", "0"], ["4", "0"]]);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b,c FROM global_index_stats USE INDEX(idx) WHERE b < 17 ORDER BY b DESC"
+        )),
+        [
+            ["16", "0"],
+            ["15", "0"],
+            ["4", "0"],
+            ["3", "0"],
+            ["2", "0"],
+            ["1", "0"]
+        ]
+    );
+    rows(&mut session, "ROLLBACK");
     let explain = displayed(rows(
         &mut session,
         "EXPLAIN FORMAT = 'brief' SELECT b FROM global_index_stats \

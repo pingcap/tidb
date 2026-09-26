@@ -3813,3 +3813,87 @@ in this checkpoint, and the test expectations above remain unchanged. These are
 now executable gaps rather than failures hidden behind test compilation. Prioritize
 the global-index scan ownership gap within the active cardinality integration
 work; the remaining package inventories and workload validation are still open.
+
+
+## Index-entry physical identity (2026-09-26)
+
+The failing global-index integration case is now resolved by retaining Go's
+record identity. `PhysicalIndexScan.initSchema` includes ExtraPhysTblID for a
+global index; `IndexLookUpExecutor.needPartitionHandle` and `getHandle` carry
+that ID with the handle. Rust's cursor already decoded it, but the lookup window
+dropped the partition ordinal, the batch read probed every partition for the
+bare handle, and the builder tried to synthesize the output from one scan-wide
+constant. This also returned wrong rows for equal handles in local partitioned
+indexes, independently of the original builder error.
+
+`IndexRangeSourceExec` now resolves cursor ordinals against its retained physical
+ID list and carries each lookup's routes into the task/result and synthetic
+output. The local batch reader fetches the exact record key for each routed
+handle. Dirty snapshot/added streams retain the same identities; a staged record
+in one partition no longer shadows the same handle in another partition. The
+index-entry predicate callback receives the already-decoded partition ordinal.
+Covering partitioned reads use the shared index-value decoder and emit their
+synthetic handle/physical-ID columns directly, with no record fetch. The physical
+builder retains a global index's required ID column instead of replacing it with
+a scan-wide constant. Adaptive prefiltering observes the same synthetic-column
+layout as parent execution.
+
+Regression evidence: before the change, the new equal-handle fixture returned
+`[(0,10),(0,10),(0,30),(0,30)]` instead of
+`[(0,10),(1,20),(0,30),(1,40)]` for the local partitioned index. It now passes for
+local and global indexes, multi-window lookup, synthetic columns in either order,
+and adaptive prefiltering. Four lookup rows issue exactly four record keys;
+covering variants issue zero record Gets/BatchGets. This is bounded I/O evidence,
+not a sysbench/TPC-C/TPC-H/YCSB benchmark result. The partitioned backend still
+uses its existing local-byte lookup fallback, not a new remote DAG protocol.
+
+The server regression now verifies the original Go global-index estimates plus
+actual covering and noncovering rows, named partitions, descending reads, common
+handles and ordered/unordered dirty reads followed by rollback. No expected
+estimate or result was relaxed. A pre-existing batch-I/O unit test also failed on
+the unmodified checkout because its unhinted query no longer guaranteed the index
+path. It now explicitly uses its existing `ib` index to test the intended batch
+reader; the one-BatchGet assertion is unchanged.
+
+Commands run from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib index_lookup_retains_partition_identity_for_equal_row_handles -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib access_path::tests -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib driver::physical_builder:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_index_hints -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_partition -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --lib global_index -- --test-threads=1
+    cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --all-targets
+    GOTOOLCHAIN=go1.25.12 make lint
+    git diff --check
+
+The new regression fails before and passes after. Access-path 40, builder 27,
+index-hint 27 and global-index server 2 tests pass; all-target check and lint pass.
+The partition group has 97 passes and one failure:
+`dynamic_partition_points_follow_each_bound_key` reports `partition:dual` in
+EXPLAIN UPDATE instead of p0. Running that exact test with all three production
+files restored to HEAD reproduces the identical failure; the fix was restored
+in a finally block. Keep this point-plan lifetime failure open, not as an expected
+result. The two baseline commands were:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib the_double_read_issues_one_batch_get_per_index_batch -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib dynamic_partition_points_follow_each_bound_key -- --test-threads=1
+
+Original Go reference, working directory `/private/tmp/tidb-go-master-20260923`:
+
+    GOTOOLCHAIN=go1.25.12 ./tools/check/failpoint-go-test.sh pkg/statistics/handle/globalstats -run '^TestGlobalIndexStatistics$' -count=1
+
+Go passes (0.757s), with failpoints disabled afterward. Refreshed master remains
+8936d7bdcb13a4fc767de42489aace2711c2c6fd; its `global_stats_test.go`,
+`executor/distsql.go` and `physical_index_scan.go` are byte-identical to the pinned
+633a9e37f1c796ac81c203dc107025e7e65385f0 tree used for execution. Server tests run
+outside the sandbox for their physical-memory sysctl. No Go/Bazel input changed,
+so bazel_prepare is not triggered. Logs are `/private/tmp/tidb-index-identity-*.log`.
+
+Changed implementation: executor `access_path.rs`, `driver/physical_builder.rs`,
+`kv_table/table_scan.rs`; integration coverage: server
+`cluster_session_node/tests/unistore_cop.rs`; plan, this audit and the cardinality
+receipt retain the incomplete package status. The earlier foreign-key,
+CaseWhenInt, statistics-notifier and lock-recovery failures remain open; the full
+cluster group was not repeated for this change. Complete package inventories,
+live TiKV/TiFlash variants and workload correctness/performance remain unverified.

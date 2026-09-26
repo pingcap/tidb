@@ -590,3 +590,28 @@ to foreign-key admission, failures cover CaseWhenInt coprocessor decoding,
 global-index physical-table-ID scan ownership, statistics notifier transactions
 and lock-recovery timeout identity. Keep all expectations visible; investigate
 the global-index lifecycle next. See the structural audit for commands and logs.
+
+
+Index identity investigation (2026-09-26, in progress): the global-index scan
+failure is not an estimate issue. `reader_output_offsets` removes ExtraPhysTblID
+and the builder tries to reconstruct it from one scan-wide physical ID. Meanwhile
+`IndexRangeCursor` already decodes a per-entry partition ordinal, but
+`next_lookup_handle` discards it when constructing lookup windows. The local
+batch reader probes every partition and takes the first matching bare handle.
+Go's global index schema and `IndexLookUpExecutor.needPartitionHandle` retain
+physical identity instead. First preserve each lookup handle's physical keyspace
+through batch collection and fallback reads, with equal-handle local/global index
+regressions. Then wire the same identity to synthetic scan outputs and covering
+reads; do not fake a constant or remove the planner's required column. This is
+staged integration evidence within the still-incomplete whole-package claim.
+
+
+Index identity outcome (2026-09-26): the retained lookup routes, synthetic output
+and covering-read portions above are implemented and verified. Equal handles in
+different partitions no longer collide; covering partitioned reads perform zero
+record fetches. The original global-index failure is resolved, with named
+partitions, common handles and dirty reads covered. A broader partition run
+exposes a baseline EXPLAIN UPDATE `partition:dual` failure; reproduction against
+unchanged production code confirms it remains independent of this fix. Exact
+commands, test counts and I/O evidence are in the structural audit. Complete
+package inventory, other server failures and workload gates remain open.

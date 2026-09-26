@@ -2997,3 +2997,14 @@ to foreign-key admission, failures cover CaseWhenInt coprocessor decoding,
 global-index physical-table-ID scan ownership, statistics notifier transactions
 and lock-recovery timeout identity. Keep all expectations visible; investigate
 the global-index lifecycle next. See the structural audit for commands and logs.
+
+
+Index identity checkpoint (2026-09-26): global-index scan construction now
+preserves Go's per-entry physical identity. Local/global lookup collisions are
+fixed and partitioned covering readers emit synthetic columns without record
+reads. Original global-index estimates and extended actual-row/transaction cases
+pass, alongside 40 access-path, 27 builder, 27 hint cases, original Go test,
+all-target checking and lint. The partition group has 97 passes and a verified
+baseline point-plan EXPLAIN failure, preserved for follow-up. Full commands,
+fail-before/pass-after and I/O evidence are in the structural audit. This is
+integration evidence, not a completed Go package or a workload performance claim.

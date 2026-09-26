@@ -156,6 +156,23 @@ impl KvTable {
         keep: Option<&[usize]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
+        self.get_rows_by_routed_handles_projected_with_context(handles, None, keep, context)
+    }
+
+    /// Decodes one record per handle in its known physical keyspace. The
+    /// partition IDs come from the index entry, not from probing for a match.
+    pub(crate) fn get_rows_by_routed_handles_projected_with_context(
+        &mut self,
+        handles: &[TableHandle],
+        routes: Option<&[i64]>,
+        keep: Option<&[usize]>,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
+        if routes.is_some_and(|ids| ids.len() != handles.len()) {
+            return Err(KvTableError::Decode(
+                "index lookup partition routes lost alignment".to_owned(),
+            ));
+        }
         if handles.is_empty() {
             return Ok(Vec::new());
         }
@@ -163,10 +180,16 @@ impl KvTable {
         if physical_ids.is_empty() {
             return Ok(vec![None; handles.len()]);
         }
-        let mut keys = Vec::with_capacity(handles.len() * physical_ids.len());
-        for handle in handles {
+        let candidates = if routes.is_some() {
+            1
+        } else {
+            physical_ids.len()
+        };
+        let mut keys = Vec::with_capacity(handles.len() * candidates);
+        for (position, handle) in handles.iter().enumerate() {
             let record_handle = handle.record_handle();
-            for physical_id in &physical_ids {
+            let ids = routes.map_or(physical_ids.as_slice(), |ids| &ids[position..position + 1]);
+            for physical_id in ids {
                 keys.push(Key::from_bytes(encode_row_key_with_handle(
                     *physical_id,
                     &record_handle,
@@ -179,7 +202,7 @@ impl KvTable {
         // key/handle collection or a tree lookup for every output row.
         let decoder = self.row_decoder_projected(keep, context)?;
         let mut rows = Vec::with_capacity(handles.len());
-        for (handle, keys) in handles.iter().zip(keys.chunks_exact(physical_ids.len())) {
+        for (handle, keys) in handles.iter().zip(keys.chunks_exact(candidates)) {
             let entry = keys.iter().find_map(|key| entries.get(key));
             let Some(entry) = entry else {
                 rows.push(None);
@@ -3725,7 +3748,7 @@ impl IndexRangeCursor {
     pub fn next_handle_in_partition(
         &mut self,
     ) -> Result<Option<(TableHandle, usize)>, KvTableError> {
-        self.next_handle_in_partition_if(|_, _, _| Ok(std::ops::ControlFlow::Continue(true)))
+        self.next_handle_in_partition_if(|_, _, _, _| Ok(std::ops::ControlFlow::Continue(true)))
     }
 
     /// Applies an index-side Selection/Limit while the entry bytes are borrowed
@@ -3733,7 +3756,12 @@ impl IndexRangeCursor {
     /// the no-op callback above and do not allocate or decode extra key values.
     pub(crate) fn next_handle_in_partition_if<E: From<KvTableError>>(
         &mut self,
-        mut admit: impl FnMut(&TableHandle, &[u8], &[u8]) -> Result<std::ops::ControlFlow<(), bool>, E>,
+        mut admit: impl FnMut(
+            &TableHandle,
+            &[u8],
+            &[u8],
+            usize,
+        ) -> Result<std::ops::ControlFlow<(), bool>, E>,
     ) -> Result<Option<(TableHandle, usize)>, E> {
         if self.merge_by_index_key {
             loop {
@@ -3753,7 +3781,17 @@ impl IndexRangeCursor {
                 )?;
                 let decision = if self.global_partition_ids.is_none() || global_partition.is_some()
                 {
-                    admit(&handle, iterator.key().as_bytes(), iterator.value())?
+                    admit(
+                        &handle,
+                        iterator.key().as_bytes(),
+                        iterator.value(),
+                        global_partition.unwrap_or_else(|| {
+                            self.partition_of_iterator
+                                .get(position)
+                                .copied()
+                                .unwrap_or(0)
+                        }),
+                    )?
                 } else {
                     std::ops::ControlFlow::Continue(false)
                 };
@@ -3801,7 +3839,17 @@ impl IndexRangeCursor {
                 iterator.value(),
             )?;
             let decision = if self.global_partition_ids.is_none() || global_partition.is_some() {
-                admit(&handle, iterator.key().as_bytes(), iterator.value())?
+                admit(
+                    &handle,
+                    iterator.key().as_bytes(),
+                    iterator.value(),
+                    global_partition.unwrap_or_else(|| {
+                        self.partition_of_iterator
+                            .get(self.next_iterator)
+                            .copied()
+                            .unwrap_or(0)
+                    }),
+                )?
             } else {
                 std::ops::ControlFlow::Continue(false)
             };

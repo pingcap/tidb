@@ -1396,6 +1396,42 @@ impl IndexPrefixLimit {
     }
 }
 
+/// Reconstructs the planner's synthetic columns from the record identity.
+/// Stored-column projection excludes both synthetic slots.
+fn project_index_identity(
+    mut row: Vec<Datum>,
+    handle_slot: Option<usize>,
+    physical_slot: Option<usize>,
+    handle: Option<&TableHandle>,
+    physical_id: Option<i64>,
+) -> Result<Vec<Datum>, ExecError> {
+    let handle_value = handle
+        .and_then(TableHandle::int_value)
+        .map_or(Datum::Null, Datum::Int);
+    let physical_value = match physical_slot {
+        Some(_) => Some(Datum::Int(physical_id.ok_or_else(|| {
+            ExecError::internal("index output lost its physical record identity")
+        })?)),
+        None => None,
+    };
+    // Insert in output order so an earlier synthetic slot shifts the stored
+    // values into their final positions before a later insertion.
+    if let (Some(slot), Some(value)) = (physical_slot, physical_value.as_ref()) {
+        if handle_slot.is_none_or(|handle| slot < handle) {
+            row.insert(slot, value.clone());
+        }
+    }
+    if let Some(slot) = handle_slot {
+        row.insert(slot, handle_value);
+    }
+    if let (Some(slot), Some(value)) = (physical_slot, physical_value) {
+        if handle_slot.is_some_and(|handle| handle < slot) {
+            row.insert(slot, value);
+        }
+    }
+    Ok(row)
+}
+
 /// Walks a set of index ranges in index order, reading each row it finds:
 /// Go's `IndexRangeScan` with the table-row lookup above it, collapsed into
 /// one operator because this tier prints one node for the pair.
@@ -1458,6 +1494,9 @@ impl IndexPrefixLimit {
 /// order.
 /// One lookup window moving through the bounded-concurrency fetch pipeline.
 struct LookupBatchJob {
+    /// One record keyspace per handle for a partitioned lookup. Global index
+    /// windows may interleave partitions, so this belongs to the task.
+    physical_ids: Vec<i64>,
     /// Number of handles this window was collected from, in collection order.
     /// The handles themselves move into the worker, just as Go's
     /// `buildAndDispatchLookupTasks` hands one `lookupTableTask.handles` slice
@@ -1479,6 +1518,7 @@ struct AdaptiveLookupProgress {
 }
 
 struct LookupBatchResult {
+    physical_ids: Vec<i64>,
     rows: Vec<Option<Vec<Datum>>>,
     handles: Vec<Option<TableHandle>>,
     filter_complete: bool,
@@ -1532,6 +1572,8 @@ const DEFAULT_LOOKUP_FETCH_CONCURRENCY: usize = 5;
 pub struct IndexRangeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
+    /// The cursor's partition ordinals resolve against this stable scan list.
+    record_physical_ids: Vec<i64>,
     /// Physical visible-column offsets emitted by this source. The mapping is
     /// composed when logical column pruning reaches a join leaf.
     keep: Vec<usize>,
@@ -1608,6 +1650,9 @@ pub struct IndexRangeSourceExec {
     /// The handle each pending lookup row came from, parallel to
     /// `lookup_rows`. Only collected while `extra_handle_slot` is set.
     lookup_handles: Vec<Option<TableHandle>>,
+    /// Exact keyspaces aligned with the pending lookup rows.
+    lookup_physical_ids: Vec<i64>,
+    physical_table_id_slot: Option<usize>,
     /// The current handle batch -- Go's `lookupTableTask.handles`, already
     /// sorted unless [`Self::keep_order`].
     ///
@@ -1730,11 +1775,11 @@ pub struct IndexRangeSourceExec {
     /// The added stream's fetched rows, in the index order the walk produced
     /// them. Go `addedRowsIter`, buffered per batch because the staged rows
     /// live behind the same session-local storage the snapshot lookup uses.
-    dirty_added_queue: std::collections::VecDeque<(TableHandle, Vec<Datum>)>,
+    dirty_added_queue: std::collections::VecDeque<(TableHandle, Vec<Datum>, Option<i64>)>,
     /// Go `getAddedRow`'s peeked cursor (`cursor4AddRows`).
-    dirty_added_head: Option<(TableHandle, Vec<Datum>)>,
+    dirty_added_head: Option<(TableHandle, Vec<Datum>, Option<i64>)>,
     /// Go `getSnapshotRow`'s peeked cursor (`cursor4SnapshotRows`).
-    dirty_snapshot_head: Option<(TableHandle, Vec<Datum>)>,
+    dirty_snapshot_head: Option<(TableHandle, Vec<Datum>, Option<i64>)>,
 }
 
 /// Go's `IndexLookUpExecutor.CalculateBatchSize`.
@@ -1927,10 +1972,11 @@ impl IndexRangeSourceExec {
     }
 
     pub(crate) fn read_table_columns(&mut self, offsets: Vec<usize>) {
-        // `_tidb_rowid` occupies a schema slot with no stored offset behind
-        // it, so the two widths differ by exactly one when it is present.
+        // Both synthetic columns occupy output slots without stored offsets.
         debug_assert_eq!(
-            offsets.len() + usize::from(self.extra_handle_slot.is_some()),
+            offsets.len()
+                + usize::from(self.extra_handle_slot.is_some())
+                + usize::from(self.physical_table_id_slot.is_some()),
             self.meta.schema().columns.len()
         );
         self.keep = offsets;
@@ -1950,10 +1996,18 @@ impl IndexRangeSourceExec {
         // The IDENTITY default is only right when the schema is the table's
         // leading columns; a caller whose schema was narrowed by column
         // pruning must say so with [`Self::read_table_columns`].
-        let keep = (0..meta.schema().columns.len()).collect();
+        let physical_table_id_slot = meta
+            .schema()
+            .columns
+            .iter()
+            .position(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
+        let keep = (0..meta.schema().columns.len() - usize::from(physical_table_id_slot.is_some()))
+            .collect();
+        let record_physical_ids = table.record_physical_ids();
         IndexRangeSourceExec {
             meta,
             table,
+            record_physical_ids,
             keep,
             index_id,
             ranges,
@@ -1980,6 +2034,8 @@ impl IndexRangeSourceExec {
             covering_row: None,
             extra_handle_slot: None,
             lookup_handles: Vec::new(),
+            lookup_physical_ids: Vec::new(),
+            physical_table_id_slot,
             batch: Vec::new(),
             batch_at: 0,
             batch_partition: 0,
@@ -2054,7 +2110,19 @@ impl IndexRangeSourceExec {
             let Some(position) = self.keep.iter().position(|&kept| kept == offset) else {
                 continue;
             };
-            let collation = self.meta.schema().columns[position]
+            let collation = self
+                .meta
+                .schema()
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(slot, _)| {
+                    Some(*slot) != self.extra_handle_slot
+                        && Some(*slot) != self.physical_table_id_slot
+                })
+                .nth(position)
+                .expect("stored index column has an output slot")
+                .1
                 .ret_type
                 .as_ref()
                 .map_or(tidb_datatype::Collation::Binary, |field_type| {
@@ -2134,6 +2202,8 @@ impl IndexRangeSourceExec {
     fn prefilter_adaptive_lookup_rows(
         &mut self,
         rows: &mut [Option<Vec<Datum>>],
+        handles: &[Option<TableHandle>],
+        physical_ids: &[i64],
     ) -> Result<bool, ExecError> {
         if self.adaptive_limit.is_none() {
             return Ok(false);
@@ -2141,9 +2211,22 @@ impl IndexRangeSourceExec {
         let Some(filter) = self.filter.as_mut() else {
             return Ok(false);
         };
-        for slot in rows {
+        for (position, slot) in rows.iter_mut().enumerate() {
             let Some(row) = slot.as_ref() else {
                 continue;
+            };
+            let projected;
+            let row = if self.extra_handle_slot.is_some() || self.physical_table_id_slot.is_some() {
+                projected = project_index_identity(
+                    row.clone(),
+                    self.extra_handle_slot,
+                    self.physical_table_id_slot,
+                    handles.get(position).and_then(Option::as_ref),
+                    physical_ids.get(position).copied(),
+                )?;
+                &projected
+            } else {
+                row
             };
             if !filter.admits(row)? {
                 *slot = None;
@@ -2394,16 +2477,18 @@ impl IndexRangeSourceExec {
             // order the walk produced; the snapshot side then sorts exactly
             // as Go's `buildTableReaderFromHandles(..., true)` does over the
             // handles its index worker extracted.
-            let physical_ids = self.table.record_physical_ids();
+            let physical_id = self
+                .record_physical_ids
+                .get(self.batch_partition)
+                .copied()
+                .ok_or_else(|| ExecError::internal("dirty index batch lost its partition"))?;
             let mut added = Vec::new();
             self.batch.retain(|handle| {
-                let staged = physical_ids.iter().any(|physical_id| {
-                    self.table.record_key_is_staged(
-                        &self.statement.staged_writes,
-                        *physical_id,
-                        handle,
-                    )
-                });
+                let staged = self.table.record_key_is_staged(
+                    &self.statement.staged_writes,
+                    physical_id,
+                    handle,
+                );
                 if staged {
                     added.push(handle.clone());
                 }
@@ -2461,6 +2546,7 @@ impl IndexRangeSourceExec {
                 };
                 self.lookup_rows = batch.rows;
                 self.lookup_handles = batch.handles;
+                self.lookup_physical_ids = batch.physical_ids;
                 self.lookup_filter_complete = batch.filter_applied_locally
                     || (batch.filter_complete
                         && self.filter.as_ref().is_none_or(
@@ -2499,14 +2585,17 @@ impl IndexRangeSourceExec {
                 .get(self.lookup_row_at)
                 .and_then(Option::as_ref)
                 .cloned();
+            let physical_id = self.lookup_physical_ids.get(self.lookup_row_at).copied();
             self.lookup_row_at += 1;
             if let Some(row) = row {
-                return Ok(Some(match (self.extra_handle_slot, handle) {
-                    (Some(slot), Some(handle)) => {
-                        crate::kv_table::insert_extra_handle(row, slot, &handle)
-                    }
-                    _ => row,
-                }));
+                return project_index_identity(
+                    row,
+                    self.extra_handle_slot,
+                    self.physical_table_id_slot,
+                    handle.as_ref(),
+                    physical_id,
+                )
+                .map(Some);
             }
         }
     }
@@ -2527,7 +2616,7 @@ impl IndexRangeSourceExec {
         if self.dirty_added_head.is_none() {
             self.dirty_added_head = self.dirty_added_queue.pop_front();
         }
-        let (handle, row) = match (
+        let (handle, row, physical_id) = match (
             self.dirty_snapshot_head.take(),
             self.dirty_added_head.take(),
         ) {
@@ -2544,16 +2633,22 @@ impl IndexRangeSourceExec {
                 }
             }
         };
-        Ok(Some(match self.extra_handle_slot {
-            Some(slot) => crate::kv_table::insert_extra_handle(row, slot, &handle),
-            None => row,
-        }))
+        project_index_identity(
+            row,
+            self.extra_handle_slot,
+            self.physical_table_id_slot,
+            Some(&handle),
+            physical_id,
+        )
+        .map(Some)
     }
 
     /// Go `getSnapshotRow`: the next row of the handle-sorted lookup stream.
     /// The snapshot side of the merge -- everything left of the batch after
     /// [`Self::fill_handle_batch`] routed the staged handles away.
-    fn next_snapshot_merge_row(&mut self) -> Result<Option<(TableHandle, Vec<Datum>)>, ExecError> {
+    fn next_snapshot_merge_row(
+        &mut self,
+    ) -> Result<Option<(TableHandle, Vec<Datum>, Option<i64>)>, ExecError> {
         loop {
             if self.lookup_row_at == self.lookup_rows.len() {
                 self.finish_adaptive_lookup_if_consumed();
@@ -2565,6 +2660,7 @@ impl IndexRangeSourceExec {
                 };
                 self.lookup_rows = batch.rows;
                 self.lookup_handles = batch.handles;
+                self.lookup_physical_ids = batch.physical_ids;
                 self.lookup_filter_complete = batch.filter_applied_locally
                     || (batch.filter_complete
                         && self.filter.as_ref().is_none_or(
@@ -2599,7 +2695,11 @@ impl IndexRangeSourceExec {
                 let handle = handle.ok_or_else(|| {
                     ExecError::unsupported("a dirty double read lookup lost its row handle")
                 })?;
-                return Ok(Some((handle, row)));
+                let physical_id = self
+                    .lookup_physical_ids
+                    .get(self.lookup_row_at - 1)
+                    .copied();
+                return Ok(Some((handle, row, physical_id)));
             }
         }
     }
@@ -2611,17 +2711,28 @@ impl IndexRangeSourceExec {
     /// staged DELETE's handle never reaches the walk at all (its index entry
     /// is gone, which is Go's tombstone never entering `addedRowsIter`).
     fn enqueue_dirty_added_rows(&mut self, handles: Vec<TableHandle>) -> Result<(), ExecError> {
+        let physical_id = self
+            .record_physical_ids
+            .get(self.batch_partition)
+            .copied()
+            .ok_or_else(|| ExecError::internal("dirty index lookup lost its partition"))?;
+        let physical_ids = vec![physical_id; handles.len()];
         let rows = self
             .table
-            .get_rows_by_handles_projected_with_context(
+            .get_rows_by_routed_handles_projected_with_context(
                 &handles,
+                Some(&physical_ids),
                 Some(&self.keep),
                 &self.decode_context,
             )
             .map_err(ExecError::from)?;
         for (handle, row) in handles.into_iter().zip(rows) {
             if let Some(row) = row {
-                self.dirty_added_queue.push_back((handle, row));
+                self.dirty_added_queue.push_back((
+                    handle,
+                    row,
+                    self.table.partition().is_some().then_some(physical_id),
+                ));
             }
         }
         Ok(())
@@ -2633,8 +2744,8 @@ impl IndexRangeSourceExec {
     /// requires `can_reorder_handles`, and a descending read clears it.
     fn dirty_compare(
         &self,
-        snapshot: &(TableHandle, Vec<Datum>),
-        added: &(TableHandle, Vec<Datum>),
+        snapshot: &(TableHandle, Vec<Datum>, Option<i64>),
+        added: &(TableHandle, Vec<Datum>, Option<i64>),
     ) -> Result<std::cmp::Ordering, ExecError> {
         for (position, collation) in self.dirty_used_index.iter().zip(&self.dirty_collations) {
             let ordering = match (snapshot.1.get(*position), added.1.get(*position)) {
@@ -2652,7 +2763,10 @@ impl IndexRangeSourceExec {
                 return Ok(ordering);
             }
         }
-        Ok(snapshot.0.cmp(&added.0))
+        Ok(snapshot
+            .2
+            .cmp(&added.2)
+            .then_with(|| snapshot.0.cmp(&added.0)))
     }
 
     /// Produces the next lookup window's decodable rows: collects a handle
@@ -2767,9 +2881,28 @@ impl IndexRangeSourceExec {
                     target
                 };
                 let mut handles = Vec::with_capacity(target);
+                let partitioned = self.table.partition().is_some();
+                let mut physical_ids = if partitioned {
+                    Vec::with_capacity(target)
+                } else {
+                    Vec::new()
+                };
                 while handles.len() < target {
                     match self.next_lookup_handle() {
-                        Ok(Some(handle)) => handles.push(handle),
+                        Ok(Some(handle)) => {
+                            if partitioned {
+                                let id = self
+                                    .record_physical_ids
+                                    .get(self.batch_partition)
+                                    .ok_or_else(|| {
+                                        ExecError::internal(
+                                            "index lookup lost its partition ordinal",
+                                        )
+                                    })?;
+                                physical_ids.push(*id);
+                            }
+                            handles.push(handle);
+                        }
                         Ok(None) => break,
                         Err(error) => {
                             if let Some(controller) = &self.adaptive_limit {
@@ -2793,7 +2926,8 @@ impl IndexRangeSourceExec {
                 // A short window means the index stream ended inside it; with
                 // no earlier window in flight there is nothing to overlap.
                 let last_window_alone = handles.len() < target && inflight == 0;
-                let mut job = match self.build_lookup_job(handles, last_window_alone) {
+                let mut job = match self.build_lookup_job(handles, physical_ids, last_window_alone)
+                {
                     Ok(job) => job,
                     Err(error) => {
                         if let Some(controller) = &self.adaptive_limit {
@@ -2875,7 +3009,11 @@ impl IndexRangeSourceExec {
                     let filter_applied_locally = if predicates_applied {
                         false
                     } else {
-                        match self.prefilter_adaptive_lookup_rows(&mut lookup_rows) {
+                        match self.prefilter_adaptive_lookup_rows(
+                            &mut lookup_rows,
+                            &lookup_handles,
+                            &[],
+                        ) {
                             Ok(applied) => applied,
                             Err(error) => {
                                 if let Some(controller) = &self.adaptive_limit {
@@ -2886,6 +3024,7 @@ impl IndexRangeSourceExec {
                         }
                     };
                     return Ok(Some(LookupBatchResult {
+                        physical_ids: Vec::new(),
                         rows: lookup_rows,
                         handles: lookup_handles,
                         filter_complete: predicates_applied,
@@ -2900,6 +3039,7 @@ impl IndexRangeSourceExec {
                         crate::storage::note_storage_op(|ops| ops.cop_rows += chunk.wire_rows);
                     }
                     return Ok(Some(LookupBatchResult {
+                        physical_ids: Vec::new(),
                         rows: Vec::new(),
                         handles: Vec::new(),
                         filter_complete: chunk.predicates_applied,
@@ -2919,31 +3059,37 @@ impl IndexRangeSourceExec {
                     } else {
                         Vec::new()
                     };
-                    let mut lookup_rows =
-                        match self.table.get_rows_by_handles_projected_with_context(
+                    let mut lookup_rows = match self
+                        .table
+                        .get_rows_by_routed_handles_projected_with_context(
                             &handles,
+                            (!job.physical_ids.is_empty()).then_some(job.physical_ids.as_slice()),
                             Some(&self.keep),
                             &self.decode_context,
                         ) {
-                            Ok(rows) => rows,
-                            Err(error) => {
-                                if let Some(controller) = &self.adaptive_limit {
-                                    controller.abort_lookup(reserved_handles);
-                                }
-                                return Err(ExecError::from(error));
+                        Ok(rows) => rows,
+                        Err(error) => {
+                            if let Some(controller) = &self.adaptive_limit {
+                                controller.abort_lookup(reserved_handles);
                             }
-                        };
-                    let filter_applied_locally =
-                        match self.prefilter_adaptive_lookup_rows(&mut lookup_rows) {
-                            Ok(applied) => applied,
-                            Err(error) => {
-                                if let Some(controller) = &self.adaptive_limit {
-                                    controller.abort_lookup(reserved_handles);
-                                }
-                                return Err(error);
+                            return Err(ExecError::from(error));
+                        }
+                    };
+                    let filter_applied_locally = match self.prefilter_adaptive_lookup_rows(
+                        &mut lookup_rows,
+                        &lookup_handles,
+                        &job.physical_ids,
+                    ) {
+                        Ok(applied) => applied,
+                        Err(error) => {
+                            if let Some(controller) = &self.adaptive_limit {
+                                controller.abort_lookup(reserved_handles);
                             }
-                        };
+                            return Err(error);
+                        }
+                    };
                     return Ok(Some(LookupBatchResult {
+                        physical_ids: job.physical_ids,
                         rows: lookup_rows,
                         handles: lookup_handles,
                         filter_complete: false,
@@ -2964,9 +3110,22 @@ impl IndexRangeSourceExec {
     fn build_lookup_job(
         &mut self,
         handles: Vec<TableHandle>,
+        physical_ids: Vec<i64>,
         last_window_alone: bool,
     ) -> Result<LookupBatchJob, ExecError> {
         let handle_count = handles.len();
+        if !physical_ids.is_empty() {
+            // The remote lookup seam currently refuses partitioned tables.
+            // Keep the per-entry routes for the bounded local BatchGet instead
+            // of probing every partition for each bare handle.
+            return Ok(LookupBatchJob {
+                physical_ids,
+                handle_count,
+                adaptive_reserved_handles: 0,
+                receiver: None,
+                ready: Some(Ok(LookupFetch::LocalFallback(handles))),
+            });
+        }
         let allow_lookup_chunks = self
             .filter
             .as_ref()
@@ -2975,6 +3134,7 @@ impl IndexRangeSourceExec {
             // A partial aggregate owns the answer end to end; the plain
             // lookup never ran for this shape.
             return Ok(LookupBatchJob {
+                physical_ids: Vec::new(),
                 handle_count,
                 adaptive_reserved_handles: 0,
                 receiver: None,
@@ -3034,6 +3194,7 @@ impl IndexRangeSourceExec {
                     .filter_map(|(handle, row)| row.map(|row| (handle, row)))
                     .collect();
                 return Ok(LookupBatchJob {
+                    physical_ids: Vec::new(),
                     handle_count,
                     adaptive_reserved_handles: 0,
                     receiver: None,
@@ -3058,6 +3219,7 @@ impl IndexRangeSourceExec {
                 })?;
             let Some(staged) = staged else {
                 return Ok(LookupBatchJob {
+                    physical_ids: Vec::new(),
                     handle_count,
                     adaptive_reserved_handles: 0,
                     receiver: None,
@@ -3079,6 +3241,7 @@ impl IndexRangeSourceExec {
                 Err(error) => Err(format!("{error:?}")),
             };
             return Ok(LookupBatchJob {
+                physical_ids: Vec::new(),
                 handle_count,
                 adaptive_reserved_handles: 0,
                 receiver: None,
@@ -3130,6 +3293,7 @@ impl IndexRangeSourceExec {
             // See INDEX_LOOKUP_INLINE_HANDLES: the same request, without the
             // lane handoff that nothing could overlap.
             return Ok(LookupBatchJob {
+                physical_ids: Vec::new(),
                 handle_count,
                 adaptive_reserved_handles: 0,
                 receiver: None,
@@ -3159,6 +3323,7 @@ impl IndexRangeSourceExec {
             })
             .map_err(|_| ExecError::internal("index lookup worker pool stopped"))?;
         Ok(LookupBatchJob {
+            physical_ids: Vec::new(),
             handle_count,
             adaptive_reserved_handles: 0,
             receiver: Some(result_rx),
@@ -3245,7 +3410,7 @@ impl IndexRangeSourceExec {
                     || self.native_covering
                 {
                     let index_entries_scanned = self.index_entries_scanned.clone();
-                    cursor.next_handle_in_partition_if(|handle, key, value| {
+                    cursor.next_handle_in_partition_if(|handle, key, value, partition| {
                         index_entries_scanned.set(index_entries_scanned.get().wrapping_add(1));
                         if self.index_probe.is_some() || self.native_covering {
                             let row = self
@@ -3258,16 +3423,19 @@ impl IndexRangeSourceExec {
                                     self.decode_context.zone(),
                                 )
                                 .map_err(ExecError::from)?;
-                            let mut projected: Vec<_> = self
+                            let projected: Vec<_> = self
                                 .keep
                                 .iter()
                                 .map(|offset| row[*offset].clone())
                                 .collect();
-                            if let (Some(slot), TableHandle::Int(handle)) =
-                                (self.extra_handle_slot, handle)
-                            {
-                                projected.insert(slot, Datum::Int(*handle));
-                            }
+                            let physical_id = self.record_physical_ids.get(partition).copied();
+                            let projected = project_index_identity(
+                                projected,
+                                self.extra_handle_slot,
+                                self.physical_table_id_slot,
+                                Some(handle),
+                                physical_id,
+                            )?;
                             if let Some(filter) = &mut self.index_probe {
                                 if !filter.admits(&projected)? {
                                     return Ok(std::ops::ControlFlow::Continue(false));
@@ -3979,6 +4147,8 @@ impl Executor for IndexRangeSourceExec {
             self.batch_size = controller.suggested_batch_size(self.max_lookup_batch_size);
         }
         self.lookup_rows.clear();
+        self.lookup_handles.clear();
+        self.lookup_physical_ids.clear();
         self.lookup_row_at = 0;
         self.adaptive_lookup_progress = None;
         self.lookup_chunk = None;
@@ -4169,8 +4339,7 @@ impl Executor for IndexRangeSourceExec {
             && self.remote_index.is_none()
             && self.partial_aggregate.is_none()
             && !self.dirty_merge
-            && !self.table.has_dirty_content(&self.statement.staged_writes)
-            && self.table.partition().is_none();
+            && !self.table.has_dirty_content(&self.statement.staged_writes);
         self.lookup_pipeline = Some(LookupPipeline {
             inflight: VecDeque::new(),
             width: self.lookup_concurrency,
@@ -5731,7 +5900,7 @@ impl IndexJoinLookupExec {
                         ));
                     };
                     cursor
-                        .next_handle_in_partition_if(|handle, key, value| {
+                        .next_handle_in_partition_if(|handle, key, value, _partition| {
                             let row = self
                                 .table
                                 .index_filter_row(
@@ -6436,6 +6605,7 @@ mod tests {
         inner: MemTableStorage,
         entries: Arc<AtomicUsize>,
         gets: Arc<AtomicUsize>,
+        batch_keys: Arc<AtomicUsize>,
     }
 
     struct CountingIterator {
@@ -6649,6 +6819,7 @@ mod tests {
         }
         fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
             self.gets.fetch_add(1, Ordering::Relaxed);
+            self.batch_keys.fetch_add(keys.len(), Ordering::Relaxed);
             self.inner.batch_get(keys)
         }
         fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
@@ -6750,6 +6921,199 @@ mod tests {
             1,
             "one batch across reached partitions, none for p0"
         );
+    }
+
+    #[test]
+    fn index_lookup_retains_partition_identity_for_equal_row_handles() {
+        use crate::table_access::TableAccess;
+        for global in [false, true] {
+            let storage = CountingStorage::default();
+            let gets = Arc::clone(&storage.gets);
+            let batch_keys = Arc::clone(&storage.batch_keys);
+            let mut table =
+                KvTable::with_storage(77, vec![column("p", 1), column("v", 2)], Box::new(storage));
+            table.set_partition(crate::partition_routing::PartitionSpec {
+                kind: crate::partition_routing::PartitionKind::Hash,
+                expr_text: "p".to_owned(),
+                expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
+                dependencies: vec!["p".to_owned()],
+                definitions: (0..2)
+                    .map(|ordinal| crate::partition_routing::PartitionDef {
+                        id: 101 + ordinal,
+                        name: format!("p{ordinal}"),
+                        ..Default::default()
+                    })
+                    .collect(),
+                overlapping_dropping_partition_indices: Vec::new(),
+                is_empty_columns: false,
+            });
+            table
+                .create_index_with_context(
+                    crate::kv_table::KvIndex {
+                        id: 1,
+                        name: "idx".to_owned(),
+                        comment: String::new(),
+                        unique: global,
+                        column_offsets: vec![1],
+                        prefix_lengths: Vec::new(),
+                        visible: true,
+                        global,
+                        global_index_version: 0,
+                        clustered_primary: false,
+                    },
+                    &crate::StmtContext::for_query(),
+                )
+                .unwrap();
+            // Row IDs belong to their physical record keyspaces. Global index
+            // order alternates those keyspaces; a bare handle is insufficient.
+            for (p, value, row_id) in [(0, 10, 7), (1, 20, 7), (0, 30, 8), (1, 40, 8)] {
+                table
+                    .insert_row_with_row_id(
+                        &[Datum::Int(p), Datum::Int(value)],
+                        Some(row_id),
+                        0,
+                        &crate::StmtContext::for_query(),
+                    )
+                    .unwrap();
+            }
+            let schema = Schema::new(vec![
+                tidb_expr::column::Column::new(1, long()),
+                tidb_expr::column::Column::new(2, long()),
+            ]);
+            let mut source = IndexRangeSourceExec::new_with_context(
+                ExecutorMeta::new(schema, 0, 2, 32),
+                table.clone(),
+                1,
+                vec![IndexRange::full()],
+                crate::RowDecodeContext::for_test_query_utc(),
+            );
+            assert!(source.accept_keep_order(false));
+            source.set_lookup_size(2);
+            source.set_lookup_concurrency(2);
+            batch_keys.store(0, Ordering::Relaxed);
+            source.open().unwrap();
+            let mut chunk = source.new_chunk();
+            let mut actual = Vec::new();
+            loop {
+                source.next(&mut chunk).unwrap();
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                for i in 0..chunk.num_rows() {
+                    let row = chunk.get_row(i);
+                    actual.push((row.get_int64(0), row.get_int64(1)));
+                }
+            }
+            source.close().unwrap();
+            assert_eq!(
+                actual,
+                [(0, 10), (1, 20), (0, 30), (1, 40)],
+                "global={global}"
+            );
+            assert_eq!(
+                batch_keys.load(Ordering::Relaxed),
+                4,
+                "one exact key per handle"
+            );
+            for covering in [false, true] {
+                for physical_slot in [0, 2] {
+                    let handle_slot = 2 - physical_slot;
+                    let mut columns = vec![tidb_expr::column::Column::new(2, long()); 3];
+                    columns[physical_slot].id = tidb_model::column::EXTRA_PHYS_TBL_ID;
+                    columns[handle_slot].id = tidb_model::column::EXTRA_HANDLE_ID;
+                    let mut source = IndexRangeSourceExec::new_with_context(
+                        ExecutorMeta::new(Schema::new(columns), 0, 2, 2),
+                        table.clone(),
+                        1,
+                        vec![IndexRange::full()],
+                        crate::RowDecodeContext::for_test_query_utc(),
+                    );
+                    source.read_extra_handle(handle_slot);
+                    source.read_table_columns(vec![1]);
+                    if covering {
+                        source.mark_covering();
+                    } else {
+                        // Adaptive prefiltering sees the same synthetic-column
+                        // layout as the row emitted to its parent.
+                        let ctx = crate::StmtContext::for_query();
+                        let mut physical = tidb_expr::column::Column::new(3, long());
+                        physical.index = physical_slot as i64;
+                        let condition =
+                            Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
+                                tidb_ast::CiString::new("gt"),
+                                long(),
+                                vec![
+                                    Expression::Column(physical),
+                                    Expression::Constant(tidb_expr::constant::Constant::new(
+                                        Datum::Int(100),
+                                        long(),
+                                    )),
+                                ],
+                            ));
+                        source.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
+                            crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
+                                vec![condition],
+                                &ctx,
+                            ),
+                            ctx,
+                            source.new_chunk(),
+                        ));
+                        source.set_adaptive_limit_controller(
+                            crate::adaptive_limit::AdaptiveLimitController::for_direct_lookup(
+                                crate::adaptive_limit::AdaptiveLimitConfig {
+                                    demand_rows: 4,
+                                    initial_outer_window: 0,
+                                    max_outer_window: 0,
+                                    initial_lookup_window: 2,
+                                    max_lookup_window: 4,
+                                    initial_lookup_batch_size: 2,
+                                    max_lookup_batch_size: 2,
+                                },
+                            ),
+                        );
+                    }
+                    assert!(source.accept_keep_order(false));
+                    gets.store(0, Ordering::Relaxed);
+                    batch_keys.store(0, Ordering::Relaxed);
+                    source.open().unwrap();
+                    let mut chunk = source.new_chunk();
+                    let mut actual = Vec::new();
+                    loop {
+                        source.next(&mut chunk).unwrap();
+                        if chunk.num_rows() == 0 {
+                            break;
+                        }
+                        for i in 0..chunk.num_rows() {
+                            let row = chunk.get_row(i);
+                            actual.push((
+                                row.get_int64(physical_slot),
+                                row.get_int64(1),
+                                row.get_int64(handle_slot),
+                            ));
+                        }
+                    }
+                    source.close().unwrap();
+                    assert_eq!(
+                        actual,
+                        [(101, 10, 7), (102, 20, 7), (101, 30, 8), (102, 40, 8)],
+                        "global={global}"
+                    );
+                    if covering {
+                        assert_eq!(
+                            gets.load(Ordering::Relaxed),
+                            0,
+                            "covering entries never fetch records"
+                        );
+                    } else {
+                        assert_eq!(
+                            batch_keys.load(Ordering::Relaxed),
+                            4,
+                            "lookup output retains exact keyspaces"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -8001,11 +8365,13 @@ mod tests {
     fn the_double_read_issues_one_batch_get_per_index_batch() {
         let ctx = crate::StmtContext::for_query();
         let (catalog, _, gets) = table_of(ROWS, true);
-        // An `IN` list keeps `eq_or_in_count` non-zero, which is what makes
-        // Go's `prefer_range` rule hold the index path under pseudo
-        // statistics -- so this measures the READER, not the chooser.
+        // Force the noncovering index path: the batching contract must not
+        // depend on the cost model preferring it over a table scan.
         let list: Vec<String> = (1..=50).map(|value| value.to_string()).collect();
-        let query = format!("SELECT a FROM t WHERE b IN ({})", list.join(", "));
+        let query = format!(
+            "SELECT a FROM t USE INDEX(ib) WHERE b IN ({})",
+            list.join(", ")
+        );
         let rows = run_select_on(&query, &catalog, &ctx).unwrap();
         assert_eq!(rows.len(), 50);
         assert_eq!(

@@ -1811,6 +1811,13 @@ fn reader_output_offsets(
     let mut extra_handle_slot = None;
     for (slot, output) in schema.columns.iter().enumerate() {
         if output.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
+            if table
+                .indexes()
+                .iter()
+                .any(|index| index.id == scan.index_id && index.global)
+            {
+                source_columns.push(output.clone());
+            }
             continue;
         }
         if Some(slot) == extra_handle {
@@ -2057,6 +2064,11 @@ fn build_index_reader(
     // by `compareExec.compare`. This tier folds that merge into the source;
     // arming it here keeps every other read untouched.
     source.enable_dirty_union_scan_merge();
+    let emits_physical_id = source
+        .schema()
+        .columns
+        .iter()
+        .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
     let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
         logical_table_id,
@@ -2064,7 +2076,11 @@ fn build_index_reader(
         ctx.index_usage_collector().cloned(),
         Some(scan.index_id),
     ));
-    project_physical_table_id(source, schema, &physical_ids, plan, ctx)
+    if emits_physical_id {
+        Ok(source)
+    } else {
+        project_physical_table_id(source, schema, &physical_ids, plan, ctx)
+    }
 }
 
 fn join_kind(join_type: LogicalJoinType) -> Result<JoinKind, DriverError> {
