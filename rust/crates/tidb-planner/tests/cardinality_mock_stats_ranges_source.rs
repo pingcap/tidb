@@ -985,7 +985,7 @@ fn ignore_realtime_stats_by_optimizer_objective() {}
 /// every column of iabc and the index itself; the five recorded distinct/count
 /// plans pin subset-vs-full index cardinality behavior.
 #[test]
-#[ignore = "go-parity-gap: async stats-load queue lifecycle spans session machinery"]
+#[ignore = "executed by tidb-session cardinality_stats_loading through the catalog queue/cache lifecycle; storage I/O uses a test double"]
 fn subset_idx_cardinality_after_async_stats_load() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2635

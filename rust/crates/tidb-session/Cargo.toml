@@ -64,3 +64,7 @@ path = "tests/all.rs"
 [[test]]
 name = "topn_assisted_string_match"
 path = "tests/topn_assisted_string_match.rs"
+
+[[test]]
+name = "cardinality_stats_loading"
+path = "tests/cardinality_stats_loading.rs"

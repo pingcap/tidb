@@ -1,11 +1,13 @@
 # `pkg/planner/cardinality` — Go-master parity receipt
 
-Current status (2026-09-25): **incomplete**. Latest validation passes 109 session
-EXPLAIN tests and 411 logical-planner tests. Historical failure reports below
-are superseded where later entries record their fixes. Two previously unmapped
-NDV SQL cases now execute exact Go fixtures and pass after restoring the
-session scale-NDV setting across statistics derivation. This remains seed
-work within the full-package effort; no package completion is claimed.
+Current status (2026-09-25): **incomplete**. Work is committed on
+`hparser-integration`; newer checkpoint sections below supersede historical
+failure reports. Ordinary and union estimation share version dispatch,
+appended-handle preparation and session estimator options. The subset-index
+fixture now exercises the production catalog async queue/cache boundary and
+matches all five Go plans with a storage test double. Source/support inventory,
+remaining context/loading variants and full workload validation remain open.
+No whole-package completion is claimed.
 
 Initial full-package inventory: Go `origin/master` at commit
 `94eb995357f34b7bab4889a82f0405797046447d` (2026-09-02). The current live
@@ -21,9 +23,9 @@ Latest source refresh: `git fetch origin master` advanced `origin/master` to
 `633a9e37f1c796ac81c203dc107025e7e65385f0`. Comparing the entire cardinality
 package against `4f27dad8db3971166156ad79a29c99e5d98dbcd2` produced no changed
 paths, so the 18-artifact source inventory and blob hashes are still current.
-The checked-out `hparser-integration` branch has extensive dirty work and is
-not being merged/rebased over upstream as part of this fetch; package tests
-compare against the fetched Go source.
+The Rust work has since been committed and integrated with `hparser-integration`.
+Package reference tests still compare against the separately pinned Go master,
+not the checked-out branch's Go implementation.
 
 ## Latest-master follow-up (2026-09-24)
 
@@ -2885,3 +2887,14 @@ fails before with 4/7.5/10 versus Go 4/6/8, then passes after. Monotonicity-only
 evidence was insufficient because a later consistency adjustment hid the missing
 snapshot. Exact commands, 180 focused tests and remaining context/package/workload
 gaps are in the structural audit. No whole-package completion is claimed.
+
+
+Async-loading fixture checkpoint (2026-09-25): the new standalone session test
+runs the original subset-index SQL setup, drives production catalog queue/cache
+loading of evicted statistics, and matches all five original Go plans. The
+storage adapter is a test double serving actual ANALYZE payloads; real storage
+bootstrap and scheduling are not verified. No production change was necessary.
+The original pinned Go test, one new Rust session test, 14 source-mapping tests
+(with 27 ignored mappings), make lint and diff checks pass. Exact commands and
+limits are in the structural audit's subset-index lifecycle entry. The full Go
+package and workload performance gates remain incomplete.

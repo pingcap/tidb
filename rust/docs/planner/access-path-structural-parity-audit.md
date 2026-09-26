@@ -3286,3 +3286,36 @@ Logs: /private/tmp/tidb-index-options-{before,after,explain,cost,hints,lint,go}.
 Statement timezone and warning policy remain incomplete, as do source/support
 inventory, package gates and sysbench/TPC-C/TPC-H/YCSB measurements. This fix is
 not a complete cardinality-package transcreation or workload-performance claim.
+
+### Subset-index async statistics lifecycle evidence (2026-09-25)
+
+The ignored `TestSubsetIdxCardinality` mapping overstated the implementation
+hole: the production catalog already owns asynchronous demand consumption and
+cache publication through `load_needed_histograms`. A new standalone session
+test exercises that existing boundary; no production behavior was added.
+`rust/crates/tidb-session/tests/cardinality_stats_loading.rs` reproduces the Go
+SQL data setup and ANALYZE, evicts the analyzed payloads while retaining metadata,
+and installs a storage test double that restores only requested analyzed items.
+Planning queues demand, the catalog restores all three columns and the index,
+and subsequent planning leaves the queue empty. All five full brief plans match
+`TestSubsetIdxCardinality` in the original Go output fixture. That fixture section
+was also compared with Go master pin
+`633a9e37f1c796ac81c203dc107025e7e65385f0` and is identical.
+
+The explicit Cargo test target isolates the process-global queue. The old planner
+placeholder and b078 receipt now point to the active test. The package receipt
+and ExecPlan retain incomplete status. This is coverage of an existing lifecycle,
+not a bug fix with fail-before evidence. Storage I/O is a test double; real storage
+bootstrap, asynchronous scheduling, expression-index initialization and other
+loading variants remain open. No whole-package or workload-performance claim.
+
+Validation (all passed):
+
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --test cardinality_stats_loading -- --test-threads=1` — one test, five exact plans.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --test all cardinality_mock_stats_ranges_source -- --test-threads=1` — 14 passed, 27 ignored mappings; these ignores are not completion evidence.
+- In the pinned Go tree: `GOTOOLCHAIN=go1.25.12 ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestSubsetIdxCardinality$' -count=1` — original upstream test passed; failpoints disabled afterward.
+- `make lint` and `git diff --check`.
+
+No Go source, Go dependency or Bazel metadata changed, so `make bazel_prepare`
+was not required. No benchmark was run; this test-only checkpoint changes no
+production correctness, compatibility or performance behavior.
