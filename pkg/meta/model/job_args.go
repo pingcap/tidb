@@ -315,8 +315,8 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
 	// The following fields are only for DROP TABLE and materialized view drop jobs.
-	// when dropping multiple tables, the Identifiers is the same, but each drop-table
-	// runs in a separate job.
+	// New DROP TABLE submissions carry the current identifier. The executor uses
+	// the full statement list for admission checks before submitting independent jobs.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
 	FKCheck     bool        `json:"fk_check,omitempty"`
 
