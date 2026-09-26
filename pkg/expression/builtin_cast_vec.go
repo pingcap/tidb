@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"errors"
 	"math"
 	"strconv"
 	"strings"
@@ -1784,21 +1783,19 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.C
 		}
 		tm, err := types.ParseTime(tc, buf.GetString(i), b.tp.GetType(), fsp)
 		if err != nil {
-			if errors.Is(err, strconv.ErrSyntax) || errors.Is(err, strconv.ErrRange) {
-				err = types.ErrIncorrectDatetimeValue.GenWithStackByArgs(buf.GetString(i))
-			}
+			err = normalizeCastStringAsTimeError(err, buf.GetString(i))
+			result.SetNull(i, true)
 			if err = handleInvalidTimeError(ctx, err); err != nil {
 				return err
 			}
-			result.SetNull(i, true)
 			continue
 		}
 		if tm.IsZero() && sqlMode(ctx).HasNoZeroDateMode() {
+			result.SetNull(i, true)
 			err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, tm.String()))
 			if err != nil {
 				return err
 			}
-			result.SetNull(i, true)
 			continue
 		}
 		times[i] = tm
