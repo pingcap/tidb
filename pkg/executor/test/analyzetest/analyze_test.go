@@ -737,6 +737,11 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"`,
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
+
+	// ANALYZE rejects every NDVRATE.
+	for _, rate := range []string{"0.1", "1"} {
+		require.ErrorContains(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"), "should be positive and not larger than 0")
+	}
 }
 
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string) {
