@@ -920,26 +920,13 @@ fn run_insert_with_physical(
                 row[offset] = column_default(&column_meta, offset, ctx, eval_chunk.get_row(0))?;
             }
         }
-        // Go `Column.HandleBadNull`: an explicit NULL in a NOT NULL column is
-        // ErrColumnCantNull, which is a different error from omitting a
-        // column that has no default. Whether it FAILS the statement is
-        // `bad_null_level` above, not the SQL mode alone.
-        for (offset, value) in row.iter_mut().enumerate() {
-            // A generated column's value is not built yet at this point, so
-            // the NULL standing in for it is not the user's NULL.
-            if assigned[offset] && !generated_targets[offset] {
-                crate::bad_null::handle_bad_null(
-                    value,
-                    &column_meta[offset].field_type,
-                    &column_list[offset].0,
-                    bad_null_level,
-                    ctx,
-                )?;
-            }
-        }
-        // Go casts each value to its column's type before the row is
+        // Go casts each value to its column's type BEFORE the row is
         // written, which is what rounds a decimal to the column's scale and
-        // parses a numeric string.
+        // parses a numeric string. The cast pass runs FIRST: go's row decode
+        // emits the truncation warnings (1406) before `HandleBadNull`'s
+        // constraint warnings (1048), so `INSERT IGNORE INTO t VALUES (NULL,
+        // 'abc')` warns 1406-for-b and only then 1048-for-a (oracle-captured
+        // order).
         if let TableEntry::Kv(kv) = &*table {
             for (offset, value) in row.iter_mut().enumerate() {
                 // The row is one wider than the table when the statement
@@ -964,6 +951,25 @@ fn run_insert_with_physical(
                     insert.ignore,
                 )?;
             }
+        }
+        // Go `Column.HandleBadNull`: an explicit NULL in a NOT NULL column is
+        // ErrColumnCantNull, which is a different error from omitting a
+        // column that has no default. Whether it FAILS the statement is
+        // `bad_null_level` above, not the SQL mode alone.
+        for (offset, value) in row.iter_mut().enumerate() {
+            // A generated column's value is not built yet at this point, so
+            // the NULL standing in for it is not the user's NULL.
+            if assigned[offset] && !generated_targets[offset] {
+                crate::bad_null::handle_bad_null(
+                    value,
+                    &column_meta[offset].field_type,
+                    &column_list[offset].0,
+                    bad_null_level,
+                    ctx,
+                )?;
+            }
+        }
+        if let TableEntry::Kv(kv) = &*table {
             // The generated columns are computed from the finished row, so
             // the conflict lookup and the foreign-key check below see the
             // same values the write will store.
