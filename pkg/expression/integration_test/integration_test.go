@@ -141,6 +141,25 @@ func skipIfNotStarterForFTS(t *testing.T) {
 	}
 }
 
+func TestRepeatLargeResult(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table repeat_base (id bigint, name varchar(255))")
+	tk.MustExec("insert into repeat_base values (2, 'abc'), (42, '')")
+	tk.MustExec("create view repeat_view as with c as (select * from repeat_base) select * from c")
+	for _, vectorized := range []string{"ON", "OFF"} {
+		tk.MustExec("set tidb_enable_vectorized_expression = " + vectorized)
+		for _, source := range []string{"repeat_base", "repeat_view"} {
+			tk.MustQuery("select name, " +
+				"cast(if(name = name, repeat(name, 5592406), regexp_instr(name, '.')) as char(255)) is null, " +
+				"char_length(cast(if(name = name, repeat(name, 5592406), regexp_instr(name, '.')) as char(255))) " +
+				"from " + source + " group by name having max(id) <= (select count(*) from " + source + ")").
+				Check(testkit.Rows("abc 0 255"))
+		}
+	}
+}
+
 func TestFTSParser(t *testing.T) {
 	skipIfNotStarterForFTS(t)
 
