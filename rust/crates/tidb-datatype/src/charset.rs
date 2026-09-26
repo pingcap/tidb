@@ -737,6 +737,38 @@ pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, CharsetError> 
         .ok_or_else(|| CharsetError::UnknownCollation(name.to_owned()))
 }
 
+/// Go `newCollatorIDMap`'s keys (`pkg/util/collate/collate.go`): the
+/// collations that carry a new-collation implementation. With the new
+/// collation framework enabled, `GetCollationByName` refuses every other
+/// collation with 1273 `Unsupported collation when new collation is enabled`.
+const NEW_COLLATION_SUPPORTED: &[&str] = &[
+    "binary",
+    "ascii_bin",
+    "latin1_bin",
+    "utf8mb4_bin",
+    "utf8_bin",
+    "utf8mb4_0900_bin",
+    "utf8mb4_general_ci",
+    "utf8_general_ci",
+    "utf8mb4_unicode_ci",
+    "utf8mb4_0900_ai_ci",
+    "utf8_unicode_ci",
+    "utf8mb4_zh_pinyin_tidb_as_cs",
+    "gbk_bin",
+    "gbk_chinese_ci",
+    "gb18030_bin",
+    "gb18030_chinese_ci",
+];
+
+/// Whether the named collation carries a new-collation implementation (go
+/// `collate.GetCollationByName`'s `newCollatorIDMap` membership check).
+#[must_use]
+pub fn is_new_collation_supported(name: &str) -> bool {
+    NEW_COLLATION_SUPPORTED
+        .iter()
+        .any(|supported| supported.eq_ignore_ascii_case(name))
+}
+
 /// Looks up any registered collation ID.
 pub fn get_collation_by_id(id: i32) -> Result<CollationInfo, CharsetError> {
     registry()

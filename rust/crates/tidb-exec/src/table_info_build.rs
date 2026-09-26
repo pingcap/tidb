@@ -1208,6 +1208,18 @@ fn build_column(
                     format!("column `{name}` declares COLLATE {collate}: {error}"),
                 )
             })?;
+            // go `collate.GetCollationByName`: the new-collation membership
+            // check rides the name lookup itself (1273, oracle-captured for
+            // `latin1_swedish_ci`).
+            if !tidb_datatype::is_new_collation_supported(&info.name) {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::mysql::errcode::ErrUnknownCollation,
+                    format!(
+                        "Unsupported collation when new collation is enabled: '{}'",
+                        info.name
+                    ),
+                ));
+            }
             if let Some(charset) = &declared_charset {
                 if !charset.eq_ignore_ascii_case(&info.charset_name) {
                     return Err(DdlAdmissionError::with_code(
@@ -1925,6 +1937,19 @@ pub(crate) fn resolve_charset_collation(
                     format!("COLLATE {collate}: {error}"),
                 )
             })?;
+            // go `collate.GetCollationByName` (the wrapped lookup every DDL
+            // route takes): with the new collation framework enabled, a
+            // collation without its own implementation answers 1273 instead
+            // of resolving (`latin1_swedish_ci` -- oracle-captured).
+            if !tidb_datatype::is_new_collation_supported(&info.name) {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::mysql::errcode::ErrUnknownCollation,
+                    format!(
+                        "Unsupported collation when new collation is enabled: '{}'",
+                        info.name
+                    ),
+                ));
+            }
             if let Some(charset) = charset.filter(|charset| !charset.is_empty()) {
                 if !charset.eq_ignore_ascii_case(&info.charset_name) {
                     // Go `ErrCollationCharsetMismatch` (1253), not the
