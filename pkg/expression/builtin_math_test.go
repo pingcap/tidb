@@ -456,6 +456,9 @@ func TestRound(t *testing.T) {
 		{[]any{-24, -1}, -20},
 		{[]any{1234567890123456789, -1}, 1234567890123456790},
 		{[]any{int64(math.MaxInt64), 0}, int64(math.MaxInt64)},
+		// Unsigned values above math.MaxInt64 must round as uint64.
+		{[]any{uint64(9223372036854775815), -1}, uint64(9223372036854775820)},
+		{[]any{uint64(18446744073709551605), -1}, uint64(18446744073709551610)},
 		{[]any{newDec("-1.23")}, newDec("-1")},
 		{[]any{newDec("-1.23"), 1}, newDec("-1.2")},
 		{[]any{newDec("-1.58")}, newDec("-2")},
@@ -490,6 +493,24 @@ func TestRound(t *testing.T) {
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
+	}
+
+	errTbl := []struct {
+		Arg []any
+		Err string
+	}{
+		{[]any{int64(math.MaxInt64), -1}, "[types:1690]BIGINT value is out of range in 'round(9223372036854775807, -1)'"},
+		{[]any{int64(math.MinInt64), -1}, "[types:1690]BIGINT value is out of range in 'round(-9223372036854775808, -1)'"},
+		{[]any{uint64(math.MaxUint64), -1}, "[types:1690]BIGINT UNSIGNED value is out of range in 'round(18446744073709551615, -1)'"},
+	}
+
+	errDtbl := tblToDtbl(errTbl)
+	for _, tt := range errDtbl {
+		fc := funcs[ast.Round]
+		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		require.NoError(t, err)
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.EqualError(t, err, tt["Err"][0].GetString())
 	}
 }
 

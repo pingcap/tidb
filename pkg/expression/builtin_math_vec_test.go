@@ -99,6 +99,9 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		// paths can compare, so keep the magnitude inside the range where no
 		// frac can overflow.
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{newRangeInt64Gener(-2e18, 2e18), newRangeInt64Gener(-100, 100)}},
+		// The default generator yields NULLs, and a non-negative frac returns
+		// every value unchanged.
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{nil, newRangeInt64Gener(0, 100)}},
 	},
 	ast.Pow: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{newRangeRealGener(0, 10, 0.5), newRangeRealGener(0, 100, 0.5)}},
