@@ -2956,15 +2956,15 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 }
 
 // PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
-// Including charset, collation, currentDB and sqlMode ensures that the cached
+// Including connection/client charsets, collation, currentDB and sqlMode ensures that the cached
 // PlanCacheStmt is only reused when the session context that affects parsing,
 // name-resolution and cacheability decisions is identical. sqlMode is included
 // because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
 // IsASTCacheable (which computes StmtCacheable) runs on that AST.
-func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+func PrepareDedupCacheKey(sql, charset, collation, currentDB, clientCharset string, sqlMode mysql.SQLMode) string {
 	var modeBuf [8]byte
 	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
-	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + clientCharset + "\x00" + string(modeBuf[:])
 }
 
 // GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
