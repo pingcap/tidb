@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -63,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -852,6 +854,9 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 	if local.DisablePDClientRouterClient {
 		pdClientOptions = append(pdClientOptions, opt.WithEnableRouterClient(false))
 	}
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+	}
 	pdCliForTiKV, err := newPDClient(ctx, apiContext, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), pdClientOptions...)
 	if err != nil {
 		_ = spkv.Close()
@@ -863,7 +868,7 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 		_ = spkv.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	rpcCli := newTiKVRPCClient(rpcOpts...)
+	rpcCli := diagnosticclient.WrapKV(newTiKVRPCClient(rpcOpts...))
 	tikvCli, err := newTiKVStore("lightning-local-backend", codecPDCli, spkv, rpcCli)
 	if err != nil {
 		if rpcCli != nil {

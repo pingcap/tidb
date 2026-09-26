@@ -21,6 +21,7 @@ import (
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -31,6 +32,7 @@ import (
 )
 
 func TestWriteRUStatistics(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(false))
 	tzShanghai, _ := time.LoadLocation("Asia/Shanghai")
 	// test with DST timezone.
 	tzLord, _ := time.LoadLocation("Australia/Lord_Howe")
