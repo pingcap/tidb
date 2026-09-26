@@ -249,6 +249,16 @@ impl Ver2Coster {
                 }
             })
             .collect::<Vec<_>>();
+        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+            let misses = columns.iter().filter(|c| c.stats.is_none()).count();
+            let pseudo = hist_coll.is_none_or(crate::stats_info::HistColl::pseudo);
+            eprintln!(
+                "ROWSIZE cols={} misses={} pseudo={}",
+                columns.len(),
+                misses,
+                pseudo
+            );
+        }
         crate::plan_cost_ver2::plan_avg_row_size(
             &columns,
             hist_coll.map(|hist_coll| (hist_coll.pseudo(), hist_coll.realtime_count())),
