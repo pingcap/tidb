@@ -1736,6 +1736,26 @@ fn real_to_time(
 /// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
 /// becomes a warning and the cast yields NULL.
 fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) {
+    // go renders a date-shaped failure through its parsed parts without
+    // zero padding: `LAST_DAY('2020-02-30')` warns `Incorrect datetime
+    // value: '2020-2-30'` (the month unpadded). Every other text keeps the
+    // raw form.
+    let trimmed = input.trim();
+    let parts: Vec<&str> = trimmed.splitn(3, '-').collect();
+    if parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    {
+        let rendered = format!(
+            "{}-{}-{}",
+            parts[0].parse::<i64>().unwrap_or(0),
+            parts[1].parse::<i64>().unwrap_or(0),
+            parts[2].parse::<i64>().unwrap_or(0)
+        );
+        ctx.append_warning(1292, &format!("Incorrect datetime value: '{rendered}'"));
+        return;
+    }
     ctx.append_warning(1292, &format!("Incorrect datetime value: '{input}'"));
 }
 
