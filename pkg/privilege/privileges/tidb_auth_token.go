@@ -60,9 +60,9 @@ func (jwks *JWKSImpl) verify(tokenBytes []byte) (payload []byte, err error) {
 func (jwks *JWKSImpl) LoadJWKS4AuthToken(ctx context.Context, wg *sync.WaitGroup, jwksPath string, interval time.Duration) error {
 	jwks.filepath = jwksPath
 	if ctx != nil && wg != nil {
+		wg.Add(1)
 		go func() {
 			ticker := time.Tick(interval)
-			wg.Add(1)
 			for {
 				select {
 				case <-ctx.Done():
