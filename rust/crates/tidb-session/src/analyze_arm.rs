@@ -71,22 +71,48 @@ pub(crate) enum AnalyzePanicPhase {
     Result,
 }
 
-fn merge_partial_statistics(
+/// Publish merged ANALYZE items as a real cache table. Go's storage loader
+/// derives the table format from histogram rows; these local results bypass
+/// that reload and must refresh the same metadata after replacing items.
+fn finish_analyze_publication(statistics: &mut tidb_executor::access_cost::TableStatistics) {
+    if let Some(version) = statistics
+        .columns
+        .values()
+        .map(|item| item.stats_ver)
+        .chain(statistics.indexes.values().map(|item| item.stats_ver))
+        .filter(|version| *version != 0)
+        .max()
+    {
+        statistics.stats_ver = version;
+    }
+    statistics.cache_pseudo = false;
+    statistics.pseudo = statistics.row_count == 0
+        || (statistics
+            .column_stats_existence
+            .values()
+            .all(|exists| !exists)
+            && statistics
+                .index_stats_existence
+                .values()
+                .all(|exists| !exists));
+}
+
+fn merge_analyzed_statistics(
     old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
     mut fresh: tidb_executor::access_cost::TableStatistics,
-    partial: bool,
+    replace_counts: bool,
 ) -> tidb_executor::access_cost::TableStatistics {
-    if !partial {
-        return fresh;
-    }
     let Some(old) = old else {
+        finish_analyze_publication(&mut fresh);
         return fresh;
     };
     let mut merged = (*old).clone();
-    merged.row_count = fresh.row_count;
-    merged.modify_count = fresh.modify_count;
+    if replace_counts {
+        merged.row_count = fresh.row_count;
+        merged.modify_count = fresh.modify_count;
+    }
     merged.version = fresh.version;
-    merged.last_analyze_version = fresh.last_analyze_version;
+    merged.last_analyze_version = merged.last_analyze_version.max(fresh.last_analyze_version);
     merged.columns.append(&mut fresh.columns);
     merged.indexes.append(&mut fresh.indexes);
     merged
@@ -107,31 +133,25 @@ fn merge_partial_statistics(
     merged
         .index_fm_sketches
         .append(&mut fresh.index_fm_sketches);
-    merged.pseudo = merged.row_count == 0
-        || (merged.column_stats_existence.values().all(|exists| !exists)
-            && merged.index_stats_existence.values().all(|exists| !exists));
+    finish_analyze_publication(&mut merged);
     merged
+}
+
+fn merge_partial_statistics(
+    old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
+    fresh: tidb_executor::access_cost::TableStatistics,
+    partial: bool,
+) -> tidb_executor::access_cost::TableStatistics {
+    merge_analyzed_statistics(if partial { old } else { None }, fresh, true)
 }
 
 fn merge_independent_index_statistics(
     old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
     fresh: tidb_executor::access_cost::TableStatistics,
 ) -> tidb_executor::access_cost::TableStatistics {
-    let Some(old) = old else {
-        return fresh;
-    };
-    let mut merged = (*old).clone();
-    merged.version = fresh.version;
-    merged.last_analyze_version = fresh.last_analyze_version;
-    merged.indexes.extend(fresh.indexes);
-    merged.index_load_status.extend(fresh.index_load_status);
-    merged
-        .index_stats_existence
-        .extend(fresh.index_stats_existence);
-    merged.pseudo = merged.row_count == 0
-        || (merged.column_stats_existence.values().all(|exists| !exists)
-            && merged.index_stats_existence.values().all(|exists| !exists));
-    merged
+    // An independent index task updates histogram rows without changing
+    // stats_meta row/modify counts, unlike a full column-sampling task.
+    merge_analyzed_statistics(old, fresh, false)
 }
 
 /// Rebuilds dynamic-mode global statistics from the physical partition
@@ -305,6 +325,7 @@ fn merge_partitioned_global_statistics(
             global.index_fm_sketches.insert(index.id, fm_sketch);
         }
     }
+    finish_analyze_publication(&mut global);
     Ok(global)
 }
 

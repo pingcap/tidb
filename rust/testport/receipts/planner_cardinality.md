@@ -2928,3 +2928,14 @@ advanced to `8936d7bdcb13a4fc767de42489aace2711c2c6fd`. The entire
 `pkg/planner/cardinality` tree and `pkg/executor/analyze_col_sampling.go` are
 unchanged from pin `633a9e37f1c796ac81c203dc107025e7e65385f0`; Go oracle
 execution above remains on that earlier pinned snapshot.
+
+
+ANALYZE publication checkpoint (2026-09-25): the prior partition baseline failure
+is now resolved. Local global/partial/independent-index results share metadata
+publication: histogram formats refresh table StatsVer, real cache state remains
+distinct from planner pseudo state, and FM sketches follow their index payloads.
+Independent tasks preserve table row/modify counts. Three strengthened cases fail
+against the old production code and pass after; 22 ANALYZE, 110 EXPLAIN tests, Go
+SQL oracle, lint and diff checks pass. Exact commands and limitations are in the
+structural audit. DDL aggregate compilation, live-cluster variants, full-package
+inventory and workload gates remain open.

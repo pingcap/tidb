@@ -233,9 +233,15 @@ pub fn analyze_kv_table_independent_index(
             unique: index.unique,
         },
     );
-    Ok(TableStatistics::new(0, 0, BTreeMap::new(), indexes)
+    let mut statistics = TableStatistics::new(0, 0, BTreeMap::new(), indexes)
+        .with_fm_sketches(
+            BTreeMap::new(),
+            BTreeMap::from([(index.id, built.fm_sketch)]),
+        )
         .with_stat_versions(now_tso_shaped(), now_tso_shaped())
-        .with_stats_ver(2))
+        .with_stats_ver(2);
+    statistics.cache_pseudo = false;
+    Ok(statistics)
 }
 
 /// The current wall clock as a Go TSO: milliseconds since the epoch shifted

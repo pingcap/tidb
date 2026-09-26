@@ -3420,3 +3420,47 @@ advanced Go master to `8936d7bdcb13a4fc767de42489aace2711c2c6fd`.
 returned no paths. The Go oracle execution remains explicitly pinned to the
 earlier snapshot; this comparison verifies the relevant reference files did
 not change.
+
+### ANALYZE cache publication metadata (2026-09-25)
+
+The partition failure recorded in the preceding checkpoints was a publication
+mismatch: merged global histograms existed, but their table format remained zero.
+Go storage loading updates HistColl.StatsVer from each nonzero histogram format
+before processing the item (`pkg/statistics/handle/storage/read.go`, column and
+index loaders). The local Rust path bypasses that storage reload. Partial
+ANALYZE likewise cloned old table metadata without refreshing the format; the
+separate independent-index merge also omitted FM sketches.
+
+The local ANALYZE paths now share item/metadata publication. The resulting table
+format comes from retained nonzero histogram formats, using the same maximum as
+the existing canonical cluster conversion; Go's invariant is that table objects
+share one format. Publication marks the canonical cache object real while keeping
+planner pseudo classification for empty/uninitialized distributions. Full and
+partial sampling replace counts; independent-index publication retains the old
+row/modify counts. All item payloads, load/existence maps and FM sketches move
+together, and LastAnalyzeVersion retains the newer timestamp. The independent
+index producer now retains its computed FM sketch and marks the result as a real
+cache object. Global partition merging invokes the same final metadata step.
+
+Regression evidence: restoring both production files to HEAD made three source
+paths fail at format zero versus two: partial analysis after stats-delta flush,
+static-to-dynamic global analysis, and independent global-index analysis. With
+the fix restored, all pass. The independent-index fixture additionally verifies
+FM NDV five and preserved table count four after analyzing five index entries.
+This resolves the previously reported partition baseline failure; historical
+entries saying it remains open are superseded by this entry.
+
+Validation:
+
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_analyze -- --test-threads=1` — baseline 19 passed/three failed with strengthened tests; fixed 22 passed.
+- `cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_explain -- --test-threads=1` — 110 passed.
+- Pinned Go tree: `GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRustAnalyzePublicationReference$' -count=1` — passed. The oracle checks partial analysis after flush and pseudo-to-analyzed global partition planning; failpoints disabled afterward.
+- `make lint` and `git diff --check` — passed. No Go/Bazel input changes; no bazel_prepare trigger.
+- `git fetch origin hparser-integration master` and `git diff --name-only 633a9e37f1c796ac81c203dc107025e7e65385f0 origin/master -- pkg/planner/cardinality pkg/statistics/handle/storage/read.go` — reference paths unchanged at refreshed master `8936d7bdcb13a4fc767de42489aace2711c2c6fd`.
+
+Changed owners: executor analyze/kv.rs, session analyze_arm.rs and tests_analyze.rs,
+plus this audit, the ExecPlan and package receipt. Corrected metadata can change
+plan choices that previously treated analyzed data as pseudo. No live-cluster or
+workload benchmark was run. The unrelated DDL aggregate-test compilation failure,
+remaining package inventory/variants and workload gates are still open; no whole
+Go package completion is claimed.

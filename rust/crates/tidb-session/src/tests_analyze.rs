@@ -270,6 +270,8 @@ fn static_partition_analyze_keeps_statistics_on_physical_partitions() {
                 .table_statistics(table.table_id)
                 .expect("dynamic ANALYZE publishes global table statistics");
             assert_eq!(statistics.row_count, 6);
+            assert_eq!(statistics.stats_ver, 2);
+            assert!(!statistics.cache_pseudo);
             Ok(())
         })
         .unwrap();
@@ -939,6 +941,16 @@ fn special_global_index_uses_the_independent_analyze_task() {
                 statistics.row_count, 4,
                 "an independent index task preserves existing stats_meta.count"
             );
+            assert_eq!(statistics.stats_ver, 2);
+            assert!(!statistics.cache_pseudo);
+            assert_eq!(
+                statistics
+                    .index_fm_sketches
+                    .get(&index_id)
+                    .expect("independent analysis publishes its FM sketch")
+                    .ndv(),
+                5
+            );
             let index = statistics
                 .indexes
                 .get(&index_id)
@@ -1420,4 +1432,37 @@ fn analyze_expression_index_samples_keep_physical_column_positions() {
             }
         }
     }
+}
+
+#[test]
+fn partial_analyze_replaces_unanalyzed_table_metadata() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE partial_metadata(a INT,b INT,KEY ia(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO partial_metadata VALUES(1,10),(2,20),(2,30)")
+        .unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session
+        .run("ANALYZE TABLE partial_metadata COLUMNS a")
+        .unwrap();
+    let shared = session.shared_catalog();
+    let catalog = shared.lock().unwrap();
+    let TableEntry::Kv(table) = catalog.table_in("test", "partial_metadata").unwrap() else {
+        panic!("KV table")
+    };
+    let stats = catalog.table_statistics(table.table_id).unwrap();
+    assert_eq!(stats.stats_ver, 2);
+    assert!(!stats.cache_pseudo);
+    assert!(!stats.pseudo);
+    assert_eq!(stats.row_count, 3);
+    drop(catalog);
+    let plan = row_text(session.run("EXPLAIN SELECT * FROM partial_metadata WHERE a=2"));
+    assert!(
+        plan.iter()
+            .flatten()
+            .all(|cell| !cell.contains("stats:pseudo")),
+        "{plan:?}"
+    );
 }
