@@ -296,7 +296,14 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
-	for _, pbSketch := range pbCollector.FmSketch {
+	for i, pbSketch := range pbCollector.FmSketch {
+		// TiKV sends the sample count only when it sampled rows for NDV.
+		if pbCollector.NdvSampleCount != nil {
+			s.FMSketches = append(s.FMSketches, newSampledFMSketch(pbSketch, ndvSample{
+				rows: s.Count, samples: *pbCollector.NdvSampleCount, nulls: s.NullCount[i],
+			}))
+			continue
+		}
 		sketch := FMSketchFromProto(pbSketch)
 		sketch.maxSize = MaxSketchSize
 		s.FMSketches = append(s.FMSketches, sketch)
