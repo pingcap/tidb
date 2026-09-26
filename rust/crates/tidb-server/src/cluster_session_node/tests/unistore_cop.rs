@@ -8773,3 +8773,49 @@ fn analyze_sampling_memory_quota_rejects_then_session_recovers() {
         1
     );
 }
+
+/// Go `TestCreateTableWithForeignKeyMetaInfo`/`checkTableForeignKeysValid`:
+/// a cluster CREATE TABLE resolves the parent through the catalog instead of
+/// refusing every FOREIGN KEY with 1824.
+#[test]
+fn cluster_create_table_foreign_key_resolves_parent_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut s = stack.factory.open_session(session_context(901)).expect("session");
+    let code = |s: &mut crate::cluster_session_node::ClusterServerSession, sql: &str| {
+        s.execute_write(sql).err().map(|error| error.code)
+    };
+    rows(&mut s, "CREATE TABLE test.fk_p (id INT PRIMARY KEY, u INT, KEY iu(u))");
+    assert_eq!(
+        code(&mut s, "CREATE TABLE test.fk_c (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_p(id) ON DELETE CASCADE)"),
+        None
+    );
+    let meta = rows(&mut s, "SHOW CREATE TABLE test.fk_c");
+    let ddl = displayed(meta)[0][1].clone();
+    assert!(ddl.contains("CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `fk_p` (`id`) ON DELETE CASCADE"), "{ddl}");
+    assert!(ddl.contains("KEY `fk_1` (`pid`)"), "auto FK index: {ddl}");
+    // Missing parent: 1824 (checks on); accepted with checks off.
+    assert_eq!(
+        code(&mut s, "CREATE TABLE test.fk_c2 (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_none(id))"),
+        Some(1824)
+    );
+    // Incompatible types: 3780; parent column without index: 1822;
+    // missing parent column: 3734.
+    assert_eq!(
+        code(&mut s, "CREATE TABLE test.fk_c3 (id INT PRIMARY KEY, pid VARCHAR(10), FOREIGN KEY (pid) REFERENCES fk_p(id))"),
+        Some(3780)
+    );
+    rows(&mut s, "CREATE TABLE test.fk_q (id INT PRIMARY KEY, v INT)");
+    assert_eq!(
+        code(&mut s, "CREATE TABLE test.fk_c4 (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_q(v))"),
+        Some(1822)
+    );
+    assert_eq!(
+        code(&mut s, "CREATE TABLE test.fk_c5 (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_q(nope))"),
+        Some(3734)
+    );
+    s.execute_write("SET foreign_key_checks = 0").expect("fk checks off");
+    assert_eq!(
+        code(&mut s, "CREATE TABLE test.fk_c6 (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_none(id))"),
+        None
+    );
+}

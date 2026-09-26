@@ -98,6 +98,7 @@ static DDL_HISTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone)]
 pub struct CreateTableBuild {
     create: CreateTableStmt,
+    schema: String,
     context: tidb_executor::StmtContext,
     template: TableInfo,
 }
@@ -115,10 +116,12 @@ impl std::fmt::Debug for CreateTableBuild {
 impl CreateTableBuild {
     fn new(
         create: &CreateTableStmt,
+        schema: &str,
         context: &tidb_executor::StmtContext,
     ) -> Result<Self, DdlAdmissionError> {
-        let template = build_table_info_with_context(
+        let template = crate::table_info_build::build_table_info_in_schema(
             create,
+            schema,
             CATALOG_CHARSET,
             CATALOG_COLLATION,
             ClusteredIndexDefMode::On,
@@ -126,6 +129,7 @@ impl CreateTableBuild {
         )?;
         Ok(Self {
             create: create.clone(),
+            schema: schema.to_owned(),
             context: context.clone(),
             template,
         })
@@ -148,8 +152,9 @@ impl CreateTableBuild {
         {
             return Ok(self.template.clone());
         }
-        build_table_info_with_context(
+        crate::table_info_build::build_table_info_in_schema(
             &self.create,
+            &self.schema,
             charset,
             collate,
             ClusteredIndexDefMode::On,
@@ -2467,7 +2472,7 @@ fn lower_create_table(
     // The server default `tidb_enable_clustered_index = ON`, which is what a
     // real TiDB builds a user table under. Bootstrap is the one caller that
     // uses a different mode, and it says so at its own call site.
-    let build = CreateTableBuild::new(create, context)?;
+    let build = CreateTableBuild::new(create, &schema, context)?;
     Ok(DdlStatement::CreateTable {
         schema,
         table,
@@ -7249,6 +7254,21 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut info = build
                 .for_database(&database.info.charset, &database.info.collate)
                 .map_err(DdlPlanError::Admission)?;
+            // Go `checkTableForeignKeysValid` (executor.go:1106) at submission,
+            // then the owner's `checkTableForeignKeyValidInOwner` +
+            // `allocateFKIndexID` (create_table.go:87). This planner runs both
+            // stages against the one snapshot it publishes from.
+            if !info.foreign_keys.is_empty() {
+                let fk_check = build.context.foreign_key_checks();
+                crate::foreign_key_build::check_table_foreign_keys_valid(
+                    &catalog, schema, &info, fk_check,
+                )
+                .map_err(DdlPlanError::Admission)?;
+                crate::foreign_key_build::check_table_foreign_keys_valid_in_owner(
+                    &catalog, schema, &mut info, fk_check,
+                )
+                .map_err(DdlPlanError::Admission)?;
+            }
             // Go `assignIDsForTable` (`ddl/jobsubmit/submit.go`) draws
             // `1 + len(Definitions)` ids in ONE call: the table's own first,
             // then one physical table per partition in definition order.

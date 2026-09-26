@@ -551,7 +551,11 @@ impl Session {
         // `AddMViewExecutionSessionVarsToJob` snapshots them into the job
         // envelope at submission, and a context without the image would
         // record the defaults instead of the creator's settings.
-        let mut context = self.statement_context(false);
+        // Go DDL reads `SessionVars.ForeignKeyChecks` (`checkTableForeignKeysValid`,
+        // `CreateTableArgs.FKCheck`); the read-shaped context leaves it at ON.
+        let mut context = self
+            .statement_context(false)
+            .with_foreign_key_checks(self.foreign_key_checks());
         context
             .set_session_vars_image(crate::vars::m_view_execution_session_vars_image(&self.vars));
         context

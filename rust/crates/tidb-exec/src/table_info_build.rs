@@ -282,6 +282,23 @@ pub fn build_table_info_with_context(
     clustered_mode: ClusteredIndexDefMode,
     context: &tidb_executor::StmtContext,
 ) -> Refusal<TableInfo> {
+    let schema = match create.name.as_slice() {
+        [schema, _] => schema.clone(),
+        _ => String::new(),
+    };
+    build_table_info_in_schema(create, &schema, db_charset, db_collate, clustered_mode, context)
+}
+
+/// [`build_table_info_with_context`] with the child's resolved schema, which
+/// an unqualified `REFERENCES` inherits (Go `preprocess.go:2097`).
+pub fn build_table_info_in_schema(
+    create: &CreateTableStmt,
+    schema: &str,
+    db_charset: &str,
+    db_collate: &str,
+    clustered_mode: ClusteredIndexDefMode,
+    context: &tidb_executor::StmtContext,
+) -> Refusal<TableInfo> {
     let refuse = |what: &str| {
         Err(DdlAdmissionError::with_code(
             GENERIC_ERROR_CODE,
@@ -408,6 +425,11 @@ pub fn build_table_info_with_context(
             }
             continue;
         }
+        // Go `buildTableInfo` builds FOREIGN KEY constraints as FKInfo, not
+        // as an index constraint: see `foreign_key_build::build_fk_infos`.
+        if let TableConstraint::ForeignKey(_) = constraint {
+            continue;
+        }
         constraint_exprs.push(table_constraint_expr_parts(constraint));
         constraints.push(lower_table_constraint(constraint)?);
     }
@@ -499,6 +521,10 @@ pub fn build_table_info_with_context(
         table_collate,
         clustered_mode,
     )?;
+    // Go `buildTableInfo`: FOREIGN KEY -> FKInfo (plus its auto index) runs
+    // inside the constraint loop, before `BuildTableInfo` appends the check
+    // constraints that read `tbInfo.ForeignKeys`.
+    crate::foreign_key_build::build_fk_infos(create, schema, &mut table)?;
     append_check_constraints(&mut table, &check_constraints, context)?;
     table.temp_table_type = temporary;
     let handle_offsets = if table.pk_is_handle {
@@ -764,26 +790,9 @@ struct KeyPart {
 
 fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     let TableConstraint::Index(index) = constraint else {
-        if let TableConstraint::ForeignKey(fk) = constraint {
-            // go `CreateNewForeignKey`/`SetAutoIncrement` tries to open the
-            // referenced table and fails with ErrFKIncompatibleTables
-            // (1824, "Failed to open the referenced table '...'") when the
-            // referenced table is absent.
-            let referenced = fk
-                .reference
-                .table
-                .as_ref()
-                .and_then(|path| path.last())
-                .map(|t| t.as_str())
-                .unwrap_or("?");
-            return Err(DdlAdmissionError::with_code(
-                1824,
-                format!("Failed to open the referenced table '{referenced}'"),
-            ));
-        }
         return Err(DdlAdmissionError::with_code(
             GENERIC_ERROR_CODE,
-            "CREATE TABLE FOREIGN KEY constraints are not supported by this node",
+            "CREATE TABLE CHECK constraints are lowered separately",
         ));
     };
     let kind = match index.kind {

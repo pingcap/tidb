@@ -239,11 +239,9 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
             "ALTER TABLE t ADD COLUMN w BIGINT, RENAME TO t2",
             "one atomic multi-schema DDL job",
         ),
-        (
-            "CREATE TABLE fk (id BIGINT PRIMARY KEY, other BIGINT, \
-             FOREIGN KEY (other) REFERENCES t (id))",
-            "not supported by this node",
-        ),
+        // CREATE TABLE ... FOREIGN KEY is expressible now (Go
+        // `checkTableForeignKeysValid`); see
+        // `cluster_create_table_foreign_key_resolves_parent_like_go`.
     ] {
         let error = session
             .execute_write(sql)

@@ -94,6 +94,7 @@ pub mod cop_scan;
 pub mod cte_first_error;
 pub mod cume_dist;
 pub mod dag_request;
+pub mod foreign_key_build;
 pub mod ddl_history_table;
 pub mod ddl_job_comments;
 pub mod ddl_job_merge;
