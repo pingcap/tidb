@@ -150,7 +150,15 @@ func newFaultSessionPool(t *testing.T, sp syssession.Pool) *faultSessionPool {
 }
 
 func (f *faultSessionPool) WithSession(fn func(*syssession.Session) error) error {
-	return f.sp.WithSession(func(se *syssession.Session) error {
+	return f.sp.WithSession(f.wrapSession(fn))
+}
+
+func (f *faultSessionPool) WithRegisteredSession(ctx context.Context, fn func(*syssession.Session) error) error {
+	return f.sp.WithRegisteredSession(ctx, f.wrapSession(fn))
+}
+
+func (f *faultSessionPool) wrapSession(fn func(*syssession.Session) error) func(*syssession.Session) error {
+	return func(se *syssession.Session) error {
 		require.NoError(f.t, se.ResetSctxForTest(func(sctx syssession.SessionContext) syssession.SessionContext {
 			return &sessionWithFault{
 				SessionContext: sctx,
@@ -166,7 +174,7 @@ func (f *faultSessionPool) WithSession(fn func(*syssession.Session) error) error
 			f.onSysSession(se)
 		}
 		return fn(se)
-	})
+	}
 }
 
 func (f *faultSessionPool) setFault(ft fault) {

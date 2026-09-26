@@ -36,7 +36,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// The following two functions are using `sqlexec.SQLExecutor` to represent session
+// The following functions are using `sqlexec.SQLExecutor` to represent session
 // which is actually not correct. It's a work around for the cyclic dependency problem.
 // It actually doesn't accept arbitrary SQLExecutor, but just `*session.session`, which means
 // you cannot pass the `(ttl/session).Session` into it.
@@ -45,8 +45,12 @@ import (
 // Also, we cannot use the functions in `session/session.go` (to avoid cyclic dependency), so
 // registering function here is really needed.
 
-func withSession(pool syssession.Pool, fn func(session.Session) error) error {
-	return pool.WithSession(func(s *syssession.Session) error {
+func withSession(ctx context.Context, pool syssession.Pool, fn func(session.Session) error) error {
+	return pool.WithRegisteredSession(ctx, wrapSession(fn))
+}
+
+func wrapSession(fn func(session.Session) error) func(*syssession.Session) error {
+	return func(s *syssession.Session) error {
 		return s.WithSessionContext(func(sctx sessionctx.Context) error {
 			if intest.InTest {
 				// Only for test, in this case, the return session is mockSession
@@ -66,7 +70,7 @@ func withSession(pool syssession.Pool, fn func(session.Session) error) error {
 			defer terror.Call(restore)
 			return fn(se)
 		})
-	})
+	}
 }
 
 func prepareSession(se session.Session) (func() error, error) {
