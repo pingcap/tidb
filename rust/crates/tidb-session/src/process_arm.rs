@@ -245,7 +245,7 @@ impl Session {
                 let digest = row.info.as_deref().map(|info| {
                     tidb_parser::digest_normalized(&tidb_parser::normalize(
                         info,
-                        tidb_parser::RedactMode::Disabled,
+                        tidb_parser::RedactMode::Enabled,
                     ))
                     .as_str()
                     .to_owned()
