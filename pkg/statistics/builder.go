@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -379,9 +380,9 @@ func BuildHistAndTopN(
 	}()
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
-		timeZone := ctx.GetSessionVars().StmtCtx.TimeZone()
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(timeZone, nil, datum)
+			// The samples were decoded in UTC, so encode them back in UTC as well.
+			encoded, err := codec.EncodeKey(time.UTC, nil, datum)
 			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if memTracker != nil {
 				// tmp memory usage

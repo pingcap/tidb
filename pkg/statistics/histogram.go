@@ -336,6 +336,16 @@ func IsColumnAnalyzedOrSynthesized(statsVer int64, ndv int64, nullCount int64) b
 // idxCols equals to number of origin values, else idxCols is 0.
 func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
 	if idxCols == 0 {
+		// A column histogram keeps its bounds decoded, in UTC, so a TIMESTAMP bound has to be
+		// rendered in the session time zone the same way the column value itself would be.
+		if vars != nil && value.Kind() == types.KindMysqlTime {
+			if t := value.GetMysqlTime(); t.Type() == mysql.TypeTimestamp {
+				if err := t.ConvertTimeZone(time.UTC, vars.Location()); err != nil {
+					return "", err
+				}
+				return t.String(), nil
+			}
+		}
 		return value.ToString()
 	}
 	var loc *time.Location
@@ -1526,7 +1536,6 @@ type bucketGroupCursor struct {
 	heap       bucketMergeHeap
 	hists      []*Histogram
 	sc         *stmtctx.StatementContext
-	tz         *time.Location
 	sortedRefs []bucketRef
 	isIndex    bool
 }
@@ -1542,7 +1551,6 @@ func newBucketGroupCursor(sc *stmtctx.StatementContext, hists []*Histogram, tota
 		hists:      hists,
 		sortedRefs: make([]bucketRef, 0, totalBuckets),
 		sc:         sc,
-		tz:         sc.TimeZone(),
 		isIndex:    isIndex,
 	}
 	for hi, hist := range hists {
@@ -1643,7 +1651,8 @@ func (c *bucketGroupCursor) nextGroup(needEncoded bool) ([]byte, uint64, error) 
 	if c.isIndex {
 		return c.hists[first.histIdx].Bounds.GetRow(int(first.bucketIdx)*2 + 1).GetBytes(0), sumRepeat, nil
 	}
-	encoded, err := codec.EncodeKey(c.tz, nil, first.upper)
+	// A bucket bound is kept in UTC, and so is the TopN key it is compared with. See issue #52429.
+	encoded, err := codec.EncodeKey(time.UTC, nil, first.upper)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1736,13 +1745,12 @@ func sortTopNEntries(
 	// Keyed by value, not by entry: the same value is typically in many
 	// partitions' TopN, and these types have few distinct values, so
 	// this decodes once per value rather than once per entry.
-	tz := sc.TimeZone()
 	datums := make(map[string]types.Datum, len(allTopN))
 	for _, e := range allTopN {
 		if _, ok := datums[string(e.encoded)]; ok {
 			continue
 		}
-		d, err := topNMetaToDatum(TopNMeta{Encoded: e.encoded}, ft, false, tz)
+		d, err := topNMetaToDatum(TopNMeta{Encoded: e.encoded}, ft, false)
 		if err != nil {
 			return err
 		}
@@ -1942,7 +1950,6 @@ func MergePartTopNAndHistToGlobal(
 		return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: no partition histograms provided")
 	}
 
-	tz := sc.TimeZone()
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
 		zap.Int64("histID", firstHist.ID),
 		zap.Stringer("tp", firstHist.Tp),
@@ -2025,7 +2032,7 @@ func MergePartTopNAndHistToGlobal(
 		case !bucketCur.valid():
 			consumeTopN = true
 		default:
-			d, err := topNMetaToDatum(TopNMeta{Encoded: topNCur.peekEncoded()}, firstHist.Tp, isIndex, tz)
+			d, err := topNMetaToDatum(TopNMeta{Encoded: topNCur.peekEncoded()}, firstHist.Tp, isIndex)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2119,7 +2126,6 @@ type globalMergeRefs struct {
 	remainingMass       map[bucketRef]int64
 	splitEffectiveUpper map[bucketRef]types.Datum
 	sc                  *stmtctx.StatementContext
-	tz                  *time.Location
 	refs                []bucketRef
 	hists               []*Histogram
 	encodeBuf           []byte // scratch reused across massAndRepeat calls
@@ -2140,7 +2146,6 @@ func newGlobalMergeRefs(
 		remainingMass:       make(map[bucketRef]int64),
 		splitEffectiveUpper: make(map[bucketRef]types.Datum),
 		sc:                  sc,
-		tz:                  sc.TimeZone(),
 		isIndex:             isIndex,
 	}
 }
@@ -2190,7 +2195,7 @@ func (r *globalMergeRefs) isGlobalTopNVal(up *types.Datum) (bool, error) {
 		return ok, nil
 	}
 	var err error
-	r.encodeBuf, err = codec.EncodeKey(r.tz, r.encodeBuf[:0], *up)
+	r.encodeBuf, err = codec.EncodeKey(time.UTC, r.encodeBuf[:0], *up)
 	if err != nil {
 		return false, err
 	}
@@ -2274,7 +2279,7 @@ func (r *globalMergeRefs) mergeVirtualTopN(virtualHistTopN []topNEntry, firstHis
 				d.SetBytes(e.encoded)
 			} else {
 				var err error
-				d, err = topNMetaToDatum(TopNMeta{Encoded: e.encoded}, firstHist.Tp, r.isIndex, r.tz)
+				d, err = topNMetaToDatum(TopNMeta{Encoded: e.encoded}, firstHist.Tp, r.isIndex)
 				if err != nil {
 					return err
 				}
