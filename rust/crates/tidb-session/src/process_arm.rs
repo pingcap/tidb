@@ -292,8 +292,9 @@ impl Session {
                     Datum::Bytes(self.active_resource_group.as_bytes().to_vec()),
                     // SESSION_ALIAS
                     Datum::Bytes(Vec::new()),
-                    // ROWS_AFFECTED
-                    Datum::Null,
+                    // ROWS_AFFECTED: go's processinfo reports the statement's
+                    // affected-rows count, which is 0 for a running query.
+                    Datum::Int(0),
                     // TIDB_CPU
                     Datum::Int(0),
                     // TIKV_CPU
