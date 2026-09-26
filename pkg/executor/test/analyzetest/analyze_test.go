@@ -737,6 +737,11 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"`,
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
+
+	// NDVRATE must be in (0, 1].
+	for _, rate := range []string{"0", "1.01"} {
+		require.Error(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"))
+	}
 }
 
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string) {
@@ -2286,4 +2291,16 @@ partition by range (a) (
 		"select count(*) from mysql.stats_histograms where table_id = %d and is_index = 0 and stats_ver = 2",
 		p1ID,
 	)).Check(testkit.Rows("4"))
+}
+
+func TestAnalyzeNDVRate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	// The mock server is a legacy peer: a sampled request may get full-input results.
+	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
+	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
 }
