@@ -3179,3 +3179,62 @@ The package remains incomplete: statement timezone/error policy, complete
 async/restricted-SQL lifecycle, remaining source/support artifacts, full package
 gates, and sysbench/TPC-C/TPC-H/YCSB behavior/performance are unverified. No
 package-complete commit or push is warranted yet.
+
+
+## Prepared index ranges shared by ordinary and union paths (2026-09-25)
+
+The previous shared version dispatcher left a higher-level split: ordinary
+executor paths applied Go core/stats.go detachCondAndBuildRangeForPath's
+pruneEstimateRange plus AdjustRowCountForAppendedHandleColumns, while union
+partials sent full physical-key bounds directly to the histogram estimator.
+Go indexmerge_path.go accessPathsForConds calls the same fillIndexPath as ordinary
+paths. This mismatch can overcount prefixes when separate full-key points share
+the same declared index prefix.
+
+The common cardinality::estimate_index_path_ranges helper now owns prefix
+truncation, last-dimension exclusion reset, union of duplicate prefix bounds,
+union of each appended handle's bounds, damping and full-point capping. Ordinary
+executor and union estimation provide collection-specific prefix/column adapters.
+Invalid or failed handle statistics are skipped as in Go; prefix errors still
+propagate. Non-appended paths borrow the original ranges without creating a
+normalized prefix vector. Union partial-statistics estimation receives only the
+declared columns for its pruned ranges. Actual scan ranges remain untouched.
+
+Regression: 100 rows with a=b=id%10 and secondary indexes ia(a), ib(b). The OR
+branches a=5 AND id IN(15,25) and b=6 AND id IN(16,26) each have prefix count 10
+and handle selectivity 0.02, giving 10*sqrt(0.02), displayed as 1.41. Rust before
+the fix displayed 2.00. Go and fixed Rust display 1.41 and return 15,16,25,26.
+The initial test omitted USE INDEX(ia,ib); Go selected BatchPointGet instead of
+index merge, invalidating that initial oracle. The final fixture explicitly
+selects the secondary indexes in both engines. Its expected value comes from
+the corrected Go oracle, not the earlier assumed two-point cap.
+
+Changed files: rust/crates/tidb-planner/src/cardinality.rs;
+rust/crates/tidb-planner/src/access_path/index_merge.rs;
+rust/crates/tidb-executor/src/access_cost.rs;
+rust/crates/tidb-session/src/tests_index_hints.rs; this audit and the cardinality
+ExecPlan/receipt. The change removes the executor's duplicate orchestration.
+
+Validation from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib union_partials_prune_index_prefix -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_index_hints:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --lib cardinality:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --lib find_best_task:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib access_cost:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_explain -- --test-threads=1
+    make lint
+    git diff --check
+
+The focused test failed before as required, then the hint suite passes 27;
+cardinality 35, candidates 52, access cost 44, EXPLAIN 109 pass (267 total,
+without double-counting the focused regression). Go oracle from
+/private/tmp/tidb-go-master-20260923, pin 633a9e37f1c796ac81c203dc107025e7e65385f0:
+
+    GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRustUnionHandlePrefixReference$' -count=1 -v
+
+Passes in 0.480s; failpoint refcount restored to zero. Logs:
+/private/tmp/tidb-merge-handle-{before,after,cost,cardinality,candidates,explain,lint,go}.log.
+No Go/Bazel changes and no bazel_prepare trigger. Whole-package source/support
+coverage, remaining statement/loading/variant gates, and sysbench/TPC-C/TPC-H/YCSB
+measurements remain open. No performance or package-completion claim is made.

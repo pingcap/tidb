@@ -2867,3 +2867,12 @@ fail-before evidence, changed files and limitations are recorded in the final
 shared-dispatch section of rust/docs/planner/access-path-structural-parity-audit.md.
 This is seed evidence within the ongoing whole package, not an integration,
 completion, commit, push, or workload-performance claim.
+
+
+Prepared-index lifecycle checkpoint (2026-09-25): union partials now share
+ordinary-path prefix pruning, range union and appended-handle damping through
+cardinality::estimate_index_path_ranges. Go oracle and fail-before/pass-after
+SQL evidence pin partial rows 1.41 instead of 2.00 and unchanged results. The
+structural audit records the invalid initial BatchPointGet oracle and corrected
+secondary-index fixture, exact commands and remaining package/workload gates.
+This remains package-internal evidence rather than completed transcreation.

@@ -76,6 +76,90 @@ pub fn adjust_row_count_for_appended_handle_columns(
     adjusted
 }
 
+/// Estimate a prepared index path using Go's declared-prefix and appended-handle
+/// lifecycle. Callers provide their statistics collection adapters; range pruning,
+/// duplicate-bound union and handle damping have one owner for all path kinds.
+pub fn estimate_index_path_ranges(
+    ranges: &[crate::ranger::Range],
+    declared_columns: usize,
+    full_width: usize,
+    realtime: f64,
+    estimate_prefix: impl Fn(
+        &[crate::ranger::Range],
+    ) -> Result<
+        row_count_column::RowEstimate,
+        row_count_estimator::EstimationError,
+    >,
+    estimate_handle: impl Fn(usize, &[crate::ranger::Range]) -> Option<row_count_column::RowEstimate>,
+) -> Result<row_count_column::RowEstimate, row_count_estimator::EstimationError> {
+    use crate::ranger::{ranger::union_ranges, Range};
+    if full_width <= declared_columns
+        || !ranges.iter().any(|range| {
+            range.low_val.len() > declared_columns || range.high_val.len() > declared_columns
+        })
+    {
+        return estimate_prefix(ranges);
+    }
+    let prefix_ranges = ranges
+        .iter()
+        .map(|range| {
+            let width = declared_columns
+                .min(range.low_val.len())
+                .min(range.high_val.len());
+            Range {
+                low_val: range.low_val[..width].to_vec(),
+                high_val: range.high_val[..width].to_vec(),
+                collators: range.collators[..width].to_vec(),
+                low_exclude: range.low_exclude && range.low_val.len() <= declared_columns,
+                high_exclude: range.high_exclude && range.high_val.len() <= declared_columns,
+            }
+        })
+        .collect();
+    let prefix_count = estimate_prefix(&union_ranges(prefix_ranges, false)?)?;
+    if realtime <= 0.0 || ranges.is_empty() {
+        return Ok(prefix_count);
+    }
+    let mut selectivities = Vec::with_capacity(full_width - declared_columns);
+    for dimension in declared_columns..full_width {
+        if ranges
+            .iter()
+            .any(|range| range.low_val.len() <= dimension || range.high_val.len() <= dimension)
+        {
+            continue;
+        }
+        let bounds = ranges
+            .iter()
+            .map(|range| Range {
+                low_val: vec![range.low_val[dimension].clone()],
+                high_val: vec![range.high_val[dimension].clone()],
+                collators: vec![range.collators[dimension]],
+                low_exclude: range.low_exclude && dimension + 1 == range.low_val.len(),
+                high_exclude: range.high_exclude && dimension + 1 == range.high_val.len(),
+            })
+            .collect();
+        // Go skips a handle dimension if its range union or estimate fails.
+        let Ok(bounds) = union_ranges(bounds, false) else {
+            continue;
+        };
+        if let Some(count) = estimate_handle(dimension, &bounds) {
+            let selectivity = count.est / realtime;
+            if selectivity > 0.0 && selectivity < 1.0 {
+                selectivities.push(selectivity);
+            }
+        }
+    }
+    let full_points = ranges.iter().all(|range| {
+        range.low_val.len() == full_width
+            && range.high_val.len() == full_width
+            && range.is_point(true)
+    });
+    Ok(adjust_row_count_for_appended_handle_columns(
+        prefix_count,
+        &selectivities,
+        full_points.then_some(ranges.len() as f64),
+    ))
+}
+
 // Go's math.Max/math.Min differ from Rust's primitive methods for NaN and
 // signed zero. Keep the source operation's special cases local to this leaf
 // instead of silently inheriting a different clamp contract.

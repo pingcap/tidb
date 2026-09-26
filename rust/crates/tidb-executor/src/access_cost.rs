@@ -856,148 +856,59 @@ pub(crate) fn index_row_count_with_appended_handle_columns(
     trigger_load: bool,
 ) -> Result<RowEstimate, tidb_planner::cardinality::row_count_estimator::EstimationError> {
     let declared_columns = index.column_offsets.len();
-    let full_width = declared_columns + appended_handle_offsets.len();
-    let includes_appended_handle = !appended_handle_offsets.is_empty()
-        && ranges.iter().any(|range| {
-            range.low_val.len() > declared_columns || range.high_val.len() > declared_columns
-        });
-    if !includes_appended_handle {
-        let ranges = ranges
-            .iter()
-            .map(|range| IndexRange {
-                low: range.low_val.clone(),
-                high: range.high_val.clone(),
-                low_exclusive: range.low_exclude,
-                high_exclusive: range.high_exclude,
-            })
-            .collect::<Vec<_>>();
-        return index_row_count(index, table, &ranges, stats, realtime, trigger_load);
-    }
-
-    // Go `pruneEstimateRange`: histogram bounds must end at the declared
-    // index prefix. Truncating a bound removes its exclusion flag because
-    // that flag belongs to the discarded last dimension; then ranges that
-    // collapse to one prefix are unioned before counting.
-    let prefix_ranges = ranges
-        .iter()
-        .map(|range| {
-            let width = declared_columns
-                .min(range.low_val.len())
-                .min(range.high_val.len());
-            tidb_planner::ranger::types::Range {
-                low_val: range.low_val[..width].to_vec(),
-                high_val: range.high_val[..width].to_vec(),
-                collators: range.collators[..width.min(range.collators.len())].to_vec(),
-                low_exclude: range.low_exclude && range.low_val.len() <= declared_columns,
-                high_exclude: range.high_exclude && range.high_val.len() <= declared_columns,
+    tidb_planner::cardinality::estimate_index_path_ranges(
+        ranges,
+        declared_columns,
+        declared_columns + appended_handle_offsets.len(),
+        realtime,
+        |ranges| {
+            let ranges = ranges
+                .iter()
+                .map(|range| IndexRange {
+                    low: range.low_val.clone(),
+                    high: range.high_val.clone(),
+                    low_exclusive: range.low_exclude,
+                    high_exclusive: range.high_exclude,
+                })
+                .collect::<Vec<_>>();
+            index_row_count(index, table, &ranges, stats, realtime, trigger_load)
+        },
+        |dimension, ranges| {
+            let column = table
+                .columns
+                .get(appended_handle_offsets[dimension - declared_columns])?;
+            let stats = stats.filter(|stats| !stats.pseudo)?;
+            if trigger_load {
+                queue_column_stats_load_if_invalid(
+                    table,
+                    stats,
+                    column.id,
+                    stats.columns.get(&column.id),
+                );
             }
-        })
-        .collect::<Vec<_>>();
-    let prefix_ranges = tidb_planner::ranger::ranger::union_ranges(prefix_ranges, false)?;
-    let prefix_ranges = prefix_ranges
-        .iter()
-        .map(|range| IndexRange {
-            low: range.low_val.clone(),
-            high: range.high_val.clone(),
-            low_exclusive: range.low_exclude,
-            high_exclusive: range.high_exclude,
-        })
-        .collect::<Vec<_>>();
-    let prefix_estimate =
-        index_row_count(index, table, &prefix_ranges, stats, realtime, trigger_load)?;
-    if realtime <= 0.0 {
-        return Ok(prefix_estimate);
-    }
-
-    let mut handle_selectivities = Vec::with_capacity(appended_handle_offsets.len());
-    for (offset, column_offset) in appended_handle_offsets.iter().copied().enumerate() {
-        let dimension = declared_columns + offset;
-        if ranges
-            .iter()
-            .any(|range| range.low_val.len() <= dimension || range.high_val.len() <= dimension)
-        {
-            continue;
-        }
-        let Some(column) = table.columns.get(column_offset) else {
-            continue;
-        };
-        let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
-            continue;
-        };
-        if trigger_load {
-            queue_column_stats_load_if_invalid(
-                table,
-                stats,
-                column.id,
-                stats.columns.get(&column.id),
-            );
-        }
-        let Some(column_stats) = stats.column_for_estimation(column.id) else {
-            continue;
-        };
-        let column_ranges = ranges
-            .iter()
-            .map(|range| tidb_planner::ranger::types::Range {
-                low_val: vec![range.low_val[dimension].clone()],
-                high_val: vec![range.high_val[dimension].clone()],
-                collators: vec![
-                    range
-                        .collators
-                        .get(dimension)
-                        .copied()
-                        .unwrap_or_else(|| column.field_type.collation()),
-                ],
-                low_exclude: range.low_exclude && dimension + 1 == range.low_val.len(),
-                high_exclude: range.high_exclude && dimension + 1 == range.high_val.len(),
-            })
-            .collect::<Vec<_>>();
-        let Ok(merged_ranges) = tidb_planner::ranger::ranger::union_ranges(column_ranges, false)
-        else {
-            continue;
-        };
-        let column_ranges = merged_ranges
-            .iter()
-            .map(
-                |range| tidb_planner::cardinality::row_count_estimator::ColumnRange {
-                    low: range.low_val[0].clone(),
-                    high: range.high_val[0].clone(),
-                    low_exclude: range.low_exclude,
-                    high_exclude: range.high_exclude,
-                },
+            let column_stats = stats.column_for_estimation(column.id)?;
+            let bounds = ranges
+                .iter()
+                .map(|range| {
+                    ColumnRange::new(
+                        range.low_val[0].clone(),
+                        range.high_val[0].clone(),
+                        range.low_exclude,
+                        range.high_exclude,
+                    )
+                })
+                .collect::<Vec<_>>();
+            get_row_count_by_column_ranges(
+                Some(column_stats),
+                &bounds,
+                ranges.first()?.collators[0],
+                realtime as i64,
+                stats.modify_count,
+                false,
+                estimator_options(),
             )
-            .collect::<Vec<_>>();
-        if column_ranges.is_empty() {
-            continue;
-        }
-        let Ok(row_count) = get_row_count_by_column_ranges(
-            Some(column_stats),
-            &column_ranges,
-            column.field_type.collation(),
-            realtime as i64,
-            stats.modify_count,
-            false,
-            estimator_options(),
-        ) else {
-            continue;
-        };
-        let selectivity = row_count.est / realtime;
-        if selectivity > 0.0 && selectivity < 1.0 {
-            handle_selectivities.push(selectivity);
-        }
-    }
-
-    let full_points = ranges.iter().all(|range| {
-        range.low_val.len() == full_width
-            && range.high_val.len() == full_width
-            && range.collators.len() >= full_width
-            && range.is_point(true)
-    });
-    Ok(
-        tidb_planner::cardinality::adjust_row_count_for_appended_handle_columns(
-            prefix_estimate,
-            &handle_selectivities,
-            full_points.then_some(ranges.len() as f64),
-        ),
+            .ok()
+        },
     )
 }
 

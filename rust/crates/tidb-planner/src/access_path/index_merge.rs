@@ -491,10 +491,59 @@ fn estimate_partial_index_ranges(
     filled: &super::ordinary::FilledIndexPath,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
+    use crate::cardinality::row_count_estimator::{get_row_count_by_column_ranges, ColumnRange};
+    let hist = ds.table_stats.as_ref().and_then(|stats| stats.hist_coll());
+    crate::cardinality::estimate_index_path_ranges(
+        &filled.detached.ranges,
+        source_index.columns.len(),
+        filled.columns.len(),
+        ds.table_stats
+            .as_ref()
+            .map_or(0.0, |stats| stats.row_count()),
+        |ranges| estimate_partial_index_prefix(ds, source_index, filled, ctx, ranges),
+        |dimension, ranges| {
+            let hist = hist.filter(|hist| !hist.pseudo())?;
+            let column = hist.histogram_for_estimation(filled.columns[dimension].0.unique_id)?;
+            let bounds = ranges
+                .iter()
+                .map(|range| {
+                    ColumnRange::new(
+                        range.low_val[0].clone(),
+                        range.high_val[0].clone(),
+                        range.low_exclude,
+                        range.high_exclude,
+                    )
+                })
+                .collect::<Vec<_>>();
+            get_row_count_by_column_ranges(
+                Some(column),
+                &bounds,
+                ranges.first()?.collators[0],
+                hist.realtime_count(),
+                hist.modify_count(),
+                false,
+                ctx.estimator_options,
+            )
+            .ok()
+        },
+    )
+    .map(|estimate| estimate.est)
+    .map_err(|error| PlanError::internal_coded(error.to_string()))
+}
+
+fn estimate_partial_index_prefix(
+    ds: &DataSource,
+    source_index: &crate::plan_builder::catalog::SourceIndex,
+    filled: &super::ordinary::FilledIndexPath,
+    ctx: &AccessPathDerivationContext<'_>,
+    ranges: &[crate::ranger::Range],
+) -> Result<
+    crate::cardinality::row_count_column::RowEstimate,
+    crate::cardinality::row_count_estimator::EstimationError,
+> {
     use crate::cardinality::row_count_estimator::{
         get_index_row_count, get_index_row_count_with_partial_stats,
     };
-    let ranges = &filled.detached.ranges;
     let stats = ds.table_stats.as_ref();
     let pseudo = || {
         crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
@@ -507,12 +556,13 @@ fn estimate_partial_index_ranges(
         .and_then(|stats| stats.hist_coll())
         .filter(|hist| !hist.pseudo())
     else {
-        return Ok(pseudo());
+        return Ok(crate::cardinality::row_count_column::RowEstimate::default_est(pseudo()));
     };
     let index_id = source_index.id;
     let ids = filled
         .columns
         .iter()
+        .take(source_index.columns.len())
         .map(|(column, _)| column.unique_id)
         .collect::<Vec<_>>();
     let columns = ids
@@ -549,13 +599,11 @@ fn estimate_partial_index_ranges(
                 hist.realtime_count(),
                 hist.modify_count(),
                 ctx.estimator_options,
-            )
-            .map_err(|error| PlanError::internal_coded(error.to_string()))?
-            {
-                return Ok(estimate.est);
+            )? {
+                return Ok(estimate);
             }
         }
-        return Ok(pseudo());
+        return Ok(crate::cardinality::row_count_column::RowEstimate::default_est(pseudo()));
     };
     let context = hist.index_estimation_stats(index_id);
     let recursive = hist
@@ -584,8 +632,6 @@ fn estimate_partial_index_ranges(
         ranges,
         ctx.estimator_options,
     )
-    .map(|estimate| estimate.est)
-    .map_err(|error| PlanError::internal_coded(error.to_string()))
 }
 
 #[derive(Clone, Debug)]

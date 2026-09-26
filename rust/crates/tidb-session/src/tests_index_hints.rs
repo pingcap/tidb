@@ -1456,3 +1456,36 @@ fn union_merge_completes_composite_ranges_from_top_level_predicates() {
         assert_eq!(rows, expected, "{sql}: {plan:?}");
     }
 }
+
+#[test]
+fn union_partials_prune_index_prefix_before_appended_handle_estimation() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE merge_handle_est(id BIGINT PRIMARY KEY CLUSTERED,a INT,b INT,KEY ia(a),KEY ib(b))").unwrap();
+    let values = (1..=100)
+        .map(|id| format!("({id},{},{})", id % 10, id % 10))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO merge_handle_est VALUES {values}"))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE merge_handle_est ALL COLUMNS")
+        .unwrap();
+    let query = "SELECT /*+ USE_INDEX_MERGE(merge_handle_est,ia,ib) */ id FROM merge_handle_est USE INDEX(ia,ib) WHERE (a=5 AND id IN (15,25)) OR (b=6 AND id IN (16,26))";
+    let plan = row_text(session.run(&format!("EXPLAIN {query}")));
+    assert!(
+        plan.iter().any(|row| row[0].contains("IndexMerge")),
+        "{plan:?}"
+    );
+    let scans = plan
+        .iter()
+        .filter(|row| row[0].contains("IndexRangeScan"))
+        .collect::<Vec<_>>();
+    assert_eq!(scans.len(), 2, "{plan:?}");
+    for scan in scans {
+        assert_eq!(scan[1], "1.41", "{plan:?}");
+    }
+    let mut rows = row_text(session.run(query));
+    rows.sort();
+    assert_eq!(rows, vec![vec!["15"], vec!["16"], vec!["25"], vec!["26"]]);
+}
