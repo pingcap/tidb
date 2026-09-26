@@ -2334,9 +2334,15 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
 	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	lastRate := func(partition string) string {
+		return fmt.Sprintf("select job_info from mysql.analyze_jobs where table_name='ndv' and partition_name='%s' order by id desc limit 1", partition)
+	}
 	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
 	// The mock server is a legacy peer: a sampled request may get full-input results.
 	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
+	// Without NDVRATE, a partition above the threshold reads every row.
+	tk.MustExec("analyze table ndv")
+	tk.MustQuery(lastRate("p0")).CheckNotContain("ndvrate")
 }
