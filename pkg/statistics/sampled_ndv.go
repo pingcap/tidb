@@ -17,6 +17,7 @@ package statistics
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -63,4 +64,33 @@ func (s *FMSketch) sampledNDV() int64 {
 		return upper
 	}
 	return int64(estimate)
+}
+
+func (s *FMSketch) encodeSampled() ([]byte, error) {
+	sample := s.sample
+	collector := tipb.RowSampleCollector{
+		Count: sample.rows, NdvSampleCount: &sample.samples,
+		NullCounts: []int64{sample.nulls},
+		FmSketch:   []*tipb.FMSketch{FMSketchToProto(s)},
+	}
+	data, err := collector.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	// Tag zero is invalid protobuf, so old TiDB must reject this format.
+	// The second byte versions the envelope.
+	return append([]byte{0, 1}, data...), nil
+}
+
+func decodeSampledFMSketch(data []byte) (*FMSketch, error) {
+	if len(data) < 2 || data[1] != 1 {
+		return nil, errors.New("unsupported sampled NDV sketch format")
+	}
+	var collector tipb.RowSampleCollector
+	if err := collector.Unmarshal(data[2:]); err != nil {
+		return nil, err
+	}
+	return newSampledFMSketch(collector.FmSketch[0], ndvSample{
+		rows: collector.Count, samples: *collector.NdvSampleCount, nulls: collector.NullCounts[0],
+	}), nil
 }

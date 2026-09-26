@@ -144,6 +144,15 @@ func SubTestSampledNDV() func(*testing.T) {
 			require.Equal(t, map[uint64]struct{}{1: {}, 2: {}}, merged.repeated)
 			require.Equal(t, int64(8), merged.NDV())
 			require.Equal(t, int64(20), merged.sample.nulls)
+			data, err := EncodeFMSketch(merged)
+			require.NoError(t, err)
+			require.Error(t, new(tipb.FMSketch).Unmarshal(data))
+			restored, err := DecodeFMSketch(data)
+			require.NoError(t, err)
+			require.Equal(t, merged, restored)
+			data[1] = 2
+			_, err = DecodeFMSketch(data)
+			require.Error(t, err)
 		}
 
 		// Only a response that carries a sample count was sampled, even if empty.
