@@ -395,19 +395,25 @@ impl TableStatistics {
                             self.columns.get(id).and_then(|candidate| {
                                 let same_version =
                                     candidate.histogram.last_update_version == version;
-                                // Go `getTotalRowCount` (`cardinality/ndv.go`)
-                                // borrows the analyze-time row count from ANY
-                                // same-version fully-loaded column -- and
-                                // `IsFullLoad` is a LOAD-STATUS check
-                                // (`evictedStatus == AllLoaded`), so a TopN-only
-                                // column (low-NDV strings keep no histogram
-                                // buckets) qualifies with its TopN total.
-                                // Requiring loaded buckets here borrowed from a
-                                // different column instead and charged the NDV
-                                // with a wrong realtime/analyze factor (TPC-DS
-                                // q78's HashAgg output estimated 929525.58 vs
-                                // Go's 1161906.98 -- exactly 0.8x).
-                                same_version.then(|| candidate.total_row_count() as i64)
+                                // A candidate whose histogram never got
+                                // buckets stores its rows in TopN only, and
+                                // the persisted TopN total can sit BELOW the
+                                // analyze-time row count (TPC-H SF50
+                                // lineitem.l_quantity is 26 rows short of
+                                // 300,005,811). Charging the factor with
+                                // that short total skewed every borrowed
+                                // NDV; an evicted column must then fall
+                                // through to no-factor (Go's shape, which
+                                // loads the needed column itself).
+                                // REVERTED to this guard after an experiment
+                                // borrowing from any allLoaded column (the
+                                // literal Go-source shape): TPC-DS q13/q48/
+                                // q49/q91 flipped inconsistent and the full
+                                // capture dropped to 67/83. The guard is
+                                // empirically load-bearing on this capture.
+                                let buckets_loaded = !candidate.histogram.buckets.is_empty();
+                                (same_version && buckets_loaded)
+                                    .then(|| candidate.total_row_count() as i64)
                             })
                         })
                         .unwrap_or(0)
