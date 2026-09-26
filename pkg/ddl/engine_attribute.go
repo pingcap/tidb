@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -31,6 +32,35 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+// checkStorageClassAdmission gates new SQL requests, not metadata parsing or
+// execution of already accepted jobs. CREATE checks built metadata to cover LIKE;
+// ALTER checks only its requested attribute so unrelated changes remain available.
+func checkStorageClassAdmission(engineAttribute string, tbInfo *model.TableInfo) error {
+	if config.GetGlobalConfig().EnableStorageClass {
+		return nil
+	}
+	hasStorageClass := false
+	if engineAttribute != "" {
+		attr, err := model.ParseEngineAttributeFromString(engineAttribute)
+		if err != nil {
+			return dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(fmt.Sprintf("'%v'", err))
+		}
+		hasStorageClass = attr.StorageClass != nil
+	}
+	if tbInfo != nil {
+		hasStorageClass = hasStorageClass || tbInfo.StorageClassTier != "" || len(tbInfo.StorageClassTransitions) > 0
+		if tbInfo.Partition != nil {
+			for _, part := range tbInfo.Partition.Definitions {
+				hasStorageClass = hasStorageClass || part.StorageClassTier != "" || len(part.StorageClassTransitions) > 0
+			}
+		}
+	}
+	if hasStorageClass {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("Storage class is disabled; set enable-storage-class = true in the TiDB configuration")
+	}
+	return nil
+}
 
 func handleEngineAttributeForCreateTable(input string, tbInfo *model.TableInfo) error {
 	attr, err := model.ParseEngineAttributeFromString(input)

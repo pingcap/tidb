@@ -1123,7 +1123,15 @@ func (b *Builder) initVirtualTables(schemaVersion int64) error {
 	}
 	// Initialize virtual tables.
 	for _, driver := range drivers {
-		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
+		dbInfo := driver.DBInfo
+		if dbInfo.ID == autoid.InformationSchemaDBID && !config.GetGlobalConfig().EnableStorageClass {
+			// Filter after startup configuration is loaded, without changing the shared driver.
+			dbInfo = dbInfo.Copy()
+			dbInfo.Deprecated.Tables = slices.DeleteFunc(dbInfo.Deprecated.Tables, func(tbl *model.TableInfo) bool {
+				return tbl.Name.O == TableStorageClassTransitions
+			})
+		}
+		err := b.createSchemaTablesForDB(dbInfo, driver.TableFromMeta, schemaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
