@@ -992,7 +992,8 @@ func (e *Explain) RenderResult() error {
 	case types.ExplainFormatHint:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
 		hints := GenHintsFromFlatPlan(flat)
-		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
+		origHints := hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)
+		hints = append(hints, dropOverriddenLeadingHints(hints, origHints)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
