@@ -1493,7 +1493,7 @@ PARTITION BY RANGE ( a ) (
 	))
 
 	// analyze partition with existing table-level options and existing partition stats under dynamic
-	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", tableInfo.ID, 0, 0, 2, 2, "DEFAULT", "")
+	tk.MustExec("insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values (?,?,?,?,?,?,?)", tableInfo.ID, 0, 0, 2, 2, "DEFAULT", "")
 	tk.MustExec("set global tidb_persist_analyze_options = true")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1503,7 +1503,7 @@ PARTITION BY RANGE ( a ) (
 	))
 
 	// analyze partition with existing table-level & partition-level options and existing partition stats under dynamic
-	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
+	tk.MustExec("insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/5) as the sample-rate=1\"",
@@ -2346,9 +2346,11 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustExec("analyze table ndv with 0.1 NDVRATE, 0.1 SAMPLERATE")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
-	// Without NDVRATE, a partition above the threshold takes its rate from its
-	// row count.
+	// A plain ANALYZE reuses the saved NDVRATE until DEFAULT clears it. Without
+	// one, a partition above the threshold takes its rate from its row count.
 	tk.MustExec("analyze table ndv")
+	tk.MustQuery(lastRate("p0")).CheckContain("0.1 ndvrate")
+	tk.MustExec("analyze table ndv with default NDVRATE")
 	tk.MustQuery(lastRate("p0")).CheckContain("0.5 ndvrate")
 	// Partitions choose their rates independently, and a statement that names
 	// partitions ignores NDVRATE in dynamic mode, like the other options.
@@ -2381,7 +2383,7 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustExec("analyze table ndv_large with 0.001 NDVRATE")
 	tk.MustQuery("show warnings").CheckContain("Analyze raised the NDV rate from 0.001 to 0.01 for table test.ndv_large")
 	tk.MustQuery(lastJob).CheckContain("0.01 samplerate, 0.01 ndvrate")
-	tk.MustExec("analyze table ndv_large with 0.001 NDVRATE, default SAMPLERATE")
+	tk.MustExec("analyze table ndv_large with default SAMPLERATE")
 	warnings := tk.MustQuery("show warnings")
 	warnings.CheckContain("Analyze raised the NDV rate from 0.001 to 1 for table test.ndv_large")
 	warnings.CheckNotContain("NDVRATE is not used")

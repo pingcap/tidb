@@ -541,7 +541,8 @@ const (
 	// version318 adds tidb_opt_range_max_count.
 	version318 = 318
 
-	// version319 keeps sampled NDV off on upgraded clusters.
+	// version319 adds ndv_rate to mysql.analyze_options and keeps sampled NDV
+	// off on upgraded clusters.
 	version319 = 319
 )
 
@@ -2371,5 +2372,6 @@ func upgradeToVer318(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer319(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_options ADD COLUMN IF NOT EXISTS ndv_rate DOUBLE NOT NULL DEFAULT -1")
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeSampledNDVThreshold, 0)
 }
