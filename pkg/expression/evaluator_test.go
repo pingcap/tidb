@@ -56,8 +56,6 @@ func kindToFieldType(kind byte) types.FieldType {
 		ft.SetType(mysql.TypeEnum)
 	case types.KindMysqlSet:
 		ft.SetType(mysql.TypeSet)
-	case types.KindInterface:
-		ft.SetType(mysql.TypeVarString)
 	case types.KindMysqlDecimal:
 		ft.SetType(mysql.TypeNewDecimal)
 	case types.KindMysqlDuration:
