@@ -79,18 +79,17 @@
         "Plan": [
           "Projection root  test.t1.id1, test.t1.id2, Column",
           "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
-          "  └─MergeJoin root  inner join, left key:test.t3.id1, test.t3.id2, right key:test.t4.id1, test.t4.id2",
+          "  └─HashJoin root  inner join, equal:[eq(test.t3.id1, test.t4.id1) eq(test.t3.id2, test.t4.id2)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
-          "    │ └─IndexFullScan cop[tikv] table:t4, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo",
-          "    └─MergeJoin(Probe) root  inner join, left key:test.t2.id1, test.t2.id2, right key:test.t3.id1, test.t3.id2",
+          "    │ └─IndexFullScan cop[tikv] table:t4, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.id1, test.t3.id1) eq(test.t2.id2, test.t3.id2)]",
           "      ├─IndexReader(Build) root  index:IndexFullScan",
-          "      │ └─IndexFullScan cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo",
-          "      └─IndexHashJoin(Probe) root  inner join, inner:IndexLookUp, outer key:test.t2.id1, test.t2.id2, inner key:test.t1.id1, test.t1.id2, equal cond:eq(test.t2.id1, test.t1.id1), eq(test.t2.id2, test.t1.id2)",
+          "      │ └─IndexFullScan cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)]",
           "        ├─IndexReader(Build) root  index:IndexFullScan",
-          "        │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo",
-          "        └─IndexLookUp(Probe) root  ",
-          "          ├─IndexRangeScan(Build) cop[tikv] table:t1, index:UK_id1_id2(id1, id2) range: decided by [eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)], keep order:false, stats:pseudo",
-          "          └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "        │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) root  data:TableFullScan",
+          "          └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
