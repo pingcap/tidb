@@ -820,9 +820,28 @@ fn report_positive_string_signed_complement(text: &str, ctx: &dyn crate::Columns
 /// the numeric signatures have their own, overflow-shaped diagnostic, in
 /// [`report_signed_overflow`].
 pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Result<(), EvalError> {
+    // go re-reads a JSON document's MarshalJSON text through the same
+    // string-integer scanner (`builtinCastJSONAsIntSig`'s StrToInt), so a
+    // document without an integer prefix warns exactly like a string one
+    // (captured: CAST(a AS UNSIGNED) over the object document warns
+    // `Truncated incorrect INTEGER value: '{...}'`).
+    let json_text;
     let text = match v {
         Datum::String(value) => value.as_utf8().ok(),
         Datum::Bytes(value) => std::str::from_utf8(value).ok(),
+        // Only the STRUCTURED documents (object/array) re-read through the
+        // string scanner: go converts a JSON boolean/number directly (the
+        // `false` document casts to 0 silently -- captured g-json2), so
+        // stringifying those over-warned.
+        Datum::Json(value)
+            if matches!(
+                value.type_code(),
+                tidb_datatype::JSON_TYPE_CODE_OBJECT | tidb_datatype::JSON_TYPE_CODE_ARRAY
+            ) =>
+        {
+            json_text = value.to_string();
+            Some(json_text.as_str())
+        }
         _ => None,
     };
     match text {
