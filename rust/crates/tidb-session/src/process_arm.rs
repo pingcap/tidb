@@ -240,6 +240,16 @@ impl Session {
         self.visible_process_rows(true)
             .into_iter()
             .map(|row| {
+                // DIGEST: go `processinfo` carries the sha1 hex of the
+                // normalized query text.
+                let digest = row.info.as_deref().map(|info| {
+                    tidb_parser::digest_normalized(&tidb_parser::normalize(
+                        info,
+                        tidb_parser::RedactMode::Disabled,
+                    ))
+                    .as_str()
+                    .to_owned()
+                });
                 vec![
                     Datum::UInt(row.id),
                     Datum::Bytes(row.user.into_bytes()),
@@ -261,7 +271,10 @@ impl Session {
                         None => Datum::Null,
                     },
                     // DIGEST
-                    Datum::Bytes(Vec::new()),
+                    match digest {
+                        Some(hex) => Datum::Bytes(hex.into_bytes()),
+                        None => Datum::Bytes(Vec::new()),
+                    },
                     // MEM
                     Datum::UInt(0),
                     // MEM_ARBITRATION
