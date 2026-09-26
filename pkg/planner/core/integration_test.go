@@ -44,6 +44,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBinaryLiteralMinMaxHaving(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, key := range []string{" primary key", ""} {
+		tk.MustExec("create table binary_having(a int" + key + ")")
+		tk.MustExec("insert into binary_having values(1),(2)")
+		tk.MustQuery("select abs(min(b'101010')) c2,1 c3 from binary_having group by a having any_value(c2)").Check(testkit.Rows())
+		tk.MustQuery("select a from binary_having group by a having max(x'31')=49").Check(testkit.Rows())
+		tk.MustQuery("select a from binary_having group by a having max(x'31')=1 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustQuery("select a from binary_having group by a having min(49)=49 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustQuery("select a from binary_having group by a having min('1')=1 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustExec("drop table binary_having")
+	}
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
