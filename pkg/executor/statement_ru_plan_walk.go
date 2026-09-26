@@ -83,12 +83,43 @@ type statementRUOwner struct {
 	finishOnce   sync.Once
 	finalOutcome atomic.Uint32
 	rootEOF      atomic.Bool
-	// Install-time snapshots reject transient restricted/cursor classifications
-	// that may be restored before a delayed result-set terminal.
-	restrictedSQLAtInstall bool
-	ttlJobAtInstall        bool
-	cursorAtInstall        bool
-	calculationSetup       statementRUCalculationSetup
+	// Install flags remain immutable after publication. Keep the consumed
+	// calculation mode in its own byte: dispatch reads installFlags outside Once.
+	installFlags          uint8
+	calculationFullReport bool
+	frontendCompileBytes  float64
+}
+
+const (
+	statementRUInstallRestricted uint8 = 1 << iota
+	statementRUInstallTTL
+	statementRUInstallCursor
+	statementRUInstallFull
+)
+
+func (owner *statementRUOwner) restrictedSQLAtInstall() bool {
+	return owner.installFlags&statementRUInstallRestricted != 0
+}
+func (owner *statementRUOwner) ttlJobAtInstall() bool {
+	return owner.installFlags&statementRUInstallTTL != 0
+}
+func (owner *statementRUOwner) cursorAtInstall() bool {
+	return owner.installFlags&statementRUInstallCursor != 0
+}
+func (owner *statementRUOwner) fullReportAtInstall() bool {
+	return owner.installFlags&statementRUInstallFull != 0
+}
+
+// Mutable setup is read only by the winning Once callback after publication.
+func (owner *statementRUOwner) calculationSetup() statementRUCalculationSetup {
+	return statementRUCalculationSetup{frontendCompileBytes: owner.frontendCompileBytes, fullReport: owner.calculationFullReport}
+}
+
+// Install before publication, or clear inside the winning Once callback.
+// Separate scalar stores must not overwrite the immutable install flags.
+func (owner *statementRUOwner) setCalculationSetup(setup statementRUCalculationSetup) {
+	owner.frontendCompileBytes = setup.frontendCompileBytes
+	owner.calculationFullReport = setup.fullReport
 }
 
 func newStatementRUOwner(stmt *ExecStmt) *statementRUOwner {
@@ -100,9 +131,15 @@ func newStatementRUOwner(stmt *ExecStmt) *statementRUOwner {
 	if sessVars == nil {
 		return owner
 	}
-	owner.restrictedSQLAtInstall = sessVars.InRestrictedSQL
-	owner.ttlJobAtInstall = isStatementRUTTLJob(sessVars)
-	owner.cursorAtInstall = sessVars.HasStatusFlag(mysql.ServerStatusCursorExists)
+	if sessVars.InRestrictedSQL {
+		owner.installFlags |= statementRUInstallRestricted
+	}
+	if isStatementRUTTLJob(sessVars) {
+		owner.installFlags |= statementRUInstallTTL
+	}
+	if sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
+		owner.installFlags |= statementRUInstallCursor
+	}
 	return owner
 }
 
@@ -139,8 +176,8 @@ func (a *ExecStmt) abortStatementRU() {
 		return
 	}
 	owner.finishOnce.Do(func() {
-		fullReport := owner.calculationSetup.fullReport
-		owner.calculationSetup = statementRUCalculationSetup{}
+		fullReport := owner.calculationFullReport
+		owner.setCalculationSetup(statementRUCalculationSetup{})
 		if fullReport {
 			publishStatementRUFailureSafely(statementRUStatementError)
 		}
@@ -165,12 +202,20 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 	if owner == nil {
 		return 0
 	}
+	// calculationSetup is cleared by the shared Once. Only the immutable
+	// install-time mode may be read here, before entering that Once.
+	if owner.fullReportAtInstall() {
+		return a.finishStatementRUWithSnapshot(owner, terminalErr)
+	}
+	return a.finishStatementRUResultOnly(owner, terminalErr)
+}
 
+func (a *ExecStmt) finishStatementRUWithSnapshot(owner *statementRUOwner, terminalErr error) float64 {
 	finalized := statementRUFinalizedSnapshot{failure: statementRUNotFinished}
 	publishFinalized := false
 	owner.finishOnce.Do(func() {
-		calculationSetup := owner.calculationSetup
-		owner.calculationSetup = statementRUCalculationSetup{}
+		calculationSetup := owner.calculationSetup()
+		owner.setCalculationSetup(statementRUCalculationSetup{})
 
 		// The entire hook is fail-closed. A panic in eligibility, flat-plan
 		// lookup/generation, or calculation must neither make the owner retryable
@@ -202,8 +247,8 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 		sessVars := a.Ctx.GetSessionVars()
 		// The snapshots catch eligibility that disappeared before terminal; the
 		// live checks catch a classification entered after owner installation.
-		if sessVars == nil || sessVars.StmtCtx == nil || owner.cursorAtInstall ||
-			((owner.restrictedSQLAtInstall || sessVars.InRestrictedSQL) && !owner.ttlJobAtInstall) ||
+		if sessVars == nil || sessVars.StmtCtx == nil || owner.cursorAtInstall() ||
+			((owner.restrictedSQLAtInstall() || sessVars.InRestrictedSQL) && !owner.ttlJobAtInstall()) ||
 			sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 			finalized.failure = statementRUIneligible
 			return
@@ -255,11 +300,132 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 		)
 	})
 	if publishFinalized {
-		finalized.ttlJob = owner.ttlJobAtInstall
+		finalized.ttlJob = owner.ttlJobAtInstall()
 		publishStatementRUFinalizedSnapshot(a, &finalized)
 		return finalized.result.TotalRU
 	}
 	return 0
+}
+
+// Keep full snapshots and calculators out of the result-only terminal frame.
+// The current plan is still classified inside Once: retries and prepared-plan
+// unwrapping can change it after the reporting mode was installed.
+func (a *ExecStmt) finishStatementRUResultOnly(owner *statementRUOwner, terminalErr error) float64 {
+	var finalized statementRUResultSnapshot
+	publishFinalized := false
+	owner.finishOnce.Do(func() {
+		calculationSetup := owner.calculationSetup()
+		owner.setCalculationSetup(statementRUCalculationSetup{})
+		defer func() {
+			if recover() != nil {
+				publishFinalized = false
+			}
+		}()
+		if statementRUFinalOutcome(owner.finalOutcome.Load()) != statementRUFinalOutcomeSuccess || terminalErr != nil {
+			return
+		}
+		planInfo := classifyStatementRUPlan(a.Plan)
+		if a.Ctx == nil || planInfo.plan == nil {
+			return
+		}
+		sessVars := a.Ctx.GetSessionVars()
+		if sessVars == nil || sessVars.StmtCtx == nil || owner.cursorAtInstall() ||
+			((owner.restrictedSQLAtInstall() || sessVars.InRestrictedSQL) && !owner.ttlJobAtInstall()) ||
+			sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
+			return
+		}
+		if planInfo.kind == statementRUPlanCommit {
+			if !owner.rootEOF.Load() {
+				return
+			}
+			writes := snapshotStatementRUWrites(sessVars.StmtCtx.GetExecDetails().CommitDetail)
+			finalized, publishFinalized = calculateStatementRUCommitResult(writes, calculationSetup)
+			return
+		}
+		if planInfo.kind == statementRUPlanPointLookup {
+			point, ok := calculateStatementRUPointPayload(
+				planInfo.plan.ID(), sessVars.StmtCtx.RuntimeStatsColl, sessVars.RUV2Metrics,
+				calculationSetup.frontendCompileBytes, owner.rootEOF.Load(),
+			)
+			if ok {
+				finalized.result.TotalRU = point.totalRU
+				finalized.engineRU = point.engineRU
+				finalized.sqlType = "select"
+				publishFinalized = true
+			}
+			return
+		}
+		flat := getFlatPlan(sessVars.StmtCtx)
+		if flat == nil || len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin != planInfo.plan {
+			return
+		}
+		finalized, publishFinalized = calculateStatementRUFlatResult(
+			flat, sessVars.StmtCtx.RuntimeStatsColl, sessVars.RUV2Metrics,
+			snapshotStatementRUWrites(sessVars.StmtCtx.GetExecDetails().CommitDetail),
+			calculationSetup, owner.rootEOF.Load(),
+		)
+	})
+	if !publishFinalized {
+		return 0
+	}
+	reportStatementRUV2ConsumptionSafely(a, finalized.engineRU)
+	publishStatementRUResultMetricsSafely(&finalized, owner.ttlJobAtInstall())
+	return finalized.result.TotalRU
+}
+
+func calculateStatementRUCommitResult(writes statementRUWriteSnapshot, setup statementRUCalculationSetup) (statementRUResultSnapshot, bool) {
+	// This adapter belongs only to the result terminal. Make that invariant
+	// explicit so its frame does not reserve an unused full report.
+	calculator := newStatementRUCalculator(statementRUCalculationSetup{frontendCompileBytes: setup.frontendCompileBytes})
+	calculator.units.WriteKeys = float64(writes.keys)
+	calculator.units.WriteBytes = float64(writes.bytes)
+	finalized, ok := calculator.finalize()
+	if !ok {
+		return statementRUResultSnapshot{}, false
+	}
+	return statementRUResultSnapshot{result: finalized.result, engineRU: finalized.engineRU, sqlType: "commit"}, true
+}
+
+func calculateStatementRUFlatResult(
+	flat *plannercore.FlatPhysicalPlan,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+) (statementRUResultSnapshot, bool) {
+	finalized, ok := calculateStatementRU(flat, runtimeStatsColl, metrics, writes, setup, rootEOF)
+	if !ok {
+		return statementRUResultSnapshot{}, false
+	}
+	return statementRUResultSnapshot{result: finalized.result, engineRU: finalized.engineRU, sqlType: finalized.sqlType}, true
+}
+
+// The result-only point path transports no StmtUnits or full report. The
+// terminal owns the final publication lifecycle.
+func calculateStatementRUPointPayload(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	frontendCompileBytes float64,
+	rootEOF bool,
+) (statementRUPointPayload, bool) {
+	if planID <= 0 || !rootEOF {
+		return statementRUPointPayload{}, false
+	}
+	netBytes := float64(0)
+	if metrics != nil && !metrics.Bypass() {
+		copBytes := metrics.TiKVCoprocessorResponseBytes()
+		if copBytes < 0 {
+			return statementRUPointPayload{}, false
+		}
+		netBytes = float64(copBytes)
+	}
+	scanBytes, payloadBytes, state := collectStatementRUPointPayload(planID, runtimeStatsColl)
+	if state != statementRUOperatorComplete {
+		return statementRUPointPayload{}, false
+	}
+	return finalizeStatementRUPointPayload(scanBytes, netBytes+payloadBytes, frontendCompileBytes)
 }
 
 func calculateStatementRUPointLookup(
@@ -1340,6 +1506,69 @@ func collectStatementRUReaderScanBytes(
 		}
 	}
 	return statementRUOperatorComplete
+}
+
+// collectStatementRUPointPayload retains the old collector's provider order,
+// coverage rules and separate integer-to-float conversions. It returns only
+// the two remote units consumed by a fresh result-mode point calculation.
+func collectStatementRUPointPayload(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+) (float64, float64, statementRUOperatorState) {
+	if runtimeStatsColl == nil {
+		return 0, 0, statementRUOperatorComplete
+	}
+	rootStats, exists := runtimeStatsColl.GetRootStatsIfExists(planID)
+	if !exists || rootStats == nil {
+		return 0, 0, statementRUOperatorComplete
+	}
+
+	_, groups := rootStats.MergeStats()
+	var aggregate clientutil.PointResponseStats
+	for _, group := range groups {
+		stats, ok := statementRUPointResponseStatsSnapshot(group)
+		if !ok {
+			continue
+		}
+		if !mergeStatementRUPointResponseStats(&aggregate, stats) {
+			return 0, 0, statementRUOperatorInvalid
+		}
+	}
+	return statementRUPointPayloadFromStats(&aggregate)
+}
+
+// The aggregate may have wrapped while merging individually valid providers.
+// Preserve coverage-before-scan validation; do not repeat pre-merge checks here.
+func statementRUPointPayloadFromStats(aggregate *clientutil.PointResponseStats) (float64, float64, statementRUOperatorState) {
+	// No provider (an unexecuted point lookup) or a valid zero-value snapshot
+	// (for example a transaction-buffer hit) contributes zero remote work.
+	if !aggregate.PayloadComplete() {
+		if aggregate.PayloadBytes != 0 ||
+			aggregate.ScanDetail.TotalKeys != 0 || aggregate.ScanDetail.ProcessedKeys != 0 ||
+			aggregate.ScanDetail.ProcessedKeysSize != 0 {
+			return 0, 0, statementRUOperatorInvalid
+		}
+		return 0, 0, statementRUOperatorComplete
+	}
+	if !aggregate.ScanDetailComplete() {
+		return 0, 0, statementRUOperatorUnsupported
+	}
+
+	scanEvidence := classifyStatementRUScanEvidence(
+		aggregate.ScanDetail.TotalKeys,
+		aggregate.ScanDetail.ProcessedKeys,
+		aggregate.ScanDetail.ProcessedKeysSize,
+	)
+	switch scanEvidence.state {
+	case statementRUScanEvidenceValid:
+
+	case statementRUScanEvidenceUnavailable:
+		// Complete response coverage does not give protobuf scalar fields
+		// presence bits. Keep the best-effort value and add no scan bytes.
+	default:
+		return 0, 0, statementRUOperatorInvalid
+	}
+	return scanEvidence.scanBytes, float64(aggregate.PayloadBytes), statementRUOperatorComplete
 }
 
 func collectStatementRUPointLookupEvidence(

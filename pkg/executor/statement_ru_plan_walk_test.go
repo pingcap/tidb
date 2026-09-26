@@ -56,7 +56,7 @@ func newStatementRUOwnerForTest() (*ExecStmt, *statementRUOwner) {
 		Plan:  plan,
 	}
 	owner := newStatementRUOwner(stmt)
-	owner.calculationSetup.frontendCompileBytes = 1
+	owner.frontendCompileBytes = 1
 	stmt.statementRUOwner = owner
 	return stmt, owner
 }
@@ -142,7 +142,7 @@ func ObserveStatementRUOwnerForTest(stmt *ExecStmt) *StatementRUOwnerObservation
 	}
 	return &StatementRUOwnerObservationForTest{
 		owner:        stmt.statementRUOwner,
-		initialSetup: stmt.statementRUOwner.calculationSetup,
+		initialSetup: stmt.statementRUOwner.calculationSetup(),
 	}
 }
 
@@ -152,7 +152,7 @@ func ObserveStatementRUOwnerForTest(stmt *ExecStmt) *StatementRUOwnerObservation
 func (observation *StatementRUOwnerObservationForTest) ConsumedForTest() bool {
 	return observation != nil && observation.owner != nil &&
 		observation.initialSetup != (statementRUCalculationSetup{}) &&
-		observation.owner.calculationSetup == (statementRUCalculationSetup{})
+		observation.owner.calculationSetup() == (statementRUCalculationSetup{})
 }
 
 // RecordedSuccessForTest reports whether the session recorded success first.
@@ -357,7 +357,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		}
 		finalized, ok := calculateStatementRU(calculationPlan,
 			sc.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
-			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+			statementRUWriteSnapshot{}, fixture.owner.calculationSetup(), true)
 		require.True(t, ok)
 		requireStatementRUReportConservation(t, finalized)
 		totalBefore := testutil.ToFloat64(metrics.RUV2Total)
@@ -382,7 +382,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		require.True(t, valid)
 		require.InDelta(t, wantResult.TotalRU,
 			testutil.ToFloat64(metrics.RUV2Total)-totalBefore, 1e-9)
-		require.Zero(t, fixture.owner.calculationSetup)
+		require.Zero(t, fixture.owner.calculationSetup())
 	}
 	requireNoPublication := func(t *testing.T, fixture statementRUSimpleSelectFixture) {
 		var calibrationCount atomic.Int64
@@ -569,23 +569,131 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 				19,
 			))
 			stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
-			direct, directOK := calculateStatementRUPointLookup(
-				plan.ID(), stmtCtx.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
-				fixture.owner.calculationSetup, true,
-			)
-			general, generalOK := calculateStatementRU(
-				plannercore.FlattenPhysicalPlan(plan, false),
-				stmtCtx.RuntimeStatsColl,
-				fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
-				statementRUWriteSnapshot{},
-				fixture.owner.calculationSetup,
-				true,
-			)
-			require.True(t, directOK)
-			require.True(t, generalOK)
-			require.Equal(t, general, direct)
+			for _, full := range []bool{false, true} {
+				setup := fixture.owner.calculationSetup()
+				setup.fullReport = full
+				direct, directOK := calculateStatementRUPointLookup(
+					plan.ID(), stmtCtx.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+					setup, true,
+				)
+				general, generalOK := calculateStatementRU(
+					plannercore.FlattenPhysicalPlan(plan, false), stmtCtx.RuntimeStatsColl,
+					fixture.stmt.Ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, setup, true,
+				)
+				require.True(t, directOK)
+				require.True(t, generalOK)
+				requireStatementRUBitsEqual(t, general, direct)
+				reference := statementRUCalculator{
+					units: ruv2.StmtUnits{OperatorNum: 1, ScanBytes: 75, NetBytes: 48,
+						FrontendCompileBytes: setup.frontendCompileBytes},
+					compute: [statementRUEngineCount]statementRUComputeUnits{{operatorNum: 1}},
+				}
+				want, ok := statementRUReferenceFinalize(reference, currentStatementRUWeights())
+				require.True(t, ok)
+				requireStatementRUBitsEqual(t, want.units, direct.units)
+				requireStatementRUBitsEqual(t, want.result, direct.result)
+				requireStatementRUBitsEqual(t, want.engineRU, direct.engineRU)
+				if full {
+					requireStatementRUReportConservation(t, direct)
+				} else {
+					require.Nil(t, direct.report)
+				}
+			}
 		})
 	}
+
+	t.Run("concurrent point terminals publish only the winning snapshot", func(t *testing.T) {
+		for _, full := range []bool{false, true} {
+			mode := "result"
+			if full {
+				mode = "full"
+			}
+			for _, zeroFrontend := range []bool{false, true} {
+				subMode := mode
+				if zeroFrontend {
+					subMode += "/zero-frontend"
+				}
+				t.Run(subMode, func(t *testing.T) {
+					fixture, plan := pointLookupFixture(t, false)
+					setStatementRUFullReportForTest(fixture.owner, full)
+					if zeroFrontend {
+						fixture.owner.frontendCompileBytes = 0
+					}
+					flagsBefore := fixture.owner.installFlags
+					registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(&kvrpcpb.ScanDetailV2{}, 0))
+					vars := fixture.stmt.Ctx.GetSessionVars()
+					want, ok := calculateStatementRU(
+						plannercore.FlattenPhysicalPlan(plan, false), vars.StmtCtx.RuntimeStatsColl,
+						vars.RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup(), true,
+					)
+					require.True(t, ok)
+					var calibrationCount, winners atomic.Int64
+					observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) { calibrationCount.Add(1) })
+					totalBefore := testutil.ToFloat64(metrics.RUV2Total)
+					fixture.stmt.RecordStatementRUFinalOutcome(true)
+					const callers = 16
+					done := make(chan struct{}, callers)
+					for range callers {
+						go func() {
+							if fixture.stmt.finishStatementRU(nil) > 0 {
+								winners.Add(1)
+							}
+							done <- struct{}{}
+						}()
+					}
+					for range callers {
+						<-done
+					}
+					require.Equal(t, int64(1), winners.Load())
+					if full {
+						require.Equal(t, int64(1), calibrationCount.Load())
+					} else {
+						require.Zero(t, calibrationCount.Load())
+					}
+					require.InDelta(t, want.result.TotalRU, testutil.ToFloat64(metrics.RUV2Total)-totalBefore, 1e-9)
+					require.Zero(t, fixture.owner.calculationSetup())
+					require.Equal(t, flagsBefore, fixture.owner.installFlags)
+				})
+			}
+		}
+	})
+
+	t.Run("point terminal provider panic consumes once without publication", func(t *testing.T) {
+		for _, full := range []bool{false, true} {
+			mode := "result"
+			if full {
+				mode = "full"
+			}
+			t.Run(mode, func(t *testing.T) {
+				fixture, plan := pointLookupFixture(t, false)
+				setStatementRUFullReportForTest(fixture.owner, full)
+				flagsBefore := fixture.owner.installFlags
+				vars := fixture.stmt.Ctx.GetSessionVars()
+				// This test provider's getter dereferences its receiver. Registration
+				// accepts the typed nil, so the panic occurs inside terminal collection.
+				vars.StmtCtx.RuntimeStatsColl.RegisterStats(plan.ID(), (*statementRUPointResponseStatsForTest)(nil))
+				var calibrationCount atomic.Int64
+				observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) { calibrationCount.Add(1) })
+				totalBefore := testutil.ToFloat64(metrics.RUV2Total)
+				failed := metrics.RUV2Statements.WithLabelValues("failed", string(statementRUPanic))
+				failuresBefore := testutil.ToFloat64(failed)
+				fixture.stmt.RecordStatementRUFinalOutcome(true)
+				require.NotPanics(t, func() { fixture.stmt.finishStatementRUForTest(nil) })
+				require.Zero(t, fixture.owner.calculationSetup())
+				require.Equal(t, flagsBefore, fixture.owner.installFlags)
+				vars.StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+				registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(&kvrpcpb.ScanDetailV2{}, 0))
+				fixture.stmt.finishStatementRUForTest(nil)
+				require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV2Total))
+				require.Zero(t, calibrationCount.Load())
+				if full {
+					require.Equal(t, failuresBefore+1, testutil.ToFloat64(failed))
+				} else {
+					require.Equal(t, failuresBefore, testutil.ToFloat64(failed))
+				}
+			})
+		}
+	})
 
 	t.Run("point terminal error consumes the direct path", func(t *testing.T) {
 		fixture, plan := pointLookupFixture(t, false)
@@ -619,7 +727,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		ctx.GetSessionVars().StmtCtx.SetPlan(plan)
 		installStatementRUOwner(stmt)
 		require.NotNil(t, stmt.statementRUOwner)
-		stmt.statementRUOwner.calculationSetup.fullReport = true
+		setStatementRUFullReportForTest(stmt.statementRUOwner, true)
 		ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(plan, false))
 		stmt.recordStatementRURootEOF()
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 1000)
@@ -1048,7 +1156,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		sc := fixture.stmt.Ctx.GetSessionVars().StmtCtx
 		finalized, ok := calculateStatementRU(sc.GetFlatPlan().(*plannercore.FlatPhysicalPlan),
 			sc.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
-			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+			statementRUWriteSnapshot{}, fixture.owner.calculationSetup(), true)
 		require.True(t, ok)
 		require.Equal(t, ruv2.StmtUnits{CPUWork: 15, HashStateRows: 2, OperatorNum: 1},
 			finalized.report.units[statementRUTiKV][statementRUHashAgg])
@@ -1956,6 +2064,119 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 }
 
 func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
+
+	t.Run("setup scalar capture and consumption preserve owner state", func(t *testing.T) {
+		for _, bits := range []uint64{0, 1 << 63, math.Float64bits(17), 0x7ff8000000000042} {
+			for _, full := range []bool{false, true} {
+				for flags := range 16 {
+					for _, terminal := range []string{"abort", "unknown", "terminal-error"} {
+						stmt, owner := newStatementRUOwnerForTest()
+						setStatementRUInstallFlagForTest(owner, statementRUInstallRestricted, flags&1 != 0)
+						setStatementRUInstallFlagForTest(owner, statementRUInstallTTL, flags&2 != 0)
+						setStatementRUInstallFlagForTest(owner, statementRUInstallCursor, flags&4 != 0)
+						setStatementRUInstallFlagForTest(owner, statementRUInstallFull, flags&8 != 0)
+						owner.rootEOF.Store(true)
+						outcome := statementRUFinalOutcomeSuccess
+						if terminal == "unknown" {
+							outcome = statementRUFinalOutcomeUnknown
+						}
+						owner.finalOutcome.Store(uint32(outcome))
+						owner.setCalculationSetup(statementRUCalculationSetup{
+							frontendCompileBytes: math.Float64frombits(bits), fullReport: full,
+						})
+						require.Equal(t, bits, math.Float64bits(owner.frontendCompileBytes))
+						require.Equal(t, full, owner.calculationFullReport)
+						captured := owner.calculationSetup()
+						require.Equal(t, bits, math.Float64bits(captured.frontendCompileBytes))
+						require.Equal(t, full, captured.fullReport)
+						switch terminal {
+						case "abort":
+							stmt.abortStatementRU()
+						case "unknown":
+							require.Zero(t, stmt.finishStatementRU(nil))
+						case "terminal-error":
+							require.Zero(t, stmt.finishStatementRU(errors.New("terminal error")))
+						}
+						require.Equal(t, uint64(0), math.Float64bits(owner.frontendCompileBytes))
+						require.False(t, owner.calculationFullReport)
+						require.Zero(t, owner.calculationSetup())
+						require.Equal(t, bits, math.Float64bits(captured.frontendCompileBytes))
+						require.Equal(t, full, captured.fullReport)
+						require.Equal(t, flags&1 != 0, owner.restrictedSQLAtInstall())
+						require.Equal(t, flags&2 != 0, owner.ttlJobAtInstall())
+						require.Equal(t, flags&4 != 0, owner.cursorAtInstall())
+						require.Equal(t, flags&8 != 0, owner.fullReportAtInstall())
+						require.True(t, owner.rootEOF.Load())
+						require.Equal(t, uint32(outcome), owner.finalOutcome.Load())
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("owner observation preserves full zero-byte setup", func(t *testing.T) {
+		var missing *StatementRUOwnerObservationForTest
+		require.False(t, missing.ConsumedForTest())
+		require.False(t, (&StatementRUOwnerObservationForTest{}).ConsumedForTest())
+		for _, full := range []bool{false, true} {
+			for _, frontend := range []float64{0, 17} {
+				for _, abort := range []bool{false, true} {
+					stmt, owner := newStatementRUOwnerForTest()
+					owner.setCalculationSetup(statementRUCalculationSetup{frontendCompileBytes: frontend, fullReport: full})
+					setStatementRUFullReportForTest(owner, full)
+					observed := ObserveStatementRUOwnerForTest(stmt)
+					require.False(t, observed.ConsumedForTest())
+					if abort {
+						stmt.abortStatementRU()
+					} else {
+						stmt.finishStatementRU(nil)
+					}
+					require.Equal(t, full || frontend != 0, observed.ConsumedForTest())
+					require.Equal(t, full, owner.fullReportAtInstall())
+					require.Zero(t, owner.calculationSetup())
+					stmt.finishStatementRU(nil)
+					require.Equal(t, full || frontend != 0, observed.ConsumedForTest())
+				}
+			}
+		}
+	})
+
+	t.Run("immutable install flags survive concurrent dispatch and consumption", func(t *testing.T) {
+		for flags := range 16 {
+			stmt, owner := newStatementRUOwnerForTest()
+			owner.installFlags = uint8(flags)
+			owner.setCalculationSetup(statementRUCalculationSetup{fullReport: flags&8 != 0})
+			owner.finalOutcome.Store(uint32(statementRUFinalOutcomeSuccess))
+			owner.rootEOF.Store(true)
+			observed := ObserveStatementRUOwnerForTest(stmt)
+			start, done := make(chan struct{}), make(chan struct{}, 4)
+			var mismatches atomic.Int64
+			for worker := range 4 {
+				go func(worker int) {
+					<-start
+					for range 16 {
+						if owner.restrictedSQLAtInstall() != (flags&1 != 0) || owner.ttlJobAtInstall() != (flags&2 != 0) || owner.cursorAtInstall() != (flags&4 != 0) || owner.fullReportAtInstall() != (flags&8 != 0) {
+							mismatches.Add(1)
+						}
+						if worker == 0 {
+							stmt.abortStatementRU()
+						} else {
+							stmt.finishStatementRU(errors.New("concurrent terminal"))
+						}
+					}
+					done <- struct{}{}
+				}(worker)
+			}
+			close(start)
+			for range 4 {
+				<-done
+			}
+			require.Zero(t, mismatches.Load())
+			require.Equal(t, uint8(flags), owner.installFlags)
+			require.Zero(t, owner.calculationSetup())
+			require.Equal(t, flags&8 != 0, observed.ConsumedForTest())
+		}
+	})
 	t.Run("nil owner is off", func(t *testing.T) {
 		stmt := &ExecStmt{}
 		require.NotPanics(t, func() {
@@ -1976,7 +2197,7 @@ func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
 
 	t.Run("owner observation fails closed for zero initial setup", func(t *testing.T) {
 		stmt, owner := newStatementRUOwnerForTest()
-		owner.calculationSetup = statementRUCalculationSetup{}
+		owner.setCalculationSetup(statementRUCalculationSetup{})
 		observation := ObserveStatementRUOwnerForTest(stmt)
 		require.NotNil(t, observation)
 		require.False(t, observation.ConsumedForTest())
@@ -1988,10 +2209,10 @@ func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
 	t.Run("unknown terminal consumes once", func(t *testing.T) {
 		stmt, owner := newStatementRUOwnerForTest()
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("recorded failure consumes once", func(t *testing.T) {
@@ -1999,9 +2220,9 @@ func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
 		stmt.RecordStatementRUFinalOutcome(false)
 		stmt.RecordStatementRUFinalOutcome(true)
 		require.Equal(t, statementRUFinalOutcomeFailure, statementRUFinalOutcome(owner.finalOutcome.Load()))
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	for _, tc := range []struct {
@@ -2021,7 +2242,7 @@ func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
 			stmt.RecordStatementRUFinalOutcome(tc.second)
 			require.Equal(t, tc.wantOutcome, statementRUFinalOutcome(owner.finalOutcome.Load()))
 			stmt.finishStatementRUForTest(nil)
-			require.Zero(t, owner.calculationSetup)
+			require.Zero(t, owner.calculationSetup())
 		})
 	}
 }
@@ -2037,7 +2258,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		require.Error(t, rs.Next(context.Background(), nil))
 		require.Empty(t, rs.lastErrs, "the RU-only abort must not change legacy terminal errors")
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("recordSet recovered panic reaches terminal", func(t *testing.T) {
@@ -2049,7 +2270,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		require.Error(t, rs.Next(ctx, nil))
 		require.Empty(t, rs.lastErrs, "the RU-only abort must not change legacy terminal errors")
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("terminal error then success", func(t *testing.T) {
@@ -2057,7 +2278,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.finishStatementRUForTest(errors.New("terminal error"))
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("deadline then success", func(t *testing.T) {
@@ -2065,7 +2286,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.finishStatementRUForTest(context.DeadlineExceeded)
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("restricted then success", func(t *testing.T) {
@@ -2075,7 +2296,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		stmt.finishStatementRUForTest(nil)
 		stmt.Ctx.GetSessionVars().InRestrictedSQL = false
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("cursor then success", func(t *testing.T) {
@@ -2085,7 +2306,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		stmt.finishStatementRUForTest(nil)
 		stmt.Ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("nil plan then plan", func(t *testing.T) {
@@ -2096,7 +2317,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		stmt.finishStatementRUForTest(nil)
 		stmt.Plan = plan
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("empty plan then plan", func(t *testing.T) {
@@ -2109,7 +2330,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		stmt.finishStatementRUForTest(nil)
 		stmt.Plan = plan
 		stmt.finishStatementRUForTest(nil)
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 
 	t.Run("success then terminal error", func(t *testing.T) {
@@ -2117,7 +2338,7 @@ func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.finishStatementRUForTest(nil)
 		stmt.finishStatementRUForTest(errors.New("late terminal error"))
-		require.Zero(t, owner.calculationSetup)
+		require.Zero(t, owner.calculationSetup())
 	})
 }
 
@@ -2137,7 +2358,7 @@ func TestStatementRUTerminalUsesStmtCtxFlatPlanCache(t *testing.T) {
 		Plan: currentPlan,
 	}
 	owner := newStatementRUOwner(stmt)
-	owner.calculationSetup.frontendCompileBytes = 1
+	owner.frontendCompileBytes = 1
 	stmt.statementRUOwner = owner
 	stmt.RecordStatementRUFinalOutcome(true)
 	stmt.finishStatementRUForTest(nil)
@@ -2145,5 +2366,5 @@ func TestStatementRUTerminalUsesStmtCtxFlatPlanCache(t *testing.T) {
 	// not prove that the cached Origin belongs to the current ExecStmt generation.
 	flat := ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
 	require.Same(t, stalePlan, flat.Main[0].Origin)
-	require.Zero(t, owner.calculationSetup)
+	require.Zero(t, owner.calculationSetup())
 }
