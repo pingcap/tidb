@@ -87,12 +87,12 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	tblStats = handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
 
-	// Auto Analyze reads every row for NDV, even above
-	// tidb_analyze_sampled_ndv_threshold.
+	// Auto Analyze samples NDV above tidb_analyze_sampled_ndv_threshold like a
+	// manual ANALYZE, at about the threshold number of rows.
 	defer tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
 	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
 	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
-	tk.MustQuery("select job_info from mysql.analyze_jobs where table_name = 't' order by id desc limit 1").CheckNotContain("ndvrate")
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_name = 't' order by id desc limit 1").CheckContain("0.3333333333333333 ndvrate")
 }
 
 func TestAnalyzeNonPartitionedIndexes(t *testing.T) {

@@ -3548,7 +3548,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
-	if rate := chooseNDVRate(opts, count); rate < 1 {
+	if rate := b.chooseNDVRate(task, opts, count); rate < 1 {
 		e.analyzePB.ColReq.NdvRate = &rate
 	}
 	if task.TblInfo != nil {
@@ -3561,16 +3561,33 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
+// minNDVRate is the lowest rate the row-count rule picks. Below it, scanning every
+// row dominates ANALYZE, so a lower rate saves little time while the NDV error
+// keeps growing.
+const minNDVRate = 0.05
+
 // chooseNDVRate returns the fraction of rows that TiKV processes for NDV. While
 // tidb_analyze_sampled_ndv_threshold is not 0, a table or partition with more
-// rows than it uses its NDVRATE option. Others use full input.
-func chooseNDVRate(opts map[ast.AnalyzeOptionType]uint64, count int64) float64 {
+// rows than it uses its NDVRATE option or, without one, max(minNDVRate,
+// threshold / rows). Others use full input.
+func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, count int64) float64 {
 	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
-	rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate])
-	if threshold == 0 || count <= threshold || rate <= 0 {
+	if threshold == 0 {
 		return 1
 	}
-	return rate
+	rows := float64(count)
+	// Like getAdjustedSampleRate, trust PD when stats_meta is far behind, for
+	// example right after a physical import.
+	if approx, hasPD := b.getApproximateTableCountFromStorage(b.ctx, task.TableID.GetStatisticsID(), task); hasPD && rows*5 < approx {
+		rows = approx
+	}
+	if rows <= float64(threshold) {
+		return 1
+	}
+	if rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate]); rate > 0 {
+		return rate
+	}
+	return max(minNDVRate, float64(threshold)/rows)
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.

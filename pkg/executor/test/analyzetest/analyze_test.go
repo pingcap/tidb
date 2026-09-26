@@ -2337,9 +2337,30 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
 	// A plain ANALYZE reuses the saved NDVRATE until DEFAULT clears it. Without
-	// one, a partition above the threshold reads every row.
+	// one, a partition above the threshold takes its rate from its row count.
 	tk.MustExec("analyze table ndv")
 	tk.MustQuery(lastRate("p0")).CheckContain("0.1 ndvrate")
 	tk.MustExec("analyze table ndv with default NDVRATE")
-	tk.MustQuery(lastRate("p0")).CheckNotContain("ndvrate")
+	tk.MustQuery(lastRate("p0")).CheckContain("0.5 ndvrate")
+	// Partitions choose their rates independently, and a statement that names
+	// partitions ignores NDVRATE in dynamic mode, like the other options.
+	tk.MustExec("insert into ndv values (3,3),(4,4)")
+	tk.MustExec("analyze table ndv partition p0, p1 with 0.2 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("Ignore columns and options when analyze partition in dynamic mode")
+	tk.MustQuery(lastRate("p0")).CheckContain("0.25 ndvrate")
+	tk.MustQuery(lastRate("p1")).CheckContain("0.5 ndvrate")
+	// The rate falls with the row count until it reaches 0.05 at 20 times the threshold.
+	tk.MustExec("create table ndv_large (a int)")
+	tk.MustExec("insert into ndv_large values (1)")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
+	for _, tc := range []struct{ rows, rate string }{{"500000000", ""}, {"2000000000", "0.25 ndvrate"}, {"20000000000", "0.05 ndvrate"}, {"40000000000", "0.05 ndvrate"}} {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return("+tc.rows+")")
+		tk.MustExec("analyze table ndv_large")
+		job := tk.MustQuery("select job_info from mysql.analyze_jobs where table_name='ndv_large' order by id desc limit 1")
+		if tc.rate == "" {
+			job.CheckNotContain("ndvrate")
+		} else {
+			job.CheckContain(tc.rate)
+		}
+	}
 }
