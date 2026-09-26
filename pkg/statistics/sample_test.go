@@ -119,7 +119,7 @@ func TestDistributedWeightedSampling(t *testing.T) {
 				ColGroups:       nil,
 				MaxSampleSize:   int(sampleNum),
 				MaxFMSketchSize: 1000,
-				Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
+				Rng:             rand.New(rand.NewSource(int64(loopI*batch + i))),
 			}
 			collector, err := builder.Collect()
 			require.NoError(t, err)
