@@ -34,10 +34,50 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPessimisticRetryLastInsertIDSetter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	owner := testkit.NewTestKit(t, store)
+	competitor := testkit.NewTestKit(t, store)
+	owner.MustExec("use test")
+	competitor.MustExec("use test")
+	owner.MustExec("create table last_id_dst(id int primary key, u int unique, v bigint)")
+	owner.MustExec("create table last_id_gate(id int primary key)")
+	owner.MustExec("insert into last_id_dst values (1, 10, 0)")
+	owner.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	competitor.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	owner.MustQuery("select last_insert_id(7)").Check(testkit.Rows("7"))
+	var once sync.Once
+	var concurrentErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeUpdateRowForTest", func(ctx sessionctx.Context) {
+		if ctx != owner.Session() {
+			return
+		}
+		once.Do(func() {
+			for _, sql := range []string{"begin pessimistic", "insert into last_id_dst values (2, 1, 0)", "insert into last_id_gate values (1)", "commit"} {
+				if _, concurrentErr = competitor.Exec(sql); concurrentErr != nil {
+					return
+				}
+			}
+		})
+	})
+	owner.MustExec("begin pessimistic")
+	owner.MustExec(`update last_id_dst x set u=1, v=last_insert_id(99)
+		where id=1 and not exists (select 1 from last_id_gate g where g.id=x.id)`)
+	require.NoError(t, concurrentErr)
+	require.Greater(t, owner.Session().GetSessionVars().StmtCtx.ExecRetryCount, uint64(0))
+	require.Zero(t, owner.Session().AffectedRows())
+	owner.MustQuery("select last_insert_id()").Check(testkit.Rows("7"))
+	owner.MustExec("commit")
+	owner.MustQuery("select * from last_id_dst order by id").Check(testkit.Rows("1 10 0", "2 1 0"))
+	owner.MustExec("update last_id_dst set v=last_insert_id(123) where id=1")
+	owner.MustQuery("select last_insert_id()").Check(testkit.Rows("123"))
+}
 
 func TestInsertIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
