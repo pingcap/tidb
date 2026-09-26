@@ -1066,15 +1066,21 @@ fn exponent_prefix(s: &str) -> i32 {
 /// silently (`getValidFloatPrefix`'s early return), matching the explicit
 /// `CAST` this arm implements.
 fn str_to_real_for_cast(v: &Datum, ctx: &dyn crate::Columns) -> Result<f64, EvalError> {
-    let text = match v {
-        Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
-        Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+    let (text, type_word) = match v {
+        Datum::String(value) => (String::from_utf8_lossy(value.bytes()).into_owned(), "DOUBLE"),
+        Datum::Bytes(value) => (String::from_utf8_lossy(value).into_owned(), "DOUBLE"),
+        // go's WrapWithCastAsReal over a JSON operand re-reads the document's
+        // MarshalJSON text as a float, and the failure names the value with
+        // the FLOAT word (`j + 0` over `{}` warns `Truncated incorrect FLOAT
+        // value: '{}'`), where the STRING sources keep the DOUBLE word.
+        Datum::Json(value) => (value.to_string(), "FLOAT"),
         _ => return Ok(to_f64_for_cast(v)),
     };
     let converted = tidb_datatype::str_to_float(&text, true);
     if converted.event.is_some() {
         ctx.handle_truncate(&format!(
-            "Truncated incorrect DOUBLE value: '{}'",
+            "Truncated incorrect {} value: '{}'",
+            type_word,
             tidb_datatype::float_warning_input(&text)
         ))?;
     }
