@@ -537,6 +537,9 @@ const (
 
 	// version317 adds the OPERATE VIEW static privilege.
 	version317 = 317
+
+	// version318 adds tidb_opt_range_max_count.
+	version318 = 318
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -550,7 +553,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version317
+var currentBootstrapVersion int64 = version318
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -742,6 +745,7 @@ var (
 		{version: version285, fn: upgradeToVer285},
 		{version: version316, fn: upgradeToVer316},
 		{version: version317, fn: upgradeToVer317},
+		{version: version318, fn: upgradeToVer318},
 	}
 )
 
@@ -2356,4 +2360,8 @@ func upgradeToVer317(s sessionapi.Session, _ int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
 	// Preserve the old behavior for upgraded clusters that do not have a persisted value.
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)
+}
+
+func upgradeToVer318(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBOptRangeMaxCount, vardef.DefTiDBOptRangeMaxCount)
 }
