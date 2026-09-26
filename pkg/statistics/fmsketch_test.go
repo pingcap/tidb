@@ -19,9 +19,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -205,6 +208,41 @@ func SubTestSampledNDV() func(*testing.T) {
 		// Without sampled rows or non-NULL rows, NDV is zero.
 		for _, sample := range []ndvSample{{rows: 200}, {rows: 10, samples: 2, nulls: 10}} {
 			require.Zero(t, newSampledFMSketch(&tipb.FMSketch{}, sample).NDV())
+		}
+
+		// Values the schema keeps unique need no estimate.
+		singles := make([]uint64, 0, 14)
+		for i := range 14 {
+			singles = append(singles, uint64(i+1))
+		}
+		distinct := make([]*SampleItem, 0, 300)
+		for i := range 300 {
+			distinct = append(distinct, &SampleItem{Value: types.NewIntDatum(int64(i)), Ordinal: i})
+		}
+		sketch := newSampledFMSketch(&tipb.FMSketch{Hashset: singles}, ndvSample{rows: 3000, samples: 15})
+		collector := &SampleCollector{Samples: distinct, FMSketch: sketch, Count: 3000, Unique: true}
+		hist, _, err := BuildHistAndTopN(mock.NewContext(), 256, 0, 1, collector, types.NewFieldType(mysql.TypeLonglong), true, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(3000), hist.NDV)
+		handle := &model.ColumnInfo{ID: 1, Offset: 0}
+		handle.AddFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
+		notNull := &model.ColumnInfo{ID: 3, Offset: 2}
+		notNull.AddFlag(mysql.NotNullFlag)
+		tblInfo := &model.TableInfo{PKIsHandle: true, Columns: []*model.ColumnInfo{handle, {ID: 2, Offset: 1}, notNull}}
+		for i, cols := range [][]*model.IndexColumn{
+			{{Offset: 1, Length: types.UnspecifiedLength}},
+			{{Offset: 2, Length: 4}},
+			{{Offset: 1, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+			{{Offset: 0, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+		} {
+			tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{ID: int64(i + 1), Unique: true, State: model.StatePublic, Columns: cols})
+		}
+		for _, want := range []struct {
+			isIndex bool
+			id      int64
+			unique  bool
+		}{{false, 1, true}, {false, 2, true}, {false, 3, false}, {true, 1, true}, {true, 2, true}, {true, 3, false}, {true, 4, true}} {
+			require.Equal(t, want.unique, UniqueByDefinition(tblInfo, want.isIndex, want.id), "%+v", want)
 		}
 	}
 }

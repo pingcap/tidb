@@ -344,7 +344,8 @@ func blockingMergePartitionStats2GlobalStats(
 		// we just set the table-level NDV.
 		if globalStats.Hg[i] != nil {
 			if sampled {
-				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.Count)
+				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.Count,
+					statistics.UniqueByDefinition(globalTableInfo, isIndex, histIDs[i]))
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
@@ -381,10 +382,13 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 	return err
 }
 
-// sampledGlobalNDV bounds a sampled estimate by the non-NULL rows. The row
-// count is current while NULL counts date from each partition's ANALYZE, so
-// the result also stays at or above the distinct values the TopN and histogram
-// merge saw.
-func sampledGlobalNDV(ndv int64, hist *statistics.Histogram, count int64) int64 {
+// sampledGlobalNDV bounds a sampled estimate by the non-NULL rows, which are
+// also the NDV of unique values. The row count is current while NULL counts
+// date from each partition's ANALYZE, so the result also stays at or above the
+// distinct values the TopN and histogram merge saw.
+func sampledGlobalNDV(ndv int64, hist *statistics.Histogram, count int64, unique bool) int64 {
+	if unique {
+		ndv = count - hist.NullCount
+	}
 	return max(min(ndv, count-hist.NullCount), hist.NDV)
 }

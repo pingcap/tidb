@@ -586,7 +586,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			if *globalHg != nil {
 				ndv := a.globalStatsNDV[item.idx]
 				if a.sampledNDV[item.idx] {
-					ndv = sampledGlobalNDV(ndv, *globalHg, a.globalStats.Count)
+					ndv = sampledGlobalNDV(ndv, *globalHg, a.globalStats.Count,
+						statistics.UniqueByDefinition(a.globalTableInfo, isIndex, a.histIDs[item.idx]))
 				}
 				(*globalHg).NDV = ndv
 			}

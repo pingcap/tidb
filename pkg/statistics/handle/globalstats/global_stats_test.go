@@ -1177,14 +1177,14 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
-	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	tk.MustExec("create table ndv (a int primary key, b int, c int not null, key idx(b), unique key uc(c, a)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1,1),(2,2,2),(11,1,1),(12,2,2)")
 	tk.MustExec("analyze table ndv")
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv"))
 	require.NoError(t, err)
 	tbl := table.Meta()
 	part0, part1 := tbl.Partition.Definitions[0].ID, tbl.Partition.Definitions[1].ID
-	colA, colB, idx := tbl.Columns[0].ID, tbl.Columns[1].ID, tbl.FindIndexByName("idx").ID
+	colA, colB, idx, uc := tbl.Columns[0].ID, tbl.Columns[1].ID, tbl.FindIndexByName("idx").ID, tbl.FindIndexByName("uc").ID
 	// sampledSketch returns a saved sketch of 10 rows, of which selected were
 	// sampled for NDV and 3 are NULL, with the given singleton hashes.
 	sampledSketch := func(selected int64, hashes ...uint64) []byte {
@@ -1225,6 +1225,11 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 		require.Equal(t, int64(math.Round(2*math.Sqrt(10./3))), mergedNDV(async, false, colB))
 	}
 	tk.MustExec("insert into mysql.stats_fm_sketch values (?, 0, ?, ?)", part1, colB, data)
+	// The schema keeps column a and index uc unique, so their NDV is every non-NULL row.
+	for _, async := range []bool{false, true} {
+		require.Equal(t, int64(20), mergedNDV(async, false, colA))
+		require.Equal(t, int64(20), mergedNDV(async, true, uc))
+	}
 	// Deletes after ANALYZE can leave fewer rows than the NULLs counted then.
 	// The NDV then keeps the values the partition histograms hold.
 	tk.MustExec("update mysql.stats_histograms set null_count=15 where table_id in (?,?) and is_index=0 and hist_id=?", part0, part1, colA)

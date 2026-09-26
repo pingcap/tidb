@@ -792,6 +792,7 @@ workLoop:
 					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
 					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 					MemSize:   collectorMemSize,
+					Unique:    statistics.UniqueByDefinition(e.tableInfo, false, e.colsInfo[task.slicePos].ID),
 				}
 			} else {
 				var tmpDatum types.Datum
@@ -851,6 +852,7 @@ workLoop:
 					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
 					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 					MemSize:   collectorMemSize,
+					Unique:    statistics.UniqueByDefinition(e.tableInfo, true, idx.ID),
 				}
 			}
 			releaseCollectorMemory := func() {

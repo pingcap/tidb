@@ -399,6 +399,10 @@ func BuildHistAndTopN(
 	count := collector.Count
 	ndv := collector.FMSketch.NDV()
 	nullCount := collector.NullCount
+	if collector.Unique && collector.FMSketch.Sampled() {
+		// A sample cannot show that values never repeat, but the schema does.
+		ndv = count
+	}
 	if ndv > count {
 		ndv = count
 	}
