@@ -1268,6 +1268,14 @@ fn cast_to_time_value(
         // `Incorrect time value: '<int64>'` (a u64 overflow reads -1).
         if matches!(v, Datum::String(_) | Datum::Bytes(_)) {
             invalid_time_warning(ctx, &s);
+        } else if matches!(v, Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_)) {
+            // The DECIMAL/REAL sources read the value through
+            // `ParseTimeFromFloatString` -- the same wall-clock TEXT parser
+            // the string sources use -- so a failure names the value with
+            // the DATETIME word and the full decimal text (`cast(2.5 as
+            // datetime)` warns `Incorrect datetime value: '2.5'`, not a
+            // truncated integer).
+            invalid_time_warning(ctx, &s);
         } else {
             // go ParseTimeFromNum consumes the number's INT64 WRAP: a u64
             // overflow wraps to -1 (not the saturating i64::MAX).

@@ -2157,6 +2157,7 @@ impl ScalarFunction {
                     field_type.code() == tidb_datatype::FieldTypeCode::Duration
                 }) {
                     return crate::time_fn::add_sub::date_add_duration(
+                        ctx,
                         unit,
                         &date,
                         &amount,

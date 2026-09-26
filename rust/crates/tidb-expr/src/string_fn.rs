@@ -1900,6 +1900,14 @@ pub(crate) fn char_func_with_context(
                 crate::cast::report_int_truncation(&as_text, ctx)?;
                 append_char_integer(&mut bytes, crate::cast::to_i64_signed(&as_text));
             }
+            // go `WrapWithCastAsInt` over a STRING source reads the text as
+            // an integer and warns `Truncated incorrect INTEGER value`
+            // (captured: CHAR('中文测试', 'ünïcödé') warns against '中文测试'
+            // before the charset error, so the warning survives it).
+            Datum::String(_) | Datum::Bytes(_) => {
+                crate::cast::report_int_truncation(v, ctx)?;
+                append_char_integer(&mut bytes, crate::cast::to_i64_signed(v));
+            }
             _ => append_char_integer(&mut bytes, crate::cast::to_i64_signed(v)),
         }
     }
@@ -1907,12 +1915,17 @@ pub(crate) fn char_func_with_context(
         return Ok(Datum::new_bytes(bytes));
     }
 
-    // go `GetCharsetInfo` over the charset's TEXT: a numeric trailing
-    // argument (say `-3.75`) is not a charset and answers bare 1105
-    // "Unknown charset -3.75" — the same answer a string spelling gets.
-    let charset_text = crate::coerce::coerce_str(charset)?
-        .ok_or_else(|| { eprintln!("[DBG-CC1] coerce none"); EvalError::Unsupported("CHAR charset argument") })?;
+    // go evaluates the charset argument as a STRING (a numeric source
+    // spells its text out: `-3.75` IS the charset name), then
+    // `GetCharsetInfo` answers the bare 1105 `Unknown charset <name>`
+    // BEFORE any encoding work happens.
+    let charset_text = crate::coerce::coerce_str(charset)?.ok_or_else(|| {
+        EvalError::Unsupported("CHAR charset argument")
+    })?;
     let charset = charset_text.to_ascii_lowercase();
+    let collation_name = get_default_collation(&charset).map_err(|_| {
+        EvalError::Unsupported(Box::leak(format!("Unknown charset {charset}").into_boxed_str()))
+    })?;
     let (decoded, error) = find_encoding(&charset)
         .transform(&bytes, TransformOp::DECODE)
         .into_parts();
@@ -1922,14 +1935,10 @@ pub(crate) fn char_func_with_context(
             return Ok(Datum::Null);
         }
     }
-    // go `charFunctionClass` GetCharsetInfo: an unknown charset answers
-    // bare 1105 "Unknown charset <name>".
-    let collation_name = get_default_collation(&charset).map_err(|_| {
-        eprintln!("[DBG-CC2] collation lookup fail {charset}");
-        EvalError::Unsupported(Box::leak(format!("Unknown charset {charset}").into_boxed_str()))
-    })?;
     let collation = Collation::from_name(&collation_name)
-        .ok_or_else(|| { eprintln!("[DBG-CC3] collation from_name fail {collation_name}"); EvalError::Unsupported("CHAR charset argument") })?;
+        .ok_or_else(|| {
+            EvalError::Unsupported(Box::leak(format!("Unknown charset {charset}").into_boxed_str()))
+        })?;
     Ok(Datum::new_collation_string(decoded, collation))
 }
 

@@ -87,12 +87,23 @@ fn fold_constant_in_mode_inner(
     // Build a replacement without changing the original function, so rejecting
     // a warning-producing fold needs neither a tree copy nor a rollback.
     let warning_bookmark = (mode == ConstantFoldMode::Try).then(|| ctx.warning_count());
+    // A fold attempt whose evaluation ERRORED must leave no warnings: go
+    // keeps the original expression and the execution re-evaluates it,
+    // re-emitting the diagnostics. The swallowed error returns `None` like
+    // every non-foldable case; the count delta identifies it. The bookmark
+    // is PER-INVOCATION -- the stash is shared across the statement's fold
+    // attempts, so a rollback must not reach into an earlier node's kept
+    // diagnostics.
+    let error_bookmark = ctx.warning_count();
     let replacement = fold_current_value_in(expr, ctx, preserve_warning_casts);
     if let Some(bookmark) = warning_bookmark {
         if ctx.warning_count() > bookmark {
             ctx.truncate_warnings(bookmark);
             return;
         }
+    }
+    if replacement.is_none() && ctx.warning_count() > error_bookmark {
+        ctx.truncate_warnings(error_bookmark);
     }
     if let Some((folded, is_deferred)) = replacement {
         let original = std::mem::replace(expr, Expression::Constant(folded));
@@ -797,6 +808,22 @@ pub fn record_fold_warning(code: u16, message: &str) {
     });
 }
 
+/// The current stash depth, so a failed fold attempt can roll its own
+/// diagnostics back ([`truncate_fold_warnings`]).
+#[must_use]
+pub fn fold_warnings_len() -> usize {
+    FOLD_WARNINGS.with(|warnings| warnings.borrow().len())
+}
+
+/// Rolls the stash back to `len`: a fold attempt whose evaluation FAILED
+/// must leave no diagnostics behind -- go's foldConstant keeps the original
+/// expression and the EXECUTION re-evaluates it, re-emitting each warning
+/// exactly once. Keeping the failed attempt's warnings multiplied every
+/// statement-error warning (fold + scalar exec + chunk exec).
+pub fn truncate_fold_warnings(len: usize) {
+    FOLD_WARNINGS.with(|warnings| warnings.borrow_mut().truncate(len));
+}
+
 /// Drains this thread's fold warnings. The statement driver calls this right
 /// after planning, forwarding the pairs into the statement's warning buffer
 /// so `SHOW WARNINGS` and the OK packet's count see them.
@@ -833,5 +860,13 @@ impl Columns for FoldWarningContext {
 
     fn append_warning(&self, code: u16, message: &str) {
         record_fold_warning(code, message);
+    }
+
+    fn warning_count(&self) -> usize {
+        fold_warnings_len()
+    }
+
+    fn truncate_warnings(&self, bookmark: usize) {
+        truncate_fold_warnings(bookmark);
     }
 }

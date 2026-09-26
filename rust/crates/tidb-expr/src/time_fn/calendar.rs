@@ -789,7 +789,7 @@ pub(crate) fn date_add_with_result_fsp(
         return Ok(Datum::Null);
     };
     if unit.eq_ignore_ascii_case("HOUR") || unit.eq_ignore_ascii_case("MINUTE") {
-        let Some(n) = whole_interval_amount(unit, amount)? else {
+        let Some(n) = whole_interval_amount(unit, amount, ctx)? else {
             return Ok(Datum::Null);
         };
         let unit_micros = if unit.eq_ignore_ascii_case("HOUR") {
@@ -827,7 +827,7 @@ pub(crate) fn date_add_with_result_fsp(
         );
     }
     if unit.eq_ignore_ascii_case("MICROSECOND") {
-        let Some(n) = whole_interval_amount(unit, amount)? else {
+        let Some(n) = whole_interval_amount(unit, amount, ctx)? else {
             return Ok(Datum::Null);
         };
         let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
@@ -841,7 +841,7 @@ pub(crate) fn date_add_with_result_fsp(
             ctx,
         );
     }
-    let Some(n) = whole_interval_amount(unit, amount)? else {
+    let Some(n) = whole_interval_amount(unit, amount, ctx)? else {
         return Ok(Datum::Null);
     };
     // Every unit below scales the amount and adds it to a day or month count,
@@ -956,8 +956,29 @@ fn interval_date_text(date: &Datum, cols: &dyn Columns) -> Result<Option<String>
                 return Ok(None);
             }
         },
-        _ => return coerce_str(date),
+        _ => {
+            // go's getDateFromReal/getDateFromDecimal do not read the raw
+            // decimal text: the numeric value is truncated toward zero to an
+            // integer first (`1.75` -> `1`), and that integer goes through
+            // the SAME packed read as the INT source. The failure names the
+            // truncated integer (`Incorrect time value: '1'`), never the
+            // decimal text.
+            let n = match date {
+                Datum::Decimal(value) => value.round_to_i64_saturating(),
+                Datum::Real(value) => value.trunc() as i64,
+                _ => return coerce_str(date),
+            };
+            return interval_int_text(n, cols);
+        }
     };
+    interval_int_text(number, cols)
+}
+
+/// The INT-source read shared by `Datum::Int` and the truncating DECIMAL/REAL
+/// sources: parse TiDB's packed `YYYYMMDD[HHMMSS]` number, and when the
+/// number is not a valid datetime name the failure with go's warning text
+/// (`Incorrect time value: '<num>'`, 1292) before the NULL.
+fn interval_int_text(number: i64, cols: &dyn Columns) -> Result<Option<String>, EvalError> {
     let Ok(parsed) = tidb_datatype::parse_time_from_num(
         number,
         tidb_datatype::TimeType::DateTime,
@@ -971,6 +992,7 @@ fn interval_date_text(date: &Datum, cols: &dyn Columns) -> Result<Option<String>
         true,
         &chrono_tz::Tz::UTC,
     ) else {
+        cols.append_warning(1292, &format!("Incorrect time value: '{number}'"));
         return Ok(None);
     };
     let core = parsed.time.core_time();
@@ -1008,7 +1030,11 @@ fn parse_single_string_amount(unit: &str, s: &str) -> i64 {
     trimmed[..i].parse::<i64>().unwrap_or(i64::MAX)
 }
 
-pub(super) fn whole_interval_amount(unit: &str, amount: &Datum) -> Result<Option<i64>, EvalError> {
+pub(super) fn whole_interval_amount(
+    unit: &str,
+    amount: &Datum,
+    cols: &dyn Columns,
+) -> Result<Option<i64>, EvalError> {
     Ok(Some(match amount {
         Datum::Null => return Ok(None),
         Datum::Int(value) => *value,
@@ -1018,7 +1044,28 @@ pub(super) fn whole_interval_amount(unit: &str, amount: &Datum) -> Result<Option
             let Some(value) = coerce_str(amount)? else {
                 return Ok(None);
             };
-            parse_single_string_amount(unit, &value)
+            let n = parse_single_string_amount(unit, &value);
+            // go converts the string amount through a decimal first: a
+            // string that is not a clean decimal (no digit run, or anything
+            // left after it -- including a fraction, which truncates)
+            // warns `Truncated incorrect DECIMAL value: '<s>'` (1292)
+            // before the same leading-run value.
+            let trimmed = value.trim();
+            let after_sign = trimmed
+                .strip_prefix(['+', '-'])
+                .unwrap_or(trimmed);
+            let digits = after_sign
+                .len()
+                - after_sign
+                    .trim_start_matches(|c: char| c.is_ascii_digit())
+                    .len();
+            if digits == 0 || digits < after_sign.len() {
+                cols.append_warning(
+                    1292,
+                    &format!("Truncated incorrect DECIMAL value: '{value}'"),
+                );
+            }
+            n
         }
         Datum::Real(value) => value.round() as i64,
         Datum::MinNotNull | Datum::MaxValue => {

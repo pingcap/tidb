@@ -127,6 +127,7 @@ pub(crate) fn add_sub_untyped(
 }
 
 pub(crate) fn date_add_duration(
+    cols: &dyn Columns,
     unit: &str,
     date: &Datum,
     amount: &Datum,
@@ -177,13 +178,13 @@ pub(crate) fn date_add_duration(
         }
     } else {
         let nanos = match upper.as_str() {
-            "MICROSECOND" => super::calendar::whole_interval_amount(&upper, amount)?
+            "MICROSECOND" => super::calendar::whole_interval_amount(&upper, amount, cols)?
                 .and_then(|value| value.checked_mul(1_000)),
             "SECOND" => super::calendar::second_interval_micros(amount)?
                 .and_then(|value| value.checked_mul(1_000)),
-            "MINUTE" => super::calendar::whole_interval_amount(&upper, amount)?
+            "MINUTE" => super::calendar::whole_interval_amount(&upper, amount, cols)?
                 .and_then(|value| value.checked_mul(60_000_000_000)),
-            "HOUR" => super::calendar::whole_interval_amount(&upper, amount)?
+            "HOUR" => super::calendar::whole_interval_amount(&upper, amount, cols)?
                 .and_then(|value| value.checked_mul(3_600_000_000_000)),
             _ => return Ok(Datum::Null),
         };
@@ -385,6 +386,22 @@ fn str_datetime_add_duration(
     cols: &dyn Columns,
 ) -> Result<Datum, EvalError> {
     let Some(first) = parse_datetime(text) else {
+        // go's ParseTime reads a digit-only text through the packed-numeric
+        // path first: a value beyond the YYYYMMDD range (> 99991231, which
+        // includes every i64/u64 overflow) fails there and names the value
+        // with the TIME word (`Incorrect time value`), while every other
+        // text failure -- non-digit content, or a date-range value -- names
+        // the DATETIME word.
+        let trimmed = text.trim();
+        if !trimmed.is_empty()
+            && trimmed.bytes().all(|b| b.is_ascii_digit())
+            && trimmed
+                .parse::<i64>()
+                .map_or(true, |n| n > 99_991_231)
+        {
+            cols.append_warning(1292, &format!("Incorrect time value: '{text}'"));
+            return Ok(Datum::Null);
+        }
         // Go appends the parse error as a warning "regardless of the
         // sql_mode, this is compatible with MySQL" and answers NULL.
         cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));

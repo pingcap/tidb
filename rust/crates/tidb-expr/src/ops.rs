@@ -809,6 +809,31 @@ pub(crate) fn eval_binary_full(
         }
         return Ok(Datum::Decimal(quotient));
     }
+    // go's bit signatures declare `ETInt` arguments, and the implied casts
+    // wrap EACH OPERAND IN ITS OWN SOURCE TYPE: a `uint64` operand goes
+    // through `builtinCastUintAsIntSig` -- a silent two's-complement wrap --
+    // and a decimal operand rounds through `builtinCastDecimalAsIntSig`
+    // (warned only at the BIGINT saturation). Promoting the pair to Decimal
+    // instead -- the arithmetic rule -- made `bitand(18446744073709551615,
+    // 0.000001)` warn `Truncated incorrect DECIMAL value` against the u64,
+    // where go answers 0 with no warning at all.
+    if matches!(op, BitAnd | BitOr | BitXor | LeftShift | RightShift) {
+        let bits_of = |value: &Datum| -> Option<Result<i64, EvalError>> {
+            match value {
+                Datum::Int(value) => Some(Ok(*value)),
+                Datum::UInt(value) => Some(Ok(*value as i64)),
+                Datum::Decimal(value) => Some(decimal_bit_operand(value, ctx)),
+                _ => None,
+            }
+        };
+        if let (Some(a), Some(b)) = (bits_of(&l), bits_of(&r)) {
+            if l == Datum::Null || r == Datum::Null {
+                return Ok(Datum::Null);
+            }
+            let (a, b) = (a?, b?);
+            return integer_binary(op, Integer::Signed(a), Integer::Signed(b), ctx);
+        }
+    }
     // A Decimal operand (an Int operand promotes to a scale-0 decimal, MySQL's
     // implicit rule) arithmetics/compares exactly; handles its own NullEq.
     if matches!(l, Datum::Decimal(_)) || matches!(r, Datum::Decimal(_)) {
