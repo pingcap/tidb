@@ -70,7 +70,8 @@ func (eqh *Handle) Run() {
 			}
 			processInfo := sm.ShowProcessList()
 			for _, info := range processInfo {
-				if info.CurTxnStartTS != 0 {
+				// A snapshot read can have a start TS without an active transaction.
+				if info.CurTxnStartTS != 0 && !info.CurTxnCreateTime.IsZero() {
 					txnCostTime := time.Since(info.CurTxnCreateTime)
 					if txnCostTime >= time.Second*time.Duration(txnThreshold) {
 						if needMetrics {
