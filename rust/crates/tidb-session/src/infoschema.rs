@@ -804,6 +804,47 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
 fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        // Go's partition reader lists VIEWS as one all-NULL partition row of
+        // zero stats (oracle: d17.v beside d17.base) -- every partition cell
+        // NULL, the four stat cells at their zero/NULL defaults.
+        if matches!(
+            catalog.table_in(&schema, &table_name),
+            Some(TableEntry::View(_))
+        ) {
+            rows.push(vec![
+                Datum::Bytes(b"def".to_vec()),
+                Datum::Bytes(schema.clone().into_bytes()),
+                Datum::Bytes(table_name.clone().into_bytes()),
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::UInt(0),
+                Datum::UInt(0),
+                Datum::UInt(0),
+                Datum::Null,
+                Datum::UInt(0),
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+            ]);
+            continue;
+        }
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
@@ -1170,7 +1211,10 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("pd_cmd_fail_total_count", 4611686018427407978),
     ("pd_grpc_completed_commands_duration", 4611686018427407979),
     ("pd_grpc_completed_commands_rate", 4611686018427407980),
-    ("pd_grpc_completed_commands_total_count", 4611686018427407981),
+    (
+        "pd_grpc_completed_commands_total_count",
+        4611686018427407981,
+    ),
     ("pd_grpc_completed_commands_total_time", 4611686018427407982),
     ("pd_handle_transactions_duration", 4611686018427407983),
     ("pd_handle_transactions_rate", 4611686018427407984),
@@ -1231,12 +1275,27 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tidb_auto_id_request_total_count", 4611686018427408039),
     ("tidb_auto_id_request_total_time", 4611686018427408040),
     ("tidb_batch_client_pending_req_count", 4611686018427408041),
-    ("tidb_batch_client_unavailable_duration", 4611686018427408042),
-    ("tidb_batch_client_unavailable_total_count", 4611686018427408043),
-    ("tidb_batch_client_unavailable_total_time", 4611686018427408044),
+    (
+        "tidb_batch_client_unavailable_duration",
+        4611686018427408042,
+    ),
+    (
+        "tidb_batch_client_unavailable_total_count",
+        4611686018427408043,
+    ),
+    (
+        "tidb_batch_client_unavailable_total_time",
+        4611686018427408044,
+    ),
     ("tidb_batch_client_wait_conn_duration", 4611686018427408045),
-    ("tidb_batch_client_wait_conn_total_count", 4611686018427408046),
-    ("tidb_batch_client_wait_conn_total_time", 4611686018427408047),
+    (
+        "tidb_batch_client_wait_conn_total_count",
+        4611686018427408046,
+    ),
+    (
+        "tidb_batch_client_wait_conn_total_time",
+        4611686018427408047,
+    ),
     ("tidb_batch_client_wait_duration", 4611686018427408048),
     ("tidb_batch_client_wait_total_count", 4611686018427408049),
     ("tidb_batch_client_wait_total_time", 4611686018427408050),
@@ -1265,8 +1324,14 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tidb_ddl_total_count", 4611686018427408073),
     ("tidb_ddl_total_time", 4611686018427408074),
     ("tidb_ddl_update_self_version_duration", 4611686018427408075),
-    ("tidb_ddl_update_self_version_total_count", 4611686018427408076),
-    ("tidb_ddl_update_self_version_total_time", 4611686018427408077),
+    (
+        "tidb_ddl_update_self_version_total_count",
+        4611686018427408076,
+    ),
+    (
+        "tidb_ddl_update_self_version_total_time",
+        4611686018427408077,
+    ),
     ("tidb_ddl_waiting_jobs_num", 4611686018427408078),
     ("tidb_ddl_worker_duration", 4611686018427408079),
     ("tidb_ddl_worker_total_count", 4611686018427408080),
@@ -1279,8 +1344,14 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tidb_distsql_partial_num_total_count", 4611686018427408087),
     ("tidb_distsql_partial_qps", 4611686018427408088),
     ("tidb_distsql_partial_scan_key_num", 4611686018427408089),
-    ("tidb_distsql_partial_scan_key_num_total_count", 4611686018427408090),
-    ("tidb_distsql_partial_scan_key_total_num", 4611686018427408091),
+    (
+        "tidb_distsql_partial_scan_key_num_total_count",
+        4611686018427408090,
+    ),
+    (
+        "tidb_distsql_partial_scan_key_total_num",
+        4611686018427408091,
+    ),
     ("tidb_distsql_partial_total_num", 4611686018427408092),
     ("tidb_distsql_qps", 4611686018427408093),
     ("tidb_distsql_scan_key_num", 4611686018427408094),
@@ -1312,7 +1383,10 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tidb_handshake_error_total_count", 4611686018427408120),
     ("tidb_ia_remote_read_segment_count", 4611686018427408121),
     ("tidb_ia_remote_read_segment_size", 4611686018427408122),
-    ("tidb_ia_remote_read_segment_wait_time_histogram", 4611686018427408123),
+    (
+        "tidb_ia_remote_read_segment_wait_time_histogram",
+        4611686018427408123,
+    ),
     ("tidb_keep_alive_opm", 4611686018427408124),
     ("tidb_kv_backoff_duration", 4611686018427408125),
     ("tidb_kv_backoff_ops", 4611686018427408126),
@@ -1373,8 +1447,14 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tidb_schema_lease_error_total_count", 4611686018427408181),
     ("tidb_server_maxprocs", 4611686018427408182),
     ("tidb_slow_query_cop_process_duration", 4611686018427408183),
-    ("tidb_slow_query_cop_process_total_count", 4611686018427408184),
-    ("tidb_slow_query_cop_process_total_time", 4611686018427408185),
+    (
+        "tidb_slow_query_cop_process_total_count",
+        4611686018427408184,
+    ),
+    (
+        "tidb_slow_query_cop_process_total_time",
+        4611686018427408185,
+    ),
     ("tidb_slow_query_cop_wait_duration", 4611686018427408186),
     ("tidb_slow_query_cop_wait_total_count", 4611686018427408187),
     ("tidb_slow_query_cop_wait_total_time", 4611686018427408188),
@@ -1384,29 +1464,65 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tidb_slow_query_total_time", 4611686018427408192),
     ("tidb_statistics_auto_analyze_duration", 4611686018427408193),
     ("tidb_statistics_auto_analyze_ops", 4611686018427408194),
-    ("tidb_statistics_auto_analyze_total_count", 4611686018427408195),
-    ("tidb_statistics_auto_analyze_total_time", 4611686018427408196),
+    (
+        "tidb_statistics_auto_analyze_total_count",
+        4611686018427408195,
+    ),
+    (
+        "tidb_statistics_auto_analyze_total_time",
+        4611686018427408196,
+    ),
     ("tidb_statistics_manual_analyze_ops", 4611686018427408197),
     ("tidb_statistics_pseudo_estimation_ops", 4611686018427408198),
-    ("tidb_statistics_pseudo_estimation_total_count", 4611686018427408199),
+    (
+        "tidb_statistics_pseudo_estimation_total_count",
+        4611686018427408199,
+    ),
     ("tidb_statistics_stats_inaccuracy_rate", 4611686018427408200),
-    ("tidb_statistics_stats_inaccuracy_rate_total_count", 4611686018427408201),
-    ("tidb_statistics_stats_inaccuracy_total_rate", 4611686018427408202),
+    (
+        "tidb_statistics_stats_inaccuracy_rate_total_count",
+        4611686018427408201,
+    ),
+    (
+        "tidb_statistics_stats_inaccuracy_total_rate",
+        4611686018427408202,
+    ),
     ("tidb_statistics_update_stats_ops", 4611686018427408203),
-    ("tidb_statistics_update_stats_total_count", 4611686018427408204),
+    (
+        "tidb_statistics_update_stats_total_count",
+        4611686018427408204,
+    ),
     ("tidb_time_jump_back_ops", 4611686018427408205),
     ("tidb_transaction_duration", 4611686018427408206),
-    ("tidb_transaction_local_latch_wait_duration", 4611686018427408207),
-    ("tidb_transaction_local_latch_wait_total_count", 4611686018427408208),
-    ("tidb_transaction_local_latch_wait_total_time", 4611686018427408209),
+    (
+        "tidb_transaction_local_latch_wait_duration",
+        4611686018427408207,
+    ),
+    (
+        "tidb_transaction_local_latch_wait_total_count",
+        4611686018427408208,
+    ),
+    (
+        "tidb_transaction_local_latch_wait_total_time",
+        4611686018427408209,
+    ),
     ("tidb_transaction_ops", 4611686018427408210),
     ("tidb_transaction_retry_error_ops", 4611686018427408211),
-    ("tidb_transaction_retry_error_total_count", 4611686018427408212),
+    (
+        "tidb_transaction_retry_error_total_count",
+        4611686018427408212,
+    ),
     ("tidb_transaction_retry_num", 4611686018427408213),
-    ("tidb_transaction_retry_num_total_count", 4611686018427408214),
+    (
+        "tidb_transaction_retry_num_total_count",
+        4611686018427408214,
+    ),
     ("tidb_transaction_retry_total_num", 4611686018427408215),
     ("tidb_transaction_statement_num", 4611686018427408216),
-    ("tidb_transaction_statement_num_total_count", 4611686018427408217),
+    (
+        "tidb_transaction_statement_num_total_count",
+        4611686018427408217,
+    ),
     ("tidb_transaction_statement_total_num", 4611686018427408218),
     ("tidb_transaction_total_count", 4611686018427408219),
     ("tidb_transaction_total_time", 4611686018427408220),
@@ -1418,15 +1534,24 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tidb_txn_region_total_num", 4611686018427408226),
     ("tiflash_cpu_quota", 4611686018427408227),
     ("tiflash_process_cpu_usage", 4611686018427408228),
-    ("tiflash_resource_manager_resource_unit", 4611686018427408229),
+    (
+        "tiflash_resource_manager_resource_unit",
+        4611686018427408229,
+    ),
     ("tikv_active_written_leaders", 4611686018427408230),
     ("tikv_admin_apply", 4611686018427408231),
     ("tikv_allocator_stats", 4611686018427408232),
     ("tikv_apply_avg_wait_duration", 4611686018427408233),
     ("tikv_approximate_avg_region_size", 4611686018427408234),
     ("tikv_approximate_region_size", 4611686018427408235),
-    ("tikv_approximate_region_size_histogram", 4611686018427408236),
-    ("tikv_approximate_region_size_total_count", 4611686018427408237),
+    (
+        "tikv_approximate_region_size_histogram",
+        4611686018427408236,
+    ),
+    (
+        "tikv_approximate_region_size_total_count",
+        4611686018427408237,
+    ),
     ("tikv_approximate_region_total_size", 4611686018427408238),
     ("tikv_auto_gc_progress", 4611686018427408239),
     ("tikv_auto_gc_safepoint", 4611686018427408240),
@@ -1473,7 +1598,10 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_cop_handle_total_count", 4611686018427408281),
     ("tikv_cop_handle_total_time", 4611686018427408282),
     ("tikv_cop_kv_cursor_operations", 4611686018427408283),
-    ("tikv_cop_kv_cursor_operations_total_count", 4611686018427408284),
+    (
+        "tikv_cop_kv_cursor_operations_total_count",
+        4611686018427408284,
+    ),
     ("tikv_cop_request_duration", 4611686018427408285),
     ("tikv_cop_request_durations", 4611686018427408286),
     ("tikv_cop_request_total_count", 4611686018427408287),
@@ -1483,16 +1611,25 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_cop_scan_details_total", 4611686018427408291),
     ("tikv_cop_scan_keys_num", 4611686018427408292),
     ("tikv_cop_scan_keys_total_num", 4611686018427408293),
-    ("tikv_cop_total_response_size_per_seconds", 4611686018427408294),
+    (
+        "tikv_cop_total_response_size_per_seconds",
+        4611686018427408294,
+    ),
     ("tikv_cop_total_response_total_size", 4611686018427408295),
-    ("tikv_cop_total_rocksdb_perf_statistics", 4611686018427408296),
+    (
+        "tikv_cop_total_rocksdb_perf_statistics",
+        4611686018427408296,
+    ),
     ("tikv_cop_wait_duration", 4611686018427408297),
     ("tikv_cop_wait_total_count", 4611686018427408298),
     ("tikv_cop_wait_total_time", 4611686018427408299),
     ("tikv_coprocessor_is_busy", 4611686018427408300),
     ("tikv_coprocessor_is_busy_total_count", 4611686018427408301),
     ("tikv_coprocessor_request_error", 4611686018427408302),
-    ("tikv_coprocessor_request_error_total_count", 4611686018427408303),
+    (
+        "tikv_coprocessor_request_error_total_count",
+        4611686018427408303,
+    ),
     ("tikv_corrrput_keys_flow", 4611686018427408304),
     ("tikv_cpu_quota", 4611686018427408305),
     ("tikv_critical_error", 4611686018427408306),
@@ -1520,7 +1657,10 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_engine_blob_value_avg_size", 4611686018427408328),
     ("tikv_engine_blob_value_max_size", 4611686018427408329),
     ("tikv_engine_compaction_flow_bytes", 4611686018427408330),
-    ("tikv_engine_get_block_cache_operations", 4611686018427408331),
+    (
+        "tikv_engine_get_block_cache_operations",
+        4611686018427408331,
+    ),
     ("tikv_engine_get_cpu_cache_operations", 4611686018427408332),
     ("tikv_engine_get_memtable_operations", 4611686018427408333),
     ("tikv_engine_live_blob_size", 4611686018427408334),
@@ -1537,9 +1677,15 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_flush_messages", 4611686018427408345),
     ("tikv_flush_messages_total_num", 4611686018427408346),
     ("tikv_futurepool_handled_tasks", 4611686018427408347),
-    ("tikv_futurepool_handled_tasks_total_num", 4611686018427408348),
+    (
+        "tikv_futurepool_handled_tasks_total_num",
+        4611686018427408348,
+    ),
     ("tikv_futurepool_pending_tasks", 4611686018427408349),
-    ("tikv_futurepool_pending_tasks_total_num", 4611686018427408350),
+    (
+        "tikv_futurepool_pending_tasks_total_num",
+        4611686018427408350,
+    ),
     ("tikv_gc_fail_tasks", 4611686018427408351),
     ("tikv_gc_keys", 4611686018427408352),
     ("tikv_gc_keys_total_num", 4611686018427408353),
@@ -1576,19 +1722,49 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_leader_missing", 4611686018427408384),
     ("tikv_local_reader_execute_requests", 4611686018427408385),
     ("tikv_local_reader_reject_requests", 4611686018427408386),
-    ("tikv_lock_manager_deadlock_detect_avg_duration", 4611686018427408387),
-    ("tikv_lock_manager_deadlock_detect_duration", 4611686018427408388),
-    ("tikv_lock_manager_deadlock_detect_total_count", 4611686018427408389),
-    ("tikv_lock_manager_deadlock_detect_total_time", 4611686018427408390),
-    ("tikv_lock_manager_deadlock_detector_leader", 4611686018427408391),
+    (
+        "tikv_lock_manager_deadlock_detect_avg_duration",
+        4611686018427408387,
+    ),
+    (
+        "tikv_lock_manager_deadlock_detect_duration",
+        4611686018427408388,
+    ),
+    (
+        "tikv_lock_manager_deadlock_detect_total_count",
+        4611686018427408389,
+    ),
+    (
+        "tikv_lock_manager_deadlock_detect_total_time",
+        4611686018427408390,
+    ),
+    (
+        "tikv_lock_manager_deadlock_detector_leader",
+        4611686018427408391,
+    ),
     ("tikv_lock_manager_detect_error", 4611686018427408392),
-    ("tikv_lock_manager_detect_error_total_count", 4611686018427408393),
+    (
+        "tikv_lock_manager_detect_error_total_count",
+        4611686018427408393,
+    ),
     ("tikv_lock_manager_handled_tasks", 4611686018427408394),
     ("tikv_lock_manager_wait_table", 4611686018427408395),
-    ("tikv_lock_manager_waiter_lifetime_avg_duration", 4611686018427408396),
-    ("tikv_lock_manager_waiter_lifetime_duration", 4611686018427408397),
-    ("tikv_lock_manager_waiter_lifetime_total_count", 4611686018427408398),
-    ("tikv_lock_manager_waiter_lifetime_total_time", 4611686018427408399),
+    (
+        "tikv_lock_manager_waiter_lifetime_avg_duration",
+        4611686018427408396,
+    ),
+    (
+        "tikv_lock_manager_waiter_lifetime_duration",
+        4611686018427408397,
+    ),
+    (
+        "tikv_lock_manager_waiter_lifetime_total_count",
+        4611686018427408398,
+    ),
+    (
+        "tikv_lock_manager_waiter_lifetime_total_time",
+        4611686018427408399,
+    ),
     ("tikv_memory", 4611686018427408400),
     ("tikv_memtable_hit", 4611686018427408401),
     ("tikv_memtable_size", 4611686018427408402),
@@ -1615,11 +1791,17 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_raft_log_speed", 4611686018427408423),
     ("tikv_raft_message_avg_batch_size", 4611686018427408424),
     ("tikv_raft_message_batch_size", 4611686018427408425),
-    ("tikv_raft_message_batch_size_total_count", 4611686018427408426),
+    (
+        "tikv_raft_message_batch_size_total_count",
+        4611686018427408426,
+    ),
     ("tikv_raft_message_batch_total_size", 4611686018427408427),
     ("tikv_raft_proposals", 4611686018427408428),
     ("tikv_raft_proposals_per_ready", 4611686018427408429),
-    ("tikv_raft_proposals_per_ready_total_count", 4611686018427408430),
+    (
+        "tikv_raft_proposals_per_ready_total_count",
+        4611686018427408430,
+    ),
     ("tikv_raft_proposals_per_total_ready", 4611686018427408431),
     ("tikv_raft_proposals_total_num", 4611686018427408432),
     ("tikv_raft_sent_messages", 4611686018427408433),
@@ -1627,7 +1809,10 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_raft_store_events_duration", 4611686018427408435),
     ("tikv_raft_store_events_total_count", 4611686018427408436),
     ("tikv_raft_store_events_total_time", 4611686018427408437),
-    ("tikv_raftstore_append_log_avg_duration", 4611686018427408438),
+    (
+        "tikv_raftstore_append_log_avg_duration",
+        4611686018427408438,
+    ),
     ("tikv_raftstore_append_log_duration", 4611686018427408439),
     ("tikv_raftstore_append_log_total_count", 4611686018427408440),
     ("tikv_raftstore_append_log_total_time", 4611686018427408441),
@@ -1638,7 +1823,10 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_raftstore_apply_wait_duration", 4611686018427408446),
     ("tikv_raftstore_apply_wait_total_count", 4611686018427408447),
     ("tikv_raftstore_apply_wait_total_time", 4611686018427408448),
-    ("tikv_raftstore_commit_log_avg_duration", 4611686018427408449),
+    (
+        "tikv_raftstore_commit_log_avg_duration",
+        4611686018427408449,
+    ),
     ("tikv_raftstore_commit_log_duration", 4611686018427408450),
     ("tikv_raftstore_commit_log_total_count", 4611686018427408451),
     ("tikv_raftstore_commit_log_total_time", 4611686018427408452),
@@ -1647,8 +1835,14 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_raftstore_process_total_count", 4611686018427408455),
     ("tikv_raftstore_process_total_time", 4611686018427408456),
     ("tikv_raftstore_propose_wait_duration", 4611686018427408457),
-    ("tikv_raftstore_propose_wait_total_count", 4611686018427408458),
-    ("tikv_raftstore_propose_wait_total_time", 4611686018427408459),
+    (
+        "tikv_raftstore_propose_wait_total_count",
+        4611686018427408458,
+    ),
+    (
+        "tikv_raftstore_propose_wait_total_time",
+        4611686018427408459,
+    ),
     ("tikv_read_amplication", 4611686018427408460),
     ("tikv_ready_handled", 4611686018427408461),
     ("tikv_receive_messages", 4611686018427408462),
@@ -1680,16 +1874,31 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_scheduler_keys_total_written", 4611686018427408488),
     ("tikv_scheduler_keys_written", 4611686018427408489),
     ("tikv_scheduler_keys_written_avg", 4611686018427408490),
-    ("tikv_scheduler_keys_written_total_count", 4611686018427408491),
-    ("tikv_scheduler_latch_wait_avg_duration", 4611686018427408492),
+    (
+        "tikv_scheduler_keys_written_total_count",
+        4611686018427408491,
+    ),
+    (
+        "tikv_scheduler_latch_wait_avg_duration",
+        4611686018427408492,
+    ),
     ("tikv_scheduler_latch_wait_duration", 4611686018427408493),
     ("tikv_scheduler_latch_wait_total_count", 4611686018427408494),
     ("tikv_scheduler_latch_wait_total_time", 4611686018427408495),
     ("tikv_scheduler_pending_commands", 4611686018427408496),
     ("tikv_scheduler_priority_commands", 4611686018427408497),
-    ("tikv_scheduler_processing_read_duration", 4611686018427408498),
-    ("tikv_scheduler_processing_read_total_count", 4611686018427408499),
-    ("tikv_scheduler_processing_read_total_time", 4611686018427408500),
+    (
+        "tikv_scheduler_processing_read_duration",
+        4611686018427408498,
+    ),
+    (
+        "tikv_scheduler_processing_read_total_count",
+        4611686018427408499,
+    ),
+    (
+        "tikv_scheduler_processing_read_total_time",
+        4611686018427408500,
+    ),
     ("tikv_scheduler_scan_details", 4611686018427408501),
     ("tikv_scheduler_scan_details_total_num", 4611686018427408502),
     ("tikv_scheduler_stage", 4611686018427408503),
@@ -1699,7 +1908,10 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_send_snapshot_total_count", 4611686018427408507),
     ("tikv_send_snapshot_total_time", 4611686018427408508),
     ("tikv_server_report_failures", 4611686018427408509),
-    ("tikv_server_report_failures_total_count", 4611686018427408510),
+    (
+        "tikv_server_report_failures_total_count",
+        4611686018427408510,
+    ),
     ("tikv_snapshot_kv_count", 4611686018427408511),
     ("tikv_snapshot_kv_count_total_count", 4611686018427408512),
     ("tikv_snapshot_kv_total_count", 4611686018427408513),
@@ -1710,18 +1922,36 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_snapshot_total_size", 4611686018427408518),
     ("tikv_sst_read_duration", 4611686018427408519),
     ("tikv_sst_read_max_duration", 4611686018427408520),
-    ("tikv_stall_conditions_changed_of_each_cf", 4611686018427408521),
-    ("tikv_storage_async_request_avg_duration", 4611686018427408522),
+    (
+        "tikv_stall_conditions_changed_of_each_cf",
+        4611686018427408521,
+    ),
+    (
+        "tikv_storage_async_request_avg_duration",
+        4611686018427408522,
+    ),
     ("tikv_storage_async_request_duration", 4611686018427408523),
-    ("tikv_storage_async_request_total_count", 4611686018427408524),
+    (
+        "tikv_storage_async_request_total_count",
+        4611686018427408524,
+    ),
     ("tikv_storage_async_request_total_time", 4611686018427408525),
     ("tikv_storage_async_requests", 4611686018427408526),
-    ("tikv_storage_async_requests_total_count", 4611686018427408527),
+    (
+        "tikv_storage_async_requests_total_count",
+        4611686018427408527,
+    ),
     ("tikv_storage_command_ops", 4611686018427408528),
     ("tikv_store_size", 4611686018427408529),
     ("tikv_thread_cpu", 4611686018427408530),
-    ("tikv_thread_nonvoluntary_context_switches", 4611686018427408531),
-    ("tikv_thread_voluntary_context_switches", 4611686018427408532),
+    (
+        "tikv_thread_nonvoluntary_context_switches",
+        4611686018427408531,
+    ),
+    (
+        "tikv_thread_voluntary_context_switches",
+        4611686018427408532,
+    ),
     ("tikv_threads_io", 4611686018427408533),
     ("tikv_threads_state", 4611686018427408534),
     ("tikv_total_keys", 4611686018427408535),
@@ -1776,9 +2006,7 @@ pub const PERFORMANCE_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("tikv_profile_cpu", 4611686018427397938),
 ];
 
-pub const SYS_TABLES: &[(&str, i64)] = &[
-    ("schema_unused_indexes", 122),
-];
+pub const SYS_TABLES: &[(&str, i64)] = &[("schema_unused_indexes", 122)];
 
 include!("metrics_tables_rows.rs");
 include!("cluster_config_rows.rs");
@@ -1891,8 +2119,20 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
     // metrics/performance machinery; the view's own creation time for sys;
     // the TIDB_TABLE_ID blocks the bootstrap assigned per schema).
     for (schema, schema_upper, tables, created, is_view) in [
-        ("metrics_schema", "METRICS_SCHEMA", METRICS_SCHEMA_TABLES, "1970-01-01 08:00:00", false),
-        ("performance_schema", "PERFORMANCE_SCHEMA", PERFORMANCE_SCHEMA_TABLES, "1970-01-01 08:00:00", false),
+        (
+            "metrics_schema",
+            "METRICS_SCHEMA",
+            METRICS_SCHEMA_TABLES,
+            "1970-01-01 08:00:00",
+            false,
+        ),
+        (
+            "performance_schema",
+            "PERFORMANCE_SCHEMA",
+            PERFORMANCE_SCHEMA_TABLES,
+            "1970-01-01 08:00:00",
+            false,
+        ),
         ("sys", "sys", SYS_TABLES, "2026-09-24 18:05:56", true),
     ] {
         let created = tidb_datatype::parse_time(
@@ -1911,10 +2151,18 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
                 text(CATALOG),
                 text(schema_upper),
                 text(table_name),
-                if is_view { text("VIEW") } else { text("SYSTEM VIEW") },
+                if is_view {
+                    text("VIEW")
+                } else {
+                    text("SYSTEM VIEW")
+                },
                 if is_view { Datum::Null } else { text("InnoDB") },
                 if is_view { Datum::Null } else { Datum::Int(10) },
-                if is_view { Datum::Null } else { text("Compact") },
+                if is_view {
+                    Datum::Null
+                } else {
+                    text("Compact")
+                },
             ];
             if is_view {
                 row.extend(std::iter::repeat_n(Datum::Null, 13));
@@ -2558,32 +2806,41 @@ fn events_rows() -> Vec<Vec<Datum>> {
 }
 
 fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
-    // go `SetTiDBIndexInTriangle`: every index of every visible table, one
-    // row per key part, with go's own column spellings (the expression parts
-    // carry COLUMN_NAME 'NULL' beside the expression text; the clustered
-    // table's primary reads CLUSTERED 'YES').
-    let mut rows = Vec::new();
+    // go `setDataFromIndexes`: `ListSchemasAndTables` walks schemas in
+    // ci-alphabetical order (`ListSchemas` sorts `AllSchemaNames`), and the
+    // tables of each schema in the meta KV's KEY BYTE ORDER —
+    // `meta.ListTables` scans the raw `t<id>` rows, so `t1063` sorts before
+    // `t428` and id length matters, not magnitude. Each visible table then
+    // contributes one row per key part, with go's own column spellings (the
+    // expression parts carry COLUMN_NAME 'NULL' beside the expression text;
+    // the clustered table's primary reads CLUSTERED 'YES').
+    let mut entries: Vec<(String, String, Vec<Datum>)> = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
+        let meta_key = format!("t{}", table.table_id);
         if let Some(offset) = table.pk_handle_offset() {
-            rows.push(vec![
-                text(&schema),
-                text(&table_name),
-                Datum::Int(0),
-                text("PRIMARY"),
-                Datum::Int(1),
-                text(&table.columns[offset].name),
-                Datum::Null,
-                text(""),
-                Datum::Null,
-                Datum::Int(0),
-                text("YES"),
-                text("YES"),
-                Datum::Int(0),
-                Datum::Null,
-            ]);
+            entries.push((
+                schema.to_lowercase(),
+                meta_key.clone(),
+                vec![
+                    text(&schema),
+                    text(&table_name),
+                    Datum::Int(0),
+                    text("PRIMARY"),
+                    Datum::Int(1),
+                    text(&table.columns[offset].name),
+                    Datum::Null,
+                    text(""),
+                    Datum::Null,
+                    Datum::Int(0),
+                    text("YES"),
+                    text("YES"),
+                    Datum::Int(0),
+                    Datum::Null,
+                ],
+            ));
         }
         for index in table.indexes() {
             for (position, offset) in index.column_offsets.iter().enumerate() {
@@ -2596,32 +2853,41 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                     .generated
                     .as_ref()
                     .map(|generated| generated.expr_text.clone());
-                rows.push(vec![
-                    text(&schema),
-                    text(&table_name),
-                    Datum::Int(i64::from(!index.unique)),
-                    text(&index.name),
-                    Datum::Int(position as i64 + 1),
-                    match &generated_expr {
-                        Some(_) => text("NULL"),
-                        None => text(&column.name),
-                    },
-                    if prefix > 0 { Datum::Int(prefix) } else { Datum::Null },
-                    text(&index.comment),
-                    match &generated_expr {
-                        Some(expr) => text(expr),
-                        None => Datum::Null,
-                    },
-                    Datum::Int(index.id),
-                    text(if index.visible { "YES" } else { "NO" }),
-                    text("NO"),
-                    Datum::Int(i64::from(index.global)),
-                    Datum::Null,
-                ]);
+                entries.push((
+                    schema.to_lowercase(),
+                    meta_key.clone(),
+                    vec![
+                        text(&schema),
+                        text(&table_name),
+                        Datum::Int(i64::from(!index.unique)),
+                        text(&index.name),
+                        Datum::Int(position as i64 + 1),
+                        match &generated_expr {
+                            Some(_) => text("NULL"),
+                            None => text(&column.name),
+                        },
+                        if prefix > 0 {
+                            Datum::Int(prefix)
+                        } else {
+                            Datum::Null
+                        },
+                        text(&index.comment),
+                        match &generated_expr {
+                            Some(expr) => text(expr),
+                            None => Datum::Null,
+                        },
+                        Datum::Int(index.id),
+                        text(if index.visible { "YES" } else { "NO" }),
+                        text("NO"),
+                        Datum::Int(i64::from(index.global)),
+                        Datum::Null,
+                    ],
+                ));
             }
         }
     }
-    rows
+    entries.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    entries.into_iter().map(|(_, _, row)| row).collect()
 }
 
 fn cluster_config_rows() -> Vec<Vec<Datum>> {
