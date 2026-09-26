@@ -3497,6 +3497,16 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                 }
             }
         }
+        if std::env::var("TIDB_DEBUG_DERIVE").is_ok() {
+            if let Ok((stats, reload)) = &result {
+                eprintln!(
+                    "DERIVE {} rows={} reload={}",
+                    node.base().base.tp(),
+                    stats.row_count(),
+                    reload
+                );
+            }
+        }
         match result {
             Ok((stats, reload)) => (node, (stats, reload, self_schema)),
             Err(error) => {
