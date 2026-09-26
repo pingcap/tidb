@@ -48,6 +48,11 @@ func newSampledFMSketch(pb *tipb.FMSketch, counts ndvCounts) *FMSketch {
 	return sketch
 }
 
+// Sampled reports whether the NDV of s is estimated from sampled rows.
+func (s *FMSketch) Sampled() bool {
+	return s != nil && s.ndvCounts != nil
+}
+
 func (s *FMSketch) sampledNDV() int64 {
 	counts := s.ndvCounts
 	// TiKV sets the sample count even if it sampled no row. The sketch is then
