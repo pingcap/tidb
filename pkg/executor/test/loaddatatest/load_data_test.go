@@ -154,6 +154,45 @@ func TestLoadDataInitParam(t *testing.T) {
 		exeerrors.ErrLoadDataWrongFormatConfig)
 }
 
+func TestLoadDataHardRowErrors(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ctx := tk.Session().(sessionctx.Context)
+	for _, tc := range []struct {
+		name, schema, data, errorText string
+	}{
+		{"regexp", "k varchar(20) primary key clustered, s varchar(64), g tinyint as (regexp_like('a',s)) stored", "k1|(\n", "regexp"},
+		{"json common handle", "k varchar(20) primary key clustered, s text, g json as (cast(s as json)) stored", "k1|oops\n", "Invalid JSON text"},
+		{"json integer handle", "k int primary key, s text, g json as (cast(s as json)) stored", "1|oops\n", "Invalid JSON text"},
+		{"json unique index", "k int unique, s text, g json as (cast(s as json)) stored", "1|oops\n", "Invalid JSON text"},
+		{"vector", "id int primary key, v vector(3) not null", "1\n", "VECTOR column 'v' cannot be null"},
+		{"recoverable null", "id int primary key, a int not null", "1|\\N\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, mode := range []string{"", "STRICT_TRANS_TABLES"} {
+				tk.MustExec("set sql_mode='" + mode + "'")
+				tk.MustExec("drop table if exists hard_row_error")
+				tk.MustExec("create table hard_row_error (" + tc.schema + ")")
+				ctx.SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
+					Build: func(string) (io.ReadCloser, error) { return mydump.NewStringReader(tc.data), nil },
+					Wg:    &sync.WaitGroup{},
+				})
+				err := tk.ExecToErr("load data local infile '/tmp/hard_row_error.txt' into table hard_row_error fields terminated by '|'")
+				if tc.errorText == "" {
+					require.NoError(t, err)
+					require.NotEmpty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+					tk.MustQuery("select id,a from hard_row_error").Check(testkit.Rows("1 0"))
+					continue
+				}
+				require.ErrorContains(t, err, tc.errorText)
+				require.NotContains(t, err.Error(), "runtime error")
+				tk.MustQuery("select count(*) from hard_row_error").Check(testkit.Rows("0"))
+			}
+		})
+	}
+}
+
 func TestLoadData(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
