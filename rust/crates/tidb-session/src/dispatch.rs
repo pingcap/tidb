@@ -1152,8 +1152,9 @@ impl Session {
         stmt: Stmt,
         privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
+        match self.prepare_bound_execution(sql, stmt, privilege_requests) {
             Ok(pending) => pending.collect(self),
-                        Err(error) => {
+            Err(error) => {
                 // A statement that fails at plan time produced no record set,
                 // so the record-set drain never runs: the fold's diagnostics
                 // must still reach the statement's warning list beside the
@@ -2867,8 +2868,6 @@ impl Session {
         output.map(PendingExecution::Complete)
     }
 
-    /// The query clauses this tier parses but cannot execute.
-    ///
     fn check_query_clauses(&self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
         Ok(())
     }

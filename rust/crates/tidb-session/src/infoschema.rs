@@ -1070,78 +1070,11 @@ fn information_schema_tables_rows() -> Vec<Vec<Datum>> {
         .collect()
 }
 
-include!("systables.rs");
-
 fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     // Go lists information_schema's own tables first -- the schema is first
     // in `database_names` -- and every one of them, served or not.
     let mut rows = information_schema_tables_rows();
-    // go seeds metrics_schema/performance_schema/sys with their own SYSTEM
-    // VIEW / VIEW rows (the oracle cells: the epoch CREATE_TIME for the
-    // metrics/performance machinery; the view's own creation time for sys;
-    // the TIDB_TABLE_ID blocks the bootstrap assigned per schema).
-    for (schema, schema_upper, tables, created, is_view) in [
-        (
-            "metrics_schema",
-            "METRICS_SCHEMA",
-            METRICS_SCHEMA_TABLES,
-            "1970-01-01 08:00:00",
-            false,
-        ),
-        (
-            "performance_schema",
-            "PERFORMANCE_SCHEMA",
-            PERFORMANCE_SCHEMA_TABLES,
-            "1970-01-01 08:00:00",
-            false,
-        ),
-        ("sys", "sys", SYS_TABLES, "2026-09-24 18:05:56", true),
-    ] {
-        for (table_name, table_id) in tables {
-            let mut row = vec![
-                text(CATALOG),
-                text(schema_upper),
-                text(table_name),
-                if is_view {
-                    text("VIEW")
-                } else {
-                    text("SYSTEM VIEW")
-                },
-                if is_view { Datum::Null } else { text("InnoDB") },
-                if is_view { Datum::Null } else { Datum::Int(10) },
-                if is_view { Datum::Null } else { text("Compact") },
-            ];
-            if is_view {
-                row.extend(std::iter::repeat_n(Datum::Null, 13));
-                row.push(text(created));
-                row.extend(std::iter::repeat_n(Datum::Null, 7));
-                row.push(text("VIEW"));
-            } else {
-                row.extend(std::iter::repeat_n(Datum::Int(0), 6));
-                row.push(Datum::Null);
-                row.push(text(created));
-                row.extend(std::iter::repeat_n(Datum::Null, 2));
-                row.push(text("utf8mb4_bin"));
-                row.push(Datum::Null);
-                row.push(text(""));
-                row.push(text(""));
-            }
-            row.push(Datum::Int(*table_id));
-            row.push(Datum::Null);
-            row.push(text("NONCLUSTERED"));
-            row.push(Datum::Null);
-            if is_view {
-                row.push(Datum::Null);
-                row.push(Datum::Null);
-                row.push(Datum::Null);
-            } else {
-                row.push(text("Normal"));
-                row.push(Datum::Null);
-                row.push(text(""));
-            }
-            rows.push(row);
-        }
-    }
+
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let table = match catalog.table_in(&schema, &table_name) {
             Some(TableEntry::Kv(table)) => table,
