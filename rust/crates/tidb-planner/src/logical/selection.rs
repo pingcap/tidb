@@ -218,6 +218,13 @@ impl LogicalSelection {
             }
         }
         let child = &child_stats[0];
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            eprintln!(
+                "[SELDERIVE] child_rows={} conds={}",
+                child.row_count(),
+                self.conditions.len()
+            );
+        }
         let mut scaled = child.scale(SELECTION_FACTOR, skew_ratio);
         scaled.set_group_ndvs(Vec::new());
         self.base.base.set_stats(Some(scaled.clone()));

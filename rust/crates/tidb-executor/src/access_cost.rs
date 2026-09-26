@@ -112,6 +112,21 @@ impl TableStatistics {
             .column_load_status
             .get(&id)
             .is_some_and(|status| status.is_essential_stats_loaded());
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            let backtrace = std::backtrace::Backtrace::force_capture();
+            eprintln!(
+                "[COLEST] id={} pseudo={} total_row_count={} ndv={} hist_len={} topn_present={} essential={} valid={}\nBACKTRACE:\n{}",
+                id,
+                self.pseudo,
+                column.total_row_count(),
+                column.histogram.ndv,
+                column.histogram.buckets.len(),
+                column.topn.is_some(),
+                essential,
+                column.is_valid_for_estimation(self.pseudo, essential),
+                backtrace
+            );
+        }
         column.is_valid_for_estimation(self.pseudo, essential).then_some(column)
     }
 
@@ -1793,6 +1808,20 @@ fn selectivity_of_conjuncts_with_path_context(
             resolver,
             range_context,
         )?;
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            eprintln!(
+                "[DETACH] col={} access_count={} ranges_len={} fallback={} not_null_mask={}",
+                column.name,
+                built.access_count,
+                built.ranges.len(),
+                range_fallback,
+                conjuncts
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, conjunct)| is_not_null_on_column(conjunct, offset, table, resolver))
+                    .count()
+            );
+        }
         if range_fallback {
             continue;
         }

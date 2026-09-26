@@ -2401,9 +2401,16 @@ impl OwnedRewrite for InitStats<'_> {
         mut node: LogicalPlan,
         _children: Vec<Self::Up>,
     ) -> (LogicalPlan, Self::Up) {
-        if !matches!(node, LogicalPlan::DataSource(_)) {
-            node.set_stats(None);
-        }
+        // Clear EVERY node's cached derived statistics, DataSources included.
+        // The sources' cached `stats_info` was derived from whatever histogram
+        // snapshot was loaded when the first derive ran -- commonly BEFORE
+        // `SyncWaitStatsLoadPoint` finishes the synchronous load (Go derives
+        // lazily at physical time, after the wait, so it never caches a cold
+        // estimate). Preserving the source's cached estimate here made every
+        // downstream derive early-return the cold value: TPC-DS q7's
+        // `eq(cd_education_status, 'Primary')` estimated 1.00 instead of
+        // 276934.43 and collapsed the whole plan's row counts.
+        node.set_stats(None);
         (node, ())
     }
 }

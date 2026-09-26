@@ -2577,6 +2577,22 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
     }
     let mut ranges = Vec::new();
     if access_count > 0 {
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            eprintln!(
+                "[RANGEBUILD] col={} points_after_intersect={} collation={:?} points={:?}",
+                column.name,
+                points.len(),
+                column.field_type.collation(),
+                points
+                    .iter()
+                    .map(|p| (
+                        format!("{:?}", p.value),
+                        p.excl,
+                        p.start
+                    ))
+                    .collect::<Vec<_>>()
+            );
+        }
         // Go converts string points to sort keys in `builder.build`, then
         // changes the field type to binary before `points2Ranges`. The points
         // may already be collation-key bytes (not SQL text), so applying the
@@ -2629,6 +2645,15 @@ pub(crate) fn detach_conds_for_column_with_context<'a>(
                 high_exclusive: range.high_exclude,
             })
             .collect();
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            eprintln!(
+                "[RANGEBUILT] col={} materialized_ranges={} first_low={:?} first_high={:?}",
+                column.name,
+                ranges.len(),
+                ranges.first().map(|r| format!("{:?}ex={}", r.low, r.low_exclusive)),
+                ranges.first().map(|r| format!("{:?}ex={}", r.high, r.high_exclusive))
+            );
+        }
         if column.prefix_len != UNSPECIFIED_LENGTH {
             ranges = union_ranges(ranges, true);
         }

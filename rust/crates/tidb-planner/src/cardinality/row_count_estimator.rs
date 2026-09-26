@@ -457,7 +457,24 @@ pub fn equal_row_count_on_column(
     // 1. TopN is exact.
     if let Some(topn) = column.topn.as_ref() {
         if let Some(count) = topn.query_bytes(encoded_value) {
+            if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                eprintln!(
+                    "PNTSEL col_id={} topn_hit count={}",
+                    column.histogram.id, count
+                );
+            }
             return Ok(RowEstimate::default_est(count as f64));
+        }
+        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+            eprintln!(
+                "PNTSEL col_id={} topn_miss encoded_len={} encoded_hex={} topn_len={} min_count={} hist_ndv={}",
+                column.histogram.id,
+                encoded_value.len(),
+                encoded_value.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
+                topn.num(),
+                topn.min_count(),
+                histogram.ndv
+            );
         }
     }
     // 2. Bucket repeat / bucket NDV.
@@ -591,6 +608,35 @@ pub fn get_column_row_count(
 ) -> Result<RowEstimate, EstimationError> {
     let mut total = RowEstimate::default_est(0.0);
     let increase_factor = column.increase_factor(realtime_row_count);
+    if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+        for (range_index, range) in ranges.iter().enumerate() {
+            let variant = |d: &tidb_datatype::Datum| match d {
+                tidb_datatype::Datum::Bytes(_) => "Bytes",
+                tidb_datatype::Datum::String(_) => "String",
+                tidb_datatype::Datum::Int(_) => "Int",
+                tidb_datatype::Datum::UInt(_) => "UInt",
+                tidb_datatype::Datum::Real(_) => "Real",
+                tidb_datatype::Datum::Decimal(_) => "Decimal",
+                tidb_datatype::Datum::MinNotNull => "MinNotNull",
+                tidb_datatype::Datum::MaxValue => "MaxValue",
+                tidb_datatype::Datum::Null => "Null",
+                _ => "Other",
+            };
+            let low_variant = variant(&range.low);
+            let high_variant = variant(&range.high);
+            eprintln!(
+                "[COLRANGE] idx={} low={}/{} high={}/{} eq={} low_ex={} high_ex={}",
+                range_index,
+                low_variant,
+                format!("{:?}", range.low).len(),
+                high_variant,
+                format!("{:?}", range.high).len(),
+                range.low == range.high,
+                range.low_exclude,
+                range.high_exclude
+            );
+        }
+    }
 
     for range in ranges {
         // Go `getColumnRowCount` enters its point branch after preparing both

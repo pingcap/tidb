@@ -82,6 +82,9 @@ fn convert_points_in_place(
     table_range: bool,
     skip_plan_cache_reason: &mut Option<String>,
 ) -> Result<Vec<Point>, PointBuilderError> {
+    if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+        eprintln!("[CPIP] entry len={} skip_null={} table_range={}", range_points.len(), skip_null, table_range);
+    }
     let (min_value, max_value) = if new_tp.is_unsigned() {
         (Datum::UInt(0), Datum::UInt(u64::MAX))
     } else {
@@ -109,7 +112,26 @@ fn convert_points_in_place(
         if skip_null && matches!(end_point.value, Datum::Null) {
             continue;
         }
-        if !valid_interval(&start_point, &end_point)? {
+        let interval_valid = valid_interval(&start_point, &end_point)?;
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            let lkey = tidb_codec::encode_key(std::slice::from_ref(&start_point.value))
+                .map(|k| k.iter().map(|b| format!("{:02x}", b)).collect::<String>())
+                .unwrap_or_default();
+            let rkey = tidb_codec::encode_key(std::slice::from_ref(&end_point.value))
+                .map(|k| k.iter().map(|b| format!("{:02x}", b)).collect::<String>())
+                .unwrap_or_default();
+            eprintln!(
+                "[PAIR] start_excl={} end_excl={} start_val={:?} end_val={:?} lkey={} rkey={} valid={}",
+                start_point.excl,
+                end_point.excl,
+                start_point.value,
+                end_point.value,
+                lkey,
+                rkey,
+                interval_valid
+            );
+        }
+        if !interval_valid {
             continue;
         }
         kept.push(start_point);
@@ -156,6 +178,37 @@ pub fn points_to_ranges(
     range_max_size: i64,
     skip_plan_cache_reason: &mut Option<String>,
 ) -> Result<(Ranges, bool), PointBuilderError> {
+    // Go `newFieldType` (`ranger.go:779`): the ranger never converts an
+    // endpoint into the column's DECLARED length -- string/blob and float
+    // targets are cloned with `types.UnspecifiedLength` first, so a fixed
+    // `CHAR(n)` binary-collated target cannot NUL-pad a shorter endpoint
+    // (the pad compared above the original, the exclusivity repair closed
+    // the high bound, `valid_interval` then rejected the equal pair and
+    // `eq(cd_education_status, 'Primary')` estimated 1.00 instead of
+    // 276934.43 -- the whole plan's row counts collapsed).
+    let widened;
+    let new_tp = if matches!(
+        new_tp.code(),
+        tidb_datatype::FieldTypeCode::Float
+            | tidb_datatype::FieldTypeCode::Double
+            | tidb_datatype::FieldTypeCode::TinyBlob
+            | tidb_datatype::FieldTypeCode::MediumBlob
+            | tidb_datatype::FieldTypeCode::LongBlob
+            | tidb_datatype::FieldTypeCode::Blob
+            | tidb_datatype::FieldTypeCode::String
+            | tidb_datatype::FieldTypeCode::Varchar
+            | tidb_datatype::FieldTypeCode::VarString
+    ) && new_tp.flen() != tidb_datatype::UNSPECIFIED_LENGTH
+    {
+        widened = {
+            let mut clone = new_tp.clone();
+            clone.set_flen(tidb_datatype::UNSPECIFIED_LENGTH);
+            clone
+        };
+        &widened
+    } else {
+        new_tp
+    };
     let has_not_null = new_tp.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL != 0;
     let range_points = convert_points_in_place(
         range_points,

@@ -304,6 +304,14 @@ fn try_analyzed_filter_selectivity_in(
     options: &crate::cardinality::row_count_estimator::EstimatorOptions,
     evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Option<f64>, crate::cardinality::row_count_estimator::EstimationError> {
+    if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+        eprintln!(
+            "[AFSEL] enter conds={} ndvs_empty={} row_count={}",
+            conditions.len(),
+            table_stats.col_ndvs().is_empty(),
+            table_stats.row_count()
+        );
+    }
     if table_stats.col_ndvs().is_empty() {
         return Ok(None);
     }
@@ -914,7 +922,20 @@ fn histogram_point_selectivity(
     options: &crate::cardinality::row_count_estimator::EstimatorOptions,
 ) -> Option<Result<f64, crate::cardinality::row_count_estimator::EstimationError>> {
     let hist_coll = table_stats.hist_coll()?;
-    let column_stats = hist_coll.histogram_for_estimation(column.unique_id)?;
+    let column_stats = hist_coll.histogram_for_estimation(column.unique_id);
+    if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+        eprintln!(
+            "[HISTPNT] uid={} gate={:?}",
+            column.unique_id,
+            column_stats.as_ref().map(|c| (
+                c.total_row_count(),
+                c.histogram.ndv,
+                c.histogram.buckets.len(),
+                c.topn.is_some()
+            ))
+        );
+    }
+    let column_stats = column_stats?;
     // Go `getColumnRowCount` answers IN/point lists for a TopN-only column
     // (stats ver2 persists no histogram buckets for low-NDV columns) from
     // the TopN counts; rejecting an empty histogram here demoted TPC-H
