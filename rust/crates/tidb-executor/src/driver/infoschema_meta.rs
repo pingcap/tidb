@@ -3081,6 +3081,41 @@ const EVENTS_COLUMNS: &[InfoColumn] = &[
 
 
 
+const CLUSTER_CONFIG_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "TYPE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "INSTANCE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "KEY",
+        tp: FieldTypeCode::Varchar,
+        size: 256,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "VALUE",
+        tp: FieldTypeCode::LongBlob,
+        size: 16777216,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
 const TIDB_INDEXES_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -3968,6 +4003,7 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("EVENTS", EVENTS_COLUMNS),
     ("KEY_COLUMN_USAGE", KEY_COLUMN_USAGE_COLUMNS),
     ("CLUSTER_LOG", CLUSTER_LOG_COLUMNS),
+    ("CLUSTER_CONFIG", CLUSTER_CONFIG_COLUMNS),
     ("TIDB_INDEXES", TIDB_INDEXES_COLUMNS),
     ("INSPECTION_RESULT", INSPECTION_RESULT_COLUMNS),
     ("METRICS_TABLES", METRICS_TABLES_COLUMNS),

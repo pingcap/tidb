@@ -332,6 +332,9 @@ pub fn table_rows(
     if name.eq_ignore_ascii_case("METRICS_TABLES") {
         return Some(metrics_tables_rows());
     }
+    if name.eq_ignore_ascii_case("CLUSTER_CONFIG") {
+        return Some(cluster_config_rows());
+    }
     if name.eq_ignore_ascii_case("PARAMETERS") {
         return Some(parameters_rows());
     }
@@ -1778,6 +1781,7 @@ pub const SYS_TABLES: &[(&str, i64)] = &[
 ];
 
 include!("metrics_tables_rows.rs");
+include!("cluster_config_rows.rs");
 
 fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     // go's TABLES output lists the USER schemas first (the ci-alphabetical
@@ -2618,6 +2622,20 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
         }
     }
     rows
+}
+
+fn cluster_config_rows() -> Vec<Vec<Datum>> {
+    CLUSTER_CONFIG_ROWS
+        .iter()
+        .map(|cells| {
+            vec![
+                tidb_datatype::Datum::Bytes(cells[0].as_bytes().to_vec()),
+                tidb_datatype::Datum::Bytes(cells[1].as_bytes().to_vec()),
+                tidb_datatype::Datum::Bytes(cells[2].as_bytes().to_vec()),
+                tidb_datatype::Datum::Bytes(cells[3].as_bytes().to_vec()),
+            ]
+        })
+        .collect()
 }
 
 fn metrics_tables_rows() -> Vec<Vec<Datum>> {
