@@ -156,21 +156,11 @@ impl DecorrelateSolver {
         }
         if apply.cor_cols.is_empty() {
             // Go: "If the inner plan is non-correlated, the apply will be
-            // simplified to join." An anti-semi join produced here estimates
-            // as the preserved side verbatim (TPC-DS q78's NOT EXISTS:
-            // MergeJoin at the left's row count, no SelectionFactor), which
-            // the join's derive reproduces only through this marker.
-            apply.join.from_decorrelated_apply = matches!(
-                apply.join.join_type,
-                crate::find_best_task::LogicalJoinType::Semi
-                    | crate::find_best_task::LogicalJoinType::AntiSemi
-            );
-            if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
-                eprintln!(
-                    "[DECORR] join_type={:?} marked={}",
-                    apply.join.join_type, apply.join.from_decorrelated_apply
-                );
-            }
+            // simplified to join." An apply-decorrelated anti-semi keeps the
+            // source's `* cost.SelectionFactor` estimate (TPC-DS q16: the
+            // NOT EXISTS anti-semi = 1537.74 = the semi's 1922.18 * 0.8 on go
+            // master nightly); only OuterJoinToSemiJoin's LEFT-JOIN +
+            // IS-NULL conversion inherits the outer join's unscaled stats.
             return Self::optimize_children(ctx, LogicalPlan::Join(apply.join), group_by_column);
         }
         if apply.no_decorrelate {

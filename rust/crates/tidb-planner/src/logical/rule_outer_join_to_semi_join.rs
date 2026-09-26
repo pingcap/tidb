@@ -308,6 +308,11 @@ fn convert(
         std::mem::swap(&mut join.left_conditions, &mut join.right_conditions);
     }
     join.join_type = LogicalJoinType::AntiSemi;
+    // Go displays the converted anti-semi at the LEFT-OUTER's row count
+    // (TPC-DS q78: MergeJoin 71637785.35 = the preserved side's estimate):
+    // the outer join's cached stats survive the conversion, so the anti-semi
+    // derive's `* cost.SelectionFactor` never runs. Mark the provenance.
+    join.preserved_side_unscaled = true;
     join.base.base.set_schema(Some(outer_schema.clone()));
     // Go's base `OutputNames()` propagates from `children[0]`.
     let outer_names = join.base.children()[0].output_names().to_vec();

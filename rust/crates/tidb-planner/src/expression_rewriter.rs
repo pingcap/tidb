@@ -1044,6 +1044,9 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         not: bool,
         force_rewrite: bool,
     ) -> Result<LogicalPlan, RewriteError> {
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            eprintln!("[BUILDSJ] not={} as_scalar={} force={}", not, as_scalar, force_rewrite);
+        }
         let outer_schema = outer.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let inner_schema = inner.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let on_condition: Vec<Expression> = on_condition
@@ -1117,6 +1120,9 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         consider_rewrite: bool,
         mark_no_decorrelate: bool,
     ) -> Result<LogicalPlan, RewriteError> {
+        if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+            eprintln!("[BUILDSA] not={} as_scalar={} no_decorr={}", not, as_scalar, mark_no_decorrelate);
+        }
         let join =
             self.build_semi_join(outer, inner, condition, as_scalar, not, consider_rewrite)?;
         let LogicalPlan::Join(mut join) = join else {

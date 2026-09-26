@@ -120,7 +120,7 @@ pub struct LogicalJoin {
     /// Go `EqualCondOutCnt`: the estimated row count after `EqualConditions`.
     pub equal_cond_out_cnt: f64,
     /// Go `FromDecorrelatedApply`.
-    pub from_decorrelated_apply: bool,
+    pub preserved_side_unscaled: bool,
 }
 
 impl Default for LogicalJoin {
@@ -150,7 +150,7 @@ impl Default for LogicalJoin {
             redundant_cols_to_output_idx: BTreeMap::new(),
             prefer_correlate: false,
             equal_cond_out_cnt: 0.0,
-            from_decorrelated_apply: false,
+            preserved_side_unscaled: false,
         }
     }
 }
@@ -1127,16 +1127,25 @@ impl LogicalJoin {
         if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
             eprintln!(
                 "[JDERIVE] type={:?} from_apply={}",
-                self.join_type, self.from_decorrelated_apply
+                self.join_type, self.preserved_side_unscaled
             );
         }
-        // Go `LogicalJoin.DeriveStats` (`logical_join.go:580`): semi and
-        // anti-semi take the preserved side times SelectionFactor. The q78
-        // MergeJoin's unscaled display is a GO-SIDE ANOMALY (a cached-stats
-        // path this port does not reproduce); mirroring it with an unscaled
-        // anti-semi regressed TPC-DS q16/q69/q94's join orders (in-vivo: the
-        // Go q16 anti-semi estimates 1537.74 = 1922.18 * 0.8).
+        // Go's two anti-semi provenances estimate differently:
+        // * a DIRECTLY-built one (NOT IN/EXISTS, TPC-DS q16) takes the
+        //   preserved side times SelectionFactor (`logical_join.go:580`;
+        //   in-vivo 1537.74 = 1922.18 * 0.8).
+        // * one CONVERTED from a LEFT-OUTER join by `wr_order_number IS
+        //   NULL` (OuterJoinToSemiJoin, TPC-DS q78) inherits the outer
+        //   join's cached stats and displays the preserved side verbatim
+        //   (MergeJoin 71637785.35 = the left's row count). The conversion
+        //   rule stamps `preserved_side_unscaled` for this branch.
         let stats = match self.join_type {
+            LogicalJoinType::AntiSemi if self.preserved_side_unscaled => StatsInfo::new(
+                left.row_count(),
+                left.col_ndvs()
+                    .iter()
+                    .map(|(id, ndv)| (*id, *ndv)),
+            ),
             LogicalJoinType::Semi | LogicalJoinType::AntiSemi => StatsInfo::new(
                 left.row_count() * SELECTION_FACTOR,
                 left.col_ndvs()
@@ -1402,7 +1411,7 @@ impl LogicalJoin {
             redundant_cols_to_output_idx: self.redundant_cols_to_output_idx.clone(),
             prefer_correlate: self.prefer_correlate,
             equal_cond_out_cnt: self.equal_cond_out_cnt,
-            from_decorrelated_apply: self.from_decorrelated_apply,
+            preserved_side_unscaled: self.preserved_side_unscaled,
         }
     }
 }
