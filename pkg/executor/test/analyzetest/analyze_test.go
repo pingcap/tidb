@@ -1484,7 +1484,7 @@ PARTITION BY RANGE ( a ) (
 	))
 
 	// analyze partition with existing table-level options and existing partition stats under dynamic
-	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", tableInfo.ID, 0, 0, 2, 2, "DEFAULT", "")
+	tk.MustExec("insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values (?,?,?,?,?,?,?)", tableInfo.ID, 0, 0, 2, 2, "DEFAULT", "")
 	tk.MustExec("set global tidb_persist_analyze_options = true")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1494,7 +1494,7 @@ PARTITION BY RANGE ( a ) (
 	))
 
 	// analyze partition with existing table-level & partition-level options and existing partition stats under dynamic
-	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
+	tk.MustExec("insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/5) as the sample-rate=1\"",
@@ -2327,10 +2327,18 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
 	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	lastRate := func(partition string) string {
+		return fmt.Sprintf("select job_info from mysql.analyze_jobs where table_name='ndv' and partition_name='%s' order by id desc limit 1", partition)
+	}
 	defer tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
 	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
 	// The mock server is a legacy peer: a sampled request may get full-input results.
 	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
+	// A plain ANALYZE reuses the saved NDVRATE until DEFAULT clears it.
+	tk.MustExec("analyze table ndv")
+	tk.MustQuery(lastRate("p0")).CheckContain("0.1 ndvrate")
+	tk.MustExec("analyze table ndv with default NDVRATE")
+	tk.MustQuery(lastRate("p0")).CheckNotContain("ndvrate")
 }

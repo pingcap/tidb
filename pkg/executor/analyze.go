@@ -585,7 +585,8 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 // default in the table definition is the source of truth for how "unset" is
 // persisted and this writer cannot drift from it across releases.
 // The reader keeps its own sentinels: getSavedAnalyzeOpts treats sample_num,
-// sample_rate and buckets as unset when not positive, and topn when negative.
+// sample_rate, buckets and ndv_rate as unset when not positive, and topn when
+// negative.
 // Those must stay consistent with the column defaults; changing a default here
 // without changing the reader would turn "unset" into a pinned value.
 func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOptionType]uint64, optType ast.AnalyzeOptionType) {
@@ -594,7 +595,7 @@ func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOption
 		sql.WriteString("DEFAULT")
 		return
 	}
-	if optType == ast.AnalyzeOptSampleRate {
+	if optType == ast.AnalyzeOptSampleRate || optType == ast.AnalyzeOptNDVRate {
 		sqlescape.MustFormatSQL(sql, "%?", math.Float64frombits(val))
 		return
 	}
@@ -623,7 +624,7 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 		}
 	}
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids,ndv_rate) VALUES ")
 	idx := 0
 	for _, opts := range toSaveMap {
 		colChoice := opts.ColChoice.String()
@@ -640,7 +641,9 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumBuckets)
 		sql.WriteString(",")
 		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumTopN)
-		sqlescape.MustFormatSQL(sql, ",%?,%?)", colChoice, colIDStrs)
+		sqlescape.MustFormatSQL(sql, ",%?,%?,", colChoice, colIDStrs)
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNDVRate)
+		sql.WriteString(")")
 		if idx < len(toSaveMap)-1 {
 			sqlescape.MustFormatSQL(sql, ",")
 		}
@@ -673,6 +676,7 @@ func resetAnalyzeOptionsForPartitions(ctx context.Context, exec sqlexec.Restrict
 		{ast.AnalyzeOptSampleRate, "sample_rate"},
 		{ast.AnalyzeOptNumBuckets, "buckets"},
 		{ast.AnalyzeOptNumTopN, "topn"},
+		{ast.AnalyzeOptNDVRate, "ndv_rate"},
 	}
 	sql := new(strings.Builder)
 	sql.WriteString("UPDATE mysql.analyze_options SET ")

@@ -567,6 +567,26 @@ func TestAnalyzeWithDefaultResetsSavedOptions(t *testing.T) {
 	require.True(t, hasAdaptiveSampleRateNote())
 	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 0 -1 ALL"))
 
+	// NDVRATE persists like SAMPLERATE. A zero threshold makes a run read every
+	// row but keeps the saved rate; 1 pins full input and DEFAULT clears it.
+	defer tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	ndvQuery := fmt.Sprintf("select ndv_rate from mysql.analyze_options where table_id = %d", tableInfo.ID)
+	lastRunSampled := "select job_info like '%0.5 ndvrate%' from mysql.analyze_jobs where table_name = 't' order by id desc limit 1"
+	tk.MustExec("analyze table t with 0.5 NDVRATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("0.5"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery(lastRunSampled).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 0")
+	tk.MustExec("analyze table t")
+	tk.MustQuery(lastRunSampled).Check(testkit.Rows("0"))
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("0.5"))
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	tk.MustExec("analyze table t with 1 NDVRATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("1"))
+	tk.MustExec("analyze table t with default NDVRATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("-1"))
+
 	// With persistence off there is no saved value to reset, so DEFAULT only
 	// means "use the system default for this run": it is accepted, the run
 	// follows tidb_analyze_default_num_buckets, and the persisted row that an

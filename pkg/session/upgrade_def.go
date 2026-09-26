@@ -538,7 +538,8 @@ const (
 	// version317 adds the OPERATE VIEW static privilege.
 	version317 = 317
 
-	// version318 keeps sampled NDV off on upgraded clusters.
+	// version318 adds ndv_rate to mysql.analyze_options and keeps sampled NDV
+	// off on upgraded clusters.
 	version318 = 318
 )
 
@@ -2363,5 +2364,6 @@ func upgradeToVer317(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer318(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_options ADD COLUMN IF NOT EXISTS ndv_rate DOUBLE NOT NULL DEFAULT -1")
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeSampledNDVThreshold, 0)
 }

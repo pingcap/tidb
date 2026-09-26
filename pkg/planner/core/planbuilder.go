@@ -2953,7 +2953,7 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 	// Deliberately not the analyze source: reading saved options is lightweight
 	// metadata work, not the heavy scan that background throttling targets.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids,ndv_rate from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
 		return nil, ast.DefaultChoice, nil, err
 	}
@@ -2977,6 +2977,9 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 	topn := row.GetInt64(3)
 	if topn >= 0 {
 		analyzeOptions[ast.AnalyzeOptNumTopN] = uint64(topn)
+	}
+	if ndvRate := row.GetFloat64(6); ndvRate > 0 {
+		analyzeOptions[ast.AnalyzeOptNDVRate] = math.Float64bits(ndvRate)
 	}
 	colType := row.GetEnum(4)
 	switch colType.Name {
