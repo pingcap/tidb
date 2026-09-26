@@ -66,6 +66,17 @@ func init() {
 	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
 }
 
+// ListCachedStores returns every TiKV store opened in this process (each keyspace).
+func ListCachedStores() []kv.Storage {
+	mc.Lock()
+	defer mc.Unlock()
+	out := make([]kv.Storage, 0, len(mc.cache))
+	for _, s := range mc.cache {
+		out = append(out, s)
+	}
+	return out
+}
+
 // Option is a function that changes some config of Driver
 type Option func(*TiKVDriver)
 
