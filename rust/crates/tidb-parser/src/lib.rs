@@ -272,7 +272,18 @@ fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
     let stmt = checked_stmt.expect("a non-over-depth AST is retained by the depth checker");
     p.skip_semicolons();
     if !p.at_eof() {
-        return Err(p.err_here("unexpected trailing tokens"));
+        // go's parser parses the WHOLE input as a statement list: the
+        // trailing statements are parsed too, and the first failing one's
+        // own error surfaces with its anchor (oracle: `SELECT 1; BOGUS
+        // STATEMENT;` errors at column 5 near "BOGUS STATEMENT", inside the
+        // trailing statement -- not at its start).
+        loop {
+            p.skip_semicolons();
+            if p.at_eof() {
+                break;
+            }
+            p.parse_statement()?;
+        }
     }
     Ok(stmt)
 }
