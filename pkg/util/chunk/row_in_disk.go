@@ -128,9 +128,12 @@ func (l *DataInDiskByRows) GetChunk(chkIdx int) (*Chunk, error) {
 	go func() {
 		defer close(formatCh)
 
+		sr, release := l.dataFile.getSectionReader(firstRowOffset)
+		defer release()
+
 		// If the row is small, a bufio can significantly improve the performance. As benchmark shows, it's still not bad
 		// for longer rows.
-		r := bufio.NewReader(l.dataFile.getSectionReader(firstRowOffset))
+		r := bufio.NewReader(sr)
 		format := rowInDisk{numCol: len(l.fieldTypes)}
 		for range chkSize {
 			_, err = format.ReadFrom(r)
@@ -161,7 +164,8 @@ func (l *DataInDiskByRows) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row R
 	if err != nil {
 		return
 	}
-	r := l.dataFile.getSectionReader(off)
+	r, release := l.dataFile.getSectionReader(off)
+	defer release()
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {
@@ -174,7 +178,8 @@ func (l *DataInDiskByRows) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row R
 func (l *DataInDiskByRows) getOffset(chkIdx uint32, rowIdx uint32) (int64, error) {
 	offsetInOffsetFile := l.rowNumOfEachChunkFirstRow[chkIdx] + int(rowIdx)
 	b := make([]byte, 8)
-	reader := l.offsetFile.getSectionReader(int64(offsetInOffsetFile) * 8)
+	reader, release := l.offsetFile.getSectionReader(int64(offsetInOffsetFile) * 8)
+	defer release()
 	n, err := io.ReadFull(reader, b)
 	if err != nil {
 		return 0, err
