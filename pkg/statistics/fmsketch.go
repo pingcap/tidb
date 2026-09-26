@@ -56,12 +56,15 @@ const MaxSketchSize = 10000
 type FMSketch struct {
 	// A set to store unique hashed values.
 	hashset map[uint64]struct{}
+	// In sampled mode hashset holds singletons; repeated holds all other hashes.
+	sample   *ndvSample
+	repeated map[uint64]struct{}
 	// A binary mask used to track the maximum number of trailing zeroes in the hashed values.
 	// Also used to track the level of the sketch.
-	// Every time the size of the hashset exceeds the maximum size, the mask will be moved to the next level.
+	// Every time the number of hashes in hashset and repeated exceeds the maximum size, the mask will be moved to the next level.
 	mask uint64
-	// The maximum size of the hashset. If the size exceeds this value, the mask will be moved to the next level.
-	// And the hashset will only keep the hashed values with trailing zeroes greater than or equal to the new mask.
+	// The maximum number of hashes in hashset and repeated. If it is exceeded, the mask will be moved to the next level.
+	// And the sets will only keep the hashed values with trailing zeroes greater than or equal to the new mask.
 	maxSize int
 }
 
@@ -78,17 +81,26 @@ func (s *FMSketch) Copy() *FMSketch {
 	if s == nil {
 		return nil
 	}
-	return &FMSketch{
-		hashset: maps.Clone(s.hashset),
-		mask:    s.mask,
-		maxSize: s.maxSize,
+	copied := &FMSketch{
+		hashset:  maps.Clone(s.hashset),
+		repeated: maps.Clone(s.repeated),
+		mask:     s.mask,
+		maxSize:  s.maxSize,
 	}
+	if s.sample != nil {
+		value := *s.sample
+		copied.sample = &value
+	}
+	return copied
 }
 
 // NDV returns the estimated number of distinct values (NDV) in the sketch.
 func (s *FMSketch) NDV() int64 {
 	if s == nil {
 		return 0
+	}
+	if s.sample != nil {
+		return s.sampledNDV()
 	}
 	// The estimated count of distinct values is 2^r * count, where 'r' is the maximum number of trailing zeroes observed and 'count' is the number of unique hashed values.
 	// The fundamental idea is that the hash function maps the input domain onto a logarithmic scale.
@@ -105,14 +117,25 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 	if (hashVal & s.mask) != 0 {
 		return
 	}
+	// A sampled sketch moves a hash seen again from hashset to repeated.
+	if s.sample != nil {
+		if _, ok := s.repeated[hashVal]; ok {
+			return
+		}
+		if _, ok := s.hashset[hashVal]; ok {
+			delete(s.hashset, hashVal)
+			s.repeated[hashVal] = struct{}{}
+			return
+		}
+	}
 	// Put the hashed value into the hashset.
 	s.hashset[hashVal] = struct{}{}
 	// We track the unique hashed values level by level to ensure a minimum count of distinct values at each level.
 	// This way, the final estimation is less likely to be skewed by outliers.
-	if len(s.hashset) > s.maxSize {
-		// If the size of the hashset exceeds the maximum size, move the mask to the next level.
+	if len(s.hashset)+len(s.repeated) > s.maxSize {
+		// If the size of the hash sets exceeds the maximum size, move the mask to the next level.
 		s.mask = s.mask*2 + 1
-		// Clean up the hashset by removing the hashed values with trailing zeroes less than the new mask.
+		// Clean up the hash sets by removing the hashed values with trailing zeroes less than the new mask.
 		s.filterHashes()
 	}
 }
@@ -120,6 +143,7 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 func (s *FMSketch) filterHashes() {
 	rejected := func(hash uint64, _ struct{}) bool { return hash&s.mask != 0 }
 	maps.DeleteFunc(s.hashset, rejected)
+	maps.DeleteFunc(s.repeated, rejected)
 }
 
 // InsertValue inserts a value into the FM sketch.
@@ -180,16 +204,28 @@ func hashRow(sc *stmtctx.StatementContext, values []types.Datum) (uint64, error)
 	return hashFunc.Sum64(), nil
 }
 
-// MergeFMSketch merges two FM Sketch.
+// MergeFMSketch merges two FM Sketch. Sampled sketches come from the responses
+// of one ANALYZE request, so both inputs are sampled at the same rate or both
+// read every row.
 func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	if s == nil || rs == nil {
 		return
+	}
+	if s.sample != nil {
+		s.sample.rows += rs.sample.rows
+		s.sample.samples += rs.sample.samples
+		s.sample.nulls += rs.sample.nulls
 	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
 		s.filterHashes()
 	}
 	for key := range rs.hashset {
+		s.insertHashValue(key)
+	}
+	for key := range rs.repeated {
+		// A second insert moves the hash to repeated.
+		s.insertHashValue(key)
 		s.insertHashValue(key)
 	}
 }
@@ -250,6 +286,10 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 func (s *FMSketch) MemoryUsage() (sum int64) {
 	// As for the variables mask(uint64) and maxSize(int) each will consume 8 bytes. This is the origin of the constant 16.
 	// And for the variables hashset(map[uint64]struct{}), we estimate 8 bytes per entry (key size only, excluding Go map overhead).
-	sum = int64(16 + 8*len(s.hashset))
+	// A sampled sketch also keeps its repeated hashes and three 8-byte sample fields.
+	sum = int64(16 + 8*(len(s.hashset)+len(s.repeated)))
+	if s.sample != nil {
+		sum += 24
+	}
 	return
 }
