@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/stretchr/testify/require"
@@ -91,4 +92,20 @@ func TestDetectAndDelete(t *testing.T) {
 	for id := range InstanceMPPCoordinatorManager.coordinatorMap {
 		require.True(t, id.GatherID == 2 || id.GatherID == 3)
 	}
+}
+
+// TestReportStatusWithNilMeta verifies that a malformed ReportTaskStatusRequest
+// with a nil Meta returns an error response instead of panicking. ReportStatus
+// runs directly on the gRPC handler goroutine, which has no panic recovery, so a
+// nil-Meta dereference there would crash the whole tidb-server.
+func TestReportStatusWithNilMeta(t *testing.T) {
+	m := newMPPCoordinatorManger()
+
+	resp := m.ReportStatus(&mpp.ReportTaskStatusRequest{Meta: nil})
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error)
+
+	resp = m.ReportStatus(nil)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error)
 }
