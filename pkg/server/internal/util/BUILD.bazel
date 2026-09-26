@@ -4,6 +4,8 @@ go_library(
     name = "util",
     srcs = [
         "buffered_read_conn.go",
+        "socket_probe_other.go",
+        "socket_probe_unix.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/internal/util",
@@ -17,9 +19,15 @@ go_library(
 go_test(
     name = "util_test",
     timeout = "short",
-    srcs = ["util_test.go"],
+    srcs = [
+        "buffered_read_conn_test.go",
+        "util_test.go",
+    ],
     embed = [":util"],
     flaky = True,
-    shard_count = 3,
-    deps = ["@com_github_stretchr_testify//require"],
+    shard_count = 10,
+    deps = [
+        "@com_github_blacktear23_go_proxyprotocol//:go-proxyprotocol",
+        "@com_github_stretchr_testify//require",
+    ],
 )
