@@ -290,6 +290,7 @@ pub use tidb_distsql::ReplicaReadType;
 /// without depending on `tidb-distsql` directly.
 pub use tidb_distsql::WarningLevel as WarnLevel;
 pub use tidb_expr::builtin_registry::builtin_list;
+pub use tidb_expr::constant_fold::take_fold_warnings;
 pub use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
 pub use tidb_expr::CurrentTso;
 pub use tidb_expr::{

@@ -221,6 +221,17 @@ impl Session {
         }
     }
 
+    /// Moves the thread's constant-fold stash into the statement warning
+    /// list: the error doors' drain (a statement that fails before producing
+    /// a record set reports its fold-time warnings beside the error, in the
+    /// order go's buffer carries them -- the fold rows first, the error row
+    /// last).
+    pub fn drain_fold_stash(&mut self) {
+        for (code, message) in tidb_executor::take_fold_warnings() {
+            self.append_warning(WarningLevel::Warning, code, message);
+        }
+    }
+
     /// Records a warning raised by a cluster-routed statement after it has
     /// bypassed the ordinary session executor.
     pub fn append_routed_warning(&mut self, code: u16, message: String) {

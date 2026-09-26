@@ -2149,6 +2149,7 @@ impl Session {
     /// warning buffer (DDL 1050/1007/1008/1051/1146 et al reach SHOW
     /// WARNINGS exactly as the query door's errors do).
     pub fn record_ddl_failure(&mut self, code: u16, message: String) {
+        eprintln!("[DBG-DDLFAIL] {} {}", code, &message[..message.len().min(30)]);
         // go `driver_tidb.go:376` appends the error, but the DDL execution
         // path may have already recorded it (HandleStatusErr in the
         // executor's own error handling). Skip the duplicate so SHOW
@@ -2193,6 +2194,11 @@ impl Session {
                 .statement_finished(guard.id(), &self.current_db, &self.status_text());
         }
         if let Err(error) = &result {
+            // The statement's fold-time diagnostics precede the error row in
+            // go's buffer (FORMAT('x', 'y') keeps both coercion warnings
+            // beside the 1582); a plan-time failure produced no record set,
+            // so this door is the drain they get.
+            self.drain_fold_stash();
             let reported = error.clone().to_mysql_error();
             // Go's wire behavior is asymmetric per error class (captured on
             // the oracle with SHOW WARNINGS after each failure): 3140/3143/

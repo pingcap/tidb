@@ -1135,8 +1135,22 @@ impl Session {
         stmt: Stmt,
         privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
-        self.prepare_bound_execution(sql, stmt, privilege_requests)?
-            .collect(self)
+        match self.prepare_bound_execution(sql, stmt, privilege_requests) {
+            Ok(pending) => pending.collect(self),
+            Err(error) => {
+                eprintln!("[DBG-ERRARM] plan error arm drained");
+                // A statement that fails at plan time produced no record set,
+                // so the record-set drain never runs: the fold's diagnostics
+                // must still reach the statement's warning list beside the
+                // error (go's FORMAT('x', 'y') keeps both coercion warnings
+                // beside the 1582, and the error itself stays out of the
+                // buffer on the read door).
+                for (code, message) in tidb_executor::take_fold_warnings() {
+                    self.append_warning(WarningLevel::Warning, code, message);
+                }
+                Err(error)
+            }
+        }
     }
 
     pub(crate) fn prepare_bound_execution(
