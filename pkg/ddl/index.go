@@ -2036,6 +2036,11 @@ func isRetryableError(err error, retryUnknown bool) bool {
 		}
 	}
 	originErr := errors.Cause(err)
+	if errdef.ErrNoLeader.Equal(originErr) ||
+		errdef.ErrKVNotLeader.Equal(originErr) ||
+		errdef.ErrKVRegionNotFound.Equal(originErr) {
+		return true
+	}
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
