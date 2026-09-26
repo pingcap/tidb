@@ -766,7 +766,7 @@ fn index_estimation_cross_validates_against_cms_maximum() {}
 /// datetime histogram with years 3580..4862 must survive range detaching of
 /// '8499-01-23'..'9961-07-23' without overflow and load its statistics.
 #[test]
-#[ignore = "session covers range execution after ANALYZE; Go's explicit LoadNeededHistograms lifecycle is not ported"]
+#[ignore = "executed by tidb-session cardinality_stats_loading before and after production async histogram loading; storage I/O uses a test double"]
 fn range_step_overflow_on_datetime_histogram() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1465

@@ -3555,3 +3555,42 @@ Go passes in 0.489s; failpoints disabled afterward. Logs:
 integration fixture, source mapping, this audit, cardinality ExecPlan and receipt.
 No production/Go/Bazel changes; no runtime compatibility or performance change.
 Whole-package inventory, live-cluster and workload gates remain incomplete.
+
+
+### Datetime overflow across asynchronous statistics loading (2026-09-26)
+
+The original Go `TestRangeStepOverflow` was represented by SQL execution after
+ANALYZE only. The active session fixture now uses its exact three datetime rows
+(years 3580/4055/4862) and range (8499 through 9961), evicts the column payload,
+runs the query, asserts async demand, drains the production Catalog loader,
+asserts one full-load request and full-load status, and reruns the query. Both
+results are empty and the loaded replan does not enqueue again. The existing
+StoredStatistics storage test double serves the original ANALYZE payload;
+queue ownership, publication and subsequent planning remain production code.
+No production behavior changed. This closes the mapped execution/loading test
+boundary, not live TiKV loading or complete package parity.
+
+Validation from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --test cardinality_stats_loading -- --test-threads=1
+    make lint
+    git diff --check
+
+All three lifecycle tests, lint and diff checks pass. Original Go validation
+from /private/tmp/tidb-go-master-20260923:
+
+    GOTOOLCHAIN=go1.25.12 ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRangeStepOverflow$' -count=1
+
+Go passes in 0.463s on pin 633a9e37f1c796ac81c203dc107025e7e65385f0;
+failpoints disabled afterward. The cardinality tree is unchanged on refreshed
+master 8936d7bdcb13a4fc767de42489aace2711c2c6fd. Logs:
+/private/tmp/tidb-range-loading-{rust,go,lint}.log. Changed files: the standalone
+session fixture, source mapping, this audit, ExecPlan and receipt. No runtime
+compatibility/performance changes; live storage and workload gates remain open.
+
+Next structural context gap confirmed during this audit: equal_row_count_on_column
+still passes no timezone to QueryValue, and cardinality encodes range bounds with
+encode_key rather than encode_key_in_timezone. Go uses the statement timezone
+for both. EstimatorOptions currently contains only copyable risk/count settings;
+the fix needs a shared statement-context contract across estimator consumers,
+not a special timestamp adjustment in one caller. This remains unimplemented.

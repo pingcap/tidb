@@ -10,6 +10,8 @@ Rust planning must estimate rows, selectivity, distinct values, and row sizes th
 
 ## Progress
 
+- [x] (2026-09-26) Exercise original datetime range-overflow SQL before and after production Catalog async loading: demand, one request, full-load status, empty results and no requeue all hold. Three lifecycle tests, original Go case, lint and diff checks pass. Storage I/O remains a test double.
+
 - [x] (2026-09-25) Extend the original unanalyzed-IN fixture through encoded statistics storage updates, repeated lite/full cache initialization and the production planner view. Both exact Go plans and existence metadata survive every stage. Two session cases, 14 source cases, original Go fixture, lint and diff checks pass. Background update orchestration and live TiKV remain outside this evidence.
 
 - [x] (2026-09-25) Restore aggregate cluster DDL/ANALYZE compilation and validate 102 DDL plus three storage cases; preserve ALTER/RENAME identity semantics and shared collation admission. See the structural audit for commands and regression evidence.
@@ -546,3 +548,8 @@ Initialization coverage update (2026-09-25): the prior builtin-IN initialization
 mapping gap now has executable storage-loader/cache/planner evidence in
 cardinality_stats_loading. No production change was needed. Commands, test-double
 boundaries and remaining whole-package gates are in the structural audit.
+
+
+Range loading update (2026-09-26): replace the stale unported-loader mapping
+with the active cardinality_stats_loading fixture. The structural audit records
+commands, boundaries and the next shared statement-timezone contract gap.

@@ -426,3 +426,67 @@ fn builtin_in_estimate_survives_statistics_initialization() {
         }
     }
 }
+
+/// Go TestRangeStepOverflow must survive both an evicted histogram and the
+/// subsequent async load. The large datetime span exercises typed range
+/// enumeration rather than a small integer-only surrogate.
+#[test]
+fn datetime_range_overflow_survives_async_statistics_load() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(col DATETIME)").unwrap();
+    session.run("INSERT INTO t VALUES('3580-05-26 07:16:48'),('4055-03-06 22:27:16'),('4862-01-26 07:16:54')").unwrap();
+    session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("SET tidb_stats_load_sync_wait=0").unwrap();
+    let shared = session.shared_catalog();
+    let (table_id, column_id, loader) = {
+        let mut catalog = shared.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
+            panic!("not KV")
+        };
+        let table_id = table.table_id;
+        let column_id = table.columns[0].id;
+        let analyzed = catalog.table_statistics(table_id).unwrap();
+        let mut evicted = (*analyzed).clone();
+        let column = evicted.columns.get_mut(&column_id).unwrap();
+        column.histogram.buckets.clear();
+        column.topn = None;
+        column.cms = None;
+        evicted
+            .column_load_status
+            .insert(column_id, tidb_stats::StatsLoadedStatus::all_evicted());
+        let loader = Arc::new(StoredStatistics {
+            table_id,
+            analyzed,
+            loaded: Mutex::new(evicted.clone()),
+            requests: Mutex::new(Vec::new()),
+        });
+        catalog.set_table_statistics(table_id, Arc::new(evicted));
+        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
+        (table_id, column_id, loader)
+    };
+    let sql = "SELECT * FROM t WHERE col BETWEEN '8499-1-23 2:14:38' AND '9961-7-23 18:35:26'";
+    assert!(rows(&mut session, sql).is_empty());
+    let queued = || {
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            .all_items()
+            .into_iter()
+            .any(|item| item.table_item_id.table_id == table_id)
+    };
+    assert!(queued(), "the first query must request evicted statistics");
+    {
+        let catalog = shared.lock().unwrap();
+        catalog.load_needed_histograms("default").unwrap();
+        assert!(
+            catalog
+                .table_statistics(table_id)
+                .unwrap()
+                .column_load_status[&column_id]
+                .is_full_load()
+        );
+    }
+    assert!(!queued());
+    assert_eq!(loader.requests.lock().unwrap().len(), 1);
+    assert!(rows(&mut session, sql).is_empty());
+    assert!(!queued(), "loaded statistics must not be requested again");
+}

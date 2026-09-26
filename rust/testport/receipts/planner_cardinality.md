@@ -2958,3 +2958,11 @@ storage bytes. Exact plans and unanalyzed existence metadata remain stable.
 Two session and 14 source tests, original Go test, lint and diff checks pass.
 The structural audit records exact commands and limits: background update
 orchestration, live TiKV, full inventory and workload gates remain unverified.
+
+
+Datetime overflow loading checkpoint (2026-09-26): exact original Go rows/range
+now run before and after Catalog async statistics loading, with demand, full-load,
+request-count and no-requeue assertions. Three lifecycle tests, original Go test,
+lint and diff checks pass. No production change; stored payloads use a test
+double. Exact commands and limits are in the structural audit. Statement context,
+complete inventory, live-cluster and workload gates remain open.
