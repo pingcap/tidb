@@ -153,11 +153,18 @@ func TestP1DirtyRead(t *testing.T) {
 }
 
 func TestP2NonRepeatableRead(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithRetainData())
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
+	dbName := fmt.Sprintf("test_p2_non_repeatable_read_%d", os.Getpid())
+	session1.MustExec("drop database if exists " + dbName)
+	session1.MustExec("create database " + dbName)
+	t.Cleanup(func() {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("drop database if exists " + dbName)
+	})
+	session1.MustExec("use " + dbName + ";")
+	session2.MustExec("use " + dbName + ";")
 	session1.MustExec("set tidb_txn_mode = 'optimistic'")
 	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
