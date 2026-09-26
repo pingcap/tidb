@@ -1125,7 +1125,21 @@ impl LogicalJoin {
         let right = &child_stats[1];
         self.equal_cond_out_cnt = equal_cond_out_cnt;
         let stats = match self.join_type {
-            LogicalJoinType::Semi | LogicalJoinType::AntiSemi => StatsInfo::new(
+            // Go's effective behavior for an anti-semi join (the NOT EXISTS
+            // decorrelation, TPC-DS q78): the output equals the preserved
+            // side's estimate -- EXPLAIN shows MergeJoin(anti semi join) at
+            // the left's row count and the cost_trace prices it at the raw
+            // table count, with no SelectionFactor anywhere in the chain
+            // (LogicalJoin.DeriveStats's `* cost.SelectionFactor` branch is
+            // never reached for the decorrelated shape). The port priced it
+            // 0.8x and every downstream estimate inherited the factor.
+            LogicalJoinType::AntiSemi => StatsInfo::new(
+                left.row_count(),
+                left.col_ndvs()
+                    .iter()
+                    .map(|(id, ndv)| (*id, *ndv)),
+            ),
+            LogicalJoinType::Semi => StatsInfo::new(
                 left.row_count() * SELECTION_FACTOR,
                 left.col_ndvs()
                     .iter()
