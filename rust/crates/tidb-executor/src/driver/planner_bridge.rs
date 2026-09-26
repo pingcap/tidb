@@ -2821,6 +2821,13 @@ fn optimize_cte_class(
             if let Some(error) = failure {
                 return Err(error);
             }
+            if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+                eprintln!(
+                    "Q74LIGHT pushed: pushed_count={} remaining={}",
+                    pushed_count,
+                    remaining.len()
+                );
+            }
             let mut seed = if !remaining.is_empty() {
                 let query_block_offset = seed.base().base.query_block_offset();
                 let mut selection = LogicalSelection::new(
