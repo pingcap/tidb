@@ -1543,8 +1543,11 @@ func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPl
 			}
 		}
 	} else if la.PreferAggToCop {
-		// If the aggregation is preferred to be pushed down to coprocessor, we will prefer it.
-		if _, ok := childTasks[0].(*physicalop.CopTask); ok {
+		// Prefer a CopTask only when the current aggregation can be attached to its
+		// coprocessor side. Root-side conditions and IndexMerge partial plans force
+		// the aggregation to be attached after converting the task to root.
+		if cop, ok := childTasks[0].(*physicalop.CopTask); ok &&
+			len(cop.RootTaskConds) == 0 && len(cop.IdxMergePartPlans) == 0 {
 			return true
 		}
 	}
