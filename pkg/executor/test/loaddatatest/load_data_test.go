@@ -324,7 +324,6 @@ func TestLoadData(t *testing.T) {
 }
 
 func TestLoadDataEscape(t *testing.T) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -334,19 +333,27 @@ func TestLoadDataEscape(t *testing.T) {
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
-		{[]byte("1\ta string\n"), []string{"1|a string"}, trivialMsg},
-		{[]byte("2\tstr \\t\n"), []string{"2|str \t"}, trivialMsg},
-		{[]byte("3\tstr \\n\n"), []string{"3|str \n"}, trivialMsg},
-		{[]byte("4\tboth \\t\\n\n"), []string{"4|both \t\n"}, trivialMsg},
-		{[]byte("5\tstr \\\\\n"), []string{"5|str \\"}, trivialMsg},
-		{[]byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, trivialMsg},
-		{[]byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, trivialMsg},
-		{[]byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, trivialMsg},
-		{[]byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, trivialMsg},
+		{data: []byte("1\ta string\n"), expected: []string{"1|a string"}},
+		{data: []byte("2\tstr \\t\n"), expected: []string{"2|str \t"}},
+		{data: []byte("3\tstr \\n\n"), expected: []string{"3|str \n"}},
+		{data: []byte("4\tboth \\t\\n\n"), expected: []string{"4|both \t\n"}},
+		{data: []byte("5\tstr \\\\\n"), expected: []string{"5|str \\"}},
+		{data: []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), expected: []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}},
+		{data: []byte("7\trtn0ZbN\n"), expected: []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}},
+		{data: []byte("8\trtn0Zb\\N\n"), expected: []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}},
+		{data: []byte("9\ttab\\	tab\n"), expected: []string{"9|tab	tab"}},
 	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	// Load all escape cases together to cover SQL execution without starting a
+	// separate LOAD DATA job for each row.
+	combined := testCase{
+		expectedMsg: fmt.Sprintf("Records: %d  Deleted: 0  Skipped: 0  Warnings: 0", len(tests)),
+	}
+	for _, tt := range tests {
+		combined.data = append(combined.data, tt.data...)
+		combined.expected = append(combined.expected, tt.expected...)
+	}
+	checkCases([]testCase{combined}, loadSQL, t, tk, ctx,
+		"select * from load_data_test order by id", "delete from load_data_test")
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
