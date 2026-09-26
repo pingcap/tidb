@@ -124,7 +124,10 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	upgradeToVer318(se, version317)
 	assertValue(vardef.On, "500000000")
 
-	// Simulate an existing cluster before the version317 backfill.
+	// Simulate an existing cluster before the version317 backfill. It has no
+	// ndv_rate column yet, and its saved options must not gain a rate.
+	MustExec(t, se, "alter table mysql.analyze_options drop column ndv_rate")
+	MustExec(t, se, "insert into mysql.analyze_options (table_id) values (1)")
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version316)))
@@ -150,6 +153,12 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
 	assertValue(vardef.Off, "0")
+	res := MustExecToRecodeSet(t, se, "select ndv_rate from mysql.analyze_options where table_id = 1")
+	defer func() { require.NoError(t, res.Close()) }()
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, float64(-1), chk.GetRow(0).GetFloat64(0))
 }
 
 func TestUpgradeToVer282RefreshesBindingDigest(t *testing.T) {
