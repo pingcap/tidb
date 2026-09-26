@@ -377,6 +377,10 @@ func newPlanCacheKeyWithMatchedBinding(
 		_, timezoneOffset = time.Now().In(vars.TimeZone).Zone()
 	}
 	connCharset, connCollation := vars.GetCharsetInfo()
+	clientCharset, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.CharacterSetClient)
+	if err != nil {
+		return "", "", false, "", err
+	}
 
 	// not allow to share the same plan among different users for safety.
 	var userName, hostName string
@@ -398,6 +402,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	hashLen += len(clientCharset) + 1
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
@@ -443,6 +448,9 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, binding...)
 	hash = append(hash, connCharset...)
 	hash = append(hash, connCollation...)
+	// The same SQL bytes can produce different literals under different client charsets.
+	hash = append(hash, clientCharset...)
+	hash = append(hash, 0)
 	hash = append(hash, bool2Byte(vars.InRestrictedSQL))
 	hash = append(hash, bool2Byte(vardef.RestrictedReadOnly.Load()))
 	hash = append(hash, bool2Byte(vardef.VarTiDBSuperReadOnly.Load()))
