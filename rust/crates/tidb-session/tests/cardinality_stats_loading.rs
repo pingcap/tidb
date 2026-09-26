@@ -187,3 +187,242 @@ fn subset_index_cardinality_after_async_statistics_load() {
         "fully loaded replans must not enqueue statistics again"
     );
 }
+
+/// Storage bytes are in memory; bootstrap, DDL stats writes, delta writes,
+/// startup loaders, cache publication and planner conversion are production code.
+#[derive(Default)]
+struct StatsStorage(std::collections::BTreeMap<Vec<u8>, Vec<u8>>);
+
+impl tidb_exec::cluster_catalog::MetaSnapshot for StatsStorage {
+    fn get(
+        &mut self,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, tidb_exec::cluster_catalog::ClusterCatalogError> {
+        Ok(self.0.get(key).cloned())
+    }
+
+    fn scan_prefix(
+        &mut self,
+        prefix: &[u8],
+    ) -> Result<
+        tidb_exec::cluster_catalog::MetaPairs,
+        tidb_exec::cluster_catalog::ClusterCatalogError,
+    > {
+        Ok(self
+            .0
+            .iter()
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect())
+    }
+}
+
+impl StatsStorage {
+    fn apply(&mut self, mutations: &[tidb_txnkv::transaction::OptimisticMutation]) {
+        use tidb_txnkv::transaction::OptimisticMutationKind;
+        for mutation in mutations {
+            match mutation.kind() {
+                OptimisticMutationKind::LockOnly => {}
+                OptimisticMutationKind::MetaDelete
+                | OptimisticMutationKind::Delete
+                | OptimisticMutationKind::IndexDelete => {
+                    self.0.remove(mutation.key());
+                }
+                _ => {
+                    self.0
+                        .insert(mutation.key().to_vec(), mutation.value().to_vec());
+                }
+            }
+        }
+    }
+}
+
+struct CanonicalStatistics(Arc<tidb_exec::stats_watch::SharedStats>);
+
+impl tidb_executor::driver::StatisticsSource for CanonicalStatistics {
+    fn table(&self, id: i64) -> Option<Arc<tidb_stats::Table>> {
+        self.0
+            .load()
+            .get(&id)
+            .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+            .cloned()
+    }
+}
+
+/// Go TestBuiltinInEstWithoutStats, including the previously omitted
+/// InitStatsLite / InitStats / existence-map lifecycle.
+#[test]
+fn builtin_in_estimate_survives_statistics_initialization() {
+    use tidb_exec::cluster_stats_write::{
+        insert_table_stats_statements, plan_insert_table_stats_statement,
+        plan_stats_delta_statement, stats_delta_statements,
+    };
+    use tidb_exec::real_tikv_stats::{
+        InitialStatsLoad, StatsTarget, load_initial_stats_snapshot_with_memory_limits,
+    };
+
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT,b INT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
+        .unwrap();
+    let shared_catalog = session.shared_catalog();
+    let table_id = {
+        let catalog = shared_catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
+            panic!("not KV")
+        };
+        table.table_id
+    };
+    let parsed = tidb_parser::parse("CREATE TABLE t(a INT,b INT)").unwrap();
+    let tidb_ast::Stmt::Ddl(ddl) = parsed else {
+        panic!("not DDL")
+    };
+    let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
+        panic!("not CREATE")
+    };
+    let mut table = tidb_exec::table_info_build::build_table_info(
+        create,
+        "utf8mb4",
+        "utf8mb4_bin",
+        tidb_exec::table_info_build::ClusteredIndexDefMode::On,
+    )
+    .unwrap();
+    table.id = table_id;
+    let targets = StatsTarget::for_table(&table);
+    let now = tidb_datatype::Time::from_date_checked(
+        2026,
+        9,
+        25,
+        0,
+        0,
+        0,
+        0,
+        tidb_datatype::TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let mut storage = StatsStorage::default();
+    let bootstrap = tidb_exec::mysql_bootstrap::plan_mysql_bootstrap(
+        &mut storage,
+        100,
+        &tidb_exec::mysql_bootstrap::BootstrapEnvironment {
+            system_tz: "UTC".to_owned(),
+            new_collation_enabled: true,
+            cluster_id: 1,
+            current_timestamp: now,
+            ddl_table_version: 0,
+        },
+    )
+    .unwrap();
+    storage.apply(&bootstrap.mutations);
+    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut storage).unwrap();
+    for statement in insert_table_stats_statements(&table, table_id) {
+        let write = plan_insert_table_stats_statement(&mut storage, &catalog, &statement, 101, now)
+            .unwrap();
+        storage.apply(&write.mutations);
+    }
+    let updates = [tidb_stats_handle_usage::DeltaUpdate {
+        table_id,
+        delta: tidb_stats_handle_usage::TableDelta {
+            delta: 10,
+            count: 10,
+            init_time: None,
+        },
+        is_locked: false,
+    }];
+    for statement in stats_delta_statements(&updates) {
+        let write =
+            plan_stats_delta_statement(&mut storage, &catalog, &statement, 102, now).unwrap();
+        storage.apply(&write.mutations);
+    }
+    let loader = tidb_exec::cluster_stats_load::ClusterStatsLoader::locate(&catalog).unwrap();
+    let cache = Arc::new(tidb_exec::stats_watch::SharedStats::new(Default::default()).unwrap());
+    shared_catalog.lock().unwrap().set_statistics_view(Arc::new(
+        tidb_executor::driver::StatisticsView::new(Arc::new(CanonicalStatistics(cache.clone()))),
+    ));
+    // Update after the delta, clear/init-lite, clear/init-full, then Update
+    // again: retain Go's lifecycle order and the same planner-facing view.
+    for mode in [
+        None,
+        Some(InitialStatsLoad::Lite),
+        Some(InitialStatsLoad::IndexFull),
+        None,
+    ] {
+        let snapshot = if let Some(mode) = mode {
+            cache.store(Default::default());
+            assert!(
+                shared_catalog
+                    .lock()
+                    .unwrap()
+                    .table_statistics(table_id)
+                    .is_none()
+            );
+            load_initial_stats_snapshot_with_memory_limits(
+                &mut storage,
+                &loader,
+                &targets,
+                &[],
+                mode,
+                u64::MAX,
+                0,
+            )
+            .unwrap()
+        } else {
+            let current = cache.load();
+            let loaded = loader
+                .load_statistics_table_for_update(
+                    &mut storage,
+                    table_id,
+                    &table,
+                    &targets[0].column_types,
+                    current
+                        .get(&table_id)
+                        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                        .map(AsRef::as_ref),
+                )
+                .unwrap()
+                .unwrap();
+            std::collections::BTreeMap::from([(
+                table_id,
+                tidb_exec::stats_watch::TableStatsState::Loaded(loaded),
+            )])
+        };
+        cache.store(snapshot);
+        let canonical = cache.load()[&table_id].loaded().unwrap().clone();
+        let existence = canonical.existence_map.as_ref().unwrap().read().unwrap();
+        assert!(!existence.is_empty(), "{mode:?}");
+        for column in table.columns.iter_deref() {
+            assert!(!existence.has_analyzed(column.read().id, false), "{mode:?}");
+        }
+        drop(existence);
+        let stats = shared_catalog
+            .lock()
+            .unwrap()
+            .table_statistics(table_id)
+            .unwrap();
+        assert!(stats.pseudo, "{mode:?}");
+        assert!(!stats.cache_pseudo, "{mode:?}");
+        assert_eq!(
+            stats.column_stats_existence,
+            std::collections::BTreeMap::from([(1, false), (2, false)])
+        );
+        for column in ["a", "b"] {
+            let sql = format!(
+                "EXPLAIN FORMAT='brief' SELECT * FROM t WHERE {column} IN (1,2,3,4,5,6,7,8)"
+            );
+            assert_eq!(
+                rows(&mut session, &sql),
+                vec![
+                    "TableReader 1.00 root  data:Selection".to_owned(),
+                    format!(
+                        "└─Selection 1.00 cop[tikv]  in(test.t.{column}, 1, 2, 3, 4, 5, 6, 7, 8)"
+                    ),
+                    "  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+                        .to_owned(),
+                ],
+                "{mode:?}: {sql}"
+            );
+        }
+    }
+}

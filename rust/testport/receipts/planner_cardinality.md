@@ -2949,3 +2949,12 @@ Server check, Go reference cases, lint and diff checks pass. Exact commands and
 fail-before/pass-after evidence are in the structural audit. This remains seed
 and integration evidence, not completion of pkg/ddl or pkg/planner/cardinality;
 live-cluster, complete inventory and workload gates remain open.
+
+
+Unanalyzed-IN initialization checkpoint (2026-09-25): the original fixture now
+also runs production DDL/delta statistics writers, update and lite/full startup
+loaders, SharedStats publication and StatisticsView conversion against in-memory
+storage bytes. Exact plans and unanalyzed existence metadata remain stable.
+Two session and 14 source tests, original Go test, lint and diff checks pass.
+The structural audit records exact commands and limits: background update
+orchestration, live TiKV, full inventory and workload gates remain unverified.

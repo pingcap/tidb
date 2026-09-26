@@ -996,10 +996,12 @@ fn subset_idx_cardinality_after_async_stats_load() {}
 /// refreshes unchanged; ColAndIdxExistenceMap ends populated but with no
 /// analyzed columns. The initial post-delta EXPLAIN for both columns is
 /// exercised by `tidb_session::tests_explain::builtin_in_estimate_without_stats_keeps_selection_floor`;
-/// Rust's stats-handle InitStatsLite/InitStats refresh lifecycle is still not
-/// wired into that session path.
+/// `tidb-session --test cardinality_stats_loading` additionally runs the
+/// production persisted-statistics loaders, repeated cache initialization,
+/// planner view and existence-map assertions. Storage bytes are in memory;
+/// live TiKV and background refresh scheduling remain separate gates.
 #[test]
-#[ignore = "Go's repeated stats initialization and ColAndIdxExistenceMap assertions are not wired through the Rust session"]
+#[ignore = "executed by tidb-session cardinality_stats_loading through persisted statistics initialization and planner view"]
 fn builtin_in_estimate_without_stats_keeps_selection_floor() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2754

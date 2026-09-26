@@ -10,6 +10,8 @@ Rust planning must estimate rows, selectivity, distinct values, and row sizes th
 
 ## Progress
 
+- [x] (2026-09-25) Extend the original unanalyzed-IN fixture through encoded statistics storage updates, repeated lite/full cache initialization and the production planner view. Both exact Go plans and existence metadata survive every stage. Two session cases, 14 source cases, original Go fixture, lint and diff checks pass. Background update orchestration and live TiKV remain outside this evidence.
+
 - [x] (2026-09-25) Restore aggregate cluster DDL/ANALYZE compilation and validate 102 DDL plus three storage cases; preserve ALTER/RENAME identity semantics and shared collation admission. See the structural audit for commands and regression evidence.
 
 - [x] (2026-09-25) Trace the partition baseline failure to ANALYZE cache publication rather than range planning: global results retained StatsVer zero; partial results retained old metadata; independent-index publication omitted FM sketches. Consolidate item/metadata merging, preserve independent-task counts, derive the table format from retained histogram objects, and retain FM sketches from the producer. Three strengthened cases fail on the previous production code and pass after; all 22 ANALYZE and 110 EXPLAIN tests, pinned Go SQL oracle, lint and diff checks pass. The earlier partition baseline failure is resolved; whole-package and workload gates remain open.
@@ -538,3 +540,9 @@ DDL aggregate gate update (2026-09-25): previous compilation blocker is resolved
 102 DDL and three aggregate storage cases pass, with server check, Go oracles,
 lint and diff validation. The structural audit records exact commands. This
 checkpoint does not close package inventory, live-cluster or workload gates.
+
+
+Initialization coverage update (2026-09-25): the prior builtin-IN initialization
+mapping gap now has executable storage-loader/cache/planner evidence in
+cardinality_stats_loading. No production change was needed. Commands, test-double
+boundaries and remaining whole-package gates are in the structural audit.

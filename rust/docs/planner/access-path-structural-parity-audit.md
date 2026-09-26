@@ -3511,3 +3511,47 @@ the server mock rename match, and this audit/ExecPlan/receipt. No Go or Bazel
 inputs changed. These are compatibility fixes and restored validation, not a
 whole-package parity claim. Live TiKV, complete source inventories and workload
 correctness/throughput gates remain unverified; no performance claim is made.
+
+
+### Unanalyzed statistics initialization lifecycle (2026-09-25)
+
+The original `TestBuiltinInEstWithoutStats` was mapped only to initial local
+EXPLAIN coverage. The standalone `cardinality_stats_loading` integration target
+now also bootstraps encoded mysql tables, writes the DDL histogram metadata and
+ten-row delta using production writers, then runs the storage update loader,
+clear/lite initialization, clear/full initialization, and final update loader.
+One retained StatisticsView observes the SharedStats cache throughout, including
+absence after each clear and new canonical objects after publication.
+
+Every stage asserts both complete Go brief plans (Selection 1.00 over pseudo
+TableFullScan 10.00), a populated existence map with neither column analyzed,
+and the distinction between real cached metadata and planner pseudo estimates.
+Existing production behavior passes; no estimator or loading behavior was added.
+The in-memory MetaSnapshot is the storage test double, and its adapter exposes
+the canonical cache to the existing production StatisticsView. Update storage
+loading and publication are called explicitly: this is not coverage of the
+background refresh scheduler, StatsCacheImpl update orchestration, or live TiKV.
+
+The original Go test passes on pin
+633a9e37f1c796ac81c203dc107025e7e65385f0. `pkg/planner/cardinality` and
+`pkg/statistics/handle/storage/read.go` are unchanged at refreshed master
+8936d7bdcb13a4fc767de42489aace2711c2c6fd. Commands from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --test cardinality_stats_loading -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --test all cardinality_mock_stats_ranges_source -- --test-threads=1
+    make lint
+    git diff --check
+
+Results: two session cases and 14 source cases pass; 27 source placeholders
+remain ignored with their mapping reasons. Lint/diff checks pass. The initial
+sandboxed session run failed at the production host memory probe (`sysctl
+hw.memsize`); the authorized retry passed without changing runtime policy.
+From /private/tmp/tidb-go-master-20260923:
+
+    GOTOOLCHAIN=go1.25.12 ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestBuiltinInEstWithoutStats$' -count=1
+
+Go passes in 0.489s; failpoints disabled afterward. Logs:
+/private/tmp/tidb-initstats-{rust,source,go,lint}.log. Files changed: the session
+integration fixture, source mapping, this audit, cardinality ExecPlan and receipt.
+No production/Go/Bazel changes; no runtime compatibility or performance change.
+Whole-package inventory, live-cluster and workload gates remain incomplete.
