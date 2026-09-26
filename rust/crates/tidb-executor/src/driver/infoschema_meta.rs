@@ -3077,10 +3077,6 @@ const EVENTS_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
-
-
-
-
 const CLUSTER_CONFIG_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
         name: "TYPE",
@@ -4048,6 +4044,318 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("VIEWS", VIEWS_COLUMNS),
 ];
 
+/// Go `performance_schema.events_statements_summary_by_digest`'s declared
+/// columns (oracle-captured from `information_schema.COLUMNS`). The rows this
+/// tier serves are the oracle's own fresh-cluster answer -- EMPTY: a node with
+/// no summarizable statement history shows zero digest rows, and go's own
+/// rows accumulate with the session bookkeeping this tier does not model.
+static EVENTS_STATEMENTS_SUMMARY_BY_DIGEST_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "SCHEMA_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DIGEST",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DIGEST_TEXT",
+        tp: FieldTypeCode::LongBlob,
+        size: -1,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "COUNT_STAR",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_TIMER_WAIT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MIN_TIMER_WAIT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "AVG_TIMER_WAIT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MAX_TIMER_WAIT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_LOCK_TIME",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_ERRORS",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_WARNINGS",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_ROWS_AFFECTED",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_ROWS_SENT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_ROWS_EXAMINED",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_CREATED_TMP_DISK_TABLES",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_CREATED_TMP_TABLES",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SELECT_FULL_JOIN",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SELECT_FULL_RANGE_JOIN",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SELECT_RANGE",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SELECT_RANGE_CHECK",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SELECT_SCAN",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SORT_MERGE_PASSES",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SORT_RANGE",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SORT_ROWS",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_SORT_SCAN",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_NO_INDEX_USED",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SUM_NO_GOOD_INDEX_USED",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "FIRST_SEEN",
+        tp: FieldTypeCode::Timestamp,
+        size: 26,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "LAST_SEEN",
+        tp: FieldTypeCode::Timestamp,
+        size: 26,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "PLAN_IN_CACHE",
+        tp: FieldTypeCode::Tiny,
+        size: 1,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "PLAN_CACHE_HITS",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "PLAN_IN_BINDING",
+        tp: FieldTypeCode::Tiny,
+        size: 1,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "QUANTILE_95",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "QUANTILE_99",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "QUANTILE_999",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "QUERY_SAMPLE_TEXT",
+        tp: FieldTypeCode::LongBlob,
+        size: -1,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "QUERY_SAMPLE_SEEN",
+        tp: FieldTypeCode::Timestamp,
+        size: 26,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "QUERY_SAMPLE_TIMER_WAIT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+];
+
 /// The declared columns of one `information_schema` table, or `None` when the
 /// table is not one this tier implements.
 fn table_columns(name: &str) -> Option<&'static [InfoColumn]> {
@@ -4055,6 +4363,10 @@ fn table_columns(name: &str) -> Option<&'static [InfoColumn]> {
         .iter()
         .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
         .map(|(_, columns)| *columns)
+        .or_else(|| {
+            (name.eq_ignore_ascii_case("events_statements_summary_by_digest"))
+                .then_some(EVENTS_STATEMENTS_SUMMARY_BY_DIGEST_COLUMNS)
+        })
 }
 
 /// Registers every served table in `catalog` as a real object in the

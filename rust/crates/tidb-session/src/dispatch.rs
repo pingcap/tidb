@@ -183,6 +183,17 @@ struct RetainedSelectPlan<'a> {
 /// The ordinary executor resolves bare names against `current_db`; mirror
 /// that here so `USE information_schema; SELECT ... FROM tables` materializes
 /// the same virtual source as its qualified spelling.
+/// The schema a referenced virtual table registers under: everything lives
+/// in `information_schema` except the one `performance_schema` table this
+/// tier serves (go seeds both schemas' retriever tables the same way).
+fn serving_schema_of(table_name: &str) -> &'static str {
+    if table_name.eq_ignore_ascii_case("events_statements_summary_by_digest") {
+        "performance_schema"
+    } else {
+        infoschema::INFORMATION_SCHEMA
+    }
+}
+
 fn information_schema_tables_in_join(
     node: &tidb_ast::JoinNode,
     current_db: &str,
@@ -192,7 +203,11 @@ fn information_schema_tables_in_join(
     match node {
         tidb_ast::JoinNode::Table(table) => match table.name.as_slice() {
             [name] if infoschema::is_information_schema(current_db) => out.push(name.clone()),
-            [schema, name] if infoschema::is_information_schema(schema) => {
+            [schema, name]
+                if infoschema::is_information_schema(schema)
+                    || (schema.eq_ignore_ascii_case("performance_schema")
+                        && name.eq_ignore_ascii_case("events_statements_summary_by_digest")) =>
+            {
                 // The 1146 for a missing virtual table names the database AS
                 // WRITTEN (go folds nothing here).
                 if written_db.is_none() {
@@ -562,7 +577,7 @@ impl Session {
             let mut scratch = catalog.clone();
             for (table_name, columns) in schemas {
                 scratch.register_mem_in(
-                    infoschema::INFORMATION_SCHEMA,
+                    serving_schema_of(&table_name),
                     &table_name,
                     tidb_executor::MemTable {
                         columns,
@@ -587,6 +602,20 @@ impl Session {
     ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        // Go's `clusterConfigRetriever` fetches each store's config over its
+        // status address; this topology's tikv node has none, so the fetch
+        // fails once per statement and surfaces as a warning beside the
+        // cached rows (oracle-captured).
+        if table_names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("CLUSTER_CONFIG"))
+        {
+            self.append_warning(
+                WarningLevel::Warning,
+                1105,
+                "tikv node store1 does not contain status address".to_owned(),
+            );
+        }
         let mut storage_statistics = None;
         let mut storage_statistics_failed = false;
         if needs_storage_stats
@@ -712,7 +741,7 @@ impl Session {
         }
         for (table_name, columns, rows) in materialized {
             scratch.register_mem_in(
-                infoschema::INFORMATION_SCHEMA,
+                serving_schema_of(&table_name),
                 &table_name,
                 tidb_executor::MemTable { columns, rows },
             );
@@ -1415,10 +1444,8 @@ impl Session {
                         Some(privilege_requests),
                         physical,
                     )?;
-                    if let (
-                        StmtOutput::Affected(count),
-                        tidb_ast::Stmt::Dml(dml),
-                    ) = (&output, statement)
+                    if let (StmtOutput::Affected(count), tidb_ast::Stmt::Dml(dml)) =
+                        (&output, statement)
                     {
                         if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
                             let name = insert.table.last().cloned();
@@ -2564,9 +2591,8 @@ impl Session {
                             );
                             return Err(DriverError::DdlCoded {
                                 errno: 1148,
-                                message:
-                                    "The used command is not allowed with this MySQL version"
-                                        .to_owned(),
+                                message: "The used command is not allowed with this MySQL version"
+                                    .to_owned(),
                             });
                         }
                         Err(DriverError::DdlCoded {
@@ -2799,12 +2825,7 @@ impl Session {
                     let ctx = self.statement_context(false);
                     let alter = alter.clone();
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_alter_view_in(
-                            &alter,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                        )?;
+                        tidb_executor::run_alter_view_in(&alter, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
