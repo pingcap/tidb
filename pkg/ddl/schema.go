@@ -386,6 +386,28 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+			if recoverInfo.TableInfo.IsSequence() {
+				// Sequence allocation state is separate from the ordinary auto IDs.
+				// Restore the reserved allocation boundary and cycle counter with
+				// the schema, so recovery retries cannot publish a reset sequence.
+				snap := w.store.GetSnapshot(kv.NewVersion(recoverInfo.SnapshotTS))
+				oldIDs := meta.NewReader(snap).GetAutoIDAccessors(recoverInfo.SchemaID, recoverInfo.TableInfo.ID)
+				value, err := oldIDs.SequenceValue().Get()
+				if err != nil {
+					return ver, errors.Trace(err)
+				}
+				cycle, err := oldIDs.SequenceCycle().Get()
+				if err != nil {
+					return ver, errors.Trace(err)
+				}
+				newIDs := jobCtx.metaMut.GetAutoIDAccessors(recoverInfo.SchemaID, recoverInfo.TableInfo.ID)
+				if err = newIDs.SequenceValue().Put(value); err != nil {
+					return ver, errors.Trace(err)
+				}
+				if err = newIDs.SequenceCycle().Put(cycle); err != nil {
+					return ver, errors.Trace(err)
+				}
+			}
 		}
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema
