@@ -870,6 +870,7 @@ var logicalOps = map[string]struct{}{
 	ast.LogicXor:           {},
 	ast.In:                 {},
 	ast.IsNull:             {},
+	ast.IsNotNull:          {},
 	ast.IsFalsity:          {},
 	ast.IsTruthWithoutNull: {},
 	ast.IsTruthWithNull:    {},
@@ -1097,6 +1098,14 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 				return f, false
 			}
 			return NewFunctionInternal(ctx, f.FuncName.L, f.GetType(ctx.GetEvalCtx()), newArgs...), true
+		case ast.IsNotNull:
+			// `not(isnotnull(x))` is exactly `isnull(x)`: `isnotnull` never returns NULL.
+			// Only this direction is folded here; `not(isnull(x))` is deliberately left
+			// untouched so that plans built without `tidb_enable_isnotnull_scalar_function`
+			// keep their historical shape.
+			if not {
+				return NewFunctionInternal(ctx, ast.IsNull, f.GetType(ctx.GetEvalCtx()), f.GetArgs()...), true
+			}
 		case ast.LogicAnd, ast.LogicOr:
 			var (
 				newArgs []Expression
@@ -1471,11 +1480,38 @@ func GetIntFromConstant(ctx EvalContext, value Expression) (int, bool, error) {
 	return intNum, false, nil
 }
 
-// BuildNotNullExpr wraps up `not(isnull())` for given expression.
+// BuildNotNullExpr builds an "is not null" test for the given expression.
+// When `tidb_enable_isnotnull_scalar_function` is on it builds the single `isnotnull`
+// ScalarFunction; otherwise it keeps the historical `not(isnull(x))` composition so
+// that plans of existing deployments stay unchanged. Use ExtractIsNotNullArg to match
+// the result, because either form may show up in an expression tree.
 func BuildNotNullExpr(ctx BuildContext, expr Expression) Expression {
+	if ctx.IsNotNullScalarFuncEnabled() {
+		return NewFunctionInternal(ctx, ast.IsNotNull, types.NewFieldType(mysql.TypeTiny), expr)
+	}
 	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
+}
+
+// ExtractIsNotNullArg returns the tested expression when expr is an "is not null" test.
+// Both the composed `not(isnull(x))` form and the single `isnotnull(x)` ScalarFunction
+// are recognized, so callers keep matching regardless of which form was built. See
+// BuildNotNullExpr and `tidb_enable_isnotnull_scalar_function`.
+func ExtractIsNotNullArg(expr Expression) (Expression, bool) {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return nil, false
+	}
+	switch sf.FuncName.L {
+	case ast.IsNotNull:
+		return sf.GetArgs()[0], true
+	case ast.UnaryNot:
+		if inner, ok := sf.GetArgs()[0].(*ScalarFunction); ok && inner.FuncName.L == ast.IsNull {
+			return inner.GetArgs()[0], true
+		}
+	}
+	return nil, false
 }
 
 // IsRuntimeConstExpr checks if a expr can be treated as a constant in **executor**.

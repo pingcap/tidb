@@ -71,6 +71,7 @@ func checkDefaultStaticExprCtx(t *testing.T, ctx *ExprContext) {
 	require.Equal(t, mysql.DefaultCollationName, ctx.GetDefaultCollationForUTF8MB4())
 	require.Equal(t, vardef.DefBlockEncryptionMode, ctx.GetBlockEncryptionMode())
 	require.Equal(t, vardef.DefSysdateIsNow, ctx.GetSysdateIsNow())
+	require.Equal(t, vardef.DefTiDBEnableIsNotNullScalarFunc, ctx.IsNotNullScalarFuncEnabled())
 	require.Equal(t, variable.TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs), ctx.GetNoopFuncsMode())
 	require.NotNil(t, ctx.Rng())
 	require.True(t, ctx.IsUseCache())
@@ -105,6 +106,7 @@ func getExprCtxOptionsForTest() ([]ExprCtxOption, *exprCtxOptionsTestState) {
 		WithDefaultCollationForUTF8MB4("utf8mb4_0900_ai_ci"),
 		WithBlockEncryptionMode("aes-256-cbc"),
 		WithSysDateIsNow(true),
+		WithIsNotNullScalarFuncEnabled(true),
 		WithNoopFuncsMode(variable.WarnInt),
 		WithRng(s.rng),
 		WithPlanCacheTracker(&planCacheTracker),
@@ -124,6 +126,7 @@ func checkOptionsStaticExprCtx(t *testing.T, ctx *ExprContext, s *exprCtxOptions
 	require.Equal(t, "utf8mb4_0900_ai_ci", ctx.GetDefaultCollationForUTF8MB4())
 	require.Equal(t, "aes-256-cbc", ctx.GetBlockEncryptionMode())
 	require.Equal(t, true, ctx.GetSysdateIsNow())
+	require.Equal(t, true, ctx.IsNotNullScalarFuncEnabled())
 	require.Equal(t, variable.WarnInt, ctx.GetNoopFuncsMode())
 	require.Same(t, s.rng, ctx.Rng())
 	require.False(t, ctx.IsUseCache())
@@ -175,6 +178,7 @@ func TestMakeExprContextStatic(t *testing.T) {
 		WithDefaultCollationForUTF8MB4("c"),
 		WithBlockEncryptionMode("d"),
 		WithSysDateIsNow(true),
+		WithIsNotNullScalarFuncEnabled(true),
 		WithNoopFuncsMode(1),
 		WithRng(mathutil.NewWithSeed(12345678)),
 		WithPlanCacheTracker(&planCacheTracker),
@@ -252,6 +256,15 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 			assert: func(ctx *ExprContext, vars *variable.SessionVars) {
 				require.True(t, ctx.GetSysdateIsNow())
 				require.Equal(t, vars.SysdateIsNow, ctx.GetSysdateIsNow())
+			},
+		},
+		{
+			name:  "tidb_enable_isnotnull_scalar_function",
+			val:   "1",
+			field: "$.isNotNullScalarFuncEnabled",
+			assert: func(ctx *ExprContext, vars *variable.SessionVars) {
+				require.True(t, ctx.IsNotNullScalarFuncEnabled())
+				require.Equal(t, vars.EnableIsNotNullScalarFunc, ctx.IsNotNullScalarFuncEnabled())
 			},
 		},
 		{
