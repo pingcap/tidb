@@ -252,7 +252,7 @@ func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, resto
 		restoredTS, clusterID,
 	)
 	if errSQL != nil {
-		return nil, errors.Annotate(err, "failed to get pitr id map from mysql.tidb_pitr_id_map")
+		return nil, errors.Annotate(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")
 	}
 
 	pitrDBMap := make([]*backup.PitrDBMap, 0)
