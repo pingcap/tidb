@@ -2065,7 +2065,6 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     "json_extract" | "json_set" | "json_insert" | "json_replace" | "json_remove"
                 ) && args.len() >= 2
                 {
-                    eprintln!("[DBG-JSONEAGER] fired for {} args={}", lowered, args.len());
                     let literal = |expression: &Expr| {
                         matches!(
                             expression,

@@ -135,7 +135,6 @@ impl Session {
     /// once the buffer holds `math.MaxUint16` entries,
     /// since the count it publishes is a `uint16`.
     pub(crate) fn append_warning(&mut self, level: WarningLevel, code: u16, message: String) {
-            eprintln!("[DBG-EAPP] append Error {} {}", code, &message[..message.len().min(30)]);
         if self.warnings.len() >= u16::MAX as usize {
             return;
         }

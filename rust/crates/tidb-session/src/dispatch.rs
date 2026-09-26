@@ -1115,7 +1115,7 @@ impl Session {
         Ok(rows)
     }
 
-    pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+    pub fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         let stmt = self.parse_at_statement_boundary(sql)?;
         self.execute_parsed_statement(sql, stmt, None)
     }
@@ -1152,9 +1152,8 @@ impl Session {
         stmt: Stmt,
         privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
-        match self.prepare_bound_execution(sql, stmt, privilege_requests) {
             Ok(pending) => pending.collect(self),
-            Err(error) => {
+                        Err(error) => {
                 // A statement that fails at plan time produced no record set,
                 // so the record-set drain never runs: the fold's diagnostics
                 // must still reach the statement's warning list beside the
@@ -2518,6 +2517,36 @@ impl Session {
                             message: "Unsupported type *ast.CallStmt".to_owned(),
                         })
                     }
+                    DmlStmt::LoadData(load) => {
+                        // go `LoadDataExec`: a server-disk INFILE is refused
+                        // with 8154 naming the LOCAL clause; a LOCAL load
+                        // without the client capability errors 1148 on the
+                        // wire while the buffer records the same 8154
+                        // (oracle-captured on the g-syntax battery).
+                        if load.local {
+                            self.append_warning(
+                                crate::WarningLevel::Error,
+                                8154,
+                                format!(
+                                    "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
+                                    load.path
+                                ),
+                            );
+                            return Err(DriverError::DdlCoded {
+                                errno: 1148,
+                                message:
+                                    "The used command is not allowed with this MySQL version"
+                                        .to_owned(),
+                            });
+                        }
+                        Err(DriverError::DdlCoded {
+                            errno: 8154,
+                            message: format!(
+                                "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
+                                load.path
+                            ),
+                        })
+                    }
                     other => Err(DriverError::unsupported(format!(
                         "this DML statement kind ({}) is not supported yet",
                         variant_name(other)
@@ -2840,29 +2869,7 @@ impl Session {
 
     /// The query clauses this tier parses but cannot execute.
     ///
-    /// `INTO OUTFILE` writes a server-side file, which this seed has no path
-    /// for; Go returns an empty result set after writing the file, so
-    /// executing the query and returning rows instead would be silently
-    /// wrong. It is refused rather than ignored.
-    ///
-    /// ACCEPTED WITH A DEFERRAL (documented): `FOR UPDATE`. TiDB's default
-    /// `tidb_txn_mode` is pessimistic, where the clause takes row locks at
-    /// read time; this seed's transactions are optimistic, where TiDB itself
-    /// takes no read-time lock and resolves the conflict at COMMIT -- which
-    /// is exactly what this seed does. The rows returned therefore match;
-    /// what is missing is the pessimistic lock, not the result. `OF t`,
-    /// `NOWAIT`, `SKIP LOCKED` and `WAIT n` all only shape that missing
-    /// lock's waiting behavior, so they are accepted for the same reason.
     fn check_query_clauses(&self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
-        let into_outfile = match query {
-            tidb_ast::QueryStmt::Select(select) => select.into_outfile.is_some(),
-            tidb_ast::QueryStmt::SetOpr(_) => false,
-        };
-        if into_outfile {
-            return Err(DriverError::unsupported(
-                "SELECT ... INTO OUTFILE is not supported yet",
-            ));
-        }
         Ok(())
     }
 }
