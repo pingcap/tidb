@@ -388,6 +388,8 @@ func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T)
 
 	// NDVRATE samples the columns, but indexes on virtual or prefix columns are
 	// analyzed separately and read every row.
+	defer tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
 	for _, tbl := range []string{"sampling_index_virtual_col", "sampling_index_prefix_col"} {
 		tk.MustExec("analyze table " + tbl + " with 0.5 NDVRATE")
 		lastJob := "select job_info from mysql.analyze_jobs where table_name = '" + tbl + "' and job_info like '%s' order by id desc limit 1"
@@ -751,6 +753,15 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	for _, rate := range []string{"0", "1.01"} {
 		require.Error(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"))
 	}
+	// A zero tidb_analyze_sampled_ndv_threshold rejects NDVRATE. Otherwise
+	// NDVRATE replaces only the rate, so without a table above the threshold
+	// ANALYZE reads every row and says so.
+	defer tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 0")
+	require.ErrorContains(t, tk.ExecToErr("analyze table t with 0.1 NDVRATE"), "tidb_analyze_sampled_ndv_threshold")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 2")
+	tk.MustExec("analyze table t with 0.1 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("NDVRATE is not used because no table or partition has more than tidb_analyze_sampled_ndv_threshold = 2 rows")
 }
 
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string) {
@@ -1960,6 +1971,8 @@ func TestAnalyzeMVIndex(t *testing.T) {
 
 	// NDVRATE samples the columns, but multi-valued indexes are analyzed
 	// separately and read every row.
+	defer tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
 	tk.MustExec("analyze table t with 0.5 NDVRATE")
 	tk.MustQuery("select job_info from mysql.analyze_jobs where table_name = 't' and job_info like 'analyze table%' order by id desc limit 1").CheckContain("0.5 ndvrate")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name = 't' and job_info like 'analyze index ij%ndvrate%'").Check(testkit.Rows("0"))
@@ -2314,6 +2327,8 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
 	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	defer tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
 	// The mock server is a legacy peer: a sampled request may get full-input results.
 	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))

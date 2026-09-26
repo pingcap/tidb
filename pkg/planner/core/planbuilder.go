@@ -3271,6 +3271,9 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	if err != nil {
 		return nil, err
 	}
+	if bits, explicit := stmtOpts[ast.AnalyzeOptNDVRate]; explicit && math.Float64frombits(bits) < 1 && vardef.AnalyzeSampledNDVThreshold.Load() == 0 {
+		return nil, errors.Errorf("sampled NDV is disabled by %s = 0", vardef.TiDBAnalyzeSampledNDVThreshold)
+	}
 	// These options are the fallback used when tidb_persist_analyze_options is
 	// off, so there is no saved value for an option given as DEFAULT to reset and
 	// it just means "use the system default for this run": merging against no

@@ -3548,7 +3548,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
-	if rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate]); rate > 0 && rate < 1 {
+	if rate := chooseNDVRate(opts, count); rate < 1 {
 		e.analyzePB.ColReq.NdvRate = &rate
 	}
 	if task.TblInfo != nil {
@@ -3559,6 +3559,18 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	b.err = tables.SetPBColumnsDefaultValue(b.sctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+// chooseNDVRate returns the fraction of rows that TiKV processes for NDV. While
+// tidb_analyze_sampled_ndv_threshold is not 0, a table or partition with more
+// rows than it uses its NDVRATE option. Others use full input.
+func chooseNDVRate(opts map[ast.AnalyzeOptionType]uint64, count int64) float64 {
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate])
+	if threshold == 0 || count <= threshold || rate <= 0 {
+		return 1
+	}
+	return rate
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
@@ -3645,6 +3657,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		return nil
 	}
 	exprCtx := b.sctx.GetExprCtx()
+	var ndvRateRequested, ndvRateUsed bool
 	for _, task := range v.ColTasks {
 		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
 		// so we need to make sure all the columns pass into it.
@@ -3668,11 +3681,21 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID()))
+		colTask := b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID())
+		e.tasks = append(e.tasks, colTask)
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
 		}
+		if rate := math.Float64frombits(colTask.colExec.opts[ast.AnalyzeOptNDVRate]); rate > 0 && rate < 1 {
+			ndvRateRequested = true
+		}
+		ndvRateUsed = ndvRateUsed || colTask.colExec.analyzePB.ColReq.NdvRate != nil
+	}
+	if threshold := vardef.AnalyzeSampledNDVThreshold.Load(); ndvRateRequested && !ndvRateUsed && threshold > 0 {
+		b.sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+			"NDVRATE is not used because no table or partition has more than %s = %d rows",
+			vardef.TiDBAnalyzeSampledNDVThreshold, threshold))
 	}
 	for _, task := range v.IdxTasks {
 		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze, v.ID()))
