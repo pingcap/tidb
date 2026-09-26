@@ -1886,11 +1886,9 @@ type SQLDigestTextRetriever struct {
 	SQLDigestsMap map[string]string
 
 	// Replace querying for test purposes.
-	mockLocalData  map[string]string
-	mockGlobalData map[string]string
-	// There are two ways for querying information: 1) query specified digests by WHERE IN query, or 2) query all
-	// information to avoid the too long WHERE IN clause. If there are more than `fetchAllLimit` digests needs to be
-	// queried, the second way will be chosen; otherwise, the first way will be chosen.
+	mockQuery func(queryGlobal, history bool, inValues []any) (map[string]string, error)
+	// Lookups with more than `fetchAllLimit` digests read the whole table once instead of building a very
+	// long WHERE IN clause. This also keeps a history lookup to a single scan of the summary files.
 	fetchAllLimit int
 }
 
@@ -1915,28 +1913,27 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 	return res, nil
 }
 
-// runFetchDigestQuery runs query to the system tables to fetch the kv mapping of SQL digests and normalized SQL texts
-// of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
-// queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
-// queries the cluster version of these two tables.
-func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec expropt.SQLExecutor, queryGlobal bool, inValues []any) (map[string]string, error) {
+// runFetchDigestQuery fetches the normalized SQL texts from either the current or history statement summary table.
+// If `inValues` is given, it fetches only those digests; otherwise, it fetches all rows from the selected table.
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec expropt.SQLExecutor, queryGlobal, history bool, inValues []any) (map[string]string, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	// If mock data is set, query the mock data instead of the real statements_summary tables.
-	if !queryGlobal && r.mockLocalData != nil {
-		return r.runMockQuery(r.mockLocalData, inValues)
-	} else if queryGlobal && r.mockGlobalData != nil {
-		return r.runMockQuery(r.mockGlobalData, inValues)
+	// Replace querying for test purposes.
+	if r.mockQuery != nil {
+		return r.mockQuery(queryGlobal, history, inValues)
 	}
 
-	// Information in statements_summary will be periodically moved to statements_summary_history. Union them together
-	// to avoid missing information when statements_summary is just cleared.
-	stmt := "select digest, digest_text from information_schema.statements_summary union distinct " +
-		"select digest, digest_text from information_schema.statements_summary_history"
+	table := "information_schema.statements_summary"
 	if queryGlobal {
-		stmt = "select digest, digest_text from information_schema.cluster_statements_summary union distinct " +
-			"select digest, digest_text from information_schema.cluster_statements_summary_history"
+		table = "information_schema.cluster_statements_summary"
 	}
-	// Add the where clause if `inValues` is specified.
+	if history {
+		table += "_history"
+	}
+	// DISTINCT restores the deduplication the old UNION DISTINCT provided: the same
+	// (digest, digest_text) pair appears once per summary window, so a plain SELECT
+	// would materialize and size the result by the total history row count.
+	stmt := "select distinct digest, digest_text from " + table
+	// Add the where clause when a digest batch is specified.
 	if len(inValues) > 0 {
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
@@ -1960,86 +1957,94 @@ func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string)
 			continue
 		}
 		sqlText, ok := queryResult[digest]
-		if ok {
+		if ok && len(sqlText) > 0 {
 			r.SQLDigestsMap[digest] = sqlText
 		}
 	}
 }
 
-// RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
-func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec expropt.SQLExecutor) error {
-	if len(r.SQLDigestsMap) == 0 {
+func (r *SQLDigestTextRetriever) unresolvedDigests() []any {
+	keys := make([]string, 0, len(r.SQLDigestsMap))
+	for digest, text := range r.SQLDigestsMap {
+		if len(text) == 0 {
+			keys = append(keys, digest)
+		}
+	}
+	slices.Sort(keys)
+	digests := make([]any, len(keys))
+	for i, digest := range keys {
+		digests[i] = digest
+	}
+	return digests
+}
+
+func (r *SQLDigestTextRetriever) retrieveDigests(ctx context.Context, exec expropt.SQLExecutor, queryGlobal, history bool) error {
+	digests := r.unresolvedDigests()
+	if len(digests) == 0 {
 		return nil
 	}
 
-	var queryResult map[string]string
-	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
-		inValues := make([]any, 0, len(r.SQLDigestsMap))
-		for key := range r.SQLDigestsMap {
-			inValues = append(inValues, key)
-		}
-		var err error
-		queryResult, err = r.runFetchDigestQuery(ctx, exec, false, inValues)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if len(queryResult) == len(r.SQLDigestsMap) {
-			r.SQLDigestsMap = queryResult
-			return nil
-		}
-	} else {
-		var err error
-		queryResult, err = r.runFetchDigestQuery(ctx, exec, false, nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	batchSize := r.fetchAllLimit
+	if batchSize <= 0 {
+		batchSize = 512
 	}
-
+	if len(digests) > batchSize {
+		// Reading the table once avoids a very long WHERE IN clause. It also matters for the history
+		// table: every history query rescans all summary files, so issuing one query per digest batch
+		// would multiply the scan cost.
+		queryResult, err := r.runFetchDigestQuery(ctx, exec, queryGlobal, history, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.updateDigestInfo(queryResult)
+		return nil
+	}
+	queryResult, err := r.runFetchDigestQuery(ctx, exec, queryGlobal, history, digests)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	r.updateDigestInfo(queryResult)
 	return nil
 }
 
+// RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
+func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec expropt.SQLExecutor) error {
+	if err := r.retrieveDigests(ctx, exec, false, false); err != nil {
+		return err
+	}
+	return r.retrieveDigests(ctx, exec, false, true)
+}
+
 // RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
 func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec expropt.SQLExecutor) error {
-	err := r.RetrieveLocal(ctx, exec)
-	if err != nil {
-		return errors.Trace(err)
+	if err := r.retrieveDigests(ctx, exec, false, false); err != nil {
+		return err
 	}
 
 	// In some unit test environments it's unable to retrieve global info, and this function blocks it for tens of
 	// seconds, which wastes much time during unit test. In this case, enable this failpoint to bypass retrieving
 	// globally.
+	skipGlobal := false
 	failpoint.Inject("sqlDigestRetrieverSkipRetrieveGlobal", func() {
-		failpoint.Return(nil)
+		skipGlobal = true
 	})
-
-	var unknownDigests []any
-	for k, v := range r.SQLDigestsMap {
-		if len(v) == 0 {
-			unknownDigests = append(unknownDigests, k)
-		}
+	if skipGlobal {
+		return r.retrieveDigests(ctx, exec, false, true)
 	}
 
-	if len(unknownDigests) == 0 {
+	// Check the cluster's current summary before reading local history. This avoids a local history scan when a
+	// requested digest is currently recorded on another TiDB node.
+	globalCurrentErr := r.retrieveDigests(ctx, exec, true, false)
+	if err := r.retrieveDigests(ctx, exec, false, true); err != nil {
+		return err
+	}
+	if len(r.unresolvedDigests()) == 0 {
 		return nil
 	}
-
-	var queryResult map[string]string
-	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
-		queryResult, err = r.runFetchDigestQuery(ctx, exec, true, unknownDigests)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		queryResult, err = r.runFetchDigestQuery(ctx, exec, true, nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	if globalCurrentErr != nil {
+		return globalCurrentErr
 	}
-
-	r.updateDigestInfo(queryResult)
-	return nil
+	return r.retrieveDigests(ctx, exec, true, true)
 }
 
 // ExprsToStringsForDisplay convert a slice of Expression to a slice of string using Expression.String(), and
