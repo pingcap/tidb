@@ -2763,6 +2763,32 @@ fn cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat() {
     // The published profile is the seed's own (the seed ids, not the
     // consumer ids) with the new content.
     assert!((table_stats2.row_count() - 500.0).abs() < 1e-9);
+
+    // Go caches the CTE result until reload, independently of the publication
+    // slot. A reload must observe NDV changes even when the seed count is equal.
+    let updated_seed = StatsInfo::new(300.0, [(10_i64, 90.0), (11, 9.0)]);
+    let (cached, derived) = c.derive_stats(
+        &updated_seed,
+        &seed_schema,
+        None,
+        &self_schema,
+        None,
+        &[false],
+    );
+    assert!(!derived);
+    assert_eq!(cached.col_ndvs()[&20], 30.0);
+    let (updated, derived) = c.derive_stats(
+        &updated_seed,
+        &seed_schema,
+        None,
+        &self_schema,
+        None,
+        &[true],
+    );
+    assert!(derived);
+    assert_eq!(updated.row_count(), 300.0);
+    assert_eq!(updated.col_ndvs()[&20], 90.0);
+    assert_eq!(seed_stat.borrow().col_ndvs()[&10], 90.0);
 }
 
 /// The recursive half (`logical_cte.go:203`): NDVs ADD, and `DISTINCT` takes

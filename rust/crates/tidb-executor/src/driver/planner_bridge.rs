@@ -2605,7 +2605,7 @@ fn cte_references(plan: &LogicalPlan) -> Vec<CteReference> {
 
 #[allow(clippy::too_many_arguments)]
 fn optimize_cte_classes(
-    plan: &LogicalPlan,
+    plan: &mut LogicalPlan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     zone: &tidb_datatype::SessionTimeZone,
@@ -2614,8 +2614,9 @@ fn optimize_cte_classes(
     rule_context: &RuleContext<'_>,
     visiting: &mut HashSet<usize>,
 ) -> Result<(), tidb_planner::plan_base::PlanError> {
+    let mut rebuilt = HashSet::new();
     for (class, seed_stat) in cte_references(plan) {
-        optimize_cte_class(
+        let did_rebuild = optimize_cte_class(
             &class,
             seed_stat.as_ref(),
             catalog,
@@ -2626,8 +2627,34 @@ fn optimize_cte_classes(
             rule_context,
             visiting,
         )?;
+        if did_rebuild {
+            rebuilt.insert(Rc::as_ptr(&class) as usize);
+        }
     }
+    invalidate_rebuilt_cte_stats(plan, &rebuilt);
     Ok(())
+}
+
+// Eager seed optimization can run again after predicate collection. Invalidate
+// every reference to the rebuilt class, including when only NDVs changed.
+// DeriveStats then propagates its reload result through ordinary parent edges.
+fn invalidate_rebuilt_cte_stats(plan: &mut LogicalPlan, rebuilt: &HashSet<usize>) {
+    if rebuilt.is_empty() {
+        return;
+    }
+    let mut stack = vec![plan];
+    while let Some(node) = stack.pop() {
+        if let LogicalPlan::CTE(cte) = node {
+            if cte
+                .cte
+                .as_ref()
+                .is_some_and(|class| rebuilt.contains(&(Rc::as_ptr(class) as usize)))
+            {
+                cte.base.base.set_stats(None);
+            }
+        }
+        stack.extend(node.base_mut().children_mut().iter_mut());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2668,7 +2695,7 @@ fn optimize_cte_tree(
         .plan;
     let mut optimized = check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
     optimize_cte_classes(
-        &optimized,
+        &mut optimized,
         catalog,
         ctx,
         zone,
@@ -2694,7 +2721,7 @@ fn optimize_cte_class(
     column_ids: &ColumnIdAllocator,
     rule_context: &RuleContext<'_>,
     visiting: &mut HashSet<usize>,
-) -> Result<(), tidb_planner::plan_base::PlanError> {
+) -> Result<bool, tidb_planner::plan_base::PlanError> {
     let identity = Rc::as_ptr(class) as usize;
     {
         let class = class.borrow();
@@ -2703,7 +2730,7 @@ fn optimize_cte_class(
                 if let (Some(seed_stat), Some(stats)) = (seed_stat, physical.stats_info()) {
                     *seed_stat.borrow_mut() = stats.clone();
                 }
-                return Ok(());
+                return Ok(false);
             }
             // The seed was optimised before the rule list with the predicates
             // recorded SO FAR. `LogicalCTE.PredicatePushDown` appended more
@@ -2899,7 +2926,7 @@ fn optimize_cte_class(
             class.recursive_part_logical_plan = Some(Box::new(recursive_logical));
             class.recursive_part_physical_plan = Some(Box::new(recursive_physical));
         }
-        Ok(())
+        Ok(true)
     })();
     visiting.remove(&identity);
     result
@@ -3546,7 +3573,7 @@ fn optimize_built_logical(
     // rule list, or the first `recursive_derive_stats` inside a rule sees a
     // nil seed physical plan.
     optimize_cte_classes(
-        &plan,
+        &mut plan,
         catalog,
         ctx,
         session_zone,
@@ -3566,7 +3593,7 @@ fn optimize_built_logical(
         attach_dynamic_partition_access(&mut optimized, &partition_pruning)?;
     }
     optimize_cte_classes(
-        &optimized,
+        &mut optimized,
         catalog,
         ctx,
         session_zone,
@@ -3758,6 +3785,36 @@ mod statistics_initialization_tests {
     use tidb_planner::logical::DataSource;
     use tidb_planner::logical::data_source::DataSourceColumn;
     use tidb_planner::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+
+    #[test]
+    fn rebuilt_cte_invalidates_every_reference_without_count_comparison() {
+        use tidb_planner::logical::{LogicalCTE, LogicalUnionAll};
+        let class = Rc::new(RefCell::new(CteClass::default()));
+        let unrelated = Rc::new(RefCell::new(CteClass::default()));
+        let reference = |class, id| {
+            let mut cte = LogicalCTE::new(BaseLogicalPlan::with_id(id, LogicalCTE::TYPE, 0), class);
+            cte.base
+                .base
+                .set_stats(Some(StatsInfo::new(100.0, [(1, 10.0)])));
+            LogicalPlan::CTE(cte)
+        };
+        let mut plan = LogicalPlan::UnionAll(LogicalUnionAll::default());
+        plan.set_children(vec![
+            reference(class.clone(), 1),
+            reference(class.clone(), 2),
+            reference(unrelated, 3),
+        ]);
+        invalidate_rebuilt_cte_stats(&mut plan, &HashSet::new());
+        assert!(
+            plan.children()
+                .iter()
+                .all(|child| child.stats_info().is_some())
+        );
+        invalidate_rebuilt_cte_stats(&mut plan, &HashSet::from([Rc::as_ptr(&class) as usize]));
+        assert!(plan.children()[0].stats_info().is_none());
+        assert!(plan.children()[1].stats_info().is_none());
+        assert!(plan.children()[2].stats_info().is_some());
+    }
 
     #[test]
     fn unfiltered_table_path_count_uses_realtime_row_count() {

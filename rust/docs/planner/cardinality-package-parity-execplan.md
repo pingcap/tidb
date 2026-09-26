@@ -10,6 +10,8 @@ Rust planning must estimate rows, selectivity, distinct values, and row sizes th
 
 ## Progress
 
+- [x] (2026-09-26) Resolve the upstream CTE test failure by restoring physical-seed input authority and Go cached/reload semantics. The eager optimizer reports class rebuilds and invalidates all affected references, avoiding row-count heuristics and stale NDVs. Original fail-before case, all 1054 planner tests, driver/session suites, Go oracle, server check and lint pass; see structural audit for commands and limits.
+
 - [x] (2026-09-26) Carry statement timezone through the shared estimator snapshot and borrow it inside recursive estimation. Align ANALYZE sample/key encoding in both local and region adapters. Direct V1 regression and real SQL/ANALYZE fixture fail before and match Go after, including named-zone seasons and SET timezone between queries. Focused tests, compile and lint pass; the full planner suite has one CTE failure after pulling 3f0e572dc8. See structural audit for exact commands and remaining gates.
 
 - [x] (2026-09-26) Exercise original datetime range-overflow SQL before and after production Catalog async loading: demand, one request, full-load status, empty results and no requeue all hold. Three lifecycle tests, original Go case, lint and diff checks pass. Storage I/O remains a test double.
@@ -273,6 +275,10 @@ Rust planning must estimate rows, selectivity, distinct values, and row sizes th
   Evidence: after deleting rows, Go retains `(RealtimeCount, ModifyCount) = (2000, 1000)` and a histogram beginning at 300; the incorrect Rust path changed the histogram minimum to 500 and estimated `a <= 300` as 10.00. Merging physical partition stats now reproduces the 191.04 estimate and every remaining source golden.
 
 ## Decision Log
+
+- Decision: keep SeedStat as a shared publication slot and invalidate CTE caches at class rebuild ownership.
+  Rationale: the driver already supplies the physical seed; reading SeedStat as input used zero/stale data, while comparing seed row count to output count missed NDV changes and conflated recursive output with seed input.
+  Date/Author: 2026-09-26 / Codex.
 
 - Decision: retain the resolved SessionTimeZone in the existing estimator snapshot and AnalyzePlan; use shared timezone codecs at both boundaries.
   Rationale: fixing only lookup left the SQL regression failing because ANALYZE had encoded session-decoded samples as UTC. Borrowing options inside estimation avoids repeated Arc clones in range loops.
@@ -564,3 +570,8 @@ commands, boundaries and the next shared statement-timezone contract gap.
 Timezone update (2026-09-26): shared producer/consumer context is implemented;
 statement warning/error policy, upstream CTE failure, server mock compilation,
 whole-package inventories and live-cluster/workload gates remain open.
+
+
+CTE gate update (2026-09-26): the previously recorded planner failure is resolved.
+The shared seed and invalidation regression follows Go authority; eager optimizer
+lifecycle differences, server mocks, package inventories and workload gates remain.

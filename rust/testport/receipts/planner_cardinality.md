@@ -2975,3 +2975,11 @@ Go after; fixed/named zones, V1/V2 columns/indexes and timezone changes are cove
 The structural audit records exact tests and limitations. Full planner testing
 now has one CTE failure after upstream 3f0e572dc8; server test mocks also retain
 DDL API drift. Package, error-policy, live-cluster and workload gates stay open.
+
+
+CTE gate checkpoint (2026-09-26): the preceding full-planner failure is resolved.
+Physical seed statistics are the input; SeedStat remains the aliased publication
+slot. Eager class rebuilds invalidate every affected CTE reference instead of
+comparing row counts. Original regression, 1054 planner tests, driver/session
+suites, Go oracle, server compilation and lint pass. Exact commands and limits
+are in the structural audit. Whole-package and workload completion remain open.

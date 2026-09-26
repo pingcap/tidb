@@ -3665,3 +3665,61 @@ whose statistics were previously built using the wrong encoding need ANALYZE
 again. Full statement warning/error policy, complete package inventory, live
 TiKV, the CTE/server test gates and workload correctness/throughput remain open.
 No benchmark improvement is claimed.
+
+
+### CTE physical-seed authority and cache invalidation (2026-09-26)
+
+The CTE failure introduced with upstream 3f0e572dc8 is resolved at its ownership
+boundary. The derive driver already passes SeedPartPhysicalPlan.StatsInfo();
+LogicalCTE must publish that input through SeedStat, not read the shared output
+slot back as its input. A fresh zero-valued slot previously replaced the actual
+300-row physical profile, reproducing the existing positional-NDV test failure.
+Go's cached-result/reload rule is restored without row-count comparisons.
+
+Rust still optimizes CTE classes eagerly, unlike Go's lazy entry point. The
+optimizer now reports whether it rebuilt the class, and the owning tree clears
+cached stats on every reference to that class. Child-derived reload signals
+then flow through the ordinary parent statistics lifecycle. Unchanged and
+unrelated classes retain their caches; equal row counts do not hide NDV changes.
+The shared output slot remains aliased by CTETable readers. Existing eager seed
+optimization/predicate collection is retained; this is not a claim that every
+CTE lifecycle difference has been removed.
+
+The original failing test now passes, extended with cache reuse and same-count
+NDV reload assertions. A driver regression verifies all references are invalidated
+and unrelated references are preserved. A direct Go oracle confirms physical
+seed publication, cached reuse despite a changed shared output, and explicit
+reload of changed NDVs.
+
+Commands from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --lib cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --lib -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib rebuilt_cte_invalidates_every_reference_without_count_comparison
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_recursive_cte -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_explain -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib cte -- --test-threads=1
+    cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-server
+    make lint
+    git diff --check
+
+First command failed before; the final full planner suite passes all 1054 cases.
+Driver 1, recursive CTE 13, EXPLAIN 111 and final session substring selection 51
+pass (that selection includes non-CTE names and retains two ignored cases).
+Production server check, lint and diff checks pass. From the pinned Go tree
+/private/tmp/tidb-go-master-20260923:
+
+    GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRustCteSeedPublication$' -count=1
+
+Go passes in 0.064s; failpoints disabled afterward. LogicalCTE Go source is
+unchanged from 633a9e37f1c796ac81c203dc107025e7e65385f0 to master
+8936d7bdcb13a4fc767de42489aace2711c2c6fd. Logs:
+/private/tmp/tidb-cte-{before,planner,owner,recursive,explain,session,server,go,lint}.log.
+Changed files: planner logical/cte.rs and logical/operator_tests.rs, executor
+planner_bridge.rs, and this audit/ExecPlan/receipt. No Go/Bazel changes.
+
+This supersedes the preceding CTE test failure. The separate stale server mock
+API gate remains open. No q74 workload, live-cluster behavior, workload throughput,
+full logicalop package inventory or whole cardinality package completion is
+claimed. Cache invalidation can change estimates and plan choices as intended;
+performance impact is unmeasured.
