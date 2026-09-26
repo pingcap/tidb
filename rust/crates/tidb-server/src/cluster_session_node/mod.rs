@@ -6530,7 +6530,6 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn record_write_failure(&mut self, code: u16, message: String) {
-        eprintln!("[DBG-WF] record_write_failure {} {}", code, &message[..message.len().min(40)]);
         self.session.record_ddl_failure(code, message);
     }
 
