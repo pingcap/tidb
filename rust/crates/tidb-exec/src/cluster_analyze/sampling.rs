@@ -402,7 +402,8 @@ where
 {
     let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
     let _cancel_guard = SamplingCancellation::start(killer, cancellation.clone())?;
-    let plan = super::cluster_analyze_plan(table, selected_columns)?;
+    let plan = super::cluster_analyze_plan(table, selected_columns)?
+        .with_time_zone(statement.eval_context.session_zone());
     let virtuals =
         super::virtual_samples::VirtualSamples::new(table, &plan, &statement.eval_context)?;
     let schema = SamplingSchema::new(table, &plan)?;

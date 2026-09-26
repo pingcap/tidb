@@ -598,7 +598,7 @@ impl CopTask {
                 crate::logical::rewrite::analyzed_filter_selectivity_with_evaluator(
                     stats,
                     &conds,
-                    stats_context.estimator_options,
+                    &stats_context.estimator_options,
                     evaluate,
                 )
             })

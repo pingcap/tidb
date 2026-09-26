@@ -279,7 +279,7 @@ pub(crate) fn handle_range_row_count(
         realtime as i64,
         stats.map_or(0, |stats| stats.modify_count),
         true,
-        options,
+        &options,
     )?
     .est)
 }

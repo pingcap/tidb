@@ -168,7 +168,7 @@ fn column_ranges_selectivity(
     table_stats: &StatsInfo,
     column: &tidb_expr::column::Column,
     conditions: &[Expression],
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
     evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
 ) -> Option<Result<f64, crate::cardinality::row_count_estimator::EstimationError>> {
     let field_type = column.ret_type.as_ref()?;
@@ -249,14 +249,14 @@ pub(crate) fn analyzed_filter_selectivity(
     analyzed_filter_selectivity_with_options(
         table_stats,
         conditions,
-        crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
     )
 }
 
 pub(crate) fn analyzed_filter_selectivity_with_options(
     table_stats: &StatsInfo,
     conditions: &[Expression],
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
 ) -> Option<f64> {
     try_analyzed_filter_selectivity_with_options(table_stats, conditions, options)
         .unwrap_or(Some(crate::cost_factors::SELECTION_FACTOR))
@@ -270,7 +270,7 @@ pub(crate) fn analyzed_filter_selectivity_in(
     analyzed_filter_selectivity_with_evaluator(
         table_stats,
         conditions,
-        context.estimator_options,
+        &context.estimator_options,
         context.expression_evaluator,
     )
 }
@@ -278,7 +278,7 @@ pub(crate) fn analyzed_filter_selectivity_in(
 pub(crate) fn analyzed_filter_selectivity_with_evaluator(
     table_stats: &StatsInfo,
     conditions: &[Expression],
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
     evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
 ) -> Option<f64> {
     try_analyzed_filter_selectivity_in(table_stats, conditions, options, evaluate)
@@ -288,7 +288,7 @@ pub(crate) fn analyzed_filter_selectivity_with_evaluator(
 fn try_analyzed_filter_selectivity_with_options(
     table_stats: &StatsInfo,
     conditions: &[Expression],
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
 ) -> Result<Option<f64>, crate::cardinality::row_count_estimator::EstimationError> {
     try_analyzed_filter_selectivity_in(
         table_stats,
@@ -301,7 +301,7 @@ fn try_analyzed_filter_selectivity_with_options(
 fn try_analyzed_filter_selectivity_in(
     table_stats: &StatsInfo,
     conditions: &[Expression],
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
     evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Option<f64>, crate::cardinality::row_count_estimator::EstimationError> {
     if table_stats.col_ndvs().is_empty() {
@@ -613,7 +613,7 @@ const DEFAULT_STRING_MATCH_SELECTIVITY: f64 = 0.1;
 fn dnf_independence_selectivity(
     table_stats: &StatsInfo,
     condition: &Expression,
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
     evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Option<f64>, crate::cardinality::row_count_estimator::EstimationError> {
     let items = flatten_boolean_conditions(condition, "or");
@@ -665,7 +665,7 @@ fn histogram_prefix_range_selectivity(
     table_stats: &StatsInfo,
     column: &tidb_expr::column::Column,
     pattern: &tidb_datatype::Datum,
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
 ) -> Option<Result<f64, crate::cardinality::row_count_estimator::EstimationError>> {
     let pattern = match pattern {
         tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
@@ -911,7 +911,7 @@ fn histogram_point_selectivity(
     table_stats: &StatsInfo,
     column: &tidb_expr::column::Column,
     values: &[tidb_datatype::Datum],
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
 ) -> Option<Result<f64, crate::cardinality::row_count_estimator::EstimationError>> {
     let hist_coll = table_stats.hist_coll()?;
     let column_stats = hist_coll.histogram_for_estimation(column.unique_id)?;
@@ -2965,7 +2965,7 @@ struct DeriveStatsFold<'a> {
     expr_pushdown_blacklist: &'a tidb_expr::infer_pushdown::ExprPushDownBlacklist,
     eval_context: &'a dyn tidb_expr::Columns,
     builder: &'a dyn tidb_expr::expr_util::FunctionBuilder,
-    estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    estimator_options: &'a crate::cardinality::row_count_estimator::EstimatorOptions,
     /// The first failure, per the module header's first-failure discipline.
     failure: RewriteFailure,
     /// Go `SCtx().GetSessionVars().TiDBOptJoinReorderThreshold`, read by
@@ -3140,7 +3140,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                             expr_pushdown_blacklist: self.expr_pushdown_blacklist,
                             selectivity_factor: self.selectivity_factor,
-                            estimator_options: self.estimator_options,
+                            estimator_options: self.estimator_options.clone(),
                             range_max_size: self.range_max_size,
                             range_fallback_handler: self.range_fallback_handler,
                             expression_evaluator: &evaluate,
@@ -3479,7 +3479,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                         expr_pushdown_blacklist: self.expr_pushdown_blacklist,
                         selectivity_factor: self.selectivity_factor,
-                        estimator_options: self.estimator_options,
+                        estimator_options: self.estimator_options.clone(),
                         range_max_size: self.range_max_size,
                         range_fallback_handler: self.range_fallback_handler,
                         expression_evaluator: &evaluate,
@@ -3527,7 +3527,7 @@ pub fn recursive_derive_stats(
         None,
         &tidb_expr::expr_util::RealFunctionBuilder::new(&tidb_expr::NoColumns),
         &tidb_expr::NoColumns,
-        crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
         tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
         crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         &Default::default(),
@@ -3552,7 +3552,7 @@ pub fn recursive_derive_stats_with_context(
         context.range_fallback_handler,
         context.builder,
         context.eval_context,
-        context.estimator_options,
+        &context.estimator_options,
         context.group_ndv_skew_ratio,
         context.scale_ndv_skew_ratio,
         &context.expr_pushdown_blacklist,
@@ -3571,7 +3571,7 @@ fn recursive_derive_stats_with_range_quota(
     range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
     builder: &dyn tidb_expr::expr_util::FunctionBuilder,
     eval_context: &dyn tidb_expr::Columns,
-    estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    estimator_options: &crate::cardinality::row_count_estimator::EstimatorOptions,
     group_ndv_skew_ratio: f64,
     scale_ndv_skew_ratio: f64,
     expr_pushdown_blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
@@ -3661,7 +3661,7 @@ mod analyzed_filter_selectivity_tests {
             super::try_analyzed_filter_selectivity_with_options(
                 &stats,
                 &cnf,
-                EstimatorOptions::default()
+                &EstimatorOptions::default()
             )
             .is_err()
         );
@@ -3680,7 +3680,7 @@ mod analyzed_filter_selectivity_tests {
             super::try_analyzed_filter_selectivity_with_options(
                 &stats,
                 &[dnf.clone()],
-                EstimatorOptions::default()
+                &EstimatorOptions::default()
             )
             .is_err()
         );
@@ -3812,13 +3812,13 @@ mod analyzed_filter_selectivity_tests {
         let baseline = analyzed_filter_selectivity_with_options(
             &table_stats,
             &conditions,
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap();
         let risk_adjusted = analyzed_filter_selectivity_with_options(
             &table_stats,
             &conditions,
-            EstimatorOptions {
+            &EstimatorOptions {
                 risk_range_skew_ratio: 0.5,
                 ..EstimatorOptions::default()
             },
@@ -3827,7 +3827,7 @@ mod analyzed_filter_selectivity_tests {
         let determinate = analyzed_filter_selectivity_with_options(
             &table_stats,
             &conditions,
-            EstimatorOptions {
+            &EstimatorOptions {
                 risk_range_skew_ratio: 0.5,
                 allow_use_modify_count: false,
                 ..EstimatorOptions::default()
@@ -3977,7 +3977,7 @@ mod analyzed_filter_selectivity_tests {
             hist.realtime_count(),
             hist.modify_count(),
             false,
-            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap()
         .est / 1_000.0;
@@ -4088,7 +4088,7 @@ mod analyzed_filter_selectivity_tests {
             hist.realtime_count(),
             hist.modify_count(),
             false,
-            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap()
         .est / 6_001_215.0;

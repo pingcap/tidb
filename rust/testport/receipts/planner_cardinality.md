@@ -2966,3 +2966,12 @@ request-count and no-requeue assertions. Three lifecycle tests, original Go test
 lint and diff checks pass. No production change; stored payloads use a test
 double. Exact commands and limits are in the structural audit. Statement context,
 complete inventory, live-cluster and workload gates remain open.
+
+
+Statement-timezone checkpoint (2026-09-26): estimator CMS/key encoding and
+ANALYZE sample/key production now use the resolved statement zone across shared
+local/cluster owners. Direct estimator and SQL fixtures fail before and match
+Go after; fixed/named zones, V1/V2 columns/indexes and timezone changes are covered.
+The structural audit records exact tests and limitations. Full planner testing
+now has one CTE failure after upstream 3f0e572dc8; server test mocks also retain
+DDL API drift. Package, error-policy, live-cluster and workload gates stay open.

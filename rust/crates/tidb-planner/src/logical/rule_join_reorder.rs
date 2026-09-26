@@ -187,7 +187,7 @@ fn optimize_recursive(
 
 fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
     RuleContext {
-        estimator_options: context.estimator_options,
+        estimator_options: context.estimator_options.clone(),
         allocator: context.allocator,
         column_allocator: context.column_allocator,
         builder: context.builder,

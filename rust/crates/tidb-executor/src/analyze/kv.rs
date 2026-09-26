@@ -368,7 +368,7 @@ fn kv_analyze_plan(
 
     AnalyzePlan::new(columns, indexes, &table.name).map(|plan| {
         (
-            plan.with_virtual_columns(
+            plan.with_time_zone(context.zone().clone()).with_virtual_columns(
                 physical_columns
                     .iter()
                     .filter(|column| crate::generated_column::is_virtual(*column))

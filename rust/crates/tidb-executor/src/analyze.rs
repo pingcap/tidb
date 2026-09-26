@@ -52,7 +52,9 @@
 pub mod kv;
 pub mod panic_recovery;
 
-use tidb_codec::{encode_key, encode_value};
+#[cfg(test)]
+use tidb_codec::encode_value;
+use tidb_codec::encode_value_in_timezone;
 use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_stats::builder::{build_hist_and_topn, BuildOptions, SampleCollector, SampleItem};
 use tidb_stats::cmsketch::TopN;
@@ -676,6 +678,7 @@ pub struct AnalyzedIndex {
 /// Which columns and indexes one table's `ANALYZE` covers, decided once.
 #[derive(Clone, Debug)]
 pub struct AnalyzePlan {
+    time_zone: tidb_datatype::SessionTimeZone,
     columns: Vec<AnalyzedColumn>,
     indexes: Vec<AnalyzedIndex>,
     /// Column positions covered by a single-column unique index, which is
@@ -712,11 +715,19 @@ impl AnalyzePlan {
             }
         }
         Ok(Self {
+            time_zone: tidb_datatype::SessionTimeZone::utc(),
             columns,
             indexes,
             unique_covered,
             virtual_columns: Default::default(),
         })
+    }
+
+    /// Uses the statement timezone to encode sampled timestamp statistics.
+    #[must_use]
+    pub fn with_time_zone(mut self, time_zone: tidb_datatype::SessionTimeZone) -> Self {
+        self.time_zone = time_zone;
+        self
     }
 
     /// Retains virtual values in samples and index keys while suppressing their
@@ -776,12 +787,12 @@ impl AnalyzePlan {
             // collation key's: Go computes it before the substitution and
             // says so, because `tot_col_size` describes what the table
             // stores.
-            let size = encode_value(std::slice::from_ref(value))
+            let size = encode_value_in_timezone(&self.time_zone, std::slice::from_ref(value))
                 .map_err(|error| AnalyzeError::Encode(error.to_string()))?
                 .len() as i64
                 - 1;
             let keyed = self.columns[position].stored_value(value);
-            let encoded_value = encode_value(std::slice::from_ref(&keyed))
+            let encoded_value = encode_value_in_timezone(&self.time_zone, std::slice::from_ref(&keyed))
                 .map_err(|error| AnalyzeError::Encode(error.to_string()))?;
             sizes.push(size);
             slots.push(SlotContribution {
@@ -801,8 +812,8 @@ impl AnalyzePlan {
             } else {
                 self.index_values(index, &keyed_columns)
             };
-            let encoded_value =
-                encode_value(&group).map_err(|error| AnalyzeError::Encode(error.to_string()))?;
+            let encoded_value = encode_value_in_timezone(&self.time_zone, &group)
+                .map_err(|error| AnalyzeError::Encode(error.to_string()))?;
             let size = index
                 .column_positions
                 .iter()
@@ -855,7 +866,7 @@ impl AnalyzePlan {
         }
         let mut key = Vec::new();
         for value in self.index_values(index, sampled) {
-            key.extend_from_slice(&encode_key_of(&value)?);
+            key.extend_from_slice(&encode_key_of(&value, &self.time_zone)?);
         }
         Ok(Some(key))
     }
@@ -1092,7 +1103,7 @@ impl<'a> AnalyzeRun<'a> {
                 }
                 let value = column.stored_value(sampled_value);
                 collected.samples.push(SampleItem {
-                    encoded: encode_key_of(&value)?,
+                    encoded: encode_key_of(&value, &plan.time_zone)?,
                     value,
                     ordinal: row.ordinal,
                 });
@@ -1171,8 +1182,12 @@ pub(crate) fn value_length(value: &Datum) -> usize {
     }
 }
 
-fn encode_key_of(value: &Datum) -> Result<Vec<u8>, AnalyzeError> {
-    encode_key(std::slice::from_ref(value)).map_err(|error| AnalyzeError::Encode(error.to_string()))
+fn encode_key_of(
+    value: &Datum,
+    time_zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Vec<u8>, AnalyzeError> {
+    tidb_codec::encode_key_in_timezone(time_zone, std::slice::from_ref(value))
+        .map_err(|error| AnalyzeError::Encode(error.to_string()))
 }
 
 #[cfg(test)]

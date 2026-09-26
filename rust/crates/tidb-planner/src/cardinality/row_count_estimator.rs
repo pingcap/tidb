@@ -36,6 +36,7 @@
 //! expression-to-range extraction, and the MV-index paths. Each is called
 //! out at its use site.
 
+#[cfg(test)]
 use tidb_codec::encode_key;
 use tidb_datatype::{Collation, Datum};
 use tidb_stats::cmsketch::{CmsSketch, TopN};
@@ -125,9 +126,12 @@ impl From<tidb_datatype::DatumValueError> for EstimationError {
 ///
 /// Defaults match a session that has not touched the risk variables:
 /// no skew adjustment, and real-time statistics allowed (that is, an
-/// optimizer objective other than `Determinate`).
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// optimizer objective other than `Determinate`). Without a statement, the
+/// encoding timezone defaults to UTC; session callers install their snapshot.
+#[derive(Clone, Debug, PartialEq)]
 pub struct EstimatorOptions {
+    /// Resolved statement timezone used by Go statistics value/key encoding.
+    pub time_zone: std::sync::Arc<tidb_datatype::SessionTimeZone>,
     /// `tidb_opt_risk_eq_skew_ratio`.
     pub risk_eq_skew_ratio: f64,
     /// `tidb_opt_risk_range_skew_ratio`.
@@ -139,6 +143,11 @@ pub struct EstimatorOptions {
 impl Default for EstimatorOptions {
     fn default() -> Self {
         Self {
+            time_zone: {
+                static UTC: std::sync::LazyLock<std::sync::Arc<tidb_datatype::SessionTimeZone>> =
+                    std::sync::LazyLock::new(|| std::sync::Arc::new(tidb_datatype::SessionTimeZone::utc()));
+                std::sync::Arc::clone(&UTC)
+            },
             risk_eq_skew_ratio: 0.0,
             risk_range_skew_ratio: 0.0,
             allow_use_modify_count: true,
@@ -381,7 +390,7 @@ fn uniform_estimate(
     increase_factor: f64,
     realtime_row_count: i64,
     modify_count: i64,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> RowEstimate {
     estimate_uniform_equality(UniformEqualityStats {
         histogram_ndv: histogram.ndv,
@@ -411,7 +420,7 @@ pub fn equal_row_count_on_column(
     collation: Collation,
     realtime_row_count: i64,
     modify_count: i64,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     if value.is_null() {
         return Ok(RowEstimate::default_est(column.histogram.null_count as f64));
@@ -429,8 +438,12 @@ pub fn equal_row_count_on_column(
             return Ok(RowEstimate::default_est(selectivity * total));
         }
         if let Some(cms) = column.cms.as_ref() {
-            let count =
-                tidb_stats::cmsketch::query_value(Some(cms), column.topn.as_ref(), value, None)?;
+            let count = tidb_stats::cmsketch::query_value(
+                Some(cms),
+                column.topn.as_ref(),
+                value,
+                Some(options.time_zone.as_ref()),
+            )?;
             return Ok(RowEstimate::default_est(count as f64));
         }
         let (hist_count, _) = histogram.equal_row_count(value, false, collation);
@@ -485,7 +498,7 @@ pub fn between_row_count_on_column(
     low_encoded: &[u8],
     high_encoded: &[u8],
     collation: Collation,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> RowEstimate {
     // The source always has a session here (only the version-1 *index* helper
     // documents a nil one), so the same-bucket skew branch runs at both stats
@@ -513,8 +526,8 @@ pub fn between_row_count_on_column(
 // including the distinction between nil and an empty enumerated integer range.
 pub use tidb_stats::enum_range_values;
 
-fn encode_datum(value: &Datum) -> Result<Vec<u8>, tidb_codec::CodecError> {
-    encode_key(std::slice::from_ref(value))
+fn encode_datum(value: &Datum, options: &EstimatorOptions) -> Result<Vec<u8>, tidb_codec::CodecError> {
+    tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), std::slice::from_ref(value))
 }
 
 #[cfg(test)]
@@ -574,7 +587,7 @@ pub fn get_column_row_count(
     realtime_row_count: i64,
     modify_count: i64,
     pk_is_handle: bool,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     let mut total = RowEstimate::default_est(0.0);
     let increase_factor = column.increase_factor(realtime_row_count);
@@ -589,7 +602,7 @@ pub fn get_column_row_count(
         if !range.low_exclude && !range.high_exclude && range.low == range.high {
             let value = to_sort_key(&range.low);
             value.compare(&value, Collation::Binary)?;
-            let encoded = encode_datum(&value)?;
+            let encoded = encode_datum(&value, options)?;
             if pk_is_handle {
                 total.add_all(1.0);
                 continue;
@@ -618,8 +631,8 @@ pub fn get_column_row_count(
         let collation = Collation::Binary;
         let equal_bounds =
             range.low.compare(&range.high, Collation::Binary)? == std::cmp::Ordering::Equal;
-        let low_encoded = encode_datum(&range.low)?;
-        let high_encoded = encode_datum(&range.high)?;
+        let low_encoded = encode_datum(&range.low, options)?;
+        let high_encoded = encode_datum(&range.high, options)?;
 
         if equal_bounds {
             // Case 1: a point.
@@ -753,7 +766,7 @@ pub fn get_index_row_count_with_partial_stats(
     ranges: &[IndexRangeDatums],
     realtime: i64,
     modify_count: i64,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> Result<Option<RowEstimate>, EstimationError> {
     if realtime <= 0 {
         return Ok(Some(RowEstimate::default_est(0.0)));
@@ -835,7 +848,7 @@ pub fn get_row_count_by_column_ranges(
     realtime_row_count: i64,
     modify_count: i64,
     pk_is_handle: bool,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     let Some(column) = column.filter(|column| column.total_row_count() != 0.0) else {
         return Ok(RowEstimate::default_est(pseudo_row_count(
@@ -892,7 +905,7 @@ mod tests {
                     100,
                     0,
                     is_handle,
-                    Default::default(),
+                    &Default::default(),
                 );
                 match range.high {
                     Datum::VectorFloat32(_) => {
@@ -931,7 +944,7 @@ mod tests {
             table_rows,
             0,
             false,
-            Default::default(),
+            &Default::default(),
         )
         .unwrap()
         .est;
@@ -1071,7 +1084,7 @@ pub fn equal_row_count_on_index(
     encoded: &[u8],
     realtime_row_count: i64,
     modify_count: i64,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> RowEstimate {
     if index.num_columns == 1 && encoded == null_key_bytes().as_slice() {
         return RowEstimate::default_est(index.histogram.null_count as f64);
@@ -1132,7 +1145,7 @@ pub fn between_row_count_on_index(
     index: &IndexStats,
     left: &[u8],
     right: &[u8],
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> RowEstimate {
     let l = Datum::Bytes(left.to_vec());
     let r = Datum::Bytes(right.to_vec());
@@ -1292,7 +1305,7 @@ pub fn get_index_row_count(
     virtual_columns: &[bool],
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
     ranges: &[IndexRangeDatums],
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     if stats.index.is_some()
         && super::index_range_policy::can_skip_datum_index_estimation(
@@ -1453,17 +1466,17 @@ pub fn get_index_row_count(
             }))
         };
         let mut selectivity = if let Some(values) = values {
-            let mut encoded = encode_key(&range.low_val[..position - 1])?;
+            let mut encoded = tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.low_val[..position - 1])?;
             let prefix_len = encoded.len();
             let mut result = 0.0;
             for value in values {
                 encoded.truncate(prefix_len);
-                encoded.extend(encode_key(&[value])?);
+                encoded.extend(tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &[value])?);
                 result += equal_selectivity(&encoded)?;
             }
             result
         } else {
-            equal_selectivity(&encode_key(&range.low_val[..position])?)?
+            equal_selectivity(&tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.low_val[..position])?)?
         };
         if position < range.low_val.len() {
             let suffix = IndexRangeDatums {
@@ -1525,7 +1538,7 @@ pub fn exp_backoff_estimation(
     range: &IndexRangeDatums,
     realtime_row_count: i64,
     modify_count: i64,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> Result<Option<(f64, f64, f64)>, EstimationError> {
     let mut single_column_results = Vec::with_capacity(range.low_val.len());
     let mut min_sel = 1.0_f64;
@@ -1656,7 +1669,7 @@ pub fn get_index_row_count_for_stats_v2(
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
     ranges: &[IndexRangeDatums],
     row_counts: IndexRowCounts,
-    options: EstimatorOptions,
+    options: &EstimatorOptions,
 ) -> Result<RowEstimate, EstimationError> {
     let realtime_row_count = row_counts.index_realtime;
     let modify_count = row_counts.index_modify;
@@ -1666,8 +1679,8 @@ pub fn get_index_row_count_for_stats_v2(
 
     for range in ranges {
         let mut count = RowEstimate::default_est(0.0);
-        let mut lb = encode_key(&range.low_val)?;
-        let mut rb = encode_key(&range.high_val)?;
+        let mut lb = tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.low_val)?;
+        let mut rb = tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.high_val)?;
         let full_len = range.low_val.len() == range.high_val.len() && range.low_val.len() == index.num_columns;
 
         if lb == rb {
@@ -1852,7 +1865,7 @@ pub struct EqualCondSelectivityInputs<'a> {
     /// The modify-count half.
     pub modify_count: i64,
     /// Estimator knobs.
-    pub options: EstimatorOptions,
+    pub options: &'a EstimatorOptions,
 }
 
 /// Go `getEqualCondSelectivity`
@@ -1949,6 +1962,7 @@ mod equal_cond_selectivity_tests {
         ndvs: &'a [Option<i64>],
         row_counts: &'a [Option<f64>],
     ) -> EqualCondSelectivityInputs<'a> {
+        static OPTIONS: std::sync::LazyLock<EstimatorOptions> = std::sync::LazyLock::new(EstimatorOptions::default);
         EqualCondSelectivityInputs {
             index,
             encoded_value: encoded,
@@ -1957,7 +1971,7 @@ mod equal_cond_selectivity_tests {
             prefix_column_row_counts: row_counts,
             realtime_row_count: 20,
             modify_count: 5,
-            options: EstimatorOptions::default(),
+            options: &OPTIONS,
         }
     }
 
@@ -2105,7 +2119,7 @@ mod recursive_index_estimation_tests {
             &range,
             100,
             0,
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap()
         .expect("the second loaded index estimates the missing first column");
@@ -2155,7 +2169,7 @@ mod recursive_index_estimation_tests {
                 &range,
                 100,
                 0,
-                EstimatorOptions::default(),
+                &EstimatorOptions::default(),
             )
             .unwrap()
         };
@@ -2222,7 +2236,7 @@ mod recursive_index_estimation_tests {
             &range,
             100,
             0,
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap();
 
@@ -2288,7 +2302,7 @@ mod recursive_index_estimation_tests {
             &range,
             1_500,
             100,
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap()
         .unwrap();
@@ -2317,7 +2331,7 @@ mod recursive_index_estimation_tests {
                 &[],
                 &[range],
                 IndexRowCounts::unscaled(100, 0),
-                EstimatorOptions::default(),
+                &EstimatorOptions::default(),
             );
             assert!(matches!(
                 result,
@@ -2359,7 +2373,7 @@ mod recursive_index_estimation_tests {
                 &range,
                 100,
                 0,
-                EstimatorOptions::default()
+                &EstimatorOptions::default()
             ),
             Err(super::EstimationError::Comparison(_))
         ));
@@ -2395,7 +2409,7 @@ mod recursive_index_estimation_tests {
                 &range,
                 100,
                 0,
-                EstimatorOptions::default()
+                &EstimatorOptions::default()
             )
             .unwrap(),
             Some((0.1, 0.1, 0.1))
@@ -2411,7 +2425,7 @@ mod recursive_index_estimation_tests {
                 &range,
                 100,
                 0,
-                EstimatorOptions::default()
+                &EstimatorOptions::default()
             )
             .unwrap(),
             None
@@ -2423,6 +2437,137 @@ mod recursive_index_estimation_tests {
 mod version_one_value_tests {
     use super::*;
     use tidb_datatype::{MySqlDuration, Time, TimeType};
+
+    #[test]
+    fn timestamp_statistics_use_the_statement_timezone() {
+        for zone in [
+            tidb_datatype::SessionTimeZone::Fixed {
+                name: "+08:00".to_owned(),
+                offset_secs: 8 * 3600,
+            },
+            tidb_datatype::SessionTimeZone::Named("America/New_York".parse().unwrap()),
+        ] {
+            for month in [1, 7] {
+                let values = (0..5)
+                    .map(|second| {
+                        Datum::Time(
+                            Time::from_date_checked(
+                                2020,
+                                month,
+                                1,
+                                0,
+                                0,
+                                second,
+                                0,
+                                TimeType::Timestamp,
+                                0,
+                            )
+                            .unwrap(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let options = EstimatorOptions {
+                    time_zone: std::sync::Arc::new(zone.clone()),
+                    ..Default::default()
+                };
+                let mut statistics = column(&values);
+                let mut cms = CmsSketch::new(5, 2048);
+                let mut topn = TopN::default();
+                for (value, count) in values.iter().zip([1, 2, 7, 13, 77]) {
+                    cms.insert_bytes_by_count(
+                        &tidb_tablecodec::encode_table_value(Some(&options.time_zone), value).unwrap(),
+                        count,
+                    );
+                    topn.append(
+                        &tidb_codec::encode_key_in_timezone(
+                            options.time_zone.as_ref(),
+                            std::slice::from_ref(value),
+                        )
+                        .unwrap(),
+                        count,
+                    );
+                }
+                statistics.cms = Some(cms);
+                for version in [VERSION1, VERSION2] {
+                    statistics.stats_ver = version;
+                    if version == VERSION2 {
+                        statistics.cms = None;
+                        statistics.topn = Some(topn.clone());
+                        statistics.histogram.buckets.clear();
+                    }
+                    let estimate = get_column_row_count(
+                        &statistics,
+                        &[ColumnRange::point(values[2].clone())],
+                        Collation::Binary,
+                        100,
+                        0,
+                        false,
+                        &options,
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        estimate.est, 7.0,
+                        "{zone:?} month {month} stats version {version}"
+                    );
+                }
+                for version in [VERSION1, VERSION2] {
+                    let mut index = IndexStats {
+                        histogram: statistics.histogram.clone(),
+                        topn: Some(topn.clone()),
+                        cms: None,
+                        stats_ver: version,
+                        num_columns: 1,
+                        unique: false,
+                    };
+                    if version == VERSION1 {
+                        let mut cms = CmsSketch::new(5, 2048);
+                        let keys = values
+                            .iter()
+                            .map(|value| {
+                                tidb_codec::encode_key_in_timezone(
+                                    options.time_zone.as_ref(),
+                                    std::slice::from_ref(value),
+                                )
+                                .unwrap()
+                            })
+                            .collect::<Vec<_>>();
+                        for (key, count) in keys.iter().zip([1, 2, 7, 13, 77]) {
+                            cms.insert_bytes_by_count(key, count);
+                        }
+                        index.cms = Some(cms);
+                        index.topn = None;
+                        index.histogram.append_bucket(
+                            Datum::Bytes(keys[0].clone()),
+                            Datum::Bytes(keys[4].clone()),
+                            100,
+                            77,
+                        );
+                    }
+                    for (low, high, expected) in [(2, 2, 7.0), (1, 3, 22.0)] {
+                        let range = IndexRangeDatums {
+                            low_val: vec![values[low].clone()],
+                            high_val: vec![values[high].clone()],
+                            collators: vec![Collation::Binary],
+                            low_exclude: false,
+                            high_exclude: false,
+                        };
+                        let stats = IndexEstimationStats::new(
+                            Some(&index),
+                            vec![],
+                            IndexRowCounts::unscaled(100, 0),
+                        );
+                        let estimate =
+                            get_index_row_count(&stats, &[], &[], &[range], &options).unwrap();
+                        assert!(
+                            (estimate.est - expected).abs() < 1e-10,
+                            "index {zone:?} month {month} stats version {version}: {}",
+                            estimate.est
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     fn temporal_values(kind: Option<TimeType>) -> Vec<Datum> {
         (0..5)
@@ -2500,7 +2645,7 @@ mod version_one_value_tests {
             200,
             100,
             false,
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap()
         .est
@@ -2607,7 +2752,7 @@ mod value_encoding_error_tests {
                 Collation::Binary,
                 1,
                 0,
-                EstimatorOptions::default(),
+                &EstimatorOptions::default(),
             ),
             Err(EstimationError::TableValue(
                 tidb_tablecodec::TableRowError::Codec(tidb_codec::CodecError::UnsupportedDatum(
@@ -2706,7 +2851,7 @@ mod version_one_index_dispatch_tests {
         let context =
             IndexEstimationStats::new(Some(&index), vec![None], IndexRowCounts::unscaled(200, 100));
         let estimate =
-            get_index_row_count(&context, &[], &[], &[range], EstimatorOptions::default()).unwrap();
+            get_index_row_count(&context, &[], &[], &[range], &EstimatorOptions::default()).unwrap();
         assert!((estimate.est - 22.0).abs() < 1e-10, "{estimate:?}");
     }
 
@@ -2770,13 +2915,13 @@ mod version_one_index_dispatch_tests {
                 &[],
                 &[Vec::new(), vec![first]],
                 std::slice::from_ref(&range),
-                EstimatorOptions::default(),
+                &EstimatorOptions::default(),
             )
             .unwrap();
             assert!((actual.est - 0.05).abs() < 1e-10, "{actual:?}");
         }
         let column_fallback =
-            get_index_row_count(&context, &[], &[], &[range], EstimatorOptions::default()).unwrap();
+            get_index_row_count(&context, &[], &[], &[range], &EstimatorOptions::default()).unwrap();
         assert!(
             (column_fallback.est - 2.0).abs() < 1e-10,
             "{column_fallback:?}"
@@ -2799,13 +2944,13 @@ mod version_one_index_dispatch_tests {
             &[],
             &[],
             std::slice::from_ref(&point),
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap();
         assert_eq!(estimate.est, 2.0);
         context.column_is_handle[0] = true;
         assert_eq!(
-            get_index_row_count(&context, &[], &[], &[point], EstimatorOptions::default())
+            get_index_row_count(&context, &[], &[], &[point], &EstimatorOptions::default())
                 .unwrap()
                 .est,
             1.0
@@ -2815,7 +2960,7 @@ mod version_one_index_dispatch_tests {
         context.row_counts = IndexRowCounts::unscaled(200, 100);
         let outside = range(vec![Datum::Int(9)], vec![Datum::Int(9)]);
         let estimate =
-            get_index_row_count(&context, &[], &[], &[outside], EstimatorOptions::default())
+            get_index_row_count(&context, &[], &[], &[outside], &EstimatorOptions::default())
                 .unwrap();
         assert!((estimate.est - 0.1).abs() < 1e-10, "{estimate:?}");
     }
@@ -2829,7 +2974,7 @@ mod version_one_index_dispatch_tests {
         empty.low_exclude = true;
         empty.high_exclude = true;
         assert_eq!(
-            get_index_row_count(&context, &[], &[], &[empty], EstimatorOptions::default())
+            get_index_row_count(&context, &[], &[], &[empty], &EstimatorOptions::default())
                 .unwrap()
                 .est,
             0.0
@@ -2847,7 +2992,7 @@ mod version_one_index_dispatch_tests {
             vec![Datum::Int(1), Datum::Int(2)],
         );
         let estimate =
-            get_index_row_count(&context, &[], &[], &[point], EstimatorOptions::default()).unwrap();
+            get_index_row_count(&context, &[], &[], &[point], &EstimatorOptions::default()).unwrap();
         assert!((estimate.est - 7.0).abs() < 1e-10, "{estimate:?}");
     }
 
@@ -2894,7 +3039,7 @@ mod version_one_index_dispatch_tests {
             &range,
             100,
             0,
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap()
         .unwrap();
@@ -2908,7 +3053,7 @@ mod version_one_index_dispatch_tests {
             &[],
             &recursive,
             &[range],
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap();
         assert!((estimate.est - 21.0).abs() < 1e-10, "{estimate:?}");

@@ -1968,7 +1968,7 @@ impl InitStats<'_> {
                             &built.ranges,
                             statistics,
                             false,
-                            self.context.optimizer_cost_env().session.estimator_options,
+                            self.context.optimizer_cost_env().session.estimator_options.clone(),
                         )
                     })
                     .transpose()
@@ -2090,7 +2090,7 @@ impl InitStats<'_> {
                                 .context
                                 .optimizer_cost_env()
                                 .session
-                                .estimator_options,
+                                .estimator_options.clone(),
                             ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
                                 self.default_string_match_selectivity,
                                 self.selectivity_factor,
@@ -2116,7 +2116,7 @@ impl InitStats<'_> {
                         statistics,
                         row_count,
                         false,
-                        self.context.optimizer_cost_env().session.estimator_options,
+                        self.context.optimizer_cost_env().session.estimator_options.clone(),
                     )
                 } else {
                     let ranges = built
@@ -2145,7 +2145,7 @@ impl InitStats<'_> {
                         statistics,
                         row_count,
                         false,
-                        self.context.optimizer_cost_env().session.estimator_options,
+                        self.context.optimizer_cost_env().session.estimator_options.clone(),
                     )
                 })
                 .map_err(estimation_error)?;
@@ -2193,7 +2193,7 @@ impl InitStats<'_> {
                             .context
                             .optimizer_cost_env()
                             .session
-                            .estimator_options,
+                            .estimator_options.clone(),
                         ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
                             self.default_string_match_selectivity,
                             self.selectivity_factor,
@@ -2337,7 +2337,7 @@ impl InitStats<'_> {
                             .collect::<Vec<_>>();
                         crate::access_cost::index_row_count_with_options(
                             metadata, table, &ranges, statistics, row_count, false,
-                            self.context.optimizer_cost_env().session.estimator_options,
+                            self.context.optimizer_cost_env().session.estimator_options.clone(),
                         )
                     } else {
                         crate::access_cost::index_row_count_with_appended_handle_columns_and_options(
@@ -2351,7 +2351,7 @@ impl InitStats<'_> {
                             statistics,
                             row_count,
                             false,
-                            self.context.optimizer_cost_env().session.estimator_options,
+                            self.context.optimizer_cost_env().session.estimator_options.clone(),
                         )
                     }
                     .map_err(estimation_error)?;
@@ -2511,7 +2511,7 @@ pub(crate) fn physical_plan_for_logical(
         tidb_expr::eval_expression_once(expression, ctx)
     };
     let mut dispatch = DispatchContext::new(plan_ids, &coster, optimizer_cost_env.session.scale_ndv_skew_ratio)
-        .with_estimator_options(optimizer_cost_env.session.estimator_options)
+        .with_estimator_options(optimizer_cost_env.session.estimator_options.clone())
         .with_group_ndv_skew_ratio(optimizer_cost_env.session.group_ndv_skew_ratio)
         .with_correlation_options(optimizer_cost_env.session.correlation_options)
         .with_expression_evaluator(&evaluate)
@@ -3480,7 +3480,7 @@ fn optimize_built_logical(
     };
     let optimizer_cost_env = ctx.optimizer_cost_env();
     let rule_context = RuleContext {
-        estimator_options: optimizer_cost_env.session.estimator_options,
+        estimator_options: optimizer_cost_env.session.estimator_options.clone(),
         allocator: plan_ids,
         column_allocator: column_ids,
         builder: &function_builder,
@@ -4017,7 +4017,7 @@ mod statistics_initialization_tests {
                     hist.realtime_count(),
                     hist.modify_count(),
                     false,
-                    Default::default(),
+                    &Default::default(),
                 )
                 .unwrap();
             assert_eq!(

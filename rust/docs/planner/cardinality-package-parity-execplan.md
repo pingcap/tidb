@@ -10,6 +10,8 @@ Rust planning must estimate rows, selectivity, distinct values, and row sizes th
 
 ## Progress
 
+- [x] (2026-09-26) Carry statement timezone through the shared estimator snapshot and borrow it inside recursive estimation. Align ANALYZE sample/key encoding in both local and region adapters. Direct V1 regression and real SQL/ANALYZE fixture fail before and match Go after, including named-zone seasons and SET timezone between queries. Focused tests, compile and lint pass; the full planner suite has one CTE failure after pulling 3f0e572dc8. See structural audit for exact commands and remaining gates.
+
 - [x] (2026-09-26) Exercise original datetime range-overflow SQL before and after production Catalog async loading: demand, one request, full-load status, empty results and no requeue all hold. Three lifecycle tests, original Go case, lint and diff checks pass. Storage I/O remains a test double.
 
 - [x] (2026-09-25) Extend the original unanalyzed-IN fixture through encoded statistics storage updates, repeated lite/full cache initialization and the production planner view. Both exact Go plans and existence metadata survive every stage. Two session cases, 14 source cases, original Go fixture, lint and diff checks pass. Background update orchestration and live TiKV remain outside this evidence.
@@ -271,6 +273,10 @@ Rust planning must estimate rows, selectivity, distinct values, and row sizes th
   Evidence: after deleting rows, Go retains `(RealtimeCount, ModifyCount) = (2000, 1000)` and a histogram beginning at 300; the incorrect Rust path changed the histogram minimum to 500 and estimated `a <= 300` as 10.00. Merging physical partition stats now reproduces the 191.04 estimate and every remaining source golden.
 
 ## Decision Log
+
+- Decision: retain the resolved SessionTimeZone in the existing estimator snapshot and AnalyzePlan; use shared timezone codecs at both boundaries.
+  Rationale: fixing only lookup left the SQL regression failing because ANALYZE had encoded session-decoded samples as UTC. Borrowing options inside estimation avoids repeated Arc clones in range loops.
+  Date/Author: 2026-09-26 / Codex.
 
 - Decision: preserve the originating rename statement kind through lowering and use the shared collation registry after charset resolution.
   Rationale: the restored aggregate gate exposed catalog writes for identity ALTER and a blanket latin1 refusal, both contrary to Go.
@@ -553,3 +559,8 @@ boundaries and remaining whole-package gates are in the structural audit.
 Range loading update (2026-09-26): replace the stale unported-loader mapping
 with the active cardinality_stats_loading fixture. The structural audit records
 commands, boundaries and the next shared statement-timezone contract gap.
+
+
+Timezone update (2026-09-26): shared producer/consumer context is implemented;
+statement warning/error policy, upstream CTE failure, server mock compilation,
+whole-package inventories and live-cluster/workload gates remain open.

@@ -253,7 +253,7 @@ fn column_estimate(
         REALTIME,
         MODIFY,
         pk,
-        EstimatorOptions::default(),
+        &EstimatorOptions::default(),
     )
     .unwrap();
     (result.est, result.min_est, result.max_est)
@@ -669,7 +669,7 @@ fn source_index_range_estimates() {
             &[],
             ranges,
             IndexRowCounts::unscaled(REALTIME, MODIFY),
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap();
         check(name, (result.est, result.min_est, result.max_est), *want);
@@ -735,7 +735,7 @@ fn source_index_exp_backoff_estimates() {
             &[],
             ranges,
             IndexRowCounts::unscaled(REALTIME, MODIFY),
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap();
         check(name, (result.est, result.min_est, result.max_est), *want);
@@ -787,7 +787,7 @@ fn source_composite_index_prefix_matching_the_first_bound_is_in_range() {
         &[],
         &[index_range(&[1], &[1], false, false)],
         IndexRowCounts::unscaled(100, 0),
-        EstimatorOptions::default(),
+        &EstimatorOptions::default(),
     )
     .unwrap();
 
@@ -949,7 +949,7 @@ fn equal_row_count_prefers_topn_over_every_later_source() {
         Collation::Binary,
         REALTIME,
         MODIFY,
-        EstimatorOptions::default(),
+        &EstimatorOptions::default(),
     )
     .unwrap();
     assert_close(result.est, 22.0, "TopN count is exact");

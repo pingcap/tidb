@@ -522,7 +522,7 @@ fn estimate_partial_index_ranges(
                 hist.realtime_count(),
                 hist.modify_count(),
                 false,
-                ctx.estimator_options,
+                &ctx.estimator_options,
             )
             .ok()
         },
@@ -598,7 +598,7 @@ fn estimate_partial_index_prefix(
                 ranges,
                 hist.realtime_count(),
                 hist.modify_count(),
-                ctx.estimator_options,
+                &ctx.estimator_options,
             )? {
                 return Ok(estimate);
             }
@@ -630,7 +630,7 @@ fn estimate_partial_index_prefix(
         &virtual_columns,
         &recursive,
         ranges,
-        ctx.estimator_options,
+        &ctx.estimator_options,
     )
 }
 

@@ -90,7 +90,7 @@ fn column_row_count(
         realtime_row_count,
         modify_count,
         false,
-        EstimatorOptions::default(),
+        &EstimatorOptions::default(),
     )
     .unwrap()
 }
@@ -272,7 +272,7 @@ fn risk_range_skew_ratio_raises_out_of_range_column_estimates() {
         realtime,
         modify,
         false,
-        EstimatorOptions {
+        &EstimatorOptions {
             risk_range_skew_ratio: 0.0,
             ..EstimatorOptions::default()
         },
@@ -290,7 +290,7 @@ fn risk_range_skew_ratio_raises_out_of_range_column_estimates() {
         realtime,
         modify,
         false,
-        EstimatorOptions {
+        &EstimatorOptions {
             risk_range_skew_ratio: 0.5,
             ..EstimatorOptions::default()
         },
@@ -335,7 +335,7 @@ fn risk_range_skew_ratio_out_of_range_sequence_is_monotone() {
             realtime,
             modify,
             false,
-            EstimatorOptions {
+            &EstimatorOptions {
                 risk_range_skew_ratio: ratio,
                 ..EstimatorOptions::default()
             },
@@ -373,7 +373,7 @@ fn out_of_range_ge_vs_between_right_uncertainty_band() {
                 realtime,
                 modify,
                 false,
-                EstimatorOptions {
+                &EstimatorOptions {
                     risk_range_skew_ratio: ratio,
                     ..EstimatorOptions::default()
                 },
@@ -391,7 +391,7 @@ fn out_of_range_ge_vs_between_right_uncertainty_band() {
                 realtime,
                 modify,
                 false,
-                EstimatorOptions {
+                &EstimatorOptions {
                     risk_range_skew_ratio: ratio,
                     ..EstimatorOptions::default()
                 },
@@ -466,7 +466,7 @@ fn risk_eq_skew_ratio_raises_index_equal_estimates_for_unseen_value() {
             &[],
             &[range_for(6)],
             IndexRowCounts::unscaled(9, 0),
-            EstimatorOptions {
+            &EstimatorOptions {
                 risk_eq_skew_ratio: ratio,
                 ..EstimatorOptions::default()
             },
@@ -516,7 +516,7 @@ fn index_estimation_survives_empty_idx_to_col_mapping() {
             high_exclude: false,
         }],
         IndexRowCounts::unscaled(50, 0),
-        EstimatorOptions::default(),
+        &EstimatorOptions::default(),
     )
     .unwrap();
     assert!(estimate.est > 0.0, "must return a small positive estimate");
@@ -681,7 +681,7 @@ fn unique_key_equal_conds_return_exact_counts() {
                 high_exclude: false,
             }],
             IndexRowCounts::unscaled(7, 0),
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .expect("the closed unique point range is estimable");
         assert_eq!(estimate.est, 1.0, "value={value}");
@@ -693,7 +693,7 @@ fn unique_key_equal_conds_return_exact_counts() {
             7,
             0,
             true,
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .expect("the primary-key handle point is estimable");
         assert_eq!(column_estimate.est, 1.0, "pk handle value={value}");
@@ -861,7 +861,7 @@ fn issue_39593_composite_prefix_point_ranges_match_estimates() {
         &[],
         &ranges,
         IndexRowCounts::unscaled(540, 0),
-        EstimatorOptions::default(),
+        &EstimatorOptions::default(),
     )
     .expect("the composite point sweep is estimable");
     assert!(
@@ -882,7 +882,7 @@ fn issue_39593_composite_prefix_point_ranges_match_estimates() {
             index_realtime: 5_400,
             index_modify: 0,
         },
-        EstimatorOptions::default(),
+        &EstimatorOptions::default(),
     )
     .expect("scaled composite point sweep is estimable");
     assert!(
@@ -1041,7 +1041,7 @@ fn risk_range_skew_ratio_widens_within_bucket_estimates() {
             &[],
             std::slice::from_ref(&range),
             IndexRowCounts::unscaled(10, 0),
-            EstimatorOptions {
+            &EstimatorOptions {
                 risk_range_skew_ratio,
                 ..EstimatorOptions::default()
             },
@@ -1092,7 +1092,7 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
             realtime,
             modify,
             false,
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap()
     };
@@ -1147,7 +1147,7 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
                 high_exclude: false,
             }],
             IndexRowCounts::unscaled(realtime, modify),
-            EstimatorOptions::default(),
+            &EstimatorOptions::default(),
         )
         .unwrap()
     };

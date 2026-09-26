@@ -217,7 +217,7 @@ pub enum ConditionKind {
 }
 
 /// The session defaults the leftover-condition tail multiplies by.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SelectivityDefaults {
     /// `SelectivityFactor`, Go's 0.8.
     pub selectivity_factor: f64,

@@ -264,7 +264,7 @@ impl Ver2Factors {
 /// `tidb_hashagg_final_concurrency`, union concurrency) resolve to
 /// `tidb_executor_concurrency`, whose default is 5; that resolution is
 /// already applied here.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CostSessionOpts {
     /// Session settings consumed by TiDB's histogram cardinality estimators.
     pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,

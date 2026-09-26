@@ -671,7 +671,7 @@ pub(crate) fn index_row_count_with_options(
         &virtual_columns,
         &recursive_indexes,
         &datum_ranges,
-        options,
+        &options,
     )
 }
 
@@ -900,7 +900,7 @@ pub(crate) fn index_row_count_with_appended_handle_columns_and_options(
                 stats,
                 realtime,
                 trigger_load,
-                options,
+                options.clone(),
             )
         },
         |dimension, ranges| {
@@ -935,7 +935,7 @@ pub(crate) fn index_row_count_with_appended_handle_columns_and_options(
                 realtime as i64,
                 stats.modify_count,
                 false,
-                options,
+                &options,
             )
             .ok()
         },
@@ -1022,7 +1022,7 @@ fn partial_stats_index_row_count(
         &ranges,
         stats.row_count,
         stats.modify_count,
-        options,
+        &options,
     )
 }
 
@@ -1840,7 +1840,7 @@ fn selectivity_of_conjuncts_with_path_context(
                     stats.row_count,
                     stats.modify_count,
                     is_handle,
-                    defaults.estimator_options,
+                    &defaults.estimator_options,
                 )?
                 .est
             }
@@ -1858,7 +1858,7 @@ fn selectivity_of_conjuncts_with_path_context(
                     realtime as i64,
                     0,
                     is_handle,
-                    defaults.estimator_options,
+                    &defaults.estimator_options,
                 )?
                 .est
             }
@@ -2000,7 +2000,7 @@ fn selectivity_of_conjuncts_with_path_context(
             stats,
             realtime,
             defaults.trigger_load,
-            defaults.estimator_options,
+            defaults.estimator_options.clone(),
         )?
         .est;
         if stats.is_some_and(|stats| stats.row_count == 5400) {}
@@ -2029,7 +2029,7 @@ fn selectivity_of_conjuncts_with_path_context(
         conjuncts.len(),
         correlated_factor,
         realtime as i64,
-        defaults,
+        defaults.clone(),
         |index| {
             if error.is_some() {
                 return ConditionKind::Other;
@@ -2039,7 +2039,7 @@ fn selectivity_of_conjuncts_with_path_context(
                 table,
                 resolver,
                 stats,
-                defaults,
+                defaults.clone(),
                 range_context,
             ) {
                 Ok(kind) => kind,
@@ -2271,7 +2271,7 @@ fn dnf_selectivity(
             table,
             resolver,
             stats,
-            defaults,
+            defaults.clone(),
             range_context,
         )?;
         selectivity = selectivity + current - selectivity * current;
@@ -2502,7 +2502,7 @@ fn row_in_selectivity(
             table,
             resolver,
             stats,
-            defaults,
+            defaults.clone(),
             range_context,
         )?;
         selectivity = selectivity + current - selectivity * current;
@@ -3343,7 +3343,7 @@ mod tests {
                 &table,
                 &resolver,
                 Some(&stats),
-                defaults,
+                defaults.clone(),
                 crate::index_range::RangeContext::default(),
             );
             assert!(
@@ -3358,7 +3358,7 @@ mod tests {
                 &table,
                 &resolver,
                 Some(&stats),
-                defaults,
+                defaults.clone(),
                 crate::index_range::RangeContext::default(),
             );
             assert!(

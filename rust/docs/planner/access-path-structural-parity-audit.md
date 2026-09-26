@@ -3594,3 +3594,74 @@ encode_key rather than encode_key_in_timezone. Go uses the statement timezone
 for both. EstimatorOptions currently contains only copyable risk/count settings;
 the fix needs a shared statement-context contract across estimator consumers,
 not a special timestamp adjustment in one caller. This remains unimplemented.
+
+
+### Shared statement timezone for statistics production and estimation (2026-09-26)
+
+The preceding timezone gap is now implemented across the producer/consumer
+boundary. EstimatorOptions retains the resolved statement SessionTimeZone in an
+Arc; native ownership remains explicit, and inner column/index/recursive and
+logical selectivity functions borrow the snapshot. Ordinary paths, union
+partials, correlation, task filters and costing retain the same context. V1
+QueryValue, column bounds, V1 index prefix enumeration and V2 index bounds use
+the existing timezone-aware codecs. UTC remains the context-free default.
+
+A direct +08:00 V1 timestamp fixture failed before (1 instead of 7). The final
+matrix matches Go for V1/V2 column points and V1/V2 index points and intervals,
+using +08:00 and America/New_York in January and July. The session snapshot test
+also verifies SET does not mutate an older statement's estimator context.
+
+The real SQL fixture then exposed a second structural defect: ANALYZE decoded
+samples in the statement timezone but encoded statistics as UTC, still producing
+1 instead of 7 after the estimator correction. AnalyzePlan now retains the
+resolved timezone for column/group sample values, column TopN and index keys.
+Both native and region-collector adapters install it; the snapshot-only adapter
+retains its existing UTC context. The SQL/ANALYZE regression now estimates and
+returns seven rows through both index and table scans, including after changing
+from +08:00 to UTC and querying the same instant.
+
+Commands from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --lib -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner --test all row_count_estimator_source -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib cardinality_estimator_options_follow_session_variables -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_explain -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_index_hints -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_analyze -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib access_cost -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib analyze:: -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --lib cluster_analyze -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --test all analyze_added_column_source -- --test-threads=1
+    cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-planner -p tidb-executor -p tidb-session --all-targets
+    cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-server
+    make lint
+    git diff --check
+
+Focused pass counts: source 14, session options 1, EXPLAIN 111, hints 27,
+ANALYZE 22, access cost 44, shared builder 8, cluster analysis 14, storage 3.
+Planner initially passed all 1054 tests. After pulling upstream 3f0e572dc8
+(CTE maintained-seed profile), it passes 1053 and fails
+logical::operator_tests::cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat
+at the expected 300-row assertion. That gate remains open. All-target checks
+for planner/executor/session and production server compilation pass. Server
+all-target checking separately exposes stale DDL warning fields and missing
+DropTables/AcceptedNoOp match arms in its existing mock_seams.rs; no mock changes
+are included in this checkpoint. Lint and diff checks pass.
+
+Go verification from /private/tmp/tidb-go-master-20260923:
+
+    GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRustTimestamp(Estimator|Sql)Timezone$' -count=1
+
+Reference pin 633a9e37f1c796ac81c203dc107025e7e65385f0; compared cardinality
+and analyze_col_sampling.go unchanged at master
+8936d7bdcb13a4fc767de42489aace2711c2c6fd. Logs are
+/private/tmp/tidb-timezone-*.log, with fail-before evidence in before.log and
+SQL producer failure captured during development. Files changed span estimator
+and callers in planner/executor/session, shared ANALYZE and its local/cluster
+adapters, source/SQL tests and this audit/ExecPlan/receipt. No Go/Bazel changes.
+
+This corrects timestamp estimates and newly built statistics; affected tables
+whose statistics were previously built using the wrong encoding need ANALYZE
+again. Full statement warning/error policy, complete package inventory, live
+TiKV, the CTE/server test gates and workload correctness/throughput remain open.
+No benchmark improvement is claimed.

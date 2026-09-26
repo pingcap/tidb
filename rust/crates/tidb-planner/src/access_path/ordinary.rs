@@ -399,7 +399,7 @@ pub(crate) fn estimate_int_table_path(
         hist.map_or(stats.row_count() as i64, |hist| hist.realtime_count()),
         hist.map_or(0, |hist| hist.modify_count()),
         true,
-        context.estimator_options,
+        &context.estimator_options,
     )
     .map(|estimate| estimate.est)
     .map_err(|error| PlanError::internal_coded(error.to_string()))

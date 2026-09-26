@@ -267,7 +267,7 @@ impl<'a> DispatchContext<'a> {
 
     /// Uses the session's resolved histogram-estimator options.
     #[must_use]
-    pub const fn with_estimator_options(
+    pub fn with_estimator_options(
         mut self,
         options: crate::cardinality::row_count_estimator::EstimatorOptions,
     ) -> Self {
@@ -289,7 +289,7 @@ impl<'a> DispatchContext<'a> {
                 crate::logical::rewrite::analyzed_filter_selectivity_with_evaluator(
                     stats,
                     filters,
-                    self.estimator_options,
+                    &self.estimator_options,
                     self.expression_evaluator,
                 )
             })
@@ -309,7 +309,7 @@ impl<'a> DispatchContext<'a> {
             } else {
                 source.table_stats.clone().map(std::sync::Arc::new)
             },
-            estimator_options: self.estimator_options,
+            estimator_options: self.estimator_options.clone(),
             scale_ndv_skew_ratio: self.skew_ratio,
         }
     }
@@ -349,7 +349,7 @@ impl<'a> DispatchContext<'a> {
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
             expr_pushdown_blacklist: &self.expr_pushdown_blacklist,
             selectivity_factor: self.selectivity_factor,
-            estimator_options: self.estimator_options,
+            estimator_options: self.estimator_options.clone(),
             range_max_size: self.range_max_size,
             range_fallback_handler: self.range_fallback_handler,
             expression_evaluator: self.expression_evaluator,
@@ -3047,7 +3047,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                                 desc,
                                                 ctx.range_max_size,
                                                 ctx.expression_evaluator,
-                                                ctx.estimator_options,
+                                                ctx.estimator_options.clone(),
                                             ),
                                         ),
                                         _ => None,

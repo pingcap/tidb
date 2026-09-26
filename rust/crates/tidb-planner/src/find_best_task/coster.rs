@@ -145,7 +145,7 @@ impl Ver2Coster {
         Self {
             factors: env.factors.clone(),
             session_factors: env.cost_factors.clone(),
-            session: env.session,
+            session: env.session.clone(),
             cost_option: None,
             explain_costs: None,
         }

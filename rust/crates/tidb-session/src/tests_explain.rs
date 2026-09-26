@@ -5111,7 +5111,7 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
             stats.row_count,
             stats.modify_count,
             false,
-            tidb_planner::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner::cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap()
         .est
@@ -5210,7 +5210,7 @@ fn unknown_value_estimates_follow_modify_delta_lifecycle() {
             stats.row_count,
             stats.modify_count,
             false,
-            tidb_planner::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner::cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap()
         .est
@@ -5604,4 +5604,34 @@ fn expression_index_statistics_remain_initialized() {
             .any(|cell| cell.contains("unInitialized")),
         "{second:?}"
     );
+}
+
+#[test]
+fn timestamp_cardinality_uses_the_statement_timezone() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+08:00'").unwrap();
+    session
+        .run("CREATE TABLE timestamp_stats(a TIMESTAMP, KEY ia(a))")
+        .unwrap();
+    for (second, count) in [1, 2, 7, 13, 77].into_iter().enumerate() {
+        let values = std::iter::repeat_n(format!("('2020-01-01 00:00:{second:02}')"), count)
+            .collect::<Vec<_>>()
+            .join(",");
+        session
+            .run(&format!("INSERT INTO timestamp_stats VALUES {values}"))
+            .unwrap();
+    }
+    session.run("ANALYZE TABLE timestamp_stats").unwrap();
+    for (zone, literal) in [
+        ("+08:00", "2020-01-01 00:00:02"),
+        ("+00:00", "2019-12-31 16:00:02"),
+    ] {
+        session.run(&format!("SET time_zone = '{zone}'")).unwrap();
+        for hint in ["USE INDEX(ia)", "IGNORE INDEX(ia)"] {
+            let sql = format!("SELECT * FROM timestamp_stats {hint} WHERE a='{literal}'");
+            let plan = row_text(session.run(&format!("EXPLAIN FORMAT='brief' {sql}")));
+            assert_eq!(plan[0][1], "7.00", "{sql}: {plan:?}");
+            assert_eq!(row_text(session.run(&sql)).len(), 7);
+        }
+    }
 }

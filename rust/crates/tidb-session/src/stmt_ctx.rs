@@ -207,6 +207,7 @@ impl Session {
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
         env.session.estimator_options =
             tidb_planner::cardinality::row_count_estimator::EstimatorOptions {
+                time_zone: std::sync::Arc::new(self.session_time_zone()),
                 risk_eq_skew_ratio: number(
                     tidb_vardef::tidb_vars::TIDB_OPT_RISK_EQ_SKEW_RATIO,
                     tidb_vardef::defaults::DEF_OPT_RISK_EQ_SKEW_RATIO,
@@ -1696,9 +1697,14 @@ mod tests {
     #[test]
     fn cardinality_estimator_options_follow_session_variables() {
         let mut session = Session::new();
+        session.run("SET time_zone = '+00:00'").unwrap();
         let original = session.statement_context(false);
-        let original_options = original.optimizer_cost_env().session.estimator_options;
-        assert_eq!(original_options, Default::default());
+        let original_options = original.optimizer_cost_env().session.estimator_options.clone();
+        assert_eq!(original_options.time_zone.as_ref(), &session.session_time_zone());
+        assert_eq!(original_options.risk_eq_skew_ratio, 0.0);
+        assert_eq!(original_options.risk_range_skew_ratio, 0.0);
+        assert!(original_options.allow_use_modify_count);
+        session.run("SET time_zone = '+08:00'").unwrap();
 
         session
             .run("SET tidb_opt_risk_eq_skew_ratio = 0.25")
@@ -1714,7 +1720,9 @@ mod tests {
             .statement_context(false)
             .optimizer_cost_env()
             .session
-            .estimator_options;
+            .estimator_options.clone();
+        assert_eq!(options.time_zone.as_ref(), &session.session_time_zone());
+        assert_ne!(options.time_zone, original_options.time_zone);
         assert_eq!(options.risk_eq_skew_ratio, 0.25);
         assert_eq!(options.risk_range_skew_ratio, 0.5);
         assert!(!options.allow_use_modify_count);

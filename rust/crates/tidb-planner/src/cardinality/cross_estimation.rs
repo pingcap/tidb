@@ -223,7 +223,7 @@ pub fn estimate_table_cross_row_count(
                 column.unique_id,
                 index_id,
                 range,
-                estimator_options,
+                estimator_options.clone(),
             )?;
             Some(CountedRange::new(range.clone(), estimated_rows))
         })
@@ -274,7 +274,7 @@ fn estimate_correlation_range(
         }
         let context = stats.index_estimation_stats(index_id);
         let estimate =
-            get_index_row_count(&context, &[], &[], std::slice::from_ref(range), options).ok()?;
+            get_index_row_count(&context, &[], &[], std::slice::from_ref(range), &options).ok()?;
         return Some(estimate.est);
     }
     let low = range.low_val.first()?.clone();
@@ -300,7 +300,7 @@ fn estimate_correlation_range(
         stats.realtime_count(),
         stats.modify_count(),
         stats.pk_is_handle(),
-        options,
+        &options,
     )
     .ok()
     .map(|estimate| estimate.est)

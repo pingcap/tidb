@@ -896,7 +896,7 @@ fn is_null_condition_selectivity_with_options(
             realtime_row_count,
             hist_coll.modify_count(),
             false,
-            options,
+            &options,
         )
         .ok()?;
         Some((estimate.est / total).clamp(0.0, 1.0))
@@ -1189,7 +1189,7 @@ mod tests {
             hist_coll.realtime_count(),
             hist_coll.modify_count(),
             false,
-            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap();
         let expected = (estimate.est / hist_coll.realtime_count() as f64).clamp(0.0, 1.0);
@@ -1236,7 +1236,7 @@ mod tests {
             hist_coll.realtime_count(),
             hist_coll.modify_count(),
             false,
-            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap();
         let expected = (estimate.est / hist_coll.realtime_count() as f64).clamp(0.0, 1.0);
@@ -1247,7 +1247,7 @@ mod tests {
             scaled_stats.row_count() as i64,
             hist_coll.modify_count(),
             false,
-            crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap();
         let wrong_count = (wrong_count_estimate.est / scaled_stats.row_count()).clamp(0.0, 1.0);
