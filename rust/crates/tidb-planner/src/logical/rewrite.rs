@@ -345,6 +345,20 @@ pub(crate) fn analyzed_filter_selectivity(
                 }
             }
         }
+        // GO `Selectivity` routes col = col through the ranger: with no
+        // constant to range on the ranger answers the FULL range, i.e.
+        // selectivity 1 — a column equals itself for every non-null row
+        // (q41's eq(i_manufact, i_manufact) self-comparison; the port's
+        // generic 0.8 fallback inflated the DNF by ×4.9).
+        if matches!(function.func_name.lowercase(), "eq" | "nulleq")
+            && matches!(
+                function.args.as_slice(),
+                [Expression::Column(_), Expression::Column(_)]
+            )
+        {
+            recognized = true;
+            continue;
+        }
         let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
             ("eq" | "nulleq", [Expression::Column(column), Expression::Constant(value)]) => {
                 (column, vec![convert_constant_to_column_type(
