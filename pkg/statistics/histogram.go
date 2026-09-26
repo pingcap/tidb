@@ -1906,6 +1906,9 @@ func collectVirtualTopN(allTopN []topNEntry, globalTopNMap map[hack.MutableStrin
 //     linear interpolation assumes uniform density, so error scales
 //     with the partition-level density variation that the merge
 //     averaged over.
+//
+// The returned histogram's NDV counts the distinct values the merge saw, a
+// lower bound on the global NDV.
 func MergePartTopNAndHistToGlobal(
 	sc *stmtctx.StatementContext,
 	killer *sqlkiller.SQLKiller,
@@ -2098,6 +2101,7 @@ func MergePartTopNAndHistToGlobal(
 	if err != nil {
 		return nil, nil, err
 	}
+	globalHist.NDV = int64(numCandidates)
 	return globalTopN, globalHist, nil
 }
 

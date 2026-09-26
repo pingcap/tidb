@@ -304,13 +304,14 @@ func blockingMergePartitionStats2GlobalStats(
 			if globalStats.Fms[i] == nil {
 				globalStats.Fms[i] = allFms[i][j]
 			} else {
-				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+				globalStats.Fms[i].MergePartitionFMSketch(allFms[i][j])
 				allFms[i][j] = nil // Release for GC.
 			}
 		}
 
 		// Update the global NDV.
 		globalStatsNDV := min(globalStats.Fms[i].NDV(), globalStats.Count)
+		sampled := globalStats.Fms[i].Sampled()
 		globalStats.Fms[i] = nil // Release for GC.
 
 		// Merge CMSketch.
@@ -342,6 +343,9 @@ func blockingMergePartitionStats2GlobalStats(
 		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 		// we just set the table-level NDV.
 		if globalStats.Hg[i] != nil {
+			if sampled {
+				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.Count)
+			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}
@@ -375,4 +379,12 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 		}
 	}
 	return err
+}
+
+// sampledGlobalNDV bounds a sampled estimate by the non-NULL rows. The row
+// count is current while NULL counts date from each partition's ANALYZE, so
+// the result also stays at or above the distinct values the TopN and histogram
+// merge saw.
+func sampledGlobalNDV(ndv int64, hist *statistics.Histogram, count int64) int64 {
+	return max(min(ndv, count-hist.NullCount), hist.NDV)
 }

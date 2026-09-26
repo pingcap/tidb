@@ -45,7 +45,99 @@ func newSampledFMSketch(pb *tipb.FMSketch, sample ndvSample) *FMSketch {
 
 // Sampled reports whether the NDV of s is estimated from sampled rows.
 func (s *FMSketch) Sampled() bool {
-	return s != nil && s.sample != nil
+	return s != nil && (s.sample != nil || s.weights != nil)
+}
+
+// MergePartitionFMSketch merges the sketch of another partition into s for
+// global statistics. GEE scales every singleton by one ratio, which fits only
+// one rate, so here each singleton keeps the scale of the partition that
+// sampled it. The values of full-input partitions are known, so they are never
+// scaled.
+func (s *FMSketch) MergePartitionFMSketch(rs *FMSketch) {
+	if s == nil || rs == nil {
+		return
+	}
+	if s.Sampled() || rs.Sampled() {
+		s.toWeighted()
+	}
+	if s.mask < rs.mask {
+		s.mask = rs.mask
+		s.filterHashes()
+	}
+	if s.weights == nil {
+		for hash := range rs.hashset {
+			s.insertHashValue(hash)
+		}
+		return
+	}
+	for hash := range rs.repeated {
+		s.insertWeighted(hash, 0)
+	}
+	scale := rs.singletonScale()
+	for hash := range rs.hashset {
+		s.insertWeighted(hash, scale)
+	}
+}
+
+// singletonScale is the GEE scale of a singleton, sqrt(N/n), or zero for full
+// input, whose values need no scaling.
+func (s *FMSketch) singletonScale() float64 {
+	if s.sample == nil || s.sample.samples == 0 {
+		return 0
+	}
+	return math.Sqrt(float64(s.sample.rows) / float64(s.sample.samples))
+}
+
+// toWeighted moves the scale of the singletons of s into weights.
+func (s *FMSketch) toWeighted() {
+	if s.weights != nil {
+		return
+	}
+	if s.repeated == nil {
+		s.repeated = make(map[uint64]struct{}, len(s.hashset))
+	}
+	s.weights = make(map[uint64]float64, len(s.hashset))
+	scale := s.singletonScale()
+	for hash := range s.hashset {
+		if scale == 0 {
+			delete(s.hashset, hash)
+			s.repeated[hash] = struct{}{}
+		} else {
+			s.weights[hash] = scale
+		}
+	}
+	s.sample = nil
+}
+
+// insertWeighted adds a hash seen once with the scale of its partition, or,
+// with scale zero, a hash seen more than once or from full input.
+func (s *FMSketch) insertWeighted(hash uint64, scale float64) {
+	if hash&s.mask != 0 {
+		return
+	}
+	if _, ok := s.repeated[hash]; ok {
+		return
+	}
+	if _, ok := s.hashset[hash]; ok || scale == 0 {
+		delete(s.hashset, hash)
+		delete(s.weights, hash)
+		s.repeated[hash] = struct{}{}
+	} else {
+		s.hashset[hash] = struct{}{}
+		s.weights[hash] = scale
+	}
+	if len(s.hashset)+len(s.repeated) > s.maxSize {
+		s.mask = s.mask*2 + 1
+		s.filterHashes()
+	}
+}
+
+func (s *FMSketch) weightedNDV() int64 {
+	sum := float64(len(s.repeated))
+	for _, scale := range s.weights {
+		sum += scale
+	}
+	return int64(math.Round(float64(s.mask+1) * sum))
 }
 
 func (s *FMSketch) sampledNDV() int64 {

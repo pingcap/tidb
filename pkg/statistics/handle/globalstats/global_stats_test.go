@@ -17,6 +17,7 @@ package globalstats_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1168,4 +1171,73 @@ func TestGlobalStatsMergePathConsistency(t *testing.T) {
 		"global TopN should be identical between async and blocking merge")
 	require.Equal(t, blockingBuckets, asyncBuckets,
 		"global buckets should be identical between async and blocking merge")
+}
+
+func TestGlobalStatsSampledNDV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	tk.MustExec("analyze table ndv")
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv"))
+	require.NoError(t, err)
+	tbl := table.Meta()
+	part0, part1 := tbl.Partition.Definitions[0].ID, tbl.Partition.Definitions[1].ID
+	colA, colB, idx := tbl.Columns[0].ID, tbl.Columns[1].ID, tbl.FindIndexByName("idx").ID
+	// sampledSketch returns a saved sketch of 10 rows, of which selected were
+	// sampled for NDV and 3 are NULL, with the given singleton hashes.
+	sampledSketch := func(selected int64, hashes ...uint64) []byte {
+		wire, err := (&tipb.RowSampleCollector{Count: 10, NdvSampleCount: &selected,
+			NullCounts: []int64{3}, FmSketch: []*tipb.FMSketch{{Hashset: hashes}}}).Marshal()
+		require.NoError(t, err)
+		return append([]byte{0, 1}, wire...)
+	}
+	data := sampledSketch(3, 1, 2)
+	tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id in (?,?)", data, part0, part1)
+	tk.MustExec("update mysql.stats_meta set count=10 where table_id in (?,?)", part0, part1)
+	h := dom.StatsHandle()
+	opts := map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumBuckets: 10, ast.AnalyzeOptNumTopN: 0}
+	mergedNDV := func(async, isIndex bool, id int64) int64 {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_async_merge_global_stats=%t", async))
+		merged, err := globalstats.MergePartitionStats2GlobalStats(tk.Session(), h, opts, dom.InfoSchema(), tbl, isIndex, []int64{id})
+		require.NoError(t, err)
+		return merged.Hg[0].NDV
+	}
+	for _, async := range []bool{false, true} {
+		// Both partitions contain the same two sampled values. Their merged NDV is two.
+		require.Equal(t, int64(2), mergedNDV(async, false, colB))
+		require.Equal(t, int64(2), mergedNDV(async, true, idx))
+		// Each partition keeps its own scale: value 2 is a singleton of p1,
+		// sampled from 2 of its 10 rows, so it counts sqrt(10/2), and value 1 counts once.
+		tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=?", sampledSketch(2, 1, 2), part1)
+		tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=?", sampledSketch(3, 1), part0)
+		require.Equal(t, int64(math.Round(1+math.Sqrt(5))), mergedNDV(async, false, colB))
+		// A full-input partition merges with sampled ones, and its values are never scaled.
+		tk.MustExec("update mysql.stats_fm_sketch set value=x'08001001' where table_id=?", part0)
+		require.Equal(t, int64(math.Round(1+math.Sqrt(5))), mergedNDV(async, false, colB))
+		tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id in (?,?)", data, part0, part1)
+	}
+	// Like full input, a sampled merge skips a partition without a sketch.
+	// Values 1 and 2 are then singletons of p0 only, each counting sqrt(10/3).
+	tk.MustExec("delete from mysql.stats_fm_sketch where table_id=? and is_index=0 and hist_id=?", part1, colB)
+	for _, async := range []bool{false, true} {
+		require.Equal(t, int64(math.Round(2*math.Sqrt(10./3))), mergedNDV(async, false, colB))
+	}
+	tk.MustExec("insert into mysql.stats_fm_sketch values (?, 0, ?, ?)", part1, colB, data)
+	// Deletes after ANALYZE can leave fewer rows than the NULLs counted then.
+	// The NDV then keeps the values the partition histograms hold.
+	tk.MustExec("update mysql.stats_histograms set null_count=15 where table_id in (?,?) and is_index=0 and hist_id=?", part0, part1, colA)
+	for _, async := range []bool{false, true} {
+		require.Equal(t, int64(4), mergedNDV(async, false, colA))
+	}
+	tk.MustExec("update mysql.stats_histograms set null_count=0 where table_id in (?,?) and is_index=0 and hist_id=?", part0, part1, colA)
+
+	// A partition analyzed again, or a locked one, merges with sketches of
+	// other rates, so ANALYZE never needs other partitions.
+	tk.MustExec("lock stats ndv partition p1")
+	tk.MustExec("analyze table ndv partition p0")
+	tk.MustQuery("show warnings").CheckNotContain("merge global stats failed")
+	tk.MustQuery("select state from mysql.analyze_jobs where table_name='ndv' and job_info like '%merge global stats%' order by id desc limit 1").Check(testkit.Rows("finished"))
+	tk.MustExec("unlock stats ndv partition p1")
 }

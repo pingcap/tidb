@@ -173,6 +173,35 @@ func SubTestSampledNDV() func(*testing.T) {
 		require.Equal(t, int64(5), empty.sample.samples)
 		require.Equal(t, int64(8), empty.NDV())
 
+		// The global merge keeps the scale of each partition's singletons,
+		// sqrt(400/100) = 2 and sqrt(900/100) = 3. A value seen in two
+		// partitions or in full input counts once.
+		sampledAt := func(rows int64, singles, multis []uint64) *FMSketch {
+			return newSampledFMSketch(&tipb.FMSketch{Hashset: singles, MultiHashset: multis}, ndvSample{rows: rows, samples: 100})
+		}
+		full := NewFMSketch(MaxSketchSize)
+		full.insertHashValue(1)
+		full.insertHashValue(5)
+		partitions := []*FMSketch{sampledAt(400, []uint64{1, 2}, []uint64{3}), sampledAt(900, []uint64{2, 4}, nil), full}
+		for _, order := range [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+			merged := partitions[order[0]].Copy()
+			for _, i := range order[1:] {
+				merged.MergePartitionFMSketch(partitions[i])
+			}
+			require.True(t, merged.Sampled())
+			require.Equal(t, map[uint64]struct{}{4: {}}, merged.hashset)
+			require.Equal(t, int64(4+3), merged.NDV())
+		}
+		plain := full.Copy()
+		plain.MergePartitionFMSketch(full)
+		require.False(t, plain.Sampled())
+		require.Equal(t, int64(2), plain.NDV())
+		// Leveling up drops hashes together with their scales.
+		leveled := sampledAt(400, []uint64{1, 2}, nil)
+		leveled.maxSize = 2
+		leveled.MergePartitionFMSketch(sampledAt(900, []uint64{4}, nil))
+		require.Equal(t, map[uint64]float64{2: 2, 4: 3}, leveled.weights)
+		require.Equal(t, int64(2*(2+3)), leveled.NDV())
 		// Without sampled rows or non-NULL rows, NDV is zero.
 		for _, sample := range []ndvSample{{rows: 200}, {rows: 10, samples: 2, nulls: 10}} {
 			require.Zero(t, newSampledFMSketch(&tipb.FMSketch{}, sample).NDV())

@@ -105,6 +105,7 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
+	sampledNDV                []bool
 	partitionIDs              []int64
 	partitionNum              int
 	skipMissingPartitionStats bool
@@ -149,6 +150,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 	a.globalStats = newGlobalStats(len(a.histIDs))
 	a.globalStats.Num = len(a.histIDs)
 	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
+	a.sampledNDV = make([]bool, 0, a.globalStats.Num)
 	statslogutil.StatsLogger().Info("global stats prepare: fetching per-partition meta",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
@@ -309,6 +311,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 			// Update the global NDV.
 			globalStatsNDV := min(a.globalStats.Fms[i].NDV(), a.globalStats.Count)
 			a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
+			a.sampledNDV = append(a.sampledNDV, a.globalStats.Fms[i].Sampled())
 			a.globalStats.Fms[i] = nil // Release for GC.
 		}
 	}
@@ -511,7 +514,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
 			if a.globalStats.Fms[fms.idx] == nil {
 				a.globalStats.Fms[fms.idx] = fms.item
 			} else {
-				a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
+				a.globalStats.Fms[fms.idx].MergePartitionFMSketch(fms.item)
 			}
 		case <-a.ioWorkerExitWhenErrChan:
 			return
@@ -581,7 +584,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 			// we just set the table-level NDV.
 			if *globalHg != nil {
-				(*globalHg).NDV = a.globalStatsNDV[item.idx]
+				ndv := a.globalStatsNDV[item.idx]
+				if a.sampledNDV[item.idx] {
+					ndv = sampledGlobalNDV(ndv, *globalHg, a.globalStats.Count)
+				}
+				(*globalHg).NDV = ndv
 			}
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
