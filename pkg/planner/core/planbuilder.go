@@ -3154,6 +3154,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
+	ast.AnalyzeOptNDVRate:       math.Float64bits(1),
 }
 
 // AnalyzeOptionDefault returns the default analyze options.
@@ -3167,6 +3168,7 @@ func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
 		ast.AnalyzeOptCMSketchDepth: 5,
 		ast.AnalyzeOptNumSamples:    0,
 		ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+		ast.AnalyzeOptNDVRate:       math.Float64bits(-1),
 	}
 }
 
@@ -3209,7 +3211,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 				return nil, nil, errors.Errorf("Value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 			optMap[opt.Type] = v
-		case ast.AnalyzeOptSampleRate:
+		case ast.AnalyzeOptSampleRate, ast.AnalyzeOptNDVRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
 			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
 			if err != nil {
@@ -3219,7 +3221,9 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 			if fVal <= 0 || fVal > limit {
 				return nil, nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", ast.AnalyzeOptionString[opt.Type], limit)
 			}
-			sampleRate = fVal
+			if opt.Type == ast.AnalyzeOptSampleRate {
+				sampleRate = fVal
+			}
 			optMap[opt.Type] = math.Float64bits(fVal)
 		default:
 			v := datumValue.GetUint64()
