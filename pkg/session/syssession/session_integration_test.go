@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -50,6 +51,8 @@ func TestDomainAdvancedSessionPoolInternalSessionRegistry(t *testing.T) {
 				require.Nil(t, sctx)
 				sctx = ctx
 				require.True(t, sessManager.ContainsInternalSession(ctx))
+				require.Equal(t, int64(vardef.DefAdaptiveClosestReadThreshold), ctx.GetSessionVars().ReplicaClosestReadThreshold)
+				require.Equal(t, int64(vardef.DefAdaptiveClosestReadThreshold), ctx.GetDistSQLCtx().ReplicaClosestReadThreshold)
 				return nil
 			})
 		}))
