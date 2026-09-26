@@ -829,8 +829,16 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     Ok(Constraint {
         kind,
         // Go `setEmptyConstraintName`: an unnamed key takes its first column's
-        // name. A PRIMARY KEY is always renamed to `PRIMARY` later.
+        // name, but that pass EXCLUDES a PRIMARY KEY (`Tp !=
+        // ast.ConstraintPrimaryKey`). The PK's name stays empty here and the
+        // index build renames it `PRIMARY`. Column-naming it early would make
+        // the 1061 duplicate-name precheck collide `KEY b (...), PRIMARY KEY
+        // (b(...))` on the same first column, where go builds both indexes
+        // (oracle: d9.pf carries 'b' id 1 beside PRIMARY id 2).
         name: index.name.clone().unwrap_or_else(|| {
+            if kind == ConstraintKind::PrimaryKey {
+                return String::new();
+            }
             parts
                 .first()
                 .map(|part| part.name.clone())
