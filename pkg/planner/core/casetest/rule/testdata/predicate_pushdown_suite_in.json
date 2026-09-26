@@ -21,5 +21,20 @@
       "select /* double_not_semi_join_exec */ t0.k0 from t0 where exists (select 1 from t2 where not not (t0.k0 = t2.k0)) order by t0.k0",
       "select /* issue:65994 */ * from t1_65994 left join t2_65994 on (t1_65994.a = t2_65994.a or 0)"
     ]
+  },
+  {
+    "name": "TestNestedInnerJoinPredicatePropagation",
+    "cases": [
+      "SELECT STRAIGHT_JOIN t3.a FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a WHERE t1.a = 1",
+      "SELECT STRAIGHT_JOIN t3.a FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a WHERE t1.a > 1",
+      "SELECT STRAIGHT_JOIN t3.a FROM t1 JOIN t2 ON t1.a = t2.a AND t1.a = 1 JOIN t3 ON t2.a = t3.a",
+      "SELECT STRAIGHT_JOIN t4.a FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t3.a = t4.a WHERE t1.a = 1",
+      "SELECT STRAIGHT_JOIN t3.a FROM t1 JOIN t2 ON t1.a = t2.a AND t1.a = 1 JOIN t3 ON t2.a = t3.a WHERE t3.a = 2",
+      "SELECT STRAIGHT_JOIN t3.a FROM t1 JOIN t2 USING (a) JOIN t3 USING (a) WHERE t1.a = 1",
+      "SELECT t3.a, t1.a FROM t3 LEFT JOIN (t1 JOIN t2 ON t1.a = t2.a) ON t3.a = t1.a AND t1.a = 1 ORDER BY t3.a",
+      "SELECT t1.a, t3.a FROM (t1 JOIN t2 ON t1.a = t2.a AND t1.a = 1) LEFT JOIN t3 ON t3.a = t1.a ORDER BY t1.a",
+      "SELECT t4.a FROM t4 WHERE EXISTS (SELECT 1 FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a WHERE t1.a = t4.a AND t1.a = 1) ORDER BY t4.a",
+      "WITH c AS (SELECT STRAIGHT_JOIN t3.a FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a) SELECT * FROM c WHERE a = 1"
+    ]
   }
 ]
