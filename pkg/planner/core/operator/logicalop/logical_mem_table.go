@@ -15,8 +15,11 @@
 package logicalop
 
 import (
+	"context"
 	"slices"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -27,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -98,6 +102,10 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 	}
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
+	if p.TableInfo.Name.O == infoschema.ClusterTableSlowLog && hasSlowQueryPhaseBackoffTypes(p.Columns, used) &&
+		!isSlowQueryPhaseBackoffTypesCompatibleBounded() {
+		return nil, errors.New("phase-specific slow-query columns are unavailable while TiDB nodes are on different builds")
+	}
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.Schema().Len() > 1 {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
@@ -107,6 +115,33 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 		}
 	}
 	return p, nil
+}
+
+// slowQueryCompatCheckTimeout bounds the etcd topology read behind the
+// phase-specific slow-query column gate so plan optimization cannot hang on a
+// slow or unavailable etcd.
+const slowQueryCompatCheckTimeout = 3 * time.Second
+
+// isSlowQueryPhaseBackoffTypesCompatibleBounded wraps the compatibility check
+// with a timeout; on timeout it reports incompatible, which fails the query
+// with a clear error instead of blocking the planner.
+func isSlowQueryPhaseBackoffTypesCompatibleBounded() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), slowQueryCompatCheckTimeout)
+	defer cancel()
+	return infoschema.IsSlowQueryPhaseBackoffTypesCompatible(ctx)
+}
+
+func hasSlowQueryPhaseBackoffTypes(columns []*model.ColumnInfo, used []bool) bool {
+	for i, col := range columns {
+		if !used[i] {
+			continue
+		}
+		switch col.Name.O {
+		case execdetails.PrewriteBackoffTypesStr, execdetails.CommitBackoffTypesStr, execdetails.CopBackoffTypesStr:
+			return true
+		}
+	}
+	return false
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.<4th> implementation.

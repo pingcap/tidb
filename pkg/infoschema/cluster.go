@@ -15,11 +15,13 @@
 package infoschema
 
 import (
+	"context"
 	"net"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -104,6 +106,34 @@ func GetClusterTableCopDestination(tableName string) ClusterTableCopDestination 
 		return DDLOwner
 	}
 	return AllTiDB
+}
+
+// IsSlowQueryPhaseBackoffTypesCompatible reports whether the cluster has a
+// consistent TiDB build for the phase-specific slow-query columns. These
+// columns are part of the cluster-table schema and cannot be sent to an older
+// TiDB node during a rolling upgrade.
+func IsSlowQueryPhaseBackoffTypesCompatible(ctx context.Context) bool {
+	local, err := infosync.GetServerInfo()
+	if err != nil || local == nil {
+		return false
+	}
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil || len(servers) == 0 {
+		return false
+	}
+	return slowQueryPhaseBackoffTypesCompatible(local, servers)
+}
+
+func slowQueryPhaseBackoffTypesCompatible(local *serverinfo.ServerInfo, servers map[string]*serverinfo.ServerInfo) bool {
+	if local == nil || len(servers) == 0 {
+		return false
+	}
+	for _, server := range servers {
+		if server == nil || server.Version != local.Version || server.GitHash != local.GitHash {
+			return false
+		}
+	}
+	return true
 }
 
 func init() {
