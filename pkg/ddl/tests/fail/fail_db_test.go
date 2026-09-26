@@ -426,21 +426,25 @@ func TestModifyColumn(t *testing.T) {
 	// Test multiple rows of data.
 	tk.MustExec("create table t3(a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
 	// Add some discrete rows.
-	maxBatch := 20
-	batchCnt := 100
+	rowsPerBatch := 5
+	batchCnt := 50
 	// Make sure there are no duplicate keys.
 	defaultBatchSize := vardef.DefTiDBDDLReorgBatchSize * vardef.DefTiDBDDLReorgWorkerCount
 	base := defaultBatchSize * 20
 	for i := 1; i < batchCnt; i++ {
 		n := base + i*defaultBatchSize + i
-		for j := range rand.Intn(maxBatch) {
-			n += j
-			sql := fmt.Sprintf("insert into t3 values (%d, %d, %d)", n, n, n)
-			tk.MustExec(sql)
+		values := ""
+		for j := range rowsPerBatch {
+			if j > 0 {
+				values += ", "
+			}
+			v := n + j
+			values += fmt.Sprintf("(%d, %d, %d)", v, v, v)
 		}
+		tk.MustExec("insert into t3 values " + values)
 	}
 	tk.MustExec("alter table t3 modify column a mediumint")
-	tk.MustExec("admin check table t")
+	tk.MustExec("admin check table t3")
 
 	// Test PointGet.
 	tk.MustExec("create table t4(a bigint, b int, unique index idx(a));")
