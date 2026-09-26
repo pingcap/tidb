@@ -2839,7 +2839,7 @@ func (cc *clientConn) handleCommonConnectionReset(ctx context.Context) error {
 	connectionInfo := cc.connectInfo()
 	cc.ctx.GetSessionVars().ConnectionInfo = connectionInfo
 
-	cc.onExtensionConnEvent(extension.ConnReset, nil)
+	cc.onExtensionConnEvent(extension.ConnReset, nil, cc.connectionID)
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
