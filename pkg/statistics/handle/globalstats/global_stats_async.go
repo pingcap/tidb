@@ -98,6 +98,9 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	tableInfo           map[int64]*model.TableInfo
 	// key is partition id and histID
 	skipPartition map[skipItem]struct{}
+	// sketchNotNull holds the non-NULL rows that each partition's sketch
+	// reports, for partitions whose TopN and histogram samples miss them.
+	sketchNotNull map[skipItem]int64
 	// ioWorker meet error, it will close this channel to notify cpuWorker.
 	ioWorkerExitWhenErrChan chan struct{}
 	// cpuWorker exit, it will close this channel to notify ioWorker.
@@ -105,6 +108,8 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
+	missedNotNull             []int64
+	sampledNDV                []bool
 	partitionIDs              []int64
 	partitionNum              int
 	skipMissingPartitionStats bool
@@ -128,6 +133,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		ioWorkerExitWhenErrChan: make(chan struct{}),
 		cpuWorkerExitChan:       make(chan struct{}),
 		skipPartition:           make(map[skipItem]struct{}),
+		sketchNotNull:           make(map[skipItem]int64),
 		allPartitionStats:       make(map[int64]*statistics.Table),
 		globalTableInfo:         globalTableInfo,
 		histIDs:                 histIDs,
@@ -149,6 +155,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 	a.globalStats = newGlobalStats(len(a.histIDs))
 	a.globalStats.Num = len(a.histIDs)
 	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
+	a.missedNotNull = make([]int64, a.globalStats.Num)
+	a.sampledNDV = make([]bool, 0, a.globalStats.Num)
 	statslogutil.StatsLogger().Info("global stats prepare: fetching per-partition meta",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
@@ -309,6 +317,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 			// Update the global NDV.
 			globalStatsNDV := min(a.globalStats.Fms[i].NDV(), a.globalStats.Count)
 			a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
+			a.sampledNDV = append(a.sampledNDV, a.globalStats.Fms[i].Sampled())
 			a.globalStats.Fms[i] = nil // Release for GC.
 		}
 	}
@@ -398,6 +407,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 			if err != nil {
 				return err
 			}
+			a.sketchNotNull[skipItem{histID: a.histIDs[i], partitionID: partitionID}] = fmsketch.NotNullRows()
 			select {
 			case a.fmsketch <- mergeItem[*statistics.FMSketch]{
 				fmsketch, i,
@@ -463,6 +473,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 	for i := range a.globalStats.Num {
 		hists := make([]*statistics.Histogram, 0, a.partitionNum)
 		topn := make([]*statistics.TopN, 0, a.partitionNum)
+		var missedNotNull int64
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
 				histID:      a.histIDs[i],
@@ -481,7 +492,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			}
 			hists = append(hists, h)
 			topn = append(topn, t)
+			if topNHistNotNull(h, t) == 0 {
+				missedNotNull += a.sketchNotNull[skipItem{histID: a.histIDs[i], partitionID: partitionID}]
+			}
 		}
+		a.missedNotNull[i] = missedNotNull
 		// This only happens when there are no records for the histogram and TopN in the system tables.
 		// It may be due to the DDL event not having been processed yet (resulting in no histogram), and the table being empty (resulting in no TopNs).
 		if len(hists) == 0 && len(topn) == 0 {
@@ -511,7 +526,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
 			if a.globalStats.Fms[fms.idx] == nil {
 				a.globalStats.Fms[fms.idx] = fms.item
 			} else {
-				a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
+				a.globalStats.Fms[fms.idx].MergePartitionFMSketch(fms.item)
 			}
 		case <-a.ioWorkerExitWhenErrChan:
 			return
@@ -582,6 +597,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// we just set the table-level NDV.
 			if *globalHg != nil {
 				ndv := a.globalStatsNDV[item.idx]
+				if a.sampledNDV[item.idx] {
+					ndv = sampledGlobalNDV(ndv, *globalHg, a.globalStats.TopN[item.idx], a.missedNotNull[item.idx], a.globalStats.Count)
+				}
 				if isLocalUnique(a.globalTableInfo, isIndex, a.histIDs[item.idx]) {
 					ndv = uniqueGlobalNDV(wrapper.AllHg, a.globalStats.Count)
 				}

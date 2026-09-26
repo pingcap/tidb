@@ -60,11 +60,14 @@ type FMSketch struct {
 	// ndvCounts is set only in a sketch of sampled rows. A sketch is sampled if
 	// and only if ndvCounts is not nil.
 	ndvCounts *ndvCounts
+	// weights replaces hashset once a global merge meets a sampled sketch. It
+	// holds each hash with the weight it adds to the NDV (see insertWeighted).
+	weights map[uint64]float64
 	// A binary mask used to track the maximum number of trailing zeroes in the hashed values.
 	// Also used to track the level of the sketch.
-	// Every time the size of the hashset exceeds the maximum size, the mask will have one more bit set.
+	// Every time the size of the hashset, or of weights, exceeds the maximum size, the mask will have one more bit set.
 	mask uint64
-	// The maximum size of the hashset. If the size exceeds this value, the mask will have one more bit set.
+	// The maximum size of the hashset, or of weights. If the size exceeds this value, the mask will have one more bit set.
 	// And the hashset will only keep the hashed values with trailing zeroes greater than or equal to the new mask.
 	maxSize int
 }
@@ -84,6 +87,7 @@ func (s *FMSketch) Copy() *FMSketch {
 	}
 	copied := &FMSketch{
 		hashset: maps.Clone(s.hashset),
+		weights: maps.Clone(s.weights),
 		mask:    s.mask,
 		maxSize: s.maxSize,
 	}
@@ -101,6 +105,9 @@ func (s *FMSketch) NDV() int64 {
 	}
 	if s.ndvCounts != nil {
 		return s.sampledNDV()
+	}
+	if s.weights != nil {
+		return s.weightedNDV()
 	}
 	// The estimated count of distinct values is 2^r * count, where 'r' is the maximum number of trailing zeroes observed and 'count' is the number of unique hashed values.
 	// The fundamental idea is that the hash function maps the input domain onto a logarithmic scale.
@@ -148,6 +155,7 @@ func (s *FMSketch) mergeHashValue(hashVal uint64, repeated bool) {
 func (s *FMSketch) filterHashes() {
 	rejected := func(hash uint64, _ bool) bool { return hash&s.mask != 0 }
 	maps.DeleteFunc(s.hashset, rejected)
+	maps.DeleteFunc(s.weights, func(hash uint64, _ float64) bool { return hash&s.mask != 0 })
 }
 
 // InsertValue inserts a value into the FM sketch.
@@ -299,9 +307,13 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 
 // MemoryUsage returns the total memory usage of a FMSketch.
 func (s *FMSketch) MemoryUsage() (sum int64) {
-	// 80 is the 32-byte struct plus the 48-byte Go map header. An entry takes about 30 bytes: its slot takes 18
+	// 88 is the 40-byte struct plus the 48-byte Go map header. An entry takes about 30 bytes: its slot takes 18
 	// (8-byte key, value padded to 8, a control byte, allocator rounding), and tables are 7/16 to 7/8 full.
-	sum = int64(80 + 30*len(s.hashset))
+	sum = int64(88 + 30*len(s.hashset))
+	// A global merge keeps its hashes in weights, a second map with entries of the same size.
+	if s.weights != nil {
+		sum += int64(48 + 30*len(s.weights))
+	}
 	// A sampled sketch also keeps three 8-byte row counts.
 	if s.ndvCounts != nil {
 		sum += 24
