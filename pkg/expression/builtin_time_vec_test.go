@@ -572,6 +572,45 @@ func TestVectorizedBuiltinTimeFunc(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinTimeCases)
 }
 
+func TestVectorizedToDaysInvalidDates(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		ctx := createContext(t)
+		sc := ctx.GetSessionVars().StmtCtx
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!strict))
+		dateType := types.NewFieldType(mysql.TypeDate)
+		f, err := funcs[ast.ToDays].getFunction(ctx, []Expression{&Column{RetType: dateType, Index: 0}})
+		require.NoError(t, err)
+		require.True(t, f.vectorized() && f.isChildrenVectorized())
+		for _, date := range []types.Time{
+			types.ZeroDate,
+			types.NewTime(types.FromDate(2024, 0, 15, 0, 0, 0, 0), mysql.TypeDate, 0),
+			types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDate, 0),
+			types.NewTime(types.FromDate(2024, 1, 15, 0, 0, 0, 0), mysql.TypeDate, 0),
+		} {
+			input := chunk.NewChunkWithCapacity([]*types.FieldType{dateType}, 2)
+			input.AppendTime(0, date)
+			input.AppendNull(0)
+			sc.SetWarnings(nil)
+			want, isNull, scalarErr := f.evalInt(ctx, input.GetRow(0))
+			warnings := sc.WarningCount()
+			sc.SetWarnings(nil)
+			result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 2)
+			vecErr := vecEvalType(ctx, f, types.ETInt, input, result)
+			if scalarErr != nil {
+				require.EqualError(t, vecErr, scalarErr.Error())
+				continue
+			}
+			require.NoError(t, vecErr)
+			require.Equal(t, isNull, result.IsNull(0), "strict=%v date=%s", strict, date)
+			require.True(t, result.IsNull(1))
+			require.Equal(t, warnings, sc.WarningCount())
+			if !isNull {
+				require.Equal(t, want, result.Int64s()[0])
+			}
+		}
+	}
+}
+
 func TestVectorizedTimeFormatEmptyFormatReturnsNull(t *testing.T) {
 	ctx := createContext(t)
 
