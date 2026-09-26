@@ -2336,7 +2336,8 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
-	// A plain ANALYZE reuses the saved NDVRATE until DEFAULT clears it.
+	// A plain ANALYZE reuses the saved NDVRATE until DEFAULT clears it. Without
+	// one, a partition above the threshold reads every row.
 	tk.MustExec("analyze table ndv")
 	tk.MustQuery(lastRate("p0")).CheckContain("0.1 ndvrate")
 	tk.MustExec("analyze table ndv with default NDVRATE")
