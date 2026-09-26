@@ -639,6 +639,12 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if outerErr != nil {
 		return outerErr
 	}
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		return saveJSONFMSketches(sctx, tbl)
+	}, util.FlagWrapTxn)
+	if err != nil {
+		return err
+	}
 	err = s.SaveColumnStatsUsageToStorage(tbl.PhysicalID, jsonTbl.PredicateColumns)
 	if err != nil {
 		return errors.Trace(err)

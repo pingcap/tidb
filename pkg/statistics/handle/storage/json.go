@@ -95,7 +95,7 @@ func GenJSONTableFromStats(
 		return nil, outerErr
 	}
 	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
+		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, idx.FMSketch, &idx.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			outerErr = err
@@ -155,6 +155,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 				statsVer = int64(statistics.Version1)
 			}
 			idx := &statistics.Index{
+				FMSketch:          statistics.FMSketchFromProto(jsonIdx.FMSketch),
 				Histogram:         *hist,
 				CMSketch:          cm,
 				TopN:              topN,
@@ -338,4 +339,31 @@ func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snaps
 	jsonTbl.ModifyCount = modifyCount
 	jsonTbl.IsHistoricalStats = true
 	return jsonTbl, true, nil
+}
+
+func saveJSONFMSketches(sctx sessionctx.Context, table *statistics.Table) error {
+	save := func(isIndex, id int64, sketch *statistics.FMSketch) error {
+		if sketch == nil {
+			return nil
+		}
+		encoded, err := statistics.EncodeFMSketch(sketch)
+		if err != nil {
+			return err
+		}
+		_, err = util.Exec(sctx, "replace into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", table.PhysicalID, isIndex, id, encoded)
+		return err
+	}
+	var err error
+	table.ForEachColumnImmutable(func(id int64, col *statistics.Column) bool {
+		err = save(0, id, col.FMSketch)
+		return err != nil
+	})
+	if err != nil {
+		return err
+	}
+	table.ForEachIndexImmutable(func(id int64, idx *statistics.Index) bool {
+		err = save(1, id, idx.FMSketch)
+		return err != nil
+	})
+	return err
 }
