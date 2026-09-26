@@ -1032,6 +1032,10 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	allSupportV2 := true
 	allSupportGlobalIdxV1 := true
 	for _, info := range infos {
+		// Standalone BR publishes server info for schema sync but does not run DDL.
+		if !info.CanServeTiDBRPC() {
+			continue
+		}
 		// we don't store TiDB version directly, but concatenated with a MySQL version,
 		// separated by mysql.VersionSeparator.
 		tidbVer := info.Version

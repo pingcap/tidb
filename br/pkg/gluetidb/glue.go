@@ -46,6 +46,9 @@ func New() Glue {
 	vardef.SetSchemaLease(config.DefSchemaLease)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.SkipRegisterToDashboard = true
+		// BR still publishes server info for schema sync / minStartTS / DDL, but
+		// it is not a TiDB RPC target for coprocessor or stats broadcast.
+		conf.TiDBRPCDisabled = true
 		conf.Log.EnableSlowLog.Store(false)
 		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
 	})

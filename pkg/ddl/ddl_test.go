@@ -728,6 +728,29 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		require.True(t, model.GetGlobalIndexV1Supported())
 	})
 
+	t.Run("ignore tidb rpc disabled node", func(t *testing.T) {
+		reset()
+		serverInfos := map[string]*serverinfo.ServerInfo{
+			"tidb": {
+				StaticInfo: serverinfo.StaticInfo{
+					VersionInfo: serverinfo.VersionInfo{Version: "8.0.11-TiDB-v8.5.6"},
+				},
+			},
+			"br": {
+				StaticInfo: serverinfo.StaticInfo{
+					VersionInfo:     serverinfo.VersionInfo{Version: "8.0.11-TiDB-v7.5.0"},
+					TiDBRPCDisabled: true,
+				},
+			},
+		}
+		bytes, err := json.Marshal(serverInfos)
+		require.NoError(t, err)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", fmt.Sprintf("return(`%s`)", string(bytes)))
+		require.NoError(t, d.detectAndUpdateJobVersionOnce())
+		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+		require.True(t, model.GetGlobalIndexV1Supported())
+	})
+
 	t.Run("all support v2 but not global index v1", func(t *testing.T) {
 		reset()
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.5.5")

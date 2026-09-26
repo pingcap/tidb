@@ -1153,3 +1153,50 @@ func TestAssumedServerInfoSyncer(t *testing.T) {
 	require.Equal(t, info.AssumedKeyspace, decoded.AssumedKeyspace)
 	require.Equal(t, uint64(1), decoded.JSONServerID)
 }
+
+func TestCanServeTiDBRPC(t *testing.T) {
+	var info StaticInfo
+	require.True(t, info.CanServeTiDBRPC())
+
+	info.TiDBRPCDisabled = false
+	require.True(t, info.CanServeTiDBRPC())
+
+	info.TiDBRPCDisabled = true
+	require.False(t, info.CanServeTiDBRPC())
+}
+
+func TestTiDBRPCDisabledFromConfig(t *testing.T) {
+	bak := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(bak)
+	})
+
+	defaultSyncer := NewSyncer("tidb", func() uint64 { return 1 }, nil, nil)
+	defaultInfo := defaultSyncer.GetLocalServerInfo()
+	require.True(t, defaultInfo.CanServeTiDBRPC())
+	defaultBuf, err := defaultInfo.Marshal()
+	require.NoError(t, err)
+	require.NotContains(t, string(defaultBuf), "tidb_rpc_disabled")
+
+	var defaultDecoded ServerInfo
+	require.NoError(t, defaultDecoded.Unmarshal(defaultBuf))
+	require.True(t, defaultDecoded.CanServeTiDBRPC())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiDBRPCDisabled = true
+	})
+	brSyncer := NewSyncer("br", func() uint64 { return 1 }, nil, nil)
+	brInfo := brSyncer.GetLocalServerInfo()
+	require.False(t, brInfo.CanServeTiDBRPC())
+	brBuf, err := brInfo.Marshal()
+	require.NoError(t, err)
+	require.Contains(t, string(brBuf), `"tidb_rpc_disabled":true`)
+
+	var brDecoded ServerInfo
+	require.NoError(t, brDecoded.Unmarshal(brBuf))
+	require.False(t, brDecoded.CanServeTiDBRPC())
+
+	allInfo, err := brSyncer.GetAllServerInfo(context.Background())
+	require.NoError(t, err)
+	require.False(t, allInfo["br"].CanServeTiDBRPC())
+}
