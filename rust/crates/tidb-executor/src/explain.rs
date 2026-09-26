@@ -1041,6 +1041,13 @@ fn physical_operator_info(
             sorted_expressions_text(eval_ctx, &selection.conditions)
         }
         PhysicalPlan::Projection(projection) => {
+            if std::env::var_os("TIDB_DEBUG_SEL").is_some() {
+                for (index, expr) in projection.exprs.iter().enumerate() {
+                    if format!("{expr:?}").contains("istrue_with_null") {
+                        eprintln!("[PROJEXPR] idx={index} expr={expr:?}");
+                    }
+                }
+            }
             projection_text(eval_ctx, &projection.exprs, projection.base.base.schema())
         }
         PhysicalPlan::HashJoin(join) => {

@@ -1135,7 +1135,13 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             // builtin_compare (eq/nulleq/ne/lt/le/gt/ge) and builtin_op
             // (logic and bit operators). Anything still uncovered keeps the
             // LongLong placeholder.
-            binary_expression(*op, left, right, resolver)
+            let built = binary_expression(*op, left, right, resolver)?;
+            if std::env::var_os("TIDB_DEBUG_SEL").is_some()
+                && matches!(op, BinaryOp::LogicOr)
+            {
+                eprintln!("[ORBUILD] built={built:?}");
+            }
+            Ok(built)
         }
         Expr::Int(_)
         | Expr::Float(_)
