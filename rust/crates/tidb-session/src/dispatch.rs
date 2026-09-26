@@ -1138,7 +1138,6 @@ impl Session {
         match self.prepare_bound_execution(sql, stmt, privilege_requests) {
             Ok(pending) => pending.collect(self),
             Err(error) => {
-                eprintln!("[DBG-ERRARM] plan error arm drained");
                 // A statement that fails at plan time produced no record set,
                 // so the record-set drain never runs: the fold's diagnostics
                 // must still reach the statement's warning list beside the
