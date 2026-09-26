@@ -152,7 +152,15 @@ impl Session {
             PrepareSource::Var(name) => self.prepare_source_text(name),
         };
         let mut statements = tidb_parser::parse_multi_with_sql_mode(&text, self.scanner_sql_mode())
-            .map_err(|e| DriverError::Parse(e.compatibility_message(&text)))?;
+            .map_err(|e| {
+                let raw = e.compatibility_message(&text);
+                // go's PREPARE appends the inner parse failure's RAW error
+                // (the positional text, under the generic 1105) at the parse
+                // site; the classified 1064 lands afterwards from the
+                // statement error return -- SHOW WARNINGS carries both rows.
+                self.append_warning(crate::WarningLevel::Error, 1105, raw.clone());
+                DriverError::Parse(raw)
+            })?;
         if statements.len() != 1 {
             return Err(DriverError::PrepareMulti);
         }
