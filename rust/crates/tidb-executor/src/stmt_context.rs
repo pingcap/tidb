@@ -648,6 +648,8 @@ pub struct StmtContextData {
     /// together they decide whether a normal INSERT can defer duplicate-key
     /// checking to prewrite.
     pessimistic_lazy_dup_check: bool,
+    /// Go TxnCtx.IsPessimistic for the active or implicit statement transaction.
+    pessimistic_transaction: bool,
     /// Go `SessionVars.ConstraintCheckInPlace` (`@@tidb_constraint_check_in_place`).
     /// `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go:331-337`)
     /// combines this with the transaction mode to select lazy checking.
@@ -1590,6 +1592,13 @@ context_configuration! {
         self
     }
 
+    /// Sets the transaction mode used by Go's single-table DML lock planner.
+    #[must_use]
+    pub fn with_pessimistic_transaction(mut self, enabled: bool) -> Self {
+        self.pessimistic_transaction = enabled;
+        self
+    }
+
     /// Sets `@@tidb_constraint_check_in_place` for this statement.
     #[must_use]
     pub fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
@@ -1909,6 +1918,7 @@ impl StmtContext {
             enable_mview: false,
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
+            pessimistic_transaction: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
             div_precision_increment: 4,
@@ -3168,6 +3178,12 @@ impl StmtContext {
     #[must_use]
     pub fn pessimistic_lazy_dup_check(&self) -> bool {
         self.pessimistic_lazy_dup_check
+    }
+
+    /// Whether this statement plans against a pessimistic transaction.
+    #[must_use]
+    pub fn pessimistic_transaction(&self) -> bool {
+        self.pessimistic_transaction
     }
 
     /// Whether Go's normal INSERT duplicate check is eager for this statement.

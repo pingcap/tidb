@@ -997,6 +997,73 @@ fn dynamic_partition_points_follow_each_bound_key() {
 }
 
 #[test]
+fn dml_explain_and_execution_share_partition_and_lock_plans() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE plan_route (id INT PRIMARY KEY, v INT) PARTITION BY RANGE(id) \
+        (PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN(20))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO plan_route VALUES (1,11),(11,111)")
+        .unwrap();
+    session
+        .run("CREATE TABLE plan_target (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    for mode in ["autocommit", "pessimistic", "optimistic"] {
+        session.run("SET tidb_txn_mode='pessimistic'").unwrap();
+        if mode != "autocommit" {
+            session.run(&format!("BEGIN {mode}")).unwrap();
+        }
+        for statement in [
+            "UPDATE plan_route SET v=v WHERE id=1 AND v>0",
+            "DELETE FROM plan_route WHERE id=19 AND v>0",
+            "INSERT INTO plan_target SELECT * FROM plan_route WHERE id=21 AND v>0",
+        ] {
+            let plain = tests_support::row_text(session.run(&format!("EXPLAIN {statement}")));
+            let analyzed =
+                tests_support::row_text(session.run(&format!("EXPLAIN ANALYZE {statement}")));
+            let plain_shape: Vec<_> = plain
+                .iter()
+                .map(|row| {
+                    vec![
+                        row[0].clone(),
+                        row[1].clone(),
+                        row[2].clone(),
+                        row[3].clone(),
+                    ]
+                })
+                .collect();
+            let analyzed_shape: Vec<_> = analyzed
+                .iter()
+                .map(|row| {
+                    vec![
+                        row[0].clone(),
+                        row[1].clone(),
+                        row[3].clone(),
+                        row[4].clone(),
+                    ]
+                })
+                .collect();
+            assert_eq!(plain_shape, analyzed_shape, "{mode}: {statement}");
+            if !statement.starts_with("INSERT") {
+                assert_eq!(
+                    plain.iter().any(|row| row[0].contains("SelectLock")),
+                    mode == "pessimistic"
+                );
+            }
+        }
+        session.run("ROLLBACK").unwrap();
+    }
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT * FROM plan_route ORDER BY id")),
+        [["1", "11"], ["11", "111"]]
+    );
+    assert!(tests_support::row_text(session.run("SELECT * FROM plan_target")).is_empty());
+}
+
+#[test]
 fn dynamic_partition_common_points_route_original_values() {
     let mut session = Session::new();
     session

@@ -426,6 +426,7 @@ pub struct PreparedPlanCacheEnvironment {
     isolation_read_engines: String,
     sql_select_limit: String,
     in_transaction: bool,
+    pessimistic_transaction: bool,
     autocommit: bool,
     invalidate_on_fresh_stats: bool,
     binding_sql: String,
@@ -459,6 +460,7 @@ impl PreparedPlanCacheEnvironment {
             isolation_read_engines: String::new(),
             sql_select_limit: String::new(),
             in_transaction: false,
+            pessimistic_transaction: false,
             autocommit: true,
             invalidate_on_fresh_stats: true,
             binding_sql: String::new(),
@@ -467,6 +469,13 @@ impl PreparedPlanCacheEnvironment {
                 as u64,
             enable_generated_columns: true,
         }
+    }
+
+    /// Keeps DML lock plans scoped to the transaction mode that built them.
+    #[must_use]
+    pub const fn with_pessimistic_transaction(mut self, enabled: bool) -> Self {
+        self.pessimistic_transaction = enabled;
+        self
     }
 
     /// Adds the session switch that controls the implicit LIKE escape under

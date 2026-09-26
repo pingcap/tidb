@@ -126,11 +126,11 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
             physical_dml_plan(
                 "Insert",
                 insert.source.as_deref(),
-                true,
                 None,
                 catalog,
                 current_db,
                 ctx,
+                &fk_spec_for_insert(insert, current_db)?,
             )
         })
         .transpose()?;
@@ -146,114 +146,23 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     run_insert_with_physical(insert, catalog, current_db, ctx, physical_source, runtime)
 }
 
-/// Builds one Go-shaped DML physical root and its retained `SelectPlan` from
-/// the same statement allocators. INSERT initializes its root before building
-/// a query source; UPDATE and DELETE initialize theirs after the logical read
-/// is built, except for the fast point path where the physical child is built
-/// first. Those are the allocation seams in the pinned Go builders.
+/// Builds and prepares the same DML plan for execution and EXPLAIN.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn physical_dml_plan(
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
-    root_before_source: bool,
     update: Option<&tidb_ast::UpdateStmt>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    fk_spec: &fk_trigger_plan::FkPlanSpec,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
-    let mut plan = physical_dml_plan_with_cache_mode(
-        operator,
-        source,
-        root_before_source,
-        update,
-        catalog,
-        current_db,
-        ctx,
-        false,
-    )?;
-    super::physical_builder::prepare_execution_plan(&mut plan, catalog, ctx)?;
-    Ok(plan)
+    physical_dml_plan_with_cache_mode(
+        operator, source, update, catalog, current_db, ctx, false, fk_spec,
+    )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn physical_dml_plan_with_cache_mode(
-    operator: &str,
-    source: Option<&tidb_ast::QueryStmt>,
-    root_before_source: bool,
-    update: Option<&tidb_ast::UpdateStmt>,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
-    use tidb_planner::physical::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
-
-    let plan_ids = tidb_planner::plan_base::PlanIdAllocator::new();
-    let column_ids = tidb_planner::expression_rewriter::ColumnIdAllocator::new();
-    let mut root_base = root_before_source.then(|| BasePhysicalPlan::new(&plan_ids, operator, 0));
-    let allow_fast_plan = update.is_none_or(update_allows_fast_plan);
-    let mut update_expressions = Vec::new();
-
-    let select_plan = match source {
-        None => None,
-        Some(tidb_ast::QueryStmt::Select(select)) if !root_before_source => {
-            if let Some(fast) = (!use_plan_cache && allow_fast_plan)
-                .then(|| {
-                    super::access::try_fast_dml_point_physical_plan_with_allocator(
-                        select, catalog, current_db, ctx, &plan_ids,
-                    )
-                })
-                .transpose()?
-                .flatten()
-            {
-                Some(fast)
-            } else {
-                root_base = Some(BasePhysicalPlan::new(&plan_ids, operator, 0));
-                let update_assignment_values = update
-                    .map(|update| {
-                        update_assignment_values_for_plan(update, catalog, current_db, ctx)
-                    })
-                    .transpose()?;
-                let (plan, expressions) =
-                    super::planner_bridge::physical_dml_source_plan_with_allocators(
-                        select,
-                        update_assignment_values.as_deref(),
-                        catalog,
-                        current_db,
-                        ctx,
-                        use_plan_cache,
-                        &plan_ids,
-                        &column_ids,
-                    )
-                    .map_err(super::planner_error_to_driver)?;
-                update_expressions = expressions;
-                Some(plan)
-            }
-        }
-        Some(query) => Some(
-            super::planner_bridge::physical_query_plan_with_allocators(
-                query,
-                catalog,
-                current_db,
-                ctx,
-                use_plan_cache,
-                &plan_ids,
-                &column_ids,
-            )
-            .map_err(super::planner_error_to_driver)?,
-        ),
-    };
-    let base = root_base.unwrap_or_else(|| BasePhysicalPlan::new(&plan_ids, operator, 0));
-    Ok(PhysicalPlan::Dml(PhysicalDmlRoot {
-        base,
-        go_operator: operator.to_owned(),
-        select_plan: select_plan.map(Box::new),
-        update_expressions,
-        fk_triggers: Vec::new(),
-    }))
-}
-
-/// The plain `EXPLAIN` shape of an INSERT/UPDATE/DELETE, reproducing Go's
+/// Shared INSERT/UPDATE/DELETE construction, following Go's
 /// plan-builder allocation order and DML-local plan nodes:
 ///
 /// * Go `buildInsert` allocates the physical `Insert` root, then the
@@ -269,13 +178,14 @@ fn physical_dml_plan_with_cache_mode(
 /// * `BuildOn{Insert,Update,Delete}FKTriggers` runs last, allocating the
 ///   `Foreign_Key_Check` / `Foreign_Key_Cascade` leaves.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn physical_dml_plan_for_explain(
+fn physical_dml_plan_with_cache_mode(
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
     update: Option<&tidb_ast::UpdateStmt>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    use_plan_cache: bool,
     fk_spec: &fk_trigger_plan::FkPlanSpec,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
     use tidb_planner::physical::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
@@ -306,7 +216,7 @@ pub(crate) fn physical_dml_plan_for_explain(
                     catalog,
                     current_db,
                     ctx,
-                    false,
+                    use_plan_cache,
                     &plan_ids,
                     &column_ids,
                 )
@@ -315,7 +225,7 @@ pub(crate) fn physical_dml_plan_for_explain(
         }
         Some(tidb_ast::QueryStmt::Select(select)) => {
             let allow_fast_plan = update.is_none_or(|update| update_allows_fast_plan(update));
-            let fast = allow_fast_plan
+            let fast = (!use_plan_cache && allow_fast_plan)
                 .then(|| {
                     super::access::try_fast_dml_point_physical_plan_with_allocator(
                         select, catalog, current_db, ctx, &plan_ids,
@@ -326,7 +236,7 @@ pub(crate) fn physical_dml_plan_for_explain(
             if let Some(mut fast) = fast {
                 // Go's point plans carry `Lock` for UPDATE and DELETE.
                 if let PhysicalPlan::PointGet(point) = &mut fast {
-                    point.lock = true;
+                    point.lock = ctx.pessimistic_transaction();
                 }
                 // Go's point-UPDATE builder allocates one extra plan between
                 // the PointGet and the Update root; the DELETE builder does
@@ -343,12 +253,13 @@ pub(crate) fn physical_dml_plan_for_explain(
                     })
                     .transpose()?;
                 let (plan, expressions, root) =
-                    super::planner_bridge::physical_dml_source_plan_explained(
+                    super::planner_bridge::physical_dml_source_plan_with_allocators(
                         select,
                         update_assignment_values.as_deref(),
                         catalog,
                         current_db,
                         ctx,
+                        use_plan_cache,
                         &plan_ids,
                         &column_ids,
                         operator,
@@ -365,7 +276,7 @@ pub(crate) fn physical_dml_plan_for_explain(
                 catalog,
                 current_db,
                 ctx,
-                false,
+                use_plan_cache,
                 &plan_ids,
                 &column_ids,
             )
@@ -374,17 +285,19 @@ pub(crate) fn physical_dml_plan_for_explain(
     };
 
     let base =
-        root_base.ok_or_else(|| DriverError::unsupported("explain DML build produced no root"))?;
+        root_base.ok_or_else(|| DriverError::unsupported("DML build produced no root"))?;
     // Go `BuildOn{Insert,Update,Delete}FKTriggers`, last in the builders.
     let fk_triggers =
         fk_trigger_plan::build_fk_triggers(catalog, ctx, operator, fk_spec, &plan_ids);
-    Ok(PhysicalPlan::Dml(PhysicalDmlRoot {
+    let mut plan = PhysicalPlan::Dml(PhysicalDmlRoot {
         base,
         go_operator: operator.to_owned(),
         select_plan: select_plan.map(Box::new),
         update_expressions,
         fk_triggers,
-    }))
+    });
+    super::physical_builder::prepare_execution_plan(&mut plan, catalog, ctx)?;
+    Ok(plan)
 }
 
 /// Go `tnW.DBInfo.Name.L` / `tableInfo.Name` for the INSERT target, plus the
@@ -2326,17 +2239,17 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let source = update_source_query(update);
-    let mut fresh = physical_plan
-        .is_none()
+    let mut fresh = (physical_plan.is_none()
+        && matches!(update.kind, tidb_ast::UpdateKind::Single(_)))
         .then(|| {
             physical_dml_plan(
                 "Update",
                 source.as_ref(),
-                false,
                 Some(update),
                 catalog,
                 current_db,
                 ctx,
+                &fk_spec_for_update(update, current_db)?,
             )
         })
         .transpose()?;
@@ -2857,16 +2770,23 @@ fn cached_dml_physical_plan(
         }
         _ => return None,
     };
+    let fk_spec = match dml.as_ref() {
+        tidb_ast::DmlStmt::Insert(insert) => fk_spec_for_insert(insert, current_database),
+        tidb_ast::DmlStmt::Update(update) => fk_spec_for_update(update, current_database),
+        tidb_ast::DmlStmt::Delete(delete) => fk_spec_for_delete(delete, current_database),
+        _ => return None,
+    }
+    .ok()?;
     ctx.start_prepared_range_tracking();
     let mut root = physical_dml_plan_with_cache_mode(
         operator,
         source.as_ref(),
-        operator.eq_ignore_ascii_case("Insert"),
         update,
         catalog,
         current_database,
         ctx,
         true,
+        &fk_spec,
     )
     .ok()?;
     // Keep a cached single-row UPDATE/DELETE source as a point access path.
@@ -3798,17 +3718,19 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         }
     }
     let source = delete_source_query(delete);
-    let mut fresh = physical_plan
-        .is_none()
+    // Multi-table DELETE retains its existing per-target execution path;
+    // it has no single-table SelectPlan or FK target specification.
+    let mut fresh = (physical_plan.is_none()
+        && matches!(delete.kind, tidb_ast::DeleteKind::Single(_)))
         .then(|| {
             physical_dml_plan(
                 "Delete",
                 source.as_ref(),
-                false,
                 None,
                 catalog,
                 current_db,
                 ctx,
+                &fk_spec_for_delete(delete, current_db)?,
             )
         })
         .transpose()?;

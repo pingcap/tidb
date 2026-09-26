@@ -48,6 +48,7 @@ pub(crate) struct PreparedPlanCacheEnvironmentCache {
     vars_generation: u64,
     blacklist_generation: u64,
     in_transaction: bool,
+    pessimistic_transaction: bool,
     autocommit: bool,
     environment: Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>>,
 }
@@ -132,11 +133,14 @@ impl Session {
         let blacklist_generation = self.pushdown_blacklists.generation();
         let in_transaction = self.in_transaction();
         let autocommit = self.is_autocommit();
+        let pessimistic_transaction = (!autocommit || in_transaction)
+            && self.statement_txn_mode().is_pessimistic();
         if let Some(cached) = self.prepared_plan_cache_environment_cache.borrow().as_ref() {
             if cached.vars_generation == vars_generation
                 && cached.blacklist_generation == blacklist_generation
                 && cached.in_transaction == in_transaction
                 && cached.autocommit == autocommit
+                && cached.pessimistic_transaction == pessimistic_transaction
             {
                 return cached.environment.clone();
             }
@@ -157,6 +161,7 @@ impl Session {
                     self.vars.get_system("time_zone").unwrap_or_default(),
                     blacklist_generation,
                 )
+                .with_pessimistic_transaction(pessimistic_transaction)
                 .with_session_state(
                     self.vars
                         .get_system("character_set_connection")
@@ -205,6 +210,7 @@ impl Session {
                 vars_generation,
                 blacklist_generation,
                 in_transaction,
+                pessimistic_transaction,
                 autocommit,
                 environment: environment.clone(),
             });

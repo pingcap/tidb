@@ -2551,7 +2551,7 @@ pub fn explain_insert_stmt(
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
     let fk_spec = crate::driver::fk_spec_for_insert(insert, current_db)?;
-    let physical = crate::driver::physical_dml_plan_for_explain(
+    let physical = crate::driver::physical_dml_plan(
         "Insert",
         insert.source.as_deref(),
         None,
@@ -2584,11 +2584,11 @@ pub fn explain_analyze_insert_stmt(
     let mut physical = crate::driver::physical_dml_plan(
         "Insert",
         insert.source.as_deref(),
-        true,
         None,
         catalog,
         current_db,
         ctx,
+        &crate::driver::fk_spec_for_insert(insert, current_db)?,
     )?;
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
@@ -2629,7 +2629,7 @@ pub fn explain_update_stmt(
         DriverError::unsupported("multi-table UPDATE plans are not supported yet")
     })?;
     let fk_spec = crate::driver::fk_spec_for_update(update, current_db)?;
-    let physical = crate::driver::physical_dml_plan_for_explain(
+    let physical = crate::driver::physical_dml_plan(
         "Update",
         Some(&source),
         Some(update),
@@ -2654,7 +2654,7 @@ pub fn explain_delete_stmt(
         DriverError::unsupported("multi-table DELETE plans are not supported yet")
     })?;
     let fk_spec = crate::driver::fk_spec_for_delete(delete, current_db)?;
-    let physical = crate::driver::physical_dml_plan_for_explain(
+    let physical = crate::driver::physical_dml_plan(
         "Delete",
         Some(&source),
         None,
@@ -2687,11 +2687,11 @@ pub fn explain_analyze_update_stmt(
     let mut physical = crate::driver::physical_dml_plan(
         "Update",
         Some(&source),
-        false,
         Some(update),
         catalog,
         current_db,
         ctx,
+        &crate::driver::fk_spec_for_update(update, current_db)?,
     )?;
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
@@ -2731,11 +2731,11 @@ pub fn explain_analyze_delete_stmt(
     let mut physical = crate::driver::physical_dml_plan(
         "Delete",
         Some(&source),
-        false,
         None,
         catalog,
         current_db,
         ctx,
+        &crate::driver::fk_spec_for_delete(delete, current_db)?,
     )?;
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();

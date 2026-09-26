@@ -1843,7 +1843,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         // build_distinct and the join construction below; the plan ids go's
         // conflict-detector and join-order passes burn AFTER buildUpdate's
         // own ctor are burned by the DML bridge instead (see
-        // planner_bridge::physical_dml_source_plan_explained).
+        // planner_bridge::physical_dml_source_plan_with_allocators).
         let mut distinct_child = np;
         let mut distinct_len = np_schema.len();
         let mut join_condition = check_condition.clone();

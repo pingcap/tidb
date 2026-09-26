@@ -2812,7 +2812,7 @@ fn explain_analyze_insert_executes() {
 
 /// `EXPLAIN ANALYZE <update>` really updates -- captured against
 /// `testkit.CreateMockStore`: `explain analyze update t set b = 111
-/// where c = 200` on a 4-row table leaves `Update_3`'s own `actRows` at
+/// where c = 200` on a 4-row table leaves `Update_4`'s own `actRows` at
 /// `0` (a write is a side effect, same as `Insert_1`), with a
 /// root `TableReader` over a coprocessor `Selection` (`actRows` `1`, the real
 /// number of `WHERE`-matching rows) and `TableFullScan` (`actRows` `4`, the
@@ -2833,7 +2833,7 @@ fn explain_analyze_update_executes() {
 
     let rows = row_text(session.run("EXPLAIN ANALYZE UPDATE t SET b = 111 WHERE c = 200"));
     assert_eq!(rows.len(), 4);
-    assert_eq!(rows[0][0], "Update_1");
+    assert_eq!(rows[0][0], "Update_4");
     assert_eq!(rows[0][2], "0");
     assert_eq!(rows[1][0], "└─TableReader_8");
     assert_eq!(rows[1][2], "1");
@@ -3334,11 +3334,11 @@ fn explain_analyze_insert_select_source_real_act_rows() {
     assert_eq!(rows.len(), 4);
     assert_eq!(rows[0][0], "Insert_1");
     assert_eq!(rows[0][2], "0");
-    assert_eq!(rows[1][0], "└─TableReader_8");
+    assert_eq!(rows[1][0], "└─TableReader_9");
     assert_eq!(rows[1][2], "2");
-    assert_eq!(rows[2][0], "  └─Selection_7");
+    assert_eq!(rows[2][0], "  └─Selection_8");
     assert_eq!(rows[2][2], "2");
-    assert_eq!(rows[3][0], "    └─TableFullScan_6");
+    assert_eq!(rows[3][0], "    └─TableFullScan_7");
     assert_eq!(rows[3][2], "3");
 
     assert_eq!(
@@ -3401,7 +3401,7 @@ fn explain_update_and_delete_plan_without_writing() {
         assert_eq!(rows[0][1..], ["N/A", "root", "", "N/A"], "{sql}");
         assert!(rows[1][0].starts_with("└─Point_Get"), "{sql}: {rows:?}");
         assert_eq!(rows[1][1..4], ["1.00", "root", "table:t"], "{sql}");
-        assert_eq!(rows[1][4], "handle:1, lock", "{sql}: {rows:?}");
+        assert_eq!(rows[1][4], "handle:1", "{sql}: {rows:?}");
     }
     // Neither plan wrote or removed the row.
     assert_eq!(

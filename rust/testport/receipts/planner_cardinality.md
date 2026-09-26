@@ -3008,3 +3008,15 @@ all-target checking and lint. The partition group has 97 passes and a verified
 baseline point-plan EXPLAIN failure, preserved for follow-up. Full commands,
 fail-before/pass-after and I/O evidence are in the structural audit. This is
 integration evidence, not a completed Go package or a workload performance claim.
+
+DML lifecycle checkpoint (2026-09-26): the point-plan EXPLAIN partition failure
+is resolved by consolidating DML root/source construction with execution and
+cached planning. Transaction mode owns lock planning and cache compatibility;
+Go replay verifies autocommit and explicit-transaction shapes. New SQL and cache
+regressions fail before and pass after. Partition 99, EXPLAIN 111, prepared 116,
+DML locks 12, multi-table 30, FK 59, sysbench access 15, physical builder 27 and
+cluster prepared-transaction 13 tests pass, as do all-target checking and lint.
+Exact commands, existing ignored cases and reference evidence are recorded in
+the structural audit. Existing multi-table execution is preserved, not a
+completed shared multi-table planner. This remains partial integration evidence;
+whole-package and workload completion are not claimed.

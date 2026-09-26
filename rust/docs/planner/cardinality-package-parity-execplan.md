@@ -615,3 +615,24 @@ exposes a baseline EXPLAIN UPDATE `partition:dual` failure; reproduction against
 unchanged production code confirms it remains independent of this fix. Exact
 commands, test counts and I/O evidence are in the structural audit. Complete
 package inventory, other server failures and workload gates remain open.
+
+
+DML lifecycle consolidation (2026-09-26, validated checkpoint): the baseline point-plan
+failure comes from duplicate DML construction paths. Plain EXPLAIN bypasses
+prepare_execution_plan and differs from execution in lock wrapping, root
+allocation and FK plan metadata. A new regression demonstrates different
+EXPLAIN and EXPLAIN ANALYZE operator identities and partition:dual versus p0
+for the same UPDATE. Replace both root builders and both DML source builders
+with one cache-aware construction sequence. Resolve Go TxnCtx.IsPessimistic
+from the statement's active/implicit transaction, not whether EXPLAIN is used.
+All roots prepare routing before publication; cached roots still rebuild on use.
+Validate INSERT/UPDATE/DELETE plan equality, transaction-mode locks, cached
+partition routing, FK metadata and actual write/locking tests against Go.
+
+The shared implementation now passes both new fail-before/pass-after regressions
+and the targeted session/executor/cluster gates recorded in the structural audit.
+Go replay distinguishes default autocommit from explicit pessimistic planning;
+three earlier EXPLAIN expectations were corrected using that reference. The
+prepared environment now retains active transaction mode. Existing multi-table
+execution stays separate and passes its 30-case regression group. Complete
+package and workload gates remain open; this checkpoint does not close them.

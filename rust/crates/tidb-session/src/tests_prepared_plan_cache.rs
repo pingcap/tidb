@@ -1608,3 +1608,21 @@ fn nonclustered_point_plan_requires_complete_visible_unique_key() {
         .is_none());
     assert!(session.prepare_ast(sql).unwrap().point_get_plan().is_none());
 }
+
+#[test]
+fn prepared_dml_lock_environment_tracks_explicit_transaction_mode() {
+    let mut session = Session::new();
+    session.run("BEGIN OPTIMISTIC").unwrap();
+    let optimistic = session.prepared_plan_cache_environment().unwrap();
+    session.run("ROLLBACK").unwrap();
+    session.run("BEGIN PESSIMISTIC").unwrap();
+    let pessimistic = session.prepared_plan_cache_environment().unwrap();
+    assert_ne!(optimistic, pessimistic);
+    // The active transaction, rather than a changed default, owns the mode.
+    session.run("SET tidb_txn_mode='optimistic'").unwrap();
+    assert_eq!(
+        pessimistic,
+        session.prepared_plan_cache_environment().unwrap()
+    );
+    session.run("ROLLBACK").unwrap();
+}

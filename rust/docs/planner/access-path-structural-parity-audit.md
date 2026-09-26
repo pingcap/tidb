@@ -3897,3 +3897,78 @@ receipt retain the incomplete package status. The earlier foreign-key,
 CaseWhenInt, statistics-notifier and lock-recovery failures remain open; the full
 cluster group was not repeated for this change. Complete package inventories,
 live TiKV/TiFlash variants and workload correctness/performance remain unverified.
+
+### Shared DML construction checkpoint (2026-09-26)
+
+The `partition:dual` failure was a lifecycle split: plain EXPLAIN owned a second
+DML root/source builder and never prepared the point partition. Execution and
+EXPLAIN also allocated different roots, installed different lock nodes and
+attached different FK plan metadata. Both now use one cache-aware construction
+sequence and prepare partition routing before publication. Cached executions
+still rebuild and prepare bound values on use. INSERT and single-table
+UPDATE/DELETE share this path. Existing multi-table execution remains separate;
+it is not claimed complete by this checkpoint.
+
+Go `TxnCtx.IsPessimistic` controls DML lock planning. The session supplies the
+active transaction mode (including explicit BEGIN overrides and autocommit OFF),
+while default autocommit has no pessimistic plan lock. Cached environments also
+retain this mode so an optimistic plan cannot supply a pessimistic DML lock
+shape. Changing the default inside an active transaction does not change its
+mode. The new environment regression fails without that cache field.
+
+The new SQL regression compares operator IDs, estimates, tasks and partition
+access for EXPLAIN versus EXPLAIN ANALYZE across INSERT/UPDATE/DELETE and
+explicit optimistic/pessimistic transactions plus autocommit. It fails against
+unchanged production HEAD: UPDATE shows `partition:dual` and a different root/
+lock tree. It passes with the shared builder. The original partition regression
+also passes. Temporary baseline restorations are protected by finally blocks.
+
+Go reference: master `8936d7bdcb13a4fc767de42489aace2711c2c6fd` has identical
+`logical_plan_builder.go` and `point_get_plan.go` to the pinned
+`633a9e37f1c796ac81c203dc107025e7e65385f0` test tree. A testkit replay compares
+plain/analyzed plans for `UPDATE t SET b=111 WHERE c=200` on
+`t(a INT PRIMARY KEY,b INT,c INT)` and `INSERT INTO dst SELECT * FROM src WHERE
+a>1` with `src(a INT)` / `dst(a INT)`. Both default autocommit and explicit
+transactions pass. Autocommit UPDATE has `Update_4` / `TableReader_8` /
+`Selection_7` / `TableFullScan_6`; explicit pessimistic UPDATE has `Update_5` /
+`SelectLock_7` / `TableReader_10` / `Selection_9` / `TableFullScan_8`. INSERT
+has `Insert_1` / `TableReader_9` / `Selection_8` / `TableFullScan_7`. Three old
+Rust expectations were corrected from this evidence, not from Rust output alone.
+The temporary oracle command (working directory is the pinned Go tree) was:
+
+    GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRustSharedDmlPlanReference$' -count=1 -v
+
+Both runs pass, with failpoints disabled afterward. Commands from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib dml_explain_and_execution_share_partition_and_lock_plans -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib prepared_dml_lock_environment_tracks_explicit_transaction_mode -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_partition -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_explain -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib prepared -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_dml_lock_keys -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_multi_table_dml -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib foreign -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_sysbench_access -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --lib driver::physical_builder::tests -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --lib prepared_transactions -- --test-threads=1
+    cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --all-targets
+    GOTOOLCHAIN=go1.25.12 make lint
+    git diff --check
+
+Passing groups: partition 99, EXPLAIN 111, prepared 116 (2 existing ignored),
+DML lock keys 12 (2 existing ignored), multi-table DML 30, foreign-key 59,
+sysbench access 15, physical builder 27, cluster prepared transactions 13.
+The first foreign-key sweep caught single-target FK metadata rejecting existing
+multi-table execution; retaining that existing execution path resolved it, and
+both the full multi-table group and the foreign-key sweep pass. Build and lint
+pass. Logs: `/private/tmp/tidb-dml-*.log`. No Go/Bazel input changed, so
+bazel_prepare is not required.
+
+Implementation files: executor `driver/{dml,planner_bridge,access}.rs`,
+`explain.rs`, `stmt_context.rs`; session `stmt_ctx.rs`, `prepared_ast.rs`.
+Coverage: session `tests_partition.rs`, `tests_explain.rs`,
+`tests_prepared_plan_cache.rs`; the planner expression-rewriter comment now
+names the shared entrypoint. ExecPlan and receipt retain incomplete status.
+The other recorded cluster failures, complete Go-package inventory/validation,
+multi-table planner integration, live TiKV/TiFlash variants and full workload
+correctness/performance gates remain open. No workload speedup is claimed.

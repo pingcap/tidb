@@ -3189,9 +3189,12 @@ fn planner_optimized_query_with_allocators(
     )
 }
 
-/// Builds the retained read child of a single-table UPDATE or DELETE through
-/// Go's DML-specific logical builder sequence rather than through SELECT-list
-/// wildcard expansion.
+/// The shared DML-source build, following Go's allocation order:
+/// the source builds logically, `buildSelectLock` wraps the single-table
+/// UPDATE/DELETE source (`logical_plan_builder.go:6117/6552`, pessimistic
+/// mode), the `Update`/`Delete` root allocates, and only then `DoOptimize`
+/// lowers the tree. Returns the physical source, the UPDATE assignment
+/// expressions, and the allocated DML root base for `PhysicalDmlRoot`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn physical_dml_source_plan_with_allocators(
     select: &tidb_ast::SelectStmt,
@@ -3200,82 +3203,6 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-) -> Result<(PhysicalPlan, Vec<Option<Expression>>), tidb_planner::plan_base::PlanError> {
-    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
-    let session_zone = ctx.session_zone();
-    let registry = ScalarSubqueryRegistry::default();
-    let evaluator = subquery_evaluator(
-        catalog,
-        ctx,
-        plan_ids,
-        column_ids,
-        use_plan_cache,
-        &session_zone,
-        &registry,
-    );
-    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator);
-    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
-    builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
-    builder.only_full_group_by = ctx.only_full_group_by();
-    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
-    builder.set_isolation_read_engines(ctx.isolation_read_engines());
-    builder.set_partition_processor_enabled(ctx.static_partition_prune());
-    builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
-    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
-    builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
-    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
-    builder.prefer_index_merge_by_fix_control = ctx
-        .optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
-    builder.add_opt_flag(flags::PRUNE_COLUMNS);
-    let (plan, mut update_expressions, flags) = match update_assignment_values {
-        Some(values) => builder.build_update_dml_source(select, values, false)?,
-        None => {
-            let (plan, flags) = builder.build_dml_source(select, false)?;
-            (plan, Vec::new(), flags)
-        }
-    };
-    let logical = optimize_built_logical(
-        plan,
-        flags,
-        Some(select),
-        catalog,
-        ctx,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-        &session_zone,
-    )?;
-    let physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
-    let schema = physical.schema().ok_or_else(|| {
-        tidb_planner::plan_base::PlanError::internal("physical DML source has no schema")
-    })?;
-    for expression in update_expressions.iter_mut().flatten() {
-        tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(|_| {
-            tidb_planner::plan_base::PlanError::internal(
-                "UPDATE assignment does not resolve in its physical source",
-            )
-        })?;
-    }
-    Ok((physical, update_expressions))
-}
-
-/// The plain-`EXPLAIN` DML-source build, reproducing Go's allocation order:
-/// the source builds logically, `buildSelectLock` wraps the single-table
-/// UPDATE/DELETE source (`logical_plan_builder.go:6117/6552`, pessimistic
-/// mode), the `Update`/`Delete` root allocates, and only then `DoOptimize`
-/// lowers the tree. Returns the physical source, the UPDATE assignment
-/// expressions, and the allocated DML root base for `PhysicalDmlRoot`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn physical_dml_source_plan_explained(
-    select: &tidb_ast::SelectStmt,
-    update_assignment_values: Option<&[Option<tidb_ast::Expr>]>,
-    catalog: &Catalog,
-    current_database: &str,
-    ctx: &crate::StmtContext,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     operator: &str,
@@ -3295,7 +3222,7 @@ pub(crate) fn physical_dml_source_plan_explained(
         ctx,
         plan_ids,
         column_ids,
-        false,
+        use_plan_cache,
         &session_zone,
         &registry,
     );
@@ -3316,9 +3243,11 @@ pub(crate) fn physical_dml_source_plan_explained(
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     let (plan, mut update_expressions, plan_flags) = match update_assignment_values {
-        Some(values) => builder.build_update_dml_source(select, values, true)?,
+        Some(values) => {
+            builder.build_update_dml_source(select, values, ctx.pessimistic_transaction())?
+        }
         None => {
-            let (plan, build_flags) = builder.build_dml_source(select, true)?;
+            let (plan, build_flags) = builder.build_dml_source(select, ctx.pessimistic_transaction())?;
             (plan, Vec::new(), build_flags)
         }
     };
@@ -3364,7 +3293,7 @@ pub(crate) fn physical_dml_source_plan_explained(
         Some(select),
         catalog,
         ctx,
-        false,
+        use_plan_cache,
         plan_ids,
         column_ids,
         &session_zone,
