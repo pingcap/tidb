@@ -928,6 +928,34 @@ func TestCreateConstraintForTable(t *testing.T) {
 	rs, err := tk.Exec("SHOW TABLES FROM test2 LIKE 't1'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "t1")
+
+	// LIKE must not rename constraints in the source table's cached metadata.
+	t.Run("like constraints", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+		tk.MustExec("create database test2")
+		tk.MustExec("create table base (id int primary key, a int, b int, constraint base_chk_1 check(a>0), constraint base_chk_2 check(b>0))")
+		tk.MustExec("alter table base drop check base_chk_1")
+		tk.MustExec("alter table base add check(a>0)")
+		before := tk.MustQuery("show create table base").Rows()
+		tk.MustExec("create table test2.base like test.base")
+		require.Equal(t, before, tk.MustQuery("show create table test.base").Rows())
+		tk.MustExec("create table same_schema like base")
+		require.Equal(t, before, tk.MustQuery("show create table test.base").Rows())
+		tk.MustExec("alter table test.base alter check base_chk_1 not enforced")
+		tk.MustExec("insert into test.base values (0,-1,1)")
+		tk.MustGetErrCode("insert into test.base values (2,1,-1)", errno.ErrCheckConstraintViolated)
+		tk.MustExec("delete from test.base")
+		tk.MustExec("alter table test.base alter check base_chk_1 enforced")
+		tk.MustExec("alter table test.base drop check base_chk_1")
+		tk.MustExec("insert into test.base values (1,-1,1)")
+		tk.MustGetErrCode("insert into test.base values (2,1,-1)", errno.ErrCheckConstraintViolated)
+		tk.MustGetErrCode("insert into test2.base values (1,-1,1)", errno.ErrCheckConstraintViolated)
+		tk.MustGetErrCode("insert into test2.base values (2,1,-1)", errno.ErrCheckConstraintViolated)
+		tk.MustExec("insert into test2.base values (3,1,1)")
+	})
 }
 
 func TestCreateTableHandleAutoIDOnce(t *testing.T) {
