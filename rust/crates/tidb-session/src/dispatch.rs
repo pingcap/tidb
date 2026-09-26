@@ -2129,6 +2129,22 @@ impl Session {
             Stmt::Query(query) => {
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context_for_stmt(&stmt, false);
+                // go `SelectIntoOutfile` opens the destination with O_EXCL:
+                // an existing file is refused with the raw open error (the
+                // oracle answers `open <path>: file exists`). This tier does
+                // not write data files, so the refusal is the only observable
+                // part of the clause that can be honored faithfully.
+                if let tidb_ast::QueryStmt::Select(select) = query.as_ref() {
+                    if let Some(outfile) = &select.into_outfile {
+                        if std::path::Path::new(&outfile.file_name).exists() {
+                            return Err(DriverError::Unsupported(format!(
+                                "open {}: file exists",
+                                outfile.file_name
+                            )
+                            .into()));
+                        }
+                    }
+                }
                 let mut table_names = Vec::new();
                 let mut written_db = None;
                 information_schema_tables_in_query(
