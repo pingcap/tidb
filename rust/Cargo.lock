@@ -4484,6 +4484,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "prost 0.14.4",
+ "regex",
  "tidb-codec",
  "tidb-datatype",
  "tidb-distsql",
