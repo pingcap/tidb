@@ -1136,9 +1136,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             // (logic and bit operators). Anything still uncovered keeps the
             // LongLong placeholder.
             let built = binary_expression(*op, left, right, resolver)?;
-            if std::env::var_os("TIDB_DEBUG_SEL").is_some()
-                && matches!(op, BinaryOp::LogicOr)
-            {
+            if std::env::var_os("TIDB_DEBUG_SEL").is_some() && matches!(op, BinaryOp::LogicOr) {
                 eprintln!("[ORBUILD] built={built:?}");
             }
             Ok(built)
@@ -1364,9 +1362,20 @@ fn rewrite_leaf_literal(
             let Some(collation) = tidb_datatype::Collation::from_name(&name) else {
                 return Err(EvalError::UnknownCollation(name));
             };
+            // go's FieldType for every NON-string result (numerics,
+            // temporals) carries Charset 'binary', so `LOCATE(...) COLLATE
+            // utf8mb4_general_ci` is 1253 against 'binary' even though the
+            // signature's placeholder type left the charset at its default.
             let arg_charset = arg
                 .static_type()
-                .map_or(String::new(), |ft| ft.charset_name().to_owned());
+                .map(|ft| {
+                    if ft.is_string() {
+                        ft.charset_name().to_owned()
+                    } else {
+                        "binary".to_owned()
+                    }
+                })
+                .unwrap_or_default();
             if !crate::collation_derive::collation_matches_charset(collation, &arg_charset) {
                 return Err(EvalError::CollationCharsetMismatch {
                     collation: name,
@@ -2008,36 +2017,36 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     | "json_merge_patch"
             ) {
                 if matches!(
+                    args[0],
+                    Expr::Int(_)
+                        | Expr::Decimal(_)
+                        | Expr::Float(_)
+                        | Expr::String(_)
+                        | Expr::RawString(_)
+                        | Expr::Bit(_)
+                ) {
+                    let numeric_doc = matches!(
                         args[0],
-                        Expr::Int(_)
-                            | Expr::Decimal(_)
-                            | Expr::Float(_)
-                            | Expr::String(_)
-                            | Expr::RawString(_)
-                            | Expr::Bit(_)
-                    ) {
-                        let numeric_doc = matches!(
-                            args[0],
-                            Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::Bit(_)
-                        );
-                        if numeric_doc {
-                            let function: &'static str = match lowered.as_str() {
-                                "json_extract" => "json_extract",
-                                "json_set" => "json_set",
-                                "json_insert" => "json_insert",
-                                "json_replace" => "json_replace",
-                                "json_remove" => "json_remove",
-                                "json_merge" => "json_merge",
-                                "json_merge_preserve" => "json_merge_preserve",
-                                _ => "json_merge_patch",
-                            };
-                            return Err(EvalError::Json(JsonError::InvalidTypeForJson {
-                                argument: 1,
-                                function,
-                            }));
-                        }
+                        Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::Bit(_)
+                    );
+                    if numeric_doc {
+                        let function: &'static str = match lowered.as_str() {
+                            "json_extract" => "json_extract",
+                            "json_set" => "json_set",
+                            "json_insert" => "json_insert",
+                            "json_replace" => "json_replace",
+                            "json_remove" => "json_remove",
+                            "json_merge" => "json_merge",
+                            "json_merge_preserve" => "json_merge_preserve",
+                            _ => "json_merge_patch",
+                        };
+                        return Err(EvalError::Json(JsonError::InvalidTypeForJson {
+                            argument: 1,
+                            function,
+                        }));
                     }
-            if let Some(Expr::Column(path)) = args.first() {
+                }
+                if let Some(Expr::Column(path)) = args.first() {
                     if let Some((_, doc_type, _)) = resolver.resolve(path) {
                         let code = doc_type.code();
                         if code != FieldTypeCode::Json && !code.is_string() {
@@ -2060,60 +2069,60 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 }
             }
             // go's JSON signature classes validate a CONSTANT path argument
-                // at build time (`ParseJSONPathExpr` in `getFunction`): a constant
-                // document paired with a constant path fails the BUILD with the
-                // classed 3143 (`JSON_EXTRACT('[1,2,3]', '$[1 TO 2]')` errors
-                // before any row), while a column document defers the invalid
-                // path to the execution wrap (1105) -- the doc argument's kind
-                // decides the tier.
-                if matches!(
-                    lowered.as_str(),
-                    "json_extract" | "json_set" | "json_insert" | "json_replace" | "json_remove"
-                ) && args.len() >= 2
-                {
-                    let literal = |expression: &Expr| {
-                        matches!(
-                            expression,
-                            Expr::Int(_)
-                                | Expr::Decimal(_)
-                                | Expr::Float(_)
-                                | Expr::String(_)
-                                | Expr::RawString(_)
-                        )
+            // at build time (`ParseJSONPathExpr` in `getFunction`): a constant
+            // document paired with a constant path fails the BUILD with the
+            // classed 3143 (`JSON_EXTRACT('[1,2,3]', '$[1 TO 2]')` errors
+            // before any row), while a column document defers the invalid
+            // path to the execution wrap (1105) -- the doc argument's kind
+            // decides the tier.
+            if matches!(
+                lowered.as_str(),
+                "json_extract" | "json_set" | "json_insert" | "json_replace" | "json_remove"
+            ) && args.len() >= 2
+            {
+                let literal = |expression: &Expr| {
+                    matches!(
+                        expression,
+                        Expr::Int(_)
+                            | Expr::Decimal(_)
+                            | Expr::Float(_)
+                            | Expr::String(_)
+                            | Expr::RawString(_)
+                    )
+                };
+                if literal(&args[0]) && literal(&args[1]) {
+                    let path_text = match &args[1] {
+                        Expr::Int(text)
+                        | Expr::Decimal(text)
+                        | Expr::String(text)
+                        | Expr::RawString(text) => text.clone(),
+                        Expr::Float(f) => f.to_string(),
+                        _ => unreachable!("literal() gated the arm"),
                     };
-                    if literal(&args[0]) && literal(&args[1]) {
-                        let path_text = match &args[1] {
-                            Expr::Int(text)
-                            | Expr::Decimal(text)
-                            | Expr::String(text)
-                            | Expr::RawString(text) => text.clone(),
-                            Expr::Float(f) => f.to_string(),
-                            _ => unreachable!("literal() gated the arm"),
-                        };
-                        if let Err(EvalError::Json(JsonError::InvalidPath(position))) =
-                            crate::builtin_ext::json::parse_path(&path_text)
-                        {
-                            // go's build-time path check surfaces the CLASSed
-                            // terror (3143) -- the statement fails before any
-                            // row -- while the execution wrap for a column doc
-                            // answers the generic 1105. The registered form
-                            // carries the types:3143 identity, so the wire keeps
-                            // 3143 instead of the shared JsonError mapping's
-                            // 1105.
-                            return Err(EvalError::Conversion(
-                                tidb_error::terror::TerrorError::registered(
-                                    tidb_error::terror::TerrorClass::Types,
-                                    tidb_error::terror::TerrorCode::new(3143),
-                                    format!(
+                    if let Err(EvalError::Json(JsonError::InvalidPath(position))) =
+                        crate::builtin_ext::json::parse_path(&path_text)
+                    {
+                        // go's build-time path check surfaces the CLASSed
+                        // terror (3143) -- the statement fails before any
+                        // row -- while the execution wrap for a column doc
+                        // answers the generic 1105. The registered form
+                        // carries the types:3143 identity, so the wire keeps
+                        // 3143 instead of the shared JsonError mapping's
+                        // 1105.
+                        return Err(EvalError::Conversion(
+                            tidb_error::terror::TerrorError::registered(
+                                tidb_error::terror::TerrorClass::Types,
+                                tidb_error::terror::TerrorCode::new(3143),
+                                format!(
                                     "Invalid JSON path expression. The error is around character \
                                      position {position}."
                                 ),
-                                ),
-                            ));
-                        }
+                            ),
+                        ));
                     }
                 }
-                let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
+            }
+            let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             if lowered == "name_const" {
                 validate_name_const_args(args)?;
             }
