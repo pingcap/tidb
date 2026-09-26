@@ -98,6 +98,12 @@ func convertAddIdxJob2RollbackJob(
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		// This job has not published any index metadata. A same-named index
+		// may belong to an earlier job and must not be rolled back here.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
