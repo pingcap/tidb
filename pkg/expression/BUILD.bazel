@@ -12,6 +12,7 @@ go_library(
         "builtin_compare_vec.go",
         "builtin_compare_vec_generated.go",
         "builtin_control.go",
+        "builtin_control_vec.go",
         "builtin_control_vec_generated.go",
         "builtin_convert_charset.go",
         "builtin_encryption.go",
