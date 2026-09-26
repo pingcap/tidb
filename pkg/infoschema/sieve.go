@@ -237,6 +237,12 @@ func (s *Sieve[K, V]) Close() {
 	s.mu.Unlock()
 }
 
+func (s *Sieve[K, V]) Under70PercentUsage() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.size < uint64(float64(s.capacity)*0.7)
+}
+
 func (s *Sieve[K, V]) removeEntry(e *entry[K, V]) {
 	s.ll.Remove(e.element)
 	delete(s.items, e.key)
