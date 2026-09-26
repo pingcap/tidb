@@ -88,6 +88,7 @@ func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	if op.FKCascades != nil {
 		return nil, false
 	}
+	cloned.Returning = utilfuncp.CloneExpressionsForPlanCache(op.Returning, nil)
 	return cloned, true
 }
 

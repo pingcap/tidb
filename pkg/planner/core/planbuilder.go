@@ -4339,7 +4339,25 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 	err = insertPlan.BuildOnInsertFKTriggers(b.ctx, b.is, tnW.DBInfo.Name.L)
-	return insertPlan, err
+	if err != nil {
+		return nil, err
+	}
+
+	// The RETURNING clause is built last: it overwrites the plan's schema, and
+	// ResolveIndices above still needs the schema the plan was built with.
+	if len(insert.Returning) > 0 {
+		returningExprs, returningSchema, returningNames, needExtraHandle, err := b.buildReturningClause(
+			ctx, insert.Returning, insertPlan.TableSchema, insertPlan.TableColNames, mockTablePlan, tableInfo, tnW.DBInfo.Name)
+		if err != nil {
+			return nil, err
+		}
+		insertPlan.Returning = returningExprs
+		insertPlan.NeedExtraHandleReturning = needExtraHandle
+		insertPlan.SetSchema(returningSchema)
+		insertPlan.SetOutputNames(returningNames)
+	}
+
+	return insertPlan, nil
 }
 
 func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physicalop.Insert) (affectedValuesCols []*table.Column, err error) {
@@ -6778,4 +6796,151 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 	}
 
 	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
+}
+
+// buildReturningClause builds the RETURNING clause of an INSERT statement: it turns the
+// RETURNING select_expr list into expressions evaluated over a written row, and returns
+// them together with the schema and the output names they produce.
+//
+// The expressions are evaluated row by row while the rows are written, so they may only
+// refer to the columns of the written row: anything that would need its own plan, such as
+// a correlated subquery, is rejected. Aggregate and window functions are rejected by the
+// expression rewriter itself, because no aggregation mapper is passed to it.
+func (b *PlanBuilder) buildReturningClause(
+	ctx context.Context,
+	returning []*ast.SelectField,
+	tableSchema *expression.Schema,
+	tableNames types.NameSlice,
+	mockPlan *logicalop.LogicalTableDual,
+	tableInfo *model.TableInfo,
+	dbName ast.CIStr,
+) ([]expression.Expression, *expression.Schema, types.NameSlice, bool, error) {
+	// A row of a table without a clustered handle carries _tidb_rowid after its public
+	// columns; the executor fills that slot in with the handle of the written row.
+	inputSchema := tableSchema
+	inputNames := tableNames
+	if !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+		extraCol := &expression.Column{
+			RetType:  tp,
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraHandleID,
+			Index:    tableSchema.Len(),
+			OrigName: fmt.Sprintf("%v.%v.%v", dbName, tableInfo.Name, model.ExtraHandleName),
+		}
+		schemaCols := make([]*expression.Column, 0, tableSchema.Len()+1)
+		schemaCols = append(schemaCols, tableSchema.Columns...)
+		schemaCols = append(schemaCols, extraCol)
+		inputSchema = expression.NewSchema(schemaCols...)
+		inputNames = append(tableNames.Shallow(), &types.FieldName{
+			OrigTblName: tableInfo.Name,
+			OrigColName: model.ExtraHandleName,
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraHandleName,
+		})
+	}
+	mockPlan.SetSchema(inputSchema)
+	mockPlan.SetOutputNames(inputNames)
+
+	// The RETURNING list is a select list, so name resolution errors should read the same
+	// way as they do for one.
+	b.curClause = fieldList
+
+	// Expand `*` the same way a projection does, so that a qualifier is validated and
+	// hidden columns and _tidb_rowid are not returned by `RETURNING *`.
+	fields, err := b.unfoldWildStar(mockPlan, returning)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+
+	nameByUniqueID := make(map[int64]*types.FieldName, len(inputNames))
+	for i, col := range inputSchema.Columns {
+		nameByUniqueID[col.UniqueID] = inputNames[i]
+	}
+
+	exprs := make([]expression.Expression, 0, len(fields))
+	cols := make([]*expression.Column, 0, len(fields))
+	names := make(types.NameSlice, 0, len(fields))
+	for _, field := range fields {
+		// A subquery is rejected rather than evaluated: an uncorrelated one would be run
+		// while the statement is planned and would therefore report the table as it was
+		// before the insert, and a correlated one cannot be evaluated over a written row
+		// at all. MariaDB rejects a subquery over the inserted table with ER_UPDATE_TABLE_USED.
+		if field.Expr.GetFlag()&ast.FlagHasSubquery != 0 {
+			return nil, nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("subquery in RETURNING clause")
+		}
+		expr, np, err := b.rewrite(ctx, field.Expr, mockPlan, nil, true)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		if np != mockPlan {
+			// The rewriter built a plan of its own; such an expression cannot be evaluated
+			// against a single written row.
+			return nil, nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("expression in RETURNING clause")
+		}
+		exprs = append(exprs, expr)
+		cols = append(cols, &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
+		})
+
+		var colName *types.FieldName
+		switch col, isCol := expr.(*expression.Column); {
+		case field.AsName.L != "":
+			colName = &types.FieldName{ColName: field.AsName}
+		case isCol && nameByUniqueID[col.UniqueID] != nil:
+			origName := nameByUniqueID[col.UniqueID]
+			colName = &types.FieldName{
+				OrigTblName: origName.OrigTblName,
+				OrigColName: origName.OrigColName,
+				DBName:      origName.DBName,
+				TblName:     origName.TblName,
+				ColName:     origName.ColName,
+			}
+		case isCol:
+			colName = &types.FieldName{ColName: ast.NewCIStr(col.OrigName)}
+		default:
+			exprName, err := b.buildProjectionFieldNameFromExpressions(ctx, field)
+			if err != nil {
+				return nil, nil, nil, false, err
+			}
+			colName = &types.FieldName{ColName: exprName}
+		}
+		names = append(names, colName)
+	}
+
+	// The clause reads the row that was written, so it needs SELECT on the columns it
+	// reads, like a query over them would. Postgres states the same rule for RETURNING.
+	b.requireSelectPrivForReturning(exprs, nameByUniqueID, tableInfo.Name, dbName)
+
+	needExtraHandle := len(expression.ExtractColumnsFromExpressions(exprs, func(col *expression.Column) bool {
+		return col.ID == model.ExtraHandleID
+	})) > 0
+	return exprs, expression.NewSchema(cols...), names, needExtraHandle, nil
+}
+
+// requireSelectPrivForReturning requires SELECT privilege for the target-table columns that
+// the RETURNING expressions read. Without it an INSERT-only user could read a column it
+// cannot select: `INSERT ... ON DUPLICATE KEY UPDATE c = c RETURNING secret` returns the row
+// as it stands after the update, so `secret` would come from the row that was already there.
+// _tidb_rowid is not a column a privilege can be granted on, so it takes SELECT on the table.
+func (b *PlanBuilder) requireSelectPrivForReturning(
+	exprs []expression.Expression,
+	nameByUniqueID map[int64]*types.FieldName,
+	tableName, dbName ast.CIStr,
+) {
+	var authErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT",
+			user.AuthUsername, user.AuthHostname, tableName.L)
+	}
+	for _, col := range expression.ExtractColumnsFromExpressions(exprs, nil) {
+		column := ""
+		if name := nameByUniqueID[col.UniqueID]; name != nil && col.ID != model.ExtraHandleID {
+			column = name.OrigColName.L
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableName.L, column, authErr)
+	}
 }
