@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
@@ -421,7 +422,7 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	subtaskMeta.RecordedConflictKVCount = sharedVars.RecordedConflictKVCount
 	// if using global sort, write the external meta to external storage.
 	if s.tableImporter.IsGlobalSort() {
-		subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(s.taskID, subtask.ID)
+		subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(s.taskID, subtask.ID, uuid.New().String())
 		if err := subtaskMeta.WriteJSONToExternalStorage(ctx, extStore, subtaskMeta); err != nil {
 			return errors.Trace(err)
 		}
@@ -550,7 +551,7 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
 	subtaskMeta.RecordedConflictKVCount = subtaskMeta.SortedKVMeta.ConflictInfo.Count
-	subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(m.task.ID, subtask.ID)
+	subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(m.task.ID, subtask.ID, uuid.New().String())
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, sortStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
@@ -793,7 +794,7 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 
 	subtaskMeta.ConflictInfo = conflictInfo
 	subtaskMeta.RecordedConflictKVCount = conflictInfo.Count
-	subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(e.taskID, subtask.ID)
+	subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(e.taskID, subtask.ID, uuid.New().String())
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, objStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
