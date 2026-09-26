@@ -9,6 +9,7 @@
 
 use tidb_exec::cluster_ddl::{lower_ddl, plan_ddl, DdlPlan, DdlPlanError};
 use tidb_meta::key;
+use tidb_exec::real_tikv_ddl::DdlWarningLevel;
 
 // The fixture helpers stay with the file that owns the bootstrap; the
 // aggregated harness makes every `tests/*.rs` a sibling module.
@@ -80,7 +81,7 @@ fn rebase_auto_increment_moves_the_counter_and_floors_without_force() {
     // Raising the base is the ordinary case: the table records 500 and the
     // counter becomes 499, so the next allocation is exactly 500.
     let write = plan(&mut store, "ALTER TABLE u6.t AUTO_INCREMENT = 500", 200);
-    assert_eq!(write.warning, None, "a rise needs no adjustment");
+    assert!(write.warnings.is_empty(), "a rise needs no adjustment");
     apply(&mut store, &write);
     assert_eq!(
         stored_table(&write, table_id)["auto_inc_id"],
@@ -93,8 +94,8 @@ fn rebase_auto_increment_moves_the_counter_and_floors_without_force() {
     // recorded base and the counter therefore stay put.
     let write = plan(&mut store, "ALTER TABLE u6.t AUTO_INCREMENT = 10", 300);
     assert_eq!(
-        write.warning.as_deref(),
-        Some("Can't reset AUTO_INCREMENT to 10 without FORCE option, using 500 instead")
+        write.warnings,
+        vec![(DdlWarningLevel::Warning, 1105, "Can't reset AUTO_INCREMENT to 10 without FORCE option, using 500 instead".to_owned())]
     );
     apply(&mut store, &write);
     assert_eq!(
@@ -105,7 +106,7 @@ fn rebase_auto_increment_moves_the_counter_and_floors_without_force() {
 
     // FORCE sets it exactly, backwards, and raises no warning.
     let write = plan(&mut store, "ALTER TABLE u6.t FORCE AUTO_INCREMENT = 10", 400);
-    assert_eq!(write.warning, None, "FORCE does what it was told");
+    assert!(write.warnings.is_empty(), "FORCE does what it was told");
     apply(&mut store, &write);
     assert_eq!(
         stored_table(&write, table_id)["auto_inc_id"],
@@ -141,7 +142,7 @@ fn accepted_no_op_alters_publish_nothing_and_order_by_warns_under_a_primary_key(
     )
     .expect("the statement plans")
     {
-        DdlPlan::AlreadySatisfied { detail, warning } => (detail, warning),
+        DdlPlan::AlreadySatisfied { detail, warnings } => (detail, warnings),
         DdlPlan::Write(_) => panic!("`{sql}` must publish nothing"),
     };
 
@@ -152,19 +153,19 @@ fn accepted_no_op_alters_publish_nothing_and_order_by_warns_under_a_primary_key(
     .into_iter()
     .enumerate()
     {
-        let (_, warning) = satisfied(&mut store, sql, 300 + offset as u64);
-        assert_eq!(warning, None, "`{sql}` is accepted silently");
+        let (_, warnings) = satisfied(&mut store, sql, 300 + offset as u64);
+        assert!(warnings.is_empty(), "`{sql}` is accepted silently");
     }
 
-    let (_, warning) = satisfied(&mut store, "ALTER TABLE u6.keyed ORDER BY v", 400);
+    let (_, warnings) = satisfied(&mut store, "ALTER TABLE u6.keyed ORDER BY v", 400);
     assert_eq!(
-        warning.as_deref(),
-        Some("ORDER BY ignored as there is a user-defined clustered index in the table 'keyed'")
+        warnings,
+        vec![(DdlWarningLevel::Warning, 1105, "ORDER BY ignored as there is a user-defined clustered index in the table 'keyed'".to_owned())]
     );
 
     // No primary key column, so Go raises nothing at all.
-    let (_, warning) = satisfied(&mut store, "ALTER TABLE u6.bare ORDER BY v", 500);
-    assert_eq!(warning, None);
+    let (_, warnings) = satisfied(&mut store, "ALTER TABLE u6.bare ORDER BY v", 500);
+    assert!(warnings.is_empty());
 
     // Go resolves the table first, so a missing one still fails.
     plan_ddl(
@@ -438,7 +439,7 @@ fn convert_to_character_set_rewrites_columns_and_refuses_a_narrowing() {
     let write = plan(
         &mut store,
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a VARCHAR(10), b INT) \
-         CHARACTER SET latin1",
+         CHARACTER SET latin1 COLLATE latin1_bin",
         100,
     );
     apply(&mut store, &write);
@@ -507,7 +508,7 @@ fn convert_to_character_set_rewrites_columns_and_refuses_a_narrowing() {
     // Narrowing back is refused: the stored bytes would be reinterpreted.
     let error = plan_ddl(
         &mut store,
-        &statement("ALTER TABLE u6.t CONVERT TO CHARACTER SET latin1"),
+        &statement("ALTER TABLE u6.t CONVERT TO CHARACTER SET latin1 COLLATE latin1_bin"),
         400,
     )
     .expect_err("a narrowing conversion is refused");
@@ -736,6 +737,20 @@ fn a_missing_table_is_1146_everywhere_except_drop_table() {
         "{error:?}"
     );
     assert_eq!(error.to_string(), "Unknown table 'u6.nosuch'");
+
+    // IF EXISTS preserves every note in source order, for both no-op and
+    // writing plans. A single optional warning cannot represent this result.
+    let expected = vec![
+        (DdlWarningLevel::Note, 1051, "Unknown table 'u6.first_missing'".to_owned()),
+        (DdlWarningLevel::Note, 1051, "Unknown table 'u6.second_missing'".to_owned()),
+    ];
+    let no_op = plan_ddl(&mut store, &statement("DROP TABLE IF EXISTS u6.first_missing,u6.second_missing"), 300).unwrap();
+    let DdlPlan::AlreadySatisfied { warnings, .. } = no_op else { panic!("missing tables do not write") };
+    assert_eq!(warnings, expected);
+    let create = plan(&mut store, "CREATE TABLE u6.present(a INT)", 400);
+    apply(&mut store, &create);
+    let drop = plan(&mut store, "DROP TABLE IF EXISTS u6.first_missing,u6.present,u6.second_missing", 500);
+    assert_eq!(drop.warnings, expected);
 }
 
 /// A `DATETIME(n) DEFAULT CURRENT_TIMESTAMP(n)` column must produce a

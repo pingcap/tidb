@@ -379,19 +379,10 @@ pub fn build_table_info_with_context(
         db_charset,
         db_collate,
     )?;
-    // go `CheckCharsetCollation` under new collation: latin1's DEFAULT
-    // collation is latin1_swedish_ci, which new collation does not carry, so
-    // a TABLE declaring the latin1 charset — or naming that collation
-    // explicitly — answers `ErrUnsupportedCollation` (1273). A COLUMN may
-    // still declare latin1: it resolves to latin1_bin, which exists.
-    if table_charset.eq_ignore_ascii_case("latin1")
-        || table_collate.eq_ignore_ascii_case("latin1_swedish_ci")
-    {
-        return Err(DdlAdmissionError::with_code(
-            1273,
-            "Unsupported collation when new collation is enabled: 'latin1_swedish_ci'",
-        ));
-    }
+    // Check the resolved pair, not the charset alone: an explicit supported
+    // collation overrides an unsupported charset default in Go as well.
+    tidb_datatype::get_supported_collation_by_name(&table_collate)
+        .map_err(|error| DdlAdmissionError::with_code(1273, error.to_string()))?;
 
     // Go `buildColumnsAndConstraints`: the table-level PRIMARY KEY is located
     // first because every column needs to know whether it is one of its keys.

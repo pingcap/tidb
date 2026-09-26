@@ -3464,3 +3464,50 @@ plan choices that previously treated analyzed data as pseudo. No live-cluster or
 workload benchmark was run. The unrelated DDL aggregate-test compilation failure,
 remaining package inventory/variants and workload gates are still open; no whole
 Go package completion is claimed.
+
+
+### Restored cluster DDL and ANALYZE aggregate gate (2026-09-25)
+
+The aggregate target no longer references the removed single-warning API.
+Tests now assert complete ordered warning lists, including severity and error
+code, for both zero-write and writing plans. Existing prefix-index support is
+checked through stored key-part metadata in inline, CREATE INDEX and ALTER
+spellings instead of obsolete refusal assertions.
+
+Restoring this gate exposed two production admission defects. Rename lowering
+now preserves Go's `isAlterTable` distinction: identity ALTER resolves the source
+then returns without staging schema-version writes; identity RENAME reports the
+existing destination. Charset admission validates the resolved collation using
+the shared supported-collation registry, allowing explicit latin1_bin while
+retaining unsupported-collation errors. The charset conversion fixture uses
+that explicit collation, so it reaches the widening/narrowing behavior under test.
+
+Regression evidence: after updating stale assertions, the old production code
+passed 100 DDL cases and failed identity ALTER and explicit latin1_bin; the fixed
+code passes 102. Additional assertions cover standalone identity RENAME and
+missing identity ALTER. The restored aggregate ANALYZE target passes three tests.
+The server compiles; Go reference cases pass; lint and diff checks pass.
+Commands from repository root:
+
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --test all cluster_ddl -- --test-threads=1
+    cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --test all analyze_added_column_source -- --test-threads=1
+    cargo check --offline --locked --manifest-path rust/Cargo.toml -p tidb-server
+    make lint
+    git diff --check
+
+Go oracle command, from /private/tmp/tidb-go-master-20260923:
+
+    GOTOOLCHAIN=go1.25.12 GOFLAGS='-overlay=/private/tmp/tidb-admission-overlay.json' ./tools/check/failpoint-go-test.sh pkg/planner/cardinality -run '^TestRustDdl(WarningListReference|AdmissionTransitions)$' -count=1
+
+Oracle pin: 633a9e37f1c796ac81c203dc107025e7e65385f0. Current master
+8936d7bdcb13a4fc767de42489aace2711c2c6fd changes executor.go storage-class
+admission, not the compared rename semantics; create_table.go is unchanged.
+Logs: /private/tmp/tidb-warning-gate-ddl-final.log and
+/private/tmp/tidb-ddl-gate-{analyze,server,go-final,lint}.log. Initial sandboxed
+lint could not resolve proxy.golang.org; the authorized network retry passed.
+
+Files: cluster_ddl.rs, table_info_build.rs, the two cluster DDL source test files,
+the server mock rename match, and this audit/ExecPlan/receipt. No Go or Bazel
+inputs changed. These are compatibility fixes and restored validation, not a
+whole-package parity claim. Live TiKV, complete source inventories and workload
+correctness/throughput gates remain unverified; no performance claim is made.

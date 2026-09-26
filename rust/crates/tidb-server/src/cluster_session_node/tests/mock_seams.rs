@@ -421,6 +421,7 @@ impl ClusterDdl for MockDdl {
                 from_table,
                 to_schema,
                 to_table,
+                ..
             } => mock_rename_table(&mut next, from_schema, from_table, to_schema, to_table)?,
             DdlStatement::RenameTables { pairs } => {
                 for pair in pairs {

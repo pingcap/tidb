@@ -10,6 +10,8 @@ Rust planning must estimate rows, selectivity, distinct values, and row sizes th
 
 ## Progress
 
+- [x] (2026-09-25) Restore aggregate cluster DDL/ANALYZE compilation and validate 102 DDL plus three storage cases; preserve ALTER/RENAME identity semantics and shared collation admission. See the structural audit for commands and regression evidence.
+
 - [x] (2026-09-25) Trace the partition baseline failure to ANALYZE cache publication rather than range planning: global results retained StatsVer zero; partial results retained old metadata; independent-index publication omitted FM sketches. Consolidate item/metadata merging, preserve independent-task counts, derive the table format from retained histogram objects, and retain FM sketches from the producer. Three strengthened cases fail on the previous production code and pass after; all 22 ANALYZE and 110 EXPLAIN tests, pinned Go SQL oracle, lint and diff checks pass. The earlier partition baseline failure is resolved; whole-package and workload gates remain open.
 
 - [ ] (2026-09-25) Cluster expression-index prerequisite: retain physical virtual sample columns, evaluate decoded placeholders with the session statement context, run Go special-index NDV/null-count scans for virtual key parts, and suppress virtual histogram build tasks in shared AnalyzePlan. Apply the same schema/evaluation distinction to the paged snapshot adapter. Encoded populated/all-NULL collectors, selected/nested dependencies, timezones and stored-row fixtures pass; 42 exec, eight builder and 42 session expression tests, server check, Go oracles and lint pass. Session ANALYZE retains the independently reproduced partition baseline failure; aggregate integration compilation has stale DDL warning fields, so three storage tests were verified through a temporary target restored afterward. Live TiKV execution, memory accounting and error-policy variants remain separate open gates.
@@ -265,6 +267,10 @@ Rust planning must estimate rows, selectivity, distinct values, and row sizes th
   Evidence: after deleting rows, Go retains `(RealtimeCount, ModifyCount) = (2000, 1000)` and a histogram beginning at 300; the incorrect Rust path changed the histogram minimum to 500 and estimated `a <= 300` as 10.00. Merging physical partition stats now reproduces the 191.04 estimate and every remaining source golden.
 
 ## Decision Log
+
+- Decision: preserve the originating rename statement kind through lowering and use the shared collation registry after charset resolution.
+  Rationale: the restored aggregate gate exposed catalog writes for identity ALTER and a blanket latin1 refusal, both contrary to Go.
+  Date/Author: 2026-09-25 / Codex.
 
 - 2026-09-25: Carry required ByItems as merge property feedback until reader conversion and keep advisory sorting distinct. Borrow the shared normalized layout in production, falling back only for native/unfilled sources. Enable ordered union only after fail-before SQL plans and actual ordered outputs match the Go reference.
 
@@ -526,3 +532,9 @@ costing 44, hints 26, recursive CTE 13, write casts 3: 1302 total. Logs are in
 No Go files, imports, module inputs or Bazel files changed; bazel_prepare is not
 triggered. Complete workspace tests, full package inventories and workload
 behavior/performance remain unverified.
+
+
+DDL aggregate gate update (2026-09-25): previous compilation blocker is resolved;
+102 DDL and three aggregate storage cases pass, with server check, Go oracles,
+lint and diff validation. The structural audit records exact commands. This
+checkpoint does not close package inventory, live-cluster or workload gates.

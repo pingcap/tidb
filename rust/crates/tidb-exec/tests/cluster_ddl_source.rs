@@ -37,7 +37,7 @@ use tidb_exec::cluster_ddl::{
     AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate,
 };
 use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
-use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_with_context;
+use tidb_exec::real_tikv_ddl::{prepare_cluster_ddl_with_context, DdlWarningLevel};
 use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::ddl_systable::{SystemTableManager, SystemTableManagerError};
 use tidb_exec::ddl_history_table::DdlHistoryTable;
@@ -2415,10 +2415,10 @@ fn exchange_partition_validation_default_and_admission_errors_match_go() {
         "the grammar's DEFAULT is Go WITH VALIDATION"
     );
     assert_eq!(
-        validated.warning.as_deref(),
-        Some(
-            "after the exchange, please analyze related table of the exchange to update statistics"
-        )
+        validated.warnings,
+        vec![(DdlWarningLevel::Warning, 1105,
+            "after the exchange, please analyze related table of the exchange to update statistics".to_owned()
+        )]
     );
 
     let unvalidated = plan(
@@ -2723,12 +2723,28 @@ fn alter_table_rename_moves_catalog_metadata_without_reissuing_ids() {
 
     let identity = tidb_parser::parse("ALTER TABLE u6.made_again RENAME TO u6.made_again")
         .expect("the identity spelling parses");
-    assert!(
-        lower_ddl(&identity, "u6")
-            .expect("an identity ALTER rename is accepted")
-            .is_none(),
-        "Go does not spend a DDL job on an identity ALTER rename"
-    );
+    let lowered = lower_ddl(&identity, "u6")
+        .unwrap()
+        .expect("identity rename still resolves its table");
+    let planned = plan_ddl(&mut store, &lowered, 470_000_104).unwrap();
+    let DdlPlan::AlreadySatisfied { warnings, .. } = planned else {
+        panic!("identity ALTER rename must not stage catalog writes");
+    };
+    assert!(warnings.is_empty());
+
+    for (sql, existing) in [
+        ("RENAME TABLE u6.made_again TO u6.made_again", true),
+        ("ALTER TABLE u6.missing RENAME TO u6.missing", false),
+    ] {
+        let statement = tidb_parser::parse(sql).unwrap();
+        let lowered = lower_ddl(&statement, "u6").unwrap().unwrap();
+        let error = plan_ddl(&mut store, &lowered, 470_000_104).unwrap_err();
+        if existing {
+            assert!(matches!(error, DdlPlanError::TableExists { .. }), "{error:?}");
+        } else {
+            assert!(matches!(error, DdlPlanError::TableNotExists { .. }), "{error:?}");
+        }
+    }
 
     let pairs = tidb_parser::parse("RENAME TABLE u6.made_again TO u6.a, u6.a TO u6.b")
         .expect("the multi-pair spelling parses");
@@ -3312,10 +3328,6 @@ fn a_duplicate_index_name_is_refused_and_if_not_exists_is_a_no_op() {
 #[test]
 fn index_shapes_this_node_cannot_maintain_are_refused_at_admission() {
     for (sql, expected) in [
-        (
-            "CREATE INDEX ci ON u6.minimal (c(4))",
-            "a prefix-length index",
-        ),
         (
             "CREATE INDEX ei ON u6.minimal ((v + 1))",
             "an expression index",
@@ -3920,39 +3932,30 @@ fn a_modify_column_reorganizes_exactly_where_go_says_it_must() {
     );
 }
 
-/// A prefix-length index must be refused wherever it is spelled. The
-/// standalone `CREATE INDEX` and the `ALTER TABLE ... ADD INDEX` spellings
-/// have always refused it, because this node's own catalog loader drops a
-/// table carrying one; the INLINE spelling inside `CREATE TABLE` did not,
-/// so the statement reported success and the table then did not exist.
+/// All prefix-index spellings retain their key-part lengths in published metadata.
 #[test]
-fn a_prefix_index_is_refused_in_every_spelling() {
-    let expected = "a prefix-length index is not supported by this node";
-
-    // All three spellings refuse at admission, before any mutation.
-    for sql in [
-        "CREATE TABLE pfx (id BIGINT PRIMARY KEY, c VARCHAR(20), INDEX px (c(5)))",
-        "CREATE TABLE pfx (id BIGINT PRIMARY KEY, c VARCHAR(20), UNIQUE KEY ux (c(5)))",
-        "CREATE INDEX px ON pfx2 (c(5))",
-        "ALTER TABLE pfx2 ADD INDEX px (c(5))",
-    ] {
-        let (code, reason) = refusal_with_code(sql);
-        assert_eq!(code, 8200, "{sql}");
-        assert!(reason.contains(expected), "{sql}: {reason}");
-    }
-
-    // The same shapes without a prefix are admitted, so the guard refuses
-    // the prefix rather than the index.
+fn prefix_index_spellings_preserve_key_part_lengths() {
     let mut store = bootstrapped();
-    let create = plan(
-        &mut store,
-        "CREATE TABLE pfx2 (id BIGINT PRIMARY KEY, c VARCHAR(20), INDEX cx (c))",
-        300,
-    );
-    assert!(!create.mutations.is_empty(), "a plain inline index plans");
+    for (name, sql, unique) in [
+        ("pfx", "CREATE TABLE pfx(id BIGINT PRIMARY KEY,c VARCHAR(20),INDEX px(c(5)))", false),
+        ("pfx_unique", "CREATE TABLE pfx_unique(id BIGINT PRIMARY KEY,c VARCHAR(20),UNIQUE KEY px(c(5)))", true),
+    ] {
+        let write = plan(&mut store, sql, 300);
+        let stored = stored_table(&write, write.created_id.unwrap());
+        assert_eq!(stored["index_info"][0]["idx_cols"][0]["length"], 5, "{name}: {stored}");
+        assert_eq!(stored["index_info"][0]["is_unique"], unique);
+        apply(&mut store, &write);
+    }
+    let create = plan(&mut store, "CREATE TABLE pfx2(id BIGINT PRIMARY KEY,c VARCHAR(20))", 301);
+    let id = create.created_id.unwrap();
     apply(&mut store, &create);
-    let plain = plan(&mut store, "CREATE INDEX cx2 ON pfx2 (c)", 301);
-    assert!(!plain.mutations.is_empty(), "a plain index still plans");
+    for (sql, name) in [("CREATE INDEX px ON pfx2(c(5))", "px"), ("ALTER TABLE pfx2 ADD INDEX ax(c(5))", "ax")] {
+        let write = plan(&mut store, sql, 302);
+        let stored = stored_table(&write, id);
+        let index = stored["index_info"].as_array().unwrap().iter().find(|index| index["idx_name"]["O"] == name).unwrap();
+        assert_eq!(index["idx_cols"][0]["length"], 5);
+        apply(&mut store, &write);
+    }
 }
 
 /// A resolved view definition as the route would hand it over, for the
@@ -6548,14 +6551,10 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
         plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_705, None)
             .expect("the refused tick plans the Rollingback transition");
     assert!(!step.terminal, "Rollingback is not terminal");
-    assert!(
-        step.write
-            .warning
-            .as_deref()
-            .is_some_and(|warning| warning.contains("residual build rows")),
-        "Go's residual error text rides the step: {:?}",
-        step.write.warning
-    );
+    assert_eq!(step.write.warnings.len(), 1);
+    let (level, code, message) = &step.write.warnings[0];
+    assert_eq!((*level, *code), (DdlWarningLevel::Warning, 1105));
+    assert!(message.contains("residual build rows"), "{message}");
     apply_mutations(&mut store, &step.write.mutations);
 
     // The next tick runs the rollback: the phase-1 view drops and the job
@@ -6612,10 +6611,10 @@ fn alter_materialized_view_succeeds_as_a_no_op_like_go() {
         .expect("the statement lowers")
         .unwrap_or_else(|| panic!("the no-op route owns {sql}"));
         let plan = plan_ddl(&mut store, &statement, 1_801).expect("the no-op plans");
-        let DdlPlan::AlreadySatisfied { warning, .. } = plan else {
+        let DdlPlan::AlreadySatisfied { warnings, .. } = plan else {
             panic!("{sql} plans as a zero-write success")
         };
-        assert!(warning.is_none(), "Go appends no warning for the no-op");
+        assert!(warnings.is_empty(), "Go appends no warning for the no-op");
     }
 }
 

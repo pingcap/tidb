@@ -561,6 +561,9 @@ pub enum DdlStatement {
     /// `RENAME TABLE [schema.]from TO [schema.]to`, including the single
     /// action form of `ALTER TABLE ... RENAME TO`.
     RenameTable {
+        /// ALTER permits an identity rename after resolving the source;
+        /// RENAME TABLE reports the existing destination instead.
+        is_alter: bool,
         /// The schema which currently owns the table.
         from_schema: String,
         /// The current table name.
@@ -1456,9 +1459,10 @@ fn lower_alter_table_catalog(
             let (from_schema, from_table) =
                 split_name(&alter.name, default_schema, "renamed table")?;
             let (to_schema, to_table) = split_name(new_name, default_schema, "new table name")?;
-            // go accepts a same-name rename as a no-op DDL job; returning
-            // Ok(None) here made the session node reject it as unrecognized.
+            // Retain identity ALTER renames so planning resolves the source before
+            // returning a no-op, as Go does.
             Ok(Some(DdlStatement::RenameTable {
+                is_alter: true,
                 from_schema,
                 from_table,
                 to_schema,
@@ -1992,6 +1996,7 @@ fn lower_rename_table_stmt(
             "RENAME TABLE names no table",
         )),
         [pair] => Ok(Some(DdlStatement::RenameTable {
+            is_alter: false,
             from_schema: pair.from_schema.clone(),
             from_table: pair.from_table.clone(),
             to_schema: pair.to_schema.clone(),
@@ -9133,19 +9138,16 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             warnings.extend(notes);
         }
         DdlStatement::RenameTable {
+            is_alter,
             from_schema,
             from_table,
             to_schema,
             to_table,
         } => {
-            if from_schema.eq_ignore_ascii_case(&to_schema)
+            if *is_alter && from_schema.eq_ignore_ascii_case(&to_schema)
                 && from_table.eq_ignore_ascii_case(&to_table)
             {
-                // go accepts a same-name rename as a no-op DDL job: the
-                // table is renamed to itself, no catalog writes needed. The
-                // table must still exist — go resolves through
-                // `getSchemaAndTableByIdent` and answers 1146 when it does
-                // not, even though nothing would be renamed.
+                // Go resolves the source before the ALTER identity early return.
                 let exists = find_database(&catalog, from_schema)
                     .is_some_and(|database| find_table(database, from_table).is_some());
                 if !exists {
@@ -9154,6 +9156,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         table: from_table.clone(),
                     });
                 }
+                return Ok(already_with_warnings(
+                    format!("table `{from_schema}`.`{from_table}` already has its requested name"),
+                    Vec::new(),
+                ));
             } else {
                 let pair = RenameTablePair {
                     from_schema: from_schema.clone(),

@@ -2939,3 +2939,13 @@ against the old production code and pass after; 22 ANALYZE, 110 EXPLAIN tests, G
 SQL oracle, lint and diff checks pass. Exact commands and limitations are in the
 structural audit. DDL aggregate compilation, live-cluster variants, full-package
 inventory and workload gates remain open.
+
+
+Aggregate gate update (2026-09-25): the stale DDL warning-field blocker above is
+resolved. Ordered warning lists and current prefix-index metadata are asserted;
+Go-compatible identity rename and resolved-collation admission fixes pass 102
+DDL cases, while the real aggregate ANALYZE target passes three storage cases.
+Server check, Go reference cases, lint and diff checks pass. Exact commands and
+fail-before/pass-after evidence are in the structural audit. This remains seed
+and integration evidence, not completion of pkg/ddl or pkg/planner/cardinality;
+live-cluster, complete inventory and workload gates remain open.
