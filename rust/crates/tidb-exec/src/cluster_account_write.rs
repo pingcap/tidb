@@ -291,6 +291,8 @@ const USER_VALUE_COLUMNS: &[&str] = &[
     "alter_routine_priv",
     "index_priv",
     "create_user_priv",
+    "create_role_priv",
+    "drop_role_priv",
     "event_priv",
     "repl_slave_priv",
     "repl_client_priv",
