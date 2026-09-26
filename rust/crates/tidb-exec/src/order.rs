@@ -397,7 +397,10 @@ fn sort_value_cmp(a: &Datum, b: &Datum) -> Ordering {
         (Datum::Int(x), Datum::UInt(y)) => (*x as u64).cmp(y),
         (Datum::UInt(_), Datum::Int(y)) if *y < 0 => Ordering::Greater,
         (Datum::UInt(x), Datum::Int(y)) => x.cmp(&(*y as u64)),
-        (Datum::String(x), Datum::String(y)) => x.bytes().cmp(y.bytes()),
+        // Strings sort under the collation the datum carries (go derives the
+        // collator from the value's FieldType): a utf8mb4_general_ci column
+        // folds case and accents in ORDER BY, not raw bytes.
+        (Datum::String(x), Datum::String(y)) => x.collation().compare(x.bytes(), y.bytes()),
         (Datum::Bytes(x), Datum::Bytes(y)) => x.cmp(y),
         (Datum::Decimal(x), Datum::Decimal(y)) => x.cmp(y),
         (Datum::Time(x), Datum::Time(y)) => x.compare(*y),
