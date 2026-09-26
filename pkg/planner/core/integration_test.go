@@ -2660,3 +2660,39 @@ from (
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
 }
+
+func TestIndexScanSeekCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
+	// Column `a` has high NDV while `b` and `c` have low NDV, so the NDV safeguard allows
+	// pruning the IN-list columns `b` and `c` from range construction.
+	tk.MustExec("set @@cte_max_recursion_depth = 100000")
+	tk.MustExec(`insert into t with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
+		select n % 200, n % 3 + 1, n % 2 + 1, n from cte`)
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@tidb_cost_model_version = 2")
+
+	// Without an ordering requirement the seek cost of 6 ranges outweighs scanning the extra
+	// rows under a = 1, so the IN-lists are pruned from the ranges and applied as filters.
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2)").Check(testkit.Rows(
+		"IndexReader 728.24 root  index:Selection",
+		"└─Selection 728.24 cop[tikv]  in(test.t.b, 1, 2, 3), in(test.t.c, 1, 2)",
+		"  └─IndexRangeScan 250.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1,1], keep order:false"))
+
+	// With ORDER BY d the full point ranges satisfy the order through a per-range merge sort,
+	// so pruning must not be chosen: it would force a Sort on top of the pruned scan.
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d").Check(testkit.Rows(
+		"IndexReader 728.24 root  index:IndexRangeScan",
+		"└─IndexRangeScan 728.24 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1 1,1 1 1], [1 1 2,1 1 2], [1 2 1,1 2 1], [1 2 2,1 2 2], [1 3 1,1 3 1], [1 3 2,1 3 2], keep order:true"))
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d limit 5").Check(testkit.Rows(
+		"Limit 5.00 root  offset:0, count:5",
+		"└─IndexReader 5.00 root  index:Limit",
+		"  └─Limit 5.00 cop[tikv]  offset:0, count:5",
+		"    └─IndexRangeScan 5.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1 1,1 1 1], [1 1 2,1 1 2], [1 2 1,1 2 1], [1 2 2,1 2 2], [1 3 1,1 3 1], [1 3 2,1 3 2], keep order:true"))
+
+	// The pruned plan must return the same rows as the ordered, unpruned plan.
+	tk.MustQuery("select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2)").Sort().Check(
+		tk.MustQuery("select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d").Sort().Rows())
+}
