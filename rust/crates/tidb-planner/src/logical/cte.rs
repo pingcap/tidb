@@ -288,16 +288,38 @@ impl LogicalCTE {
         let reload = reloads.len() == 1 && reloads[0];
         if !reload {
             if let Some(existing) = self.base.base.stats_info() {
-                return (existing.clone(), false);
+                // Re-derive when the maintained seed profile changed: the
+                // seed physical stats settle only after the stats load
+                // completes, and the eager first cache froze mid-load values
+                // (q74's CTE flipped nondeterministically between 2328832
+                // and 931533.60 across server runs).
+                let current = self.seed_stat.as_ref().map(|s| s.borrow().row_count());
+                if current.is_none_or(|current| current == existing.row_count()) {
+                    return (existing.clone(), false);
+                }
             }
         }
+        // GO `LogicalCTE.DeriveStats` answers from the SEED PHYSICAL plan's
+        // stats (`resStat := p.Cte.SeedPartPhysicalPlan.StatsInfo();
+        // *p.SeedStat = *resStat`): the maintained final seed profile. The
+        // logical `seed` argument is a MID-PASS snapshot whose count still
+        // moves as later Selection passes scale their branches.
+        let seed_profile = self
+            .seed_stat
+            .as_ref()
+            .map(|s| s.borrow().clone())
+            .unwrap_or_else(|| seed.clone());
         if let Some(seed_stat) = &self.seed_stat {
-            *seed_stat.borrow_mut() = seed.clone();
-            if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-                eprintln!("CTEPROD rows={} name={}", seed.row_count(), self.cte_name);
-            }
+            *seed_stat.borrow_mut() = seed_profile.clone();
         }
-        let mut row_count = seed.row_count();
+        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
+            eprintln!(
+                "CTEPROD rows={} name={}",
+                seed_profile.row_count(),
+                self.cte_name
+            );
+        }
+        let mut row_count = seed_profile.row_count();
         let mut ndvs: Vec<(i64, f64)> = self_schema
             .columns
             .iter()
@@ -306,7 +328,7 @@ impl LogicalCTE {
                 let from_seed = seed_schema
                     .columns
                     .get(i)
-                    .and_then(|seed_col| seed.col_ndvs().get(&seed_col.unique_id))
+                    .and_then(|seed_col| seed_profile.col_ndvs().get(&seed_col.unique_id))
                     .copied()
                     .unwrap_or(0.0);
                 (col.unique_id, from_seed)
