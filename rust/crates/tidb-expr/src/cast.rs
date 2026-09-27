@@ -1744,30 +1744,59 @@ fn real_to_time(
 /// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
 /// becomes a warning and the cast yields NULL.
 fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) {
-    // go renders a date-shaped failure through its parsed parts without
-    // zero padding: `LAST_DAY('2020-02-30')` warns `Incorrect datetime
-    // value: '2020-2-30'` (the month unpadded). Every other text keeps the
-    // raw form.
+    // go splits the failure classes by SHAPE (oracle-captured):
+    //  * a VALID calendar date prefix followed by trailing characters raises
+    //    the VALUE class 8034 with the raw text (`CAST('2020-01-01x' AS
+    //    DATE)` -- m17);
+    //  * a calendar-INVALID date shape renders through its parsed parts
+    //    without zero padding under the truncation class 1292
+    //    (`'2020-2-30'` -- m4);
+    //  * everything else is 1292 with the raw text (`'abc'` -- m1).
     let trimmed = input.trim();
-    let parts: Vec<&str> = trimmed.splitn(3, '-').collect();
-    if parts.len() == 3
-        && parts
-            .iter()
-            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    let head: Vec<&str> = trimmed.splitn(3, '-').collect();
+    if head.len() == 3
+        && !head[0].is_empty()
+        && !head[1].is_empty()
+        && head[0].bytes().all(|b| b.is_ascii_digit())
+        && head[1].bytes().all(|b| b.is_ascii_digit())
     {
-        let rendered = format!(
-            "{}-{}-{}",
-            parts[0].parse::<i64>().unwrap_or(0),
-            parts[1].parse::<i64>().unwrap_or(0),
-            parts[2].parse::<i64>().unwrap_or(0)
-        );
-        // go raises the VALUE class (ErrWrongValue, 8034) for the CAST-string
-    // parse failures, not the truncation class (oracle: `CAST('2020-01-01x'
-    // AS DATE)` warns 8034).
-    ctx.append_warning(8034, &format!("Incorrect datetime value: '{rendered}'"));
-        return;
+        let digits = |part: &str| -> i64 {
+            part.bytes()
+                .take_while(|byte| byte.is_ascii_digit())
+                .fold(0i64, |acc, byte| acc * 10 + i64::from(byte - b'0'))
+        };
+        let (year, month) = (digits(head[0]), digits(head[1]));
+        let day_digits = head[2]
+            .bytes()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        let day = digits(&head[2][..day_digits]);
+        if (1..=12).contains(&month) && (1..=31).contains(&day) {
+            let days_in_month = match month {
+                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                4 | 6 | 9 | 11 => 30,
+                _ => {
+                    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+                    if leap {
+                        29
+                    } else {
+                        28
+                    }
+                }
+            };
+            if day <= days_in_month {
+                // A valid calendar date prefix plus trailing characters.
+                ctx.append_warning(8034, &format!("Incorrect datetime value: '{input}'"));
+                return;
+            }
+            if head[2].bytes().all(|byte| byte.is_ascii_digit()) {
+                let rendered = format!("{year}-{month}-{day}");
+                ctx.append_warning(1292, &format!("Incorrect datetime value: '{rendered}'"));
+                return;
+            }
+        }
     }
-    ctx.append_warning(8034, &format!("Incorrect datetime value: '{input}'"));
+    ctx.append_warning(1292, &format!("Incorrect datetime value: '{input}'"));
 }
 
 /// `CAST(... AS YEAR)`: the operand's calendar year if it parses as a
