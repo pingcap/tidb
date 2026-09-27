@@ -49,7 +49,10 @@ impl Parser {
             // go's DefaultValueExpr paren form wraps a NARROW value: the
             // yacc has no infix inside the column default, so
             // `DEFAULT (1 + 2)` errors at `+ 2)` (oracle-captured on
-            // g-view's dft CREATE).
+            // g-view's dft CREATE). A column operand PARSES here and its
+            // fate belongs to the default-expression resolver, not the
+            // parser: `DEFAULT (a)` fails later with ErrBadField (1054)
+            // 'expression' (oracle: t5b's dflt CREATE).
             self.bump();
             let expression = self.parse_prefix(prec::NONE)?;
             self.expect_op(")")?;
@@ -58,16 +61,16 @@ impl Parser {
             // Go's column DEFAULT grammar deliberately parses one prefix
             // expression, not a full infix expression. This leaves the next
             // `NOT NULL`/other column option for the option loop.
-            self.parse_prefix(prec::NONE)?
+            let expression = self.parse_prefix(prec::NONE)?;
+            // `parseColumnOptions` rejects a bare identifier directly
+            // following DEFAULT. Parenthesized identifiers take the
+            // parenthesized-expression grammar path above and are not
+            // reclassified here.
+            if matches!(expression, Expr::Column(_)) {
+                return Err(self.err_here("invalid default value"));
+            }
+            expression
         };
-
-        // `parseColumnOptions` rejects a bare identifier directly following
-        // DEFAULT. Preserve Go's exact timing: parenthesized identifiers
-        // have already taken its parenthesized-expression grammar path and
-        // are not reclassified here.
-        if matches!(expression, Expr::Column(_)) {
-            return Err(self.err_here("invalid default value"));
-        }
 
         Ok(normalize_column_default_expression(expression))
     }
