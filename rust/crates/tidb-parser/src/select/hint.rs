@@ -745,7 +745,12 @@ pub struct HintParseResult {
 /// later occurrences remain parseable. `ansi_quotes` mirrors the only SQL-mode
 /// bit consulted by the source hint scanner, and `initial_line` is retained in
 /// syntax diagnostics for callers embedding a comment in a larger statement.
-pub fn parse_hint(input: &str, ansi_quotes: bool, initial_line: usize) -> HintParseResult {
+pub fn parse_hint(
+    input: &str,
+    ansi_quotes: bool,
+    initial_line: usize,
+    column_base: usize,
+) -> HintParseResult {
     let Some(inner) = input
         .strip_prefix("/*+")
         .and_then(|value| value.strip_suffix("*/"))
@@ -787,8 +792,14 @@ pub fn parse_hint(input: &str, ansi_quotes: bool, initial_line: usize) -> HintPa
                 parser.bump();
                 if parser.is_op("(") && parser.peek_n(1).text == ")" {
                     parser.bump();
-                    parser.bump();
-                    diagnostics.push(hint_syntax_diagnostic(initial_line));
+                    // go's hint yacc has no production for an unknown name
+                    // over EMPTY parens: the failure anchors at the closing
+                    // paren (oracle g-hint: MERGE_JOIN_INTRA_CITY() errors
+                    // 1064 `column 34 near ") */"`; AG_TO_COP() `column 22`).
+                    let rparen = parser.bump();
+                    let column = rparen.end_offset + column_base + 3;
+                    let near = format!("{}*/", &inner[rparen.offset..]);
+                    diagnostics.push(hint_1064_diagnostic(initial_line, column, &near));
                 } else {
                     parser.skip_hint_args();
                     diagnostics.push(HintDiagnostic {
@@ -803,6 +814,8 @@ pub fn parse_hint(input: &str, ansi_quotes: bool, initial_line: usize) -> HintPa
                     &mut hints,
                     &mut diagnostics,
                     initial_line,
+                    inner,
+                    column_base,
                 );
             }
         } else {
@@ -811,6 +824,8 @@ pub fn parse_hint(input: &str, ansi_quotes: bool, initial_line: usize) -> HintPa
                 &mut hints,
                 &mut diagnostics,
                 initial_line,
+                inner,
+                column_base,
             );
         }
 
@@ -830,6 +845,8 @@ fn parse_standalone_hint_occurrence(
     hints: &mut Vec<Hint>,
     diagnostics: &mut Vec<HintDiagnostic>,
     initial_line: usize,
+    inner: &str,
+    column_base: usize,
 ) {
     let start = parser.pos;
     match parser.parse_one_hint() {
@@ -858,10 +875,30 @@ fn parse_standalone_hint_occurrence(
                     message: error.message,
                 });
             }
-            diagnostics.push(hint_syntax_diagnostic(initial_line));
+            // go's yacc anchors the hint syntax error at the token it cannot
+            // reduce -- for a parenthesized hint, the first argument token or
+            // the closing paren (oracle g-hint: MAX_EXECUTION_TIME(abc)
+            // errors `column 33 near "abc) */"`, MERGE_JOIN_INTRA_CITY()
+            // errors `column 34 near ") */"`). The near restores the `*/`
+            // delimiter the inner text strips.
             parser.pos = start;
             parser.bump();
-            parser.skip_hint_args();
+            if parser.is_op("(") {
+                parser.bump();
+                let anchor = parser.peek();
+                let column = anchor.end_offset + column_base + 3;
+                let near = format!("{}*/", &inner[anchor.offset..]);
+                diagnostics.push(hint_1064_diagnostic(initial_line, column, &near));
+            } else {
+                diagnostics.push(HintDiagnostic {
+                    message: format!(
+                        "[parser:1064]Optimizer hint syntax error at line {initial_line}"
+                    ),
+                });
+            }
+            while !parser.at_eof() && !parser.is_op(")") {
+                parser.bump();
+            }
         }
     }
 }
@@ -869,6 +906,20 @@ fn parse_standalone_hint_occurrence(
 fn hint_syntax_diagnostic(initial_line: usize) -> HintDiagnostic {
     HintDiagnostic {
         message: format!("Optimizer hint syntax error at line {initial_line} "),
+    }
+}
+
+/// go's 1064 rendering for a hint the yacc cannot reduce: anchored at the
+/// failing token with the remaining hint input (the [parser:1064] prefix is
+/// what the session's warning decoder splits the class code off).
+fn hint_1064_diagnostic(initial_line: usize, column: usize, near: &str) -> HintDiagnostic {
+    HintDiagnostic {
+        // go's own rendering carries a trailing space after the quoted near
+        // (oracle g-hint: `... near ") */" ` with the space before the row
+        // end).
+        message: format!(
+            "[parser:1064]Optimizer hint syntax error at line {initial_line} column {column} near \"{near}\" "
+        ),
     }
 }
 
@@ -880,8 +931,8 @@ fn hint_syntax_diagnostic(initial_line: usize) -> HintDiagnostic {
 /// token-cursor primitives (`peek`/`bump`/`is_kw`/`expect_op`/...) every
 /// other parsing function in this crate already uses. The dispatch mirrors
 /// the semantic and unsupported-hint cases in `pkg/parser/hintparser.go`.
-pub(crate) fn parse_hint_comment(text: &str, initial_line: usize) -> HintParseResult {
-    parse_hint(text, false, initial_line)
+pub(crate) fn parse_hint_comment(text: &str, initial_line: usize, column_base: usize) -> HintParseResult {
+    parse_hint(text, false, initial_line, column_base)
 }
 
 /// Whether `name` (already uppercased) is one of the ~85 hint names real
