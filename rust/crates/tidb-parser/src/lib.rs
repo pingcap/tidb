@@ -266,7 +266,8 @@ fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
     }
     let start = p.peek().offset;
     let mut stmt = p.parse_statement()?;
-    let end = if p.is_op(";") {
+    let mut saw_semicolon = p.is_op(";");
+    let end = if saw_semicolon {
         p.bump().end_offset
     } else {
         p.peek().offset
@@ -292,7 +293,23 @@ fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
             if p.at_eof() {
                 break;
             }
+            // go's statement list grammar separates statements with `;`:
+            // a further statement without the separator is a syntax error AT
+            // its first token (oracle: `SELECT 1 SELECT 2` errors 1064 near
+            // "SELECT 2" -- go's yacc cannot reduce a second statement
+            // without the `;`, and the first statement's own shape checks
+            // must not preempt the parse error).
+            if !saw_semicolon {
+                let tok = p.peek();
+                return Err(crate::ParseError {
+                    message: String::new(),
+                    offset: tok.end_offset,
+                    near_offset: tok.offset,
+                    errno: None,
+                });
+            }
             p.parse_statement()?;
+            saw_semicolon = p.is_op(";");
         }
     }
     Ok(stmt)
