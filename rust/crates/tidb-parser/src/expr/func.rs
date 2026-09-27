@@ -749,6 +749,14 @@ impl Parser {
         if self.peek_n(1).kind == TokenKind::Op && self.peek_n(1).text == "(" {
             return self.parse_named_func();
         }
+        // go's yacc: the lexer returns `SQL` as a KEYWORD token (the
+        // unreserved class), and the simpleExpr identifier arm takes the
+        // lexer's identifier token only -- the SQL keyword never starts a
+        // column reference (oracle: `CHAR(233, USING utf8mb4)` errors 1064
+        // at the USING token, not at the charset).
+        if self.peek().text.eq_ignore_ascii_case("using") {
+            return Err(self.err_here(""));
+        }
         Ok(Expr::Column(self.parse_column_ref_path()?))
     }
 
