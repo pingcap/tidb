@@ -1300,7 +1300,7 @@ fn cast_to_time_value(
         // numeric sources parse the INT64/FLOAT reinterpretations and warn
         // `Incorrect time value: '<int64>'` (a u64 overflow reads -1).
         if matches!(v, Datum::String(_) | Datum::Bytes(_)) {
-            invalid_time_warning(ctx, &s);
+            invalid_time_warning(ctx, &s, fsp.unwrap_or(0));
         } else if matches!(v, Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_)) {
             // The DECIMAL/REAL sources read the value through
             // `ParseTimeFromFloatString` -- the same wall-clock TEXT parser
@@ -1308,7 +1308,7 @@ fn cast_to_time_value(
             // the DATETIME word and the full decimal text (`cast(2.5 as
             // datetime)` warns `Incorrect datetime value: '2.5'`, not a
             // truncated integer).
-            invalid_time_warning(ctx, &s);
+            invalid_time_warning(ctx, &s, fsp.unwrap_or(0));
         } else {
             // go ParseTimeFromNum consumes the number's INT64 WRAP: a u64
             // overflow wraps to -1 (not the saturating i64::MAX).
@@ -1350,7 +1350,10 @@ fn cast_to_time_value(
     // `expression/cast`. Gating this on the text sources keeps the numeric
     // sources on Go's own no-rejection path.
     if matches!(v, Datum::String(_) | Datum::Bytes(_)) && time.is_zero() && modes.no_zero_date {
-        invalid_time_warning(ctx, &s);
+        // The go warning text renders the PARSED value: the string sources
+        // parse at go's MaxFsp (6), so the zero time renders with its full
+        // `.000000` fraction (oracle-captured on g-fsp's DAYOFYEAR row).
+        invalid_time_warning(ctx, &s, 6);
         return Ok(None);
     }
     Ok(Some(truncate_clock_for_date(time, kind)))
@@ -1743,8 +1746,10 @@ fn real_to_time(
 
 /// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
 /// becomes a warning and the cast yields NULL.
-fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) {
+fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) {
     // go splits the failure classes by SHAPE (oracle-captured):
+    //  * the ZERO date renders through the parsed value with its fsp
+    //    (`'0000-00-00 00:00:00.000000'` for fsp 6 -- g-fsp);
     //  * a VALID calendar date prefix followed by trailing characters raises
     //    the VALUE class 8034 with the raw text (`CAST('2020-01-01x' AS
     //    DATE)` -- m17);
@@ -1771,6 +1776,18 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) {
             .take_while(|byte| byte.is_ascii_digit())
             .count();
         let day = digits(&head[2][..day_digits]);
+        if year == 0 && month == 0 && day == 0 {
+            let fraction = if fsp > 0 {
+                format!(".{:0width$}", 0, width = fsp as usize)
+            } else {
+                String::new()
+            };
+            ctx.append_warning(
+                1292,
+                &format!("Incorrect datetime value: '0000-00-00 00:00:00{fraction}'"),
+            );
+            return;
+        }
         if (1..=12).contains(&month) && (1..=31).contains(&day) {
             let days_in_month = match month {
                 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
