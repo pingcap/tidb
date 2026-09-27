@@ -1761,10 +1761,13 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) {
             parts[1].parse::<i64>().unwrap_or(0),
             parts[2].parse::<i64>().unwrap_or(0)
         );
-        ctx.append_warning(1292, &format!("Incorrect datetime value: '{rendered}'"));
+        // go raises the VALUE class (ErrWrongValue, 8034) for the CAST-string
+    // parse failures, not the truncation class (oracle: `CAST('2020-01-01x'
+    // AS DATE)` warns 8034).
+    ctx.append_warning(8034, &format!("Incorrect datetime value: '{rendered}'"));
         return;
     }
-    ctx.append_warning(1292, &format!("Incorrect datetime value: '{input}'"));
+    ctx.append_warning(8034, &format!("Incorrect datetime value: '{input}'"));
 }
 
 /// `CAST(... AS YEAR)`: the operand's calendar year if it parses as a
