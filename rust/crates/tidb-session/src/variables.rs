@@ -392,8 +392,22 @@ impl Session {
         }
         // go `SetExecutor`: max_allowed_packet is SESSION-read-only — any
         // session-scope assignment (including `= DEFAULT`) answers
-        // ErrReadOnlyVariable (1621) naming the variable.
+        // ErrReadOnlyVariable (1621) naming the variable. go validates the
+        // value BEFORE the scope refusal: a value below the 1024 floor
+        // truncates (1292) and both the warning row and the error land
+        // (oracle-captured on m6-accept).
         if assignment.name.eq_ignore_ascii_case("max_allowed_packet") && !is_global {
+            if let tidb_ast::SetVariableValue::Expr(expr) = &assignment.value {
+                if let tidb_ast::Expr::Int(text) | tidb_ast::Expr::String(text) = expr {
+                    if text.parse::<i64>().is_ok_and(|value| value < 1024) {
+                        self.append_warning(
+                            crate::WarningLevel::Error,
+                            1292,
+                            format!("Truncated incorrect max_allowed_packet value: '{text}'"),
+                        );
+                    }
+                }
+            }
             return Err(DriverError::Var(
                 tidb_executor::VarErrorKind::SessionScopeIsReadOnly(
                     "max_allowed_packet".to_owned(),
