@@ -438,6 +438,13 @@ func TestMaterializedViewPartitionDependencyConstraints(t *testing.T) {
 		require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table materialized view shadow table")
 		err = checkTableMaterializedViewConstraints(nil, shadowTable, "DROP TABLE")
 		require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+		baseWithMLog := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 7},
+		}
+		err = checkTableMaterializedViewConstraints(nil, baseWithMLog, "DROP TABLE")
+		require.ErrorContains(t, err, "DROP TABLE on base table with materialized view log")
+		err = checkTableMaterializedViewConstraints(nil, baseWithMLog, "TRUNCATE TABLE")
+		require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view log")
 		err = CheckIndexOperationMaterializedViewConstraints(nil, shadowTable, "DROP INDEX", false)
 		require.ErrorContains(t, err, "DROP INDEX on materialized view shadow table")
 

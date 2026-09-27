@@ -90,6 +90,10 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 	case model.StatePublic:
 		// public -> write only
 		if job.Type == model.ActionDropTable {
+			if err = checkTableMaterializedViewConstraints(nil, tblInfo, "DROP TABLE"); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, args)
 			if err != nil {
 				return ver, err
@@ -516,6 +520,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
+	}
+	if err = checkTableMaterializedViewConstraints(nil, tblInfo, "TRUNCATE TABLE"); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 	// Copy the old tableInfo for later usage.
 	oldTblInfo := tblInfo.Clone()
@@ -2069,6 +2077,14 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 	})
 	if err := w.deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx, args.OldMViewID); err != nil {
 		logutil.DDLLogger().Warn("refresh materialized view complete OUT OF PLACE cutover: failed to delete stale refresh alert", zap.Error(err))
+	}
+	if oldMViewTblInfo.TiFlashReplica != nil {
+		if err := infosync.DeleteTiFlashTableSyncProgress(oldMViewTblInfo); err != nil {
+			logutil.DDLLogger().Error("DeleteTiFlashTableSyncProgress fails during materialized view cutover", zap.Error(err), zap.Int64("tableID", oldMViewTblInfo.ID))
+		}
+	}
+	if err := deleteTableAffinityGroupsInPD(jobCtx, oldMViewTblInfo, nil); err != nil {
+		logutil.DDLLogger().Error("failed to delete old materialized view affinity groups during cutover", zap.Error(err), zap.Int64("tableID", oldMViewTblInfo.ID))
 	}
 	if err := jobCtx.metaMut.DropTableOrView(job.SchemaID, args.OldMViewID); err != nil {
 		return ver, errors.Trace(err)

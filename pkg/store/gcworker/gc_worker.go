@@ -1709,6 +1709,25 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 					TableID: tableID,
 				}
 				mockJ.FillFinishedArgs(&model.DropTableArgs{})
+			} else if strings.HasPrefix(x, "mview-cutover:") {
+				ids := strings.Split(strings.TrimPrefix(x, "mview-cutover:"), ":")
+				if len(ids) != 2 {
+					return
+				}
+				oldMViewID, oldErr := strconv.ParseInt(ids[0], 10, 64)
+				shadowTableID, shadowErr := strconv.ParseInt(ids[1], 10, 64)
+				if oldErr != nil || shadowErr != nil {
+					return
+				}
+				mockJ = &model.Job{
+					Version: model.GetJobVerInUse(),
+					ID:      dr.JobID,
+					Type:    model.ActionMViewRefreshOutOfPlaceCutover,
+					TableID: oldMViewID,
+				}
+				mockJ.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+					OldMViewID: oldMViewID, ShadowTableID: shadowTableID, BuildReadTSO: 1,
+				})
 			}
 		default:
 			return
@@ -1751,6 +1770,12 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 		if historyJob.IsRollbackDone() && historyJob.TableID != 0 {
 			physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
 		}
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		args, err2 := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(historyJob)
+		if err2 != nil {
+			return err2
+		}
+		physicalTableIDs = append(physicalTableIDs, args.OldMViewID)
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		var args *model.TruncateTableArgs
 		args, err = model.GetFinishedTruncateTableArgs(historyJob)

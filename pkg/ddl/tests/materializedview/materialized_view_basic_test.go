@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -514,6 +515,12 @@ func TestMaterializedViewShadowCanOnlyBeDroppedByInternalCleanup(t *testing.T) {
 	shadowTable, err := dom.InfoSchema().TableByName(context.Background(), dbInfo.Name, shadowName)
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{AuthUsername: "test", AuthHostname: "%"}
+
+	err = tk.ExecToErr("insert into `__mv_shadow_cleanup` values (1, 1, 1)")
+	require.ErrorContains(t, err, "is not updatable")
+	err = tk.ExecToErr("select * from `__mv_shadow_cleanup`")
+	require.ErrorContains(t, err, "SELECT command denied")
 
 	err = tk.ExecToErr("drop table `__mv_shadow_cleanup`")
 	require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
