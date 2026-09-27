@@ -1874,8 +1874,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             // StmtCtx. The DML column-validation path already
                             // appends its own warns; avoid double-appending
                             // (go's INSERT 1264 shows ONE row).
-                            let is_ddl = parsed.as_ref().is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
-                            if is_ddl || !matches!(error.code, 1264 | 1265 | 1366 | 1406) {
+                            let is_ddl = parsed
+                                .as_ref()
+                                .is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
+                            if is_ddl || !matches!(error.code, 1148 | 1264 | 1265 | 1366 | 1406) {
                                 engine.record_write_failure(error.code, error.message.clone());
                             }
                         }

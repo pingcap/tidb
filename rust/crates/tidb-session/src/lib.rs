@@ -1414,18 +1414,10 @@ impl Session {
                 // go's CLUSTER_INFO VERSION cell reads the TiDB semver
                 // without the MySQL-protocol prefix or the tag's `v`
                 // (`8.4.0-...`, not `8.0.11-TiDB-v8.4.0-...`).
-                let tidb_version = info
-                    .version_info
-                    .version
-                    .split_once("-TiDB-")
-                    .map_or_else(
-                        || info.version_info.version.clone(),
-                        |(_, rest)| {
-                            rest.strip_prefix('v')
-                                .unwrap_or(rest)
-                                .to_owned()
-                        },
-                    );
+                let tidb_version = info.version_info.version.split_once("-TiDB-").map_or_else(
+                    || info.version_info.version.clone(),
+                    |(_, rest)| rest.strip_prefix('v').unwrap_or(rest).to_owned(),
+                );
                 store_start = start_time;
                 vec![
                     text("tidb"),
@@ -1446,21 +1438,21 @@ impl Session {
                 ]
             })
             .collect();
-    // go `SetTiKVStoreInSyncer`: the unistore mock store registers as
-    // `store1` with the server's boot time and empty diagnostics (oracle:
-    // the tikv row's STATUS_ADDRESS/VERSION/GIT_HASH/UPTIME are empty and
-    // SERVER_ID is 0).
-    rows.push(vec![
-        Datum::Bytes(b"tikv".to_vec()),
-        Datum::Bytes(b"store1".to_vec()),
-        Datum::Bytes(Vec::new()),
-        Datum::Bytes(Vec::new()),
-        Datum::Bytes(Vec::new()),
-        datetime_datum(store_start),
-        Datum::Bytes(Vec::new()),
-        Datum::Int(0),
-    ]);
-    rows
+        // go `SetTiKVStoreInSyncer`: the unistore mock store registers as
+        // `store1` with the server's boot time and empty diagnostics (oracle:
+        // the tikv row's STATUS_ADDRESS/VERSION/GIT_HASH/UPTIME are empty and
+        // SERVER_ID is 0).
+        rows.push(vec![
+            Datum::Bytes(b"tikv".to_vec()),
+            Datum::Bytes(b"store1".to_vec()),
+            Datum::Bytes(Vec::new()),
+            Datum::Bytes(Vec::new()),
+            Datum::Bytes(Vec::new()),
+            datetime_datum(store_start),
+            Datum::Bytes(Vec::new()),
+            Datum::Int(0),
+        ]);
+        rows
     }
 
     /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
@@ -2239,8 +2231,13 @@ impl Session {
             // 1411 leave the statement warning buffer EMPTY, while 3146/
             // 1305/1235 and every parse/plan/executor failure show their own
             // error row there.
-            if !reported.is_from_evaluation()
-                || !matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105)
+            // 1148 is go's `handleLoadData` refusal: it fires BEFORE any
+            // statement context reset, so the buffer keeps the PREVIOUS
+            // statement's rows and never gains its own row (oracle-captured),
+            // whichever classification the error carries.
+            if reported.code != 1148
+                && (!reported.is_from_evaluation()
+                    || !matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105))
             {
                 self.append_warning(WarningLevel::Error, reported.code, reported.message);
             }

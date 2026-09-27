@@ -328,6 +328,23 @@ impl Session {
     fn install_statement_warning_state(&mut self, stmt: &Stmt, previous: Vec<SqlWarning>) {
         self.restore_statement_variables();
         self.set_previous_warning_counts(&previous);
+        // go `clientConn.handleLoadData`: a LOCAL load without the client
+        // capability refuses BEFORE any statement context reset, so the
+        // warning buffer keeps the PREVIOUS statement's rows (oracle:
+        // `LOAD DATA LOCAL INFILE ...` answers 1148 with the prior
+        // statement's 8154 still in SHOW WARNINGS).
+        if matches!(
+            stmt,
+            Stmt::Dml(dml)
+                if matches!(
+                    dml.as_ref(),
+                    tidb_ast::DmlStmt::LoadData(load) if load.local
+                )
+        ) {
+            self.warnings = previous;
+            self.in_show_warning = false;
+            return;
+        }
         self.in_show_warning = reports_warnings(stmt);
         if self.in_show_warning {
             self.warnings = previous;

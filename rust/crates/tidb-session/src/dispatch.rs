@@ -2137,11 +2137,9 @@ impl Session {
                 if let tidb_ast::QueryStmt::Select(select) = query.as_ref() {
                     if let Some(outfile) = &select.into_outfile {
                         if std::path::Path::new(&outfile.file_name).exists() {
-                            return Err(DriverError::Unsupported(format!(
-                                "open {}: file exists",
-                                outfile.file_name
-                            )
-                            .into()));
+                            return Err(DriverError::Unsupported(
+                                format!("open {}: file exists", outfile.file_name).into(),
+                            ));
                         }
                     }
                 }
@@ -2592,31 +2590,28 @@ impl Session {
                     }
                     DmlStmt::LoadData(load) => {
                         // go `LoadDataExec`: a server-disk INFILE is refused
-                        // with 8154 naming the LOCAL clause; a LOCAL load
-                        // without the client capability errors 1148 on the
-                        // wire while the buffer records the same 8154
-                        // (oracle-captured on the g-syntax battery).
-                        if load.local {
-                            self.append_warning(
-                                crate::WarningLevel::Error,
-                                8154,
-                                format!(
-                                    "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
-                                    load.path
-                                ),
-                            );
+                        // with the 8154 error AND its own 8154 warning row; a
+                        // LOCAL load without the client capability errors
+                        // 1148 on the wire with NO new warning row (go
+                        // refuses in `handleLoadData` before any statement
+                        // context reset, so the buffer keeps the PREVIOUS
+                        // statement's rows -- oracle-captured on g-syntax).
+                        let refused_8154 = format!(
+                            "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
+                            load.path
+                        );
+                        // The statement-error door appends the 8154 row (go
+                        // shows ONE row; the arm itself adds nothing).
+                        if !load.local {
                             return Err(DriverError::DdlCoded {
-                                errno: 1148,
-                                message: "The used command is not allowed with this MySQL version"
-                                    .to_owned(),
+                                errno: 8154,
+                                message: refused_8154,
                             });
                         }
                         Err(DriverError::DdlCoded {
-                            errno: 8154,
-                            message: format!(
-                                "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
-                                load.path
-                            ),
+                            errno: 1148,
+                            message: "The used command is not allowed with this MySQL version"
+                                .to_owned(),
                         })
                     }
                     other => Err(DriverError::unsupported(format!(
