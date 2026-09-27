@@ -180,9 +180,17 @@ impl Session {
         let planner_context = self.statement_context(false);
         // Go `GeneratePlanCacheStmtWithAST` runs `CacheableWithCtx` here, at
         // PREPARE, and stores the verdict on the `PlanCacheStmt`.
-        let (cacheable, select_plan, dml_plan) = {
+        let (cacheable, select_plan, dml_plan, skip_reason) = {
             let catalog = self.lock_catalog()?;
             let cacheable = self.prepared_statement_cacheable(&mut statement, &catalog);
+            // go's plan cache records the refusal as a statement warning at
+            // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'
+            // answers (ok) with `skip prepared plan-cache: not a
+            // SELECT/UPDATE/INSERT/DELETE/SET statement`).
+            let skip_reason = cacheable
+                .as_ref()
+                .err()
+                .map(|reason| format!("skip prepared plan-cache: {reason}"));
             let select_plan = if cacheable.is_ok() {
                 tidb_executor::build_prepared_select_plan(
                     &statement,
@@ -206,8 +214,15 @@ impl Session {
             } else {
                 None
             };
-            (cacheable, select_plan, dml_plan)
+            (cacheable, select_plan, dml_plan, skip_reason)
         };
+        // go's plan cache records the refusal as a statement warning at
+        // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'
+        // answers (ok) with `skip prepared plan-cache: not a
+        // SELECT/UPDATE/INSERT/DELETE/SET statement`).
+        if let Some(reason) = skip_reason {
+            self.append_warning(crate::WarningLevel::Warning, 1105, reason);
+        }
         // Only a statement that CARRIES markers is ever restored (that is what
         // binding does), so only that statement needs its column names pinned
         // against the restore. A marker-free statement keeps the text the user
@@ -303,6 +318,25 @@ impl Session {
         // binding match while the body applies its own hints and metadata.
         let binding_matched = binding_sql.is_some();
         self.rewrite_fts_for_planning(&mut effective_statement);
+        // go's plan cache re-checks the stored verdict on every EXECUTE and
+        // records the refusal as a statement warning (oracle m21: EXECUTE
+        // st3 carries the same skip row as its PREPARE). A cacheable plan
+        // whose root is a TableDual is refused with its own reason (oracle
+        // m21: EXECUTE st USING @p over `SELECT ? + 1` carries `skip
+        // prepared plan-cache: get a TableDual plan`).
+        if let Err(reason) = &prepared.cacheable {
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                1105,
+                format!("skip prepared plan-cache: {reason}"),
+            );
+        } else if plans_over_table_dual(&effective_statement) {
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                1105,
+                "skip prepared plan-cache: get a TableDual plan".to_owned(),
+            );
+        }
         if prepared.cacheable.is_ok()
             && self.prepared_plan_cache_allowed_for_statement(&effective_statement)
         {
@@ -389,6 +423,19 @@ fn is_unpreparable(stmt: &Stmt) -> bool {
             | tidb_ast::SessionStmt::Execute { .. }
             | tidb_ast::SessionStmt::Deallocate(_)
     )
+}
+
+/// go's plan for a FROM-less `SELECT` roots at a `TableDual`, which the
+/// prepared plan cache refuses (oracle m21: `EXECUTE st USING @p` over
+/// `SELECT ? + 1` carries `skip prepared plan-cache: get a TableDual plan`).
+fn plans_over_table_dual(stmt: &Stmt) -> bool {
+    let Stmt::Query(query) = stmt else {
+        return false;
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        return false;
+    };
+    select.from.is_none()
 }
 
 /// The marker orders standing in the statement's top-level `LIMIT`, count and
