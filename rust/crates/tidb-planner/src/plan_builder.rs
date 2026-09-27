@@ -846,6 +846,10 @@ pub struct PlanScopeResolver<'a> {
     /// Go `er.clause()`: the clause an unknown-column error names. The
     /// default is Go's `expressionClause` spelling.
     clause_message: &'static str,
+    /// Go `FindFieldName`'s errNonUniq side-channel: the Option-only resolve
+    /// contract cannot raise, so an ambiguous path records its written name
+    /// here and the rewrite caller swaps the 1054 fall-through for 1052.
+    ambiguous_column: std::cell::RefCell<Option<String>>,
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -877,6 +881,7 @@ impl<'a> PlanScopeResolver<'a> {
             div_precision_increment: 4,
             warning_context: None,
             clause_message: "expression",
+            ambiguous_column: std::cell::RefCell::new(None),
         }
     }
 
@@ -911,6 +916,7 @@ impl<'a> PlanScopeResolver<'a> {
             div_precision_increment: 4,
             warning_context: None,
             clause_message: "expression",
+            ambiguous_column: std::cell::RefCell::new(None),
         }
     }
 
@@ -921,6 +927,21 @@ impl<'a> PlanScopeResolver<'a> {
         self.connection_charset = info.0.to_owned();
         self.connection_collation = info.1.to_owned();
         self
+    }
+
+    /// Go `FindFieldName`'s errNonUniq side-channel: the Option-only resolve
+    /// contract cannot raise, so an ambiguous path records its written name
+    /// here; the rewrite caller swaps the 1054 fall-through for 1052.
+    fn record_ambiguity(&self, names: Option<&[FieldName]>, path: &[String]) {
+        let Some(names) = names else {
+            return;
+        };
+        if self.ambiguous_column.borrow().is_some() {
+            return;
+        }
+        if let Some(display) = field_name_ambiguity(names, path) {
+            *self.ambiguous_column.borrow_mut() = Some(display);
+        }
     }
 
     /// Attach the side vector `MarkerKind::Constant` markers select from.
@@ -1023,6 +1044,43 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
         }
     }
     found
+}
+
+/// Whether `path` matches several NON-redundant names in `names` -- go
+/// `expression.FindFieldName`'s errNonUniq (1052) case, which the
+/// Option-only [`find_field_name`] cannot distinguish from an ordinary
+/// miss. Returns the path as written for the error text.
+#[must_use]
+pub(crate) fn field_name_ambiguity(names: &[FieldName], path: &[String]) -> Option<String> {
+    let (db, table, column) = match path {
+        [column] => (None, None, column.as_str()),
+        [table, column] => (None, Some(table.as_str()), column.as_str()),
+        [db, table, column] => (Some(db.as_str()), Some(table.as_str()), column.as_str()),
+        _ => return None,
+    };
+    let mut found: Option<usize> = None;
+    for (index, name) in names.iter().enumerate() {
+        if name.hidden || name.not_explicit_usable {
+            continue;
+        }
+        let matches = name.names.column.lower.eq_ignore_ascii_case(column)
+            && table.is_none_or(|t| name.names.table.lower.eq_ignore_ascii_case(t))
+            && db.is_none_or(|d| name.names.database.lower.eq_ignore_ascii_case(d));
+        if matches {
+            if let Some(previous) = found {
+                let previous: &FieldName = &names[previous];
+                if previous.redundant || name.redundant {
+                    if !name.redundant {
+                        found = Some(index);
+                    }
+                    continue;
+                }
+                return Some(path.join("."));
+            }
+            found = Some(index);
+        }
+    }
+    None
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
@@ -1142,17 +1200,33 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         // against its full names, whose `Redundant` marks settle a common
         // `USING`/`NATURAL` column even when the output kept both copies (the
         // multi-table UPDATE/DELETE merged schema).
-        let full_hit = self
+        let full = self
             .full_names
-            .filter(|full| full.len() == self.names.len())
-            .and_then(|full| Some((self.full_schema?, find_field_name(full, path)?)));
+            .filter(|full| full.len() == self.names.len());
+        let full_hit = full.and_then(|full| {
+            let index = match find_field_name(full, path) {
+                Some(index) => index,
+                None => {
+                    self.record_ambiguity(Some(full), path);
+                    return None;
+                }
+            };
+            Some((self.full_schema?, index))
+        });
         let (schema, index) = if let Some(hit) = full_hit {
             hit
         } else if let Some(index) = find_field_name(self.names, path) {
             (self.schema, index)
         } else {
+            self.record_ambiguity(Some(self.names), path);
             let full_names = self.full_names?;
-            let index = find_field_name(full_names, path)?;
+            let index = match find_field_name(full_names, path) {
+                Some(index) => index,
+                None => {
+                    self.record_ambiguity(Some(full_names), path);
+                    return None;
+                }
+            };
             (self.full_schema?, index)
         };
         let mut column = schema.columns.get(index)?.clone();
@@ -1176,6 +1250,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         }
         for (schema, names) in self.outer_schemas.iter().zip(self.outer_names).rev() {
             let Some(index) = find_field_name(names, path) else {
+                self.record_ambiguity(Some(names), path);
                 continue;
             };
             let Some(mut column) = schema.columns.get(index).cloned() else {
@@ -1615,7 +1690,19 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         if let Some(error) = window_error {
             return Err(error);
         }
-        let mut rewritten = rewrite_expr_resolved(expr, &resolver)?;
+        // Go raises `FindFieldName`'s errNonUniq (1052) the moment a rewrite
+        // hits an ambiguous column; the Option-only resolve contract instead
+        // falls through to the 1054 miss, so swap it back when the resolver
+        // recorded this very column as ambiguous.
+        let mut rewritten = match rewrite_expr_resolved(expr, &resolver) {
+            Ok(rewritten) => Ok(rewritten),
+            Err(EvalError::UnknownColumnInClause(column, _))
+                if resolver.ambiguous_column.borrow().as_deref() == Some(column.as_str()) =>
+            {
+                Err(PlanError::ambiguous_column(column))
+            }
+            Err(error) => Err(PlanError::from(error)),
+        }?;
         // The resolver's structural pass intentionally preserves warning-
         // producing casts while it has only a zone-only no-column context.
         // Go's `NewFunction` still folds those closed casts with the live

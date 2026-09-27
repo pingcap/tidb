@@ -391,6 +391,12 @@ pub enum PlanErrorKind {
         /// Go's `clauseMsg` spelling, for example `having clause`.
         clause: String,
     },
+    /// Go `expression.errNonUniq` (1052): `FindFieldName`'s multi
+    /// non-redundant match, which names the clause `field list` there.
+    AmbiguousColumnInClause {
+        /// The name as written, including any qualifier.
+        column: String,
+    },
     /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (1222).
     WrongNumberOfColumnsInSelect,
     /// Go `dbterror.ErrViewWrongList` (1353).
@@ -659,6 +665,17 @@ impl PlanError {
         Self {
             message: format!("Unknown column '{column}' in '{clause}'"),
             kind: PlanErrorKind::UnknownColumnInClause { column, clause },
+        }
+    }
+
+    /// Go `expression.errNonUniq` (1052), which `FindFieldName` raises for a
+    /// multi non-redundant match; its clause is hardcoded `field list` there.
+    #[must_use]
+    pub fn ambiguous_column(column: impl Into<String>) -> Self {
+        let column = column.into();
+        Self {
+            message: format!("Column '{column}' in field list is ambiguous"),
+            kind: PlanErrorKind::AmbiguousColumnInClause { column },
         }
     }
 
