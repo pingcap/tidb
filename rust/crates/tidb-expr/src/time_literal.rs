@@ -129,8 +129,17 @@ pub(crate) fn date_literal(
     if !date_pattern().is_match(text) {
         return Err(wrong_value(1292, "date", text));
     }
-    let time = parse(text, TimeType::Date, 0, zone, modes.allow_invalid_dates)
-        .map_err(|()| wrong_value(1292, "datetime", text))?;
+    let time = parse(text, TimeType::Date, 0, zone, modes.allow_invalid_dates).map_err(|()| {
+        // go renders a date-shaped failure through its parsed parts without
+        // zero padding (`DATE'2020-02-30'` fails `Incorrect datetime value:
+        // '2020-2-30'`); every other text keeps the raw form.
+        let message = unpadded_datetime_message(text)
+            .unwrap_or_else(|| format!("Incorrect datetime value: '{text}'"));
+        EvalError::WrongTemporalLiteral {
+            code: 1292,
+            message,
+        }
+    })?;
     if modes.no_zero_date && time.is_zero() {
         return Err(wrong_value(1292, "date", text));
     }
@@ -143,6 +152,27 @@ pub(crate) fn date_literal(
     ft.set_decimal(0);
     ft.set_flen(MAX_DATE_WIDTH);
     Ok((time, ft))
+}
+
+/// go renders a date-shaped failure through its parsed parts without zero
+/// padding (`LAST_DAY('2020-02-30')` and `DATE'2020-02-30'` both name
+/// `'2020-2-30'`); every other text keeps the raw form.
+pub(crate) fn unpadded_datetime_message(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let parts: Vec<&str> = trimmed.splitn(3, '-').collect();
+    if parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Some(format!(
+            "Incorrect datetime value: '{}-{}-{}'",
+            parts[0].parse::<i64>().unwrap_or(0),
+            parts[1].parse::<i64>().unwrap_or(0),
+            parts[2].parse::<i64>().unwrap_or(0)
+        ));
+    }
+    None
 }
 
 /// Go `builtinTimestampLiteralSig`: the value of `TIMESTAMP 'lit'`, or the
