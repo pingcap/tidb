@@ -74,7 +74,7 @@ pub(crate) fn dispatch(
         "DAYNAME" => dayname(vals),
         "LAST_DAY" => last_day(vals),
         "TIME_TO_SEC" => time_to_sec(vals),
-        "SEC_TO_TIME" => sec_to_time(vals),
+        "SEC_TO_TIME" => sec_to_time(vals, cols),
         "MAKEDATE" => makedate(vals),
         "MAKETIME" => maketime(vals),
         "PERIOD_ADD" => period_add(vals),
@@ -105,7 +105,9 @@ pub(crate) fn dispatch(
         // own doc.
         "YEAR_MONTH" | "DAY_HOUR" | "DAY_MINUTE" | "DAY_SECOND" | "DAY_MICROSECOND"
         | "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND" | "MINUTE_SECOND"
-        | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => calendar::extract_composite(name, vals, cols),
+        | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => {
+            calendar::extract_composite(name, vals, cols)
+        }
         _ => return None,
     })
 }
@@ -1024,9 +1026,17 @@ fn time_to_sec(vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 /// `builtinSecToTimeSig` in `pkg/expression/builtin_time.go`.
-fn sec_to_time(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
+    }
+    // go's argument cast warns the DOUBLE truncation for a non-numeric
+    // string (`SEC_TO_TIME('x')` warns 1292 with 'x' -- g-fsp).
+    if let Some(text) = coerce_str(&vals[0])? {
+        let text = text.trim();
+        if text.parse::<f64>().is_err() {
+            cols.append_warning(1292, &format!("Truncated incorrect DOUBLE value: '{text}'"));
+        }
     }
     let Some(seconds) = number_arg(&vals[0])? else {
         return Ok(Datum::Null);
