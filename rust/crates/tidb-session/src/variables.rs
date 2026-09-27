@@ -401,7 +401,7 @@ impl Session {
                 if let tidb_ast::Expr::Int(text) | tidb_ast::Expr::String(text) = expr {
                     if text.parse::<i64>().is_ok_and(|value| value < 1024) {
                         self.append_warning(
-                            crate::WarningLevel::Error,
+                            crate::WarningLevel::Warning,
                             1292,
                             format!("Truncated incorrect max_allowed_packet value: '{text}'"),
                         );

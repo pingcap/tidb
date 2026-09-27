@@ -269,8 +269,47 @@ impl Session {
         self.prepared_params = None;
         self.statement_boundary_open = true;
         let previous = std::mem::take(&mut self.warnings);
-        let stmt = self.parse(sql)?;
+        let (stmt, parse_warnings) =
+            match tidb_parser::parse_with_sql_mode_and_warnings(sql, self.scanner_sql_mode()) {
+                Ok(output) => (output.statement, output.warnings),
+                Err(error) => {
+                    // The parse-failure door maps the error; the diagnostics
+                    // a failed parse carried are dropped (go's failed parse
+                    // never reaches the warning copy either).
+                    let mapped = match error.errno {
+                        Some(errno) => DriverError::ParseCoded {
+                            errno,
+                            message: error.message,
+                        },
+                        None => DriverError::Parse(error.compatibility_message(sql)),
+                    };
+                    return Err(mapped);
+                }
+            };
         self.install_statement_warning_state(&stmt, previous);
+        // go's recoverable parser diagnostics land as warning rows AFTER the
+        // context reset: the `[parser:8061]`-prefixed hint refusals decode
+        // into their class code with the remainder as the message (oracle:
+        // `SELECT /*+ WRONG_HINT_SYNTAX(xyz) */ ...` warns 8061).
+        for diagnostic in parse_warnings {
+            let message = diagnostic.message;
+            let decoded = message
+                .strip_prefix("[parser:")
+                .and_then(|rest| rest.split_once(']'))
+                .and_then(|(code, remainder)| {
+                    code.parse::<u16>()
+                        .ok()
+                        .map(|code| (code, remainder.to_owned()))
+                });
+            match decoded {
+                Some((code, remainder)) => {
+                    self.append_warning(crate::WarningLevel::Warning, code, remainder);
+                }
+                None => {
+                    self.append_warning(crate::WarningLevel::Warning, 8061, message);
+                }
+            }
+        }
         Ok(stmt)
     }
 

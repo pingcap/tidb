@@ -169,6 +169,16 @@ pub fn parse_with_warnings(sql: &str) -> PResult<ParseOutput> {
     })
 }
 
+/// [`parse_with_warnings`] under the SESSION's SQL mode.
+pub fn parse_with_sql_mode_and_warnings(sql: &str, sql_mode: SqlMode) -> PResult<ParseOutput> {
+    let mut parser = Parser::new_with_configuration(sql, false, sql_mode);
+    let statement = parse_one_with_parser(sql, &mut parser)?;
+    Ok(ParseOutput {
+        statement,
+        warnings: parser.warnings,
+    })
+}
+
 /// Parses one statement with connection charset/collation metadata without
 /// discarding recoverable parser warnings.
 pub fn parse_with_connection_and_warnings(
@@ -1783,6 +1793,6 @@ fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool) -> String {
     String::from_utf8(out).expect("unescaping valid UTF-8 SQL preserves valid UTF-8")
 }
 
+mod pipes_probe_test;
 #[cfg(test)]
 mod tests;
-mod pipes_probe_test;
