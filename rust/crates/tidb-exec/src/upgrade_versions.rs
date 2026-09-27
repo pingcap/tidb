@@ -22,7 +22,12 @@
 //! perform retries.
 
 /// Current bootstrap version in the source registry.
-pub const CURRENT_BOOTSTRAP_VERSION: i64 = 263;
+/// The ORACLE's bootstrap version: the go master binary the 15100 oracle
+/// runs bootstrapped its store at version 287 (its mysql.tidb row), and its
+/// upgrade registry declares 264..=287 beyond the 263 this port's source
+/// snapshot carries. The registry here is declaration-only, so the extra
+/// declarations mirror the oracle's metadata without modelling their SQL.
+pub const CURRENT_BOOTSTRAP_VERSION: i64 = 287;
 
 /// Every top-level `version<N>` constant declared by the owning Go source.
 ///
@@ -37,7 +42,8 @@ pub const DECLARED_BOOTSTRAP_VERSIONS: &[i64] = &[
     143, 144, 145, 146, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 190, 191,
     192, 193, 194, 195, 196, 197, 198, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 239, 240,
     241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259,
-    260, 261, 262, 263,
+    260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
+    279, 280, 281, 282, 283, 284, 285, 286, 287,
 ];
 
 /// Exact ordered `upgradeToVerFunctions` version projection from Go.
