@@ -449,6 +449,11 @@ fn report_decimal_production(
     let rounded = source.round_to_scale(scale as i32);
     let int_digits = rounded.coefficient_digits().len() as u32 - rounded.storage_scale();
     if int_digits > flen.saturating_sub(scale) {
+        // go appends the OVERFLOW terror twice through two paths: the raw
+        // terror (whose unformatted message is the "%s value is out of range
+        // in '%s'" template) and the GenWithStackByArgs-formatted row
+        // (oracle-captured on `CAST('1e300' AS DECIMAL)`).
+        ctx.append_warning(1690, "%s value is out of range in '%s'");
         ctx.append_warning(
             1690,
             &format!("DECIMAL value is out of range in '({flen}, {scale})'"),
@@ -1086,7 +1091,10 @@ fn exponent_prefix(s: &str) -> i32 {
 /// `CAST` this arm implements.
 fn str_to_real_for_cast(v: &Datum, ctx: &dyn crate::Columns) -> Result<f64, EvalError> {
     let (text, type_word) = match v {
-        Datum::String(value) => (String::from_utf8_lossy(value.bytes()).into_owned(), "DOUBLE"),
+        Datum::String(value) => (
+            String::from_utf8_lossy(value.bytes()).into_owned(),
+            "DOUBLE",
+        ),
         Datum::Bytes(value) => (String::from_utf8_lossy(value).into_owned(), "DOUBLE"),
         // go's WrapWithCastAsReal over a JSON operand re-reads the document's
         // MarshalJSON text as a float, and the failure names the value with
