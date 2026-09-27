@@ -1639,6 +1639,37 @@ impl Session {
         ts: u64,
         stripped: Stmt,
     ) -> Result<PendingExecution, DriverError> {
+        let retention_unavailable = match self.open_stale_transaction(ts) {
+            Ok(()) => None,
+            Err(DriverError::Txn(crate::TxnErrorKind::AsOf(cause)))
+                if cause.contains("precedes this store's retained history") =>
+            {
+                Some(cause)
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(cause) = retention_unavailable {
+            // go resolves the named tables against the AS-OF schema before
+            // anything else. When the timestamp precedes this store's
+            // retention, that schema answers `Table ... doesn't exist` for
+            // the first named table -- nothing was retained that far back
+            // (oracle-captured: `SELECT * FROM sq1 AS OF TIMESTAMP
+            // '2020-01-01 ...'` on a table that exists in the present).
+            let mut scan = stripped.clone();
+            let scan_result = crate::binding::scan_statement_tables(&mut scan);
+            if let Some((database, table)) = scan_result.names.first() {
+                let database = if database.is_empty() {
+                    self.current_database().to_owned()
+                } else {
+                    database.clone()
+                };
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{}.{}",
+                    database, table
+                ))));
+            }
+            return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(cause)));
+        }
         self.open_stale_transaction(ts)?;
         match self.execute_parsed_statement_inner("", stripped, None, None, None) {
             Ok(PendingExecution::Query(mut query)) => {
