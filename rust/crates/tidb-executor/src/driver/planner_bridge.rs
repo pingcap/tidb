@@ -3264,12 +3264,19 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
+    // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
+    // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table
+    // write locks the rows it writes instead.
+    let single_source = select.from.as_ref().is_some_and(|from| {
+        from.right.is_none() && matches!(from.left, tidb_ast::JoinNode::Table(_))
+    });
+    let wrap_lock = ctx.pessimistic_transaction() && single_source;
     let (plan, mut update_expressions, plan_flags) = match update_assignment_values {
         Some(values) => {
-            builder.build_update_dml_source(select, values, ctx.pessimistic_transaction())?
+            builder.build_update_dml_source(select, values, wrap_lock)?
         }
         None => {
-            let (plan, build_flags) = builder.build_dml_source(select, ctx.pessimistic_transaction())?;
+            let (plan, build_flags) = builder.build_dml_source(select, wrap_lock)?;
             (plan, Vec::new(), build_flags)
         }
     };

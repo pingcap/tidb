@@ -227,8 +227,9 @@ fn build_multi_source(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    layout_only: bool,
 ) -> Result<MultiSource, DriverError> {
-    let left = build_multi_node(&join.left, catalog, current_db, ctx)?;
+    let left = build_multi_node(&join.left, catalog, current_db, ctx, layout_only)?;
     let Some(right_node) = &join.right else {
         // The single-relation wrapper the parser always produces.
         return Ok(left);
@@ -251,7 +252,7 @@ fn build_multi_source(
             ctx,
         );
     }
-    let right = build_multi_node(right_node, catalog, current_db, ctx)?;
+    let right = build_multi_node(right_node, catalog, current_db, ctx, layout_only)?;
     join_sources(left, right, join, ctx)
 }
 
@@ -260,12 +261,15 @@ fn build_multi_node(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    layout_only: bool,
 ) -> Result<MultiSource, DriverError> {
     match node {
         tidb_ast::JoinNode::Table(table_ref) => {
-            scan_base_table(table_ref, catalog, current_db, ctx)
+            scan_base_table(table_ref, catalog, current_db, ctx, layout_only)
         }
-        tidb_ast::JoinNode::Join(join) => build_multi_source(join, catalog, current_db, ctx),
+        tidb_ast::JoinNode::Join(join) => {
+            build_multi_source(join, catalog, current_db, ctx, layout_only)
+        }
         tidb_ast::JoinNode::Derived {
             subquery,
             alias,
@@ -497,6 +501,7 @@ fn scan_base_table(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    layout_only: bool,
 ) -> Result<MultiSource, DriverError> {
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     let entry = catalog.get_in(database, name).ok_or_else(|| {
@@ -513,6 +518,8 @@ fn scan_base_table(
             .enumerate()
             .map(|(index, row)| (vec![Some(RowId::Mem(index))], row.clone()))
             .collect(),
+        // The planned read supplies the rows; only the layout is needed.
+        TableEntry::Kv(_) if layout_only => Vec::new(),
         TableEntry::Kv(kv) => (**kv)
             .clone()
             .scan_rows_with_handles(&ctx.session_zone())
@@ -824,8 +831,11 @@ pub(crate) fn run_multi_update(
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
-    let mut source = build_multi_source(from, catalog, current_db, ctx)?;
+    let planned = !join_reads_mem_table(from, catalog, current_db);
+    let mut source = build_multi_source(from, catalog, current_db, ctx, planned)?;
     let scope = source.scope();
     let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
     let on_update_now: Vec<super::dml::PreparedOnUpdateNow> = source
@@ -843,14 +853,36 @@ pub(crate) fn run_multi_update(
         })
         .collect::<Result<_, _>>()?;
     let field_types = source.field_types();
-    ctx.notify_before_executor_first_run();
-    let rows = selected_rows(
-        &mut source,
-        &update.where_clause,
-        &update.order_by,
-        &update.limit,
-        ctx,
-    )?;
+    let rows = if planned {
+        let mut fresh = None;
+        let plan = match physical_plan {
+            Some(plan) => plan,
+            None => super::dml::dml_select_plan_mut(
+                fresh.insert(multi_dml_physical_plan(
+                    "Update",
+                    from,
+                    update.where_clause.as_ref(),
+                    &update.order_by,
+                    update.limit.as_ref(),
+                    catalog,
+                    current_db,
+                    ctx,
+                )?),
+                "",
+            )?
+            .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?,
+        };
+        planned_source_rows(&source, plan, catalog, ctx, runtime)?
+    } else {
+        ctx.notify_before_executor_first_run();
+        selected_rows(
+            &mut source,
+            &update.where_clause,
+            &update.order_by,
+            &update.limit,
+            ctx,
+        )?
+    };
 
     account_joined_rows(&rows, crate::mem_quota::label::UPDATE, ctx)?;
 
@@ -1071,11 +1103,36 @@ pub(crate) fn run_multi_delete(
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
-    let mut source = build_multi_source(from, catalog, current_db, ctx)?;
+    let planned = !join_reads_mem_table(from, catalog, current_db);
+    let mut source = build_multi_source(from, catalog, current_db, ctx, planned)?;
     let target_slots = resolve_delete_targets(targets, &source)?;
-    ctx.notify_before_executor_first_run();
-    let rows = selected_rows(&mut source, &delete.where_clause, &[], &None, ctx)?;
+    let rows = if planned {
+        let mut fresh = None;
+        let plan = match physical_plan {
+            Some(plan) => plan,
+            None => super::dml::dml_select_plan_mut(
+                fresh.insert(multi_dml_physical_plan(
+                    "Delete",
+                    from,
+                    delete.where_clause.as_ref(),
+                    &[],
+                    None,
+                    catalog,
+                    current_db,
+                    ctx,
+                )?),
+                "",
+            )?
+            .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?,
+        };
+        planned_source_rows(&source, plan, catalog, ctx, runtime)?
+    } else {
+        ctx.notify_before_executor_first_run();
+        selected_rows(&mut source, &delete.where_clause, &[], &None, ctx)?
+    };
     account_joined_rows(&rows, crate::mem_quota::label::DELETE, ctx)?;
 
     // Go's `tblRowMap` is keyed by TABLE ID, so a row reachable through
@@ -1200,4 +1257,250 @@ fn resolve_delete_targets(
         }
     }
     Ok(slots)
+}
+
+/// Whether any base table the `FROM` reads is a matrix-backed (in-memory)
+/// table. Those identify rows by position and have no physical reader, so
+/// they keep the materialized read below.
+fn join_reads_mem_table(join: &tidb_ast::Join, catalog: &Catalog, current_db: &str) -> bool {
+    let node_reads = |node: &tidb_ast::JoinNode| match node {
+        tidb_ast::JoinNode::Table(table_ref) => split_table_path(&table_ref.name, current_db)
+            .ok()
+            .and_then(|(database, name)| catalog.get_in(database, name))
+            .is_some_and(|entry| matches!(entry, TableEntry::Mem(_))),
+        tidb_ast::JoinNode::Join(join) => join_reads_mem_table(join, catalog, current_db),
+        tidb_ast::JoinNode::Derived { .. } => false,
+    };
+    node_reads(&join.left) || join.right.as_ref().is_some_and(node_reads)
+}
+
+/// Go `buildUpdate`/`buildDelete`'s read: the `FROM` join with the `WHERE`,
+/// `ORDER BY` and `LIMIT` above it, as one SELECT for the planner.
+pub(crate) fn multi_dml_select(
+    from: &tidb_ast::Join,
+    where_clause: Option<&tidb_ast::Expr>,
+    order_by: &[tidb_ast::OrderItem],
+    limit: Option<&tidb_ast::Limit>,
+) -> tidb_ast::QueryStmt {
+    let mut fields = tidb_ast::SelectFieldList::default();
+    fields.push(tidb_ast::SelectField::Wildcard(Vec::new()));
+    tidb_ast::QueryStmt::Select(Box::new(tidb_ast::SelectStmt {
+        kind: Default::default(),
+        is_in_braces: false,
+        with: None,
+        hints: Vec::new(),
+        priority: Default::default(),
+        sql_small_result: false,
+        sql_big_result: false,
+        sql_buffer_result: false,
+        sql_no_cache: false,
+        straight_join: false,
+        calc_found_rows: false,
+        distinct: false,
+        all: false,
+        fields,
+        values: Vec::new(),
+        from: Some(from.clone()),
+        where_clause: where_clause.cloned(),
+        group_by: Vec::new(),
+        rollup: false,
+        having: None,
+        windows: Vec::new(),
+        order_by: order_by.to_vec(),
+        limit: limit.cloned(),
+        lock: None,
+        into_outfile: None,
+        into_vars: Vec::new(),
+    }))
+}
+
+/// Go `buildUpdate`/`buildDelete` → `DoOptimize`: the multi-table write's
+/// read plan, a `PhysicalDmlRoot` whose `SelectPlan` is the optimized join.
+pub(crate) fn multi_dml_physical_plan(
+    operator: &str,
+    from: &tidb_ast::Join,
+    where_clause: Option<&tidb_ast::Expr>,
+    order_by: &[tidb_ast::OrderItem],
+    limit: Option<&tidb_ast::Limit>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    let select = multi_dml_select(from, where_clause, order_by, limit);
+    super::dml::physical_dml_plan(
+        operator,
+        Some(&select),
+        None,
+        catalog,
+        current_db,
+        ctx,
+        &super::fk_trigger_plan::FkPlanSpec::default(),
+    )
+}
+
+/// Runs the planned read (the `SelectPlan` under the DML root) of a
+/// multi-table write and splits each output row
+/// into the per-table row identities the write needs.
+///
+/// Go reads these identities from `tblID2Handle`'s handle columns in the
+/// optimized `SelectPlan`'s schema (`logical_plan_builder.go:6200`): each
+/// base table contributes its stored columns followed by `_tidb_rowid` when
+/// its handle is not the primary key, the DML build keeps the merged
+/// (uncoalesced) join schema, and a NULL handle is an outer join's padded
+/// side (`unmatchedOuterRow`).
+fn planned_source_rows(
+    source: &MultiSource,
+    plan: &mut tidb_planner::physical::PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+) -> Result<Vec<SourceRow>, DriverError> {
+    struct Slot<'a> {
+        width: usize,
+        kv: Option<&'a crate::kv_table::KvTable>,
+        stored: usize,
+    }
+    let mut slots = Vec::with_capacity(source.tables.len());
+    for table in &source.tables {
+        let kv = match &table.origin {
+            SourceOrigin::Base { database, name } => match catalog.get_in(database, name) {
+                Some(TableEntry::Kv(kv)) => Some(&**kv),
+                _ => None,
+            },
+            SourceOrigin::Derived => None,
+        };
+        let extra = kv.is_some_and(|kv| {
+            kv.pk_handle_offset().is_none() && kv.common_handle_offsets().is_empty()
+        });
+        slots.push(Slot {
+            width: table.columns.len() + usize::from(extra),
+            kv,
+            stored: table.columns.len(),
+        });
+    }
+    let expected: usize = slots.iter().map(|slot| slot.width).sum();
+    let (rows, collected) =
+        super::physical_builder::execute_dml_source(plan, catalog, ctx, runtime.is_some())?;
+    if let Some(runtime) = runtime {
+        runtime.extend(collected);
+    }
+    let zone = ctx.session_zone();
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        if row.len() != expected {
+            return Err(DriverError::unsupported(format!(
+                "a multi-table read returned {} columns, expected {expected}",
+                row.len()
+            )));
+        }
+        let mut ids = Vec::with_capacity(slots.len());
+        let mut values = Vec::with_capacity(source.width());
+        let mut start = 0;
+        for slot in &slots {
+            let part = &row[start..start + slot.width];
+            start += slot.width;
+            let id = match slot.kv {
+                None => None,
+                Some(kv) => {
+                    let handle = if let Some(offset) = kv.pk_handle_offset() {
+                        match &part[offset] {
+                            Datum::Int(value) => Some(TableHandle::Int(*value)),
+                            Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
+                            _ => None,
+                        }
+                    } else if !kv.common_handle_offsets().is_empty() {
+                        let handle_values: Vec<Datum> = kv
+                            .common_handle_offsets()
+                            .iter()
+                            .map(|offset| part[*offset].clone())
+                            .collect();
+                        if handle_values
+                            .iter()
+                            .any(|value| matches!(value, Datum::Null))
+                        {
+                            None
+                        } else {
+                            Some(
+                                kv.common_handle_of_values(&handle_values, &zone)
+                                    .map_err(kv_write_error)?,
+                            )
+                        }
+                    } else {
+                        match &part[slot.stored] {
+                            Datum::Int(value) => Some(TableHandle::Int(*value)),
+                            Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
+                            _ => None,
+                        }
+                    };
+                    handle.map(RowId::Kv)
+                }
+            };
+            ids.push(id);
+            values.extend_from_slice(&part[..slot.stored]);
+        }
+        out.push((ids, values));
+    }
+    Ok(out)
+}
+
+/// The EXPLAIN plan of a multi-table `UPDATE`/`DELETE`: Go's `Update`/
+/// `Delete` root over the optimized join `SelectPlan`. `None` for a
+/// single-table statement, which keeps its own builder.
+pub(crate) fn multi_dml_explain_plan(
+    dml: MultiDmlRef<'_>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    match dml {
+        MultiDmlRef::Update(update) => {
+            let tidb_ast::UpdateKind::Multi { from, .. } = &update.kind else {
+                return Ok(None);
+            };
+            if join_reads_mem_table(from, catalog, current_db) {
+                return Err(DriverError::unsupported(
+                    "EXPLAIN of a multi-table UPDATE over an in-memory table",
+                ));
+            }
+            multi_dml_physical_plan(
+                "Update",
+                from,
+                update.where_clause.as_ref(),
+                &update.order_by,
+                update.limit.as_ref(),
+                catalog,
+                current_db,
+                ctx,
+            )
+            .map(Some)
+        }
+        MultiDmlRef::Delete(delete) => {
+            let tidb_ast::DeleteKind::Multi { from, .. } = &delete.kind else {
+                return Ok(None);
+            };
+            if join_reads_mem_table(from, catalog, current_db) {
+                return Err(DriverError::unsupported(
+                    "EXPLAIN of a multi-table DELETE over an in-memory table",
+                ));
+            }
+            multi_dml_physical_plan(
+                "Delete",
+                from,
+                delete.where_clause.as_ref(),
+                &[],
+                None,
+                catalog,
+                current_db,
+                ctx,
+            )
+            .map(Some)
+        }
+    }
+}
+
+/// Which multi-table write [`multi_dml_explain_plan`] plans.
+#[derive(Clone, Copy)]
+pub(crate) enum MultiDmlRef<'a> {
+    Update(&'a tidb_ast::UpdateStmt),
+    Delete(&'a tidb_ast::DeleteStmt),
 }

@@ -2632,8 +2632,16 @@ pub fn explain_update_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    if let Some(physical) = crate::driver::multi_dml_explain_plan(
+        crate::driver::MultiDmlRef::Update(update),
+        catalog,
+        current_db,
+        ctx,
+    )? {
+        return render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[]);
+    }
     let source = crate::driver::update_source_query(update).ok_or_else(|| {
-        DriverError::unsupported("multi-table UPDATE plans are not supported yet")
+        DriverError::unsupported("UPDATE has no single-table source")
     })?;
     let fk_spec = crate::driver::fk_spec_for_update(update, current_db)?;
     let physical = crate::driver::physical_dml_plan(
@@ -2657,8 +2665,16 @@ pub fn explain_delete_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    if let Some(physical) = crate::driver::multi_dml_explain_plan(
+        crate::driver::MultiDmlRef::Delete(delete),
+        catalog,
+        current_db,
+        ctx,
+    )? {
+        return render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[]);
+    }
     let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
-        DriverError::unsupported("multi-table DELETE plans are not supported yet")
+        DriverError::unsupported("DELETE has no single-table source")
     })?;
     let fk_spec = crate::driver::fk_spec_for_delete(delete, current_db)?;
     let physical = crate::driver::physical_dml_plan(
@@ -2688,18 +2704,28 @@ pub fn explain_analyze_update_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let source = crate::driver::update_source_query(update).ok_or_else(|| {
-        DriverError::unsupported("multi-table UPDATE plans are not supported yet")
-    })?;
-    let mut physical = crate::driver::physical_dml_plan(
-        "Update",
-        Some(&source),
-        Some(update),
+    let mut physical = match crate::driver::multi_dml_explain_plan(
+        crate::driver::MultiDmlRef::Update(update),
         catalog,
         current_db,
         ctx,
-        &crate::driver::fk_spec_for_update(update, current_db)?,
-    )?;
+    )? {
+        Some(physical) => physical,
+        None => {
+            let source = crate::driver::update_source_query(update).ok_or_else(|| {
+                DriverError::unsupported("UPDATE has no single-table source")
+            })?;
+            crate::driver::physical_dml_plan(
+                "Update",
+                Some(&source),
+                Some(update),
+                catalog,
+                current_db,
+                ctx,
+                &crate::driver::fk_spec_for_update(update, current_db)?,
+            )?
+        }
+    };
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
     run_update_stmt_with_physical_and_stats(
@@ -2732,18 +2758,28 @@ pub fn explain_analyze_delete_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
-        DriverError::unsupported("multi-table DELETE plans are not supported yet")
-    })?;
-    let mut physical = crate::driver::physical_dml_plan(
-        "Delete",
-        Some(&source),
-        None,
+    let mut physical = match crate::driver::multi_dml_explain_plan(
+        crate::driver::MultiDmlRef::Delete(delete),
         catalog,
         current_db,
         ctx,
-        &crate::driver::fk_spec_for_delete(delete, current_db)?,
-    )?;
+    )? {
+        Some(physical) => physical,
+        None => {
+            let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
+                DriverError::unsupported("DELETE has no single-table source")
+            })?;
+            crate::driver::physical_dml_plan(
+                "Delete",
+                Some(&source),
+                None,
+                catalog,
+                current_db,
+                ctx,
+                &crate::driver::fk_spec_for_delete(delete, current_db)?,
+            )?
+        }
+    };
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
     run_delete_stmt_with_physical_and_stats(

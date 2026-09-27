@@ -1490,8 +1490,27 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let coalesced_schema = Schema::new(schema_columns);
         p.base.base.set_schema(Some(coalesced_schema.clone()));
         p.base.base.set_output_names(names);
-        for (redundant, visible) in &redundant_mappings {
-            p.register_redundant_column_mapping(redundant, visible, &coalesced_schema);
+        if self.in_update_or_delete_stmt {
+            // "We do not need to coalesce columns for update and delete."
+            // (`buildUsingClause`/`buildNaturalJoin`): restore the merged
+            // child schema, and skip the redundant mapping registration,
+            // whose output indexes would be stale (`coalesceCommonColumns`).
+            let merged = Schema::new(
+                left.0
+                    .columns
+                    .iter()
+                    .chain(right.0.columns.iter())
+                    .cloned()
+                    .collect(),
+            );
+            p.base.base.set_schema(Some(merged));
+            p.base
+                .base
+                .set_output_names(left.1.iter().chain(right.1.iter()).cloned().collect());
+        } else {
+            for (redundant, visible) in &redundant_mappings {
+                p.register_redundant_column_mapping(redundant, visible, &coalesced_schema);
+            }
         }
         conditions.extend(std::mem::take(&mut p.other_conditions));
         p.other_conditions = conditions;

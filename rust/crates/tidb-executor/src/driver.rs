@@ -275,6 +275,7 @@ mod from;
 mod index_usage_reporter;
 pub mod infoschema_meta;
 mod multi_dml;
+pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 mod record_set;
 pub use record_set::QueryRecordSet;
 pub(crate) mod fk_trigger_plan;

@@ -1276,3 +1276,83 @@ fn multi_statement_admission_follows_capability_then_sysvar() {
         vec!["SELEC 1; SELECT 2".to_owned()]
     );
 }
+
+fn explain_ops(session: &mut Session, sql: &str) -> Vec<String> {
+    row_text(session.run(sql))
+        .into_iter()
+        .map(|row| format!("{}|{}", row[0], row[4]))
+        .collect()
+}
+
+/// Go `buildUpdate`/`buildDelete` optimize the multi-table read through
+/// `DoOptimize`, so the `Update`/`Delete` root sits over a planned join whose
+/// schema carries each target's row identity (`_tidb_rowid` for a table
+/// without a PK handle). Expected shapes are Go master 8936d7bdcb's
+/// `explain format='brief'` for the same statements.
+#[test]
+fn multi_table_dml_explains_the_optimized_join_plan() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE uj1 (id INT PRIMARY KEY, left_v INT)",
+        "CREATE TABLE uj2 (id INT PRIMARY KEY, right_v INT)",
+        "CREATE TABLE nh (a INT, b INT)",
+        "INSERT INTO uj1 VALUES (1,10),(2,20),(3,30)",
+        "INSERT INTO uj2 VALUES (1,7),(2,8)",
+        "INSERT INTO nh VALUES (1,1),(2,2)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(
+        explain_ops(
+            &mut session,
+            "explain format='brief' UPDATE uj1 JOIN uj2 ON uj1.id = uj2.id SET uj1.left_v = 5"
+        ),
+        [
+            "Update|N/A",
+            "└─MergeJoin|inner join, left key:test.uj1.id, right key:test.uj2.id",
+            "  ├─TableReader(Build)|data:TableFullScan",
+            "  │ └─TableFullScan|keep order:true, stats:pseudo",
+            "  └─TableReader(Probe)|data:TableFullScan",
+            "    └─TableFullScan|keep order:true, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        explain_ops(
+            &mut session,
+            "explain format='brief' DELETE uj1 FROM uj1 JOIN uj2 ON uj1.id = uj2.id"
+        )[..2],
+        [
+            "Delete|N/A",
+            "└─MergeJoin|inner join, left key:test.uj1.id, right key:test.uj2.id",
+        ]
+    );
+    let plan = explain_ops(
+        &mut session,
+        "explain format='brief' UPDATE uj1 JOIN nh ON uj1.id = nh.a SET nh.b = uj1.left_v",
+    );
+    assert_eq!(plan[0], "Update|N/A");
+    assert!(plan[1].starts_with("└─Projection|"), "{plan:?}");
+    assert!(plan[1].contains("test.nh._tidb_rowid"), "{plan:?}");
+    assert!(plan[2].contains("HashJoin"), "{plan:?}");
+
+    // The planned read drives the write: identities come off its rows.
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE uj1 JOIN nh ON uj1.id = nh.a SET nh.b = uj1.left_v"
+        ),
+        2
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM nh ORDER BY a"),
+        ["1|10", "2|20"]
+    );
+    assert_eq!(
+        affected(
+            &mut session,
+            "DELETE uj1 FROM uj1 JOIN uj2 ON uj1.id = uj2.id"
+        ),
+        2
+    );
+    assert_eq!(column(&mut session, "SELECT id FROM uj1"), ["3"]);
+}

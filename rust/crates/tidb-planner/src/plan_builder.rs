@@ -673,6 +673,10 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub no_decorrelate: bool,
     /// Go `isForUpdateRead`.
     pub is_for_update_read: bool,
+    /// Go `inUpdateStmt || inDeleteStmt`: a multi-table write keeps the
+    /// merged child schema of a `USING`/`NATURAL` join, so every target's
+    /// columns and handle stay in the joined row (`buildUsingClause`).
+    pub in_update_or_delete_stmt: bool,
 
     /// Go `SessionVars`, narrowed exactly as the rewriter narrows it.
     pub flags: RewriterSessionFlags,
@@ -1002,7 +1006,17 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
             && table.is_none_or(|t| name.names.table.lower.eq_ignore_ascii_case(t))
             && db.is_none_or(|d| name.names.database.lower.eq_ignore_ascii_case(d));
         if matches {
-            if found.is_some() {
+            if let Some(previous) = found {
+                // Go: "Do not allow multiple non-redundant columns with the
+                // same name" -- a redundant USING/NATURAL copy yields to the
+                // canonical one.
+                let previous: &FieldName = &names[previous];
+                if previous.redundant || name.redundant {
+                    if !name.redundant {
+                        found = Some(index);
+                    }
+                    continue;
+                }
                 return None;
             }
             found = Some(index);
@@ -1124,7 +1138,17 @@ impl ColumnResolver for PlanScopeResolver<'_> {
                 // marker falls through to ordinary name resolution.
             }
         }
-        let (schema, index) = if let Some(index) = find_field_name(self.names, path) {
+        // Go `getExpressionRewriter`: a join with a `FullSchema` resolves
+        // against its full names, whose `Redundant` marks settle a common
+        // `USING`/`NATURAL` column even when the output kept both copies (the
+        // multi-table UPDATE/DELETE merged schema).
+        let full_hit = self
+            .full_names
+            .filter(|full| full.len() == self.names.len())
+            .and_then(|full| Some((self.full_schema?, find_field_name(full, path)?)));
+        let (schema, index) = if let Some(hit) = full_hit {
+            hit
+        } else if let Some(index) = find_field_name(self.names, path) {
             (self.schema, index)
         } else {
             let full_names = self.full_names?;
@@ -1225,6 +1249,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             sub_query_hint_flags: 0,
             no_decorrelate: false,
             is_for_update_read: false,
+            in_update_or_delete_stmt: false,
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: Rc::new(from::JoinHints::default()),
@@ -1487,8 +1512,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             cur_clause: self.cur_clause,
             outer_schemas: self.outer_schemas.clone(),
             outer_names: self.outer_names.clone(),
-            // `inUpdateStmt || inDeleteStmt`; both are dropped narrowings.
-            in_dml_stmt: false,
+            // Go `inUpdateStmt || inDeleteStmt`.
+            in_dml_stmt: self.in_update_or_delete_stmt,
         }
     }
 
@@ -3723,6 +3748,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         wrap_lock: bool,
     ) -> Result<(LogicalPlan, u64), PlanError> {
         self.is_for_update_read = true;
+        self.in_update_or_delete_stmt = true;
         let mut plan = self.build_table_refs(select.from.as_ref())?;
         let markers = BTreeMap::new();
         if let Some(where_clause) = &select.where_clause {

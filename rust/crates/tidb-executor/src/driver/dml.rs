@@ -363,7 +363,7 @@ pub(crate) fn fk_spec_for_delete(
     })
 }
 
-fn dml_select_plan_mut<'a>(
+pub(super) fn dml_select_plan_mut<'a>(
     plan: &'a mut tidb_planner::physical::PhysicalPlan,
     operator: &str,
 ) -> Result<Option<&'a mut tidb_planner::physical::PhysicalPlan>, DriverError> {
@@ -372,7 +372,7 @@ fn dml_select_plan_mut<'a>(
             "DML execution received a non-DML physical root",
         ));
     };
-    if !root.go_operator.eq_ignore_ascii_case(operator) {
+    if !operator.is_empty() && !root.go_operator.eq_ignore_ascii_case(operator) {
         return Err(DriverError::unsupported(format!(
             "{operator} execution received a {} physical root",
             root.go_operator
@@ -2953,7 +2953,15 @@ fn run_update_with_physical(
         // target's row identity, which is a different read path -- see
         // `multi_dml`'s module doc. `EXPLAIN` has never described it.
         tidb_ast::UpdateKind::Multi { from, .. } => {
-            return super::multi_dml::run_multi_update(update, from, catalog, current_db, ctx);
+            return super::multi_dml::run_multi_update(
+                update,
+                from,
+                catalog,
+                current_db,
+                ctx,
+                physical_source,
+                runtime,
+            );
         }
     };
     let (database, name) = single_table_name(table_ref, current_db)?;
@@ -3786,7 +3794,14 @@ fn run_delete_with_physical(
         // See `multi_dml`'s module doc; `EXPLAIN` has never described this.
         tidb_ast::DeleteKind::Multi { targets, from, .. } => {
             return super::multi_dml::run_multi_delete(
-                delete, targets, from, catalog, current_db, ctx,
+                delete,
+                targets,
+                from,
+                catalog,
+                current_db,
+                ctx,
+                physical_source,
+                runtime,
             );
         }
     };
