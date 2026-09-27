@@ -241,6 +241,30 @@ pub struct BuiltinSignature {
 }
 
 impl BuiltinSignature {
+    /// The evaluation type argument `index` of an `arity`-argument call is
+    /// cast to; `own` is that argument's own evaluation type. Fixed-shape
+    /// rows read `arg_types`. The variadic conditional rows type their slots
+    /// the way Go's `getFunction` does (`builtin_control.go`): a CASE WHEN
+    /// condition and IF's first argument keep their own type
+    /// (`args[i].GetType()`), and every value slot is the return type.
+    #[must_use]
+    pub fn arg_type_at(&self, index: usize, arity: usize, own: EvalType) -> Option<EvalType> {
+        if !self.arg_types.is_empty() {
+            return self.arg_types.get(index).copied();
+        }
+        match self.name {
+            "case" if index + 1 == arity && arity % 2 == 1 => Some(self.ret),
+            "case" if index % 2 == 0 => Some(own),
+            "case" => Some(self.ret),
+            "if" if arity == 3 && index == 0 => Some(own),
+            "if" if arity == 3 => Some(self.ret),
+            "ifnull" if arity == 2 => Some(self.ret),
+            _ => None,
+        }
+    }
+}
+
+impl BuiltinSignature {
     /// The TiPB field type of this signature's result: Go's
     /// `newReturnFieldTypeForBaseBuiltinFunc` for `ret`, plus the per-family
     /// adjustment the family's own `getFunction` makes to it afterwards.
@@ -2675,8 +2699,10 @@ pub fn to_pb(
         )),
         PbScalar::Call { signature, args } => {
             let mut children = Vec::with_capacity(args.len());
-            for (argument, required) in args.iter().zip(signature.arg_types) {
-                children.push(coerced_to_pb(argument, *required, columns)?);
+            for (index, argument) in args.iter().enumerate() {
+                let required =
+                    signature.arg_type_at(index, args.len(), argument.eval_type())?;
+                children.push(coerced_to_pb(argument, required, columns)?);
             }
             let return_field_type = signature.return_field_type(scalar.is_unsigned(), &children)?;
             Some(Expr {

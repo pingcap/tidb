@@ -1232,6 +1232,7 @@ fn eval_datum(
         SimpleExpr::Time(value) => Ok(Datum::Time(*value)),
         SimpleExpr::Null => Ok(Datum::Null),
         SimpleExpr::Func(..) => Err("a computed aggregate argument is a later course".to_owned()),
+        SimpleExpr::Shared(shared) => eval_shared(shared, row),
     }
 }
 
@@ -1509,6 +1510,9 @@ pub enum SimpleExpr {
     Time(tidb_datatype::Time),
     /// `ExprType_ScalarFunc` over a supported signature.
     Func(SimpleSig, Vec<SimpleExpr>),
+    /// A pushed signature this evaluator has no arm for, decoded by Go's
+    /// `PBToExpr` port into the shared builtin tree and evaluated there.
+    Shared(std::sync::Arc<tidb_expr::expression::Expression>),
 }
 
 /// The date-argument channel of one upstream `AddDate`/`SubDate` type
@@ -1985,6 +1989,24 @@ pub enum SimpleSig {
     /// no match answers NULL when the tested value or any list element is
     /// NULL, FALSE otherwise.
     InInt,
+}
+
+/// Go `PBToExpr` for a signature outside this evaluator's arms: the shared
+/// builtin answers it, so every signature the pushdown catalog admits runs.
+fn convert_shared(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
+    tidb_expr::distsql_builtin::pb_to_expr(expr, &[])
+        .map(|shared| SimpleExpr::Shared(std::sync::Arc::new(shared)))
+}
+
+/// Evaluates a [`SimpleExpr::Shared`] node over one scanned row.
+fn eval_shared(
+    expr: &tidb_expr::expression::Expression,
+    row: &[tidb_datatype::Datum],
+) -> Result<tidb_datatype::Datum, String> {
+
+    let row = tidb_chunk::mutrow::MutRow::from_datums(row);
+    expr.eval(&tidb_expr::NoColumns, row.to_row())
+        .map_err(|err| format!("{err:?}"))
 }
 
 /// Convert one wire expression, refusing what the slice does not carry.
@@ -2577,11 +2599,7 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::GeTime => SimpleSig::GeTime,
             tipb::ScalarFuncSig::EqTime => SimpleSig::EqTime,
             tipb::ScalarFuncSig::NeTime => SimpleSig::NeTime,
-            other => {
-                return Err(format!(
-                    "scalar signature {other:?} waits on its distsql_builtin.go course"
-                ))
-            }
+            _ => return convert_shared(expr),
         };
         let children = expr
             .children
@@ -2615,6 +2633,10 @@ fn eval_decimal(
     use tidb_datatype::Datum;
     let expr = expr?;
     match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+            Datum::Decimal(v) => Some(v),
+            _ => None,
+        },
         SimpleExpr::Decimal(value) => Some(value.clone()),
         SimpleExpr::Column(offset) => match row.get(*offset) {
             Some(Datum::Decimal(value)) => Some(value.clone()),
@@ -2777,6 +2799,10 @@ fn eval_json(
         tidb_datatype::BinaryJSON::from_typed_value(&value).ok()
     };
     match expr? {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+            Datum::Json(v) => Some(v),
+            _ => None,
+        },
         SimpleExpr::Json(value) => Some(value.clone()),
         SimpleExpr::Column(offset) => match row.get(*offset) {
             Some(Datum::Json(value)) => Some(value.clone()),
@@ -2958,6 +2984,10 @@ fn eval_real(
     use tidb_datatype::Datum;
     let expr = expr?;
     match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+            Datum::Real(v) | Datum::Float32(v) => Some(v),
+            _ => None,
+        },
         SimpleExpr::Real(value) => Some(*value),
         SimpleExpr::Column(offset) => match row.get(*offset) {
             Some(Datum::Real(value)) => Some(*value),
@@ -3322,6 +3352,10 @@ fn eval_duration(
     use tidb_datatype::Datum;
     let expr = expr?;
     match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+            Datum::Duration(v) => Some(v),
+            _ => None,
+        },
         SimpleExpr::Column(offset) => match row.get(*offset) {
             Some(Datum::Duration(value)) => Some(*value),
             Some(Datum::Time(value)) => value.to_duration().ok(),
@@ -3438,6 +3472,10 @@ fn eval_time(
     use tidb_datatype::Datum;
     let expr = expr?;
     match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+            Datum::Time(v) => Some(v),
+            _ => None,
+        },
         SimpleExpr::Time(value) => Some(*value),
         SimpleExpr::Column(offset) => match row.get(*offset) {
             Some(Datum::Time(value)) => Some(*value),
@@ -3684,6 +3722,11 @@ fn eval_bytes(
     use tidb_datatype::Datum;
     let expr = expr?;
     match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+            Datum::Bytes(v) => Some(v),
+            Datum::String(v) => Some(v.bytes().to_vec()),
+            _ => None,
+        },
         SimpleExpr::Bytes(value) => Some(value.clone()),
         SimpleExpr::Column(offset) => match row.get(*offset) {
             Some(Datum::String(value)) => Some(value.bytes().to_vec()),
@@ -4009,6 +4052,14 @@ pub fn eval_expr(
 ) -> Result<Option<i128>, String> {
     use tidb_datatype::Datum;
     let value = match expr {
+        // A truth value from the shared builtin: Go's `EvalInt` over a
+        // filter condition, NULL as UNKNOWN.
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
+            Datum::Int(value) => Some(i128::from(value)),
+            Datum::UInt(value) => Some(i128::from(value)),
+            Datum::Null => None,
+            other => return Err(format!("pushed expression answered non-integer {other:?}")),
+        },
         SimpleExpr::Null => None,
         SimpleExpr::Int(value) => Some(i128::from(*value)),
         SimpleExpr::Column(offset) => match row.get(*offset) {
@@ -7530,5 +7581,43 @@ mod tests {
         );
         // The data row still encodes correctly alongside the warnings.
         assert!(!select.chunks.is_empty(), "the data row should be present");
+    }
+
+    /// Every signature the pushdown catalog admits decodes here: the
+    /// admission side and the execution side read the same inventory, as
+    /// Go's `scalarExprSupportedByTiKV` and `getSignatureByPB` do.
+    #[test]
+    fn every_admitted_signature_decodes_like_go_pb_to_expr() {
+        let column = |offset: i64| {
+            let mut val = Vec::new();
+            tidb_codec::encode_int(&mut val, offset);
+            tipb::Expr {
+                tp: Some(tipb::ExprType::ColumnRef as i32),
+                val: Some(val),
+                field_type: Some(tipb::FieldType {
+                    tp: Some(8),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        };
+        let mut refused = Vec::new();
+        for row in tidb_expr::pushdown_catalog::CATALOG {
+            let arity = row.arg_types.len().max(3);
+            let expr = tipb::Expr {
+                tp: Some(tipb::ExprType::ScalarFunc as i32),
+                sig: Some(row.sig as i32),
+                children: (0..arity as i64).map(column).collect(),
+                field_type: Some(tipb::FieldType {
+                    tp: Some(8),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            if let Err(message) = convert_expr(&expr) {
+                refused.push((row.sig, message));
+            }
+        }
+        assert!(refused.is_empty(), "admitted but undecodable: {refused:?}");
     }
 }

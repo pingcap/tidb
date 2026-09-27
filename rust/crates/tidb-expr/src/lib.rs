@@ -369,6 +369,7 @@ pub use new_function::{
     ScalarFunctionCallBack,
 };
 mod ops;
+pub mod distsql_builtin;
 pub mod pb_predicate;
 pub mod pushdown_catalog;
 pub mod ranger_context;

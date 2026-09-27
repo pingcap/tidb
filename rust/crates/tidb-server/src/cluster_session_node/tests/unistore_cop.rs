@@ -8819,3 +8819,29 @@ fn cluster_create_table_foreign_key_resolves_parent_like_go() {
         None
     );
 }
+
+/// Go `PBToExpr` decodes every signature the pushdown catalog admits
+/// (`distsql_builtin.go` `getSignatureByPB`); CASE/IF/IFNULL pushed into a
+/// coprocessor Selection were refused with 1105 before.
+#[test]
+fn pushed_conditional_signatures_evaluate_in_the_coprocessor_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut s = stack.factory.open_session(session_context(902)).expect("session");
+    rows(&mut s, "CREATE TABLE test.pc (id INT PRIMARY KEY, a INT, b INT, d DATETIME, j JSON)");
+    s.execute_write(
+        "INSERT INTO test.pc VALUES (1, 1, NULL, '2024-01-02 03:04:05', '\"x\"'), \
+         (2, 5, 7, NULL, NULL), (3, NULL, 2, '2020-05-06 00:00:00', '\"yy\"')",
+    )
+    .expect("insert");
+    let ids = |s: &mut crate::cluster_session_node::ClusterServerSession, sql: &str| {
+        displayed(rows(s, sql)).into_iter().map(|row| row[0].clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE CASE WHEN a > 2 THEN a ELSE 0 END > 1 ORDER BY id"), ["2"]);
+    assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE IF(a IS NULL, b, a) = 2 ORDER BY id"), ["3"]);
+    assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE IFNULL(b, 0) < 3 ORDER BY id"), ["1", "3"]);
+    assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE CAST(d AS SIGNED) > 20210000000000 ORDER BY id"), ["1"]);
+    assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE IFNULL(CAST(j AS CHAR), 'n') = '\"yy\"' ORDER BY id"), ["3"]);
+    // A non-integer condition keeps its own type (Go `builtin_control.go`
+    // `args[i].GetType()`), so 0.5 is TRUE rather than truncated to 0.
+    assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE CASE WHEN a / 10 THEN 1 ELSE 0 END = 1 ORDER BY id"), ["1", "2"]);
+}
