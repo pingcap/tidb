@@ -76,7 +76,7 @@ pub(crate) fn dispatch(
         "TIME_TO_SEC" => time_to_sec(vals),
         "SEC_TO_TIME" => sec_to_time(vals, cols),
         "MAKEDATE" => makedate(vals),
-        "MAKETIME" => maketime(vals),
+        "MAKETIME" => maketime(vals, cols),
         "PERIOD_ADD" => period_add(vals),
         "PERIOD_DIFF" => period_diff(vals),
         "TIME_FORMAT" => time_format(vals),
@@ -788,20 +788,44 @@ fn int_arg(value: &Datum) -> Result<Option<i64>, EvalError> {
     }
 }
 
-fn number_arg(value: &Datum) -> Result<Option<f64>, EvalError> {
+fn number_arg(value: &Datum, cols: &dyn Columns) -> Result<Option<f64>, EvalError> {
     Ok(match value {
         Datum::Null => None,
         Datum::Int(v) => Some(*v as f64),
         Datum::UInt(v) => Some(*v as f64),
         Datum::Decimal(v) => Some(v.to_f64()),
         Datum::Real(v) => Some(*v),
-        Datum::String(v) => v
-            .as_utf8()
-            .ok()
-            .map(|text| text.trim().parse().unwrap_or(0.0)),
-        Datum::Bytes(v) => std::str::from_utf8(v)
-            .ok()
-            .map(|text| text.trim().parse().unwrap_or(0.0)),
+        // go's ETReal argument cast (WrapWithCastAsReal) warns the DOUBLE
+        // truncation for a non-numeric string (oracle: MAKETIME's second
+        // hand warns 1292 with 'x' -- g-fsp).
+        Datum::String(v) => match v.as_utf8().ok().map(|text| text.trim().parse::<f64>()) {
+            Some(Ok(parsed)) => Some(parsed),
+            Some(Err(_)) => {
+                let text = v.as_utf8().unwrap_or_default();
+                let text = text.trim();
+                cols.append_warning(1292, &format!("Truncated incorrect DOUBLE value: '{text}'"));
+                Some(0.0)
+            }
+            None => Some(0.0),
+        },
+        Datum::Bytes(v) => {
+            match std::str::from_utf8(v)
+                .ok()
+                .map(|text| text.trim().parse::<f64>())
+            {
+                Some(Ok(parsed)) => Some(parsed),
+                Some(Err(_)) => {
+                    let text = std::str::from_utf8(v).unwrap_or_default();
+                    let text = text.trim();
+                    cols.append_warning(
+                        1292,
+                        &format!("Truncated incorrect DOUBLE value: '{text}'"),
+                    );
+                    Some(0.0)
+                }
+                None => Some(0.0),
+            }
+        }
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel numeric argument"));
         }
@@ -1030,15 +1054,7 @@ fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    // go's argument cast warns the DOUBLE truncation for a non-numeric
-    // string (`SEC_TO_TIME('x')` warns 1292 with 'x' -- g-fsp).
-    if let Some(text) = coerce_str(&vals[0])? {
-        let text = text.trim();
-        if text.parse::<f64>().is_err() {
-            cols.append_warning(1292, &format!("Truncated incorrect DOUBLE value: '{text}'"));
-        }
-    }
-    let Some(seconds) = number_arg(&vals[0])? else {
+    let Some(seconds) = number_arg(&vals[0], cols)? else {
         return Ok(Datum::Null);
     };
     Ok(Datum::new_string(format_duration(
@@ -1155,14 +1171,14 @@ fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 /// `builtinMakeTimeSig` in `pkg/expression/builtin_time.go`.
-fn maketime(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn maketime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 3 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
     let (Some(mut hour), Some(minute), Some(second)) = (
         int_arg(&vals[0])?,
         int_arg(&vals[1])?,
-        number_arg(&vals[2])?,
+        number_arg(&vals[2], cols)?,
     ) else {
         return Ok(Datum::Null);
     };
