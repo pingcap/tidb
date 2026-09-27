@@ -10172,13 +10172,10 @@ fn plan_rename_tables(
         if !database_ids.contains_key(&from_schema) {
             return Err(DdlPlanError::UnknownDatabase(pair.from_schema.clone()));
         }
-        let from_key = table_name_key(&from_schema, &pair.from_table.go_to_lower());
-        let Some(state) = namespace.get(&from_key) else {
-            return Err(DdlPlanError::TableNotExists {
-                schema: pair.from_schema.clone(),
-                table: pair.from_table.clone(),
-            });
-        };
+        // go checks the DESTINATION before the source: a rename whose target
+        // name is taken reports 1050 even when the source is also missing
+        // (oracle m13: `RENAME TABLE h1 TO h2` over a missing h1 and an
+        // existing h2 errors `Table 'fdq.h2' already exists`).
         let Some(&new_schema_id) = database_ids.get(&to_schema) else {
             return Err(DdlPlanError::UnknownDatabase(pair.to_schema.clone()));
         };
@@ -10189,6 +10186,13 @@ fn plan_rename_tables(
                 table: pair.to_table.clone(),
             });
         }
+        let from_key = table_name_key(&from_schema, &pair.from_table.go_to_lower());
+        let Some(state) = namespace.get(&from_key) else {
+            return Err(DdlPlanError::TableNotExists {
+                schema: pair.from_schema.clone(),
+                table: pair.from_table.clone(),
+            });
+        };
 
         let mut state = state.clone();
         namespace.remove(&from_key);
