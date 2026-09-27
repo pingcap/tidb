@@ -157,6 +157,15 @@ impl Parser {
                 let mut args = vec![self.parse_expr(prec::NONE)?];
                 if self.is_op(",") {
                     self.bump();
+                    // go's yacc grammar for the offset slot refuses a unary
+                    // minus AT the sign token (oracle g-window2:
+                    // `LAG(v, -1) OVER ...` errors 1064 near "-1) OVER ...",
+                    // before any argument validation could raise 1210).
+                    if name == "LAG" || name == "LEAD" {
+                        if self.is_op("-") {
+                            return Err(self.err_here(""));
+                        }
+                    }
                     args.push(self.parse_expr(prec::NONE)?);
                     if self.is_op(",") {
                         self.bump();
@@ -175,6 +184,16 @@ impl Parser {
             if self.is_kw("FROM") && self.is_kw_at(1, "FIRST") {
                 self.bump();
                 self.bump();
+            } else if self.is_kw("FROM") {
+                // go's nth_value production consumes `FROM` expecting
+                // FIRST|LAST: a stray FROM (the query's own clause, when the
+                // OVER was forgotten) errors AT the token after it (oracle
+                // g-window2: `NTH_VALUE(s, 2) FROM w2` errors 1064 near
+                // "w2").
+                if name == "NTH_VALUE" {
+                    self.bump();
+                    return Err(self.err_here(""));
+                }
             }
             false
         };
