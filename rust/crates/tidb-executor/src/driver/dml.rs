@@ -120,6 +120,11 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<(u64, Option<u64>), DriverError> {
+    // go resolves the INSERT's target table before planning the source
+    // query: `INSERT INTO h1 (a, b) SELECT a, b FROM no_such` over a missing
+    // h1 errors `Table 'fdq.h1' doesn't exist`, not the source query's own
+    // 1146 (oracle m13).
+    resolve_insert_target(insert, catalog, current_db, ctx)?;
     let mut fresh = physical_plan
         .is_none()
         .then(|| {
