@@ -2235,7 +2235,11 @@ impl Session {
             // statement context reset, so the buffer keeps the PREVIOUS
             // statement's rows and never gains its own row (oracle-captured),
             // whichever classification the error carries.
+            // 1210 (`Incorrect arguments to <function>`, go's
+            // ClassExpression) never lands a warning row either (oracle:
+            // PERIOD_ADD's 1210 errors without a row -- g-fsp).
             if reported.code != 1148
+                && reported.code != 1210
                 && (!reported.is_from_evaluation()
                     || !matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105))
             {

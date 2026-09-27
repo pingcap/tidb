@@ -1877,7 +1877,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             let is_ddl = parsed
                                 .as_ref()
                                 .is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
-                            if is_ddl || !matches!(error.code, 1148 | 1264 | 1265 | 1366 | 1406) {
+                            if is_ddl
+                                || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406)
+                            {
                                 engine.record_write_failure(error.code, error.message.clone());
                             }
                         }

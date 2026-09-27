@@ -1051,11 +1051,8 @@ pub(super) fn whole_interval_amount(
             // warns `Truncated incorrect DECIMAL value: '<s>'` (1292)
             // before the same leading-run value.
             let trimmed = value.trim();
-            let after_sign = trimmed
-                .strip_prefix(['+', '-'])
-                .unwrap_or(trimmed);
-            let digits = after_sign
-                .len()
+            let after_sign = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
+            let digits = after_sign.len()
                 - after_sign
                     .trim_start_matches(|c: char| c.is_ascii_digit())
                     .len();
@@ -1644,7 +1641,15 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
     }
     let result = str_to_date_inner(vals, cols)?;
     if matches!(result, Datum::Null) {
-        cols.append_warning(1292, "Incorrect datetime value: '0000-00-00 00:00:00'");
+        // go `strToDate`: the invalid VALUE raises ErrWrongValueForFunction
+        // (1411) naming the INPUT text and the function -- not the zero-time
+        // truncation class (oracle-captured on g-fsp).
+        if let Ok(Some(input)) = coerce_str(&vals[0]) {
+            cols.append_warning(
+                1411,
+                &format!("Incorrect datetime value: '{input}' for function str_to_date"),
+            );
+        }
     }
     Ok(result)
 }
@@ -1876,7 +1881,11 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             return Ok(Datum::Null);
         }
         let date = format!("{:04}-{:02}-{:02}", value.year, value.month, value.day);
-        if value.saw_time {
+        // go's `Time.String` renders the time-of-day for ANY datetime-kind
+        // result: a `%f`-bearing format forces the full
+        // `0000-00-00 00:00:00.000000` shape even without a time specifier
+        // (oracle-captured on g-fsp's zero-value rows).
+        if value.saw_time || value.saw_fraction {
             return Ok(Datum::new_string(if value.saw_fraction {
                 format!(
                     "{date} {:02}:{:02}:{:02}.{:06}",
@@ -2450,9 +2459,8 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "HOUR_MICROSECOND",
-                &[
-                Datum::new_string("01:02:03.4567".to_string())],
-            &crate::context::NoColumns,
+                &[Datum::new_string("01:02:03.4567".to_string())],
+                &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(102_034_567_00)
@@ -2465,9 +2473,8 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "MINUTE_MICROSECOND",
-                &[
-                Datum::new_string("02:03.4567".to_string())],
-            &crate::context::NoColumns,
+                &[Datum::new_string("02:03.4567".to_string())],
+                &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(20_345_670_0)
@@ -2476,9 +2483,8 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "SECOND_MICROSECOND",
-                &[
-                Datum::new_string("03.4567".to_string())],
-            &crate::context::NoColumns,
+                &[Datum::new_string("03.4567".to_string())],
+                &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(3_456_700)
@@ -2487,9 +2493,8 @@ mod composite_extract_tests {
         assert_eq!(
             extract_composite(
                 "HOUR_MICROSECOND",
-                &[
-                Datum::new_string("02:03.4567".to_string())],
-            &crate::context::NoColumns,
+                &[Datum::new_string("02:03.4567".to_string())],
+                &crate::context::NoColumns,
             )
             .unwrap(),
             Datum::Int(20_345_670_0)

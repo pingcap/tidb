@@ -217,6 +217,9 @@ pub(super) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
         &cols.time_zone(),
     );
     let Ok(parsed) = parsed else {
+        // go's argument-cast layer warns `Incorrect datetime value: '<text>'`
+        // before answering NULL (oracle-captured on g-fsp).
+        cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
         return Ok(Datum::Null);
     };
     let core = parsed.time.core_time();
