@@ -869,27 +869,25 @@ impl Parser {
                     .to_vec(),
             );
         }
-        let check_option = if self.is_kw("WITH") {
+        // go's view grammar has NO `WITH [LOCAL|CASCADED] CHECK OPTION`
+        // tail: the yacc errors at the CHECK token, anchoring the 1064 there
+        // (`near "CHECK OPTION"`, column 45 on the captured statement).
+        if self.is_kw("WITH") {
             self.bump();
-            let local = if self.is_kw("LOCAL") {
+            if self.is_kw("LOCAL") {
                 self.bump();
-                true
-            } else {
-                if self.is_kw("CASCADED") {
-                    self.bump();
-                }
-                false
-            };
-            self.expect_kw("CHECK")?;
-            self.expect_kw("OPTION")?;
-            if local {
-                ViewCheckOption::LOCAL
-            } else {
-                ViewCheckOption::CASCADED
+            } else if self.is_kw("CASCADED") {
+                self.bump();
             }
-        } else {
-            ViewCheckOption::CASCADED
-        };
+            return Err(self.err_here(""));
+        }
+        // go's view grammar has no trailing `SQL SECURITY ...` either: the
+        // yacc errors at the SQL token (`near "SQL SECURITY INVOKER"`,
+        // column 40 on the captured statement).
+        if self.is_kw("SQL") {
+            return Err(self.err_here(""));
+        }
+        let check_option = ViewCheckOption::CASCADED;
         Ok(CreateViewStmt {
             or_replace,
             algorithm,
