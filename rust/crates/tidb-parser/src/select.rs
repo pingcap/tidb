@@ -1253,8 +1253,7 @@ impl Parser {
     /// NOT the same gate the explicit `AS name` form uses).
     fn can_be_alias_name(&self) -> bool {
         matches!(self.peek().kind, TokenKind::Ident | TokenKind::Str)
-            || (self.peek().kind == TokenKind::Keyword
-                && !is_alias_excluded_keyword(&self.peek().text))
+            || (self.peek().kind == TokenKind::Keyword && !crate::is_reserved(&self.peek().text))
     }
 
     /// Reports whether the CURRENT token is eligible as an EXPLICIT `AS

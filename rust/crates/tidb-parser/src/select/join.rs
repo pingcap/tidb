@@ -610,7 +610,7 @@ impl Parser {
         };
         let alias = self.peek_n(alias_offset);
         if !(alias.kind == TokenKind::Ident
-            || (alias.kind == TokenKind::Keyword && !is_alias_excluded_keyword(&alias.text)))
+            || (alias.kind == TokenKind::Keyword && !crate::is_reserved(&alias.text)))
         {
             return false;
         }
