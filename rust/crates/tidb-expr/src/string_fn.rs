@@ -188,7 +188,10 @@ pub(crate) fn str_take(vals: &[Datum], from_left: bool) -> Result<Datum, EvalErr
 /// difference and this is written once: negative positions count back from the
 /// end, while position zero and every out-of-range position produce the empty
 /// string.
-pub(crate) fn substring(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn substring(
+    vals: &[Datum],
+    cols: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     if vals.contains(&Datum::Null) {
         return Ok(Datum::Null);
     }
@@ -198,12 +201,19 @@ pub(crate) fn substring(vals: &[Datum]) -> Result<Datum, EvalError> {
     // `evalString` runs -- exactly the coercion `LEFT`/`RIGHT` already use here.
     // Matching only `Datum::Int` refused `SUBSTRING('hello', '2')` (Go: `ello`)
     // and every other argument Go silently casts.
+    // go's position/length arguments are WrapWithCastAsInt-wrapped: the
+    // conversion warns `Truncated incorrect INTEGER value` exactly like an
+    // explicit CAST (`SUBSTRING('abc', 1, 'x')` warns 1292 for 'x').
     let (str, pos, length) = match vals {
-        [str, pos] => (str, crate::cast::to_i64_signed(pos), None),
+        [str, pos] => (
+            str,
+            crate::cast::to_i64_signed_with_warnings(pos, cols)?,
+            None,
+        ),
         [str, pos, length] => (
             str,
-            crate::cast::to_i64_signed(pos),
-            Some(crate::cast::to_i64_signed(length)),
+            crate::cast::to_i64_signed_with_warnings(pos, cols)?,
+            Some(crate::cast::to_i64_signed_with_warnings(length, cols)?),
         ),
         _ => return Err(EvalError::Unsupported("bad SUBSTRING arguments")),
     };
@@ -1919,12 +1929,13 @@ pub(crate) fn char_func_with_context(
     // spells its text out: `-3.75` IS the charset name), then
     // `GetCharsetInfo` answers the bare 1105 `Unknown charset <name>`
     // BEFORE any encoding work happens.
-    let charset_text = crate::coerce::coerce_str(charset)?.ok_or_else(|| {
-        EvalError::Unsupported("CHAR charset argument")
-    })?;
+    let charset_text = crate::coerce::coerce_str(charset)?
+        .ok_or_else(|| EvalError::Unsupported("CHAR charset argument"))?;
     let charset = charset_text.to_ascii_lowercase();
     let collation_name = get_default_collation(&charset).map_err(|_| {
-        EvalError::Unsupported(Box::leak(format!("Unknown charset {charset}").into_boxed_str()))
+        EvalError::Unsupported(Box::leak(
+            format!("Unknown charset {charset}").into_boxed_str(),
+        ))
     })?;
     let (decoded, error) = find_encoding(&charset)
         .transform(&bytes, TransformOp::DECODE)
@@ -1935,10 +1946,11 @@ pub(crate) fn char_func_with_context(
             return Ok(Datum::Null);
         }
     }
-    let collation = Collation::from_name(&collation_name)
-        .ok_or_else(|| {
-            EvalError::Unsupported(Box::leak(format!("Unknown charset {charset}").into_boxed_str()))
-        })?;
+    let collation = Collation::from_name(&collation_name).ok_or_else(|| {
+        EvalError::Unsupported(Box::leak(
+            format!("Unknown charset {charset}").into_boxed_str(),
+        ))
+    })?;
     Ok(Datum::new_collation_string(decoded, collation))
 }
 
@@ -2033,13 +2045,22 @@ mod bit_count_tests {
             (Datum::Decimal(Decimal::from_literal("3.1")), 2),
         ];
         for (input, want) in cases {
-            assert_eq!(bit_count(&[input], &crate::context::NoColumns), Ok(Datum::Int(want)));
+            assert_eq!(
+                bit_count(&[input], &crate::context::NoColumns),
+                Ok(Datum::Int(want))
+            );
         }
-        assert_eq!(bit_count(&[Datum::Null], &crate::context::NoColumns), Ok(Datum::Null));
+        assert_eq!(
+            bit_count(&[Datum::Null], &crate::context::NoColumns),
+            Ok(Datum::Null)
+        );
         // Go's string conversion is byte-prefix based, so malformed UTF-8
         // after an ASCII number must not erase the numeric prefix.
         assert_eq!(
-            bit_count(&[Datum::new_bytes(vec![b'1', 0xff])], &crate::context::NoColumns),
+            bit_count(
+                &[Datum::new_bytes(vec![b'1', 0xff])],
+                &crate::context::NoColumns
+            ),
             Ok(Datum::Int(1))
         );
     }

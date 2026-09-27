@@ -759,7 +759,7 @@ pub(crate) fn eval_func_values(
         "LOWER" | "LCASE" => case_convert(vals, false),
         "LEFT" if vals.len() == 2 => str_take(vals, true),
         "RIGHT" if vals.len() == 2 => str_take(vals, false),
-        "SUBSTRING" | "SUBSTR" | "MID" if vals.len() == 3 => substring(vals),
+        "SUBSTRING" | "SUBSTR" | "MID" if vals.len() == 3 => substring(vals, ctx),
         "REVERSE" => reverse(vals),
         // `ASCII`: the first BYTE's numeric value (0 for the empty string).
         "ASCII" => ascii(vals),

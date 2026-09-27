@@ -29,7 +29,7 @@ pub(crate) fn dispatch(
     ctx: &dyn crate::Columns,
 ) -> Option<Result<Datum, EvalError>> {
     match (name, vals.len()) {
-        ("SUBSTRING" | "SUBSTR" | "MID", 2) => Some(substring(vals)),
+        ("SUBSTRING" | "SUBSTR" | "MID", 2) => Some(substring(vals, &crate::NoColumns)),
         ("LOCATE", 3) => Some(locate3(vals)),
         ("FORMAT", 3) => Some(format_with_locale(vals, ctx)),
         ("FIND_IN_SET", 2) => Some(find_in_set(vals)),
@@ -1044,7 +1044,7 @@ mod tests {
             ("Sakila", -100, ""),
         ] {
             assert_eq!(
-                substring(&[string(input), Datum::Int(pos)]).unwrap(),
+                substring(&[string(input), Datum::Int(pos)], &crate::NoColumns).unwrap(),
                 string(want),
                 "SUBSTRING({input:?}, {pos})"
             );
@@ -1057,7 +1057,11 @@ mod tests {
             ("Sakila", 2, 100, "akila"),
         ] {
             assert_eq!(
-                substring(&[string(input), Datum::Int(pos), Datum::Int(length),]).unwrap(),
+                substring(
+                    &[string(input), Datum::Int(pos), Datum::Int(length),],
+                    &crate::NoColumns
+                )
+                .unwrap(),
                 string(want),
                 "SUBSTRING({input:?}, {pos}, {length})"
             );
@@ -1153,13 +1157,21 @@ mod tests {
         // int64 and returns an empty string when that addition wraps.  This
         // catches the tempting-but-wrong Rust `saturating_add` translation.
         assert_eq!(
-            substring(&[string("Sakila"), Datum::Int(2), Datum::Int(i64::MAX),]).unwrap(),
+            substring(
+                &[string("Sakila"), Datum::Int(2), Datum::Int(i64::MAX),],
+                &crate::NoColumns
+            )
+            .unwrap(),
             string("")
         );
         // At position one the same maximum length does not overflow and
         // therefore returns the complete string.
         assert_eq!(
-            substring(&[string("Sakila"), Datum::Int(1), Datum::Int(i64::MAX),]).unwrap(),
+            substring(
+                &[string("Sakila"), Datum::Int(1), Datum::Int(i64::MAX),],
+                &crate::NoColumns
+            )
+            .unwrap(),
             string("Sakila")
         );
     }
