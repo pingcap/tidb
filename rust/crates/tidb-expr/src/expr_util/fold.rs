@@ -90,7 +90,7 @@ impl<'a> From<&SubstituteOptions<'a>> for FoldOptions<'a> {
 #[must_use]
 pub fn fold_constant(
     expr: &Expression,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     opts: &SubstituteOptions<'_>,
 ) -> Expression {
     fold_constant_with(expr, ctx, &FoldOptions::from(opts))
@@ -100,7 +100,7 @@ pub fn fold_constant(
 #[must_use]
 pub fn fold_constant_with(
     expr: &Expression,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     opts: &FoldOptions<'_>,
 ) -> Expression {
     let (mut folded, _) = fold_constant_inner(expr, ctx, opts);
@@ -128,7 +128,7 @@ pub fn fold_constant_with(
 /// Returns [`SubstituteError`] when evaluation fails.
 pub(super) fn fold_constant_value(
     expr: &Expression,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, SubstituteError> {
     if let Expression::Constant(constant) = expr {
         if constant.param_marker.is_some() {
@@ -146,7 +146,7 @@ pub(super) fn fold_constant_value(
 /// `isDeferredConst`.
 fn fold_constant_inner(
     expr: &Expression,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     opts: &FoldOptions<'_>,
 ) -> (Expression, bool) {
     match expr {
@@ -176,7 +176,7 @@ fn fold_constant_inner(
 fn fold_scalar_function(
     expr: &Expression,
     function: &ScalarFunction,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     opts: &FoldOptions<'_>,
 ) -> (Expression, bool) {
     let name = function.func_name.lowercase();
@@ -275,7 +275,7 @@ fn fold_partially_const(
     arg_is_const: &[bool],
     has_null_arg: bool,
     is_deferred_const: bool,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     opts: &FoldOptions<'_>,
 ) -> (Expression, bool) {
     let name = function.func_name.lowercase();
@@ -345,7 +345,7 @@ fn constant_of(value: Datum, function: &ScalarFunction) -> Constant {
 fn is_null_handler(
     expr: &Expression,
     function: &ScalarFunction,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     _opts: &FoldOptions<'_>,
 ) -> (Expression, bool) {
     let Some(arg0) = function.get_args().first() else {
@@ -377,7 +377,7 @@ fn is_null_handler(
 fn if_fold_handler(
     expr: &Expression,
     function: &ScalarFunction,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     opts: &FoldOptions<'_>,
 ) -> (Expression, bool) {
     let args = function.get_args();
@@ -405,7 +405,7 @@ fn if_fold_handler(
 fn if_null_fold_handler(
     expr: &Expression,
     function: &ScalarFunction,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     opts: &FoldOptions<'_>,
 ) -> (Expression, bool) {
     let args = function.get_args();
@@ -442,7 +442,7 @@ fn if_null_fold_handler(
 fn case_when_handler(
     expr: &Expression,
     function: &ScalarFunction,
-    ctx: &impl Columns,
+    ctx: &dyn crate::context::Columns,
     opts: &FoldOptions<'_>,
 ) -> (Expression, bool) {
     let args = function.get_args();

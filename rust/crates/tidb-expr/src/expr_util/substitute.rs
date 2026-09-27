@@ -737,7 +737,10 @@ impl std::error::Error for SubstituteError {}
 
 /// Go `expr.Eval(ctx.GetEvalCtx(), chunk.Row{})`: evaluating against the empty
 /// row, which is what a wholly constant subtree needs.
-pub(super) fn eval_once(expr: &Expression, ctx: &impl Columns) -> Result<Datum, EvalError> {
+pub(super) fn eval_once(
+    expr: &Expression,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
     chunk.set_num_virtual_rows(1);
     expr.eval(ctx, chunk.get_row(0))

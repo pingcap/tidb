@@ -119,6 +119,17 @@ pub trait FunctionBuilder {
         }
     }
 
+    /// The live evaluation context Go folds built constants against, when
+    /// this builder carries one. Rule-side constant folds (projection
+    /// elimination's merged-expression fold) must evaluate with it and
+    /// re-home the diagnostics like every construction-time fold -- a dry
+    /// `NoColumns` fold silently drops go's 1292 rows (oracle:
+    /// `SELECT CAST(j AS SIGNED) FROM (SELECT CAST('{}' AS JSON) AS j) t`
+    /// warns `Truncated incorrect INTEGER value: '{}'`).
+    fn fold_context(&self) -> Option<&dyn crate::context::Columns> {
+        None
+    }
+
     /// Go `wrapWithIsTrue(ctx, keepNull=true, expr, wrapForInt=true)`, the one
     /// call `pushNotAcrossExpr` makes before descending through a `NOT`.
     ///
@@ -229,6 +240,10 @@ impl<'a, C: crate::context::Columns> RealFunctionBuilder<'a, C> {
 }
 
 impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> {
+    fn fold_context(&self) -> Option<&dyn crate::context::Columns> {
+        Some(self.ctx)
+    }
+
     fn new_function(
         &self,
         func_name: &str,

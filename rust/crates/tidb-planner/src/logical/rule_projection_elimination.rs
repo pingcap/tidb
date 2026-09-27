@@ -307,8 +307,26 @@ fn merge_adjacent_projections(
     for expression in &mut projection.exprs {
         let replaced =
             super::rule_util::replace_column_of_expr(expression, &child.exprs, &child_schema);
-        let mut folded =
-            tidb_expr::expr_util::fold::fold_constant(&replaced, &tidb_expr::NoColumns, &options);
+        // go folds the merged expression with the LIVE statement context
+        // (`FoldConstant` over `BuildContext`); the diagnostics belong to the
+        // statement. The planner boundary resets the live list between
+        // planning and execution, so -- exactly like every construction-time
+        // fold -- the delta re-homes into the thread stash the record set
+        // drains post-execution.
+        let mut folded = match builder.fold_context() {
+            Some(context) => {
+                let bookmark = context.warning_count();
+                let folded =
+                    tidb_expr::expr_util::fold::fold_constant(&replaced, context, &options);
+                tidb_expr::constant_fold::move_live_warnings_to_stash(context, bookmark);
+                folded
+            }
+            None => tidb_expr::expr_util::fold::fold_constant(
+                &replaced,
+                &tidb_expr::NoColumns,
+                &options,
+            ),
+        };
         preserve_not_null_flag(&replaced, &mut folded);
         *expression = folded;
     }
