@@ -310,6 +310,19 @@ impl Parser {
         self.expect_op("(")?;
         let path = self.parse_name_path()?;
         self.expect_op(")")?;
+        // go's yacc treats `DEFAULT (col)` as a DefaultExpr leaf that cannot
+        // participate in operator chains: an operator after it is a syntax
+        // error anchored at that operator (oracle on m6-accept:
+        // `... DEFAULT (DEFAULT(a) + 2) ...` errors at `+ 2)`).
+        if matches!(
+            self.peek().text.to_ascii_uppercase().as_str(),
+            "+" | "-" | "*" | "/" | "%" | "DIV" | "MOD"
+        ) && matches!(
+            self.peek().kind,
+            TokenKind::Op | TokenKind::Ident | TokenKind::Keyword
+        ) {
+            return Err(self.err_here(""));
+        }
         Ok(Expr::Default(Some(path)))
     }
 

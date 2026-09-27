@@ -619,11 +619,20 @@ impl AutoIdAllocator {
 
     /// The id the next allocation will return, as a pattern. Meaningful only
     /// while ids remain, which is what `SHOW TABLE STATUS` reports.
+    /// The id the next allocation will return, as a pattern. Meaningful only
+    /// while ids remain, which is what `SHOW TABLE STATUS` reports.
+    ///
+    /// go's `tbl.AutoIncID` — what SHOW CREATE/SHOW TABLE STATUS read — is
+    /// the STORED counter, i.e. the reserved range's EXCLUSIVE end (the next
+    /// id past the batch reservation), not this node's in-cache cursor: after
+    /// `AUTO_INCREMENT = 100` plus one insert the oracle reports 30100 (the
+    /// 30000-wide reservation), not 101 (oracle-captured on g-view). The
+    /// cached range keeps `end` INCLUSIVE, hence the +1.
     pub(crate) fn next(&self) -> u64 {
         self.cache
             .lock()
             .expect("auto id cache poisoned")
-            .base
+            .end
             .wrapping_add(1)
     }
 
