@@ -557,8 +557,27 @@ impl Parser {
     ) -> PResult<Expr> {
         self.bump(); // DATE / TIME / TIMESTAMP
         let lit = self.bump();
+        let text = self.decode_string(&lit.text);
+        // go `parsePrefixTimeLiteral`: a TIME/TIMESTAMP literal's fsp comes
+        // from the TEXT's own fractional digits (`TIME'10:59:59.9'` carries
+        // fsp 1 and answers `105959.9` under `+ 0`), not the type's fsp-0
+        // default, which would round `.9` up to the next hour.
+        let cast_type = match (&style, &cast_type, text.rfind('.')) {
+            (CastStyle::TimeLiteral, CastType::Time { fsp: None }, Some(dot))
+            | (CastStyle::TimestampLiteral, CastType::DateTime { fsp: None }, Some(dot))
+                if text[dot + 1..].bytes().all(|byte| byte.is_ascii_digit()) =>
+            {
+                let fsp = (text.len() - dot - 1).min(6) as u32;
+                match cast_type {
+                    CastType::Time { .. } => CastType::Time { fsp: Some(fsp) },
+                    CastType::DateTime { .. } => CastType::DateTime { fsp: Some(fsp) },
+                    other => other,
+                }
+            }
+            _ => cast_type,
+        };
         Ok(Expr::Cast(CastExpr {
-            expr: Box::new(Expr::String(self.decode_string(&lit.text))),
+            expr: Box::new(Expr::String(text)),
             cast_type,
             style,
             array: false,
