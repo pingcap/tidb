@@ -477,6 +477,16 @@ func (s *SyncExecDetails) MergeCopExecDetails(details *CopExecDetails, copTime t
 	s.detailsSummary.Merge(details.BackoffSleep, details.BackoffTimes, details.CalleeAddress, details.TimeDetail)
 }
 
+// MergeScanDetail merges scan details without changing cop-task counts or timings.
+func (s *SyncExecDetails) MergeScanDetail(scanDetail *util.ScanDetail) {
+	if scanDetail == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mergeScanDetail(scanDetail)
+}
+
 // mergeScanDetail merges scan details into self.
 func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
