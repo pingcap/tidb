@@ -449,11 +449,12 @@ fn report_decimal_production(
     let rounded = source.round_to_scale(scale as i32);
     let int_digits = rounded.coefficient_digits().len() as u32 - rounded.storage_scale();
     if int_digits > flen.saturating_sub(scale) {
-        // go appends the OVERFLOW terror twice through two paths: the raw
-        // terror (whose unformatted message is the "%s value is out of range
-        // in '%s'" template) and the GenWithStackByArgs-formatted row
-        // (oracle-captured on `CAST('1e300' AS DECIMAL)`).
-        ctx.append_warning(1690, "%s value is out of range in '%s'");
+        // go appends only the GenWithStackByArgs-formatted row here
+        // (`ProduceDecWithSpecifiedTp` -> `ec.HandleError`); the raw
+        // "%s value is out of range in '%s'" template row belongs to the
+        // string-to-decimal PARSE site's ErrOverflow, not to the production
+        // clamp (oracle: CAST('99999999999999999999' AS DECIMAL(10,2)) warns
+        // 1690 once, formatted).
         ctx.append_warning(
             1690,
             &format!("DECIMAL value is out of range in '({flen}, {scale})'"),
@@ -905,6 +906,17 @@ pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Column
     };
     let trimmed = text.trim();
     let (_, parse_error) = Decimal::parse_mysql(trimmed);
+    if matches!(
+        parse_error,
+        Some(tidb_datatype::DecimalParseError::Overflow)
+    ) {
+        // go's string-to-decimal sig hands the parse's ErrOverflow straight
+        // to `ec.HandleError` without format args, so the appended row keeps
+        // the raw "%s value is out of range in '%s'" template (oracle:
+        // CAST('1e300' AS DECIMAL)). The value is still retained (saturated);
+        // the production clamp below reports its own formatted row.
+        ctx.append_warning(1690, "%s value is out of range in '%s'");
+    }
     if matches!(
         parse_error,
         Some(
@@ -1940,6 +1952,23 @@ mod tests {
                 "{input}",
             );
         }
+    }
+
+    /// The string-to-JSON literal parse routes a `{}` OBJECT document
+    /// through `builtinCastJSONAsIntSig`'s StrToInt re-read when cast to an
+    /// integer — the object text has no integer prefix, so the 1292 row is
+    /// mandatory (`g-t3`: `CAST(j AS SIGNED)` over the object column).
+    #[test]
+    fn json_object_to_int_cast_warns_truncation_like_string() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        let json = Datum::new_json(tidb_datatype::BinaryJSON::parse("{}").expect("json"));
+        let got = eval_cast(&CastType::Signed, json, None, &ctx)
+            .expect("a truncated JSON int cast remains a successful read");
+        assert_eq!(got, Datum::Int(0));
+        assert_eq!(
+            ctx.0.borrow().as_slice(),
+            &[(1292, "Truncated incorrect INTEGER value: '{}'".to_owned())],
+        );
     }
 
     /// Go's `ErrTruncatedWrongVal` template truncates the quoted value at
