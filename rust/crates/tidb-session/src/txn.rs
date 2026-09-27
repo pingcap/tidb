@@ -688,15 +688,36 @@ impl Session {
     /// the same 1305 an unknown name gets.
     fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
         let lowered = go_to_lower(name);
-        let txn = self
-            .txn
-            .as_mut()
-            .ok_or_else(|| DriverError::SavepointNotExists(name.to_owned()))?;
-        let index = txn
+        // go appends the statement error into the warning buffer as well
+        // (driver_tidb.go:376's error door), so SHOW WARNINGS after the
+        // refused ROLLBACK TO carries the same 1305 row.
+        let txn = match self.txn.as_mut() {
+            Some(txn) => txn,
+            None => {
+                self.append_warning(
+                    crate::WarningLevel::Error,
+                    1305,
+                    format!("SAVEPOINT {name} does not exist"),
+                );
+                return Err(DriverError::SavepointNotExists(name.to_owned()));
+            }
+        };
+        let index = match txn
             .savepoints
             .iter()
             .position(|savepoint| savepoint.name == lowered)
-            .ok_or_else(|| DriverError::SavepointNotExists(name.to_owned()))?;
+        {
+            Some(index) => index,
+            None => {
+                drop(txn);
+                self.append_warning(
+                    crate::WarningLevel::Error,
+                    1305,
+                    format!("SAVEPOINT {name} does not exist"),
+                );
+                return Err(DriverError::SavepointNotExists(name.to_owned()));
+            }
+        };
         txn.working = txn.savepoints[index].image.clone();
         let local_temporary = txn.savepoints[index].local_temporary.clone();
         let global_temporary = txn.savepoints[index].global_temporary.clone();
@@ -713,15 +734,21 @@ impl Session {
     /// savepoint taken after it (`Savepoints[:i]`), touching no data.
     fn release_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
         let lowered = go_to_lower(name);
-        let index = self
-            .txn
-            .as_ref()
-            .and_then(|txn| {
-                txn.savepoints
-                    .iter()
-                    .position(|savepoint| savepoint.name == lowered)
-            })
-            .ok_or_else(|| DriverError::SavepointNotExists(name.to_owned()))?;
+        let index = match self.txn.as_ref().and_then(|txn| {
+            txn.savepoints
+                .iter()
+                .position(|savepoint| savepoint.name == lowered)
+        }) {
+            Some(index) => index,
+            None => {
+                self.append_warning(
+                    crate::WarningLevel::Error,
+                    1305,
+                    format!("SAVEPOINT {name} does not exist"),
+                );
+                return Err(DriverError::SavepointNotExists(name.to_owned()));
+            }
+        };
         if let Some(txn) = &mut self.txn {
             txn.savepoints.truncate(index);
         }
