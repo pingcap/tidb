@@ -2235,12 +2235,17 @@ impl Session {
             // statement context reset, so the buffer keeps the PREVIOUS
             // statement's rows and never gains its own row (oracle-captured),
             // whichever classification the error carries.
+            // 3057 (`Incorrect user-level lock name`) is go's
+            // handleSingleGetLock refusal: it errors bare, without its own
+            // warning row (oracle g-err3: get_lock('x') over a missing
+            // timeout).
             // 1210 (`Incorrect arguments to <function>`) splits by origin: an
             // EVALUATION raise (PERIOD_ADD over a bad period -- g-fsp) never
             // lands a warning row, while the window executor's own build-time
             // refusal does (oracle g-window2: `NTILE(0)` errors 1210 WITH its
             // error row).
             if reported.code != 1148
+                && reported.code != 3057
                 && (!reported.is_from_evaluation()
                     || !matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105 | 1210))
             {

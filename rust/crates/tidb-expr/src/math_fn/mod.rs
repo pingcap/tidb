@@ -506,7 +506,14 @@ fn log2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     Ok(match numeric_arg(v, ctx)? {
-        Some(x) if x <= 0.0 => Datum::Null,
+        // go `builtinLog2Sig.evalReal`: a non-positive argument warns
+        // ErrInvalidArgumentForLogarithm (3020) on its way to NULL, exactly
+        // like the 1-arg ln/log10 signatures (oracle g-err3: log2('x')
+        // answers NULL with 1292 + 3020).
+        Some(x) if x <= 0.0 => {
+            ctx.append_warning(3020, "Invalid argument for logarithm");
+            Datum::Null
+        }
         Some(x) => Datum::Real(x.log2()),
         None => Datum::Null,
     })
@@ -543,7 +550,17 @@ fn exp(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     match numeric_arg(v, ctx)? {
-        Some(x) => finite_float(go_exp_log::go_exp(x)),
+        Some(x) => match go_exp_log::go_exp(x) {
+            value if value.is_finite() => Ok(Datum::Real(value)),
+            // go `builtinExpSig.evalReal` formats its overflow with the
+            // EVALUATED argument, not the source text (oracle g-err3:
+            // exp('2020-01-01') truncates to 2020 and errors `DOUBLE value
+            // is out of range in 'exp(2020)'`).
+            _ => Err(EvalError::DataOutOfRange {
+                value: "DOUBLE",
+                expression: format!("exp({x})"),
+            }),
+        },
         None => Ok(Datum::Null),
     }
 }

@@ -117,7 +117,10 @@ pub(crate) fn pad(
     }
     let len = match &vals[1] {
         Datum::Null => return Ok(Datum::Null),
-        value => crate::cast::to_i64_signed(value),
+        // go's ETInt argument cast warns on the failed string scan exactly
+        // like an explicit CAST (oracle g-err3: lpad(1, 'x', 2) / rpad(1,
+        // 'x', 2) answer '' with `Truncated incorrect INTEGER value: 'x'`).
+        value => crate::cast::to_i64_signed_with_warnings(value, ctx)?,
     };
     // `lpadFunctionClass.getFunction` tests BOTH string arguments, so a binary
     // pad string makes the whole call byte-based.
