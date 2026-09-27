@@ -113,14 +113,6 @@ pub struct CteClass {
     pub column_map: std::collections::BTreeMap<Vec<u8>, Column>,
     /// Go `IsOuterMostCTE`.
     pub is_outer_most_cte: bool,
-    /// Length of [`Self::push_down_predicates`] at the moment the seed's
-    /// physical plan was built. Go's `LogicalCTE.DeriveStats` optimises the
-    /// seed exactly once, in the physical phase, when every reference has
-    /// already recorded its predicates. The executor optimises seeds EAGERLY
-    /// (before the rule list, so join reorder sees their stats), so a class
-    /// whose predicate set grew during the rule list must be re-optimised;
-    /// this counter detects that growth.
-    pub optimized_predicate_count: usize,
 }
 
 /// What [`LogicalCTE::predicate_push_down`] resolved.

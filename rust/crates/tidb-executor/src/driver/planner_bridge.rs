@@ -2596,181 +2596,50 @@ pub(crate) fn physical_plan_for_logical(
     Ok(physical)
 }
 
-type CteReference = (Rc<RefCell<CteClass>>, Option<Rc<RefCell<StatsInfo>>>);
+/// Go `utilfuncp.DoOptimize` as `LogicalCTE.DeriveStats` calls it
+/// (`logical_cte.go:172`): the CTE class is optimized lazily, the first time a
+/// reference's statistics are derived, with the DNF of every predicate its
+/// references have recorded by then. It is never re-optimized.
+struct DriverCteOptimizer<'a> {
+    catalog: &'a Catalog,
+    ctx: &'a crate::StmtContext,
+    plan_ids: &'a PlanIdAllocator,
+    column_ids: &'a ColumnIdAllocator,
+    /// Classes being optimized right now; a class reaching itself is a cycle.
+    visiting: RefCell<HashSet<usize>>,
+}
 
-/// Collect the CTE class handles visible in one logical tree. Hidden seed and
-/// recursive roots are visited when their owning class is optimized.
-fn cte_references(plan: &LogicalPlan) -> Vec<CteReference> {
-    let mut references = Vec::new();
-    let mut seen = HashSet::new();
-    plan.walk_preorder(&mut |node| {
-        let LogicalPlan::CTE(cte) = node else {
-            return;
-        };
-        let Some(class) = &cte.cte else {
-            return;
-        };
+impl tidb_planner::logical::rule::CteOptimizer for DriverCteOptimizer<'_> {
+    fn optimize_cte(
+        &self,
+        class: &Rc<RefCell<CteClass>>,
+        seed_stat: Option<&Rc<RefCell<StatsInfo>>>,
+        rule_context: &RuleContext<'_>,
+    ) -> Result<(), tidb_planner::plan_base::PlanError> {
+        if class.borrow().seed_part_physical_plan.is_some() {
+            return Ok(());
+        }
         let identity = Rc::as_ptr(class) as usize;
-        if seen.insert(identity) {
-            references.push((Rc::clone(class), cte.seed_stat.clone()));
+        if !self.visiting.borrow_mut().insert(identity) {
+            return Err(tidb_planner::plan_base::PlanError::internal(
+                "LogicalCTE.DeriveStats: cyclic CTE class optimization",
+            ));
         }
-    });
-    references
-}
-
-#[allow(clippy::too_many_arguments)]
-fn optimize_cte_classes(
-    plan: &mut LogicalPlan,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-    zone: &tidb_datatype::SessionTimeZone,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    rule_context: &RuleContext<'_>,
-    visiting: &mut HashSet<usize>,
-) -> Result<(), tidb_planner::plan_base::PlanError> {
-    let mut rebuilt = HashSet::new();
-    for (class, seed_stat) in cte_references(plan) {
-        let did_rebuild = optimize_cte_class(
-            &class,
-            seed_stat.as_ref(),
-            catalog,
-            ctx,
-            zone,
-            plan_ids,
-            column_ids,
-            rule_context,
-            visiting,
-        )?;
-        if did_rebuild {
-            rebuilt.insert(Rc::as_ptr(&class) as usize);
-        }
-    }
-    invalidate_rebuilt_cte_stats(plan, &rebuilt);
-    Ok(())
-}
-
-// Eager seed optimization can run again after predicate collection. Invalidate
-// every reference to the rebuilt class, including when only NDVs changed.
-// DeriveStats then propagates its reload result through ordinary parent edges.
-fn invalidate_rebuilt_cte_stats(plan: &mut LogicalPlan, rebuilt: &HashSet<usize>) {
-    if rebuilt.is_empty() {
-        return;
-    }
-    let mut stack = vec![plan];
-    while let Some(node) = stack.pop() {
-        if let LogicalPlan::CTE(cte) = node {
-            if cte
-                .cte
-                .as_ref()
-                .is_some_and(|class| rebuilt.contains(&(Rc::as_ptr(class) as usize)))
-            {
-                cte.base.base.set_stats(None);
-            }
-        }
-        stack.extend(node.base_mut().children_mut().iter_mut());
+        let result = self.optimize_class(class, seed_stat, rule_context);
+        self.visiting.borrow_mut().remove(&identity);
+        result
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn optimize_cte_tree(
-    plan: LogicalPlan,
-    opt_flag: u64,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-    zone: &tidb_datatype::SessionTimeZone,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    rule_context: &RuleContext<'_>,
-    visiting: &mut HashSet<usize>,
-) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
-    // Go DataSource.DeriveStats initializes base statistics even when called
-    // from a logical rule. CTE roots need the same preinitialization as the
-    // outer query before join reorder can inspect their sources.
-    let mut initializer = InitStats {
-        error: None,
-        range_context: crate::index_range::RangeContext {
-            max_size: ctx.range_max_size(),
-            fallback_handler: Some(ctx.range_fallback_handler()),
-            eval_ctx: Some(ctx),
-        },
-        catalog,
-        select: None,
-        default_string_match_selectivity: ctx.default_string_match_selectivity(),
-        selectivity_factor: ctx.selectivity_factor(),
-        enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
-        context: ctx,
-    };
-    let (plan, ()) = fold_owned(&mut initializer, plan, ());
-    if let Some(error) = initializer.error {
-        return Err(error);
-    }
-    let optimized = logical_optimize(rule_context, opt_flag, plan)
-        .map_err(|(_, error)| error)?
-        .plan;
-    let mut optimized = check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
-    optimize_cte_classes(
-        &mut optimized,
-        catalog,
-        ctx,
-        zone,
-        plan_ids,
-        column_ids,
-        rule_context,
-        visiting,
-    )?;
-    optimized.recursive_derive_stats_with_context(&[], rule_context)?;
-    let logical = prepare_possible_properties(optimized).0;
-    let physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
-    Ok((logical, physical))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn optimize_cte_class(
-    class: &Rc<RefCell<CteClass>>,
-    seed_stat: Option<&Rc<RefCell<StatsInfo>>>,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-    zone: &tidb_datatype::SessionTimeZone,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    rule_context: &RuleContext<'_>,
-    visiting: &mut HashSet<usize>,
-) -> Result<bool, tidb_planner::plan_base::PlanError> {
-    let identity = Rc::as_ptr(class) as usize;
-    {
-        let class = class.borrow();
-        if let Some(physical) = class.seed_part_physical_plan.as_deref() {
-            if class.push_down_predicates.len() == class.optimized_predicate_count {
-                if let (Some(seed_stat), Some(stats)) = (seed_stat, physical.stats_info()) {
-                    *seed_stat.borrow_mut() = stats.clone();
-                }
-                return Ok(false);
-            }
-            // The seed was optimised before the rule list with the predicates
-            // recorded SO FAR. `LogicalCTE.PredicatePushDown` appended more
-            // since (GO records them in the logical phase and only then runs
-            // `DeriveStats`), so fall through and rebuild the seed with the
-            // DNF-extracted Selection below.
-        }
-    }
-    if !visiting.insert(identity) {
-        return Err(tidb_planner::plan_base::PlanError::internal(
-            "LogicalCTE.DeriveStats: cyclic CTE class optimization",
-        ));
-    }
-
-    let result = (|| {
-        let (mut seed, recursive, mut opt_flag, pushed_predicates, re_optimize) = {
+impl DriverCteOptimizer<'_> {
+    fn optimize_class(
+        &self,
+        class: &Rc<RefCell<CteClass>>,
+        seed_stat: Option<&Rc<RefCell<StatsInfo>>>,
+        rule_context: &RuleContext<'_>,
+    ) -> Result<(), tidb_planner::plan_base::PlanError> {
+        let (mut seed, mut opt_flag, predicates) = {
             let class = class.borrow();
-            // When the predicate set grew after the eager first pass, the
-            // seed is RE-optimised below with ONLY the predicate pushdown
-            // (plus stats re-derivation and the physical build): the recorded
-            // conditions ride the SAME absorption path pass 1 used, so their
-            // selectivities land correctly, and re-running the full rule list
-            // is neither needed nor safe on an already-optimised tree.
-            let re_optimize = class.seed_part_physical_plan.is_some()
-                && class.push_down_predicates.len() != class.optimized_predicate_count;
             let seed = class
                 .seed_part_logical_plan
                 .as_deref()
@@ -2780,178 +2649,93 @@ fn optimize_cte_class(
                     )
                 })?
                 .deep_clone();
-            (
-                seed,
-                class
-                    .recursive_part_logical_plan
-                    .as_deref()
-                    .map(LogicalPlan::deep_clone),
-                class.opt_flag,
-                class.push_down_predicates.clone(),
-                re_optimize,
-            )
+            (seed, class.opt_flag, class.push_down_predicates.clone())
         };
-
         // Go composes the predicates recorded by every reference as one DNF,
         // extracts common conjuncts, and puts that Selection above the seed
         // before running the CTE's own optimizer pass.
-        let pushed_count = pushed_predicates.len();
-        if let Some(dnf) = compose_dnf_condition(pushed_predicates) {
+        if let Some(dnf) = compose_dnf_condition(predicates) {
             let conditions = extract_filters_from_dnfs(vec![dnf]);
-            if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-                eprintln!("CTEDNF count={:?}", conditions.len());
-                for condition in &conditions {
-                    eprintln!("CTEDNF cond={:?}", condition);
-                }
-            }
             let query_block_offset = seed.base().base.query_block_offset();
             let mut selection = LogicalSelection::new(
-                BaseLogicalPlan::new(plan_ids, LogicalSelection::TYPE, query_block_offset),
+                BaseLogicalPlan::new(self.plan_ids, LogicalSelection::TYPE, query_block_offset),
                 conditions,
             );
             selection.base.set_children(vec![seed]);
             seed = LogicalPlan::Selection(selection);
             opt_flag = tidb_planner::logical::rule::set_predicate_push_down_flag(opt_flag);
+            class.borrow_mut().opt_flag = opt_flag;
         }
-
-        let (seed_logical, seed_physical) = if re_optimize {
-            // Light re-optimisation: push the attached Selection's conditions
-            // down (the pass-1 tree's DataSources hold fully initialised
-            // statistics, so absorption updates the estimates exactly the way
-            // pass 1's own PPDSolver pass did), then re-derive statistics and
-            // rebuild the physical tree. The logical rule list must NOT run
-            // again: pass 1 already applied it, and a second pass over an
-            // optimised tree perturbs the estimates (q30's join flipped from
-            // 603125.46 to 3405929.32).
-            let (seed, remaining, failure) =
-                tidb_planner::logical::rewrite::predicate_push_down(rule_context, seed, Vec::new());
-            if let Some(error) = failure {
-                return Err(error);
-            }
-            if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-                eprintln!(
-                    "Q74LIGHT pushed: pushed_count={} remaining={}",
-                    pushed_count,
-                    remaining.len()
-                );
-            }
-            let mut seed = if !remaining.is_empty() {
-                let query_block_offset = seed.base().base.query_block_offset();
-                let mut selection = LogicalSelection::new(
-                    BaseLogicalPlan::new(plan_ids, LogicalSelection::TYPE, query_block_offset),
-                    remaining,
-                );
-                selection.base.set_children(vec![seed]);
-                LogicalPlan::Selection(selection)
-            } else {
-                seed
-            };
-            // GO's single pass runs the column pruner after the pushdown; the
-            // join-output projections the pushdown ensures are eliminated
-            // there (q30/q1 kept one between HashAgg and HashJoin without
-            // this step).
-            let root_cols: Vec<tidb_expr::column::Column> = seed
-                .schema()
-                .map(|schema| schema.columns.clone())
-                .unwrap_or_default();
-            let (seed, prune_failure) = tidb_planner::logical::rewrite::prune_columns(
-                rule_context,
-                seed,
-                root_cols,
-            );
-            if let Some(error) = prune_failure {
-                return Err(error);
-            }
-            // Mirror optimize_cte_tree's tail around the re-derivation: the
-            // access-path check and the possible-properties preparation feed
-            // physical_plan_for_logical; skipping either rebuilds scans from
-            // stale info (q1/q30 lost their scan Selections and the d_year
-            // filter showed full-table estimates).
-            let mut seed = check_partial_index_paths(seed, ctx, rule_context.use_plan_cache);
-            seed.recursive_derive_stats_with_context(&[], rule_context)?;
-            let seed = prepare_possible_properties(seed).0;
-            let physical = physical_plan_for_logical(&seed, plan_ids, column_ids, ctx)?;
-            (seed, physical)
-        } else {
-            optimize_cte_tree(
-                seed,
-                opt_flag,
-                catalog,
-                ctx,
-                zone,
-                plan_ids,
-                column_ids,
-                rule_context,
-                visiting,
-            )?
-        };
-        let seed_stats = seed_physical.stats_info().cloned().ok_or_else(|| {
-            tidb_planner::plan_base::PlanError::internal(
-                "LogicalCTE.DeriveStats: seed physical stats are nil",
-            )
-        })?;
-        if std::env::var("TIDB_DEBUG_NDV").is_ok() {
-            eprintln!(
-                "CTEOPT pass pushed={} count={} seed_rows={}",
-                pushed_count,
-                class.borrow().optimized_predicate_count,
-                seed_stats.row_count()
-            );
-            {
-                eprintln!("CTETREE === seed logical ===");
-                seed_logical.walk_preorder(&mut |node| {
-                    let rows = node
-                        .stats_info()
-                        .map(|stats| stats.row_count().to_string())
-                        .unwrap_or_else(|| "?".to_string());
-                    eprintln!("CTETREE {} rows={}", node.tp(), rows);
-                });
-            }
-        }
-        if let Some(seed_stat) = seed_stat {
-            *seed_stat.borrow_mut() = seed_stats;
+        let (seed_logical, seed_physical) = self.optimize_tree(seed, opt_flag, rule_context)?;
+        // Go `*p.SeedStat = *resStat` precedes the recursive DoOptimize.
+        if let (Some(seed_stat), Some(stats)) = (seed_stat, seed_physical.stats_info()) {
+            *seed_stat.borrow_mut() = stats.clone();
         }
         {
             let mut class = class.borrow_mut();
             class.seed_part_logical_plan = Some(Box::new(seed_logical));
             class.seed_part_physical_plan = Some(Box::new(seed_physical));
-            class.optimized_predicate_count = pushed_count;
         }
-
+        let recursive = {
+            let class = class.borrow();
+            match (
+                class.recursive_part_logical_plan.as_deref(),
+                class.recursive_part_physical_plan.is_none(),
+            ) {
+                (Some(recursive), true) => Some(recursive.deep_clone()),
+                _ => None,
+            }
+        };
         if let Some(recursive) = recursive {
-            let (recursive_logical, recursive_physical) = if re_optimize {
-                // The recursive part was already optimised in pass 1 and the
-                // recorded consumer predicates target the seed; leave it
-                // untouched rather than re-running the rule list on it.
-                (
-                    recursive,
-                    class.borrow().recursive_part_physical_plan.as_deref().cloned().ok_or_else(|| {
-                        tidb_planner::plan_base::PlanError::internal(
-                            "LogicalCTE.DeriveStats: recursive physical plan is nil",
-                        )
-                    })?,
-                )
-            } else {
-                optimize_cte_tree(
-                    recursive,
-                    opt_flag,
-                    catalog,
-                    ctx,
-                    zone,
-                    plan_ids,
-                    column_ids,
-                    rule_context,
-                    visiting,
-                )?
-            };
+            let (logical, physical) = self.optimize_tree(recursive, opt_flag, rule_context)?;
             let mut class = class.borrow_mut();
-            class.recursive_part_logical_plan = Some(Box::new(recursive_logical));
-            class.recursive_part_physical_plan = Some(Box::new(recursive_physical));
+            class.recursive_part_logical_plan = Some(Box::new(logical));
+            class.recursive_part_physical_plan = Some(Box::new(physical));
         }
-        Ok(true)
-    })();
-    visiting.remove(&identity);
-    result
+        Ok(())
+    }
+
+    /// Go `DoOptimize` over one CTE part: logical rules, statistics (which
+    /// optimize nested CTE classes lazily through the same hook), and the
+    /// physical search.
+    fn optimize_tree(
+        &self,
+        plan: LogicalPlan,
+        opt_flag: u64,
+        rule_context: &RuleContext<'_>,
+    ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
+        let ctx = self.ctx;
+        // Go DataSource.DeriveStats initializes base statistics even when
+        // called from a logical rule; CTE roots need the same preinitialization
+        // as the outer query before join reorder can inspect their sources.
+        let mut initializer = InitStats {
+            error: None,
+            range_context: crate::index_range::RangeContext {
+                max_size: ctx.range_max_size(),
+                fallback_handler: Some(ctx.range_fallback_handler()),
+                eval_ctx: Some(ctx),
+            },
+            catalog: self.catalog,
+            select: None,
+            default_string_match_selectivity: ctx.default_string_match_selectivity(),
+            selectivity_factor: ctx.selectivity_factor(),
+            enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
+            context: ctx,
+        };
+        let (plan, ()) = fold_owned(&mut initializer, plan, ());
+        if let Some(error) = initializer.error {
+            return Err(error);
+        }
+        let optimized = logical_optimize(rule_context, opt_flag, plan)
+            .map_err(|(_, error)| error)?
+            .plan;
+        let mut optimized =
+            check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
+        optimized.recursive_derive_stats_with_context(&[], rule_context)?;
+        let logical = prepare_possible_properties(optimized).0;
+        let physical = physical_plan_for_logical(&logical, self.plan_ids, self.column_ids, ctx)?;
+        Ok((logical, physical))
+    }
 }
 
 /// Builds the ordinary physical SELECT tree consumed by the common executor
@@ -3351,7 +3135,7 @@ fn optimize_built_logical(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
-    session_zone: &tidb_expr::SessionTimeZone,
+    _session_zone: &tidb_expr::SessionTimeZone,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
     struct PlannerStatisticsLoad<'a> {
         catalog: &'a Catalog,
@@ -3464,6 +3248,13 @@ fn optimize_built_logical(
         context: ctx,
     };
     let optimizer_cost_env = ctx.optimizer_cost_env();
+    let cte_optimizer = DriverCteOptimizer {
+        catalog,
+        ctx,
+        plan_ids,
+        column_ids,
+        visiting: RefCell::new(HashSet::new()),
+    };
     let rule_context = RuleContext {
         estimator_options: optimizer_cost_env.session.estimator_options.clone(),
         allocator: plan_ids,
@@ -3504,6 +3295,7 @@ fn optimize_built_logical(
         outer_join_reorder: ctx.outer_join_reorder(),
         advanced_join_hint: ctx.advanced_join_hint(),
         hint_warning_sink: Some(ctx),
+        cte_optimizer: Some(&cte_optimizer),
     };
     let mut source_count = 0;
     plan.walk_preorder(&mut |plan| {
@@ -3521,25 +3313,11 @@ fn optimize_built_logical(
     // Go `core.RecheckCTE(logic)` (`optimize.go:553`): fill
     // `IsOuterMostCTE` on every CTE class before ANY optimization runs —
     // `LogicalCTE.PredicatePushDown` refuses to record predicates for a
-    // non-outermost CTE, and the eager seed optimization below runs the rule
-    // list on seeds that contain nested CTE references.
+    // non-outermost CTE.
     tidb_planner::logical::cte::recheck_cte(&mut plan);
-    // Go's `LogicalCTE.DeriveStats` optimizes its CTE class the first time a
-    // logical rule asks the producer for statistics, which happens DURING
-    // `logicalOptimize`. A class reference kept alive by two or more uses (a
-    // single use is inlined) therefore has to be optimized before entering the
-    // rule list, or the first `recursive_derive_stats` inside a rule sees a
-    // nil seed physical plan.
-    optimize_cte_classes(
-        &mut plan,
-        catalog,
-        ctx,
-        session_zone,
-        plan_ids,
-        column_ids,
-        &rule_context,
-        &mut HashSet::new(),
-    )?;
+    // No CTE class is optimized here: Go's `LogicalCTE.DeriveStats` runs
+    // `DoOptimize` the first time a reference's statistics are derived, which
+    // `rule_context.cte_optimizer` does from inside the stats walk.
     let mut optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?
         .plan;
@@ -3550,16 +3328,6 @@ fn optimize_built_logical(
     if !ctx.static_partition_prune() {
         attach_dynamic_partition_access(&mut optimized, &partition_pruning)?;
     }
-    optimize_cte_classes(
-        &mut optimized,
-        catalog,
-        ctx,
-        session_zone,
-        plan_ids,
-        column_ids,
-        &rule_context,
-        &mut HashSet::new(),
-    )?;
     optimized.recursive_derive_stats_with_context(&[], &rule_context)?;
     let logical = prepare_possible_properties(optimized).0;
     Ok(logical)
@@ -3743,36 +3511,6 @@ mod statistics_initialization_tests {
     use tidb_planner::logical::DataSource;
     use tidb_planner::logical::data_source::DataSourceColumn;
     use tidb_planner::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
-
-    #[test]
-    fn rebuilt_cte_invalidates_every_reference_without_count_comparison() {
-        use tidb_planner::logical::{LogicalCTE, LogicalUnionAll};
-        let class = Rc::new(RefCell::new(CteClass::default()));
-        let unrelated = Rc::new(RefCell::new(CteClass::default()));
-        let reference = |class, id| {
-            let mut cte = LogicalCTE::new(BaseLogicalPlan::with_id(id, LogicalCTE::TYPE, 0), class);
-            cte.base
-                .base
-                .set_stats(Some(StatsInfo::new(100.0, [(1, 10.0)])));
-            LogicalPlan::CTE(cte)
-        };
-        let mut plan = LogicalPlan::UnionAll(LogicalUnionAll::default());
-        plan.set_children(vec![
-            reference(class.clone(), 1),
-            reference(class.clone(), 2),
-            reference(unrelated, 3),
-        ]);
-        invalidate_rebuilt_cte_stats(&mut plan, &HashSet::new());
-        assert!(
-            plan.children()
-                .iter()
-                .all(|child| child.stats_info().is_some())
-        );
-        invalidate_rebuilt_cte_stats(&mut plan, &HashSet::from([Rc::as_ptr(&class) as usize]));
-        assert!(plan.children()[0].stats_info().is_none());
-        assert!(plan.children()[1].stats_info().is_none());
-        assert!(plan.children()[2].stats_info().is_some());
-    }
 
     #[test]
     fn unfiltered_table_path_count_uses_realtime_row_count() {

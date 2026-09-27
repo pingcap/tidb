@@ -458,3 +458,71 @@ fn recursive_block_restrictions_report_gos_errnos() {
         assert_eq!(got.0, *want, "for {sql}: {}", got.1);
     }
 }
+
+/// Go `LogicalCTE.DeriveStats` (`logical_cte.go:172`) optimizes a CTE class
+/// lazily, the first time a reference's statistics are derived: the seed is
+/// optimized with the DNF of every reference's recorded predicates, its
+/// statistics are published to `SeedStat`, and only THEN is the recursive
+/// part optimized, so its `CTETable` reads the seed's row count. Expected
+/// rows are Go master 8936d7bdcb's `explain format='brief'` output.
+#[test]
+fn cte_classes_are_optimized_from_derive_stats_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE uj1 (id INT PRIMARY KEY, left_v INT)",
+        "INSERT INTO uj1 VALUES (1,10),(2,20),(3,30)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let explain = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| format!("{}|{}|{}", row[0], row[1], row[4]))
+            .collect()
+    };
+    assert_eq!(
+        explain(
+            &mut session,
+            "explain format='brief' WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL \
+             SELECT n+1 FROM r WHERE n < 3) SELECT * FROM r a JOIN r b ON a.n = b.n \
+             WHERE a.n > 1"
+        ),
+        [
+            "HashJoin|1.30|inner join, equal:[eq(Column#6, Column#7)]",
+            "├─Selection(Build)|1.44|gt(Column#7, 1), not(isnull(Column#7))",
+            "│ └─CTEFullScan|1.80|data:CTE_0",
+            "└─Selection(Probe)|1.44|gt(Column#6, 1), not(isnull(Column#6))",
+            "  └─CTEFullScan|1.80|data:CTE_0",
+            "CTE|1.80|Recursive CTE",
+            "├─Projection(Seed Part)|1.00|1->Column#2",
+            "│ └─TableDual|1.00|rows:1",
+            "└─Projection(Recursive Part)|0.80|cast(plus(Column#3, 1), bigint BINARY)->Column#5",
+            "  └─Selection|0.80|lt(Column#3, 3)",
+            "    └─CTETable|1.00|Scan on CTE_0",
+        ]
+    );
+    // Both references' predicates reach the seed as one DNF.
+    assert_eq!(
+        explain(
+            &mut session,
+            "explain format='brief' WITH c AS (SELECT id, left_v FROM uj1) SELECT * \
+             FROM c c1 JOIN c c2 ON c1.id = c2.id WHERE c1.left_v = 10 AND c2.left_v > 5"
+        )[5..],
+        [
+            "CTE|3333.33|Non-Recursive CTE",
+            "└─TableReader(Seed Part)|3333.33|data:Selection",
+            "  └─Selection|3333.33|or(eq(test.uj1.left_v, 10), gt(test.uj1.left_v, 5))",
+            "    └─TableFullScan|10000.00|keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "WITH c AS (SELECT id, left_v FROM uj1) SELECT * FROM c c1, c c2 \
+             WHERE c1.id = 1 AND c2.id = 2"
+        ))
+        .into_iter()
+        .map(|row| row.join("|"))
+        .collect::<Vec<_>>(),
+        ["1|10|2|20"]
+    );
+}

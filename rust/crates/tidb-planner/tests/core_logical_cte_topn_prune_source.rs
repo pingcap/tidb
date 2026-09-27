@@ -109,6 +109,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         outer_join_reorder: true,
         advanced_join_hint: true,
         hint_warning_sink: None,
+        cte_optimizer: None,
     }
 }
 

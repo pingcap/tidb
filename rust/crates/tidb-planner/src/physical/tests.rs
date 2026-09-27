@@ -2314,7 +2314,6 @@ fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
         push_down_predicates: Vec::new(),
         column_map: std::collections::BTreeMap::new(),
         is_outer_most_cte: false,
-        optimized_predicate_count: 0,
     };
     let lp = LogicalCTE::new(
         BaseLogicalPlan::new(&allocator, LogicalCTE::TYPE, 0),

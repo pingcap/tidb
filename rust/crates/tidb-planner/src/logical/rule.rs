@@ -663,6 +663,27 @@ pub struct RuleContext<'a> {
     pub advanced_join_hint: bool,
     /// Go `StmtCtx.SetHintWarning`.
     pub hint_warning_sink: Option<&'a dyn HintWarningSink>,
+    /// Go `utilfuncp.DoOptimize` as `LogicalCTE.DeriveStats` reaches it: the
+    /// driver-owned whole-query optimizer a CTE class runs the first time its
+    /// statistics are asked for (`logical_cte.go:172`).
+    pub cte_optimizer: Option<&'a dyn CteOptimizer>,
+}
+
+/// Go `LogicalCTE.DeriveStats`' lazy `DoOptimize` of a CTE class: the seed
+/// (with the DNF of every reference's recorded predicates) and, for a
+/// recursive CTE, the recursive part are optimized into logical + physical
+/// plans the FIRST time the class's statistics are needed, and never again.
+pub trait CteOptimizer {
+    /// Fill `class.seed_part_{logical,physical}_plan` (and the recursive
+    /// pair) when the seed physical plan is still absent. Go publishes the
+    /// optimized seed's statistics into the calling reference's `SeedStat`
+    /// BEFORE the recursive part is optimized, so its `CTETable` sees them.
+    fn optimize_cte(
+        &self,
+        class: &std::rc::Rc<std::cell::RefCell<super::cte::CteClass>>,
+        seed_stat: Option<&std::rc::Rc<std::cell::RefCell<crate::stats_info::StatsInfo>>>,
+        context: &RuleContext<'_>,
+    ) -> Result<(), PlanError>;
 }
 
 /// The optimizer-hint warning side effect exposed by Go's statement context.

@@ -3048,6 +3048,10 @@ struct DeriveStatsFold<'a> {
     range_max_size: i64,
     selectivity_factor: f64,
     range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    /// The rule context whose [`CteOptimizer`](super::rule::CteOptimizer)
+    /// `LogicalCTE.DeriveStats` runs lazily; `None` for the context-free
+    /// entry points, where an unoptimized CTE class refuses.
+    rule_context: Option<&'a RuleContext<'a>>,
 }
 
 /// What one `ascend` arm decided.
@@ -3459,7 +3463,27 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                     .cte
                     .clone()
                     .ok_or_else(|| PlanError::internal("LogicalCTE.DeriveStats: CTEClass is nil"));
+                let reload = reloads.len() == 1 && reloads[0];
+                let rule_context = self.rule_context;
                 StatsOutcome::Done(class.and_then(|class| {
+                    // Go `logical_cte.go:172`: kept stats short-circuit
+                    // before the class is ever optimized.
+                    if !reload {
+                        if let Some(existing) = op.base.base.stats_info() {
+                            return Ok((existing.clone(), false));
+                        }
+                    }
+                    // Go: `if p.Cte.SeedPartPhysicalPlan == nil { ... DoOptimize }`
+                    // -- the class is optimized HERE, the first time any
+                    // reference's statistics are needed, with whatever
+                    // predicates the references have recorded by then.
+                    if class.borrow().seed_part_physical_plan.is_none() {
+                        let optimizer = rule_context
+                            .and_then(|context| context.cte_optimizer.map(|o| (o, context)));
+                        if let Some((optimizer, context)) = optimizer {
+                            optimizer.optimize_cte(&class, op.seed_stat.as_ref(), context)?;
+                        }
+                    }
                     let class = class.borrow();
                     let seed_plan = class.seed_part_physical_plan.as_deref().ok_or_else(|| {
                         PlanError::internal("LogicalCTE.DeriveStats: seed physical plan is nil")
@@ -3608,6 +3632,7 @@ pub fn recursive_derive_stats(
         tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
         crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         &Default::default(),
+        None,
     )
 }
 
@@ -3633,6 +3658,7 @@ pub fn recursive_derive_stats_with_context(
         context.group_ndv_skew_ratio,
         context.scale_ndv_skew_ratio,
         &context.expr_pushdown_blacklist,
+        Some(context),
     )
 }
 
@@ -3652,6 +3678,7 @@ fn recursive_derive_stats_with_range_quota(
     group_ndv_skew_ratio: f64,
     scale_ndv_skew_ratio: f64,
     expr_pushdown_blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    rule_context: Option<&RuleContext<'_>>,
 ) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
     let mut fold = DeriveStatsFold {
         expr_pushdown_blacklist,
@@ -3668,6 +3695,7 @@ fn recursive_derive_stats_with_range_quota(
         range_max_size,
         selectivity_factor,
         range_fallback_handler,
+        rule_context,
     };
     let (plan, (stats, reload, _schema)) = fold_owned(&mut fold, plan, col_groups);
     match fold.failure.take() {
