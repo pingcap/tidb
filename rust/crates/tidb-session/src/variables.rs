@@ -48,10 +48,9 @@ enum ResourceGroupHintRejection {
 /// becomes a number; every other type stays the stored string.
 ///
 /// Go builds a `Uint` datum for `TypeUnsigned`, which this AST has no literal
-/// for: [`Expr::Int`] carries digits that later fail above `i64::MAX`. A value
-/// that does not fit stays a string, which renders identically and keeps the
-/// arithmetic gap where it already is rather than turning a readable variable
-/// into an error.
+/// for: [`Expr::Int`] carries the digits, and `eval_in` settles the datum —
+/// `Int` below `i64::MAX`, `UInt` above — so the full unsigned domain renders
+/// as a number exactly as go's does.
 fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
     use tidb_ast::Expr;
     match sysvar::get_sys_var(name).map(|def| def.var_type) {
@@ -59,7 +58,11 @@ fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
             let on = value.eq_ignore_ascii_case("ON") || value == "1";
             Expr::Int(i32::from(on).to_string())
         }
-        Some(sysvar::VarType::Unsigned) if value.parse::<i64>().is_ok() => Expr::Int(value),
+        Some(sysvar::VarType::Unsigned)
+            if value.parse::<i64>().is_ok() || value.parse::<u64>().is_ok() =>
+        {
+            Expr::Int(value)
+        }
         _ => Expr::String(value),
     }
 }
