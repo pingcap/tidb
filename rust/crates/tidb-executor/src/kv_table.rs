@@ -3099,6 +3099,17 @@ impl KvTable {
             .map(|_| self.auto_id.next() as i64)
     }
 
+    /// The live draw cursor's next id, which `SHOW TABLE STATUS` reports as
+    /// `Auto_increment` -- distinct from [`Self::next_auto_increment`] (the
+    /// reserved window's end, which `SHOW CREATE` reports): go's STATUS row
+    /// reads the draw cursor (oracle g-view sr: after `AUTO_INCREMENT = 100`
+    /// plus one drawn id the two shows read 30100 and 101 respectively).
+    #[must_use]
+    pub fn allocated_auto_increment(&self) -> Option<i64> {
+        self.auto_increment_offset
+            .map(|_| self.auto_id.allocated_next() as i64)
+    }
+
     /// The table's indexes: every one of them, which is what index
     /// maintenance, `SHOW INDEX`, and `information_schema` read.
     #[must_use]

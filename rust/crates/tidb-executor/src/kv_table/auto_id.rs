@@ -636,6 +636,23 @@ impl AutoIdAllocator {
             .wrapping_add(1)
     }
 
+    /// The id the next SINGLE draw hands out -- the cached range's base plus
+    /// one -- which is what `SHOW TABLE STATUS` reports as `Auto_increment`.
+    /// go separates this from `SHOW CREATE`'s value: the CREATE side reads
+    /// the reserved window's end ([`Self::next`]), the STATUS side reads the
+    /// draw cursor (oracle g-view sr: after `AUTO_INCREMENT = 100` and one
+    /// drawn id, SHOW CREATE reads 30100 while SHOW TABLE STATUS reads 101;
+    /// oracle m20 ai1: the explicit-100 cache-only rebase makes STATUS read
+    /// 103). A table whose allocator never drew reports base(0)+1 == 1 -- go
+    /// renders that shape as 0, which nothing pins.
+    pub(crate) fn allocated_next(&self) -> u64 {
+        self.cache
+            .lock()
+            .expect("auto id cache poisoned")
+            .base
+            .wrapping_add(1)
+    }
+
     /// The next id beyond all ranges reserved in the shared store.
     pub(crate) fn next_global(&self) -> Result<u64, AutoIdStoreError> {
         self.store.next_global()
