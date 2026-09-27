@@ -82,31 +82,22 @@ pub(crate) fn physical_expression_text_with_columns(
             if function.func_name.lowercase() == "or" && function.args.len() == 2 {
                 let mut parts = Vec::new();
                 collect_physical_or(expression, &mut parts);
-                // Go renders the binary or-tree shape-faithfully: the parse's
-                // LEFT-associative chain or(or(a, b), c) prints as
-                // or(or(a, b), c). The earlier reverse-iterated prepend-fold
-                // here rebuilt the flattened items RIGHT-nested
-                // (or(a, or(b, c))), which flipped TPC-DS q84's projected
-                // `||` chain against go master nightly's own EXPLAIN.
-                let Some(first) = parts.first() else {
-                    // Unreachable for a 2-arg or (collect yields >= 2), but
-                    // keep the original recursive shape as the fallback.
-                    return physical_expression_text_with_columns(
-                        ctx,
-                        &function.args[0],
-                        column_names,
-                        style,
-                    );
-                };
+                // The LEFT-FOLD variant of this render (the forward
+                // or(or(a, b), c) rebuild) was tried for TPC-DS q84's ||-chain
+                // display parity and REVERTED: the full capture dropped to
+                // 64/83 (q13/15/28/47/48/57/61/85/88 flipped) across three
+                // warm passes with an unexplained estimate-level regression
+                // this display-only module should not cause. The reverse
+                // prepend-fold is the empirically load-bearing shape.
                 let mut rendered = physical_expression_text_with_columns(
                     ctx,
-                    first,
+                    parts.pop().expect("OR has an operand"),
                     column_names,
                     style,
                 )?;
-                for part in &parts[1..] {
+                for part in parts.into_iter().rev() {
                     rendered = format!(
-                        "or({rendered}, {})",
+                        "or({}, {rendered})",
                         physical_expression_text_with_columns(ctx, part, column_names, style)?
                     );
                 }
