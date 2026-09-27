@@ -286,7 +286,14 @@ pub fn build_table_info_with_context(
         [schema, _] => schema.clone(),
         _ => String::new(),
     };
-    build_table_info_in_schema(create, &schema, db_charset, db_collate, clustered_mode, context)
+    build_table_info_in_schema(
+        create,
+        &schema,
+        db_charset,
+        db_collate,
+        clustered_mode,
+        context,
+    )
 }
 
 /// [`build_table_info_with_context`] with the child's resolved schema, which
@@ -1974,6 +1981,20 @@ pub(crate) fn resolve_charset_collation(
         }
         if let Some(charset) = charset.filter(|charset| !charset.is_empty()) {
             let collate = get_default_collation(charset).map_err(|error| {
+                // go `charset.GetCharsetInfo`: an absent name answers the
+                // clean 1115 (`Unknown character set: 'utf16'`), not the
+                // generic refusal (oracle-captured on g-charset2).
+                // utf16-style names sit in MySQL's table but carry no TiDB
+                // support (`UnsupportedCharset`); the oracle answers the
+                // SAME clean 1115 for both that and a truly absent name.
+                if let tidb_datatype::CharsetError::UnknownCharset(name)
+                | tidb_datatype::CharsetError::UnsupportedCharset(name) = &error
+                {
+                    return DdlAdmissionError::with_code(
+                        tidb_error::mysql::errcode::ErrUnknownCharacterSet,
+                        format!("Unknown character set: '{name}'"),
+                    );
+                }
                 DdlAdmissionError::with_code(
                     GENERIC_ERROR_CODE,
                     format!("CHARACTER SET {charset}: {error}"),

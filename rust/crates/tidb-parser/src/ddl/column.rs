@@ -115,10 +115,15 @@ impl Parser {
                 } else {
                     self.parse_charset_name()?
                 };
-                let charset = canonical_field_charset(&raw).ok_or_else(|| {
-                    self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
-                })?;
-                ty.charset = Some(charset.to_ascii_uppercase());
+                // go's parser accepts ANY charset name; the DDL layer
+                // refuses the unknown ones with a clean 1115 (`Unknown
+                // character set: 'utf16'`), so the raw name flows through
+                // instead of a parse-time 1064 wrap.
+                let charset = match canonical_field_charset(&raw) {
+                    Some(canonical) => canonical.to_ascii_uppercase(),
+                    None => raw.clone(),
+                };
+                ty.charset = Some(charset);
                 if ty.charset.as_deref() == Some("BINARY") {
                     normalize_binary_charset(&mut ty);
                 }
