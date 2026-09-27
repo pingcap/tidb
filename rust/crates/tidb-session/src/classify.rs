@@ -414,6 +414,22 @@ impl Session {
             {
                 StoredStateChange::Accounts
             }
+            Stmt::Ddl(ddl)
+                if matches!(
+                    ddl.as_ref(),
+                    tidb_ast::DdlStmt::CreateSequence(_)
+                        | tidb_ast::DdlStmt::DropSequence(_)
+                        | tidb_ast::DdlStmt::AlterSequence(_)
+                ) =>
+            {
+                // A sequence lives in the session's own catalog
+                // (`run_create_sequence_in`/`run_drop_sequence_in`): its
+                // allocators are that catalog's Arc handles, and the builtins
+                // resolve through the statement's catalog snapshot. No
+                // separate cluster meta exists to publish, so there is
+                // nothing to route — the statement runs where it stands.
+                StoredStateChange::None
+            }
             Stmt::Ddl(_) => StoredStateChange::Schema,
             // The privilege/role statements: everything under `Admin` that
             // writes `mysql.user`, `mysql.db`, or the role edges. `SHOW
