@@ -45,6 +45,15 @@ impl Parser {
                 args: Vec::new(),
                 origin_position: 0,
             }
+        } else if self.is_op("(") {
+            // go's DefaultValueExpr paren form wraps a NARROW value: the
+            // yacc has no infix inside the column default, so
+            // `DEFAULT (1 + 2)` errors at `+ 2)` (oracle-captured on
+            // g-view's dft CREATE).
+            self.bump();
+            let expression = self.parse_prefix(prec::NONE)?;
+            self.expect_op(")")?;
+            expression
         } else {
             // Go's column DEFAULT grammar deliberately parses one prefix
             // expression, not a full infix expression. This leaves the next
