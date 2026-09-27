@@ -510,12 +510,68 @@ fn show_row_matches(
     columns: &[&str],
     row: &[Datum],
 ) -> Result<bool, DriverError> {
+    // go's SHOW WHERE resolves names against the statement's OWN output
+    // columns; a name outside that list is ErrBadField with the 'where
+    // clause' clause -- even when it names a DATA column of the inspected
+    // table (oracle: `SHOW COLUMNS FROM sy WHERE b IS NOT NULL` fails
+    // `Unknown column 'b' in 'where clause'`).
+    if let Some(missing) = first_unknown_output_column(predicate, columns) {
+        return Err(DriverError::UnknownColumnInClause {
+            column: missing,
+            clause: "where clause".to_owned(),
+        });
+    }
     let resolver = ShowRowResolver { columns, row };
     let value = tidb_executor::eval_in(predicate, &resolver)
         .map_err(|e| DriverError::Exec(tidb_executor::ExecError::Eval(e)))?;
     let truthy = tidb_executor::truthy_of(&value)
         .map_err(|e| DriverError::Exec(tidb_executor::ExecError::Eval(e)))?;
     Ok(truthy.unwrap_or(false))
+}
+
+/// The first referenced column name that is not one of the SHOW output's own
+/// columns, in evaluation order.
+fn first_unknown_output_column(predicate: &tidb_ast::Expr, columns: &[&str]) -> Option<String> {
+    struct Collector<'a> {
+        columns: &'a [&'a str],
+        missing: Option<String>,
+    }
+    impl tidb_ast::Visitor for Collector<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(name) = node
+                .downcast_ref::<tidb_ast::Expr>()
+                .and_then(|expr| match expr {
+                    tidb_ast::Expr::Column(path) => path.last().cloned(),
+                    _ => None,
+                })
+            {
+                if !self
+                    .columns
+                    .iter()
+                    .any(|column| column.eq_ignore_ascii_case(&name))
+                {
+                    self.missing = Some(name);
+                }
+                // A column leaf has no children; false keeps the walk alive
+                // for sibling keys (`WHERE a = 1 AND b = 2`).
+                return false;
+            }
+            // Descend into compound expressions: `enter` returning true
+            // SKIPS the subtree, which would never reach the operands.
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let mut probe = predicate.clone();
+    let mut collector = Collector {
+        columns,
+        missing: None,
+    };
+    tidb_ast::Visitable::accept(&mut probe, &mut collector);
+    collector.missing
 }
 
 /// An evaluated SHOW LIKE operand, including whether Go's predicate extractor
@@ -1324,8 +1380,7 @@ impl Session {
                 let mut catalog = shared
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                return crate::show_admin::flush_stmt(flush, &mut catalog, &current_db)
-                    .map(Some);
+                return crate::show_admin::flush_stmt(flush, &mut catalog, &current_db).map(Some);
             }
             tidb_ast::AdminStmt::ShowDdl => {
                 return Ok(Some(crate::show_admin::show_ddl_output(
