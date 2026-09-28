@@ -399,6 +399,11 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.AlterTableStmt:
 		dbNames = append(dbNames, node.Table.Schema)
+		for _, spec := range node.Specs {
+			if spec.NewTable != nil {
+				dbNames = append(dbNames, spec.NewTable.Schema)
+			}
+		}
 	case *ast.ImportIntoStmt:
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.TruncateTableStmt:
