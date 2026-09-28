@@ -865,6 +865,26 @@ impl Session {
             tidb_ast::AdminStmt::ShowDdlJobs(show) => {
                 Ok(Some(self.admin_show_ddl_jobs_stmt(show)?))
             }
+            // go `SimpleExec.executeExplainFor` (`pkg/executor/simple.go`):
+            // the target connection must exist on this server
+            // (`ErrNoSuchThread` 1094, `Unknown thread id: %d`); its running
+            // statement then explains through the ordinary machinery.
+            tidb_ast::AdminStmt::ExplainFor(explain_for) => {
+                let target = explain_for.connection_id;
+                let found = self.process.as_ref().map_or(false, |guard| {
+                    guard
+                        .registry()
+                        .snapshot()
+                        .iter()
+                        .any(|row| row.id == target)
+                });
+                if !found {
+                    return Err(DriverError::UnknownThreadId(target));
+                }
+                Err(DriverError::unsupported(
+                    "EXPLAIN FOR CONNECTION over a live statement is not supported yet",
+                ))
+            }
             // go `fetchShowPrivileges` (`pkg/executor/show.go:2036`): the
             // static table then every dynamic privilege.
             tidb_ast::AdminStmt::ShowPrivileges => {

@@ -66,6 +66,9 @@ pub enum DriverError {
     /// Go `plannererrors.ErrUnknownExplainFormat` (1791), carrying the
     /// unrecognized format name from `EXPLAIN ... FORMAT`.
     UnknownExplainFormat(String),
+    /// Go `executor.ErrNoSuchThread` (1094): `EXPLAIN FOR CONNECTION` named a
+    /// connection this server does not know. Carries the connection id.
+    UnknownThreadId(u64),
     /// Go `dbterror.ErrSequenceUnsupportedTableOption` (8227), carrying the
     /// option value from `CreateSequenceStmt.TblOptions`.
     SequenceUnsupportedTableOption(String),

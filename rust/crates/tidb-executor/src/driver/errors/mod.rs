@@ -214,6 +214,9 @@ impl DriverError {
             1791,
             format!("Unknown EXPLAIN format name: '{name}'"),
         ),
+        DriverError::UnknownThreadId(id) => {
+            MysqlError::new(1094, format!("Unknown thread id: {id}"))
+        }
         DriverError::NotSupportedWithSem(statement) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrNotSupportedWithSem,
             format!(
