@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/expression/matchagainst"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tipb/go-tipb"
@@ -60,6 +61,26 @@ func BuildFTSBooleanQueryWithNgramTokenSize(search string, parserType model.Full
 	query.QueryTokenizer = string(parserType)
 	if parserType == model.FullTextParserTypeNgramV1 && ngramTokenSize > 0 {
 		query.NgramTokenSize = uint32(ngramTokenSize)
+	}
+	return query, nil
+}
+
+// BuildFTSBooleanQueryWithAnalyzerConfig carries the same analyzer settings
+// used by TiDB's local evaluator to TiFlash. This extends only execution
+// parity; it does not change BOOLEAN MODE query semantics.
+func BuildFTSBooleanQueryWithAnalyzerConfig(search string, config fulltext.AnalyzerConfig) (*tipb.FTSBooleanQuery, error) {
+	query, err := BuildFTSBooleanQueryWithNgramTokenSize(search, config.ParserType, config.NgramTokenSize)
+	if err != nil {
+		return nil, err
+	}
+	if config.ParserType == model.FullTextParserTypeStandardV1 {
+		if config.InnodbFtMinTokenSize < 0 || config.InnodbFtMaxTokenSize <= 0 {
+			return nil, fmt.Errorf("invalid STANDARD_V1 analyzer token-size range: min=%d max=%d",
+				config.InnodbFtMinTokenSize, config.InnodbFtMaxTokenSize)
+		}
+		query.InnodbFtMinTokenSize = uint32(config.InnodbFtMinTokenSize)
+		query.InnodbFtMaxTokenSize = uint32(config.InnodbFtMaxTokenSize)
+		query.InnodbFtEnableStopword = config.InnodbFtEnableStopword
 	}
 	return query, nil
 }

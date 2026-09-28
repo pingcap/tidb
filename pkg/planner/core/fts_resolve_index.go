@@ -109,11 +109,7 @@ func (*FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor
 		if err != nil {
 			return false, plannererrors.ErrWrongUsage.FastGen("cannot configure BOOLEAN MODE full-text analyzer: %s", err)
 		}
-		booleanQuery, err := expression.BuildFTSBooleanQueryWithNgramTokenSize(
-			ftsInfo.Query,
-			matchingIndex.FullTextInfo.ParserType,
-			analyzerConfig.NgramTokenSize,
-		)
+		booleanQuery, err := expression.BuildFTSBooleanQueryWithAnalyzerConfig(ftsInfo.Query, analyzerConfig)
 		if err != nil {
 			return false, plannererrors.ErrWrongUsage.FastGen("unsupported BOOLEAN MODE full-text query: %s", err)
 		}

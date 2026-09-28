@@ -17,6 +17,7 @@ package expression
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,34 @@ func TestBuildFTSBooleanQuery(t *testing.T) {
 
 	require.Equal(t, tipb.FTSBooleanOccur_FTSBooleanOccurMustNot, query.GetNodes()[3].GetOccur())
 	require.Equal(t, "dog", query.GetNodes()[3].GetTerm().GetText())
+}
+
+func TestBuildFTSBooleanQueryWithAnalyzerConfig(t *testing.T) {
+	query, err := BuildFTSBooleanQueryWithAnalyzerConfig("+cat -dog", fulltext.AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   1,
+		InnodbFtMaxTokenSize:   16,
+		InnodbFtEnableStopword: false,
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint32(1), query.GetInnodbFtMinTokenSize())
+	require.Equal(t, uint32(16), query.GetInnodbFtMaxTokenSize())
+	require.False(t, query.GetInnodbFtEnableStopword())
+	require.Equal(t, "STANDARD_V1", query.GetQueryTokenizer())
+
+	_, err = BuildFTSBooleanQueryWithAnalyzerConfig("cat", fulltext.AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize: 5,
+		InnodbFtMaxTokenSize: 0,
+	})
+	require.Error(t, err)
+
+	query, err = BuildFTSBooleanQueryWithAnalyzerConfig("cat", fulltext.AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize: 16,
+		InnodbFtMaxTokenSize: 10,
+	})
+	require.NoError(t, err, "min > max is a valid TiDB configuration that analyzes no standard tokens")
 }
 
 func TestBuildFTSBooleanQuerySupportsNgramAndRejectsUnsupportedSyntax(t *testing.T) {

@@ -163,6 +163,54 @@ func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 	require.Contains(t, fmt.Sprint(explainRows), "tiflash")
 }
 
+func TestMatchAgainstStandardAnalyzerSettingsPushdownToTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table standard_articles (
+		id int primary key,
+		body text,
+		fulltext index idx_body(body)
+	)`)
+
+	oldMinTokenSize := tk.MustQuery("select @@global.innodb_ft_min_token_size").Rows()[0][0]
+	oldMaxTokenSize := tk.MustQuery("select @@global.innodb_ft_max_token_size").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global innodb_ft_min_token_size=%v", oldMinTokenSize))
+		tk.MustExec(fmt.Sprintf("set global innodb_ft_max_token_size=%v", oldMaxTokenSize))
+	}()
+	tk.MustExec("set global innodb_ft_min_token_size=1")
+	tk.MustExec("set global innodb_ft_max_token_size=10")
+	tk.MustExec("set session innodb_ft_enable_stopword=OFF")
+
+	dom := domain.GetDomain(tk.Session())
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("standard_articles"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	tk.MustExec("set @@session.tidb_enable_local_match_against=OFF")
+
+	plan := compilePhysicalPlan(t, tk, "select id from standard_articles where match(body) against('+the' in boolean mode)")
+	scan := findFTSTableScan(t, plan)
+	require.NotNil(t, scan.FtsQueryInfo)
+	booleanQuery := scan.FtsQueryInfo.BooleanQuery
+	require.NotNil(t, booleanQuery)
+	require.Equal(t, uint32(1), booleanQuery.GetInnodbFtMinTokenSize())
+	require.Equal(t, uint32(10), booleanQuery.GetInnodbFtMaxTokenSize())
+	require.False(t, booleanQuery.GetInnodbFtEnableStopword())
+
+	pb, err := scan.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
+	require.NoError(t, err)
+	require.NotNil(t, pb.TblScan)
+	require.Len(t, pb.TblScan.UsedColumnarIndexes, 1)
+	ftsInfo, ok := pb.TblScan.UsedColumnarIndexes[0].Index.(*tipb.ColumnarIndexInfo_FtsQueryInfo)
+	require.True(t, ok)
+	require.Equal(t, uint32(1), ftsInfo.FtsQueryInfo.BooleanQuery.GetInnodbFtMinTokenSize())
+	require.Equal(t, uint32(10), ftsInfo.FtsQueryInfo.BooleanQuery.GetInnodbFtMaxTokenSize())
+	require.False(t, ftsInfo.FtsQueryInfo.BooleanQuery.GetInnodbFtEnableStopword())
+}
+
 func compilePhysicalPlan(t *testing.T, tk *testkit.TestKit, sql string) base.Plan {
 	t.Helper()
 	ctx := context.Background()

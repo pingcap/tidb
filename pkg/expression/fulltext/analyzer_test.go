@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -63,6 +64,21 @@ func TestAnalyzeStandardV1(t *testing.T) {
 	require.Equal(t, []Token{
 		{Text: "cat", Position: 1},
 	}, tokens)
+}
+
+func TestAnalyzeStandardV1StopwordsUseCollation(t *testing.T) {
+	analyzer, err := GetAnalyzer(AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		Collation:              "utf8mb4_general_ci",
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		InnodbFtEnableStopword: true,
+	})
+	require.NoError(t, err)
+
+	tokens, err := analyzer.Analyze("thé")
+	require.NoError(t, err)
+	require.Empty(t, tokens, "the accent-insensitive collation considers thé equal to the stopword the")
 }
 
 // TestDefaultInnodbStopwordList guards the transcription of MySQL's

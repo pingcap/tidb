@@ -2545,10 +2545,8 @@ func ftsNativeAnalyzerConfigSupportedForParser(sessVars *variable.SessionVars, p
 
 func ftsNativeAnalyzerConfigSupported(sessVars *variable.SessionVars) bool {
 	config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1)
-	return err == nil &&
-		config.InnodbFtMinTokenSize == 3 &&
-		config.InnodbFtMaxTokenSize == 84 &&
-		config.InnodbFtEnableStopword
+	return err == nil && config.InnodbFtMinTokenSize >= 0 &&
+		config.InnodbFtMaxTokenSize > 0
 }
 
 // matchAgainstToBuiltin converts MATCH...AGAINST to the FTSMysqlMatchAgainst
