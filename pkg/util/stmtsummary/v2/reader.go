@@ -576,6 +576,13 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 				return nil
 			}
 		}
+		// The file overlaps none of the queried time ranges, so it is not kept.
+		// Only the kept files are closed by stmtFiles.close(), so this one must
+		// be closed here; otherwise every read of the persisted statements
+		// summary leaks one descriptor per pruned file.
+		if err := file.close(); err != nil {
+			logutil.BgLogger().Warn("failed to close statements file", zap.Error(err), zap.String("path", path))
+		}
 		return nil
 	}
 

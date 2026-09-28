@@ -19,9 +19,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -180,6 +184,72 @@ func TestStmtFiles(t *testing.T) {
 		require.Len(t, files.files, 1)
 		require.Equal(t, filename2, files.files[0].file.Name())
 	}()
+}
+
+// countOpenFilesUnder reports how many descriptors of this process point at a
+// file under dir. Scoping the count to dir keeps it stable while other tests in
+// the same binary open unrelated files.
+func countOpenFilesUnder(t *testing.T, dir string) int {
+	entries, err := os.ReadDir("/proc/self/fd")
+	require.NoError(t, err)
+	prefix := dir + string(os.PathSeparator)
+	count := 0
+	for _, entry := range entries {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+		if err != nil {
+			continue // the descriptor was closed while walking
+		}
+		if strings.HasPrefix(target, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+// Files pruned by the time range must be closed by newStmtFiles itself, since
+// stmtFiles.close() only sees the files it kept.
+func TestStmtFilesCloseSkippedFiles(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("counting open descriptors requires /proc")
+	}
+
+	dir := t.TempDir()
+	origFilename := config.GetGlobalConfig().Instance.StmtSummaryFilename
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = origFilename
+	})
+
+	// The rotated file name carries the window end time; base is the end of the
+	// first rotated file.
+	base := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local).Unix()
+	write := func(name string, begin, end int64) {
+		file, err := os.Create(filepath.Join(dir, name))
+		require.NoError(t, err)
+		_, err = file.WriteString(fmt.Sprintf("{\"begin\":%d,\"end\":%d}\n", begin, end))
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+	}
+	// Ends at base, so it overlaps the queried range below.
+	write("tidb-statements-2022-12-27T16-21-20.245.log", base-600, base-590)
+	// Ends at base+600, beyond the queried range.
+	write("tidb-statements-2022-12-27T16-31-20.245.log", base+1, base+590)
+	// The current file has no end time, but it begins after the queried range.
+	write("tidb-statements.log", base+700, base+710)
+
+	require.Zero(t, countOpenFilesUnder(t, dir))
+	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: base - 600, End: base - 590},
+	})
+	require.NoError(t, err)
+	require.Len(t, files.files, 1)
+	// Only the kept file may still hold a descriptor.
+	require.Equal(t, 1, countOpenFilesUnder(t, dir))
+
+	files.close()
+	require.Zero(t, countOpenFilesUnder(t, dir))
 }
 
 func TestStmtChecker(t *testing.T) {
