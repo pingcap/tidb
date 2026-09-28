@@ -975,6 +975,19 @@ impl Parser {
         }
     }
 
+    /// go's yacc failures AT EOF: the whole input was consumed and the
+    /// production still wanted more. The column is the last token's end and
+    /// `near` is EMPTY (nothing remains to quote) — oracle: ADMIN SHOW
+    /// NEXT_ROW_ID answers `column 22 near ""`.
+    fn err_at_eof(&self, msg: &str) -> ParseError {
+        ParseError {
+            message: msg.to_owned(),
+            offset: self.peek().end_offset,
+            near_offset: self.source.len(),
+            errno: None,
+        }
+    }
+
     /// A grammar-action refusal that carries its own errno, the way Go's
     /// parser raises `ast.ErrNoParts` as `[ddl:1504]` rather than 1064.
     fn err_coded(&self, errno: u16, msg: &str) -> ParseError {

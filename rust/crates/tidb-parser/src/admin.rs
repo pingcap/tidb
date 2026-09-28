@@ -141,19 +141,51 @@ impl Parser {
         // and fail AT the first unrecognized token (captured: ADMIN CLEANUP
         // ALL JOBS answers column 17 near "ALL JOBS"). The expect chains
         // reproduce those positions byte-for-byte.
+        // Each two-word arm consumes ADMIN first: expect_kw checks the
+        // CURRENT token, and the error must anchor at the token AFTER the
+        // verb (oracle: ADMIN SHOW NEXT_ROW_ID errors at NEXT_ROW_ID,
+        // column 22; ADMIN FLUSH STATS_META at STATS_META, column 22;
+        // ADMIN SHOW ALL JOBS at ALL, column 14).
         if self.is_kw_at(1, "CLEANUP") {
+            self.bump();
             self.expect_kw("CLEANUP")?;
             self.expect_kw("JOBS")?;
             return Err(self.err_here("expected a job id list"));
         }
         if self.is_kw_at(1, "FLUSH") {
+            self.bump();
             self.expect_kw("FLUSH")?;
             return Err(self.err_here("expected an ADMIN FLUSH target"));
         }
         if self.is_kw_at(1, "SHOW") {
+            self.bump();
             self.expect_kw("SHOW")?;
+            // `ADMIN SHOW NEXT_ROW_ID` is go's `SHOW table NEXT_ROW_ID`
+            // production with the table missing: the yacc consumes
+            // NEXT_ROW_ID as the table name and fails AT EOF — column =
+            // NEXT_ROW_ID's end, near EMPTY (oracle: column 22 near "").
+            if self.is_kw("NEXT_ROW_ID") {
+                self.bump();
+                return Err(self.err_at_eof("expected NEXT_ROW_ID"));
+            }
+            // An IDENTIFIER target (NEXT_ROW_ID, TELEMETRY, ...) is a shape
+            // go's grammar starts but cannot continue: the yacc consumes the
+            // whole input and fails AT EOF — column = the last token's end,
+            // near EMPTY (oracle: ADMIN SHOW NEXT_ROW_ID column 22 near "";
+            // ADMIN SHOW TELEMETRY column 20 near ""). Keyword targets
+            // (ALL of ALL JOBS) fail AT the keyword with the full near.
+            if self.peek().kind != TokenKind::Keyword {
+                return Err(self.err_at_eof("expected an ADMIN SHOW target"));
+            }
             return Err(self.err_here("expected an ADMIN SHOW target"));
         }
+        // go's yacc: the ADMIN production consumed ADMIN and fails AT the
+        // verb token no sub-production matched (oracle: ADMIN UPDATE
+        // STATS_META ... errors at UPDATE, column 12; ADMIN PLUG-IN ... at
+        // PLUG, column 10 — the col is the verb token's end and near is the
+        // rest of the input from its start). Consuming ADMIN puts the verb
+        // under err_here's anchor.
+        self.bump();
         Err(self.err_here("unsupported ADMIN command"))
     }
 
@@ -265,6 +297,14 @@ impl Parser {
         self.expect_kw("ADMIN")?;
         self.expect_kw(operation)?;
         self.expect_kw("INDEX")?;
+        // go's `tableName` production takes the lexer's identifier (or
+        // quoted-identifier) token only: a KEYWORD token in the table
+        // position is a syntax error AT it (oracle: ADMIN CLEANUP INDEX
+        // LOCK adm ib errors at LOCK, column 24, not after consuming it as
+        // the table name).
+        if self.peek().kind != TokenKind::Ident {
+            return Err(self.err_here(""));
+        }
         let table = self.parse_table_name()?;
         let index = self.parse_name_or_keyword()?;
         Ok(AdminRecoverIndexStmt { table, index })
@@ -500,6 +540,11 @@ impl Parser {
         self.expect_kw("ADMIN")?;
         self.expect_kw("SHOW")?;
         let table = self.parse_table_name()?;
+        if !self.is_kw("NEXT_ROW_ID") {
+            // go consumed the whole input (NEXT_ROW_ID taken as the table
+            // name) and failed AT EOF: column 22, near EMPTY.
+            return Err(self.err_at_eof("expected NEXT_ROW_ID"));
+        }
         self.expect_kw("NEXT_ROW_ID")?;
         Ok(AdminShowNextRowIdStmt { table })
     }
