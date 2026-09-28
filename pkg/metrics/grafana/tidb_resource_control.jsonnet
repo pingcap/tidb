@@ -244,11 +244,13 @@ local RUPanel = graphPanel.new(
   )
 );
 
-// Each sample represents one completed UTC minute. Keep the range equal to
-// the display step and require every minute, including quality samples.
+// Each sample is the busiest second of one completed UTC minute, stamped at
+// the minute end; an incomplete minute has no sample. Shifting the range one
+// second forward makes it cover exactly the minutes ending in
+// (t - interval, t] under both closed (Prometheus 2.x) and left-open (3.x)
+// range selectors, and an interval missing any minute stays a gap.
 local RUPeakSelector = '{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}';
-local RUPeakSeries = 'resource_manager_resource_unit_peak_per_second' + RUPeakSelector;
-local RUPeakAvailable = 'resource_manager_resource_unit_peak_available' + RUPeakSelector;
+local RUPeakRange = 'resource_manager_resource_unit_peak_per_second' + RUPeakSelector + '[$__interval] offset -1s';
 local RUMaxPanel = graphPanel.new(
   title="RU Max - 1s",
   datasource=myDS,
@@ -261,13 +263,11 @@ local RUMaxPanel = graphPanel.new(
   legend_current=true,
   legend_rightSide=true,
   legend_alignAsTable=true,
-  description="Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Incomplete intervals remain gaps. Requires enable-ru-minute-peak and complete source coverage; excludes SQL CPU RU, RUv2 and untimed TiFlash aggregates.",
+  description="Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Incomplete intervals remain gaps. Requires complete source coverage; excludes SQL CPU RU, RUv2 and untimed TiFlash aggregates.",
 ).addTarget(
   prometheus.target(
-    'max_over_time(' + RUPeakSeries + '[$__interval])' +
-    ' and (min_over_time(' + RUPeakAvailable + '[$__interval]) == 1)' +
-    ' and (count_over_time(' + RUPeakAvailable + '[$__interval]) == $__interval_ms / 60000)' +
-    ' and (count_over_time(' + RUPeakSeries + '[$__interval]) == $__interval_ms / 60000)',
+    'max_over_time(' + RUPeakRange + ')' +
+    ' and (count_over_time(' + RUPeakRange + ') == $__interval_ms / 60000)',
     legendFormat="{{resource_group}}",
     interval="1m",
     intervalFactor=1,

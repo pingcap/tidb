@@ -255,7 +255,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Incomplete intervals remain gaps. Requires enable-ru-minute-peak and complete source coverage; excludes SQL CPU RU, RUv2 and untimed TiFlash aggregates.",
+               "description": "Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Incomplete intervals remain gaps. Requires complete source coverage; excludes SQL CPU RU, RUv2 and untimed TiFlash aggregates.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -293,7 +293,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "max_over_time(resource_manager_resource_unit_peak_per_second{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval]) and (min_over_time(resource_manager_resource_unit_peak_available{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval]) == 1) and (count_over_time(resource_manager_resource_unit_peak_available{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval]) == $__interval_ms / 60000) and (count_over_time(resource_manager_resource_unit_peak_per_second{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval]) == $__interval_ms / 60000)",
+                     "expr": "max_over_time(resource_manager_resource_unit_peak_per_second{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval] offset -1s) and (count_over_time(resource_manager_resource_unit_peak_per_second{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval] offset -1s) == $__interval_ms / 60000)",
                      "format": "time_series",
                      "interval": "1m",
                      "intervalFactor": 1,
