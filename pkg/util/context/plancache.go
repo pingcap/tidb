@@ -171,25 +171,17 @@ func NewPlanCacheTracker(warnHandler WarnAppender) PlanCacheTracker {
 type RangeFallbackHandler struct {
 	planCacheTracker *PlanCacheTracker
 
-	warnHandler         WarnAppender
-	reportRangeFallback sync.Once
+	warnHandler                WarnAppender
+	reportRangeFallbackWarning sync.Once
 }
 
 // RecordRangeFallback records the range fallback event.
 func (h *RangeFallbackHandler) RecordRangeFallback(rangeMaxSize int64) {
-	h.reportRangeFallback.Do(func() {
-		// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
-		// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
-		h.planCacheTracker.SetSkipPlanCache("in-list is too long")
+	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
+	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
+	h.planCacheTracker.SetSkipPlanCache("in-list is too long")
+	h.reportRangeFallbackWarning.Do(func() {
 		h.warnHandler.AppendWarning(errors.NewNoStackErrorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
-	})
-}
-
-// RecordRangeFallbackByCount records a range fallback caused by exceeding the range count limit.
-func (h *RangeFallbackHandler) RecordRangeFallbackByCount(rangeMaxCount int64) {
-	h.reportRangeFallback.Do(func() {
-		h.planCacheTracker.SetSkipPlanCache("range count exceeds limit")
-		h.warnHandler.AppendWarning(errors.NewNoStackErrorf("Range count limit of %v for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxCount))
 	})
 }
 

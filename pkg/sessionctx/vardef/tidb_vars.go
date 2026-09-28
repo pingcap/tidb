@@ -1064,8 +1064,8 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
-	// TiDBOptRangeMaxCount is the maximum number of ranges the optimizer may build. When constructing more ranges would
-	// exceed the limit, it chooses less accurate ranges such as ranges built from a shorter index prefix. 0 disables the limit.
+	// TiDBOptRangeMaxCount is the range-count threshold above which skyline pruning does not prefer an access path
+	// for having more equality/IN predicates. It does not limit range construction. 0 disables the threshold.
 	TiDBOptRangeMaxCount = "tidb_opt_range_max_count"
 
 	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
@@ -1848,8 +1848,8 @@ const (
 	DefTiDBOptAdvancedJoinHint                = true
 	DefTiDBAnalyzePartitionConcurrency        = 2
 	DefTiDBOptRangeMaxSize                    = 64 * int64(size.MB) // 64 MB
-	// DefTiDBOptRangeMaxCount is the default maximum number of ranges the optimizer may build; 0 disables the limit.
-	DefTiDBOptRangeMaxCount             int64 = 0
+	// DefTiDBOptRangeMaxCount is the default range-count threshold for equality/IN preference in skyline pruning.
+	DefTiDBOptRangeMaxCount             int64 = 1000
 	DefTiDBCostModelVer                       = 2
 	DefTiDBServerMemoryLimitSessMinSize       = 128 << 20
 	DefTiDBServerMemoryLimitGCTrigger         = 0.7

@@ -1551,72 +1551,55 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	})
 }
 
-func TestPlanCacheForIndexRangeCountFallback(t *testing.T) {
+func TestRangeCountThreshold(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a int, b int, c int, index idx(a, b, c))")
-		tk.MustExec("insert into t values (10, 40, 70), (20, 50, 75), (30, 60, 80), (10, 99, 70)")
+		tk.MustExec("drop table if exists t_range_count")
+		tk.MustExec("create table t_range_count (a int, b int, c int, index idx(a, b, c))")
+		tk.MustExec("insert into t_range_count values (10,40,70), (20,50,75), (30,60,80), (10,99,70)")
 		tk.MustExec("set @@tidb_opt_range_max_size=0")
-		tk.MustExec("set @@tidb_opt_range_max_count=8")
-
-		query := "select /*+ use_index(t, idx) */ * from t where a in (10, 20, 30) and b in (40, 50, 60) and c between 70 and 80"
-		plan := fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + query).Rows())
-		require.Contains(t, plan, "IndexRangeScan")
-		require.Contains(t, plan, "range:[10,10], [20,20], [30,30]")
-		require.Contains(t, plan, "in(test.t.b, 40, 50, 60)")
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
-		tk.MustQuery(query + " order by a").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
-
-		// A single IN predicate exceeding the limit falls back to an index full scan plus a selection.
-		tk.MustExec("set @@tidb_opt_range_max_count=4")
-		singleINQuery := "select /*+ use_index(t, idx) */ * from t where a in (10, 20, 30, 40, 50, 60)"
-		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + singleINQuery).Rows())
-		require.Contains(t, plan, "IndexFullScan")
-		require.Contains(t, plan, "Selection")
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 4 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
-		tk.MustQuery(singleINQuery + " order by a, b").Check(testkit.Rows("10 40 70", "10 99 70", "20 50 75", "30 60 80"))
-
-		// The same fallback applies when ranges are built for a clustered primary key table scan.
-		tk.MustExec("drop table if exists t_clustered")
-		tk.MustExec("create table t_clustered (a int, b int, c int, primary key (a, b) clustered)")
-		tk.MustExec("insert into t_clustered values (10, 1, 70), (20, 1, 75), (30, 1, 80), (70, 1, 90)")
-		tableScanQuery := "select * from t_clustered where a in (10, 20, 30, 40, 50, 60)"
-		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + tableScanQuery).Rows())
-		require.Contains(t, plan, "TableFullScan")
-		require.Contains(t, plan, "Selection")
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 4 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
-		tk.MustQuery(tableScanQuery + " order by a").Check(testkit.Rows("10 1 70", "20 1 75", "30 1 80"))
-		tk.MustExec("set @@tidb_opt_range_max_count=8")
-
-		// SET_VAR should be able to enable the range-count guardrail for a single statement.
+		tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("1000"))
+		query := "select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (10,20,30) and b in (40,50,60) and c between 70 and 80"
 		tk.MustExec("set @@tidb_opt_range_max_count=0")
-		hintedQuery := "select /*+ set_var(tidb_opt_range_max_count=8) use_index(t, idx) */ * from t where a in (10, 20, 30) and b in (40, 50, 60) and c between 70 and 80"
-		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + hintedQuery).Rows())
-		require.Contains(t, plan, "range:[10,10], [20,20], [30,30]")
-		require.Contains(t, plan, "in(test.t.b, 40, 50, 60)")
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
-		tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("0"))
-		tk.MustExec("set @@tidb_opt_range_max_count=8")
+		unlimitedPlan := tk.MustQuery("explain format='plan_tree' " + query).Rows()
+		require.Contains(t, fmt.Sprint(unlimitedPlan), "range:[10 40 70,10 40 80]")
+		require.Contains(t, fmt.Sprint(unlimitedPlan), "[30 60 70,30 60 80]")
 
+		// The threshold only affects candidate comparison; all nine ranges can still be built.
+		tk.MustExec("set @@tidb_opt_range_max_count=4")
+		tk.MustQuery("explain format='plan_tree' " + query).Check(unlimitedPlan)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery(query + " order by a").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
+		singleIN := "select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (10,20,30,40,50,60)"
+		plan := fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + singleIN).Rows())
+		require.Contains(t, plan, "IndexRangeScan")
+		require.Contains(t, plan, "[60,60]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustExec("drop table if exists t_range_count_pk")
+		tk.MustExec("create table t_range_count_pk (a int, b int, primary key(a,b) clustered)")
+		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' select * from t_range_count_pk where a in (10,20,30,40,50,60)").Rows())
+		require.Contains(t, plan, "TableRangeScan")
+		require.Contains(t, plan, "[60,60]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustQuery("select /*+ set_var(tidb_opt_range_max_count=1) */ @@tidb_opt_range_max_count").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("4"))
+
+		// Exceeding the threshold must not disable prepared-plan caching or range rebuilds.
 		tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
-		tk.MustExec("prepare stmt from 'select /*+ use_index(t, idx) */ * from t where a in (?, ?, ?) and b in (?, ?, ?) and c between ? and ?'")
+		tk.MustExec("prepare stmt from 'select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (?,?,?) and b in (?,?,?) and c between ? and ? order by a,b'")
 		tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50, @f=60, @g=70, @h=80")
-		tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h")
-		tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-			"Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-			"Warning 1105 skip prepared plan-cache: range count exceeds limit"))
-		tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h")
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-		// A count fallback must not also be reported as a size fallback when plan cache is forced.
-		tk.MustExec(`set @@tidb_opt_fix_control="49736:ON"`)
-		tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h")
-		tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-			"Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-			"Warning 1105 force plan-cache: may use risky cached plan: range count exceeds limit"))
-		tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h")
+		for i := range 2 {
+			tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f,@g,@h").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
+			require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(strconv.Itoa(i)))
+		}
+		tk.MustExec("set @c=70, @e=99")
+		tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f,@g,@h").Check(testkit.Rows("10 40 70", "10 99 70"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("deallocate prepare stmt")
 	})
 }
 
