@@ -1026,7 +1026,7 @@ func TestPointReadScanDetailsInDiagnostics(t *testing.T) {
 				)
 				// The second execution has no remote reads; averages use both executions.
 				tk.MustQuery(sql)
-				tk.MustQuery("select exec_count,ia_remote_exec_count,avg_ia_remote_read_segment_count,max_ia_remote_read_segment_count,avg_ia_remote_read_segment_size,max_ia_remote_read_segment_size,avg_ia_remote_read_segment_wait_time,max_ia_remote_read_segment_wait_time from information_schema.statements_summary where digest='" + digest.String() + "'").Check(
+				tk.MustQuery("select exec_count,ia_exec_count,avg_ia_remote_read_segment_count,max_ia_remote_read_segment_count,avg_ia_remote_read_segment_size,max_ia_remote_read_segment_size,avg_ia_remote_read_segment_wait_time,max_ia_remote_read_segment_wait_time from information_schema.statements_summary where digest='" + digest.String() + "'").Check(
 					testkit.Rows(fmt.Sprintf("2 1 %d %d %d %d %d %d", tc.requests, tc.requests*2, tc.requests*2048, tc.requests*4096, tc.requests*3000000, tc.requests*6000000)))
 			})
 		}
