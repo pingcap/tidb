@@ -267,6 +267,13 @@ func skipMergeSort(stats []external.MultipleFilesStat, concurrency int) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
+// For the temp-index merge step it records the committed transaction bytes of
+// the succeeded subtasks into task.Meta. The framework persists the mutated meta
+// together with the success state transition, so the workload survives the
+// subtask history transfer and recordDistTaskRU can convert it to RU later.
+// The recorded size is best-effort: it is the sum of the subtask summaries that
+// were persisted, and bytes committed by a subtask that later failed are not
+// recoverable, see mergeTempIndexExecutor.RunSubtask.
 func (sch *LitBackfillScheduler) OnDone(_ context.Context, h diststorage.TaskHandle, task *proto.Task) error {
 	// The temp-index merge workload is only accounted in NextGen, and reverted
 	// tasks are not accounted at all.

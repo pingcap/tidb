@@ -136,6 +136,14 @@ type Extension interface {
 	// with error.
 	// if the task is failed when initializing scheduler, or it's an unknown task,
 	// we don't call this function.
+	// OnDone MAY update task.Meta to record a summary collected from the
+	// finished subtasks, for example a workload summary used for resource
+	// accounting. When the task finishes successfully the framework persists the
+	// meta mutated here together with the state transition, so the update is not
+	// lost even after the subtasks are moved to the history tables. The
+	// implementation must not rely on the update being atomic with anything else
+	// it does, and should be idempotent because OnDone can be called again after
+	// a failed state transition.
 	OnDone(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.

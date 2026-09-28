@@ -1228,6 +1228,12 @@ func (w *mergeTempIndexWorker) HandleTask(task tempIndexScanTask, sender func(te
 			return err
 		}
 		sender(rs)
+		// Test hook: fail the subtask after a range has been committed, so the
+		// retry path resets the subtask summary and only the remaining ranges are
+		// accounted again. It exercises the best-effort merge RU accounting.
+		failpoint.Inject("mockMergeTempIndexFailAfterRange", func() {
+			failpoint.Return(errors.New("mock failure after a committed merge temp index range"))
+		})
 		done = rs.done
 		start = rs.nextKey
 	}
