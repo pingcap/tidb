@@ -5742,6 +5742,44 @@ impl ClusterServerSession {
                 if let Some((code, message)) = schema_shape_refusal(stmt) {
                     return Err(SqlQueryError::new(code, *b"HY000", message));
                 }
+                // go `SimpleExec.executeLockTables`/`executeUnlockTables`:
+                // with the experimental table lock disabled
+                // (`enable-table-lock=false`), both statements answer OK
+                // with Warning 1235 pointing at the configuration
+                // (`pkg/ddl/tests/serial/serial_test.go:1057`).
+                if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+                    let notice = match &**ddl {
+                        tidb_ast::DdlStmt::LockTables(locks) => {
+                            let table = locks
+                                .first()
+                                .and_then(|lock| lock.table.last())
+                                .cloned()
+                                .unwrap_or_default();
+                            Some((
+                                self.session.current_database().to_owned(),
+                                table,
+                                "LOCK TABLES is not supported. To enable this experimental \
+                                 feature, set 'enable-table-lock' in the configuration file."
+                                    .to_owned(),
+                            ))
+                        }
+                        tidb_ast::DdlStmt::UnlockTables => Some((
+                            String::new(),
+                            String::new(),
+                            "UNLOCK TABLES is not supported. To enable this experimental \
+                             feature, set 'enable-table-lock' in the configuration file."
+                                .to_owned(),
+                        )),
+                        _ => None,
+                    };
+                    if let Some((schema, table, message)) = notice {
+                        return Ok(StatementRoute::Ddl(DdlStatement::AcceptedNoOp {
+                            schema,
+                            table,
+                            warning: Some((1235, message)),
+                        }));
+                    }
+                }
                 // A CREATE VIEW resolves its body against this node's own
                 // catalog FIRST — a bad body fails here, at CREATE time,
                 // exactly where Go's `executeCreateView` preprocess fails —

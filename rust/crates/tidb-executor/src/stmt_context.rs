@@ -3573,6 +3573,13 @@ impl StmtContext {
         self.append_warning(code, message);
     }
 
+    /// Records a driver-rendered warning at go's ERROR warning level —
+    /// `StmtCtx.AppendError` (`ErrAlterOperationNotSupported`'s 1846 lands
+    /// as `Error 1846 ...` in SHOW WARNINGS, not `Warning 1846`).
+    pub fn append_error_parts(&self, code: u16, message: &str) {
+        self.append_leveled(WarningLevel::Error, code, message);
+    }
+
     /// Moves the warnings the CONSTANT-FOLD evaluation stashed on this
     /// thread into this context's warning list. go appends a fold-time
     /// warning to `StmtCtx.warnings` while planning

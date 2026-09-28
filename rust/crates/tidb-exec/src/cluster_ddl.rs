@@ -1385,6 +1385,41 @@ fn lower_alter_table_catalog(
                         name: name.clone(),
                     });
                 }
+                tidb_ast::AlterTableAction::Lock(_) => {
+                    // go: `LOCK=NONE` is the supported lock for the column
+                    // operations and selects nothing observable; the option
+                    // is skipped without a warning (oracle: ADD COLUMN f INT,
+                    // LOCK=NONE answers a plain (ok)).
+                    continue;
+                }
+                tidb_ast::AlterTableAction::Algorithm(algorithm) => {
+                    // go `getProperAlgorithm` + `ErrAlterOperationNotSupported`:
+                    // the requested algorithm selects nothing here — the
+                    // operation runs with its own default algorithm and the
+                    // refusal lands as an ERROR-level 1846 warning (oracle:
+                    // ALTER TABLE x1 ADD COLUMN d INT, ALGORITHM=INPLACE
+                    // answers (ok) with `ALGORITHM=INPLACE is not supported.
+                    // Reason: Cannot alter table by INPLACE. Try
+                    // ALGORITHM=INSTANT.`). The column-operation descriptor's
+                    // default is INSTANT, which is why INSTANT itself warns
+                    // nothing.
+                    let (specify, def_algorithm) = match algorithm {
+                        tidb_ast::AlterTableAlgorithm::Inplace => ("INPLACE", "INSTANT"),
+                        tidb_ast::AlterTableAlgorithm::Copy => ("COPY", "INSTANT"),
+                        _ => {
+                            // DEFAULT and INSTANT are the operation's own
+                            // default — no refusal.
+                            continue;
+                        }
+                    };
+                    context.append_error_parts(
+                        1846,
+                        &format!(
+                            "ALGORITHM={specify} is not supported. Reason: \
+                             Cannot alter table by {specify}. Try ALGORITHM={def_algorithm}."
+                        ),
+                    );
+                }
                 _ => {
                     actions.clear();
                     break;

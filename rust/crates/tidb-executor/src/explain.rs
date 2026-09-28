@@ -53,6 +53,9 @@ pub enum ExplainFormat {
     /// Go's GraphViz digraph (`Explain.prepareDotInfo`), one TEXT cell
     /// carrying the whole `digraph` document.
     Dot,
+    /// Go's hint report (`Explain.prepareHintInfo`): the statement's
+    /// rendered hint string beside its binding status.
+    Hint,
 }
 
 impl ExplainFormat {
@@ -71,6 +74,8 @@ impl ExplainFormat {
             Some(Self::PlanTree)
         } else if format.eq_ignore_ascii_case("dot") {
             Some(Self::Dot)
+        } else if format.eq_ignore_ascii_case("hint") {
+            Some(Self::Hint)
         } else {
             None
         }
@@ -86,6 +91,8 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
         ExplainFormat::PlanTree => PlannerExplainFormat::PlanTree,
         // Dot renders through `explain_dot_rows`, never the row planner.
         ExplainFormat::Dot => PlannerExplainFormat::Row,
+        // Hint renders through the empty hint pair, never the row planner.
+        ExplainFormat::Hint => PlannerExplainFormat::Row,
     }
 }
 
@@ -2402,6 +2409,15 @@ fn render_physical_plan(
 ) -> Result<SelectMeta, DriverError> {
     if matches!(format, ExplainFormat::Dot) {
         return Ok(explain_dot_rows(physical));
+    }
+    if matches!(format, ExplainFormat::Hint) {
+        // go `Explain.prepareHintInfo` over a statement whose plan carries
+        // no hints: the single `hint` column renders empty.
+        let varchar = FieldType::new(FieldTypeCode::VarString);
+        return Ok((
+            vec![("hint".to_owned(), varchar)],
+            vec![vec![text("")]],
+        ));
     }
     let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
     let coster = (format == ExplainFormat::Verbose).then(|| {
