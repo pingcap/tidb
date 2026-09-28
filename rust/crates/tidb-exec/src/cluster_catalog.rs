@@ -27,10 +27,12 @@
 
 use std::fmt;
 
-use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+use tidb_ast::CiString;
+use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_hack::GoToLower;
 use tidb_meta::{key, value};
 use tidb_model::column::ColumnInfo;
+use tidb_model::GoSharedPointerSlice;
 use tidb_model::db::DBInfo;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION2, TABLE_INFO_VERSION3};
@@ -208,6 +210,62 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
             .map_err(|error| ClusterCatalogError::Decode(format!("DBInfo: {error}")))?;
         let tables = load_database_tables(snapshot, info.id)?;
         databases.push(LoadedDatabase { info, tables });
+    }
+
+    // The fork pre-populates `metrics_schema` with the metric tables
+    // (oracle g-is: 642 tables whose scans fail `query metric error: pd
+    // unavailable`). Registered here so SHOW TABLES and the table
+    // resolution answer.
+    if !databases
+        .iter()
+        .any(|database| database.info.name.lowercase() == "metrics_schema")
+    {
+        let mut tables = Vec::new();
+        for (index, (name, labels)) in crate::metric_tables_def::METRIC_TABLES
+            .iter()
+            .enumerate()
+        {
+            let table_id = -900_000 - index as i64;
+            let mut columns = GoSharedPointerSlice::<ColumnInfo>::default();
+            columns.push_go(ColumnInfo {
+                id: table_id * 10,
+                name: CiString::new("time"),
+                offset: 0,
+                field_type: FieldType::new(FieldTypeCode::Datetime),
+                ..Default::default()
+            });
+            for (label_offset, label) in labels.iter().enumerate() {
+                columns.push_go(ColumnInfo {
+                    id: table_id * 10 + label_offset as i64 + 1,
+                    name: CiString::new(*label),
+                    offset: label_offset as i64 + 1,
+                    field_type: FieldType::new(FieldTypeCode::VarString),
+                    ..Default::default()
+                });
+            }
+            columns.push_go(ColumnInfo {
+                id: table_id * 10 + labels.len() as i64 + 1,
+                name: CiString::new("value"),
+                offset: labels.len() as i64 + 1,
+                field_type: FieldType::new(FieldTypeCode::Double),
+                ..Default::default()
+            });
+            tables.push(TableInfo {
+                id: table_id,
+                name: CiString::new(*name),
+                state: SchemaState::PUBLIC,
+                columns,
+                ..Default::default()
+            });
+        }
+        databases.push(LoadedDatabase {
+            info: DBInfo {
+                id: -900_000,
+                name: CiString::new("metrics_schema"),
+                ..Default::default()
+            },
+            tables,
+        });
     }
 
     Ok(ClusterCatalog {

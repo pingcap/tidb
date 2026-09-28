@@ -430,6 +430,26 @@ impl Session {
                 // nothing to route — the statement runs where it stands.
                 StoredStateChange::None
             }
+            Stmt::Ddl(ddl)
+                if matches!(
+                    ddl.as_ref(),
+                    tidb_ast::DdlStmt::AlterTable(alter)
+                        if alter.actions.iter().all(|action| matches!(
+                            action,
+                            tidb_ast::AlterTableAction::Partition(_)
+                        ))
+                ) =>
+            {
+                // The partition DDL statements run against the session's own
+                // catalog: the partition actions (REORGANIZE/COALESCE/ADD/
+                // DROP) execute locally and the fork's own metrics tables
+                // play no part. Routing them to the cluster schema change
+                // lowered them to the run-this-on-a-TiDB-server refusal
+                // (oracle m24: REORGANIZE PARTITION answers (ok) with the
+                // statistics-outdated warning, COALESCE PARTITION on a
+                // RANGE table errors 1509).
+                StoredStateChange::None
+            }
             Stmt::Ddl(_) => StoredStateChange::Schema,
             // The privilege/role statements: everything under `Admin` that
             // writes `mysql.user`, `mysql.db`, or the role edges. `SHOW

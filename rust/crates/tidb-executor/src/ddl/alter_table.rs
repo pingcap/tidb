@@ -637,6 +637,14 @@ fn run_alter_table_in_inner(
                 count,
                 ..
             }) => coalesce_partition_action(catalog, &database, &name, *count, ctx)?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Reorganize {
+                names,
+                definitions,
+                ..
+            }) => {
+                eprintln!("DBG-REORG arm entered names={names:?}");
+                reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?
+            }
             // The four metadata-only actions: a name or a flag changes while
             // every column id, column offset and index entry stays put. See
             // the `alter_metadata` module doc for why they belong together.
@@ -1057,6 +1065,93 @@ fn add_hash_partitions_action(
     std::sync::Arc::make_mut(table)
         .rehash_hash_partitions(&new_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("add partition", error))
+}
+
+fn reorganize_partition_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    names: &[String],
+    definitions: &[tidb_ast::PartitionDefinition],
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let new_ids: Vec<i64> = (0..definitions.len())
+        .map(|_| catalog.allocate_table_id())
+        .collect();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE ... REORGANIZE PARTITION needs a storage-backed table",
+        ));
+    };
+    let Some(partition) = std::sync::Arc::make_mut(table).partition_mut() else {
+        return Err(DriverError::PartitionManagementOnNonpartitioned);
+    };
+    let mut start = None;
+    let mut end = 0usize;
+    for (index, definition) in partition.definitions.iter().enumerate() {
+        if names.iter().any(|name| {
+            super::table_partition::partition_names_equal(&definition.name, name)
+        }) {
+            if start.is_none() {
+                start = Some(index);
+            }
+            end = index + 1;
+        }
+    }
+    let Some(start) = start else {
+        return Err(DriverError::unsupported(
+            "REORGANIZE PARTITION names no such partition".to_owned(),
+        ));
+    };
+    let mut replaced: Vec<crate::partition_routing::PartitionDef> = Vec::new();
+    for (index, definition) in partition.definitions.iter().enumerate() {
+        if index < start {
+            replaced.push(definition.clone());
+        }
+    }
+    for (index, definition) in definitions.iter().enumerate() {
+        let mut bounds = Vec::new();
+        if let tidb_ast::PartitionDefinitionClause::LessThan(values) = &definition.clause {
+            for value in values {
+                match value {
+                    tidb_ast::PartitionValue::Expr(expression)
+                        if matches!(expression, tidb_ast::Expr::Int(_)) =>
+                    {
+                        if let tidb_ast::Expr::Int(text) = expression {
+                            bounds.push(text.clone());
+                        }
+                    }
+                    tidb_ast::PartitionValue::MaxValue => {
+                        bounds.push("MAXVALUE".to_owned());
+                    }
+                    _ => {
+                        return Err(DriverError::unsupported(
+                            "REORGANIZE PARTITION bounds must be integer literals on this node",
+                        ))
+                    }
+                }
+            }
+        }
+        replaced.push(crate::partition_routing::PartitionDef {
+            id: new_ids[index],
+            name: definition.name.clone(),
+            less_than: bounds,
+            in_values: Vec::new(),
+            comment: String::new(),
+            ..Default::default()
+        });
+    }
+    for (index, definition) in partition.definitions.iter().enumerate() {
+        if index >= end {
+            replaced.push(definition.clone());
+        }
+    }
+    partition.definitions = replaced;
+    ctx.append_warning_parts(
+        1105,
+        "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now",
+    );
+    Ok(())
 }
 
 fn coalesce_partition_action(

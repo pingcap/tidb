@@ -2039,6 +2039,12 @@ impl Session {
         }
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
         if let Some(output) = self.apply_schema_stmt(&stmt)? {
+            // The partition DDL's fold-stash warnings (the reorganize
+            // statistics-outdated row) drain here: DDL statements produce no
+            // record set, so the record-set-only drain never runs for them.
+            let statement_ctx = self.statement_context(false);
+            eprintln!("DBG-DRAIN apply_schema path");
+            self.drain_eval_warnings(&statement_ctx);
             return Ok(PendingExecution::Complete(output));
         }
         // BEGIN / COMMIT / ROLLBACK and SET both have their own entry points
