@@ -183,10 +183,10 @@ impl PdRegionLoader {
     /// loader previously surfaced the first omission as an invalid-topology
     /// error, which a Prewrite regroup turned into a definitive rollback
     /// under sustained write load.
-    fn retry_on_region_miss<T>(
+    fn retry_pd_on_region_miss<T>(
         &mut self,
         mut attempt: impl FnMut(&mut Self) -> Result<T, PdClientError>,
-    ) -> Result<T, RegionLoadError> {
+    ) -> Result<T, PdClientError> {
         const TOTAL_BUDGET: Duration = Duration::from_secs(20);
         const BASE_DELAY: Duration = Duration::from_millis(2);
         const DELAY_CAP: Duration = Duration::from_millis(10);
@@ -201,13 +201,21 @@ impl PdRegionLoader {
                         PdClientError::InvalidTopology { kind, .. } if *kind == "missing_region"
                     );
                     if !region_miss || started.elapsed() + delay > TOTAL_BUDGET {
-                        return Err(region_load_error(error));
+                        return Err(error);
                     }
                     std::thread::sleep(delay);
                     delay = delay.mul_f64(2.0).min(DELAY_CAP);
                 }
             }
         }
+    }
+
+    fn retry_on_region_miss<T>(
+        &mut self,
+        attempt: impl FnMut(&mut Self) -> Result<T, PdClientError>,
+    ) -> Result<T, RegionLoadError> {
+        self.retry_pd_on_region_miss(attempt)
+            .map_err(region_load_error)
     }
 
     fn project_region(&mut self, region: PdRegion) -> Result<RegionLocation, RegionLoadError> {
@@ -360,12 +368,16 @@ impl BatchRegionLoader for PdRegionLoader {
                 PdKeyRange { start_key, end_key }
             })
             .collect::<Vec<_>>();
-        match self.client.batch_scan_regions(
-            &encoded_ranges,
-            pd_limit(limit)?,
-            options.need_buckets,
-            true,
-        ) {
+        let pd_limit = pd_limit(limit)?;
+        let response = self.retry_pd_on_region_miss(|loader| {
+            loader.client.batch_scan_regions(
+                &encoded_ranges,
+                pd_limit,
+                options.need_buckets,
+                true,
+            )
+        });
+        match response {
             Ok(regions) => self.project_regions(regions),
             Err(PdClientError::Transport { ref code, .. }) if code == "Unimplemented" => {
                 self.batch_scan_regions_fallback(ranges, limit)
@@ -417,10 +429,12 @@ impl RegionQueryLoader for PdRegionLoader {
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
         let leader_only = options.route == RegionQueryRoute::LeaderOnly;
         let (start_key, end_key) = encode_region_range(&range.start, &range.end);
-        let regions = self
-            .client
-            .scan_regions_routed(&start_key, &end_key, pd_limit(limit)?, leader_only)
-            .map_err(region_load_error)?;
+        let pd_limit = pd_limit(limit)?;
+        let regions = self.retry_on_region_miss(|loader| {
+            loader
+                .client
+                .scan_regions_routed(&start_key, &end_key, pd_limit, leader_only)
+        })?;
         self.project_regions(regions)
     }
 
