@@ -3394,32 +3394,6 @@ pub(crate) fn cached_query_plan(
 
 /// Builds and admits the physical source tree shared by cached queries and
 /// cached DML roots.
-fn fn_has_index_lookup_reader(plan: &PhysicalPlan) -> bool {
-    if matches!(plan, PhysicalPlan::IndexLookUpReader(_)) {
-        return true;
-    }
-    match plan {
-        PhysicalPlan::TableReader(reader) => reader
-            .table_plan
-            .as_deref()
-            .is_some_and(fn_has_index_lookup_reader),
-        PhysicalPlan::IndexReader(reader) => reader
-            .index_plan
-            .as_deref()
-            .is_some_and(fn_has_index_lookup_reader),
-        PhysicalPlan::IndexLookUpReader(_) => true,
-        PhysicalPlan::IndexMergeReader(reader) => reader
-            .partial_plans_raw
-            .iter()
-            .any(fn_has_index_lookup_reader),
-        PhysicalPlan::Dml(dml) => dml
-            .select_plan
-            .as_deref()
-            .is_some_and(fn_has_index_lookup_reader),
-        _ => plan.children().iter().any(fn_has_index_lookup_reader),
-    }
-}
-
 pub(crate) fn cached_physical_query_plan(
     query: &tidb_ast::QueryStmt,
     catalog: &Catalog,
@@ -3433,17 +3407,10 @@ pub(crate) fn cached_physical_query_plan(
     ctx.start_prepared_range_tracking();
     let (_, physical) = planner_physical_query(query, catalog, current_database, ctx, true).ok()?;
     if ctx.skip_plan_cache() {
-        return Some((physical, !has_lookup_reader));
+        return Some((physical, false));
     }
     tidb_planner::physical_plan_cache::plan_cacheable(&physical, cacheability).ok()?;
-    // Go's cache rebuild updates IndexPlans[0] and the lookup executor
-    // consumes that flattened plan. Rust's current remote lookup builder
-    // cannot preserve that runtime state across a cached execute, so admit
-    // the ordinary physical plan but force a fresh bind for this shape. This
-    // keeps range routing identical to Go's per-execute plan while the reader
-    // runtime is completed.
-    let has_lookup_reader = fn_has_index_lookup_reader(&physical);
-    Some((physical, !has_lookup_reader))
+    Some((physical, true))
 }
 
 #[cfg(test)]
