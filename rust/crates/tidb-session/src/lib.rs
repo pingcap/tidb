@@ -2249,7 +2249,17 @@ impl Session {
                 && (!reported.is_from_evaluation()
                     || !matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105 | 1210))
             {
-                self.append_warning(WarningLevel::Error, reported.code, reported.message);
+                // The inner execution may have already filed this exact
+                // error row (the SET arm's `handleErr` append through the
+                // delegated-account route); go's SHOW WARNINGS carries it
+                // once.
+                let duplicated = self
+                    .warnings
+                    .last()
+                    .map_or(false, |w| w.code == reported.code && w.message == reported.message);
+                if !duplicated {
+                    self.append_warning(WarningLevel::Error, reported.code, reported.message);
+                }
             }
         }
     }

@@ -1561,10 +1561,6 @@ impl InitStats<'_> {
             // PseudoRowCount=10000 — oracle: EXPLAIN over a stats-less
             // partition table answers estRows 10.00, not the DML count's
             // 1.25.
-            eprintln!(
-                "DBG-PSEUDO pid={} row_count={} analyze_count={} pseudo={}",
-                source.physical_table_id, statistics.row_count, analyze_count, statistics.pseudo
-            );
             if analyze_count == 0 {
                 let mut copied = statistics.clone();
                 copied.pseudo = true;
