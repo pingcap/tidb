@@ -917,7 +917,7 @@ func (job *Job) IsRollbackable() bool {
 		return job.SchemaState == StatePublic
 	case ActionTruncateTablePartition:
 		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
-	case ActionRebaseAutoID, ActionShardRowID,
+	case ActionRebaseAutoID, ActionShardRowID, ActionMViewRefreshOutOfPlaceCutover,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
