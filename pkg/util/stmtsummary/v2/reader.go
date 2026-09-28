@@ -514,7 +514,6 @@ func openStmtFile(path string) (*stmtFile, error) {
 	}, nil
 }
 
-
 func parseBeginTsAndReseek(file *os.File) (int64, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
