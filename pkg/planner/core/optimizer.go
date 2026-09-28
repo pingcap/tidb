@@ -1040,7 +1040,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	// The resolver needs to see the original Selection directly above the data
 	// source; after PPD the MATCH expression would either be buried in pushed
 	// conditions or lose the table/index context needed to build FTSQueryInfo.
-	if vars.StmtCtx.FTSFunctionIsUsed {
+	if vars.StmtCtx.AlternativeLogicalPlanHasPredicateMatch {
 		logic, _, err = (&FullTextIndexResolverWhere{}).Optimize(ctx, logic)
 		if err != nil {
 			return nil, err

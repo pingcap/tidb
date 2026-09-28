@@ -18,7 +18,6 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
@@ -31,7 +30,6 @@ var _ builtinFunc = &builtinFtsMysqlMatchAgainstSig{}
 
 type ftsMysqlMatchAgainstFunctionClass struct {
 	baseFunctionClass
-	expropt.SessionVarsPropReader
 }
 
 type builtinFtsMysqlMatchAgainstSig struct {
@@ -171,12 +169,6 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 	if err != nil {
 		return nil, err
 	}
-
-	sessionVars, err := c.GetSessionVars(ctx.GetEvalCtx())
-	if err != nil {
-		return nil, err
-	}
-	sessionVars.StmtCtx.FTSFunctionIsUsed = true
 
 	sig := &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FTSMatchExpression)

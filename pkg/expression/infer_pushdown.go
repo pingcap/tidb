@@ -413,8 +413,6 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
-	case ast.FTSMatchWord:
-		return true
 	case ast.FTSMysqlMatchAgainst:
 		// The scalar function encoding does not serialize the FTS modifier.
 		// Boolean-mode native pushdown is handled by the dedicated FTSQueryInfo
@@ -428,7 +426,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		// modifier guard below already covers it, since local evaluation is
 		// Boolean-mode only; the explicit check keeps the two independent.
 		sig, ok := function.Function.(*builtinFtsMysqlMatchAgainstSig)
-		return ok && !sig.hasLocalEvalInfo() && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
+		return ok && sig.localEvalInfo == nil && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}

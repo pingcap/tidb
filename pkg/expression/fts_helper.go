@@ -35,7 +35,7 @@ type FTSInfo struct {
 func ContainsFullTextSearchFn(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		if x.FuncName.L == ast.FTSMatchWord || x.FuncName.L == ast.FTSMysqlMatchAgainst {
+		if x.FuncName.L == ast.FTSMysqlMatchAgainst {
 			return true
 		}
 		if slices.ContainsFunc(x.GetArgs(), ContainsFullTextSearchFn) {
@@ -54,13 +54,7 @@ func InterpretFullTextSearchExpr(expr Expression) *FTSInfo {
 	}
 
 	args := x.GetArgs()
-	if x.FuncName.L != ast.FTSMatchWord && x.FuncName.L != ast.FTSMysqlMatchAgainst {
-		return nil
-	}
-	if x.FuncName.L == ast.FTSMatchWord && len(args) != 2 {
-		return nil
-	}
-	if x.FuncName.L == ast.FTSMysqlMatchAgainst && len(args) < 2 {
+	if x.FuncName.L != ast.FTSMysqlMatchAgainst || len(args) < 2 {
 		return nil
 	}
 

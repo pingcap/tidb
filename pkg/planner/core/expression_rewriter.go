@@ -2423,9 +2423,8 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 //   - the originating table has an available TiFlash replica;
 //   - the column list matches one public FULLTEXT index on that table.
 //
-// In addition, BOOLEAN MODE requires a parser and analyzer configuration that
-// are represented by the TiFlash protocol. Natural-language mode retains its
-// existing native viability rules; query expansion is not part of this feature.
+// BOOLEAN MODE requires a parser and analyzer configuration represented by the
+// TiFlash protocol. Other MATCH modes remain outside this pushdown feature.
 func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
 	if numCols <= 0 {
 		return false
@@ -2455,7 +2454,7 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 		}
 		dbName := name.DBName
 		if dbName.L == "" {
-			dbName = ast.NewCIStr(sessVars.CurrentDB)
+			dbName = pmodel.NewCIStr(sessVars.CurrentDB)
 		}
 		tblInfo, err := builder.is.TableInfoByName(dbName, tblName)
 		if err != nil {
@@ -2508,7 +2507,7 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 // BOOLEAN MODE is carried by FTSQueryInfo.boolean_query; query expansion still
 // has no protocol representation and is therefore rejected.
 func ftsModifierAllowsNativePushdown(modifier ast.FulltextSearchModifier) bool {
-	return !modifier.WithQueryExpansion()
+	return modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
 }
 
 // tableHasPublicFTSIndexOnColumn reports whether tblInfo has a public FULLTEXT

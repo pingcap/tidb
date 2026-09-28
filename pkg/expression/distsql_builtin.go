@@ -1149,8 +1149,6 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
-	case tipb.ScalarFuncSig_FTSMatchWord:
-		f = &builtinFtsMatchWordSig{base}
 	case tipb.ScalarFuncSig_FTSMatchExpression:
 		// The scalar function encoding does not carry the MATCH modifier. Native
 		// BOOLEAN MODE pushdown is represented by FTSQueryInfo.boolean_query on

@@ -551,7 +551,6 @@ func normalizePrefixTerm(
 				children = append(children, termNode{token: token.Text})
 			}
 		}
-<<<<<<< HEAD
 
 		// MySQL applies '*' to only the last word of a split term. The
 		// wildcard also keeps that word when it is shorter than the normal
