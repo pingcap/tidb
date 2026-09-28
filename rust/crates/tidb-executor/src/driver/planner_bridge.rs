@@ -2190,27 +2190,46 @@ impl InitStats<'_> {
                         is_index,
                     );
                 };
-                crate::access_cost::selectivity_with_filled_path_context_observing(
-                    predicate,
-                    table,
-                    &resolver,
-                    statistics,
-                    tidb_planner::selectivity_greedy::SelectivityDefaults {
-                        trigger_load: false,
-                        estimator_options: self
-                            .context
-                            .optimizer_cost_env()
-                            .session
-                            .estimator_options.clone(),
-                        ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
-                            self.default_string_match_selectivity,
-                            self.selectivity_factor,
-                        )
-                    },
-                    self.range_context,
-                    &filled_path_appended_handle_columns,
-                    &mut observe,
-                )
+                let defaults = tidb_planner::selectivity_greedy::SelectivityDefaults {
+                    trigger_load: false,
+                    estimator_options: self
+                        .context
+                        .optimizer_cost_env()
+                        .session
+                        .estimator_options.clone(),
+                    ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
+                        self.default_string_match_selectivity,
+                        self.selectivity_factor,
+                    )
+                };
+                if source.pushed_down_conds.is_empty() {
+                    crate::access_cost::selectivity_with_filled_path_context_observing(
+                        predicate,
+                        table,
+                        &resolver,
+                        statistics,
+                        defaults,
+                        self.range_context,
+                        &filled_path_appended_handle_columns,
+                        &mut observe,
+                    )
+                } else {
+                    let evaluate = |expression: &tidb_expr::expression::Expression| {
+                        tidb_expr::eval_expression_once(expression, self.context)
+                    };
+                    source
+                        .table_stats
+                        .as_ref()
+                        .and_then(|stats| {
+                            tidb_planner::logical::rewrite::analyzed_filter_selectivity_with_evaluator(
+                                stats,
+                                &source.pushed_down_conds,
+                                &defaults.estimator_options,
+                                &evaluate,
+                            )
+                        })
+                        .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
+                }
             };
             let cached_predicate_matches = source.base.base.schema().is_some_and(|schema| {
                 let names = source
@@ -2251,7 +2270,7 @@ impl InitStats<'_> {
             // A source estimate belongs to its predicates. Optimizer-added
             // filters must be derived from the current expressions, not the
             // original statement's WHERE clause.
-            if cached_predicate_matches {
+            if cached_predicate_matches || !source.pushed_down_conds.is_empty() {
                 let filtered_stats = table_stats.scale(
                     selectivity,
                     self.context.optimizer_cost_env().session.scale_ndv_skew_ratio,

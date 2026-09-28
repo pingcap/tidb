@@ -157,6 +157,65 @@ fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
 }
 
 #[test]
+fn prepared_in_predicate_uses_filtered_stats_for_cache_admission() {
+    use tidb_planner::physical::PhysicalPlan;
+
+    fn contains_lookup(plan: &PhysicalPlan) -> bool {
+        matches!(plan, PhysicalPlan::IndexLookUpReader(_))
+            || plan.children().iter().any(contains_lookup)
+    }
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE prepared_in_stats (id BIGINT PRIMARY KEY, k BIGINT, v BIGINT, KEY k_idx(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO prepared_in_stats VALUES
+            (1,1,11),(2,2,22),(3,3,33),(4,4,44),(5,5,55),
+            (6,6,66),(7,7,77),(8,8,88),(9,9,99),(10,10,110)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "prepared_in_stats",
+        10,
+        &[("k", 10)],
+        &ctx,
+    );
+
+    let statement = tidb_parser::parse(
+        "SELECT id, v FROM prepared_in_stats WHERE k IN (?,?,?,?,?,?,?,?,?,?)",
+    )
+    .unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(
+            &statement,
+            10,
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+        )
+        .expect("the prepared IN query is cacheable"),
+    );
+    let values = (1..=10).map(Datum::Int).collect::<Vec<_>>();
+    let execution = plan
+        .bind(
+            &values,
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &PreparedPlanCacheEnvironment::default(),
+        )
+        .expect("bound IN values should build the cached plan");
+    assert!(execution.with_plan(|_, physical| contains_lookup(physical)).unwrap());
+}
+
+#[test]
 fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
     let mut catalog = Catalog::default();
     let ctx = crate::StmtContext::for_query();

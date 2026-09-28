@@ -275,7 +275,8 @@ pub(crate) fn analyzed_filter_selectivity_in(
     )
 }
 
-pub(crate) fn analyzed_filter_selectivity_with_evaluator(
+/// Estimates expression predicates with the caller's prepared-parameter evaluator.
+pub fn analyzed_filter_selectivity_with_evaluator(
     table_stats: &StatsInfo,
     conditions: &[Expression],
     options: &crate::cardinality::row_count_estimator::EstimatorOptions,
