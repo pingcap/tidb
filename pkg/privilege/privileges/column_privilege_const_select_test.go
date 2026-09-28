@@ -33,9 +33,21 @@ func TestSelectConstantRequiresTablePrivilege(t *testing.T) {
 	rootTk.MustExec("CREATE DATABASE leakdb")
 	rootTk.MustExec("CREATE TABLE leakdb.t (a int, b int)")
 	rootTk.MustExec("INSERT INTO leakdb.t VALUES (1, 1), (2, 2), (3, 3)")
+	rootTk.MustExec("CREATE SQL SECURITY INVOKER VIEW leakdb.v AS SELECT 1 AS c FROM leakdb.t")
 	rootTk.MustExec("CREATE USER 'nopriv'@'%'")
+	rootTk.MustExec("CREATE USER 'viewcreator'@'%'")
 	// Only the default USAGE global privilege; nothing on leakdb.t.
 	rootTk.MustExec("GRANT USAGE ON *.* TO 'nopriv'@'%'")
+	rootTk.MustExec("GRANT SELECT ON leakdb.v TO 'nopriv'@'%'")
+	rootTk.MustExec("GRANT CREATE VIEW ON leakdb.* TO 'viewcreator'@'%'")
+
+	viewCreatorTk := testkit.NewTestKit(t, store)
+	require.NoError(t, viewCreatorTk.Session().Auth(&auth.UserIdentity{
+		Username: "viewcreator", Hostname: "%", AuthUsername: "viewcreator", AuthHostname: "%",
+	}, nil, nil, nil))
+	// CREATE VIEW checks the creator's privilege on its SELECT sources and keeps
+	// reporting the underlying table access error.
+	viewCreatorTk.MustGetErrCode("CREATE VIEW leakdb.denied AS SELECT 1 FROM leakdb.t", errno.ErrTableaccessDenied)
 
 	userTk := testkit.NewTestKit(t, store)
 	require.NoError(t, userTk.Session().Auth(&auth.UserIdentity{
@@ -48,6 +60,9 @@ func TestSelectConstantRequiresTablePrivilege(t *testing.T) {
 	userTk.MustGetErrCode("SELECT 1 FROM leakdb.t LIMIT 1", errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode("SELECT COUNT(*) FROM leakdb.t", errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode("SELECT * FROM leakdb.t", errno.ErrTableaccessDenied)
+	// Invoking an existing SQL SECURITY INVOKER view reports the view error when
+	// its constant-only body cannot access the underlying table.
+	userTk.MustGetErrCode("SELECT c FROM leakdb.v", errno.ErrViewInvalid)
 	// A referenced column keeps reporting a column-level error.
 	userTk.MustGetErrCode("SELECT a FROM leakdb.t", errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode("SELECT 1 FROM leakdb.t WHERE a > 0", errno.ErrColumnaccessDenied)
@@ -56,8 +71,8 @@ func TestSelectConstantRequiresTablePrivilege(t *testing.T) {
 	userTk.MustGetErrCode("select count(*) from leakdb.t", errno.ErrTableaccessDenied)
 	rootTk.MustExec("CREATE TABLE leakdb.tpk (id int primary key, v int)")
 	rootTk.MustExec("INSERT INTO leakdb.tpk VALUES (1, 10)")
-	require.Error(t, userTk.ExecToErr("SELECT 1 FROM leakdb.tpk WHERE id = 1"))
-	require.Error(t, userTk.ExecToErr("SELECT COUNT(*) FROM leakdb.tpk"))
+	userTk.MustGetErrCode("SELECT 1 FROM leakdb.tpk WHERE id = 1", errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode("SELECT COUNT(*) FROM leakdb.tpk", errno.ErrTableaccessDenied)
 	// Unknown schemas/tables are still denied.
 	userTk.MustGetErrCode("SELECT 1 FROM leakdb.nonexistent", errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode("SELECT 1 FROM nodb.t", errno.ErrTableaccessDenied)
@@ -69,5 +84,6 @@ func TestSelectConstantRequiresTablePrivilege(t *testing.T) {
 	userTk.MustQuery("SELECT a FROM leakdb.t").Check(testkit.Rows("1", "2", "3"))
 	userTk.MustQuery("SELECT 1 FROM leakdb.t").Check(testkit.Rows("1", "1", "1"))
 	userTk.MustQuery("SELECT COUNT(*) FROM leakdb.t").Check(testkit.Rows("3"))
+	userTk.MustQuery("SELECT c FROM leakdb.v").Check(testkit.Rows("1", "1", "1"))
 	userTk.MustGetErrCode("SELECT b FROM leakdb.t", errno.ErrColumnaccessDenied)
 }

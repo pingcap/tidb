@@ -2584,14 +2584,12 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			sql: `SELECT count(a) FROM t`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
 			sql: `SELECT 1 FROM (SELECT count(a) FROM t) tt`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
@@ -2623,8 +2621,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 			},
 		},
 

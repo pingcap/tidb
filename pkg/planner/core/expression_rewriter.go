@@ -1514,9 +1514,6 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
-		if v.F == ast.AggFuncCount {
-			er.collectPrivsForCount()
-		}
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr,
 		*ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
@@ -2497,48 +2494,6 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	}
 }
 
-// Assume that there are two tables t and t1, which contain a and b columns individually. In MySQL:
-// -- Require `a` or `b` SELECT privilege
-// select count(*) from t;
-// select count(1) from t;
-// -- Require `a` SELECT privilege
-// select count(a) from t;
-// -- Require `b` SELECT privilege
-// select count(b) from t;
-// -- Require `SELCT` privilege of `t.a` and `t1.a`
-// select count(*) from t join t1 on t.a = t1.a;
-func (er *expressionRewriter) collectPrivsForCount() {
-	b := er.planCtx.builder
-	if b == nil {
-		return
-	}
-	// dbName -> tableName
-	tableNames := make(map[string]map[string]struct{})
-	for _, fieldName := range er.names {
-		tblName := &ast.TableName{
-			Name:   fieldName.OrigTblName,
-			Schema: fieldName.DBName,
-		}
-		if b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
-			tblName.Name = fieldName.TblName
-		}
-		if len(tblName.Name.L) > 0 && len(tblName.Schema.L) > 0 {
-			if _, ok := tableNames[tblName.Schema.L]; !ok {
-				tableNames[tblName.Schema.L] = make(map[string]struct{})
-			}
-			tableNames[tblName.Schema.L][tblName.Name.L] = struct{}{}
-		}
-	}
-
-	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
-	for db, tables := range tableNames {
-		for table := range tables {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, db, table, "*",
-				plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, table))
-		}
-	}
-}
-
 // Now TableName in expression only used by sequence function like nextval(seq).
 // The function arg should be evaluated as a table name rather than normal column name like mysql does.
 func (er *expressionRewriter) toTable(v *ast.TableName) {
@@ -2815,37 +2770,13 @@ func hasLimit(plan base.LogicalPlan) bool {
 }
 
 func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName) {
-	// A table-level SELECT requirement (`column == "*"`) recorded by
-	// buildDataSource is implied by a column-level SELECT requirement on the same
-	// table, so drop it here to keep the effective requirement set minimal and
-	// the reported error precise. Tables whose columns are never referenced are
-	// untouched and keep the table-level requirement that prevents
-	// `SELECT <constant> FROM t` from bypassing the privilege check.
-	visited := make(map[[2]string]struct{}, len(columnVisited))
-	for _, colName := range columnVisited {
-		visited[[2]string{colName.Schema.L, colName.Table.L}] = struct{}{}
-	}
-	if len(visited) > 0 {
-		kept := b.visitInfo[:0]
-		for _, v := range b.visitInfo {
-			if v.privilege == mysql.SelectPriv && v.column == "*" {
-				if _, ok := visited[[2]string{v.db, v.table}]; ok {
-					continue
-				}
-			}
-			kept = append(kept, v)
-		}
-		b.visitInfo = kept
-	}
-
 	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
 	views := b.SavedViews
 	switch {
 	case len(views) > 0:
 		view := views[len(views)-1]
 		for _, colName := range columnVisited {
-			b.visitInfo = appendVisitInfo(b.visitInfo,
-				mysql.SelectPriv,
+			b.visitInfo = appendSelectVisitInfo(b.visitInfo,
 				colName.Schema.L,
 				colName.Table.L,
 				colName.Name.L,
@@ -2854,8 +2785,7 @@ func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName)
 		}
 	case b.checkColPriv == reportTableErrOption:
 		for _, colName := range columnVisited {
-			b.visitInfo = appendVisitInfo(b.visitInfo,
-				mysql.SelectPriv,
+			b.visitInfo = appendSelectVisitInfo(b.visitInfo,
 				colName.Schema.L,
 				colName.Table.L,
 				colName.Name.L,
@@ -2864,8 +2794,7 @@ func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName)
 		}
 	default:
 		for _, colName := range columnVisited {
-			b.visitInfo = appendVisitInfo(b.visitInfo,
-				mysql.SelectPriv,
+			b.visitInfo = appendSelectVisitInfo(b.visitInfo,
 				colName.Schema.L,
 				colName.Table.L,
 				colName.Name.L,
