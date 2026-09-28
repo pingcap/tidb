@@ -197,6 +197,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryRPCHistogram)
 	prometheus.MustRegister(QueryProcessedKeyHistogram)
+	prometheus.MustRegister(IACacheHitCount)
 	prometheus.MustRegister(IARemoteReadSegmentCount)
 	prometheus.MustRegister(IARemoteReadSegmentSize)
 	prometheus.MustRegister(IARemoteReadSegmentWaitDuration)
