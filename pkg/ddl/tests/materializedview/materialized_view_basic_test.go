@@ -502,6 +502,68 @@ func TestMaterializedViewOutOfPlaceCutoverFailureRollsBackMLogDependencies(t *te
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", shadowTableID)).Check(testkit.Rows("0"))
 }
 
+func TestMaterializedViewOutOfPlaceCutoverPublishEventErrorKeepsRefreshMetadataAtomic(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cutover_publish_error (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_cutover_publish_error (a, b)")
+	tk.MustExec("create materialized view mv_cutover_publish_error (a, s, cnt) as select a, sum(b), count(1) from t_cutover_publish_error group by a")
+
+	oldMView := mustGetMaterializedView(t, dom, "mv_cutover_publish_error")
+	oldMViewID := oldMView.Meta().ID
+	shadowName := ast.NewCIStr("__mv_shadow_cutover_publish_error")
+	shadowInfo, err := ddl.BuildTableInfoWithLike(
+		ast.Ident{Name: shadowName},
+		oldMView.Meta(),
+		&ast.CreateTableStmt{},
+	)
+	require.NoError(t, err)
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: oldMViewID}
+	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	require.NoError(t, dom.DDLExecutor().CreateMaterializedViewShadowTable(tk.Session(), dbInfo.ID, dbInfo.Name, shadowInfo))
+	shadowTable, err := dom.InfoSchema().TableByName(context.Background(), dbInfo.Name, shadowName)
+	require.NoError(t, err)
+	shadowTableID := shadowTable.Meta().ID
+	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	oldMViewRevision := oldMView.Meta().Revision
+	tk.MustExec(fmt.Sprintf(
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, UPDATE_TIME) values (%d, 'test', 'mv_cutover_publish_error', 'warning', UTC_TIMESTAMP())",
+		oldMViewID,
+	))
+
+	const publishEventErrorFailpoint = "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError"
+	require.NoError(t, failpoint.Enable(publishEventErrorFailpoint, "return"))
+	setRefreshCutoverQueryString(t, tk, "mv_cutover_publish_error")
+	err = dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
+		123456789, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+	)
+	require.NoError(t, failpoint.Disable(publishEventErrorFailpoint))
+	require.ErrorContains(t, err, "mock publish event error")
+
+	stillOldMView := mustGetMaterializedView(t, dom, "mv_cutover_publish_error")
+	require.Equal(t, oldMViewID, stillOldMView.Meta().ID)
+	mlog, err := dom.InfoSchema().TableByName(context.Background(), dbInfo.Name, ast.NewCIStr("$mlog$t_cutover_publish_error"))
+	require.NoError(t, err)
+	require.Equal(t, []int64{oldMViewID}, mlog.Meta().MaterializedViewLog.DependentMViewIDs)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", oldMViewID)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", shadowTableID)).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", oldMViewID)).Check(testkit.Rows("1"))
+
+	setRefreshCutoverQueryString(t, tk, "mv_cutover_publish_error")
+	require.NoError(t, dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
+		123456790, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+	))
+	newMView := mustGetMaterializedView(t, dom, "mv_cutover_publish_error")
+	require.Equal(t, shadowTableID, newMView.Meta().ID)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", oldMViewID)).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", shadowTableID)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", oldMViewID)).Check(testkit.Rows("0"))
+}
+
 func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)

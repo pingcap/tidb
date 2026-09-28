@@ -68,6 +68,14 @@ func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, jo
 		return
 	}
 
+	if err := w.deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx, args.OldMViewID); err != nil {
+		logutil.DDLLogger().Warn(
+			"failed to delete stale materialized view refresh alert after cutover",
+			zap.Int64("tableID", args.OldMViewID),
+			zap.Error(err),
+		)
+	}
+
 	// Materialized views in Stage-1 are non-partitioned, so their table-level
 	// affinity group ID is derived directly from the old physical table ID.
 	groupID := GetTableAffinityGroupID(args.OldMViewID)
@@ -2117,9 +2125,6 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError", func() {
 		failpoint.Return(ver, errors.New("mock refresh materialized view complete OUT OF PLACE cutover error after migrating refresh info"))
 	})
-	if err := w.deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx, args.OldMViewID); err != nil {
-		logutil.DDLLogger().Warn("refresh materialized view complete OUT OF PLACE cutover: failed to delete stale refresh alert", zap.Error(err))
-	}
 	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverBeforeCommitError", func() {
 		failpointErr := errors.New("mock refresh materialized view complete OUT OF PLACE cutover error before commit")
 		w.sess.Rollback()
