@@ -50,6 +50,9 @@ pub enum ExplainFormat {
     Brief,
     /// Go's four-column tree format, without estimates or id suffixes.
     PlanTree,
+    /// Go's GraphViz digraph (`Explain.prepareDotInfo`), one TEXT cell
+    /// carrying the whole `digraph` document.
+    Dot,
 }
 
 impl ExplainFormat {
@@ -66,6 +69,8 @@ impl ExplainFormat {
             Some(Self::Brief)
         } else if format.eq_ignore_ascii_case("plan_tree") {
             Some(Self::PlanTree)
+        } else if format.eq_ignore_ascii_case("dot") {
+            Some(Self::Dot)
         } else {
             None
         }
@@ -79,6 +84,8 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
         ExplainFormat::Verbose => PlannerExplainFormat::Verbose,
         ExplainFormat::Brief => PlannerExplainFormat::Brief,
         ExplainFormat::PlanTree => PlannerExplainFormat::PlanTree,
+        // Dot renders through `explain_dot_rows`, never the row planner.
+        ExplainFormat::Dot => PlannerExplainFormat::Row,
     }
 }
 
@@ -2393,6 +2400,9 @@ fn render_physical_plan(
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
 ) -> Result<SelectMeta, DriverError> {
+    if matches!(format, ExplainFormat::Dot) {
+        return Ok(explain_dot_rows(physical));
+    }
     let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
     let coster = (format == ExplainFormat::Verbose).then(|| {
         Ver2Coster::from_env(statement_context.optimizer_cost_env()).with_explain_cache()
@@ -2436,6 +2446,49 @@ fn render_physical_plan(
         );
     }
     Ok((columns, rows))
+}
+
+/// go `Explain.prepareDotInfo` (`pkg/planner/core/common_plans.go:1341`): the
+/// plan rendered as one GraphViz `digraph` document in a single TEXT cell.
+/// Each task opens a `cluster<N>` subgraph labelled with its task type, then
+/// walks its operators breadth-first writing one `"parent" -> "child"` edge
+/// per child; reader/cop splits (go's `copTasks`/`pipelines` queues) do not
+/// arise at this tier, where a reader is an ordinary node of the same tree.
+fn explain_dot_rows(physical: &PhysicalPlan) -> SelectMeta {
+    let mut buffer = String::new();
+    buffer.push_str(&format!("\ndigraph {} {{\n", physical.explain_id(false)));
+    prepare_task_dot(physical, "root", &mut buffer);
+    buffer.push_str("}\n");
+    let field_type = FieldType::new(FieldTypeCode::VarString);
+    (
+        vec![("dot contents".to_owned(), field_type)],
+        vec![vec![text(&buffer)]],
+    )
+}
+
+/// go `Explain.prepareTaskDot`: one cluster per task, breadth-first edges
+/// inside it.
+fn prepare_task_dot(plan: &PhysicalPlan, task_tp: &str, buffer: &mut String) {
+    buffer.push_str(&format!("subgraph cluster{}{{\n", plan.id()));
+    buffer.push_str("node [style=filled, color=lightgrey]\n");
+    buffer.push_str("color=black\n");
+    buffer.push_str(&format!("label = \"{}\"\n", task_tp));
+    if plan.children().is_empty() {
+        buffer.push_str(&format!("\"{}\"\n", plan.explain_id(false)));
+    }
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(plan);
+    while let Some(current) = queue.pop_front() {
+        for child in current.children() {
+            buffer.push_str(&format!(
+                "\"{}\" -> \"{}\"\n",
+                current.explain_id(false),
+                child.explain_id(false)
+            ));
+            queue.push_back(child);
+        }
+    }
+    buffer.push_str("}\n");
 }
 
 fn render_physical_query(
