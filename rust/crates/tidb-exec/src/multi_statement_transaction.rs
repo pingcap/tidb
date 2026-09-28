@@ -1472,6 +1472,7 @@ mod tests {
                     .unwrap(),
             ],
             affected_rows: 2,
+            warnings: Vec::new(),
         };
         assert_eq!(
             planned_mutation_keys(&plan),

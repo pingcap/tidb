@@ -1303,3 +1303,32 @@ fn a_pushed_cap_becomes_a_limit_executor_above_the_selection() {
         vec![ExecType::TypeTableScan as i32, ExecType::TypeLimit as i32]
     );
 }
+
+#[test]
+fn timestamp_constants_follow_the_request_zone_through_nested_predicates() {
+    let zone = tidb_datatype::SessionTimeZone::Named(chrono_tz::Asia::Shanghai);
+    let local = Time::from_date_checked(2024, 1, 2, 11, 4, 5, 0, TimeType::Timestamp, 0).unwrap();
+    let utc = Time::from_date_checked(2024, 1, 2, 3, 4, 5, 0, TimeType::Timestamp, 0).unwrap();
+    let call = build_call(
+        "isnull",
+        vec![PbScalar::TimeLiteral {
+            value: local,
+            field_type: FieldType::new(FieldTypeCode::Timestamp).with_decimal(0),
+        }],
+    )
+    .unwrap();
+    let predicate = ScanPredicate::Not(Box::new(ScanPredicate::Builtin(call)));
+    assert!(tidb_exec::wide_scan_selection::accepts_in(
+        &predicate,
+        &[],
+        &zone
+    ));
+    let encoded =
+        tidb_exec::wide_scan_selection::wide_scan_selection_conditions_in(&[predicate], &[], &zone)
+            .unwrap();
+    let literal = &encoded[0].children[0].children[0];
+    assert_eq!(
+        tidb_codec::decode_uint(literal.val()).unwrap().1,
+        utc.to_packed_uint().unwrap()
+    );
+}

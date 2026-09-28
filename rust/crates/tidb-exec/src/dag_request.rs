@@ -557,7 +557,7 @@ fn construct_dag_req_assembled(
     match selection {
         SelectionSource::None => {}
         SelectionSource::Bounded(plan) => {
-            executors.push(selection_to_pb(plan, scan_columns)?);
+            executors.push(selection_to_pb(plan, scan_columns, context)?);
         }
         SelectionSource::Conditions(conditions) => {
             executors.push(selection_executor(conditions.to_vec())?);
@@ -619,20 +619,33 @@ fn validate_output_offsets(offsets: &[u32], width: usize) -> Result<(), DagReque
 fn selection_to_pb(
     plan: &PhysicalSelection,
     scan_columns: &[ScanColumnInfo],
+    context: &DagRequestContext,
 ) -> Result<Executor, DagRequestBuildError> {
     if plan.conditions.is_empty() {
         return Err(DagRequestBuildError::EmptySelection);
     }
+    let zone = match context.time_zone_name.as_str() {
+        "" => tidb_datatype::SessionTimeZone::Fixed {
+            name: String::new(),
+            offset_secs: i32::try_from(context.time_zone_offset)
+                .map_err(|_| DagRequestBuildError::UnsupportedSelectionExpression)?,
+        },
+        "System" => tidb_datatype::SessionTimeZone::Local,
+        name => tidb_datatype::SessionTimeZone::Named(
+            name.parse()
+                .map_err(|_| DagRequestBuildError::UnsupportedSelectionExpression)?,
+        ),
+    };
     let conditions = plan
         .conditions
         .iter()
         .map(|condition| {
             validate_selection_columns(condition, scan_columns)?;
-            if let Some(encoded) =
-                tidb_expr::pushdown_catalog::expression_to_pb(condition, &|offset| {
-                    scan_column_descriptor(scan_columns, offset)
-                })
-            {
+            if let Some(encoded) = tidb_expr::pushdown_catalog::expression_to_pb_in(
+                condition,
+                &|offset| scan_column_descriptor(scan_columns, offset),
+                &zone,
+            ) {
                 return Ok(encoded);
             }
             let comparison = BigIntComparison::from_expression(condition)

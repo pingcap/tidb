@@ -172,6 +172,7 @@ fn a_mixed_int_and_string_insert_routes_each_value_by_column_type() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
@@ -251,6 +252,7 @@ fn one_insert_row_becomes_one_not_exists_mutation_and_one_affected_row() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
@@ -276,6 +278,7 @@ fn every_inserted_row_counts_exactly_once() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
@@ -334,6 +337,7 @@ fn a_changed_row_publishes_one_exists_mutation_and_reports_one_row() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_update(
         &table(),
         10,
@@ -420,6 +424,7 @@ fn a_point_delete_publishes_one_exists_asserted_delete_mutation() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_delete(&table(), 10, Some(&stored_row(100))).expect("delete must plan")
     else {
         panic!("an existing row publishes a delete");
@@ -875,6 +880,7 @@ fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_configured_write(&mut snapshot, &write, &call(), 0)
         .expect("duplicate update must plan")
     else {
@@ -1000,6 +1006,7 @@ fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_configured_write(&mut snapshot, &write, &call(), 0)
         .expect("later VALUES rows observe their staged predecessor")
     else {
@@ -1027,6 +1034,7 @@ fn insert_adds_one_non_unique_index_entry_beside_the_record() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
@@ -1153,6 +1161,7 @@ fn replace_deletes_a_conflicting_primary_row_then_reuses_its_record_key() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("REPLACE must plan")
     else {
         panic!("a changed replacement publishes");
@@ -1184,6 +1193,7 @@ fn replace_reads_a_unique_conflict_and_moves_its_handle() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("REPLACE must plan")
     else {
         panic!("a replacement with a unique conflict publishes");
@@ -1234,6 +1244,7 @@ fn multiple_replace_rows_observe_the_statement_local_replacement() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("REPLACE must plan")
     else {
         panic!("the final replacement publishes");
@@ -1309,6 +1320,7 @@ fn updating_an_int_column_preserves_the_char_columns_of_a_mixed_row() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_update(
         &mixed_table(),
         1,
@@ -1425,6 +1437,7 @@ fn setting_a_char_column_replaces_only_its_bytes_and_keeps_the_int_columns() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan_update(
         &mixed_table(),
         1,
@@ -1710,6 +1723,7 @@ fn plan_configured_write_plans_an_insert_without_reading() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan
     else {
         panic!("an INSERT plans a write");
@@ -1774,6 +1788,7 @@ fn plan_configured_write_reads_then_plans_a_present_delete() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
+        ..
     } = plan
     else {
         panic!("a present row plans a delete");

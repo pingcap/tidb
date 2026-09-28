@@ -2038,12 +2038,14 @@ fn convert_shared(
     expr: &tipb::Expr,
     context: &Arc<RequestEvalContext>,
 ) -> Result<SimpleExpr, String> {
-    tidb_expr::distsql_builtin::pb_to_expr(expr, &context.column_types).map(|expression| {
-        SimpleExpr::Shared(Arc::new(SharedExpression {
-            expression,
-            context: Arc::clone(context),
-        }))
-    })
+    tidb_expr::distsql_builtin::pb_to_expr_in(expr, &context.column_types, &context.zone).map(
+        |expression| {
+            SimpleExpr::Shared(Arc::new(SharedExpression {
+                expression,
+                context: Arc::clone(context),
+            }))
+        },
+    )
 }
 
 /// Evaluates a [`SimpleExpr::Shared`] node over one scanned row.
@@ -2080,60 +2082,47 @@ fn convert_expr_with_context(
     {
         return convert_shared(expr, context);
     }
-    if tp == tipb::ExprType::Null {
-        return Ok(SimpleExpr::Null);
-    }
-    if tp == tipb::ExprType::Int64 {
-        let (_, value) = tidb_codec::decode_int(expr.val())
-            .map_err(|err| format!("invalid int literal: {err:?}"))?;
-        return Ok(SimpleExpr::Int(value));
-    }
-    if tp == tipb::ExprType::Float64 {
-        // Go `convertFloat`: `codec.DecodeFloat` -- eight big-endian bits.
-        let bytes = expr.val();
-        if bytes.len() != 8 {
-            return Err(format!("invalid float literal: {bytes:?}"));
-        }
-        return Ok(SimpleExpr::Real(f64::from_bits(u64::from_be_bytes(
-            bytes.try_into().expect("eight bytes"),
-        ))));
-    }
-    if tp == tipb::ExprType::String {
-        return Ok(SimpleExpr::Bytes(expr.val().to_vec()));
-    }
-    if tp == tipb::ExprType::MysqlTime {
-        let (_, packed) = tidb_codec::decode_uint(expr.val())
-            .map_err(|err| format!("invalid time literal: {err:?}"))?;
-        let field_type = expr.field_type.as_ref();
-        let kind = field_type.and_then(|ft| u8::try_from(ft.tp()).ok()).map_or(
-            tidb_datatype::TimeType::DateTime,
-            |tp| match tidb_datatype::FieldTypeCode::from_mysql_type(tp) {
-                tidb_datatype::FieldTypeCode::Date => tidb_datatype::TimeType::Date,
-                tidb_datatype::FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
-                _ => tidb_datatype::TimeType::DateTime,
-            },
-        );
-        let fsp = field_type.map_or(0, |ft| i64::from(ft.decimal()));
-        let value = tidb_datatype::Time::from_packed_uint(packed, kind, fsp)
-            .map_err(|err| format!("invalid time literal: {err:?}"))?;
-        return Ok(SimpleExpr::Time(value));
-    }
-    if tp == tipb::ExprType::MysqlDecimal {
-        let (_, value, _, _) = tidb_codec::decode_decimal(expr.val())
-            .map_err(|err| format!("invalid decimal literal: {err:?}"))?;
-        return Ok(SimpleExpr::Decimal(value));
-    }
-    if tp == tipb::ExprType::MysqlJson {
-        // Go `convertJSON`: `codec.DecodeOne` -- a codec-wrapped JSON datum.
-        let datums = tidb_codec::decode(expr.val(), 1)
-            .map_err(|err| format!("invalid json literal: {err:?}"))?;
-        let Some(datum) = datums.into_iter().next() else {
-            return Err("invalid json literal: no datum".to_owned());
-        };
-        match datum {
-            tidb_datatype::Datum::Json(json) => return Ok(SimpleExpr::Json(json)),
-            _ => return Err("invalid json literal: not a json datum".to_owned()),
-        }
+    if tp != tipb::ExprType::ScalarFunc && tp != tipb::ExprType::ColumnRef {
+        use tidb_datatype::Datum;
+        use tidb_expr::{constant::Constant, expression::Expression};
+        // All wire literals use Go's shared decoding contract, including
+        // UTC TIMESTAMP conversion. Keep cheap legacy leaves where their
+        // representation preserves the datum, without materializing a row.
+        let expression =
+            tidb_expr::distsql_builtin::pb_to_expr_in(expr, &context.column_types, &context.zone)?;
+        return Ok(match expression {
+            Expression::Constant(Constant {
+                value: Datum::Null, ..
+            }) => SimpleExpr::Null,
+            Expression::Constant(Constant {
+                value: Datum::Int(value),
+                ..
+            }) => SimpleExpr::Int(value),
+            Expression::Constant(Constant {
+                value: Datum::Real(value),
+                ..
+            }) => SimpleExpr::Real(value),
+            Expression::Constant(Constant {
+                value: Datum::Bytes(value),
+                ..
+            }) => SimpleExpr::Bytes(value),
+            Expression::Constant(Constant {
+                value: Datum::Time(value),
+                ..
+            }) => SimpleExpr::Time(value),
+            Expression::Constant(Constant {
+                value: Datum::Decimal(value),
+                ..
+            }) => SimpleExpr::Decimal(value),
+            Expression::Constant(Constant {
+                value: Datum::Json(value),
+                ..
+            }) => SimpleExpr::Json(value),
+            expression => SimpleExpr::Shared(Arc::new(SharedExpression {
+                expression,
+                context: Arc::clone(context),
+            })),
+        });
     }
     if tp == tipb::ExprType::ColumnRef {
         let (_, offset) = tidb_codec::decode_int(expr.val())
@@ -2681,6 +2670,17 @@ fn convert_expr_with_context(
     ))
 }
 
+// Preserve SQL NULL independently of expression evaluation errors. Each caller
+// evaluates children in place, so lazy branches retain Go's evaluation order.
+macro_rules! nullable {
+    ($value:expr) => {
+        match $value {
+            Some(value) => value,
+            None => return Ok(None),
+        }
+    };
+}
+
 /// The bytes a string operand carries: a literal, or a string-valued
 /// column. Anything else -- including SQL NULL -- is `None`, which the
 /// caller propagates as MySQL's UNKNOWN.
@@ -2697,11 +2697,11 @@ fn eval_decimal(
     row: &[tidb_datatype::Datum],
     div_precision_increment: i64,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Option<tidb_datatype::Decimal> {
+) -> Result<Option<tidb_datatype::Decimal>, String> {
     use tidb_datatype::Datum;
-    let expr = expr?;
-    match expr {
-        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+    let expr = nullable!(expr);
+    let value = match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
             Datum::Decimal(v) => Some(v),
             _ => None,
         },
@@ -2723,8 +2723,18 @@ fn eval_decimal(
             children,
         ) => {
             let (left, right) = (
-                eval_decimal(children.first(), row, div_precision_increment, time_zone)?,
-                eval_decimal(children.get(1), row, div_precision_increment, time_zone)?,
+                nullable!(eval_decimal(
+                    children.first(),
+                    row,
+                    div_precision_increment,
+                    time_zone
+                )?),
+                nullable!(eval_decimal(
+                    children.get(1),
+                    row,
+                    div_precision_increment,
+                    time_zone
+                )?),
             );
             match sig {
                 SimpleSig::DivideDecimal => left.div_mysql(&right, div_precision_increment as u32),
@@ -2738,22 +2748,27 @@ fn eval_decimal(
         // clock in the session zone, divided by 1e6 exactly (an out-of-
         // range source answers the zero decimal, not NULL).
         SimpleExpr::Func(SimpleSig::UnixTimestampDec, children) => {
-            let time = eval_time(children.first(), row, div_precision_increment, time_zone)?;
+            let time = nullable!(eval_time(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             if time.is_zero() {
-                return Some(tidb_datatype::Decimal::from_my_decimal(
+                return Ok(Some(tidb_datatype::Decimal::from_my_decimal(
                     &tidb_datatype::MyDecimal::from_int(0),
-                ));
+                )));
             }
             let Ok(clock) = time.core_time().to_datetime(time_zone) else {
-                return Some(tidb_datatype::Decimal::from_my_decimal(
+                return Ok(Some(tidb_datatype::Decimal::from_my_decimal(
                     &tidb_datatype::MyDecimal::from_int(0),
-                ));
+                )));
             };
             let micros = clock.timestamp_micros();
             if !(1_000_000..=32_536_771_199_999_999).contains(&micros) {
-                return Some(tidb_datatype::Decimal::from_my_decimal(
+                return Ok(Some(tidb_datatype::Decimal::from_my_decimal(
                     &tidb_datatype::MyDecimal::from_int(0),
-                ));
+                )));
             }
             // Go shifts the exact micros by -6 digits; render the same
             // value as text (the in-crate shift rounds the dropped
@@ -2781,10 +2796,11 @@ fn eval_decimal(
         ) => {
             match sig {
                 SimpleSig::CastIntAsDecimal => {
-                    let value = children
+                    let value = nullable!(children
                         .first()
-                        .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())
-                        .flatten()?;
+                        .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                        .transpose()?
+                        .flatten());
                     // An unsigned source renders through `from_uint` --
                     // the i128 carries the value without the wire's flag.
                     if let Ok(signed) = i64::try_from(value) {
@@ -2800,19 +2816,27 @@ fn eval_decimal(
                     }
                 }
                 SimpleSig::CastRealAsDecimal => {
-                    let value =
-                        eval_real(children.first(), row, div_precision_increment, time_zone)?;
+                    let value = nullable!(eval_real(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     // Go `FromFloat64`: the truncated warning folds.
                     Some(tidb_datatype::Decimal::from_my_decimal(
                         &tidb_datatype::MyDecimal::from_float64(value).0,
                     ))
                 }
                 SimpleSig::CastDecimalAsDecimal => {
-                    eval_decimal(children.first(), row, div_precision_increment, time_zone)
+                    eval_decimal(children.first(), row, div_precision_increment, time_zone)?
                 }
                 SimpleSig::CastStringAsDecimal => {
-                    let raw =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
+                    let raw = nullable!(eval_bytes(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     let text = String::from_utf8_lossy(&raw);
                     // Go trims, then `FromString` (the truncated warning
                     // folds; the numeric prefix survives).
@@ -2821,18 +2845,19 @@ fn eval_decimal(
                     ))
                 }
                 SimpleSig::CastTimeAsDecimal => {
-                    eval_time(children.first(), row, div_precision_increment, time_zone)
+                    eval_time(children.first(), row, div_precision_increment, time_zone)?
                         .map(tidb_datatype::Time::to_number)
                 }
                 SimpleSig::CastDurationAsDecimal => {
-                    eval_duration(children.first(), row, div_precision_increment, time_zone)
+                    eval_duration(children.first(), row, div_precision_increment, time_zone)?
                         .map(tidb_datatype::MySqlDuration::to_number)
                 }
                 _ => None,
             }
         }
         _ => None,
-    }
+    };
+    Ok(value)
 }
 
 /// Go's `CreateBinaryJSON` over a scanned datum, for a MEMBER OF target:
@@ -2861,13 +2886,13 @@ fn eval_json(
     row: &[tidb_datatype::Datum],
     div_precision_increment: i64,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Option<tidb_datatype::BinaryJSON> {
+) -> Result<Option<tidb_datatype::BinaryJSON>, String> {
     use tidb_datatype::Datum;
     let to_json = |value: tidb_datatype::BinaryJSONValue| {
         tidb_datatype::BinaryJSON::from_typed_value(&value).ok()
     };
-    match expr? {
-        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+    let value = match nullable!(expr) {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
             Datum::Json(v) => Some(v),
             _ => None,
         },
@@ -2892,36 +2917,49 @@ fn eval_json(
             match sig {
                 SimpleSig::CastIntAsJson => children
                     .first()
-                    .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())
+                    .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                    .transpose()?
                     .flatten()
                     .and_then(|value| i64::try_from(value).ok())
                     .and_then(|value| to_json(tidb_datatype::BinaryJSONValue::Int64(value))),
                 SimpleSig::CastRealAsJson => {
-                    eval_real(children.first(), row, div_precision_increment, time_zone)
+                    eval_real(children.first(), row, div_precision_increment, time_zone)?
                         .and_then(|value| to_json(tidb_datatype::BinaryJSONValue::Float64(value)))
                 }
                 SimpleSig::CastDecimalAsJson => {
                     // Go converts through f64 and notes the FIXME: the
                     // JSON type reads DOUBLE.
-                    let value =
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?;
+                    let value = nullable!(eval_decimal(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     to_json(tidb_datatype::BinaryJSONValue::Float64(value.to_f64()))
                 }
                 SimpleSig::CastStringAsJson => {
-                    let raw =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
+                    let raw = nullable!(eval_bytes(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     let text = String::from_utf8_lossy(&raw).into_owned();
-                    let parsed = tidb_datatype::BinaryJSON::parse(&text).ok()?;
+                    let parsed = nullable!(tidb_datatype::BinaryJSON::parse(&text).ok());
                     Some(parsed)
                 }
                 // Go re-fits datetime and timestamp to MaxFsp before
                 // wrapping; dates keep their kind.
                 SimpleSig::CastTimeAsJson => {
-                    let time =
-                        eval_time(children.first(), row, div_precision_increment, time_zone)?;
+                    let time = nullable!(eval_time(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     let time = if time.kind() == tidb_datatype::TimeType::DateTime {
                         let mut widened = time;
-                        widened.set_fsp(6).ok()?;
+                        nullable!(widened.set_fsp(6).ok());
                         widened
                     } else {
                         time
@@ -2929,14 +2967,20 @@ fn eval_json(
                     to_json(tidb_datatype::BinaryJSONValue::Time(time))
                 }
                 SimpleSig::CastDurationAsJson => {
-                    let duration =
-                        eval_duration(children.first(), row, div_precision_increment, time_zone)?;
-                    let widened =
-                        tidb_datatype::MySqlDuration::from_nanoseconds(duration.nanoseconds(), 6)
-                            .ok()?;
+                    let duration = nullable!(eval_duration(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
+                    let widened = nullable!(tidb_datatype::MySqlDuration::from_nanoseconds(
+                        duration.nanoseconds(),
+                        6
+                    )
+                    .ok());
                     to_json(tidb_datatype::BinaryJSONValue::Duration(widened))
                 }
-                _ => eval_json(children.first(), row, div_precision_increment, time_zone),
+                _ => eval_json(children.first(), row, div_precision_increment, time_zone)?,
             }
         }
         // The JSON value functions answer documents. A literal NULL
@@ -2950,33 +2994,45 @@ fn eval_json(
             | SimpleSig::JsonMergePatchSig),
             children,
         ) => {
-            let json_arg = |index: usize| -> Option<tidb_datatype::BinaryJSON> {
-                match children.get(index) {
+            let json_arg = |index: usize| -> Result<Option<tidb_datatype::BinaryJSON>, String> {
+                Ok(match children.get(index) {
                     Some(SimpleExpr::Null) => tidb_datatype::BinaryJSON::from_typed_value(
                         &tidb_datatype::BinaryJSONValue::Null,
                     )
                     .ok(),
-                    _ => eval_json(children.get(index), row, div_precision_increment, time_zone),
-                }
+                    _ => eval_json(children.get(index), row, div_precision_increment, time_zone)?,
+                })
             };
-            let pair = |index: usize| -> Option<(
-                tidb_datatype::JSONPathExpression,
-                tidb_datatype::BinaryJSON,
-            )> {
-                let raw = eval_bytes(children.get(index), row, div_precision_increment, time_zone)?;
-                let path =
-                    tidb_datatype::parse_json_path_expr(&String::from_utf8_lossy(&raw)).ok()?;
-                let value = json_arg(index + 1)?;
-                Some((path, value))
+            let pair = |index: usize| -> Result<
+                Option<(tidb_datatype::JSONPathExpression, tidb_datatype::BinaryJSON)>,
+                String,
+            > {
+                let raw = nullable!(eval_bytes(
+                    children.get(index),
+                    row,
+                    div_precision_increment,
+                    time_zone
+                )?);
+                let path = nullable!(tidb_datatype::parse_json_path_expr(
+                    &String::from_utf8_lossy(&raw)
+                )
+                .ok());
+                let value = nullable!(json_arg(index + 1)?);
+                Ok(Some((path, value)))
             };
             match sig {
                 SimpleSig::JsonReplaceSig => {
-                    let doc = eval_json(children.first(), row, div_precision_increment, time_zone)?;
+                    let doc = nullable!(eval_json(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     let mut paths = Vec::new();
                     let mut values = Vec::new();
                     let mut index = 1;
                     while index + 1 < children.len() {
-                        let (path, value) = pair(index)?;
+                        let (path, value) = nullable!(pair(index)?);
                         paths.push(path);
                         values.push(value);
                         index += 2;
@@ -2985,14 +3041,18 @@ fn eval_json(
                         .ok()
                 }
                 SimpleSig::JsonArrayAppendSig => {
-                    let mut doc =
-                        eval_json(children.first(), row, div_precision_increment, time_zone)?;
+                    let mut doc = nullable!(eval_json(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     let mut index = 1;
                     while index + 1 < children.len() {
-                        let (path, value) = pair(index)?;
+                        let (path, value) = nullable!(pair(index)?);
                         if path.could_match_multiple_values() {
                             // Go: `ErrInvalidJSONPathMultipleSelection`.
-                            return None;
+                            return Ok(None);
                         }
                         let Some(target) = doc.extract(std::slice::from_ref(&path)).ok().flatten()
                         else {
@@ -3002,22 +3062,23 @@ fn eval_json(
                         };
                         if target.type_code() != tidb_datatype::JSON_TYPE_CODE_ARRAY {
                             // Go: `ErrInvalidJSONPathArrayCell` folded.
-                            return None;
+                            return Ok(None);
                         }
-                        let count = target.element_count().ok()?;
+                        let count = nullable!(target.element_count().ok());
                         let mut items = Vec::with_capacity(count + 1);
                         for cell in 0..count {
-                            let element = target.array_get(cell).ok()?.expect("within count");
+                            let element =
+                                nullable!(target.array_get(cell).ok()).expect("within count");
                             items.push(tidb_datatype::BinaryJSONValue::Binary(element));
                         }
                         items.push(tidb_datatype::BinaryJSONValue::Binary(value));
-                        let appended = tidb_datatype::BinaryJSON::from_typed_value(
+                        let appended = nullable!(tidb_datatype::BinaryJSON::from_typed_value(
                             &tidb_datatype::BinaryJSONValue::Array(items),
                         )
-                        .ok()?;
-                        doc = doc
+                        .ok());
+                        doc = nullable!(doc
                             .modify(&[path], &[appended], tidb_datatype::JSONModifyType::Set)
-                            .ok()?;
+                            .ok());
                         index += 2;
                     }
                     Some(doc)
@@ -3025,20 +3086,21 @@ fn eval_json(
                 SimpleSig::JsonMergePatchSig => {
                     let mut values = Vec::with_capacity(children.len());
                     for index in 0..children.len() {
-                        values.push(eval_json(
+                        values.push(nullable!(eval_json(
                             children.get(index),
                             row,
                             div_precision_increment,
                             time_zone,
-                        )?);
+                        )?));
                     }
-                    tidb_datatype::merge_patch_binary_json(&values).ok()?
+                    nullable!(tidb_datatype::merge_patch_binary_json(&values).ok())
                 }
                 _ => None,
             }
         }
         _ => None,
-    }
+    };
+    Ok(value)
 }
 
 /// The binary64 value of one operand of a real comparison or arithmetic;
@@ -3048,11 +3110,11 @@ fn eval_real(
     row: &[tidb_datatype::Datum],
     div_precision_increment: i64,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Option<f64> {
+) -> Result<Option<f64>, String> {
     use tidb_datatype::Datum;
-    let expr = expr?;
-    match expr {
-        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+    let expr = nullable!(expr);
+    let value = match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
             Datum::Real(v) | Datum::Float32(v) => Some(v),
             _ => None,
         },
@@ -3064,7 +3126,12 @@ fn eval_real(
         // Go `ConvertJSONToReal`: numbers pass, strings take the numeric
         // prefix, other codes answer 0 under the folded error.
         SimpleExpr::Func(SimpleSig::CastJsonAsReal, children) => {
-            let value = eval_json(children.first(), row, div_precision_increment, time_zone)?;
+            let value = nullable!(eval_json(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             if let Some(real) = value.as_f64() {
                 Some(real)
             } else if let Some(text) = value.as_string() {
@@ -3110,26 +3177,35 @@ fn eval_real(
             ) {
                 // Go wraps the operand in the cast signature; the widening
                 // itself is exact for the admitted source kinds.
-                return match sig {
+                return Ok(match sig {
                     SimpleSig::CastIntAsReal => {
                         // The int channel carries no error for a leaf.
-                        let value = children.first().and_then(|c| {
-                            eval_expr(c, row, div_precision_increment, time_zone)
-                                .ok()
-                                .flatten()
-                        });
+                        let value = children
+                            .first()
+                            .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                            .transpose()?
+                            .flatten();
                         value.map(|value| value as f64)
                     }
                     SimpleSig::CastDecimalAsReal => Some(
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?
-                            .to_f64(),
+                        nullable!(eval_decimal(
+                            children.first(),
+                            row,
+                            div_precision_increment,
+                            time_zone
+                        )?)
+                        .to_f64(),
                     ),
                     SimpleSig::CastStringAsReal => {
-                        let raw =
-                            eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
+                        let raw = nullable!(eval_bytes(
+                            children.first(),
+                            row,
+                            div_precision_increment,
+                            time_zone
+                        )?);
                         let text = String::from_utf8_lossy(&raw);
                         let Some(prefix) = numeric_prefix(text.trim_start(), true) else {
-                            return Some(0.0);
+                            return Ok(Some(0.0));
                         };
                         let parsed = prefix.parse::<f64>().unwrap_or(f64::NAN);
                         // `strconv.ParseFloat` range saturation: ±MaxFloat64.
@@ -3144,40 +3220,63 @@ fn eval_real(
                         })
                     }
                     SimpleSig::RoundReal => {
-                        eval_real(children.first(), row, div_precision_increment, time_zone)
+                        eval_real(children.first(), row, div_precision_increment, time_zone)?
                             .map(f64::round)
                     }
                     SimpleSig::RoundInt => children
                         .first()
-                        .and_then(|c| {
-                            eval_expr(c, row, div_precision_increment, time_zone)
-                                .ok()
-                                .flatten()
-                        })
+                        .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                        .transpose()?
+                        .flatten()
                         .map(|value| value as f64),
                     SimpleSig::RoundDec => Some(
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?
-                            .round_to_scale(0)
-                            .to_f64(),
+                        nullable!(eval_decimal(
+                            children.first(),
+                            row,
+                            div_precision_increment,
+                            time_zone
+                        )?)
+                        .round_to_scale(0)
+                        .to_f64(),
                     ),
                     SimpleSig::Pow => {
-                        let left =
-                            eval_real(children.first(), row, div_precision_increment, time_zone)?;
-                        let right =
-                            eval_real(children.get(1), row, div_precision_increment, time_zone)?;
+                        let left = nullable!(eval_real(
+                            children.first(),
+                            row,
+                            div_precision_increment,
+                            time_zone
+                        )?);
+                        let right = nullable!(eval_real(
+                            children.get(1),
+                            row,
+                            div_precision_increment,
+                            time_zone
+                        )?);
                         Some(left.powf(right))
                     }
                     SimpleSig::Atan2Args => {
-                        let left =
-                            eval_real(children.first(), row, div_precision_increment, time_zone)?;
-                        let right =
-                            eval_real(children.get(1), row, div_precision_increment, time_zone)?;
+                        let left = nullable!(eval_real(
+                            children.first(),
+                            row,
+                            div_precision_increment,
+                            time_zone
+                        )?);
+                        let right = nullable!(eval_real(
+                            children.get(1),
+                            row,
+                            div_precision_increment,
+                            time_zone
+                        )?);
                         Some(left.atan2(right))
                     }
                     SimpleSig::Pi => Some(std::f64::consts::PI),
                     other => {
-                        let value =
-                            eval_real(children.first(), row, div_precision_increment, time_zone)?;
+                        let value = nullable!(eval_real(
+                            children.first(),
+                            row,
+                            div_precision_increment,
+                            time_zone
+                        )?);
                         match other {
                             SimpleSig::Acos => Some(value.acos()),
                             SimpleSig::Asin => Some(value.asin()),
@@ -3185,14 +3284,24 @@ fn eval_real(
                             SimpleSig::Cos => Some(value.cos()),
                             SimpleSig::Sin => Some(value.sin()),
                             SimpleSig::Cot => Some(1.0 / value.tan()),
-                            _ => return None,
+                            _ => return Ok(None),
                         }
                     }
-                };
+                });
             }
             let (left, right) = (
-                eval_real(children.first(), row, div_precision_increment, time_zone)?,
-                eval_real(children.get(1), row, div_precision_increment, time_zone)?,
+                nullable!(eval_real(
+                    children.first(),
+                    row,
+                    div_precision_increment,
+                    time_zone
+                )?),
+                nullable!(eval_real(
+                    children.get(1),
+                    row,
+                    div_precision_increment,
+                    time_zone
+                )?),
             );
             match sig {
                 SimpleSig::PlusReal => Some(left + right),
@@ -3207,7 +3316,8 @@ fn eval_real(
             }
         }
         _ => None,
-    }
+    };
+    Ok(value)
 }
 
 /// The MySQL duration of one operand: a DURATION leaf, or a DATETIME
@@ -3290,30 +3400,49 @@ fn interval_text(
     time_zone: &tidb_datatype::SessionTimeZone,
     kind: IntervalArg,
     unit: &str,
-) -> Option<String> {
-    match kind {
+) -> Result<Option<String>, String> {
+    let value = match kind {
         IntervalArg::String => {
-            let raw = eval_bytes(children.get(1), row, div_precision_increment, time_zone)?;
+            let raw = nullable!(eval_bytes(
+                children.get(1),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             Some(interval_reformat_string(
                 &String::from_utf8_lossy(&raw),
                 unit,
             ))
         }
         IntervalArg::Int => {
-            let value = eval_expr(children.get(1)?, row, div_precision_increment, time_zone)
-                .ok()
-                .flatten()?;
+            let value = nullable!(eval_expr(
+                nullable!(children.get(1)),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             Some(value.to_string())
         }
         IntervalArg::Real => {
-            let value = eval_real(children.get(1), row, div_precision_increment, time_zone)?;
+            let value = nullable!(eval_real(
+                children.get(1),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             Some(format!("{value}"))
         }
         IntervalArg::Decimal => {
-            let value = eval_decimal(children.get(1), row, div_precision_increment, time_zone)?;
+            let value = nullable!(eval_decimal(
+                children.get(1),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             Some(interval_reformat_decimal_text(&value.to_string(), unit))
         }
-    }
+    };
+    Ok(value)
 }
 
 /// The date operand parsed per its channel for the string-answer forms
@@ -3327,13 +3456,18 @@ fn add_sub_date_operand(
     time_zone: &tidb_datatype::SessionTimeZone,
     kind: DateArithArg,
     unit: &str,
-) -> Option<tidb_datatype::Time> {
+) -> Result<Option<tidb_datatype::Time>, String> {
     use tidb_datatype::TimeType;
     let zone = time_zone;
     let clock = tidb_datatype::is_clock_unit(unit);
-    match kind {
+    let value = match kind {
         DateArithArg::String => {
-            let raw = eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
+            let raw = nullable!(eval_bytes(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let text = String::from_utf8_lossy(&raw).into_owned();
             let kind = if !tidb_datatype::is_date_format(&text) || clock {
                 TimeType::DateTime
@@ -3345,34 +3479,47 @@ fn add_sub_date_operand(
                 .map(|parsed| parsed.time)
         }
         DateArithArg::Int => {
-            let value = eval_expr(children.first()?, row, div_precision_increment, time_zone)
-                .ok()
-                .flatten()?;
-            let mut date = tidb_datatype::parse_time_from_int64(
-                i64::try_from(value).ok()?,
+            let value = nullable!(eval_expr(
+                nullable!(children.first()),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
+            let mut date = nullable!(tidb_datatype::parse_time_from_int64(
+                nullable!(i64::try_from(value).ok()),
                 false,
                 false,
                 zone,
             )
-            .ok()?;
+            .ok());
             if clock {
                 date.set_kind(TimeType::DateTime);
             }
             Some(date)
         }
         DateArithArg::Real => {
-            let value = eval_real(children.first(), row, div_precision_increment, time_zone)?;
+            let value = nullable!(eval_real(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let mut date =
-                tidb_datatype::parse_time_from_float64(value, false, false, zone).ok()?;
+                nullable!(tidb_datatype::parse_time_from_float64(value, false, false, zone).ok());
             if clock {
                 date.set_kind(TimeType::DateTime);
             }
             Some(date)
         }
         DateArithArg::Decimal => {
-            let value = eval_decimal(children.first(), row, div_precision_increment, time_zone)?;
+            let value = nullable!(eval_decimal(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let mut date =
-                tidb_datatype::parse_time_from_decimal(&value, false, false, zone).ok()?;
+                nullable!(tidb_datatype::parse_time_from_decimal(&value, false, false, zone).ok());
             if clock {
                 date.set_kind(TimeType::DateTime);
             }
@@ -3381,7 +3528,8 @@ fn add_sub_date_operand(
         // The typed temporal operands answer through the time and
         // duration channels instead.
         _ => None,
-    }
+    };
+    Ok(value)
 }
 
 /// Go `baseDateArithmetical.add`/`sub` -> `addDate`: the interval text
@@ -3416,11 +3564,11 @@ fn eval_duration(
     row: &[tidb_datatype::Datum],
     div_precision_increment: i64,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Option<tidb_datatype::MySqlDuration> {
+) -> Result<Option<tidb_datatype::MySqlDuration>, String> {
     use tidb_datatype::Datum;
-    let expr = expr?;
-    match expr {
-        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+    let expr = nullable!(expr);
+    let value = match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
             Datum::Duration(v) => Some(v),
             _ => None,
         },
@@ -3430,7 +3578,7 @@ fn eval_duration(
             _ => None,
         },
         SimpleExpr::Func(SimpleSig::CastTimeAsDuration, children) => {
-            eval_time(children.first(), row, div_precision_increment, time_zone)
+            eval_time(children.first(), row, div_precision_increment, time_zone)?
                 .and_then(|time| time.to_duration().ok())
         }
         // DATE_ADD/DATE_SUB over a duration column answers a duration
@@ -3445,19 +3593,28 @@ fn eval_duration(
             },
             children,
         ) => {
-            let duration =
-                eval_duration(children.first(), row, div_precision_increment, time_zone)?;
-            let unit_raw = eval_bytes(children.get(2), row, div_precision_increment, time_zone)?;
+            let duration = nullable!(eval_duration(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
+            let unit_raw = nullable!(eval_bytes(
+                children.get(2),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let unit = String::from_utf8_lossy(&unit_raw).into_owned();
-            let interval = interval_text(
+            let interval = nullable!(interval_text(
                 children,
                 row,
                 div_precision_increment,
                 time_zone,
                 *interval_kind,
                 &unit,
-            )?;
-            let delta = tidb_datatype::extract_duration_value(&unit, &interval).ok()?;
+            )?);
+            let delta = nullable!(tidb_datatype::extract_duration_value(&unit, &interval).ok());
             if *subtract {
                 duration.checked_sub(delta).ok()
             } else {
@@ -3483,7 +3640,8 @@ fn eval_duration(
             match sig {
                 SimpleSig::CastIntAsDuration => children
                     .first()
-                    .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())
+                    .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                    .transpose()?
                     .flatten()
                     .and_then(|value| i64::try_from(value).ok())
                     .and_then(|value| {
@@ -3493,40 +3651,62 @@ fn eval_duration(
                     }),
                 SimpleSig::CastRealAsDuration => {
                     // Go formats shortest-'f', then `ParseDuration`.
-                    let value =
-                        eval_real(children.first(), row, div_precision_increment, time_zone)?;
-                    to_duration(
-                        tidb_datatype::parse_duration(format!("{value}").as_bytes(), 6).ok()?,
+                    let value = nullable!(eval_real(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
+                    to_duration(nullable!(tidb_datatype::parse_duration(
+                        format!("{value}").as_bytes(),
+                        6
                     )
+                    .ok()))
                 }
                 SimpleSig::CastDecimalAsDuration => {
-                    let value =
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?;
-                    to_duration(
-                        tidb_datatype::parse_duration(value.to_string().as_bytes(), 6).ok()?,
+                    let value = nullable!(eval_decimal(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
+                    to_duration(nullable!(tidb_datatype::parse_duration(
+                        value.to_string().as_bytes(),
+                        6
                     )
+                    .ok()))
                 }
                 SimpleSig::CastStringAsDuration => {
-                    let raw =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
-                    to_duration(tidb_datatype::parse_duration(&raw, 6).ok()?)
+                    let raw = nullable!(eval_bytes(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
+                    to_duration(nullable!(tidb_datatype::parse_duration(&raw, 6).ok()))
                 }
-                _ => eval_duration(children.first(), row, div_precision_increment, time_zone),
+                _ => eval_duration(children.first(), row, div_precision_increment, time_zone)?,
             }
         }
         // Go reads the opaque duration code and parses string contents;
         // other codes answer NULL under the folded error.
         SimpleExpr::Func(SimpleSig::CastJsonAsDuration, children) => {
-            let value = eval_json(children.first(), row, div_precision_increment, time_zone)?;
+            let value = nullable!(eval_json(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             if let Ok(duration) = value.as_duration() {
-                return Some(duration);
+                return Ok(Some(duration));
             }
-            let text = value.as_string()?;
-            let parsed = tidb_datatype::parse_duration(text, 6).ok()?;
+            let text = nullable!(value.as_string());
+            let parsed = nullable!(tidb_datatype::parse_duration(text, 6).ok());
             tidb_datatype::MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).ok()
         }
         _ => None,
-    }
+    };
+    Ok(value)
 }
 
 /// The TIME value of one operand of a temporal comparison; see
@@ -3536,11 +3716,11 @@ fn eval_time(
     row: &[tidb_datatype::Datum],
     div_precision_increment: i64,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Option<tidb_datatype::Time> {
+) -> Result<Option<tidb_datatype::Time>, String> {
     use tidb_datatype::Datum;
-    let expr = expr?;
-    match expr {
-        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+    let expr = nullable!(expr);
+    let value = match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
             Datum::Time(v) => Some(v),
             _ => None,
         },
@@ -3562,17 +3742,27 @@ fn eval_time(
             },
             children,
         ) => {
-            let date = eval_time(children.first(), row, div_precision_increment, time_zone)?;
-            let unit_raw = eval_bytes(children.get(2), row, div_precision_increment, time_zone)?;
+            let date = nullable!(eval_time(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
+            let unit_raw = nullable!(eval_bytes(
+                children.get(2),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let unit = String::from_utf8_lossy(&unit_raw).into_owned();
-            let interval = interval_text(
+            let interval = nullable!(interval_text(
                 children,
                 row,
                 div_precision_increment,
                 time_zone,
                 *interval_kind,
                 &unit,
-            )?;
+            )?);
             add_sub_time(date, *subtract, &unit, &interval)
         }
         // The `Duration*Datetime` upstream ids anchor the duration on
@@ -3603,25 +3793,38 @@ fn eval_time(
             match sig {
                 SimpleSig::CastIntAsTime => children
                     .first()
-                    .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())
+                    .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                    .transpose()?
                     .flatten()
                     .and_then(|value| i64::try_from(value).ok())
                     .and_then(|value| {
                         tidb_datatype::parse_time_from_int64(value, false, false, zone).ok()
                     }),
                 SimpleSig::CastRealAsTime => {
-                    let value =
-                        eval_real(children.first(), row, div_precision_increment, time_zone)?;
+                    let value = nullable!(eval_real(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     tidb_datatype::parse_time_from_float64(value, false, false, zone).ok()
                 }
                 SimpleSig::CastDecimalAsTime => {
-                    let value =
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?;
+                    let value = nullable!(eval_decimal(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     tidb_datatype::parse_time_from_decimal(&value, false, false, zone).ok()
                 }
                 SimpleSig::CastStringAsTime => {
-                    let raw =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
+                    let raw = nullable!(eval_bytes(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     let text = String::from_utf8_lossy(&raw).into_owned();
                     let kind = if tidb_datatype::is_date_format(&text) {
                         tidb_datatype::TimeType::Date
@@ -3632,16 +3835,21 @@ fn eval_time(
                         .ok()
                         .map(|parsed| parsed.time)
                 }
-                _ => eval_time(children.first(), row, div_precision_increment, time_zone),
+                _ => eval_time(children.first(), row, div_precision_increment, time_zone)?,
             }
         }
         // Go `evalFromUnixTime`: a negative or too-large epoch answers
         // NULL; the split seconds render through the session zone.
         SimpleExpr::Func(SimpleSig::FromUnixTime1Arg, children) => {
-            let seconds = eval_decimal(children.first(), row, div_precision_increment, time_zone)?;
+            let seconds = nullable!(eval_decimal(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let unix = seconds.to_f64();
             if !(0.0..=32_536_771_199.999_999).contains(&unix) {
-                return None;
+                return Ok(None);
             }
             let whole = unix.trunc();
             let nanos = ((unix - whole) * 1e9).round() as u32;
@@ -3649,7 +3857,7 @@ fn eval_time(
             let built = time_zone
                 .timestamp_opt(whole as i64, nanos * 1_000)
                 .single();
-            let naive_built = built?;
+            let naive_built = nullable!(built);
             tidb_datatype::Time::new(
                 tidb_datatype::core_time_from_datetime(naive_built),
                 tidb_datatype::TimeType::DateTime,
@@ -3660,11 +3868,16 @@ fn eval_time(
         // Go reads the opaque date codes and parses string contents;
         // other codes answer NULL under the folded error.
         SimpleExpr::Func(SimpleSig::CastJsonAsTime, children) => {
-            let value = eval_json(children.first(), row, div_precision_increment, time_zone)?;
+            let value = nullable!(eval_json(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             if let Ok(time) = value.as_time(6) {
-                return Some(time);
+                return Ok(Some(time));
             }
-            let text = value.as_string()?;
+            let text = nullable!(value.as_string());
             let text = String::from_utf8_lossy(text).into_owned();
             let kind = if tidb_datatype::is_date_format(&text) {
                 tidb_datatype::TimeType::Date
@@ -3676,7 +3889,8 @@ fn eval_time(
                 .map(|parsed| parsed.time)
         }
         _ => None,
-    }
+    };
+    Ok(value)
 }
 
 /// Go `conv` (pkg/expression/builtin_math.go): re-read `text` in base
@@ -3786,11 +4000,11 @@ fn eval_bytes(
     row: &[tidb_datatype::Datum],
     div_precision_increment: i64,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Option<Vec<u8>> {
+) -> Result<Option<Vec<u8>>, String> {
     use tidb_datatype::Datum;
-    let expr = expr?;
-    match expr {
-        SimpleExpr::Shared(shared) => match eval_shared(shared, row).ok()? {
+    let expr = nullable!(expr);
+    let value = match expr {
+        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
             Datum::Bytes(v) => Some(v),
             Datum::String(v) => Some(v.bytes().to_vec()),
             _ => None,
@@ -3804,27 +4018,44 @@ fn eval_bytes(
         // DATE_FORMAT: Go `builtinDateFormatSig` answers through
         // `Time.DateFormat` over the format layout.
         SimpleExpr::Func(SimpleSig::DateFormatSig, children) => {
-            let time = eval_time(children.first(), row, div_precision_increment, time_zone)?;
-            let layout = eval_bytes(children.get(1), row, div_precision_increment, time_zone)?;
+            let time = nullable!(eval_time(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
+            let layout = nullable!(eval_bytes(
+                children.get(1),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let layout = String::from_utf8_lossy(&layout).into_owned();
-            let formatted = time.date_format(&layout).ok()?;
+            let formatted = nullable!(time.date_format(&layout).ok());
             Some(formatted.into_bytes())
         }
         // CONV: Go `builtinConvSig` re-reads the text in one base and
         // re-formats it in another; the base operands go through the
         // int channel.
         SimpleExpr::Func(SimpleSig::Conv, children) => {
-            let text = eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
-            let from_base = children
+            let text = nullable!(eval_bytes(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
+            let from_base = nullable!(children
                 .get(1)
-                .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())
+                .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                .transpose()?
                 .flatten()
-                .and_then(|value| i64::try_from(value).ok())?;
-            let to_base = children
+                .and_then(|value| i64::try_from(value).ok()));
+            let to_base = nullable!(children
                 .get(2)
-                .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())
+                .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                .transpose()?
                 .flatten()
-                .and_then(|value| i64::try_from(value).ok())?;
+                .and_then(|value| i64::try_from(value).ok()));
             conv_convert(&text, from_base, to_base)
         }
         // DATE_ADD/DATE_SUB over a non-temporal source answers the
@@ -3834,7 +4065,12 @@ fn eval_bytes(
         SimpleExpr::Func(sig @ SimpleSig::AddSubDate { .. }, children)
             if add_sub_answers_text(sig) =>
         {
-            let unit_raw = eval_bytes(children.get(2), row, div_precision_increment, time_zone)?;
+            let unit_raw = nullable!(eval_bytes(
+                children.get(2),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let unit = String::from_utf8_lossy(&unit_raw).into_owned();
             let (subtract, date_kind, interval_kind) = match sig {
                 SimpleSig::AddSubDate {
@@ -3845,30 +4081,30 @@ fn eval_bytes(
                 } => (*subtract, *date, *interval),
                 _ => unreachable!("guarded by add_sub_answers_text"),
             };
-            let date = add_sub_date_operand(
+            let date = nullable!(add_sub_date_operand(
                 children,
                 row,
                 div_precision_increment,
                 time_zone,
                 date_kind,
                 &unit,
-            )?;
+            )?);
             if date.is_zero() {
                 // Go answers NULL under the folded wrong-value error.
-                return None;
+                return Ok(None);
             }
-            let interval = interval_text(
+            let interval = nullable!(interval_text(
                 children,
                 row,
                 div_precision_increment,
                 time_zone,
                 interval_kind,
                 &unit,
-            )?;
-            let mut result = add_sub_time(date, subtract, &unit, &interval)?;
+            )?);
+            let mut result = nullable!(add_sub_time(date, subtract, &unit, &interval));
             // Go refits the fraction: whole seconds render short.
             let fsp = i64::from(result.core_time().microsecond() != 0) * 6;
-            result.set_fsp(fsp).ok()?;
+            nullable!(result.set_fsp(fsp).ok());
             Some(result.to_string().into_bytes())
         }
         // The `AS CHAR` casts answer their source's text rendering (Go
@@ -3886,10 +4122,11 @@ fn eval_bytes(
         ) => {
             match sig {
                 SimpleSig::CastIntAsString => {
-                    let value = children
+                    let value = nullable!(children
                         .first()
-                        .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())
-                        .flatten()?;
+                        .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                        .transpose()?
+                        .flatten());
                     // Go formats by the source's UNSIGNED flag; the i128
                     // carries the sign here. The `TypeYear` "0" -> "0000"
                     // special case folds -- no field type on the wire.
@@ -3902,24 +4139,32 @@ fn eval_bytes(
                 // shortest decimal form without an exponent -- Rust's
                 // `Display` for f64.
                 SimpleSig::CastRealAsString => {
-                    let value =
-                        eval_real(children.first(), row, div_precision_increment, time_zone)?;
+                    let value = nullable!(eval_real(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     Some(format!("{value}").into_bytes())
                 }
                 SimpleSig::CastDecimalAsString => {
-                    let value =
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?;
+                    let value = nullable!(eval_decimal(
+                        children.first(),
+                        row,
+                        div_precision_increment,
+                        time_zone
+                    )?);
                     Some(value.to_string().into_bytes())
                 }
                 SimpleSig::CastStringAsString => {
-                    eval_bytes(children.first(), row, div_precision_increment, time_zone)
+                    eval_bytes(children.first(), row, div_precision_increment, time_zone)?
                 }
                 SimpleSig::CastTimeAsString => {
-                    eval_time(children.first(), row, div_precision_increment, time_zone)
+                    eval_time(children.first(), row, div_precision_increment, time_zone)?
                         .map(|time| time.to_string().into_bytes())
                 }
                 SimpleSig::CastDurationAsString => {
-                    eval_duration(children.first(), row, div_precision_increment, time_zone)
+                    eval_duration(children.first(), row, div_precision_increment, time_zone)?
                         .map(|duration| duration.to_string().into_bytes())
                 }
                 _ => None,
@@ -3932,10 +4177,20 @@ fn eval_bytes(
                 SimpleSig::FromUnixTime1Arg,
                 vec![children.first().expect("wire shape").clone()],
             );
-            let time = eval_time(Some(&seconds), row, div_precision_increment, time_zone)?;
-            let layout = eval_bytes(children.get(1), row, div_precision_increment, time_zone)?;
+            let time = nullable!(eval_time(
+                Some(&seconds),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
+            let layout = nullable!(eval_bytes(
+                children.get(1),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let layout = String::from_utf8_lossy(&layout).into_owned();
-            let rendered = time.date_format(&layout).ok()?;
+            let rendered = nullable!(time.date_format(&layout).ok());
             Some(rendered.into_bytes())
         }
         // Go's string-function family: case folding and substring over the
@@ -3966,7 +4221,12 @@ fn eval_bytes(
                     bytes.iter().map(|b| *b as char).collect()
                 }
             };
-            let text = eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
+            let text = nullable!(eval_bytes(
+                children.first(),
+                row,
+                div_precision_increment,
+                time_zone
+            )?);
             let is_sub = matches!(
                 sig,
                 SimpleSig::Substring2Args
@@ -3992,19 +4252,20 @@ fn eval_bytes(
                         .map(|c| (*c as u8).to_ascii_uppercase() as char)
                         .collect(),
                 };
-                return Some(if utf8 {
+                return Ok(Some(if utf8 {
                     folded.into_bytes()
                 } else {
                     folded.chars().map(|c| c as u8).collect()
-                });
+                }));
             }
             // Go `builtinSubstringSig`: 1-based position; a negative
             // position counts from the end; a negative length takes the
             // rest after the start.
-            let pos_arg = children
+            let pos_arg = nullable!(nullable!(children
                 .get(1)
-                .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())?
-                .and_then(|value| i64::try_from(value).ok())?;
+                .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                .transpose()?)
+            .and_then(|value| i64::try_from(value).ok()));
             let pos = pos_arg;
             let char_units: Vec<char> = units(&text);
             let char_count = if utf8 {
@@ -4017,23 +4278,24 @@ fn eval_bytes(
             } else if pos < 0 {
                 char_count + pos
             } else {
-                return None;
+                return Ok(None);
             };
             if start < 0 || start >= char_count {
-                return Some(Vec::new());
+                return Ok(Some(Vec::new()));
             }
             let mut end = char_count;
             if matches!(
                 sig,
                 SimpleSig::Substring3Args | SimpleSig::Substring3ArgsUtf8
             ) {
-                let len_arg = children
+                let len_arg = nullable!(nullable!(children
                     .get(2)
-                    .and_then(|c| eval_expr(c, row, div_precision_increment, time_zone).ok())?
-                    .and_then(|value| i64::try_from(value).ok())?;
+                    .map(|c| eval_expr(c, row, div_precision_increment, time_zone))
+                    .transpose()?)
+                .and_then(|value| i64::try_from(value).ok()));
                 let len = len_arg;
                 if len < 0 {
-                    return Some(Vec::new());
+                    return Ok(Some(Vec::new()));
                 }
                 end = (start + len).min(char_count);
             }
@@ -4045,7 +4307,8 @@ fn eval_bytes(
             }
         }
         _ => None,
-    }
+    };
+    Ok(value)
 }
 
 /// The collation id a comparison is evaluated under, taken from the
@@ -4175,8 +4438,8 @@ pub fn eval_expr(
                 | SimpleSig::MinusIntForcedSignedUnsigned
                 | SimpleSig::MultiplyInt
                 | SimpleSig::MultiplyIntUnsigned => {
-                    let (left, right) = match (child(0), child(1)) {
-                        (Ok(Some(left)), Ok(Some(right))) => (left, right),
+                    let (left, right) = match (child(0)?, child(1)?) {
+                        (Some(left), Some(right)) => (left, right),
                         _ => return Ok(None),
                     };
                     let (name, unsigned) = match sig {
@@ -4243,7 +4506,7 @@ pub fn eval_expr(
                 | SimpleSig::CastTimeAsDecimal
                 | SimpleSig::CastDurationAsDecimal
                 | SimpleSig::UnixTimestampDec => {
-                    eval_decimal(Some(expr), row, div_precision_increment, time_zone)
+                    eval_decimal(Some(expr), row, div_precision_increment, time_zone)?
                         .map(|value| i128::from(!value.is_zero()))
                 }
                 SimpleSig::ModIntUnsignedUnsigned
@@ -4272,8 +4535,8 @@ pub fn eval_expr(
                     // Go where this seam answers NULL (`div_rem` folds both)
                     // -- a narrowing, not a value change inside BIGINT.
                     let (Some(left), Some(right)) = (
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone),
-                        eval_decimal(children.get(1), row, div_precision_increment, time_zone),
+                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?,
+                        eval_decimal(children.get(1), row, div_precision_increment, time_zone)?,
                     ) else {
                         return Ok(None);
                     };
@@ -4289,7 +4552,7 @@ pub fn eval_expr(
                 // ("constant %v overflows bigint").
                 SimpleSig::CastRealAsInt => {
                     let Some(value) =
-                        eval_real(children.first(), row, div_precision_increment, time_zone)
+                        eval_real(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4306,7 +4569,7 @@ pub fn eval_expr(
                 }
                 SimpleSig::CastDecimalAsInt => {
                     let Some(value) =
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone)
+                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4327,7 +4590,7 @@ pub fn eval_expr(
                     // answers 0 and the range saturates to the BIGINT bound
                     // (the non-strict SELECT observable).
                     let Some(raw) =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone)
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4347,7 +4610,7 @@ pub fn eval_expr(
                 SimpleSig::CastStringAsReal => {
                     // A bare AS REAL cast answers its own truth; the value
                     // flows through `eval_real`'s composition arm.
-                    eval_real(Some(expr), row, div_precision_increment, time_zone)
+                    eval_real(Some(expr), row, div_precision_increment, time_zone)?
                         .filter(|value| !value.is_nan())
                         .map(|value| i128::from(value != 0.0))
                 }
@@ -4358,7 +4621,7 @@ pub fn eval_expr(
                     // A bare real cast as a condition answers its own truth
                     // (`ToBool`); the value flows through `eval_real`'s own
                     // composition arms, which early-return on the Result.
-                    eval_real(Some(expr), row, div_precision_increment, time_zone)
+                    eval_real(Some(expr), row, div_precision_increment, time_zone)?
                         .filter(|value| !value.is_nan())
                         .map(|value| i128::from(value != 0.0))
                 }
@@ -4375,14 +4638,14 @@ pub fn eval_expr(
                 | SimpleSig::Cos
                 | SimpleSig::Cot
                 | SimpleSig::Pi
-                | SimpleSig::Sin => eval_real(Some(expr), row, div_precision_increment, time_zone)
+                | SimpleSig::Sin => eval_real(Some(expr), row, div_precision_increment, time_zone)?
                     .filter(|value| !value.is_nan())
                     .map(|value| i128::from(value != 0.0)),
                 SimpleSig::CharLengthUtf8 | SimpleSig::CharLength => {
                     // Go `builtinCharLengthUtf8Sig` counts runes;
                     // `builtinCharLengthBinarySig` counts bytes.
                     let Some(raw) =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone)
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4412,7 +4675,8 @@ pub fn eval_expr(
                     // A bare string function (or CONV) as a condition
                     // answers its `ToBool` truth: the numeric prefix of
                     // the result, non-zero (Go `StrToFloat` -> `ToBool`).
-                    let Some(raw) = eval_bytes(Some(expr), row, div_precision_increment, time_zone)
+                    let Some(raw) =
+                        eval_bytes(Some(expr), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4430,15 +4694,14 @@ pub fn eval_expr(
                             date: DateArithArg::Duration,
                             datetime_result: false,
                             ..
-                        } => eval_duration(Some(expr), row, div_precision_increment, time_zone)
+                        } => eval_duration(Some(expr), row, div_precision_increment, time_zone)?
                             .is_some(),
                         SimpleSig::AddSubDate {
                             date: DateArithArg::Datetime,
                             ..
-                        } => {
-                            eval_time(Some(expr), row, div_precision_increment, time_zone).is_some()
-                        }
-                        _ => eval_bytes(Some(expr), row, div_precision_increment, time_zone)
+                        } => eval_time(Some(expr), row, div_precision_increment, time_zone)?
+                            .is_some(),
+                        _ => eval_bytes(Some(expr), row, div_precision_increment, time_zone)?
                             .is_some(),
                     };
                     Some(i128::from(answered))
@@ -4462,8 +4725,8 @@ pub fn eval_expr(
                 | SimpleSig::EqReal
                 | SimpleSig::NeReal => {
                     let (Some(left), Some(right)) = (
-                        eval_real(children.first(), row, div_precision_increment, time_zone),
-                        eval_real(children.get(1), row, div_precision_increment, time_zone),
+                        eval_real(children.first(), row, div_precision_increment, time_zone)?,
+                        eval_real(children.get(1), row, div_precision_increment, time_zone)?,
                     ) else {
                         return Ok(None);
                     };
@@ -4487,7 +4750,7 @@ pub fn eval_expr(
                     // A bare real arithmetic as a condition answers its own
                     // truth (`ToBool`): non-zero and not-NaN is true, NULL
                     // is filtered. MySQL's `ToBool` treats NaN as 0.
-                    eval_real(Some(expr), row, div_precision_increment, time_zone)
+                    eval_real(Some(expr), row, div_precision_increment, time_zone)?
                         .filter(|value| !value.is_nan())
                         .map(|value| i128::from(value != 0.0))
                 }
@@ -4497,8 +4760,8 @@ pub fn eval_expr(
                 | SimpleSig::GeInt
                 | SimpleSig::EqInt
                 | SimpleSig::NeInt => {
-                    let (left, right) = match (child(0), child(1)) {
-                        (Ok(Some(left)), Ok(Some(right))) => (left, right),
+                    let (left, right) = match (child(0)?, child(1)?) {
+                        (Some(left), Some(right)) => (left, right),
                         _ => return Ok(None),
                     };
                     let truth = match sig {
@@ -4518,8 +4781,8 @@ pub fn eval_expr(
                 | SimpleSig::GeString(collation)
                 | SimpleSig::EqString(collation) => {
                     let (Some(left), Some(right)) = (
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone),
-                        eval_bytes(children.get(1), row, div_precision_increment, time_zone),
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?,
+                        eval_bytes(children.get(1), row, div_precision_increment, time_zone)?,
                     ) else {
                         return Ok(None);
                     };
@@ -4541,8 +4804,8 @@ pub fn eval_expr(
                 | SimpleSig::EqDecimal
                 | SimpleSig::NeDecimal => {
                     let (Some(left), Some(right)) = (
-                        eval_decimal(children.first(), row, div_precision_increment, time_zone),
-                        eval_decimal(children.get(1), row, div_precision_increment, time_zone),
+                        eval_decimal(children.first(), row, div_precision_increment, time_zone)?,
+                        eval_decimal(children.get(1), row, div_precision_increment, time_zone)?,
                     ) else {
                         return Ok(None);
                     };
@@ -4564,8 +4827,8 @@ pub fn eval_expr(
                 | SimpleSig::EqTime
                 | SimpleSig::NeTime => {
                     let (Some(left), Some(right)) = (
-                        eval_time(children.first(), row, div_precision_increment, time_zone),
-                        eval_time(children.get(1), row, div_precision_increment, time_zone),
+                        eval_time(children.first(), row, div_precision_increment, time_zone)?,
+                        eval_time(children.get(1), row, div_precision_increment, time_zone)?,
                     ) else {
                         return Ok(None);
                     };
@@ -4582,8 +4845,8 @@ pub fn eval_expr(
                 }
                 SimpleSig::NeString(collation) => {
                     let (Some(left), Some(right)) = (
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone),
-                        eval_bytes(children.get(1), row, div_precision_increment, time_zone),
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?,
+                        eval_bytes(children.get(1), row, div_precision_increment, time_zone)?,
                     ) else {
                         return Ok(None);
                     };
@@ -4594,7 +4857,11 @@ pub fn eval_expr(
                 }
                 SimpleSig::LogicalAnd => {
                     // MySQL: FALSE dominates NULL.
-                    let (left, right) = (child(0)?, child(1)?);
+                    let left = child(0)?;
+                    if left == Some(0) {
+                        return Ok(Some(0));
+                    }
+                    let right = child(1)?;
                     match (left, right) {
                         (Some(0), _) | (_, Some(0)) => Some(0),
                         (Some(_), Some(_)) => Some(1),
@@ -4603,7 +4870,11 @@ pub fn eval_expr(
                 }
                 SimpleSig::LogicalOr => {
                     // MySQL: TRUE dominates NULL.
-                    let (left, right) = (child(0)?, child(1)?);
+                    let left = child(0)?;
+                    if left.is_some_and(|value| value != 0) {
+                        return Ok(Some(1));
+                    }
+                    let right = child(1)?;
                     match (left, right) {
                         (Some(l), _) if l != 0 => Some(1),
                         (_, Some(r)) if r != 0 => Some(1),
@@ -4628,7 +4899,7 @@ pub fn eval_expr(
                     // collation; otherwise NULL if the tested value or any
                     // element was NULL, FALSE otherwise.
                     let tested =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone);
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
                     let mut saw_null = tested.is_none();
                     for index in 1..children.len() {
                         let element = eval_bytes(
@@ -4636,7 +4907,7 @@ pub fn eval_expr(
                             row,
                             div_precision_increment,
                             time_zone,
-                        );
+                        )?;
                         match (&tested, &element) {
                             (Some(left), Some(right)) => {
                                 if tidb_datatype::get_collator_by_id(*collation)
@@ -4657,7 +4928,7 @@ pub fn eval_expr(
                 }
                 SimpleSig::WeekWithoutMode => {
                     let Some(time) =
-                        eval_time(children.first(), row, div_precision_increment, time_zone)
+                        eval_time(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4686,7 +4957,7 @@ pub fn eval_expr(
                 // answers the day difference between two dates.
                 SimpleSig::CastTimeAsDuration => {
                     let Some(duration) =
-                        eval_duration(children.first(), row, div_precision_increment, time_zone)
+                        eval_duration(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4694,7 +4965,7 @@ pub fn eval_expr(
                 }
                 SimpleSig::Date => {
                     let Some(time) =
-                        eval_time(children.first(), row, div_precision_increment, time_zone)
+                        eval_time(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4721,7 +4992,7 @@ pub fn eval_expr(
                 }
                 SimpleSig::Hour => {
                     let Some(duration) =
-                        eval_duration(children.first(), row, div_precision_increment, time_zone)
+                        eval_duration(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4729,7 +5000,7 @@ pub fn eval_expr(
                 }
                 SimpleSig::Minute => {
                     let Some(duration) =
-                        eval_duration(children.first(), row, div_precision_increment, time_zone)
+                        eval_duration(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4737,7 +5008,7 @@ pub fn eval_expr(
                 }
                 SimpleSig::Second => {
                     let Some(duration) =
-                        eval_duration(children.first(), row, div_precision_increment, time_zone)
+                        eval_duration(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4745,7 +5016,7 @@ pub fn eval_expr(
                 }
                 SimpleSig::MicroSecond => {
                     let Some(duration) =
-                        eval_duration(children.first(), row, div_precision_increment, time_zone)
+                        eval_duration(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4753,7 +5024,7 @@ pub fn eval_expr(
                 }
                 SimpleSig::Month => {
                     let Some(time) =
-                        eval_time(children.first(), row, div_precision_increment, time_zone)
+                        eval_time(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4761,8 +5032,8 @@ pub fn eval_expr(
                 }
                 SimpleSig::DateDiff => {
                     let (Some(left), Some(right)) = (
-                        eval_time(children.first(), row, div_precision_increment, time_zone),
-                        eval_time(children.get(1), row, div_precision_increment, time_zone),
+                        eval_time(children.first(), row, div_precision_increment, time_zone)?,
+                        eval_time(children.get(1), row, div_precision_increment, time_zone)?,
                     ) else {
                         return Ok(None);
                     };
@@ -4798,13 +5069,13 @@ pub fn eval_expr(
                 }
                 SimpleSig::TimestampDiff => {
                     let Some(unit_raw) =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone)
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
                     let (Some(first), Some(second)) = (
-                        eval_time(children.get(1), row, div_precision_increment, time_zone),
-                        eval_time(children.get(2), row, div_precision_increment, time_zone),
+                        eval_time(children.get(1), row, div_precision_increment, time_zone)?,
+                        eval_time(children.get(2), row, div_precision_increment, time_zone)?,
                     ) else {
                         return Ok(None);
                     };
@@ -4865,7 +5136,7 @@ pub fn eval_expr(
                         None => return Ok(None),
                     };
                     let Some(obj) =
-                        eval_json(children.get(1), row, div_precision_increment, time_zone)
+                        eval_json(children.get(1), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4891,9 +5162,9 @@ pub fn eval_expr(
                     // fold here is ASCII-lowercase, exact for the common
                     // ASCII pattern families).
                     let target =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone);
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
                     let pattern =
-                        eval_bytes(children.get(1), row, div_precision_increment, time_zone);
+                        eval_bytes(children.get(1), row, div_precision_increment, time_zone)?;
                     // LikeSig's third argument is ETInt on the wire. Go
                     // evaluates it with EvalInt and compiles byte(escape).
                     let escape = child(2)?;
@@ -4924,9 +5195,9 @@ pub fn eval_expr(
                     // case-insensitively, `_bin` is exact -- the same fold
                     // rule the LikeSig arm applies.
                     let target =
-                        eval_bytes(children.first(), row, div_precision_increment, time_zone);
+                        eval_bytes(children.first(), row, div_precision_increment, time_zone)?;
                     let pattern =
-                        eval_bytes(children.get(1), row, div_precision_increment, time_zone);
+                        eval_bytes(children.get(1), row, div_precision_increment, time_zone)?;
                     let (Some(target), Some(pattern)) = (target, pattern) else {
                         return Ok(None);
                     };
@@ -4964,7 +5235,7 @@ pub fn eval_expr(
                     // wall clock reads in the session zone; microseconds
                     // outside Go's supported epoch range answer 0.
                     let Some(time) =
-                        eval_time(children.first(), row, div_precision_increment, time_zone)
+                        eval_time(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -4987,7 +5258,7 @@ pub fn eval_expr(
                     // code folds to 0 here (no text accessor on the
                     // trimmed build).
                     let Some(value) =
-                        eval_json(children.first(), row, div_precision_increment, time_zone)
+                        eval_json(children.first(), row, div_precision_increment, time_zone)?
                     else {
                         return Ok(None);
                     };
@@ -5018,7 +5289,7 @@ pub fn eval_expr(
                     // A bare JSON cast as a condition answers its own
                     // non-NULL truth (Go `ToBool` over the rendering).
                     let answered =
-                        eval_json(Some(expr), row, div_precision_increment, time_zone).is_some();
+                        eval_json(Some(expr), row, div_precision_increment, time_zone)?.is_some();
                     Some(i128::from(answered))
                 }
                 SimpleSig::CastIntAsTime
@@ -5043,9 +5314,10 @@ pub fn eval_expr(
                         | SimpleSig::CastStringAsTime
                         | SimpleSig::CastTimeAsTime
                         | SimpleSig::CastJsonAsTime => {
-                            eval_time(Some(expr), row, div_precision_increment, time_zone).is_some()
+                            eval_time(Some(expr), row, div_precision_increment, time_zone)?
+                                .is_some()
                         }
-                        _ => eval_duration(Some(expr), row, div_precision_increment, time_zone)
+                        _ => eval_duration(Some(expr), row, div_precision_increment, time_zone)?
                             .is_some(),
                     };
                     Some(i128::from(answered))
@@ -5498,15 +5770,28 @@ mod tests {
                             tidb_codec::encode_int(&mut offset, 0);
                             offset
                         }),
+                        field_type: Some(tipb::FieldType {
+                            tp: Some(253),
+                            charset: Some("utf8mb4".to_owned()),
+                            collate: Some(tidb_datatype::collation_to_proto(collation_name)),
+                            ..Default::default()
+                        }),
                         ..tipb::Expr::default()
                     },
                     tipb::Expr {
                         tp: Some(tipb::ExprType::String as i32),
                         val: Some(literal.as_bytes().to_vec()),
+                        field_type: Some(tipb::FieldType {
+                            tp: Some(253),
+                            charset: Some("utf8mb4".to_owned()),
+                            collate: Some(tidb_datatype::collation_to_proto(collation_name)),
+                            ..Default::default()
+                        }),
                         ..tipb::Expr::default()
                     },
                 ],
                 field_type: Some(tipb::FieldType {
+                    tp: Some(8),
                     collate: Some(tidb_datatype::collation_to_proto(collation_name)),
                     ..tipb::FieldType::default()
                 }),
@@ -6295,9 +6580,9 @@ mod tests {
 
     #[test]
     fn a_float64_literal_decodes_go_convert_float() {
-        // Go `convertFloat`: `codec.DecodeFloat` -- eight big-endian bits.
+        // Go convertFloat consumes the mem-comparable codec, not raw IEEE bits.
         let mut val = Vec::new();
-        val.extend_from_slice(&1.5_f64.to_bits().to_be_bytes());
+        tidb_codec::encode_float(&mut val, 1.5);
         let expr = tipb::Expr {
             tp: Some(tipb::ExprType::Float64 as i32),
             val: Some(val),
@@ -6716,7 +7001,9 @@ mod tests {
             SimpleSig::LowerUtf8,
             vec![SimpleExpr::Bytes(b"H\xc3\x89LLO".to_vec())],
         );
-        let folded = eval_bytes(Some(&lower), &row, 4, &zone()).expect("folds");
+        let folded = eval_bytes(Some(&lower), &row, 4, &zone())
+            .unwrap()
+            .expect("folds");
         // "héllo" -- the É (C3 89) folds to é (C3 A9) via the rune fold.
         assert_eq!(folded, b"h\xc3\xa9llo".to_vec());
         // A bare string function as a condition answers its numeric-prefix
@@ -7002,14 +7289,18 @@ mod tests {
             )
         };
         // DATE_ADD(t, INTERVAL 1 DAY) answers the next same-clock day.
-        let next = eval_time(Some(&arith(false, 1, b"DAY")), &row, 4, &zone()).expect("evals");
+        let next = eval_time(Some(&arith(false, 1, b"DAY")), &row, 4, &zone())
+            .unwrap()
+            .expect("evals");
         assert_eq!(
             next,
             Time::from_date_checked(2024, 3, 6, 14, 30, 45, 0, TimeType::DateTime, 0)
                 .expect("constructs")
         );
         // DATE_SUB(t, INTERVAL 1 DAY) answers the previous day.
-        let previous = eval_time(Some(&arith(true, 1, b"DAY")), &row, 4, &zone()).expect("evals");
+        let previous = eval_time(Some(&arith(true, 1, b"DAY")), &row, 4, &zone())
+            .unwrap()
+            .expect("evals");
         assert_eq!(
             previous,
             Time::from_date_checked(2024, 3, 4, 14, 30, 45, 0, TimeType::DateTime, 0)
@@ -7024,6 +7315,7 @@ mod tests {
             4,
             &zone(),
         )
+        .unwrap()
         .expect("evals");
         assert_eq!(
             february,
@@ -7108,12 +7400,15 @@ mod tests {
         // 02:00:00 + INTERVAL '1:10' HOUR_MINUTE = 03:10:00.
         let expected = MySqlDuration::from_nanoseconds(11_400_000_000_000, 0).expect("constructs");
         assert_eq!(
-            eval_duration(Some(&arith(false)), &row, 4, &zone()),
+            eval_duration(Some(&arith(false)), &row, 4, &zone()).unwrap(),
             Some(expected)
         );
         // The datetime-promoted duration ids anchor on the current date
         // and answer no stable predicate.
-        assert_eq!(eval_time(Some(&arith(true)), &row, 4, &zone()), None);
+        assert_eq!(
+            eval_time(Some(&arith(true)), &row, 4, &zone()).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -7366,7 +7661,9 @@ mod tests {
             SimpleSig::UnixTimestampDec,
             vec![SimpleExpr::Time(with_micros)],
         );
-        let decimal = eval_decimal(Some(&unix_dec), &[], 4, &shanghai).expect("evals");
+        let decimal = eval_decimal(Some(&unix_dec), &[], 4, &shanghai)
+            .unwrap()
+            .expect("evals");
         assert!((decimal.to_f64() - 1_709_620_200.5).abs() < 1e-6);
         // An invalid (zero) source answers 0, not NULL.
         let zero = Time::from_date_checked(0, 0, 0, 0, 0, 0, 0, TimeType::DateTime, 0);
@@ -7388,12 +7685,16 @@ mod tests {
             &tidb_datatype::MyDecimal::from_int(1_709_620_200),
         ));
         let from_unix = SimpleExpr::Func(SimpleSig::FromUnixTime1Arg, vec![epoch.clone()]);
-        let rendered = eval_time(Some(&from_unix), &[], 4, &shanghai).expect("evals");
+        let rendered = eval_time(Some(&from_unix), &[], 4, &shanghai)
+            .unwrap()
+            .expect("evals");
         let expected = Time::from_date_checked(2024, 3, 5, 14, 30, 0, 0, TimeType::DateTime, 0)
             .expect("constructs");
         assert_eq!(rendered, expected);
         // The same epoch reads 10:30 in UTC.
-        let utc_rendered = eval_time(Some(&from_unix), &[], 4, &zone()).expect("evals");
+        let utc_rendered = eval_time(Some(&from_unix), &[], 4, &zone())
+            .unwrap()
+            .expect("evals");
         let utc_expected = Time::from_date_checked(2024, 3, 5, 6, 30, 0, 0, TimeType::DateTime, 0)
             .expect("constructs");
         assert_eq!(utc_rendered, utc_expected);
@@ -7402,14 +7703,19 @@ mod tests {
             SimpleSig::FromUnixTime2Arg,
             vec![epoch, SimpleExpr::Bytes(b"%Y/%m/%d".to_vec())],
         );
-        let answer = eval_bytes(Some(&formatted), &[], 4, &shanghai).expect("evals");
+        let answer = eval_bytes(Some(&formatted), &[], 4, &shanghai)
+            .unwrap()
+            .expect("evals");
         assert_eq!(answer, b"2024/03/05".to_vec());
         // A negative epoch answers NULL.
         let negative = SimpleExpr::Decimal(tidb_datatype::Decimal::from_my_decimal(
             &tidb_datatype::MyDecimal::from_int(-1),
         ));
         let negative_unix = SimpleExpr::Func(SimpleSig::FromUnixTime1Arg, vec![negative]);
-        assert_eq!(eval_time(Some(&negative_unix), &[], 4, &shanghai), None);
+        assert_eq!(
+            eval_time(Some(&negative_unix), &[], 4, &shanghai).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -7419,7 +7725,10 @@ mod tests {
         let as_time = SimpleExpr::Func(SimpleSig::CastIntAsTime, vec![SimpleExpr::Int(20_240_305)]);
         let expected =
             Time::from_date_checked(2024, 3, 5, 0, 0, 0, 0, TimeType::Date, 0).expect("constructs");
-        assert_eq!(eval_time(Some(&as_time), &[], 4, &zone()), Some(expected));
+        assert_eq!(
+            eval_time(Some(&as_time), &[], 4, &zone()).unwrap(),
+            Some(expected)
+        );
         // A datetime text widens to the datetime kind.
         let as_text_time = SimpleExpr::Func(
             SimpleSig::CastStringAsTime,
@@ -7428,7 +7737,7 @@ mod tests {
         let expected = Time::from_date_checked(2024, 3, 5, 14, 30, 45, 0, TimeType::DateTime, 6)
             .expect("constructs");
         assert_eq!(
-            eval_time(Some(&as_text_time), &[], 4, &zone()),
+            eval_time(Some(&as_text_time), &[], 4, &zone()).unwrap(),
             Some(expected)
         );
         // The parsed kinds order like Go's packed times: the earlier
@@ -7447,7 +7756,7 @@ mod tests {
             SimpleExpr::Func(SimpleSig::CastIntAsDuration, vec![SimpleExpr::Int(101_010)]);
         let expected = MySqlDuration::from_nanoseconds(36_610_000_000_000, 6).expect("constructs");
         assert_eq!(
-            eval_duration(Some(&as_duration), &[], 4, &zone()),
+            eval_duration(Some(&as_duration), &[], 4, &zone()).unwrap(),
             Some(expected)
         );
         // A clock text parses: '11:30:45'.
@@ -7457,7 +7766,7 @@ mod tests {
         );
         let expected = MySqlDuration::from_nanoseconds(41_445_000_000_000, 6).expect("constructs");
         assert_eq!(
-            eval_duration(Some(&as_text_duration), &[], 4, &zone()),
+            eval_duration(Some(&as_text_duration), &[], 4, &zone()).unwrap(),
             Some(expected)
         );
         // The duration identity passes a column through.
@@ -7467,7 +7776,7 @@ mod tests {
         );
         let row = [Datum::Duration(expected)];
         assert_eq!(
-            eval_duration(Some(&identity), &row, 4, &zone()),
+            eval_duration(Some(&identity), &row, 4, &zone()).unwrap(),
             Some(expected)
         );
     }
@@ -7485,6 +7794,7 @@ mod tests {
             4,
             &zone(),
         )
+        .unwrap()
         .expect("evals");
         assert_eq!(parsed.element_count(), Ok(1));
         let wrapped = eval_json(
@@ -7496,6 +7806,7 @@ mod tests {
             4,
             &zone(),
         )
+        .unwrap()
         .expect("evals");
         assert_eq!(wrapped.as_i64(), Some(7));
         // A datetime wraps as the opaque time scalar at MaxFsp.
@@ -7510,6 +7821,7 @@ mod tests {
             4,
             &zone(),
         )
+        .unwrap()
         .expect("evals");
         assert_eq!(time_json.as_time(6).as_ref(), time_json.as_time(6).as_ref());
         assert!(time_json.as_time(6).is_ok());
@@ -7526,7 +7838,10 @@ mod tests {
         let text_json = tidb_datatype::BinaryJSON::parse(r#""12.5abc""#).expect("parses");
         let as_real = SimpleExpr::Func(SimpleSig::CastJsonAsReal, vec![SimpleExpr::Column(0)]);
         let text_row = [Datum::Json(text_json)];
-        assert_eq!(eval_real(Some(&as_real), &text_row, 4, &zone()), Some(12.5));
+        assert_eq!(
+            eval_real(Some(&as_real), &text_row, 4, &zone()).unwrap(),
+            Some(12.5)
+        );
         // CAST(json AS TIME) parses a string document into a date.
         let date_json = tidb_datatype::BinaryJSON::parse(r#""2024-03-05""#).expect("parses");
         let as_time = SimpleExpr::Func(SimpleSig::CastJsonAsTime, vec![SimpleExpr::Column(0)]);
@@ -7534,7 +7849,7 @@ mod tests {
         let expected =
             Time::from_date_checked(2024, 3, 5, 0, 0, 0, 0, TimeType::Date, 6).expect("constructs");
         assert_eq!(
-            eval_time(Some(&as_time), &date_row, 4, &zone()),
+            eval_time(Some(&as_time), &date_row, 4, &zone()).unwrap(),
             Some(expected)
         );
         // A bare JSON cast as a condition answers its non-NULL truth.
@@ -7561,6 +7876,7 @@ mod tests {
             4,
             &zone(),
         )
+        .unwrap()
         .expect("evals");
         let path_a = tidb_datatype::parse_json_path_expr("$.a").expect("path");
         assert_eq!(
@@ -7583,6 +7899,7 @@ mod tests {
             4,
             &zone(),
         )
+        .unwrap()
         .expect("evals");
         let path_a = tidb_datatype::parse_json_path_expr("$.a").expect("path");
         let cell = appended
@@ -7599,7 +7916,7 @@ mod tests {
                 SimpleExpr::Func(SimpleSig::CastIntAsJson, vec![SimpleExpr::Int(2)]),
             ],
         );
-        assert_eq!(eval_json(Some(&not_array), &[], 4, &zone()), None);
+        assert_eq!(eval_json(Some(&not_array), &[], 4, &zone()).unwrap(), None);
         // JSON_MERGE_PATCH folds documents; any NULL argument answers
         // NULL.
         let merged = eval_json(
@@ -7611,6 +7928,7 @@ mod tests {
             4,
             &zone(),
         )
+        .unwrap()
         .expect("evals");
         let path_a = tidb_datatype::parse_json_path_expr("$.a").expect("path");
         let nested = merged
@@ -7622,7 +7940,7 @@ mod tests {
             SimpleSig::JsonMergePatchSig,
             vec![json_leaf(r#"{"a": 1}"#), SimpleExpr::Null],
         );
-        assert_eq!(eval_json(Some(&with_null), &[], 4, &zone()), None);
+        assert_eq!(eval_json(Some(&with_null), &[], 4, &zone()).unwrap(), None);
         // A bare value function as a condition answers its non-NULL
         // truth.
         let bare = SimpleExpr::Func(SimpleSig::JsonMergePatchSig, vec![json_leaf(r#"{"a": 1}"#)]);

@@ -111,7 +111,7 @@ pub struct SharedExpression {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{RegionAggregator, TopNSpec, convert_expr_with_context, eval_datum};
+    use super::super::{convert_expr_with_context, eval_datum, RegionAggregator, TopNSpec};
     use super::*;
     use tidb_proto::tipb;
 
@@ -324,6 +324,158 @@ mod tests {
                 assert_eq!(*code, 1292);
             }
             assert!(ctx.take_warnings().is_empty());
+        }
+    }
+}
+
+#[cfg(test)]
+mod timestamp_decode_tests {
+    use super::*;
+    use tidb_proto::tipb;
+
+    #[test]
+    fn timestamp_literal_uses_request_zone_during_decoding() {
+        let utc = tidb_datatype::Time::from_date_checked(
+            2024,
+            1,
+            2,
+            3,
+            4,
+            5,
+            0,
+            tidb_datatype::TimeType::Timestamp,
+            0,
+        )
+        .unwrap();
+        let mut val = Vec::new();
+        tidb_codec::encode_uint(&mut val, utc.to_packed_uint().unwrap());
+        let literal = tipb::Expr {
+            tp: Some(tipb::ExprType::MysqlTime as i32),
+            val: Some(val),
+            field_type: Some(tipb::FieldType {
+                tp: Some(7),
+                decimal: Some(0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let expr = tipb::Expr {
+            tp: Some(tipb::ExprType::ScalarFunc as i32),
+            sig: Some(tipb::ScalarFuncSig::UnixTimestampInt as i32),
+            children: vec![literal],
+            field_type: Some(tipb::FieldType {
+                tp: Some(8),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let ctx = Arc::new(RequestEvalContext::new(
+            SessionTimeZone::Named(chrono_tz::Asia::Shanghai),
+            4,
+            0,
+        ));
+        let direct = super::super::convert_expr_with_context(&expr.children[0], &ctx).unwrap();
+        let local = tidb_datatype::Time::from_date_checked(
+            2024,
+            1,
+            2,
+            11,
+            4,
+            5,
+            0,
+            tidb_datatype::TimeType::Timestamp,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            super::super::eval_datum(&direct, &[]).unwrap(),
+            Datum::Time(local)
+        );
+        let expr = super::super::convert_expr_with_context(&expr, &ctx).unwrap();
+        assert_eq!(
+            super::super::eval_datum(&expr, &[]).unwrap(),
+            Datum::Int(1_704_164_645)
+        );
+    }
+}
+
+#[cfg(test)]
+mod child_error_tests {
+    use super::*;
+    use tidb_proto::tipb;
+    #[test]
+    fn legacy_parent_keeps_typed_child_error() {
+        let text = tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(b"not a number".to_vec()),
+            field_type: Some(tipb::FieldType {
+                tp: Some(253),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cast = tipb::Expr {
+            tp: Some(tipb::ExprType::ScalarFunc as i32),
+            sig: Some(tipb::ScalarFuncSig::CastStringAsReal as i32),
+            children: vec![text],
+            field_type: Some(tipb::FieldType {
+                tp: Some(5),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut zero = Vec::new();
+        tidb_codec::encode_float(&mut zero, 0.0);
+        let zero = tipb::Expr {
+            tp: Some(tipb::ExprType::Float64 as i32),
+            val: Some(zero),
+            field_type: Some(tipb::FieldType {
+                tp: Some(5),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let expr = tipb::Expr {
+            tp: Some(tipb::ExprType::ScalarFunc as i32),
+            sig: Some(tipb::ScalarFuncSig::GtReal as i32),
+            children: vec![cast, zero],
+            field_type: Some(tipb::FieldType {
+                tp: Some(8),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let ctx = Arc::new(RequestEvalContext::new(
+            SessionTimeZone::Named(chrono_tz::UTC),
+            4,
+            0,
+        ));
+        let converted = super::super::convert_expr_with_context(&expr, &ctx).unwrap();
+        let result = super::super::eval_expr(&converted, &[], 4, &ctx.zone);
+        assert!(
+            result.is_err(),
+            "strict cast error must propagate, got {result:?}"
+        );
+        // Each legacy channel must preserve errors before inspecting the result's kind.
+        let child = super::super::convert_expr_with_context(&expr.children[0], &ctx).unwrap();
+        assert!(super::super::eval_real(Some(&child), &[], 4, &ctx.zone).is_err());
+        assert!(super::super::eval_decimal(Some(&child), &[], 4, &ctx.zone).is_err());
+        assert!(super::super::eval_bytes(Some(&child), &[], 4, &ctx.zone).is_err());
+        assert!(super::super::eval_json(Some(&child), &[], 4, &ctx.zone).is_err());
+        assert!(super::super::eval_time(Some(&child), &[], 4, &ctx.zone).is_err());
+        assert!(super::super::eval_duration(Some(&child), &[], 4, &ctx.zone).is_err());
+        for (sig, left, expected) in [
+            (super::super::SimpleSig::LogicalAnd, 0, 0),
+            (super::super::SimpleSig::LogicalOr, 1, 1),
+        ] {
+            let lazy = super::super::SimpleExpr::Func(
+                sig,
+                vec![super::super::SimpleExpr::Int(left), child.clone()],
+            );
+            assert_eq!(
+                super::super::eval_expr(&lazy, &[], 4, &ctx.zone).unwrap(),
+                Some(expected)
+            );
         }
     }
 }

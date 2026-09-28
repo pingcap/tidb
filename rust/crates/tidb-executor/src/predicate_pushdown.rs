@@ -791,6 +791,7 @@ fn remap_pb_scalar(
         | tidb_expr::pushdown_catalog::PbScalar::UIntLiteral { .. }
         | tidb_expr::pushdown_catalog::PbScalar::DecimalLiteral { .. }
         | tidb_expr::pushdown_catalog::PbScalar::RealLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::Float32Literal { .. }
         | tidb_expr::pushdown_catalog::PbScalar::StringLiteral { .. }
         | tidb_expr::pushdown_catalog::PbScalar::BytesLiteral { .. }
         | tidb_expr::pushdown_catalog::PbScalar::BitLiteral { .. }

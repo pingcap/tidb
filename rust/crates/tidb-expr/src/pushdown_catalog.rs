@@ -2076,6 +2076,13 @@ pub enum PbScalar {
         /// The planner-inferred literal type carried on the TiPB leaf.
         field_type: FieldType,
     },
+    /// A single-precision datum, distinct from its inferred SQL result type.
+    Float32Literal {
+        /// Widened storage of the exact f32 value.
+        value: f64,
+        /// Planner-inferred literal type.
+        field_type: FieldType,
+    },
     /// A folded string/bytes literal.  Go sends both `KindString` and
     /// `KindBinaryLiteral` as a raw `ExprType_String` leaf; the field type
     /// carries the collation and binary flag.
@@ -2121,7 +2128,7 @@ pub enum PbScalar {
         /// Planner-inferred literal type.
         field_type: FieldType,
     },
-    /// A folded binary JSON literal.
+    /// A folded binary JSON literal, refused by Go encodeDatum and this encoder.
     JsonLiteral {
         /// Exact type-code-plus-payload representation.
         value: BinaryJSON,
@@ -2156,6 +2163,7 @@ impl PbScalar {
             | Self::UIntLiteral { field_type, .. }
             | Self::DecimalLiteral { field_type, .. }
             | Self::RealLiteral { field_type, .. }
+            | Self::Float32Literal { field_type, .. }
             | Self::StringLiteral { field_type, .. }
             | Self::BytesLiteral { field_type, .. }
             | Self::BitLiteral { field_type, .. }
@@ -2177,7 +2185,7 @@ impl PbScalar {
             Self::IntLiteral(_) => EvalType::Int,
             Self::UIntLiteral { field_type, .. } => field_type.eval_type(),
             Self::DecimalLiteral { .. } => EvalType::Decimal,
-            Self::RealLiteral { .. } => EvalType::Real,
+            Self::RealLiteral { .. } | Self::Float32Literal { .. } => EvalType::Real,
             Self::StringLiteral { .. } => EvalType::String,
             Self::BytesLiteral { .. } => EvalType::String,
             Self::BitLiteral { field_type, .. } => field_type.eval_type(),
@@ -2204,7 +2212,8 @@ impl PbScalar {
             Self::IntLiteral(_) => false,
             Self::UIntLiteral { field_type, .. }
             | Self::DecimalLiteral { field_type, .. }
-            | Self::RealLiteral { field_type, .. } => field_type.is_unsigned(),
+            | Self::RealLiteral { field_type, .. }
+            | Self::Float32Literal { field_type, .. } => field_type.is_unsigned(),
             Self::StringLiteral { field_type, .. }
             | Self::BytesLiteral { field_type, .. }
             | Self::BitLiteral { field_type, .. }
@@ -2234,9 +2243,10 @@ impl PbScalar {
             Self::Column { field_type, .. } => field_type.is_binary_string(),
             Self::NullLiteral { .. } => false,
             Self::IntLiteral(_) => false,
-            Self::UIntLiteral { .. } | Self::DecimalLiteral { .. } | Self::RealLiteral { .. } => {
-                false
-            }
+            Self::UIntLiteral { .. }
+            | Self::DecimalLiteral { .. }
+            | Self::RealLiteral { .. }
+            | Self::Float32Literal { .. } => false,
             Self::StringLiteral { field_type, .. } | Self::BytesLiteral { field_type, .. } => {
                 field_type.is_binary_string()
             }
@@ -2450,10 +2460,14 @@ fn describe_literal(value: Datum, field_type: Option<&FieldType>) -> Option<PbSc
             value: value.clone(),
             field_type: field_type?.clone(),
         }),
-        Datum::Real(value) | Datum::Float32(value)
-            if !(*value == 0.0 && value.is_sign_negative()) =>
-        {
+        Datum::Real(value) if !(*value == 0.0 && value.is_sign_negative()) => {
             Some(PbScalar::RealLiteral {
+                value: *value,
+                field_type: field_type?.clone(),
+            })
+        }
+        Datum::Float32(value) if !(*value == 0.0 && value.is_sign_negative()) => {
+            Some(PbScalar::Float32Literal {
                 value: *value,
                 field_type: field_type?.clone(),
             })
@@ -2486,10 +2500,8 @@ fn describe_literal(value: Datum, field_type: Option<&FieldType>) -> Option<PbSc
             value: *value,
             field_type: field_type?.clone(),
         }),
-        Datum::Json(value) => Some(PbScalar::JsonLiteral {
-            value: value.clone(),
-            field_type: field_type?.clone(),
-        }),
+        // Go encodeDatum has no KindMysqlJSON arm.
+        Datum::Json(_) => None,
         Datum::VectorFloat32(value) => Some(PbScalar::VectorLiteral {
             value: value.clone(),
             field_type: field_type?.clone(),
@@ -2507,8 +2519,18 @@ pub fn expression_to_pb(
     expression: &Expression,
     columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
 ) -> Option<Expr> {
+    expression_to_pb_in(expression, columns, &tidb_datatype::SessionTimeZone::utc())
+}
+
+/// Encode expression literals in the statement's timezone.
+#[must_use]
+pub fn expression_to_pb_in(
+    expression: &Expression,
+    columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Expr> {
     let described = from_expression(expression)?;
-    let mut encoded = to_pb(&described, columns)?;
+    let mut encoded = to_pb_in(&described, columns, zone)?;
     encoded.field_type = Some(field_type_to_pb(expression.static_type()?)?);
     Some(encoded)
 }
@@ -2585,6 +2607,16 @@ pub fn to_pb(
     scalar: &PbScalar,
     columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
 ) -> Option<Expr> {
+    to_pb_in(scalar, columns, &tidb_datatype::SessionTimeZone::utc())
+}
+
+/// Encode a described expression using the statement's timezone recursively.
+#[must_use]
+pub fn to_pb_in(
+    scalar: &PbScalar,
+    columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Expr> {
     match scalar {
         PbScalar::Column { offset, field_type } => {
             let declared = columns(*offset)?;
@@ -2660,11 +2692,19 @@ pub fn to_pb(
                 field_type_to_pb(field_type)?,
             ))
         }
-        PbScalar::RealLiteral { value, field_type } => {
+        PbScalar::RealLiteral { value, field_type }
+        | PbScalar::Float32Literal { value, field_type } => {
+            if *value == 0.0 && value.is_sign_negative() {
+                return None;
+            }
             let mut encoded = Vec::new();
             tidb_codec::encode_float(&mut encoded, *value);
             Some(leaf(
-                ExprType::Float64,
+                if matches!(scalar, PbScalar::Float32Literal { .. }) {
+                    ExprType::Float32
+                } else {
+                    ExprType::Float64
+                },
                 encoded,
                 field_type_to_pb(field_type)?,
             ))
@@ -2694,9 +2734,13 @@ pub fn to_pb(
             ))
         }
         PbScalar::TimeLiteral { value, field_type } => {
-            let packed = value.to_packed_uint().ok()?;
             let mut encoded = Vec::new();
-            tidb_codec::encode_uint(&mut encoded, packed);
+            let kind = match field_type.code() {
+                FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
+                FieldTypeCode::Date => tidb_datatype::TimeType::Date,
+                _ => tidb_datatype::TimeType::DateTime,
+            };
+            tidb_codec::encode_mysql_time(zone, *value, Some(kind), &mut encoded).ok()?;
             Some(leaf(
                 ExprType::MysqlTime,
                 encoded,
@@ -2708,11 +2752,7 @@ pub fn to_pb(
             encode_signed(value.nanoseconds()),
             field_type_to_pb(field_type)?,
         )),
-        PbScalar::JsonLiteral { value, field_type } => Some(leaf(
-            ExprType::MysqlJson,
-            value.encoded(),
-            field_type_to_pb(field_type)?,
-        )),
+        PbScalar::JsonLiteral { .. } => None,
         PbScalar::VectorLiteral { value, field_type } => Some(leaf(
             ExprType::TiDbVectorFloat32,
             value.serialize(),
@@ -2721,9 +2761,8 @@ pub fn to_pb(
         PbScalar::Call { signature, args } => {
             let mut children = Vec::with_capacity(args.len());
             for (index, argument) in args.iter().enumerate() {
-                let required =
-                    signature.arg_type_at(index, args.len(), argument.eval_type())?;
-                children.push(coerced_to_pb(argument, required, columns)?);
+                let required = signature.arg_type_at(index, args.len(), argument.eval_type())?;
+                children.push(coerced_to_pb(argument, required, columns, zone)?);
             }
             let return_field_type = signature.return_field_type(scalar.is_unsigned(), &children)?;
             Some(Expr {
@@ -2743,12 +2782,13 @@ fn coerced_to_pb(
     argument: &PbScalar,
     required: EvalType,
     columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<Expr> {
     // Go folds a deterministic cast over a constant and sends the target
     // literal family, not a ScalarFunc cast node.
     if let PbScalar::IntLiteral(value) = argument {
         if required == EvalType::Int {
-            return to_pb(argument, columns);
+            return to_pb_in(argument, columns, zone);
         }
         return match required {
             EvalType::Real => {
@@ -2787,13 +2827,13 @@ fn coerced_to_pb(
                 // Fall through after the constant-specialization block.
                 let cast = cast_signature(argument.eval_type(), required)?;
                 let Some(cast) = cast else {
-                    return to_pb(argument, columns);
+                    return to_pb_in(argument, columns, zone);
                 };
                 let field_type = cast_target_field_type(argument, required)?;
                 return Some(Expr {
                     tp: Some(ExprType::ScalarFunc as i32),
                     val: None,
-                    children: vec![to_pb(argument, columns)?],
+                    children: vec![to_pb_in(argument, columns, zone)?],
                     sig: Some(cast as i32),
                     field_type: Some(field_type),
                     has_distinct: Some(false),
@@ -2803,7 +2843,7 @@ fn coerced_to_pb(
         };
     }
     let cast = cast_signature(argument.eval_type(), required)?;
-    let lowered = to_pb(argument, columns)?;
+    let lowered = to_pb_in(argument, columns, zone)?;
     let Some(cast) = cast else {
         return Some(lowered);
     };
@@ -3149,6 +3189,7 @@ mod tests {
             | PbScalar::UIntLiteral { .. }
             | PbScalar::DecimalLiteral { .. }
             | PbScalar::RealLiteral { .. }
+            | PbScalar::Float32Literal { .. }
             | PbScalar::StringLiteral { .. }
             | PbScalar::BytesLiteral { .. }
             | PbScalar::BitLiteral { .. }

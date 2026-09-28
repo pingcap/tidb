@@ -58,7 +58,10 @@ fn typed_or(expr: &tipb::Expr, default: FieldTypeCode) -> FieldType {
 /// Go `PBToExpr`'s literal arms (`convertInt`, `convertUint`,
 /// `convertString`, `convertFloat`, `convertDecimal`, `convertDuration`,
 /// `convertTime`, `convertJSON`). `None`: `expr` is not a literal.
-fn pb_literal(expr: &tipb::Expr) -> Option<Result<Expression, String>> {
+fn pb_literal(
+    expr: &tipb::Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Result<Expression, String>> {
     use tipb::ExprType;
     let val = expr.val();
     let bad = |what: &str, err: &dyn std::fmt::Debug| format!("invalid {what} literal: {err:?}");
@@ -70,12 +73,51 @@ fn pb_literal(expr: &tipb::Expr) -> Option<Result<Expression, String>> {
         ExprType::Uint64 => tidb_codec::decode_uint(val)
             .map(|(_, v)| constant(Datum::UInt(v), typed_or(expr, FieldTypeCode::LongLong)))
             .map_err(|e| bad("uint", &e)),
-        ExprType::String | ExprType::Bytes => Ok(constant(
+        ExprType::String => Ok(constant(
             Datum::Bytes(val.to_vec()),
             typed_or(expr, FieldTypeCode::String),
         )),
+        ExprType::Bytes => Ok(constant(
+            Datum::Bytes(val.to_vec()),
+            FieldType::new(FieldTypeCode::String),
+        )),
+        ExprType::MysqlBit => Ok(constant(
+            Datum::Bit(val.into()),
+            FieldType::new(FieldTypeCode::String),
+        )),
+        ExprType::MysqlEnum => (|| {
+            let (_, value) = tidb_codec::decode_uint(val).map_err(|e| bad("enum", &e))?;
+            let field_type = typed_or(expr, FieldTypeCode::Enum);
+            let value = if value == 0 {
+                tidb_datatype::MysqlEnum::default()
+            } else {
+                tidb_datatype::parse_enum_value(&field_type.elems_snapshot(), value)
+                    .map_err(|e| bad("enum", &e))?
+            };
+            Ok(constant(
+                Datum::Enum(value, field_type.collation()),
+                field_type,
+            ))
+        })(),
+        ExprType::TiDbVectorFloat32 => tidb_datatype::deserialize_vector_float32(val)
+            .map(|(value, _)| {
+                constant(
+                    Datum::VectorFloat32(value),
+                    FieldType::new(FieldTypeCode::VectorFloat32),
+                )
+            })
+            .map_err(|e| bad("vector", &e)),
         ExprType::Float32 | ExprType::Float64 => tidb_codec::decode_float(val)
-            .map(|(_, v)| constant(Datum::Real(v), typed_or(expr, FieldTypeCode::Double)))
+            .map(|(_, v)| {
+                constant(
+                    if expr.tp() == ExprType::Float32 {
+                        Datum::Float32(f64::from(v as f32))
+                    } else {
+                        Datum::Real(v)
+                    },
+                    FieldType::new(FieldTypeCode::Double),
+                )
+            })
             .map_err(|e| bad("float", &e)),
         ExprType::MysqlDecimal => tidb_codec::decode_decimal(val)
             .map(|(_, v, _, _)| {
@@ -83,22 +125,25 @@ fn pb_literal(expr: &tipb::Expr) -> Option<Result<Expression, String>> {
             })
             .map_err(|e| bad("decimal", &e)),
         ExprType::MysqlDuration | ExprType::MysqlTime | ExprType::MysqlJson => {
-            pb_codec_literal(expr)
+            pb_codec_literal(expr, zone)
         }
         _ => return None,
     })
 }
 
 /// Go `convertDuration`, `convertTime`, `convertJSON`.
-fn pb_codec_literal(expr: &tipb::Expr) -> Result<Expression, String> {
+fn pb_codec_literal(
+    expr: &tipb::Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Expression, String> {
     use tipb::ExprType;
     let val = expr.val();
     match expr.tp() {
         ExprType::MysqlDuration => {
             let (_, nanos) = tidb_codec::decode_int(val)
                 .map_err(|err| format!("invalid duration literal: {err:?}"))?;
-            let field_type = typed_or(expr, FieldTypeCode::Duration);
-            let fsp = field_type.decimal().max(0);
+            let field_type = FieldType::new(FieldTypeCode::Duration);
+            let fsp = 6;
             let value = tidb_datatype::MySqlDuration::from_nanoseconds(nanos, fsp)
                 .map_err(|err| format!("invalid duration literal: {err:?}"))?;
             Ok(constant(Datum::Duration(value), field_type))
@@ -112,16 +157,22 @@ fn pb_codec_literal(expr: &tipb::Expr) -> Result<Expression, String> {
                 FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
                 _ => tidb_datatype::TimeType::DateTime,
             };
-            let value = tidb_datatype::Time::from_packed_uint(packed, kind, field_type.decimal())
-                .map_err(|err| format!("invalid time literal: {err:?}"))?;
+            let mut value =
+                tidb_datatype::Time::from_packed_uint(packed, kind, field_type.decimal())
+                    .map_err(|err| format!("invalid time literal: {err:?}"))?;
+            if kind == tidb_datatype::TimeType::Timestamp && !zone.is_utc() {
+                value
+                    .convert_time_zone(&tidb_datatype::SessionTimeZone::utc(), zone)
+                    .map_err(|err| format!("invalid time literal: {err:?}"))?;
+            }
             Ok(constant(Datum::Time(value), field_type))
         }
         _ => {
-            let datum = tidb_codec::decode(val, 1)
-                .map_err(|err| format!("invalid json literal: {err:?}"))?
-                .into_iter()
-                .next()
-                .ok_or_else(|| "invalid json literal: no datum".to_owned())?;
+            let (_, datum) = tidb_codec::decode_one(val)
+                .map_err(|err| format!("invalid json literal: {err:?}"))?;
+            if !matches!(datum, Datum::Json(_)) {
+                return Err("invalid json literal: expected a JSON datum".to_owned());
+            }
             Ok(constant(datum, FieldType::new(FieldTypeCode::Json)))
         }
     }
@@ -152,10 +203,19 @@ fn pb_column(expr: &tipb::Expr, column_types: &[FieldType]) -> Result<Expression
 /// A malformed literal, an out-of-range column, or a signature TiDB does not
 /// push (Go `getSignatureByPB`'s `default:` arm).
 pub fn pb_to_expr(expr: &tipb::Expr, column_types: &[FieldType]) -> Result<Expression, String> {
+    pb_to_expr_in(expr, column_types, &tidb_datatype::SessionTimeZone::utc())
+}
+
+/// Decode using the request timezone, including UTC TIMESTAMP wire literals.
+pub fn pb_to_expr_in(
+    expr: &tipb::Expr,
+    column_types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Expression, String> {
     if expr.tp() == tipb::ExprType::ColumnRef {
         return pb_column(expr, column_types);
     }
-    if let Some(literal) = pb_literal(expr) {
+    if let Some(literal) = pb_literal(expr, zone) {
         return literal;
     }
     if expr.tp() != tipb::ExprType::ScalarFunc {
@@ -164,7 +224,7 @@ pub fn pb_to_expr(expr: &tipb::Expr, column_types: &[FieldType]) -> Result<Expre
     let args = expr
         .children
         .iter()
-        .map(|child| pb_to_expr(child, column_types))
+        .map(|child| pb_to_expr_in(child, column_types, zone))
         .collect::<Result<Vec<_>, _>>()?;
     let sig = expr.sig();
     let builtin = PbBuiltin::new(sig)
@@ -202,6 +262,172 @@ mod tests {
             ..Default::default()
         }
     }
+    #[test]
+    fn timestamp_literals_use_the_same_zone_in_both_wire_directions() {
+        use crate::pushdown_catalog::{build_call, to_pb_in, PbScalar};
+        use tidb_datatype::{SessionTimeZone, Time, TimeType};
+        for (zone, hour) in [
+            (SessionTimeZone::utc(), 3),
+            (SessionTimeZone::Named(chrono_tz::Asia::Shanghai), 11),
+            (
+                SessionTimeZone::Fixed {
+                    name: String::new(),
+                    offset_secs: 3600,
+                },
+                4,
+            ),
+        ] {
+            for (code, kind) in [
+                (FieldTypeCode::Timestamp, TimeType::Timestamp),
+                (FieldTypeCode::Datetime, TimeType::DateTime),
+            ] {
+                let local = Time::from_date_checked(2024, 1, 2, hour, 4, 5, 0, kind, 0).unwrap();
+                let literal = PbScalar::TimeLiteral {
+                    value: local,
+                    field_type: FieldType::new(code).with_decimal(0),
+                };
+                let pb = to_pb_in(&literal, &|_| None, &zone).unwrap();
+                let wire = Time::from_date_checked(
+                    2024,
+                    1,
+                    2,
+                    if kind == TimeType::Timestamp { 3 } else { hour },
+                    4,
+                    5,
+                    0,
+                    kind,
+                    0,
+                )
+                .unwrap();
+                assert_eq!(
+                    tidb_codec::decode_uint(pb.val()).unwrap().1,
+                    wire.to_packed_uint().unwrap()
+                );
+                let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+                let value = pb_to_expr_in(&pb, &[], &zone)
+                    .unwrap()
+                    .eval(&crate::ZonedNoColumns(zone.clone()), row.to_row())
+                    .unwrap();
+                assert_eq!(value, Datum::Time(local));
+                let call = build_call("isnull", vec![literal]).unwrap();
+                let parent = to_pb_in(&call, &|_| None, &zone).unwrap();
+                assert_eq!(parent.children[0].val, pb.val);
+            }
+        }
+    }
+
+    #[test]
+    fn float32_and_duration_literals_retain_go_datum_metadata() {
+        let mut val = Vec::new();
+        tidb_codec::encode_float(&mut val, 1.23456789);
+        let pb = tipb::Expr {
+            tp: Some(tipb::ExprType::Float32 as i32),
+            val: Some(val),
+            ..Default::default()
+        };
+        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        assert_eq!(
+            pb_to_expr(&pb, &[])
+                .unwrap()
+                .eval(&crate::NoColumns, row.to_row())
+                .unwrap(),
+            Datum::Float32(f64::from(1.23456789_f32))
+        );
+        let mut val = Vec::new();
+        tidb_codec::encode_int(&mut val, 1_234_567_000);
+        let pb = tipb::Expr {
+            tp: Some(tipb::ExprType::MysqlDuration as i32),
+            val: Some(val),
+            field_type: Some(tipb::FieldType {
+                decimal: Some(0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            pb_to_expr(&pb, &[])
+                .unwrap()
+                .eval(&crate::NoColumns, row.to_row())
+                .unwrap(),
+            Datum::Duration(
+                tidb_datatype::MySqlDuration::from_nanoseconds(1_234_567_000, 6).unwrap()
+            )
+        );
+        let constant = constant(Datum::Float32(1.25), FieldType::new(FieldTypeCode::Double));
+        let pb = crate::pushdown_catalog::expression_to_pb(&constant, &|_| None).unwrap();
+        assert_eq!(pb.tp(), tipb::ExprType::Float32);
+    }
+
+    #[test]
+    fn bit_enum_and_vector_literals_decode_like_go() {
+        use crate::pushdown_catalog::{to_pb, PbScalar};
+        let literals = [
+            PbScalar::BitLiteral {
+                value: vec![3].into(),
+                field_type: FieldType::new(FieldTypeCode::Bit),
+            },
+            PbScalar::EnumLiteral {
+                value: 2,
+                field_type: FieldType::new(FieldTypeCode::Enum).with_elems(["red", "green"]),
+            },
+            PbScalar::VectorLiteral {
+                value: tidb_datatype::VectorFloat32::must_create([1.0, 2.0]),
+                field_type: FieldType::new(FieldTypeCode::VectorFloat32),
+            },
+        ];
+        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        for literal in literals {
+            let pb = to_pb(&literal, &|_| None).unwrap();
+            let decoded = pb_to_expr(&pb, &[]).unwrap();
+            let value = decoded.eval(&crate::NoColumns, row.to_row()).unwrap();
+            match literal {
+                PbScalar::BitLiteral {
+                    value: expected, ..
+                } => assert_eq!(value, Datum::Bit(expected)),
+                PbScalar::EnumLiteral { .. } => assert_eq!(
+                    value,
+                    Datum::Enum(
+                        tidb_datatype::MysqlEnum::new("green", 2),
+                        decoded.static_type().unwrap().collation()
+                    )
+                ),
+                PbScalar::VectorLiteral {
+                    value: expected, ..
+                } => assert_eq!(value, Datum::VectorFloat32(expected)),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn json_literals_follow_go_admission_and_decoder_kind_checks() {
+        let value = tidb_datatype::BinaryJSON::parse("{\"a\":1}").unwrap();
+        let scalar = crate::pushdown_catalog::PbScalar::JsonLiteral {
+            value,
+            field_type: FieldType::new(FieldTypeCode::Json),
+        };
+        assert!(crate::pushdown_catalog::to_pb(&scalar, &|_| None).is_none());
+        let pb = tipb::Expr {
+            tp: Some(tipb::ExprType::MysqlJson as i32),
+            val: Some(tidb_codec::encode_value(&[Datum::Int(1)]).unwrap()),
+            ..Default::default()
+        };
+        assert!(pb_to_expr(&pb, &[]).is_err());
+        let value = tidb_datatype::BinaryJSON::parse("{\"a\":1}").unwrap();
+        let good = tipb::Expr {
+            val: Some(tidb_codec::encode_value(&[Datum::Json(value.clone())]).unwrap()),
+            ..pb
+        };
+        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        assert_eq!(
+            pb_to_expr(&good, &[])
+                .unwrap()
+                .eval(&crate::NoColumns, row.to_row())
+                .unwrap(),
+            Datum::Json(value)
+        );
+    }
+
     #[test]
     fn every_encoder_signature_has_a_typed_decoder() {
         for signature in crate::pushdown_catalog::CATALOG

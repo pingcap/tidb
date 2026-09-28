@@ -180,12 +180,21 @@ pub fn wide_scan_selection_conditions(
     predicates: &[ScanPredicate],
     columns: &[ScanColumnInfo],
 ) -> Result<Vec<Expr>, WideScanSelectionError> {
+    wide_scan_selection_conditions_in(predicates, columns, &tidb_datatype::SessionTimeZone::utc())
+}
+
+/// Lower constants using the same timezone carried by the DAG request.
+pub fn wide_scan_selection_conditions_in(
+    predicates: &[ScanPredicate],
+    columns: &[ScanColumnInfo],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Vec<Expr>, WideScanSelectionError> {
     if predicates.is_empty() {
         return Err(WideScanSelectionError::NoConditions);
     }
     let mut conditions = Vec::new();
     for predicate in predicates {
-        conditions.extend(predicate_to_conditions(predicate, columns)?);
+        conditions.extend(predicate_to_conditions(predicate, columns, zone)?);
     }
     Ok(conditions)
 }
@@ -194,28 +203,40 @@ pub fn wide_scan_selection_conditions(
 /// admission test the request filter applies before anything is sent.
 #[must_use]
 pub fn accepts(predicate: &ScanPredicate, columns: &[ScanColumnInfo]) -> bool {
-    predicate_to_conditions(predicate, columns).is_ok()
+    accepts_in(predicate, columns, &tidb_datatype::SessionTimeZone::utc())
+}
+
+/// Apply the encoder's admission check using the statement timezone.
+#[must_use]
+pub fn accepts_in(
+    predicate: &ScanPredicate,
+    columns: &[ScanColumnInfo],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    predicate_to_conditions(predicate, columns, zone).is_ok()
 }
 
 fn predicate_to_conditions(
     predicate: &ScanPredicate,
     columns: &[ScanColumnInfo],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<Expr>, WideScanSelectionError> {
     match predicate {
         ScanPredicate::And(branches) => {
             let mut conditions = Vec::new();
             for branch in branches {
-                conditions.extend(predicate_to_conditions(branch, columns)?);
+                conditions.extend(predicate_to_conditions(branch, columns, zone)?);
             }
             Ok(conditions)
         }
-        other => Ok(vec![predicate_to_pb(other, columns)?]),
+        other => Ok(vec![predicate_to_pb(other, columns, zone)?]),
     }
 }
 
 fn predicate_to_pb(
     predicate: &ScanPredicate,
     columns: &[ScanColumnInfo],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Expr, WideScanSelectionError> {
     match predicate {
         ScanPredicate::Compare(comparison) => comparison_to_pb(comparison, columns),
@@ -257,9 +278,11 @@ fn predicate_to_pb(
             .ok_or(WideScanSelectionError::UnsupportedColumnType {
                 offset: *column_offset,
             })?;
-            let is_null = tidb_expr::pushdown_catalog::to_pb(&call, &|offset| {
-                scan_column_descriptor(offset, columns)
-            })
+            let is_null = tidb_expr::pushdown_catalog::to_pb_in(
+                &call,
+                &|offset| scan_column_descriptor(offset, columns),
+                zone,
+            )
             .ok_or(WideScanSelectionError::UnsupportedColumnType {
                 offset: *column_offset,
             })?;
@@ -315,9 +338,11 @@ fn predicate_to_pb(
             negated,
             collation,
         } => {
-            let tested = tidb_expr::pushdown_catalog::to_pb(tested, &|offset| {
-                scan_column_descriptor(offset, columns)
-            })
+            let tested = tidb_expr::pushdown_catalog::to_pb_in(
+                tested,
+                &|offset| scan_column_descriptor(offset, columns),
+                zone,
+            )
             .ok_or(WideScanSelectionError::UnsupportedBuiltinOperand)?;
             let literals = literals
                 .iter()
@@ -355,9 +380,11 @@ fn predicate_to_pb(
         // `newBaseBuiltinFuncWithTp` inserts. It refuses a leaf whose TiPB
         // field type this tier cannot build faithfully, which is a refusal to
         // send and never a wrong condition.
-        ScanPredicate::Builtin(call) => tidb_expr::pushdown_catalog::to_pb(call, &|offset| {
-            scan_column_descriptor(offset, columns)
-        })
+        ScanPredicate::Builtin(call) => tidb_expr::pushdown_catalog::to_pb_in(
+            call,
+            &|offset| scan_column_descriptor(offset, columns),
+            zone,
+        )
         .ok_or(WideScanSelectionError::UnsupportedBuiltinOperand),
         // Top-level ANDs are expanded into Selection.conditions by
         // `predicate_to_conditions`; an AND nested under OR/NOT is not a
@@ -367,18 +394,18 @@ fn predicate_to_pb(
         ScanPredicate::And(branches) => {
             let branches = branches
                 .iter()
-                .map(|branch| predicate_to_pb(branch, columns))
+                .map(|branch| predicate_to_pb(branch, columns, zone))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(logical_and_to_pb(branches)?)
         }
         ScanPredicate::Or(branches) => {
             let branches = branches
                 .iter()
-                .map(|branch| predicate_to_pb(branch, columns))
+                .map(|branch| predicate_to_pb(branch, columns, zone))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(logical_or_to_pb(branches)?)
         }
-        ScanPredicate::Not(inner) => Ok(logical_not_to_pb(predicate_to_pb(inner, columns)?)),
+        ScanPredicate::Not(inner) => Ok(logical_not_to_pb(predicate_to_pb(inner, columns, zone)?)),
     }
 }
 

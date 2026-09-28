@@ -103,7 +103,7 @@ enum LoweredAggregate {
     },
 }
 use crate::real_tikv_read::RealTiKvSessionTransportFactory;
-use crate::wide_scan_selection::{accepts, wide_scan_selection_conditions};
+use crate::wide_scan_selection::{accepts_in, wide_scan_selection_conditions_in};
 
 /// The per-process wire receipt behind `cluster-session-smoke --cop`:
 /// how many rows the coprocessor actually sent over the wire for the
@@ -286,15 +286,16 @@ where
             let lowered: Vec<ScanPredicate> = request
                 .predicates
                 .iter()
-                .filter(|predicate| accepts(predicate, &columns))
+                .filter(|predicate| accepts_in(predicate, &columns, &request.statement.time_zone))
                 .cloned()
                 .collect();
             let conditions: Vec<Expr> = if lowered.is_empty() {
                 Vec::new()
             } else {
-                wide_scan_selection_conditions(&lowered, &columns).map_err(|error| {
-                    PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-                })?
+                wide_scan_selection_conditions_in(&lowered, &columns, &request.statement.time_zone)
+                    .map_err(|error| {
+                        PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
+                    })?
             };
             let mut slot = self
                 .selection_cache
@@ -389,9 +390,11 @@ where
                         "partial aggregation requires a complete Selection and no competing pushdown",
                     ));
                 }
-                let lowered = lower_aggregate_functions(functions, &columns).ok_or_else(|| {
-                    refuse("a global aggregate function cannot be lowered to TiPB")
-                })?;
+                let lowered =
+                    lower_aggregate_functions(functions, &columns, &request.statement.time_zone)
+                        .ok_or_else(|| {
+                            refuse("a global aggregate function cannot be lowered to TiPB")
+                        })?;
                 field_types = functions
                     .iter()
                     .map(|function| function.output_type.clone())
@@ -417,9 +420,10 @@ where
                     ));
                 }
                 let lowered_functions =
-                    lower_aggregate_functions(functions, &columns).ok_or_else(|| {
-                        refuse("a grouped aggregate function cannot be lowered to TiPB")
-                    })?;
+                    lower_aggregate_functions(functions, &columns, &request.statement.time_zone)
+                        .ok_or_else(|| {
+                            refuse("a grouped aggregate function cannot be lowered to TiPB")
+                        })?;
                 let group_by = lower_group_by(group_offsets, group_types, &columns)
                     .ok_or_else(|| refuse("a grouped aggregate key cannot be lowered to TiPB"))?;
                 field_types = functions
@@ -1082,6 +1086,7 @@ fn scan_column_descriptor(
 fn lower_aggregate_functions(
     functions: &[tidb_executor::remote_scan::PushdownAggregateFunction],
     columns: &[ScanColumnInfo],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<Vec<Expr>> {
     functions
         .iter()
@@ -1091,6 +1096,7 @@ fn lower_aggregate_functions(
                 function.input.as_ref(),
                 &function.output_type,
                 columns,
+                zone,
             )
         })
         .collect()
@@ -1101,11 +1107,13 @@ fn lower_aggregate_function(
     input: Option<&tidb_expr::expression::Expression>,
     output_type: &FieldType,
     columns: &[ScanColumnInfo],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<Expr> {
     let children = match input {
-        Some(input) => vec![tidb_expr::pushdown_catalog::expression_to_pb(
+        Some(input) => vec![tidb_expr::pushdown_catalog::expression_to_pb_in(
             input,
             &|offset| scan_column_descriptor(columns, offset),
+            zone,
         )?],
         None if kind == PushdownAggregateKind::Count => {
             vec![tidb_expr::pushdown_catalog::to_pb(
@@ -1246,6 +1254,7 @@ mod tests {
             Some(&input),
             &FieldType::new(FieldTypeCode::LongLong),
             &columns,
+            &tidb_datatype::SessionTimeZone::utc(),
         )
         .expect("MAX_COUNT lowers to a tipb aggregate expression");
         let min = lower_aggregate_function(
@@ -1253,6 +1262,7 @@ mod tests {
             Some(&input),
             &FieldType::new(FieldTypeCode::LongLong),
             &columns,
+            &tidb_datatype::SessionTimeZone::utc(),
         )
         .expect("MIN_COUNT lowers to a tipb aggregate expression");
         assert_eq!(max.tp, Some(ExprType::MaxCount as i32));
