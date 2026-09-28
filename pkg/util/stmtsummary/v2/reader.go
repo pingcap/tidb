@@ -479,6 +479,10 @@ func openStmtFile(path string) (*stmtFile, error) {
 	}, nil
 }
 
+// openStmtFileFn is a package-level indirection over openStmtFile so tests
+// can observe the lifetime of files opened during directory enumeration.
+var openStmtFileFn = openStmtFile
+
 func parseBeginTsAndReseek(file *os.File) (int64, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
@@ -557,7 +561,7 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 		if isCtxDone(ctx) {
 			return ctx.Err()
 		}
-		file, err := openStmtFile(path)
+		file, err := openStmtFileFn(path)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", path))
 			return nil
@@ -571,6 +575,12 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 				files = append(files, file)
 				return nil
 			}
+		}
+		// The file overlaps no requested range. Close it instead of leaking
+		// its FD until process exit: this branch opens every candidate
+		// eagerly, so excluded files must be released here.
+		if err := file.close(); err != nil {
+			logutil.BgLogger().Warn("failed to close statements file", zap.Error(err), zap.String("path", path))
 		}
 		return nil
 	}

@@ -119,6 +119,54 @@ func TestStmtFileAbsoluteConfiguredFilename(t *testing.T) {
 	require.False(t, checker.isTimeValid(f.begin, f.end))
 }
 
+// TestStmtFilesClosesExcludedFDs verifies that files opened during directory
+// enumeration but excluded by the requested time ranges are closed on the
+// spot instead of leaking their FDs until process exit.
+func TestStmtFilesClosesExcludedFDs(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	dir := t.TempDir()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+	})
+
+	end := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+	rotated := filepath.Join(dir, fmt.Sprintf("tidb-statements-%s.log", end.Format("2006-01-02T15-04-05.000")))
+	content := fmt.Sprintf("{\"begin\":%d,\"end\":%d}\n", end.Unix()-600, end.Unix())
+	require.NoError(t, os.WriteFile(rotated, []byte(content), 0o600))
+
+	var opened []*os.File
+	orig := openStmtFileFn
+	openStmtFileFn = func(path string) (*stmtFile, error) {
+		f, err := orig(path)
+		if err == nil {
+			opened = append(opened, f.file)
+		}
+		return f, err
+	}
+	t.Cleanup(func() { openStmtFileFn = orig })
+
+	// The range starts after the file's end, so the file is excluded while
+	// enumeration has already opened it.
+	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: end.Unix() + 100, End: end.Unix() + 200},
+	})
+	require.NoError(t, err)
+	require.Empty(t, files.files)
+	require.Len(t, opened, 1)
+	// A second Close reports os.ErrClosed iff enumeration closed the FD.
+	require.ErrorIs(t, opened[0].Close(), os.ErrClosed)
+
+	// The inverse: a retained file must still be open and owned by the result.
+	files, err = newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: 0, End: end.Unix()},
+	})
+	require.NoError(t, err)
+	require.Len(t, files.files, 1)
+	require.NoError(t, files.files[0].close())
+}
+
 func TestStmtFiles(t *testing.T) {
 	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"
