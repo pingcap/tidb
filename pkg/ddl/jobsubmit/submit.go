@@ -517,10 +517,7 @@ func job2TableIDs(spec *JobSpec) string {
 		return strconv.FormatInt(spec.Job.TableID, 10)
 	case model.ActionMViewRefreshOutOfPlaceCutover:
 		args := spec.Args.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
-		if args != nil && args.ShadowTableID > 0 {
-			return makeStringForIDs([]int64{spec.Job.TableID, args.ShadowTableID})
-		}
-		return strconv.FormatInt(spec.Job.TableID, 10)
+		return makeStringForIDs([]int64{spec.Job.TableID, args.ShadowTableID})
 	default:
 		return strconv.FormatInt(spec.Job.TableID, 10)
 	}

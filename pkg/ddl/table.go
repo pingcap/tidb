@@ -2217,6 +2217,16 @@ func rewriteMaterializedViewBaseForOutOfPlaceCutover(baseTblInfo *model.TableInf
 	return nil
 }
 
+// migrateMViewRefreshInfoForOutOfPlaceCutover moves the refresh-info row from
+// the old MV table ID to the shadow table ID as part of the cutover DDL txn.
+//
+// Do not use a SQL UPDATE here. SQL writes run as independent statements and
+// StmtCommit moves their mutations into the DDL session before the remaining
+// cutover metadata mutations are complete. If a later cutover step fails,
+// w.sess.Reset only rolls back the current statement staging, so an earlier SQL
+// UPDATE can leave mysql.tidb_mview_refresh_info pointing at the shadow table
+// while the schema still points at the old MV. Writing through the table API
+// keeps this migration in the same DDL transaction as the table metadata swap.
 func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(jobCtx *jobContext, args *model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) error {
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
@@ -2245,6 +2255,11 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(jobCtx *jobContext,
 	if err != nil {
 		return errors.Trace(convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err))
 	}
+	// The table API mutation below relies on the fixed refresh-info schema:
+	// columns are [MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS],
+	// and MVIEW_ID is the single integer primary-key handle used by kv.IntHandle.
+	// If this system table schema changes, update this function together with
+	// TestBootstrapMaterializedViewSystemTables.
 	if len(refreshInfoTbl.Meta().Columns) != 4 {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: unexpected refresh info schema")
 	}

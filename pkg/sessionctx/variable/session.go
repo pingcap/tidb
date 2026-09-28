@@ -1686,7 +1686,6 @@ type SessionVars struct {
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
-
 	// InMViewMaintenance indicates the session is executing internal MV build/refresh statements.
 	InMViewMaintenance bool
 
