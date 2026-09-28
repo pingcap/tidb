@@ -764,7 +764,7 @@ func (mr *MockTaskManagerMockRecorder) RevertedTask(arg0, arg1 any) *gomock.Call
 }
 
 // SucceedTask mocks base method.
-func (m *MockTaskManager) SucceedTask(arg0 context.Context, arg1 int64) error {
+func (m *MockTaskManager) SucceedTask(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SucceedTask", arg0, arg1)
 	ret0, _ := ret[0].(error)
