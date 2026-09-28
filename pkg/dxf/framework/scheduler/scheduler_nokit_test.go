@@ -650,17 +650,37 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 
-		// task done, but update failed, task state unchanged
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(fmt.Errorf("update err"))
+		// task done, but update failed, task state unchanged. OnDone mutates the
+		// task meta it is called with, and SucceedTask must receive that same
+		// mutated meta so the framework persists it with the state transition.
+		doneMeta := []byte(`{"summary":{"merge_temp_index_txn_kv_size":42}}`)
+		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ storage.TaskHandle, task *proto.Task) error {
+				task.Meta = doneMeta
+				return nil
+			})
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, task *proto.Task) error {
+				require.Equal(t, doneMeta, task.Meta)
+				return fmt.Errorf("update err")
+			})
 		require.ErrorContains(t, scheduler.switch2NextStep(), "update err")
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		// task done successfully, task state changed
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(nil)
+		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ storage.TaskHandle, task *proto.Task) error {
+				task.Meta = doneMeta
+				return nil
+			})
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, task *proto.Task) error {
+				require.Equal(t, doneMeta, task.Meta)
+				return nil
+			})
 		require.NoError(t, scheduler.switch2NextStep())
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
+		tmpTask.Meta = doneMeta
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 	})
 

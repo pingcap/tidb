@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
+	dxfproto "github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -441,6 +447,124 @@ func TestDDLJobRU(t *testing.T) {
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
 			testutil.ToFloat64(metrics.RUV2ByEngineTiKV)-tikvRUBefore, 1e-9)
 	})
+}
+
+// TestMergeTempIndexRUAccountingAcrossRetry covers the regression path of the
+// temp-index merge RU accounting: a merge subtask commits one range, fails and
+// is retried, and after the task succeeds the committed transaction bytes must
+// reach the persisted task meta and the finished job's RU.
+func TestMergeTempIndexRUAccountingAcrossRetry(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("the temp index merge RU is only accounted in the nextgen kernel")
+	}
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	// Force the ingest backfill path, so the temporary index merge runs as a
+	// distributed task that reports its workload through the task meta.
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	const tableName = "t_merge_ru_retry"
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table " + tableName + " (id int primary key, v int)")
+	// A non-empty table is required, otherwise the reorg work is skipped.
+	tk.MustExec("insert into " + tableName + " values (0, 0)")
+
+	// Populate the temporary index right after the main index backfill finishes.
+	// The index is in ready-to-merge state then, so DML double writes into both
+	// the origin and the temporary index and the merge step has ranges to merge.
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	var (
+		inserted  atomic.Bool
+		insertMu  sync.Mutex
+		insertErr error
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.TableName != tableName {
+			return
+		}
+		if !inserted.CompareAndSwap(false, true) {
+			return
+		}
+		// More rows than the default reorg batch size (256), so the merge commits
+		// several ranges and the failpoint below leaves ranges unmerged.
+		vals := make([]string, 0, 2048)
+		for i := 1; i <= 2048; i++ {
+			vals = append(vals, "("+strconv.Itoa(i)+","+strconv.Itoa(i)+")")
+		}
+		_, err := tk1.Exec("insert into " + tableName + " values " + strings.Join(vals, ","))
+		insertMu.Lock()
+		insertErr = err
+		insertMu.Unlock()
+	})
+
+	// Fail the merge step once after it has committed its first range, so the
+	// subtask is retried with a reset summary and only the remaining ranges are
+	// accounted by the successful attempt.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMergeTempIndexFailAfterRange", "1*return()")
+
+	// Count the failed merge subtask runs to make sure the retry path is really
+	// exercised, instead of the merge succeeding on the first attempt.
+	var mergeFailures atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
+		func(e *taskexecutor.BaseTaskExecutor, resErr *error, _ context.Context) {
+			base := e.GetTaskBase()
+			if base.Type == dxfproto.Backfill && base.Step == dxfproto.BackfillStepMergeTempIndex &&
+				resErr != nil && *resErr != nil {
+				mergeFailures.Add(1)
+			}
+		})
+
+	var (
+		jobMu sync.Mutex
+		jobID int64
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, updateErr *error) {
+		if job.Type != model.ActionAddIndex || job.TableName != tableName || *updateErr != nil {
+			return
+		}
+		jobMu.Lock()
+		jobID = job.ID
+		jobMu.Unlock()
+	})
+
+	tk.MustExec("alter table " + tableName + " add unique index idx_v(v)")
+
+	require.True(t, inserted.Load(), "the temporary index must be populated before merge")
+	insertMu.Lock()
+	require.NoError(t, insertErr)
+	insertMu.Unlock()
+	require.Positive(t, mergeFailures.Load(), "the merge subtask must have failed once and been retried")
+	tk.MustExec("admin check table " + tableName)
+
+	jobMu.Lock()
+	capturedJobID := jobID
+	jobMu.Unlock()
+	require.NotZero(t, capturedJobID)
+
+	// The task meta must carry the committed bytes of the ranges merged by the
+	// successful attempt, so the workload survives the subtask history transfer.
+	taskMgr, err := dxfstorage.GetDXFSvcTaskMgr()
+	require.NoError(t, err)
+	taskKey := ddl.NewTaskKeyBuilder().SetMergeTempIndex(true).Build(capturedJobID)
+	taskCtx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	task, err := taskMgr.GetTaskByKeyWithHistory(taskCtx, taskKey)
+	require.NoError(t, err)
+	require.NotNil(t, task)
+	require.Equal(t, dxfproto.TaskStateSucceed, task.State)
+	var taskMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
+	require.NotNil(t, taskMeta.Summary)
+	require.Positive(t, taskMeta.Summary.MergeTempIndexTxnKVSize,
+		"merge temp index transaction bytes must be persisted into the task meta")
+
+	// And the accounted bytes must reach the finished job as RU v2.
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
+	require.NoError(t, err)
+	require.NotNil(t, historyJob)
+	weight := config.GetGlobalConfig().RUV2.DDLWeights.TxnKVBytes
+	require.Positive(t, historyJob.RU)
+	require.GreaterOrEqual(t, historyJob.RU, float64(taskMeta.Summary.MergeTempIndexTxnKVSize)*weight)
 }
 
 func TestCheckOwner(t *testing.T) {
