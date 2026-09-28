@@ -56,6 +56,12 @@ pub enum ExplainFormat {
     /// Go's hint report (`Explain.prepareHintInfo`): the statement's
     /// rendered hint string beside its binding status.
     Hint,
+    /// Go's cost trace (`ExplainFormatCostTrace`): the row planner's own
+    /// per-operator cost formulas beside the estimates. The format is
+    /// ADMITTED here; its renderer needs go's `CostVer2` formula-trace
+    /// port (`plan_cost_ver2.go`'s per-operator formula closures) and
+    /// answers `renderer is not translated` until that lands.
+    CostTrace,
 }
 
 impl ExplainFormat {
@@ -76,6 +82,8 @@ impl ExplainFormat {
             Some(Self::Dot)
         } else if format.eq_ignore_ascii_case("hint") {
             Some(Self::Hint)
+        } else if format.eq_ignore_ascii_case("cost_trace") {
+            Some(Self::CostTrace)
         } else {
             None
         }
@@ -93,6 +101,7 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
         ExplainFormat::Dot => PlannerExplainFormat::Row,
         // Hint renders through the empty hint pair, never the row planner.
         ExplainFormat::Hint => PlannerExplainFormat::Row,
+        ExplainFormat::CostTrace => PlannerExplainFormat::CostTrace,
     }
 }
 
