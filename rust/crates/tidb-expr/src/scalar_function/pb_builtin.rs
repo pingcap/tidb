@@ -31,21 +31,35 @@ type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
 #[derive(Clone, Copy, Debug)]
 enum Kernel {
     Binary(BinaryOp, EvalType),
-    /// The string-comparison family (`LtString`/`LeString`/`GtString`/
-    /// `GeString`/`EqString`/`NeString`). Unlike [`Kernel::Binary`], whose
-    /// operands pass the numeric coercion first, both sides evaluate as
-    /// themselves and the comparison runs through the same collation-aware
-    /// value comparator the name-based path uses.
-    Compare(BinaryOp),
+    /// Go comparisons evaluate both typed operands before applying NULL semantics.
+    Compare(BinaryOp, EvalType),
+    In(EvalType),
+    Like,
+    DateArithmetic {
+        subtract: bool,
+    },
     Logic(BinaryOp),
-    IntegerMod { unsigned: [bool; 2] },
+    IntegerMod {
+        unsigned: [bool; 2],
+    },
+    IntegerMultiply {
+        unsigned: bool,
+    },
     IsNull,
-    Truth { negate: bool },
+    Truth {
+        negate: bool,
+    },
     Case,
     If,
     IfNull,
-    Cast { source: EvalType, target: EvalType },
-    String { operation: StringOp, binary: bool },
+    Cast {
+        source: EvalType,
+        target: EvalType,
+    },
+    String {
+        operation: StringOp,
+        binary: bool,
+    },
     Round,
     FromUnixTime,
     Regexp,
@@ -77,6 +91,14 @@ impl PbBuiltin {
         use ScalarFuncSig::*;
         let kernel = match signature {
             PlusInt => Kernel::Binary(BinaryOp::Plus, EvalType::Int),
+            PlusReal => Kernel::Binary(BinaryOp::Plus, EvalType::Real),
+            MinusInt => Kernel::Binary(BinaryOp::Minus, EvalType::Int),
+            MinusReal => Kernel::Binary(BinaryOp::Minus, EvalType::Real),
+            MultiplyInt => Kernel::IntegerMultiply { unsigned: false },
+            MultiplyIntUnsigned => Kernel::IntegerMultiply { unsigned: true },
+            MultiplyReal => Kernel::Binary(BinaryOp::Mul, EvalType::Real),
+            IntDivideInt => Kernel::Binary(BinaryOp::IntDiv, EvalType::Int),
+            IntDivideDecimal => Kernel::Binary(BinaryOp::IntDiv, EvalType::Decimal),
             PlusDecimal => Kernel::Binary(BinaryOp::Plus, EvalType::Decimal),
             MinusDecimal => Kernel::Binary(BinaryOp::Minus, EvalType::Decimal),
             MultiplyDecimal => Kernel::Binary(BinaryOp::Mul, EvalType::Decimal),
@@ -96,14 +118,39 @@ impl PbBuiltin {
             ModIntUnsignedUnsigned => Kernel::IntegerMod {
                 unsigned: [true, true],
             },
-            EqInt => Kernel::Binary(BinaryOp::Eq, EvalType::Int),
-            GtInt => Kernel::Binary(BinaryOp::Gt, EvalType::Int),
-            LtString => Kernel::Compare(BinaryOp::Lt),
-            LeString => Kernel::Compare(BinaryOp::Le),
-            GtString => Kernel::Compare(BinaryOp::Gt),
-            GeString => Kernel::Compare(BinaryOp::Ge),
-            EqString => Kernel::Compare(BinaryOp::Eq),
-            NeString => Kernel::Compare(BinaryOp::Ne),
+            LtInt => Kernel::Compare(BinaryOp::Lt, EvalType::Int),
+            LeInt => Kernel::Compare(BinaryOp::Le, EvalType::Int),
+            GtInt => Kernel::Compare(BinaryOp::Gt, EvalType::Int),
+            GeInt => Kernel::Compare(BinaryOp::Ge, EvalType::Int),
+            EqInt => Kernel::Compare(BinaryOp::Eq, EvalType::Int),
+            NeInt => Kernel::Compare(BinaryOp::Ne, EvalType::Int),
+            LtReal => Kernel::Compare(BinaryOp::Lt, EvalType::Real),
+            LeReal => Kernel::Compare(BinaryOp::Le, EvalType::Real),
+            GtReal => Kernel::Compare(BinaryOp::Gt, EvalType::Real),
+            GeReal => Kernel::Compare(BinaryOp::Ge, EvalType::Real),
+            EqReal => Kernel::Compare(BinaryOp::Eq, EvalType::Real),
+            NeReal => Kernel::Compare(BinaryOp::Ne, EvalType::Real),
+            LtDecimal => Kernel::Compare(BinaryOp::Lt, EvalType::Decimal),
+            LeDecimal => Kernel::Compare(BinaryOp::Le, EvalType::Decimal),
+            GtDecimal => Kernel::Compare(BinaryOp::Gt, EvalType::Decimal),
+            GeDecimal => Kernel::Compare(BinaryOp::Ge, EvalType::Decimal),
+            EqDecimal => Kernel::Compare(BinaryOp::Eq, EvalType::Decimal),
+            NeDecimal => Kernel::Compare(BinaryOp::Ne, EvalType::Decimal),
+            LtString => Kernel::Compare(BinaryOp::Lt, EvalType::String),
+            LeString => Kernel::Compare(BinaryOp::Le, EvalType::String),
+            GtString => Kernel::Compare(BinaryOp::Gt, EvalType::String),
+            GeString => Kernel::Compare(BinaryOp::Ge, EvalType::String),
+            EqString => Kernel::Compare(BinaryOp::Eq, EvalType::String),
+            NeString => Kernel::Compare(BinaryOp::Ne, EvalType::String),
+            LtTime => Kernel::Compare(BinaryOp::Lt, EvalType::Datetime),
+            LeTime => Kernel::Compare(BinaryOp::Le, EvalType::Datetime),
+            GtTime => Kernel::Compare(BinaryOp::Gt, EvalType::Datetime),
+            GeTime => Kernel::Compare(BinaryOp::Ge, EvalType::Datetime),
+            EqTime => Kernel::Compare(BinaryOp::Eq, EvalType::Datetime),
+            NeTime => Kernel::Compare(BinaryOp::Ne, EvalType::Datetime),
+            InInt => Kernel::In(EvalType::Int),
+            InString => Kernel::In(EvalType::String),
+            LikeSig => Kernel::Like,
             LogicalAnd => Kernel::Logic(BinaryOp::LogicAnd),
             LogicalOr => Kernel::Logic(BinaryOp::LogicOr),
             IntIsNull | RealIsNull | DecimalIsNull | StringIsNull | TimeIsNull | DurationIsNull
@@ -191,12 +238,80 @@ impl PbBuiltin {
             JsonMemberOfSig | JsonReplaceSig | JsonArrayAppendSig | JsonMergePatchSig => {
                 Kernel::Json
             }
+            AddDateDatetimeDecimal
+            | AddDateDatetimeInt
+            | AddDateDatetimeReal
+            | AddDateDatetimeString
+            | AddDateDecimalDecimal
+            | AddDateDecimalInt
+            | AddDateDecimalReal
+            | AddDateDecimalString
+            | AddDateDurationDecimal
+            | AddDateDurationDecimalDatetime
+            | AddDateDurationInt
+            | AddDateDurationIntDatetime
+            | AddDateDurationReal
+            | AddDateDurationRealDatetime
+            | AddDateDurationString
+            | AddDateDurationStringDatetime
+            | AddDateIntDecimal
+            | AddDateIntInt
+            | AddDateIntReal
+            | AddDateIntString
+            | AddDateRealDecimal
+            | AddDateRealInt
+            | AddDateRealReal
+            | AddDateRealString
+            | AddDateStringDecimal
+            | AddDateStringInt
+            | AddDateStringReal
+            | AddDateStringString => Kernel::DateArithmetic { subtract: false },
+            SubDateDatetimeDecimal
+            | SubDateDatetimeInt
+            | SubDateDatetimeReal
+            | SubDateDatetimeString
+            | SubDateDecimalDecimal
+            | SubDateDecimalInt
+            | SubDateDecimalReal
+            | SubDateDecimalString
+            | SubDateDurationDecimal
+            | SubDateDurationDecimalDatetime
+            | SubDateDurationInt
+            | SubDateDurationIntDatetime
+            | SubDateDurationReal
+            | SubDateDurationRealDatetime
+            | SubDateDurationString
+            | SubDateDurationStringDatetime
+            | SubDateIntDecimal
+            | SubDateIntInt
+            | SubDateIntReal
+            | SubDateIntString
+            | SubDateRealDecimal
+            | SubDateRealInt
+            | SubDateRealReal
+            | SubDateRealString
+            | SubDateStringDecimal
+            | SubDateStringInt
+            | SubDateStringReal
+            | SubDateStringString => Kernel::DateArithmetic { subtract: true },
             _ => {
                 let (source, target) = cast_types(signature)?;
                 Kernel::Cast { source, target }
             }
         };
         Some(Self { signature, kernel })
+    }
+
+    pub(super) fn numeric_domain(self) -> Option<EvalType> {
+        match self.kernel {
+            Kernel::Binary(_, domain) => Some(domain),
+            Kernel::IntegerMod { .. } | Kernel::IntegerMultiply { .. } => Some(EvalType::Int),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_date_arithmetic(self) -> bool {
+        matches!(self.kernel, Kernel::DateArithmetic { .. })
     }
 
     pub(super) fn eval(
@@ -257,6 +372,41 @@ impl PbBuiltin {
                     (_, _, Some(value)) => Datum::Int(i64::from(value)),
                 })
             }
+            Kernel::IntegerMultiply { unsigned } => {
+                if args.len() != 2 {
+                    return Err(EvalError::Unsupported("protobuf multiply arity"));
+                }
+                let left = eval_numeric_row(&args[0], ctx, row, EvalType::Int)?;
+                let Some(left) = crate::arg_eval_type::eval_int(&left)? else {
+                    return Ok(Datum::Null);
+                };
+                let right = eval_numeric_row(&args[1], ctx, row, EvalType::Int)?;
+                let Some(right) = crate::arg_eval_type::eval_int(&right)? else {
+                    return Ok(Datum::Null);
+                };
+                // These Go signatures bake signedness into the implementation.
+                let result = if unsigned {
+                    (left as u64).checked_mul(right as u64).map(Datum::UInt)
+                } else {
+                    left.checked_mul(right).map(Datum::Int)
+                };
+                result.ok_or_else(|| {
+                    let text = |index| {
+                        super::numeric_argument_text(function, &args[index], false, ctx, None)
+                    };
+                    match text(0).zip(text(1)) {
+                        Some((left, right)) => EvalError::DataOutOfRange {
+                            value: if unsigned {
+                                "BIGINT UNSIGNED"
+                            } else {
+                                "BIGINT"
+                            },
+                            expression: format!("({left} * {right})"),
+                        },
+                        None => EvalError::IntOverflow,
+                    }
+                })
+            }
             Kernel::IntegerMod { unsigned } => {
                 // The four Go MOD signatures bake signedness into the builtin,
                 // rather than reselecting it from each row or the SQL name.
@@ -291,21 +441,57 @@ impl PbBuiltin {
                 let right = eval_numeric_operand_row(&args[1], ctx, row, domain)?;
                 function.eval_binary_values(op, left, right, ctx)
             }
-            Kernel::Compare(op) => {
+            Kernel::Compare(op, domain) => {
                 if args.len() != 2 {
                     return Err(EvalError::Unsupported("protobuf comparison arity"));
                 }
-                // NULL on either side answers NULL before the value
-                // comparison, mirroring the numeric arm's own short-circuit.
-                let left = argument(0)?;
+                let left = eval_numeric_row(&args[0], ctx, row, domain)?;
+                let right = eval_numeric_row(&args[1], ctx, row, domain)?;
+                function.eval_binary_values(op, left, right, ctx)
+            }
+            Kernel::In(domain) => {
+                let Some(first) = args.first() else {
+                    return Err(EvalError::Unsupported("protobuf IN arity"));
+                };
+                let left = eval_numeric_row(first, ctx, row, domain)?;
                 if left.is_null() {
                     return Ok(Datum::Null);
                 }
-                let right = argument(1)?;
-                if right.is_null() {
-                    return Ok(Datum::Null);
+                let mut has_null = false;
+                for candidate in &args[1..] {
+                    let right = eval_numeric_row(candidate, ctx, row, domain)?;
+                    if right.is_null() {
+                        has_null = true;
+                        continue;
+                    }
+                    let equal = crate::ops::eval_binary_full(
+                        BinaryOp::Eq,
+                        left.clone(),
+                        right,
+                        ctx.div_precision_increment(),
+                        function.derived_collation(),
+                        crate::ops::Operands::of(first, candidate),
+                        ctx,
+                    )?;
+                    if equal == Datum::Int(1) {
+                        return Ok(equal);
+                    }
                 }
-                function.eval_binary_values(op, left, right, ctx)
+                Ok(if has_null { Datum::Null } else { Datum::Int(0) })
+            }
+            Kernel::Like => function.eval_like(ctx, row, false),
+            Kernel::DateArithmetic { subtract } => {
+                if args.len() != 3 {
+                    return Err(EvalError::Unsupported("protobuf date arithmetic arity"));
+                }
+                // Go evaluates the unit before the date and interval.
+                let unit = eval_numeric_row(&args[2], ctx, row, EvalType::String)?;
+                let Some(unit) = crate::arg_eval_type::eval_string(&unit)? else {
+                    return Ok(Datum::Null);
+                };
+                let unit = std::str::from_utf8(&unit)
+                    .map_err(|_| EvalError::Unsupported("invalid date interval unit"))?;
+                function.eval_date_arithmetic(unit, subtract, ctx, row)
             }
             Kernel::Cast { source, target } => {
                 if args.len() != 1 {
@@ -450,6 +636,12 @@ impl PbBuiltin {
 fn cast_types(sig: ScalarFuncSig) -> Option<(EvalType, EvalType)> {
     use ScalarFuncSig::*;
     Some(match sig {
+        CastIntAsInt => (EvalType::Int, EvalType::Int),
+        CastRealAsReal => (EvalType::Real, EvalType::Real),
+        CastDecimalAsDecimal => (EvalType::Decimal, EvalType::Decimal),
+        CastStringAsString => (EvalType::String, EvalType::String),
+        CastDurationAsDuration => (EvalType::Duration, EvalType::Duration),
+        CastJsonAsJson => (EvalType::Json, EvalType::Json),
         CastDecimalAsDuration => (EvalType::Decimal, EvalType::Duration),
         CastDecimalAsInt => (EvalType::Decimal, EvalType::Int),
         CastDecimalAsJson => (EvalType::Decimal, EvalType::Json),

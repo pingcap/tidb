@@ -1453,6 +1453,10 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
     }
     let dag_req = tipb::DagRequest::decode(req.data.as_slice())
         .map_err(|decode_err| format!("invalid dag request: {decode_err}"))?;
+    for executor in &dag_req.executors {
+        tipb::ExecType::try_from(executor.tp.unwrap_or_default())
+            .map_err(|_| format!("unknown executor type {}", executor.tp.unwrap_or_default()))?;
+    }
     let time_zone = match dag_req.time_zone_name() {
         "" => TimeZoneSpec::FixedOffset(dag_req.time_zone_offset()),
         "System" => TimeZoneSpec::System,
@@ -1517,11 +1521,9 @@ pub fn validate_executor_list(executors: &[tipb::Executor]) {
     }
 }
 
-/// Go `expression.PBToExpr` (`pkg/expression/distsql_builtin.go`), the
-/// INTEGER slice: column refs, null and int literals, the six int
-/// comparisons, three-valued AND/OR/NOT, and IS NULL. Everything else
-/// refuses naming that file — string comparisons wait on collation, casts
-/// on the cast tables, IN on its value-list decode.
+/// Coprocessor expression storage. Production scalar functions use `Shared`
+/// and Go's recursive PBToExpr contract; simple leaves retain their cheap row
+/// representation. `Func` remains for direct legacy evaluator fixtures.
 #[derive(Clone, Debug)]
 pub enum SimpleExpr {
     /// `ExprType_Null`.
@@ -1532,9 +1534,7 @@ pub enum SimpleExpr {
     /// `distsql_builtin.go:1222`.
     Column(usize),
     /// `ExprType_String`, the raw literal bytes with no codec around them.
-    /// (`Bytes`, Go's `KindBytes` tag, is deliberately absent from the
-    /// trimmed proto -- no leaf this path builds is that kind.) The
-    /// COMPARISON's collation decides how these order, as in Go.
+    /// The comparison's collation decides how these order, as in Go.
     Bytes(Vec<u8>),
     /// `ExprType_MysqlDecimal`, val decimal-codec decoded
     /// (`distsql_builtin.go`'s `decodeValueList` -> `codec.DecodeDecimal`).
@@ -2077,9 +2077,7 @@ fn convert_expr_with_context(
     context: &Arc<RequestEvalContext>,
 ) -> Result<SimpleExpr, String> {
     let tp = expr.tp();
-    if tp == tipb::ExprType::ScalarFunc
-        && tidb_expr::distsql_builtin::supports_signature(expr.sig())
-    {
+    if tp == tipb::ExprType::ScalarFunc {
         return convert_shared(expr, context);
     }
     if tp != tipb::ExprType::ScalarFunc && tp != tipb::ExprType::ColumnRef {
@@ -2130,540 +2128,6 @@ fn convert_expr_with_context(
         return Ok(SimpleExpr::Column(
             usize::try_from(offset).map_err(|_| "negative column offset".to_owned())?,
         ));
-    }
-    if tp == tipb::ExprType::ScalarFunc {
-        // `expr.sig()` decodes the wire integer, an UNRECOGNIZED value
-        // falling to `Unspecified` — which lands in the refusal arm, Go's
-        // unsupported-signature error.
-        let sig = match expr.sig() {
-            // The decimal arithmetic and integer MOD families -- the wire
-            // ids are the upstream tipb contract, carried by the trimmed
-            // proto build.
-            tipb::ScalarFuncSig::PlusDecimal => SimpleSig::PlusDecimal,
-            tipb::ScalarFuncSig::MinusDecimal => SimpleSig::MinusDecimal,
-            tipb::ScalarFuncSig::MultiplyDecimal => SimpleSig::MultiplyDecimal,
-            tipb::ScalarFuncSig::ModDecimal => SimpleSig::ModDecimal,
-            tipb::ScalarFuncSig::ModIntUnsignedUnsigned => SimpleSig::ModIntUnsignedUnsigned,
-            tipb::ScalarFuncSig::ModIntUnsignedSigned => SimpleSig::ModIntUnsignedSigned,
-            tipb::ScalarFuncSig::ModIntSignedUnsigned => SimpleSig::ModIntSignedUnsigned,
-            tipb::ScalarFuncSig::ModIntSignedSigned => SimpleSig::ModIntSignedSigned,
-            tipb::ScalarFuncSig::IntDivideInt => SimpleSig::IntDivideInt,
-            tipb::ScalarFuncSig::IntDivideIntUnsignedUnsigned => {
-                SimpleSig::IntDivideIntUnsignedUnsigned
-            }
-            tipb::ScalarFuncSig::IntDivideIntUnsignedSigned => {
-                SimpleSig::IntDivideIntUnsignedSigned
-            }
-            tipb::ScalarFuncSig::IntDivideIntSignedSigned => SimpleSig::IntDivideIntSignedSigned,
-            tipb::ScalarFuncSig::IntDivideIntSignedUnsigned => {
-                SimpleSig::IntDivideIntSignedUnsigned
-            }
-            tipb::ScalarFuncSig::IntDivideDecimal => SimpleSig::IntDivideDecimal,
-            tipb::ScalarFuncSig::PlusInt => SimpleSig::PlusInt,
-            tipb::ScalarFuncSig::MinusInt => SimpleSig::MinusInt,
-            tipb::ScalarFuncSig::MultiplyInt => SimpleSig::MultiplyInt,
-            tipb::ScalarFuncSig::MultiplyIntUnsigned => SimpleSig::MultiplyIntUnsigned,
-            tipb::ScalarFuncSig::PlusIntUnsignedUnsigned => SimpleSig::PlusIntUnsignedUnsigned,
-            tipb::ScalarFuncSig::PlusIntUnsignedSigned => SimpleSig::PlusIntUnsignedSigned,
-            tipb::ScalarFuncSig::PlusIntSignedUnsigned => SimpleSig::PlusIntSignedUnsigned,
-            tipb::ScalarFuncSig::PlusIntSignedSigned => SimpleSig::PlusIntSignedSigned,
-            tipb::ScalarFuncSig::MinusIntUnsignedUnsigned => SimpleSig::MinusIntUnsignedUnsigned,
-            tipb::ScalarFuncSig::MinusIntUnsignedSigned => SimpleSig::MinusIntUnsignedSigned,
-            tipb::ScalarFuncSig::MinusIntSignedUnsigned => SimpleSig::MinusIntSignedUnsigned,
-            tipb::ScalarFuncSig::MinusIntSignedSigned => SimpleSig::MinusIntSignedSigned,
-            tipb::ScalarFuncSig::MinusIntForcedUnsignedUnsigned => {
-                SimpleSig::MinusIntForcedUnsignedUnsigned
-            }
-            tipb::ScalarFuncSig::MinusIntForcedUnsignedSigned => {
-                SimpleSig::MinusIntForcedUnsignedSigned
-            }
-            tipb::ScalarFuncSig::MinusIntForcedSignedUnsigned => {
-                SimpleSig::MinusIntForcedSignedUnsigned
-            }
-            tipb::ScalarFuncSig::LtReal => SimpleSig::LtReal,
-            tipb::ScalarFuncSig::LeReal => SimpleSig::LeReal,
-            tipb::ScalarFuncSig::GtReal => SimpleSig::GtReal,
-            tipb::ScalarFuncSig::GeReal => SimpleSig::GeReal,
-            tipb::ScalarFuncSig::EqReal => SimpleSig::EqReal,
-            tipb::ScalarFuncSig::NeReal => SimpleSig::NeReal,
-            tipb::ScalarFuncSig::PlusReal => SimpleSig::PlusReal,
-            tipb::ScalarFuncSig::MinusReal => SimpleSig::MinusReal,
-            tipb::ScalarFuncSig::MultiplyReal => SimpleSig::MultiplyReal,
-            tipb::ScalarFuncSig::DivideReal => SimpleSig::DivideReal,
-            tipb::ScalarFuncSig::DivideDecimal => SimpleSig::DivideDecimal,
-            tipb::ScalarFuncSig::RoundReal => SimpleSig::RoundReal,
-            tipb::ScalarFuncSig::RoundInt => SimpleSig::RoundInt,
-            tipb::ScalarFuncSig::RoundDec => SimpleSig::RoundDec,
-            tipb::ScalarFuncSig::Pow => SimpleSig::Pow,
-            tipb::ScalarFuncSig::Acos => SimpleSig::Acos,
-            tipb::ScalarFuncSig::Asin => SimpleSig::Asin,
-            tipb::ScalarFuncSig::Atan1Arg => SimpleSig::Atan1Arg,
-            tipb::ScalarFuncSig::Atan2Args => SimpleSig::Atan2Args,
-            tipb::ScalarFuncSig::Cos => SimpleSig::Cos,
-            tipb::ScalarFuncSig::Cot => SimpleSig::Cot,
-            tipb::ScalarFuncSig::Pi => SimpleSig::Pi,
-            tipb::ScalarFuncSig::Sin => SimpleSig::Sin,
-            tipb::ScalarFuncSig::WeekWithoutMode => SimpleSig::WeekWithoutMode,
-            tipb::ScalarFuncSig::InString => SimpleSig::InString(collation_of(expr)),
-            tipb::ScalarFuncSig::VectorFloat32IsNull => SimpleSig::VectorFloat32IsNull,
-            tipb::ScalarFuncSig::CharLengthUtf8 => SimpleSig::CharLengthUtf8,
-            tipb::ScalarFuncSig::CharLength => SimpleSig::CharLength,
-            tipb::ScalarFuncSig::LowerUtf8 => SimpleSig::LowerUtf8,
-            tipb::ScalarFuncSig::Lower => SimpleSig::Lower,
-            tipb::ScalarFuncSig::DateFormatSig => SimpleSig::DateFormatSig,
-            tipb::ScalarFuncSig::Conv => SimpleSig::Conv,
-            tipb::ScalarFuncSig::AddDateStringString => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::String,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateStringInt => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::String,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateStringDecimal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::String,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateIntString => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Int,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateIntInt => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Int,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDatetimeString => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Datetime,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDatetimeInt => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Datetime,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateStringString => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::String,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateStringInt => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::String,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateStringDecimal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::String,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateIntString => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Int,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateIntInt => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Int,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDatetimeString => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Datetime,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDatetimeInt => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Datetime,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateStringReal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::String,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateIntReal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Int,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateIntDecimal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Int,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDatetimeReal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Datetime,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDatetimeDecimal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Datetime,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDurationString => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDurationInt => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDurationReal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDurationDecimal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateStringReal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::String,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateIntReal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Int,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateIntDecimal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Int,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDatetimeReal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Datetime,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDatetimeDecimal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Datetime,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDurationString => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDurationInt => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDurationReal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDurationDecimal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDurationStringDatetime => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::String,
-                datetime_result: true,
-            },
-            tipb::ScalarFuncSig::AddDateDurationIntDatetime => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Int,
-                datetime_result: true,
-            },
-            tipb::ScalarFuncSig::AddDateDurationRealDatetime => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Real,
-                datetime_result: true,
-            },
-            tipb::ScalarFuncSig::AddDateDurationDecimalDatetime => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Decimal,
-                datetime_result: true,
-            },
-            tipb::ScalarFuncSig::SubDateDurationStringDatetime => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::String,
-                datetime_result: true,
-            },
-            tipb::ScalarFuncSig::SubDateDurationIntDatetime => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Int,
-                datetime_result: true,
-            },
-            tipb::ScalarFuncSig::SubDateDurationRealDatetime => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Real,
-                datetime_result: true,
-            },
-            tipb::ScalarFuncSig::SubDateDurationDecimalDatetime => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Duration,
-                interval: IntervalArg::Decimal,
-                datetime_result: true,
-            },
-            tipb::ScalarFuncSig::AddDateRealString => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Real,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateRealInt => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Real,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateRealReal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Real,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateRealDecimal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Real,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDecimalString => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Decimal,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDecimalInt => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Decimal,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDecimalReal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Decimal,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::AddDateDecimalDecimal => SimpleSig::AddSubDate {
-                subtract: false,
-                date: DateArithArg::Decimal,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateRealString => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Real,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateRealInt => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Real,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateRealReal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Real,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateRealDecimal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Real,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDecimalString => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Decimal,
-                interval: IntervalArg::String,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDecimalInt => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Decimal,
-                interval: IntervalArg::Int,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDecimalReal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Decimal,
-                interval: IntervalArg::Real,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::SubDateDecimalDecimal => SimpleSig::AddSubDate {
-                subtract: true,
-                date: DateArithArg::Decimal,
-                interval: IntervalArg::Decimal,
-                datetime_result: false,
-            },
-            tipb::ScalarFuncSig::UpperUtf8 => SimpleSig::UpperUtf8,
-            tipb::ScalarFuncSig::Upper => SimpleSig::Upper,
-            tipb::ScalarFuncSig::Substring2ArgsUtf8 => SimpleSig::Substring2ArgsUtf8,
-            tipb::ScalarFuncSig::Substring3ArgsUtf8 => SimpleSig::Substring3ArgsUtf8,
-            tipb::ScalarFuncSig::Substring2Args => SimpleSig::Substring2Args,
-            tipb::ScalarFuncSig::Substring3Args => SimpleSig::Substring3Args,
-            tipb::ScalarFuncSig::LtInt => SimpleSig::LtInt,
-            tipb::ScalarFuncSig::LeInt => SimpleSig::LeInt,
-            tipb::ScalarFuncSig::GtInt => SimpleSig::GtInt,
-            tipb::ScalarFuncSig::GeInt => SimpleSig::GeInt,
-            tipb::ScalarFuncSig::EqInt => SimpleSig::EqInt,
-            tipb::ScalarFuncSig::NeInt => SimpleSig::NeInt,
-            // The wire rarely carries a logical AND scalar: a WHERE
-            // conjunction arrives as SEPARATE selection conditions, the
-            // list itself being the AND. The evaluator keeps the
-            // three-valued semantics for both shapes.
-            tipb::ScalarFuncSig::LogicalAnd => SimpleSig::LogicalAnd,
-            tipb::ScalarFuncSig::LogicalOr => SimpleSig::LogicalOr,
-            tipb::ScalarFuncSig::ModReal => SimpleSig::ModReal,
-            tipb::ScalarFuncSig::TimestampDiff => SimpleSig::TimestampDiff,
-            tipb::ScalarFuncSig::UnaryNotInt => SimpleSig::UnaryNot,
-            tipb::ScalarFuncSig::IntIsNull => SimpleSig::IntIsNull,
-            tipb::ScalarFuncSig::Date => SimpleSig::Date,
-            tipb::ScalarFuncSig::Hour => SimpleSig::Hour,
-            tipb::ScalarFuncSig::Minute => SimpleSig::Minute,
-            tipb::ScalarFuncSig::Second => SimpleSig::Second,
-            tipb::ScalarFuncSig::MicroSecond => SimpleSig::MicroSecond,
-            tipb::ScalarFuncSig::Month => SimpleSig::Month,
-            tipb::ScalarFuncSig::DateDiff => SimpleSig::DateDiff,
-            tipb::ScalarFuncSig::CastTimeAsDuration => SimpleSig::CastTimeAsDuration,
-            tipb::ScalarFuncSig::DecimalIsNull => SimpleSig::DecimalIsNull,
-            tipb::ScalarFuncSig::DurationIsNull => SimpleSig::DurationIsNull,
-            tipb::ScalarFuncSig::RealIsNull => SimpleSig::RealIsNull,
-            tipb::ScalarFuncSig::StringIsNull => SimpleSig::StringIsNull,
-            tipb::ScalarFuncSig::TimeIsNull => SimpleSig::TimeIsNull,
-            tipb::ScalarFuncSig::LikeSig => SimpleSig::Like(collation_of(expr)),
-            tipb::ScalarFuncSig::RegexpLikeSig => SimpleSig::RegexpLike(collation_of(expr)),
-            tipb::ScalarFuncSig::JsonMemberOfSig => SimpleSig::JsonMemberOfSig,
-            tipb::ScalarFuncSig::CastIntAsInt => SimpleSig::CastIntAsInt,
-            tipb::ScalarFuncSig::CastRealAsInt => SimpleSig::CastRealAsInt,
-            tipb::ScalarFuncSig::CastDecimalAsInt => SimpleSig::CastDecimalAsInt,
-            tipb::ScalarFuncSig::CastIntAsReal => SimpleSig::CastIntAsReal,
-            tipb::ScalarFuncSig::CastRealAsReal => SimpleSig::CastRealAsReal,
-            tipb::ScalarFuncSig::CastDecimalAsReal => SimpleSig::CastDecimalAsReal,
-            tipb::ScalarFuncSig::CastStringAsInt => SimpleSig::CastStringAsInt,
-            tipb::ScalarFuncSig::CastStringAsReal => SimpleSig::CastStringAsReal,
-            tipb::ScalarFuncSig::CastIntAsDecimal => SimpleSig::CastIntAsDecimal,
-            tipb::ScalarFuncSig::CastRealAsDecimal => SimpleSig::CastRealAsDecimal,
-            tipb::ScalarFuncSig::CastDecimalAsDecimal => SimpleSig::CastDecimalAsDecimal,
-            tipb::ScalarFuncSig::CastStringAsDecimal => SimpleSig::CastStringAsDecimal,
-            tipb::ScalarFuncSig::CastTimeAsDecimal => SimpleSig::CastTimeAsDecimal,
-            tipb::ScalarFuncSig::CastDurationAsDecimal => SimpleSig::CastDurationAsDecimal,
-            tipb::ScalarFuncSig::CastIntAsString => SimpleSig::CastIntAsString,
-            tipb::ScalarFuncSig::CastRealAsString => SimpleSig::CastRealAsString,
-            tipb::ScalarFuncSig::CastDecimalAsString => SimpleSig::CastDecimalAsString,
-            tipb::ScalarFuncSig::CastStringAsString => SimpleSig::CastStringAsString,
-            tipb::ScalarFuncSig::CastTimeAsString => SimpleSig::CastTimeAsString,
-            tipb::ScalarFuncSig::CastDurationAsString => SimpleSig::CastDurationAsString,
-            tipb::ScalarFuncSig::CastIntAsTime => SimpleSig::CastIntAsTime,
-            tipb::ScalarFuncSig::CastRealAsTime => SimpleSig::CastRealAsTime,
-            tipb::ScalarFuncSig::CastDecimalAsTime => SimpleSig::CastDecimalAsTime,
-            tipb::ScalarFuncSig::CastStringAsTime => SimpleSig::CastStringAsTime,
-            tipb::ScalarFuncSig::CastTimeAsTime => SimpleSig::CastTimeAsTime,
-            tipb::ScalarFuncSig::CastIntAsDuration => SimpleSig::CastIntAsDuration,
-            tipb::ScalarFuncSig::CastRealAsDuration => SimpleSig::CastRealAsDuration,
-            tipb::ScalarFuncSig::CastDecimalAsDuration => SimpleSig::CastDecimalAsDuration,
-            tipb::ScalarFuncSig::CastStringAsDuration => SimpleSig::CastStringAsDuration,
-            tipb::ScalarFuncSig::CastDurationAsDuration => SimpleSig::CastDurationAsDuration,
-            tipb::ScalarFuncSig::CastIntAsJson => SimpleSig::CastIntAsJson,
-            tipb::ScalarFuncSig::CastRealAsJson => SimpleSig::CastRealAsJson,
-            tipb::ScalarFuncSig::CastDecimalAsJson => SimpleSig::CastDecimalAsJson,
-            tipb::ScalarFuncSig::CastStringAsJson => SimpleSig::CastStringAsJson,
-            tipb::ScalarFuncSig::CastTimeAsJson => SimpleSig::CastTimeAsJson,
-            tipb::ScalarFuncSig::CastDurationAsJson => SimpleSig::CastDurationAsJson,
-            tipb::ScalarFuncSig::CastJsonAsJson => SimpleSig::CastJsonAsJson,
-            tipb::ScalarFuncSig::CastJsonAsInt => SimpleSig::CastJsonAsInt,
-            tipb::ScalarFuncSig::CastJsonAsReal => SimpleSig::CastJsonAsReal,
-            tipb::ScalarFuncSig::CastJsonAsTime => SimpleSig::CastJsonAsTime,
-            tipb::ScalarFuncSig::CastJsonAsDuration => SimpleSig::CastJsonAsDuration,
-            tipb::ScalarFuncSig::JsonReplaceSig => SimpleSig::JsonReplaceSig,
-            tipb::ScalarFuncSig::JsonArrayAppendSig => SimpleSig::JsonArrayAppendSig,
-            tipb::ScalarFuncSig::JsonMergePatchSig => SimpleSig::JsonMergePatchSig,
-            tipb::ScalarFuncSig::UnixTimestampInt => SimpleSig::UnixTimestampInt,
-            tipb::ScalarFuncSig::UnixTimestampDec => SimpleSig::UnixTimestampDec,
-            tipb::ScalarFuncSig::FromUnixTime1Arg => SimpleSig::FromUnixTime1Arg,
-            tipb::ScalarFuncSig::FromUnixTime2Arg => SimpleSig::FromUnixTime2Arg,
-            tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
-            // Go reads the comparison's collation off the `ScalarFunc`'s own
-            // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
-            // which is where the lowering writes the DERIVED collation.
-            tipb::ScalarFuncSig::LtString => SimpleSig::LtString(collation_of(expr)),
-            tipb::ScalarFuncSig::LeString => SimpleSig::LeString(collation_of(expr)),
-            tipb::ScalarFuncSig::GtString => SimpleSig::GtString(collation_of(expr)),
-            tipb::ScalarFuncSig::GeString => SimpleSig::GeString(collation_of(expr)),
-            tipb::ScalarFuncSig::EqString => SimpleSig::EqString(collation_of(expr)),
-            tipb::ScalarFuncSig::NeString => SimpleSig::NeString(collation_of(expr)),
-            tipb::ScalarFuncSig::LtDecimal => SimpleSig::LtDecimal,
-            tipb::ScalarFuncSig::LeDecimal => SimpleSig::LeDecimal,
-            tipb::ScalarFuncSig::GtDecimal => SimpleSig::GtDecimal,
-            tipb::ScalarFuncSig::GeDecimal => SimpleSig::GeDecimal,
-            tipb::ScalarFuncSig::EqDecimal => SimpleSig::EqDecimal,
-            tipb::ScalarFuncSig::NeDecimal => SimpleSig::NeDecimal,
-            tipb::ScalarFuncSig::LtTime => SimpleSig::LtTime,
-            tipb::ScalarFuncSig::LeTime => SimpleSig::LeTime,
-            tipb::ScalarFuncSig::GtTime => SimpleSig::GtTime,
-            tipb::ScalarFuncSig::GeTime => SimpleSig::GeTime,
-            tipb::ScalarFuncSig::EqTime => SimpleSig::EqTime,
-            tipb::ScalarFuncSig::NeTime => SimpleSig::NeTime,
-            _ => return convert_shared(expr, context),
-        };
-        let children = expr
-            .children
-            .iter()
-            .map(|child| convert_expr_with_context(child, context))
-            .collect::<Result<Vec<_>, _>>()?;
-        return Ok(SimpleExpr::Func(sig, children));
     }
     Err(format!(
         "expr type {tp:?} waits on its distsql_builtin.go course"
@@ -5460,6 +4924,21 @@ mod tests {
         })
         .expect_err("no ranges");
         assert_eq!(err, "request range is null");
+    }
+
+    #[test]
+    fn unknown_executor_kind_is_not_a_default_table_scan() {
+        let dag = tipb::DagRequest {
+            executors: vec![tipb::Executor { tp: Some(i32::MAX), ..Default::default() }],
+            ..Default::default()
+        };
+        let request = coprocessor::Request {
+            tp: REQ_TYPE_DAG,
+            data: dag.encode_to_vec(),
+            ranges: vec![coprocessor::KeyRange::default()],
+            ..Default::default()
+        };
+        assert!(build_dag(&request).unwrap_err().contains("unknown executor type"));
     }
 
     #[test]

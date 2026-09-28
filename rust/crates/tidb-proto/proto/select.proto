@@ -1,5 +1,5 @@
 // Source: github.com/pingcap/tipb@v0.0.0-20260623093813-5f9928e91afe/proto/select.proto
-// ScalarFuncSig is copied in full from the same pin's proto/expression.proto;
+// Dispatch enums are copied in full from the same pin's expression/executor schemas;
 // checked by rust/scripts/sync-tipb-scalar-func-sig.py.
 //
 // This is a source-owned, dependency-closed projection of the request and
@@ -11,19 +11,29 @@ syntax = "proto2";
 
 package tipb;
 
-// The executor kinds admitted by the bounded TiKV scan and Selection lowering
-// path. Numeric values are copied from executor.proto.
+// Complete wire vocabulary from executor.proto; decoder support is separate.
 enum ExecType {
-  TypeTableScan = 0;
-  TypeIndexScan = 1;
-  TypeSelection = 2;
-  // Upstream's hash aggregation; the name predates TiKV's stream support.
-  TypeAggregation = 3;
-  TypeTopN = 4;
-  TypeLimit = 5;
-  TypeStreamAgg = 6;
-  // Upstream tipb executor.proto:32.
-  TypeExchangeSender = 9;
+	TypeTableScan = 0;
+	TypeIndexScan = 1;
+	TypeSelection = 2;
+	TypeAggregation = 3; // TODO: Rename it to hash aggregation after support stream aggregation in TiKV.
+	TypeTopN = 4;
+	TypeLimit = 5;
+	TypeStreamAgg = 6;
+	TypeJoin = 7;
+	TypeKill = 8;
+	TypeExchangeSender = 9;
+	TypeExchangeReceiver = 10;
+	TypeProjection = 11;
+	TypePartitionTableScan = 12;
+	TypeSort = 13;
+	TypeWindow = 14;
+	TypeExpand = 15; // Expand executor is used to expand underlying data sources to feed different grouping sets.
+	TypeExpand2 = 16; // Expand2 executor is used to expand underlying data sources to feed different grouping sets.
+	TypeBroadcastQuery = 17;
+	TypeCTESink = 18;
+	TypeCTESource = 19;
+	TypeIndexLookUp = 20;
 }
 
 enum EngineType {
@@ -83,43 +93,77 @@ message FieldType {
   optional bool array = 8;
 }
 
-// The scalar expression kinds admitted by the coprocessor expression path.
-// Values are copied from expression.proto; keeping the concrete literal
-// families here lets Rust carry the same metadata as Go's ExprToPB.
+// Complete wire vocabulary from expression.proto; decoder support is separate.
 enum ExprType {
-  Null = 0;
-  Int64 = 1;
-  Uint64 = 2;
-  Float32 = 3;
-  Float64 = 4;
-  // Go `constantToPBExpr`'s `KindString`/`KindBinaryLiteral` arm: the raw
-  // bytes as `Val`, with no codec around them.
-  String = 5;
-  // Additional scalar leaves used by the upstream DAG converter.  Keeping
-  // the exact tipb numbers here lets the Rust pushdown path carry the same
-  // concrete values instead of falling back to a root Selection.
-  Bytes = 6;
-  MysqlBit = 101;
-  MysqlDecimal = 102;
-  MysqlDuration = 103;
-  MysqlEnum = 104;
-  MysqlSet = 106;
-  MysqlTime = 107;
-  MysqlJson = 108;
-  TiDBVectorFloat32 = 121;
-  ColumnRef = 201;
-  // The aggregate-function family a partial TiKV aggregation carries. Only
-  // the kinds the pushed-aggregate lowering builds are projected; upstream
-  // also numbers Avg (3003), First (3006) and GroupConcat (3007).
-  Count = 3001;
-  Sum = 3002;
-  // Go tipb `ExprType_MaxCount` / `ExprType_MinCount`: the aggregate
-  // partials that retain an extreme value and its tie count.
-  MinCount = 3022;
-  MaxCount = 3023;
-  Min = 3004;
-  Max = 3005;
-  ScalarFunc = 10000;
+	/* Children count 0. */
+	// Values are encoded bytes.
+	Null = 0;
+	Int64 = 1;
+	Uint64 = 2;
+	Float32 = 3;
+	Float64 = 4;
+	String = 5;
+	Bytes = 6;
+
+	// Mysql specific types.
+	MysqlBit = 101;
+	MysqlDecimal = 102;
+	MysqlDuration = 103;
+	MysqlEnum = 104;
+	MysqlHex = 105;
+	MysqlSet = 106;
+	MysqlTime = 107;
+	MysqlJson = 108;
+
+	TiDBVectorFloat32 = 121;
+
+	// Encoded value list.
+	ValueList = 151;
+
+	// Column reference. value is int64 column ID.
+	ColumnRef = 201;
+
+	/* Mysql functions, children count is function specific. */
+	// Aggregate functions.
+	Count = 3001;
+	Sum = 3002;
+	Avg = 3003;
+	Min = 3004;
+	Max = 3005;
+	First = 3006;
+	GroupConcat = 3007;
+	Agg_BitAnd = 3008;
+	Agg_BitOr = 3009;
+	Agg_BitXor = 3010;
+	Std = 3011;
+	Stddev = 3012;
+	StddevPop = 3013;
+	StddevSamp = 3014;
+	VarPop = 3015;
+	VarSamp = 3016;
+	Variance = 3017;
+	JsonArrayAgg = 3018;
+	JsonObjectAgg = 3019;
+	ApproxCountDistinct = 3020;
+	SumInt = 3021;
+	MinCount = 3022;
+	MaxCount = 3023;
+
+	// Window functions
+	RowNumber = 4001;
+	Rank = 4002;
+	DenseRank = 4003;
+	CumeDist = 4004;
+	PercentRank = 4005;
+	Ntile = 4006;
+	Lead = 4007;
+	Lag = 4008;
+	FirstValue = 4009;
+	LastValue = 4010;
+	NthValue = 4011;
+
+	/* Scalar Function */
+	ScalarFunc = 10000;
 }
 
 // Scalar function signatures used by the coprocessor expression path. The

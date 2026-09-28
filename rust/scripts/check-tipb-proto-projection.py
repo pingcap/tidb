@@ -14,13 +14,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RUST_PROTO_DIR = ROOT / "rust/crates/tidb-proto/proto"
 GO_MODULE = "github.com/pingcap/tipb"
-PARTIAL_ENUMS = {
-    # The Rust planner intentionally projects only executor/expression kinds
-    # that its TiKV lowering currently constructs. New upstream values must be
-    # reviewed before those projections are expanded.
-    ".tipb.ExecType",
-    ".tipb.ExprType",
-}
+
 def run(command: list[str], *, input_bytes: bytes | None = None) -> bytes:
     result = subprocess.run(
         command,
@@ -178,7 +172,7 @@ def compare_projection(
         for value_name, number in local_values.items():
             if upstream_values.get(value_name) != number:
                 errors.append(f"{name}.{value_name}: value differs from pinned TiPB")
-        if name not in PARTIAL_ENUMS and local_values != upstream_values:
+        if local_values != upstream_values:
             errors.append(
                 f"{name}: enum is stale ({len(local_values)} local values, "
                 f"{len(upstream_values)} pinned values)"

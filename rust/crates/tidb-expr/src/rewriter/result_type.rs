@@ -957,14 +957,17 @@ fn tidb_parse_tso_return_type(args: &[Expression]) -> Option<FieldType> {
 }
 
 fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
-    use tidb_datatype::EvalType;
-
-    let [date, amount] = args else {
-        return None;
-    };
     let unit = name
         .strip_prefix("date_add_")
         .or_else(|| name.strip_prefix("date_sub_"))?;
+    date_arithmetic_return_type(unit, args)
+}
+
+pub(crate) fn date_arithmetic_return_type(unit: &str, args: &[Expression]) -> Option<FieldType> {
+    use tidb_datatype::EvalType;
+    let [date, amount] = args else {
+        return None;
+    };
     let date_type = date.static_type()?;
     let clock_unit = matches!(
         unit.to_ascii_uppercase().as_str(),

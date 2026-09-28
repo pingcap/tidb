@@ -1202,9 +1202,144 @@ impl ScalarFunction {
         self.coerce_to_ret_type(value)
     }
 
+    fn eval_like(
+        &self,
+        ctx: &dyn Columns,
+        row: Row<'_>,
+        case_insensitive: bool,
+    ) -> Result<Datum, EvalError> {
+        if self.args.len() != 3 {
+            return Err(EvalError::Unsupported("LIKE arity"));
+        }
+        let value = self.args[0].eval(ctx, row)?;
+        if value.is_null() {
+            return Ok(Datum::Null);
+        }
+        let text = value
+            .sql_bytes()
+            .map_err(|_| EvalError::Unsupported("invalid LIKE operand scalar domain"))?;
+        let pattern = self.args[1].eval(ctx, row)?;
+        if pattern.is_null() {
+            return Ok(Datum::Null);
+        }
+        let pattern = pattern
+            .sql_bytes()
+            .map_err(|_| EvalError::Unsupported("invalid LIKE pattern scalar domain"))?;
+        let raw_escape = self.args[2].eval(ctx, row)?;
+        let int_escape = crate::cast::cast_arg_as_int(&raw_escape, self.args[2].static_type(), ctx)?;
+        let Some(escape) = crate::arg_eval_type::eval_int(&int_escape)? else {
+            return Ok(Datum::Null);
+        };
+        let escape = escape as u8;
+        let cache_pattern = self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
+        let cache_escape = self.args[2].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
+        let matched = if case_insensitive {
+            if cache_pattern && cache_escape {
+                let cached = self
+                    .ilike_pattern_cache
+                    .get_or_init_cache(ctx.context_id(), || {
+                        Ok::<_, EvalError>(crate::like::CompiledIlikePattern::new(
+                            &pattern,
+                            escape,
+                            self.derived_collation(),
+                        ))
+                    })?;
+                cached.is_match(&text)
+            } else {
+                crate::like::ilike_match_with_collation(text, pattern, escape, self.derived_collation())
+            }
+        } else {
+            if cache_pattern && cache_escape {
+                let cached = self
+                    .like_pattern_cache
+                    .get_or_init_cache(ctx.context_id(), || {
+                        Ok::<_, EvalError>(crate::like::CompiledLikePattern::new(
+                            &pattern,
+                            escape,
+                            self.derived_collation(),
+                        ))
+                    })?;
+                cached.is_match(&text)
+            } else {
+                crate::like_match_with_collation(text, pattern, Some(escape), self.derived_collation())
+            }
+        };
+        return Ok(Datum::Int(i64::from(matched)));
+    }
+
+    fn eval_date_arithmetic(
+        &self,
+        unit: &str,
+        subtract: bool,
+        ctx: &dyn Columns,
+        row: Row<'_>,
+    ) -> Result<Datum, EvalError> {
+        let result_fsp = crate::time_fn::calendar::date_add_result_fsp(
+            unit,
+            self.args[0].static_type(),
+            self.args[1].static_type(),
+        );
+        let mut date = self.args[0].eval(ctx, row)?;
+        if date.is_null() {
+            return Ok(Datum::Null);
+        }
+        let amount = self.args[1].eval(ctx, row)?;
+        if amount.is_null() {
+            return Ok(Datum::Null);
+        }
+        let result_type = self.get_static_type();
+        if result_type
+            .is_some_and(|field_type| field_type.code() == tidb_datatype::FieldTypeCode::Duration)
+        {
+            return crate::time_fn::add_sub::date_add_duration(
+                ctx,
+                unit,
+                &date,
+                &amount,
+                self.args[1].static_type(),
+                if subtract { -1 } else { 1 },
+                i64::from(result_fsp.unwrap_or(0)),
+            );
+        }
+        if result_type
+            .is_some_and(|field_type| field_type.code() == tidb_datatype::FieldTypeCode::Datetime)
+            && self.args[0]
+                .static_type()
+                .is_some_and(|field_type| field_type.code() == tidb_datatype::FieldTypeCode::Duration)
+        {
+            date = crate::cast::cast_arg_as_datetime(&date, self.args[0].static_type(), ctx)?;
+        }
+        let result = crate::time_fn::calendar::date_add_with_result_fsp(
+            unit,
+            &date,
+            &amount,
+            if subtract { -1 } else { 1 },
+            result_fsp,
+            ctx,
+        )?;
+        let Some(result_type) = result_type else {
+            return Ok(result);
+        };
+        return match result_type.code() {
+            tidb_datatype::FieldTypeCode::Date => {
+                crate::cast::parse_computed_time(&result, ctx, tidb_datatype::TimeType::Date, Some(0))
+            }
+            tidb_datatype::FieldTypeCode::Datetime => crate::cast::parse_computed_time(
+                &result,
+                ctx,
+                tidb_datatype::TimeType::DateTime,
+                Some(result_type.decimal()),
+            ),
+            _ => Ok(result),
+        };
+    }
+
     /// The argument evaluation domain selected by Go's arithmetic builder.
     /// DIV returns Int but consumes Decimal unless both arguments are Int.
     fn numeric_operand_domain(&self) -> Option<EvalType> {
+        if let Some(builtin) = self.pb_builtin {
+            return builtin.numeric_domain();
+        }
         let op = binary_op_for_name(self.func_name.lowercase())?;
         if self.args.len() != 2
             || !matches!(
@@ -1220,20 +1355,21 @@ impl ScalarFunction {
             return None;
         }
         let output = self.get_static_type()?.eval_type();
-        let domain = if op == BinaryOp::IntDiv {
-            if output != EvalType::Int {
-                return None;
-            }
-            if self.args.iter().all(|arg| {
-                crate::builtin_arithmetic::numeric_context_result_type(arg) == EvalType::Int
-            }) {
-                EvalType::Int
+        let domain =
+            if op == BinaryOp::IntDiv {
+                if output != EvalType::Int {
+                    return None;
+                }
+                if self.args.iter().all(|arg| {
+                    crate::builtin_arithmetic::numeric_context_result_type(arg) == EvalType::Int
+                }) {
+                    EvalType::Int
+                } else {
+                    EvalType::Decimal
+                }
             } else {
-                EvalType::Decimal
-            }
-        } else {
-            output
-        };
+                output
+            };
         if (op == BinaryOp::Div && domain == EvalType::Int)
             || !matches!(domain, EvalType::Int | EvalType::Real | EvalType::Decimal)
             || self.args.iter().any(|arg| {
@@ -1920,71 +2056,7 @@ impl ScalarFunction {
         // and stop at NULL. The escape is EvalInt followed by byte(escape),
         // not a range-checked conversion that substitutes a default.
         if (name == "like" || name == "ilike") && self.args.len() == 3 {
-            let value = self.args[0].eval(ctx, row)?;
-            if value.is_null() {
-                return Ok(Datum::Null);
-            }
-            let text = value
-                .sql_bytes()
-                .map_err(|_| EvalError::Unsupported("invalid LIKE operand scalar domain"))?;
-            let pattern = self.args[1].eval(ctx, row)?;
-            if pattern.is_null() {
-                return Ok(Datum::Null);
-            }
-            let pattern = pattern
-                .sql_bytes()
-                .map_err(|_| EvalError::Unsupported("invalid LIKE pattern scalar domain"))?;
-            let raw_escape = self.args[2].eval(ctx, row)?;
-            let int_escape =
-                crate::cast::cast_arg_as_int(&raw_escape, self.args[2].static_type(), ctx)?;
-            let Some(escape) = crate::arg_eval_type::eval_int(&int_escape)? else {
-                return Ok(Datum::Null);
-            };
-            let escape = escape as u8;
-            let cache_pattern = self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
-            let cache_escape = self.args[2].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
-            let matched = if name == "ilike" {
-                if cache_pattern && cache_escape {
-                    let cached =
-                        self.ilike_pattern_cache
-                            .get_or_init_cache(ctx.context_id(), || {
-                                Ok::<_, EvalError>(crate::like::CompiledIlikePattern::new(
-                                    &pattern,
-                                    escape,
-                                    self.derived_collation(),
-                                ))
-                            })?;
-                    cached.is_match(&text)
-                } else {
-                    crate::like::ilike_match_with_collation(
-                        text,
-                        pattern,
-                        escape,
-                        self.derived_collation(),
-                    )
-                }
-            } else {
-                if cache_pattern && cache_escape {
-                    let cached =
-                        self.like_pattern_cache
-                            .get_or_init_cache(ctx.context_id(), || {
-                                Ok::<_, EvalError>(crate::like::CompiledLikePattern::new(
-                                    &pattern,
-                                    escape,
-                                    self.derived_collation(),
-                                ))
-                            })?;
-                    cached.is_match(&text)
-                } else {
-                    crate::like_match_with_collation(
-                        text,
-                        pattern,
-                        Some(escape),
-                        self.derived_collation(),
-                    )
-                }
-            };
-            return Ok(Datum::Int(i64::from(matched)));
+            return self.eval_like(ctx, row, name == "ilike");
         }
         // Go's `GETVAR`/`SETVAR` families (`pkg/expression/builtin_other.go`):
         // the variable NAME is a build-time constant, so the rewriter passes
@@ -2187,62 +2259,7 @@ impl ScalarFunction {
         if self.args.len() == 2 {
             let subtract = name.starts_with("date_sub_");
             if subtract || name.starts_with("date_add_") {
-                let unit = &name["date_add_".len()..];
-                let result_fsp = crate::time_fn::calendar::date_add_result_fsp(
-                    unit,
-                    self.args[0].static_type(),
-                    self.args[1].static_type(),
-                );
-                let mut date = self.args[0].eval(ctx, row)?;
-                let amount = self.args[1].eval(ctx, row)?;
-                let result_type = self.get_static_type();
-                if result_type.is_some_and(|field_type| {
-                    field_type.code() == tidb_datatype::FieldTypeCode::Duration
-                }) {
-                    return crate::time_fn::add_sub::date_add_duration(
-                        ctx,
-                        unit,
-                        &date,
-                        &amount,
-                        self.args[1].static_type(),
-                        if subtract { -1 } else { 1 },
-                        i64::from(result_fsp.unwrap_or(0)),
-                    );
-                }
-                if result_type.is_some_and(|field_type| {
-                    field_type.code() == tidb_datatype::FieldTypeCode::Datetime
-                }) && self.args[0].static_type().is_some_and(|field_type| {
-                    field_type.code() == tidb_datatype::FieldTypeCode::Duration
-                }) {
-                    date =
-                        crate::cast::cast_arg_as_datetime(&date, self.args[0].static_type(), ctx)?;
-                }
-                let result = crate::time_fn::calendar::date_add_with_result_fsp(
-                    unit,
-                    &date,
-                    &amount,
-                    if subtract { -1 } else { 1 },
-                    result_fsp,
-                    ctx,
-                )?;
-                let Some(result_type) = result_type else {
-                    return Ok(result);
-                };
-                return match result_type.code() {
-                    tidb_datatype::FieldTypeCode::Date => crate::cast::parse_computed_time(
-                        &result,
-                        ctx,
-                        tidb_datatype::TimeType::Date,
-                        Some(0),
-                    ),
-                    tidb_datatype::FieldTypeCode::Datetime => crate::cast::parse_computed_time(
-                        &result,
-                        ctx,
-                        tidb_datatype::TimeType::DateTime,
-                        Some(result_type.decimal()),
-                    ),
-                    _ => Ok(result),
-                };
+                return self.eval_date_arithmetic(&name["date_add_".len()..], subtract, ctx, row);
             }
         }
         // Go `builtinDatabaseSig`/`builtinVersionSig` read session state

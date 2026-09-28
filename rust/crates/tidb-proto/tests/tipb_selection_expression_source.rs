@@ -91,3 +91,17 @@ fn field_type_preserves_every_upstream_scalar_field_presence() {
     assert!(encoded.windows(2).any(|bytes| bytes == [0x20, 0]));
     assert!(encoded.windows(2).any(|bytes| bytes == [0x40, 0]));
 }
+
+#[test]
+fn complete_expression_enum_keeps_value_list_distinct_from_null() {
+    let value = ExprType::try_from(151).expect("upstream ValueList is a wire kind");
+    assert_ne!(value, ExprType::Null);
+    let expr = Expr {
+        tp: Some(151),
+        ..Default::default()
+    };
+    assert_eq!(
+        Expr::decode(expr.encode_to_vec().as_slice()).unwrap().tp(),
+        value
+    );
+}

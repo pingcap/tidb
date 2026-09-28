@@ -479,3 +479,132 @@ mod child_error_tests {
         }
     }
 }
+#[cfg(test)]
+mod next_boundary_audit {
+    use super::*;
+    use tidb_proto::tipb;
+    fn ty(tp: i32) -> tipb::FieldType {
+        tipb::FieldType {
+            tp: Some(tp),
+            decimal: Some(0),
+            ..Default::default()
+        }
+    }
+    fn int(v: i64) -> tipb::Expr {
+        let mut b = Vec::new();
+        tidb_codec::encode_int(&mut b, v);
+        tipb::Expr {
+            tp: Some(tipb::ExprType::Int64 as i32),
+            val: Some(b),
+            field_type: Some(ty(8)),
+            ..Default::default()
+        }
+    }
+    fn real(v: f64) -> tipb::Expr {
+        let mut b = Vec::new();
+        tidb_codec::encode_float(&mut b, v);
+        tipb::Expr {
+            tp: Some(tipb::ExprType::Float64 as i32),
+            val: Some(b),
+            field_type: Some(ty(5)),
+            ..Default::default()
+        }
+    }
+    fn call(sig: tipb::ScalarFuncSig, args: Vec<tipb::Expr>) -> tipb::Expr {
+        tipb::Expr {
+            tp: Some(tipb::ExprType::ScalarFunc as i32),
+            sig: Some(sig as i32),
+            children: args,
+            field_type: Some(ty(8)),
+            ..Default::default()
+        }
+    }
+    fn ctx() -> Arc<RequestEvalContext> {
+        Arc::new(RequestEvalContext::new(SessionTimeZone::utc(), 4, 0))
+    }
+    #[test]
+    fn a_supported_child_remains_supported_under_a_shared_parent() {
+        let ctx = ctx();
+        let child = call(tipb::ScalarFuncSig::GtReal, vec![real(1.0), real(0.0)]);
+        let alone = super::super::convert_expr_with_context(&child, &ctx).unwrap();
+        assert_eq!(
+            super::super::eval_expr(&alone, &[], 4, &ctx.zone).unwrap(),
+            Some(1)
+        );
+        let parent = call(tipb::ScalarFuncSig::IfInt, vec![child, int(1), int(0)]);
+        let expr = super::super::convert_expr_with_context(&parent, &ctx)
+            .expect("Go recursively decodes supported signatures");
+        assert_eq!(
+            super::super::eval_expr(&expr, &[], 4, &ctx.zone).unwrap(),
+            Some(1)
+        );
+    }
+    #[test]
+    fn empty_value_list_returns_false_like_go() {
+        let ctx = ctx();
+        let list = tipb::Expr {
+            tp: Some(tipb::ExprType::ValueList as i32),
+            val: Some(Vec::new()),
+            ..Default::default()
+        };
+        let pb = call(tipb::ScalarFuncSig::InInt, vec![int(1), list]);
+        let expr = super::super::convert_expr_with_context(&pb, &ctx)
+            .expect("Go expands ValueList into constant arguments");
+        assert_eq!(
+            super::super::eval_expr(&expr, &[], 4, &ctx.zone).unwrap(),
+            Some(0)
+        );
+    }
+    #[test]
+    fn null_comparison_still_reports_the_other_operands_error() {
+        let ctx = ctx();
+        let bad = tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(b"invalid".to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let cast = call(tipb::ScalarFuncSig::CastStringAsInt, vec![bad]);
+        let alone = super::super::convert_expr_with_context(&cast, &ctx).unwrap();
+        assert!(super::super::eval_expr(&alone, &[], 4, &ctx.zone).is_err());
+        let null = tipb::Expr {
+            tp: Some(tipb::ExprType::Null as i32),
+            ..Default::default()
+        };
+        for sig in [
+            tipb::ScalarFuncSig::EqInt,
+            tipb::ScalarFuncSig::NeInt,
+            tipb::ScalarFuncSig::LtInt,
+            tipb::ScalarFuncSig::LeInt,
+            tipb::ScalarFuncSig::GtInt,
+            tipb::ScalarFuncSig::GeInt,
+        ] {
+            for args in [
+                vec![null.clone(), cast.clone()],
+                vec![cast.clone(), null.clone()],
+            ] {
+                let pb = call(sig, args);
+                let expr = super::super::convert_expr_with_context(&pb, &ctx).unwrap();
+                let result = super::super::eval_expr(&expr, &[], 4, &ctx.zone);
+                assert!(
+                    result.is_err(),
+                    "Go evaluates both comparison operands, {sig:?}: {result:?}"
+                );
+            }
+        }
+        for (sig, left, expected) in [
+            (tipb::ScalarFuncSig::LogicalAnd, 0, 0),
+            (tipb::ScalarFuncSig::LogicalOr, 1, 1),
+        ] {
+            let expr = super::super::convert_expr_with_context(
+                &call(sig, vec![int(left), cast.clone()]),
+                &ctx,
+            )
+            .unwrap();
+            assert_eq!(
+                super::super::eval_expr(&expr, &[], 4, &ctx.zone).unwrap(),
+                Some(expected)
+            );
+        }
+    }
+}

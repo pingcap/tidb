@@ -212,27 +212,71 @@ pub fn pb_to_expr_in(
     column_types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Expression, String> {
-    if expr.tp() == tipb::ExprType::ColumnRef {
+    let kind = tipb::ExprType::try_from(expr.tp.unwrap_or_default())
+        .map_err(|_| format!("unknown expression type {}", expr.tp.unwrap_or_default()))?;
+    if kind == tipb::ExprType::ColumnRef {
         return pb_column(expr, column_types);
     }
     if let Some(literal) = pb_literal(expr, zone) {
         return literal;
     }
-    if expr.tp() != tipb::ExprType::ScalarFunc {
+    if kind != tipb::ExprType::ScalarFunc {
         return Err(format!("expr type {:?} is not decodable", expr.tp()));
     }
-    let args = expr
-        .children
-        .iter()
-        .map(|child| pb_to_expr_in(child, column_types, zone))
-        .collect::<Result<Vec<_>, _>>()?;
-    let sig = expr.sig();
+    let mut args = Vec::with_capacity(expr.children.len());
+    for child in &expr.children {
+        if child.tp == Some(tipb::ExprType::ValueList as i32) {
+            let values = if child.val().is_empty() {
+                Vec::new()
+            } else {
+                tidb_codec::decode(child.val(), 1)
+                    .map_err(|error| format!("invalid value list: {error:?}"))?
+            };
+            // Go PBToExpr returns FALSE immediately for an empty packed list.
+            if values.is_empty() {
+                return Ok(constant(
+                    Datum::Int(0),
+                    FieldType::new(FieldTypeCode::LongLong),
+                ));
+            }
+            args.extend(values.into_iter().map(|value| {
+                let mut constant = Constant::default();
+                constant.value = value;
+                Expression::Constant(constant)
+            }));
+        } else {
+            args.push(pb_to_expr_in(child, column_types, zone)?);
+        }
+    }
+    let sig = tipb::ScalarFuncSig::try_from(expr.sig.unwrap_or_default())
+        .map_err(|_| format!("unknown scalar signature {}", expr.sig.unwrap_or_default()))?;
     let builtin = PbBuiltin::new(sig)
         .ok_or_else(|| format!("scalar signature {sig:?} is not a pushdown builtin"))?;
+    if args.iter().any(|arg| arg.static_type().is_none()) {
+        // Go's decodeValueList leaves RetType nil, which panics in collation
+        // derivation. Reject malformed untyped arguments at the Rust boundary.
+        return Err("protobuf builtin argument has no field type".to_owned());
+    }
+    let ret_type = if builtin.is_date_arithmetic() {
+        // Go getSignatureByPB delegates this family to addSubDateFunctionClass,
+        // deriving its result type from the arguments rather than the wire type.
+        let [_, _, unit] = args.as_slice() else {
+            return Err("protobuf date arithmetic arity".to_owned());
+        };
+        let value = unit
+            .eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+            .map_err(|error| format!("invalid date interval unit: {error:?}"))?;
+        let bytes = crate::arg_eval_type::eval_string(&value)
+            .map_err(|error| format!("invalid date interval unit: {error:?}"))?
+            .unwrap_or_default();
+        let unit = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
+        crate::rewriter::result_type::date_arithmetic_return_type(unit, &args[..2])
+            .ok_or_else(|| "invalid date arithmetic argument types".to_owned())?
+    } else {
+        typed_or(expr, FieldTypeCode::Null)
+    };
     Ok(Expression::ScalarFunction(ScalarFunction::from_pb(
-        builtin,
-        typed_or(expr, FieldTypeCode::Null),
-        args,
+        builtin, ret_type, args,
     )))
 }
 
@@ -262,6 +306,212 @@ mod tests {
             ..Default::default()
         }
     }
+    fn integer(value: i64) -> tipb::Expr {
+        let mut val = Vec::new();
+        tidb_codec::encode_int(&mut val, value);
+        tipb::Expr {
+            tp: Some(tipb::ExprType::Int64 as i32),
+            val: Some(val),
+            field_type: Some(tidb_proto::tipb::FieldType {
+                tp: Some(8),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn legacy_families_compose_through_one_recursive_decoder() {
+        use tipb::ScalarFuncSig::*;
+        let int_type = tipb::FieldType {
+            tp: Some(8),
+            decimal: Some(0),
+            ..Default::default()
+        };
+        let row = tidb_chunk::row::Row::empty();
+        for (sig, args, expected) in [
+            (MinusInt, vec![integer(3), integer(1)], 2),
+            (MultiplyInt, vec![integer(3), integer(2)], 6),
+            (IntDivideInt, vec![integer(7), integer(2)], 3),
+            (CastIntAsInt, vec![integer(7)], 7),
+            (InInt, vec![integer(2), integer(1), integer(2)], 1),
+            (InString, vec![text("x"), text("y"), text("x")], 1),
+            (LikeSig, vec![text("abc"), text("a%"), integer(92)], 1),
+        ] {
+            let child = call(sig, args, int_type.clone());
+            let parent = call(IfInt, vec![integer(1), child, integer(0)], int_type.clone());
+            let expr = pb_to_expr(&parent, &[]).unwrap();
+            assert_eq!(
+                expr.eval(&crate::NoColumns, row).unwrap(),
+                Datum::Int(expected),
+                "{sig:?}"
+            );
+        }
+        for sig in [AddDateStringInt, SubDateStringInt] {
+            let expected = if sig == AddDateStringInt {
+                "2024-01-03"
+            } else {
+                "2024-01-01"
+            };
+            // Go's date builder derives VarString even when the PB return type is Int.
+            let child = call(
+                sig,
+                vec![text("2024-01-02"), integer(1), text("DAY")],
+                int_type.clone(),
+            );
+            let parent = call(
+                IfNullString,
+                vec![child, text("fallback")],
+                text("").field_type.unwrap(),
+            );
+            let expr = pb_to_expr(&parent, &[]).unwrap();
+            assert_eq!(
+                expr.eval(&crate::NoColumns, row)
+                    .unwrap()
+                    .sql_bytes()
+                    .unwrap(),
+                expected.as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn protobuf_multiply_signedness_is_selected_by_signature() {
+        for (sig, expected) in [
+            (tipb::ScalarFuncSig::MultiplyInt, Datum::Int(1)),
+            (
+                tipb::ScalarFuncSig::MultiplyIntUnsigned,
+                Datum::UInt(u64::MAX),
+            ),
+        ] {
+            let right = if sig == tipb::ScalarFuncSig::MultiplyInt {
+                -1
+            } else {
+                1
+            };
+            let field = tipb::FieldType {
+                tp: Some(8),
+                flag: Some(if right == 1 { 32 } else { 0 }),
+                ..Default::default()
+            };
+            let expr =
+                pb_to_expr(&call(sig, vec![integer(-1), integer(right)], field), &[]).unwrap();
+            assert_eq!(
+                expr.eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+                    .unwrap(),
+                expected
+            );
+        }
+        let field = tipb::FieldType {
+            tp: Some(8),
+            flag: Some(32),
+            ..Default::default()
+        };
+        let expr = pb_to_expr(
+            &call(
+                tipb::ScalarFuncSig::MultiplyIntUnsigned,
+                vec![integer(-1), integer(-1)],
+                field,
+            ),
+            &[],
+        )
+        .unwrap();
+        assert!(matches!(
+            expr.eval(&crate::NoColumns, tidb_chunk::row::Row::empty()),
+            Err(crate::EvalError::DataOutOfRange {
+                value: "BIGINT UNSIGNED",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn packed_lists_preserve_go_empty_shortcut_and_reject_untyped_members() {
+        let int_type = tipb::FieldType {
+            tp: Some(8),
+            ..Default::default()
+        };
+        for bytes in [
+            vec![255],
+            tidb_codec::encode_value(&[Datum::Int(1)]).unwrap(),
+        ] {
+            let list = tipb::Expr {
+                tp: Some(tipb::ExprType::ValueList as i32),
+                val: Some(bytes),
+                ..Default::default()
+            };
+            let expr = call(
+                tipb::ScalarFuncSig::InInt,
+                vec![integer(1), list],
+                int_type.clone(),
+            );
+            assert!(pb_to_expr(&expr, &[]).is_err());
+        }
+        let list = tipb::Expr {
+            tp: Some(tipb::ExprType::ValueList as i32),
+            ..Default::default()
+        };
+        let expr = call(
+            tipb::ScalarFuncSig::InInt,
+            vec![tipb::Expr::default(), list],
+            int_type,
+        );
+        assert_eq!(
+            pb_to_expr(&expr, &[])
+                .unwrap()
+                .eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+                .unwrap(),
+            Datum::Int(0)
+        );
+    }
+
+    #[test]
+    fn go_rejected_arithmetic_variants_do_not_gain_fallback_support() {
+        use tipb::ScalarFuncSig::*;
+        for sig in [
+            IntDivideIntSignedSigned,
+            IntDivideIntSignedUnsigned,
+            IntDivideIntUnsignedSigned,
+            IntDivideIntUnsignedUnsigned,
+            MinusIntForcedSignedUnsigned,
+            MinusIntForcedUnsignedSigned,
+            MinusIntForcedUnsignedUnsigned,
+            MinusIntSignedSigned,
+            MinusIntSignedUnsigned,
+            MinusIntUnsignedSigned,
+            MinusIntUnsignedUnsigned,
+            PlusIntSignedSigned,
+            PlusIntSignedUnsigned,
+            PlusIntUnsignedSigned,
+            PlusIntUnsignedUnsigned,
+        ] {
+            assert!(
+                pb_to_expr(
+                    &call(
+                        sig,
+                        vec![integer(1), integer(1)],
+                        tipb::FieldType {
+                            tp: Some(8),
+                            ..Default::default()
+                        }
+                    ),
+                    &[]
+                )
+                .is_err(),
+                "{sig:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_wire_kind_is_not_sql_null() {
+        let pb = tipb::Expr {
+            tp: Some(i32::MAX),
+            ..Default::default()
+        };
+        assert!(pb_to_expr(&pb, &[]).is_err());
+    }
+
     #[test]
     fn timestamp_literals_use_the_same_zone_in_both_wire_directions() {
         use crate::pushdown_catalog::{build_call, to_pb_in, PbScalar};
