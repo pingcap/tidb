@@ -450,6 +450,14 @@ impl Session {
                 // RANGE table errors 1509).
                 StoredStateChange::None
             }
+            Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::DropTable(drop)
+                if matches!(drop.temporary, tidb_ast::DropTemporary::Local)) =>
+            {
+                // DROP TEMPORARY TABLE (LOCAL) targets the session's own
+                // catalog's local temp tables: the ordinary route runs the
+                // session's DropTable arm, whose Local arm judges the names.
+                StoredStateChange::None
+            }
             Stmt::Ddl(_) => StoredStateChange::Schema,
             // The privilege/role statements: everything under `Admin` that
             // writes `mysql.user`, `mysql.db`, or the role edges. `SHOW
