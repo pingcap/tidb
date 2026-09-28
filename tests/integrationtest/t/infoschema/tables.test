@@ -208,7 +208,27 @@ DROP TABLE t2;
 SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
 --sorted_result
 SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = 'infoschema__tables' AND TABLE_NAME = 't3';
-DROP TABLE t3;
+CREATE TABLE t4 (a INT, CONSTRAINT Chk_Mixed CHECK (a > 0));
+drop user if exists 'chk_priv'@'localhost';
+CREATE USER 'chk_priv'@'localhost';
+connect (conn1,localhost,chk_priv,,);
+connection conn1;
+SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = 'infoschema__tables' AND TABLE_NAME = 't3';
+SELECT CONSTRAINT_NAME FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = 'infoschema__tables';
+SELECT CONSTRAINT_NAME, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = 'infoschema__tables';
+connection default;
+GRANT INSERT ON infoschema__tables.t3 TO 'chk_priv'@'localhost';
+connection conn1;
+--sorted_result
+SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = 'infoschema__tables' AND TABLE_NAME = 't3';
+--sorted_result
+SELECT CONSTRAINT_NAME FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = 'infoschema__tables';
+--sorted_result
+SELECT CONSTRAINT_NAME, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = 'infoschema__tables';
+connection default;
+disconnect conn1;
+DROP USER 'chk_priv'@'localhost';
+DROP TABLE t3, t4;
 SET GLOBAL tidb_enable_check_constraint = default;
 
 # TestTiDBCheckConstraints
