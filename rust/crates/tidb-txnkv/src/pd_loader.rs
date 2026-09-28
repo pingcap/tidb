@@ -126,15 +126,17 @@ impl PdRegionLoader {
     ) -> Result<RegionLocation, RegionLoadError> {
         let mut encoded_key = Vec::new();
         encode_bytes(&mut encoded_key, key);
-        let mut region = self
-            .client
-            .get_region_routed(&encoded_key, need_buckets, leader_only)
-            .map_err(region_load_error)?;
-        if !region.start_key.is_empty() && region.start_key == encoded_key {
-            region = self
+        let mut region = self.retry_on_region_miss(|loader| {
+            loader
                 .client
-                .get_prev_region_routed(&encoded_key, need_buckets, true)
-                .map_err(region_load_error)?;
+                .get_region_routed(&encoded_key, need_buckets, leader_only)
+        })?;
+        if !region.start_key.is_empty() && region.start_key == encoded_key {
+            region = self.retry_on_region_miss(|loader| {
+                loader
+                    .client
+                    .get_prev_region_routed(&encoded_key, need_buckets, true)
+            })?;
         }
         self.project_region(region)
     }
