@@ -130,7 +130,7 @@ func TestTiDBServerVersionInfosConsistent(t *testing.T) {
 
 	t.Run("ignore tidb rpc disabled server info", func(t *testing.T) {
 		br := serverInfo("br", version("8.0.11-TiDB-v8.5.0", "2222222"))
-		br.TiDBRPCDisabled = true
+		br.DisableRPC = true
 		consistent, err := tiDBServerVersionInfosConsistent(current, map[string]*serverinfo.ServerInfo{
 			"real": serverInfo("real", current),
 			"br":   br,
@@ -141,7 +141,7 @@ func TestTiDBServerVersionInfosConsistent(t *testing.T) {
 
 	t.Run("only tidb rpc disabled server info", func(t *testing.T) {
 		br := serverInfo("br", current)
-		br.TiDBRPCDisabled = true
+		br.DisableRPC = true
 		_, err := tiDBServerVersionInfosConsistent(current, map[string]*serverinfo.ServerInfo{"br": br})
 		require.Error(t, err)
 	})

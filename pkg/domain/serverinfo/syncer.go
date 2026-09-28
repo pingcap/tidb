@@ -68,6 +68,7 @@ func serverInfoKeyPath(id string) string {
 
 type syncerOptions struct {
 	skipStatusEndpointClaim bool
+	disableRPC              bool
 }
 
 // SyncerOption configures a Syncer during construction.
@@ -79,6 +80,14 @@ type SyncerOption func(*syncerOptions)
 func WithoutStatusEndpointClaim() SyncerOption {
 	return func(options *syncerOptions) {
 		options.skipStatusEndpointClaim = true
+	}
+}
+
+// WithDisableRPC marks the published server info as ineligible for TiDB RPC.
+// Domain passes it when the domain is started as standalone BR.
+func WithDisableRPC() SyncerOption {
+	return func(options *syncerOptions) {
+		options.disableRPC = true
 	}
 }
 
@@ -116,7 +125,7 @@ func newSyncer(
 	for _, option := range options {
 		option(args)
 	}
-	info := getServerInfo(uuid, serverIDGetter, assumedKS)
+	info := getServerInfo(uuid, serverIDGetter, assumedKS, args.disableRPC)
 	claimEnabled := config.GetGlobalConfig().Status.ReportStatus && !args.skipStatusEndpointClaim
 	is := &Syncer{
 		etcdCli:        etcdCli,
@@ -268,7 +277,7 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
 		info := s.info.Load()
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "")
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "", false)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
@@ -576,7 +585,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *ServerInfo {
+func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string, disableRPC bool) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		StaticInfo: StaticInfo{
@@ -589,7 +598,7 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *S
 			Keyspace:        config.GetGlobalKeyspaceName(),
 			AssumedKeyspace: assumedKS,
 			ServerIDGetter:  serverIDGetter,
-			TiDBRPCDisabled: cfg.TiDBRPCDisabled,
+			DisableRPC:      disableRPC,
 		},
 		DynamicInfo: DynamicInfo{
 			Labels: maps.Clone(cfg.Labels),

@@ -154,7 +154,7 @@ func tiDBServerVersionInfosConsistent(currentVersion serverinfo.VersionInfo, ser
 		}
 		// Assumed cross-keyspace entries and processes that only publish server
 		// info, such as standalone BR, are not TiDB workers.
-		if info.IsAssumed() || info.IsTiDBRPCDisabled() {
+		if info.IsAssumed() || info.IsDisableRPC() {
 			continue
 		}
 		realServerCount++

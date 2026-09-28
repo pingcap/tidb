@@ -230,7 +230,7 @@ func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	for _, server := range servers {
 		// Skip processes that register server info but cannot receive TiDB RPC,
 		// such as standalone BR.
-		if server.IsTiDBRPCDisabled() {
+		if server.IsDisableRPC() {
 			continue
 		}
 		// In-process test domains can register server info without starting a

@@ -903,7 +903,7 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 		}
 		// Skip processes that register server info but cannot receive TiDB RPC,
 		// such as standalone BR.
-		if ser.IsTiDBRPCDisabled() {
+		if ser.IsDisableRPC() {
 			continue
 		}
 

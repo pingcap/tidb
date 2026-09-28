@@ -2080,7 +2080,7 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	for _, node := range tidbNodes {
 		// Skip processes that register server info but cannot receive TiDB RPC,
 		// such as standalone BR. Their address is not a cluster endpoint.
-		if node.IsTiDBRPCDisabled() {
+		if node.IsDisableRPC() {
 			continue
 		}
 		servers = append(servers, ServerInfo{
