@@ -17,9 +17,9 @@
 //! BRIDGE DECISION: Go keeps a `ScalarFunction`'s arguments and evaluation
 //! behind a `Function builtinFunc` interface (implemented by hundreds of
 //! per-signature structs). This port instead holds `args: Vec<Expression>`
-//! directly on the node and identifies the function by name; the evaluation
-//! dispatch (the `builtinFunc` `eval*` methods, keyed by `tipb.ScalarFuncSig`)
-//! is a separate, larger unit built on `EvalContext`/`chunk.Row`.
+//! directly on the node. Protobuf functions retain a typed implementation
+//! selected by `tipb.ScalarFuncSig`; SQL-built functions still use the
+//! existing name-based builder and shared evaluation kernels.
 //!
 //! Ported: the struct and its argument-structural methods, recursive
 //! `Decorrelate`, const-level rules, the common `ReHashCode` path (including
@@ -28,6 +28,10 @@
 //! Unknown builtin names fail explicitly. `MemoryUsage` lives in
 //! `crate::memory_usage`; the remaining structural gap is per-signature
 //! collation.
+
+mod pb_builtin;
+
+pub(crate) use pb_builtin::PbBuiltin;
 
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
@@ -281,6 +285,8 @@ pub struct ScalarFunction {
     /// expression is built and the value is read from the statement's
     /// current-insert row at evaluation time.
     values_offset: Option<usize>,
+    /// Go Function: a protobuf-selected builtin, independent of FuncName.
+    pb_builtin: Option<PbBuiltin>,
     /// Lazily-filled `HashCode` cache (Go `hashcode`).
     hashcode: Vec<u8>,
     /// Go `BuiltinGroupingImplSig` metadata installed by `SetMetadata`.
@@ -659,6 +665,23 @@ impl ScalarFunction {
             args,
             ..Default::default()
         }
+    }
+
+    /// Go newDistSQLFunctionBySig: retain the wire type and implementation.
+    pub(crate) fn from_pb(builtin: PbBuiltin, ret_type: FieldType, args: Vec<Expression>) -> Self {
+        Self {
+            func_name: CiString::new(format!("sig_{:?}", builtin.signature())),
+            ret_type: Some(ret_type),
+            args,
+            pb_builtin: Some(builtin),
+            ..Default::default()
+        }
+    }
+
+    /// The signature selected by protobuf decoding, preserved by Clone.
+    #[must_use]
+    pub fn pb_signature(&self) -> Option<tidb_proto::tipb::ScalarFuncSig> {
+        self.pb_builtin.map(PbBuiltin::signature)
     }
 
     /// Builds Go's `NewValuesFunc(ctx, offset, retTp)` node. The offset is
@@ -1157,6 +1180,21 @@ impl ScalarFunction {
     /// type -- see [`Self::coerce_to_ret_type`] for why that is the whole
     /// point of Go's `Eval` and not an afterthought.
     pub fn eval(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+        if let Some(builtin) = self.pb_builtin {
+            let value = builtin.eval(self, ctx, row)?;
+            // Go ScalarFunction.Eval interprets an evalInt carrier through
+            // the wire result type, independently of the argument flags.
+            let value = match (value, self.get_static_type()) {
+                (Datum::UInt(value), Some(field)) if !field.is_unsigned() => {
+                    Datum::Int(value as i64)
+                }
+                (Datum::Int(value), Some(field)) if field.is_unsigned() => {
+                    Datum::UInt(value as u64)
+                }
+                (value, _) => value,
+            };
+            return self.coerce_to_ret_type(value);
+        }
         if let Some(value) = self.eval_fast_integer_binary(ctx, row)? {
             return self.coerce_to_ret_type(value);
         }
@@ -1464,6 +1502,52 @@ impl ScalarFunction {
                 other => other,
             },
         )
+    }
+
+    fn eval_regexp_like(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+        if !matches!(self.args.len(), 2 | 3) {
+            return Err(EvalError::WrongParameterCount("regexp_like"));
+        }
+        let string_arg = |index: usize| -> Result<Option<String>, EvalError> {
+            let value = self.args[index].eval(ctx, row)?;
+            let value =
+                crate::cast::cast_arg_as_string(&value, self.args[index].static_type(), ctx)?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            value
+                .sql_string()
+                .map(Some)
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP_LIKE argument"))
+        };
+        let Some(text) = string_arg(0)? else {
+            return Ok(Datum::Null);
+        };
+        let Some(pattern) = string_arg(1)? else {
+            return Ok(Datum::Null);
+        };
+        let match_type = if self.args.len() == 3 {
+            let Some(match_type) = string_arg(2)? else {
+                return Ok(Datum::Null);
+            };
+            match_type
+        } else {
+            String::new()
+        };
+        let match_type =
+            crate::regexp::regexp_match_type_with_collation(&match_type, self.derived_collation());
+        let cache_pattern = self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
+        let cache_match_type =
+            self.args.len() < 3 || self.args[2].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
+        let regex = crate::regexp::get_cached_regexp(
+            &self.regexp_cache,
+            ctx.context_id(),
+            cache_pattern && cache_match_type,
+            &pattern,
+            &match_type,
+        )?;
+        let matched = regex.is_match(&text);
+        return Ok(Datum::Int(i64::from(matched)));
     }
 
     /// The per-signature evaluation itself.
@@ -1966,48 +2050,7 @@ impl ScalarFunction {
             return Ok(Datum::Int(i64::from(matched)));
         }
         if name == "regexp_like" && matches!(self.args.len(), 2 | 3) {
-            let string_arg = |index: usize| -> Result<Option<String>, EvalError> {
-                let value = self.args[index].eval(ctx, row)?;
-                let value =
-                    crate::cast::cast_arg_as_string(&value, self.args[index].static_type(), ctx)?;
-                if value.is_null() {
-                    return Ok(None);
-                }
-                value
-                    .sql_string()
-                    .map(Some)
-                    .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP_LIKE argument"))
-            };
-            let Some(text) = string_arg(0)? else {
-                return Ok(Datum::Null);
-            };
-            let Some(pattern) = string_arg(1)? else {
-                return Ok(Datum::Null);
-            };
-            let match_type = if self.args.len() == 3 {
-                let Some(match_type) = string_arg(2)? else {
-                    return Ok(Datum::Null);
-                };
-                match_type
-            } else {
-                String::new()
-            };
-            let match_type = crate::regexp::regexp_match_type_with_collation(
-                &match_type,
-                self.derived_collation(),
-            );
-            let cache_pattern = self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
-            let cache_match_type =
-                self.args.len() < 3 || self.args[2].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
-            let regex = crate::regexp::get_cached_regexp(
-                &self.regexp_cache,
-                ctx.context_id(),
-                cache_pattern && cache_match_type,
-                &pattern,
-                &match_type,
-            )?;
-            let matched = regex.is_match(&text);
-            return Ok(Datum::Int(i64::from(matched)));
+            return self.eval_regexp_like(ctx, row);
         }
         // The charset boundary: `to_binary`/`from_binary` are the implicit
         // calls the rewriter wraps a non-UTF-8 argument in (Go

@@ -28,7 +28,7 @@ pub(crate) mod calendar;
 mod convert_tz;
 pub(crate) mod duration_parse;
 pub(crate) mod extract;
-mod session_tz;
+pub(crate) mod session_tz;
 
 use self::calendar::{civil_from_days, days_from_civil, parse_date_ymd, week_of_year};
 use crate::coerce::coerce_str;
@@ -171,7 +171,7 @@ fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, E
 /// `DATE(expr)`, after Go's declared `ETDatetime` argument cast has produced
 /// a typed temporal value. The function applies its own zero-date SQL-mode
 /// checks, clears the clock, and changes the result domain to `DATE`.
-fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -299,7 +299,7 @@ fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// ETDuration argument. Go deliberately suppresses a duration-cast error and
 /// returns NULL, unlike `TIME()` which reports the same truncation through the
 /// statement context.
-fn microsecond(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn microsecond(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -471,7 +471,7 @@ fn single_datetime(vals: &[Datum]) -> Result<Option<(i64, u32, u32)>, EvalError>
 /// rejection, because `monthFunctionClass` declares its argument
 /// `types.ETDatetime` (`builtin_time.go:1116`) and so receives a value
 /// `EvalTime` already produced non-NULL — see [`calendar::component_date`].
-fn month(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn month(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(calendar::component_date(vals)?
         .map_or(Datum::Null, |(_, month, _)| Datum::Int(i64::from(month))))
 }

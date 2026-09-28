@@ -158,6 +158,29 @@ mod tests {
     }
 
     #[test]
+    fn dag_precision_defaults_only_when_absent() {
+        use prost::Message;
+        for (wire, expected) in [(None, 4), (Some(0), 0), (Some(8), 8)] {
+            let dag = tipb::DagRequest {
+                div_precision_increment: wire,
+                ..Default::default()
+            };
+            let request = tidb_proto::coprocessor::Request {
+                tp: super::super::REQ_TYPE_DAG,
+                data: dag.encode_to_vec(),
+                ranges: vec![Default::default()],
+                ..Default::default()
+            };
+            let context = super::super::build_dag(&request).unwrap();
+            assert_eq!(context.div_precision_increment, i64::from(expected));
+            assert_eq!(
+                context.expression_context.div_precision_increment(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn selection_aggregate_and_topn_share_request_context() {
         let ctx = context(0);
         let expr = conditional(call(

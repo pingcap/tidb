@@ -151,7 +151,7 @@ fn unix_arg_nanos(value: &Datum, cols: &dyn Columns) -> Result<Option<(i128, usi
 }
 
 /// `FROM_UNIXTIME(unix[, format])`.
-pub(super) fn from_unixtime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn from_unixtime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if !(1..=2).contains(&vals.len()) {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -181,7 +181,7 @@ pub(super) fn from_unixtime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
 }
 
 /// `UNIX_TIMESTAMP([datetime])`.
-pub(super) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     match vals.len() {
         0 => {
             // The statement clock; absent outside a session.

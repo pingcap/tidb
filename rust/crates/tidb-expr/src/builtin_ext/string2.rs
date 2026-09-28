@@ -1071,7 +1071,7 @@ mod tests {
             vec![string("Sakila"), Datum::Null, Datum::Int(3)],
             vec![string("Sakila"), Datum::Int(2), Datum::Null],
         ] {
-            assert_eq!(substring(&args).unwrap(), Datum::Null);
+            assert_eq!(substring(&args, &crate::NoColumns).unwrap(), Datum::Null);
         }
 
         // LOCATE(substr, str) is the two-argument form.  The source's

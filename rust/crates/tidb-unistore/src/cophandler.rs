@@ -1460,10 +1460,7 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
     };
     let mut expression_context = RequestEvalContext::new(
         time_zone.resolve()?,
-        dag_req
-            .div_precision_increment
-            .filter(|value| *value != 0)
-            .unwrap_or(4),
+        dag_req.div_precision_increment.unwrap_or(4),
         dag_req.flags.unwrap_or(0),
     );
     let columns = dag_req.executors.first().and_then(|scan| {
@@ -1483,11 +1480,7 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
         time_zone,
         // Go `buildDAG`: the session default is 4 when the request omits
         // the field (`variable.DefDivPrecisionIncrement`).
-        div_precision_increment: dag_req
-            .div_precision_increment
-            .map(i64::from)
-            .filter(|value| *value != 0)
-            .unwrap_or(4),
+        div_precision_increment: dag_req.div_precision_increment.map(i64::from).unwrap_or(4),
         dag_req,
     })
 }
@@ -2083,7 +2076,7 @@ fn convert_expr_with_context(
 ) -> Result<SimpleExpr, String> {
     let tp = expr.tp();
     if tp == tipb::ExprType::ScalarFunc
-        && tidb_expr::distsql_builtin::builtin_name_of(expr.sig()).is_some()
+        && tidb_expr::distsql_builtin::supports_signature(expr.sig())
     {
         return convert_shared(expr, context);
     }

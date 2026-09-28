@@ -535,7 +535,7 @@ fn log10(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     })
 }
 
-fn pow(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn pow(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [base, exp] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -566,7 +566,7 @@ fn exp(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
 }
 
 /// `PI()`: a niladic function returning the constant.
-fn pi(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn pi(vals: &[Datum]) -> Result<Datum, EvalError> {
     match vals {
         [] => Ok(Datum::Real(std::f64::consts::PI)),
         _ => Err(EvalError::Unsupported("bad function arity")),
@@ -590,11 +590,11 @@ fn unary_finite(
     }
 }
 
-fn sin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn sin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     unary_finite(vals, ctx, go_trig::go_sin)
 }
 
-fn cos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn cos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     unary_finite(vals, ctx, go_trig::go_cos)
 }
 
@@ -602,7 +602,7 @@ fn tan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     unary_finite(vals, ctx, go_trig::go_tan)
 }
 
-fn cot(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn cot(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     unary_finite(vals, ctx, |x| 1.0 / go_trig::go_tan(x))
 }
 
@@ -624,7 +624,7 @@ fn asin_acos_domain(x: f64, f: impl FnOnce(f64) -> f64) -> Datum {
     }
 }
 
-fn asin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn asin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -634,7 +634,7 @@ fn asin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     })
 }
 
-fn acos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn acos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -646,7 +646,7 @@ fn acos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// `ATAN(x)` (1 argument) or `ATAN(y, x)` (2 arguments, exactly `ATAN2(y,
 /// x)` — same argument order, confirmed via `goeval`, not assumed).
-fn atan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn atan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     match vals {
         [_] => unary_finite(vals, ctx, go_trig::go_atan),
         [_, _] => atan2(vals, ctx),
@@ -654,7 +654,7 @@ fn atan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     }
 }
 
-fn atan2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn atan2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [y, x] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };

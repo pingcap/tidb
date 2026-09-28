@@ -3,14 +3,15 @@
 //! signature with the same builtin the root task would have used.
 //!
 //! Go's `getSignatureByPB` maps each `ScalarFuncSig` to its builtin. Here the
-//! pushdown [`CATALOG`] is the inventory of signatures TiDB sends, and each
-//! row names the builtin (`BuiltinSignature::name`) that produced it.
+//! decoder selects a typed implementation independently of the encoder
+//! admission catalog. Names label expressions; they never select execution.
 
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::expression::Expression;
-use crate::pushdown_catalog::CATALOG;
+use crate::scalar_function::PbBuiltin;
 use crate::scalar_function::ScalarFunction;
+#[cfg(test)]
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_proto::tipb;
@@ -38,19 +39,10 @@ pub fn pb_type_to_field_type(tp: &tipb::FieldType) -> FieldType {
     field_type
 }
 
-/// The builtin name Go's `getSignatureByPB` resolves `sig` to, restricted to
-/// the signatures TiDB pushes (the catalog). `None` is Go's `default:` arm.
+/// Whether the decoder has the concrete implementation for this wire signature.
 #[must_use]
-pub fn builtin_name_of(sig: tipb::ScalarFuncSig) -> Option<&'static str> {
-    CATALOG
-        .iter()
-        .find(|row| row.sig == sig)
-        .map(|row| row.name)
-        .or_else(|| {
-            crate::pushdown_catalog::implicit_cast_signatures()
-                .any(|cast| cast == sig)
-                .then_some("cast")
-        })
+pub fn supports_signature(sig: tipb::ScalarFuncSig) -> bool {
+    PbBuiltin::new(sig).is_some()
 }
 
 fn constant(value: Datum, ret_type: FieldType) -> Expression {
@@ -175,19 +167,232 @@ pub fn pb_to_expr(expr: &tipb::Expr, column_types: &[FieldType]) -> Result<Expre
         .map(|child| pb_to_expr(child, column_types))
         .collect::<Result<Vec<_>, _>>()?;
     let sig = expr.sig();
-    let name = builtin_name_of(sig)
+    let builtin = PbBuiltin::new(sig)
         .ok_or_else(|| format!("scalar signature {sig:?} is not a pushdown builtin"))?;
-    let ret_type = typed_or(expr, FieldTypeCode::Null);
-    if name == "cast" {
-        let [argument]: [Expression; 1] = args
-            .try_into()
-            .map_err(|_| "a protobuf cast requires one argument".to_owned())?;
-        return crate::simple_expr::build_cast_function(argument, ret_type, false)
-            .map_err(|error| format!("invalid protobuf cast: {error:?}"));
-    }
-    Ok(Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new(name),
-        ret_type,
+    Ok(Expression::ScalarFunction(ScalarFunction::from_pb(
+        builtin,
+        typed_or(expr, FieldTypeCode::Null),
         args,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(value: &str) -> tipb::Expr {
+        tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(value.as_bytes().to_vec()),
+            field_type: Some(tipb::FieldType {
+                tp: Some(253),
+                charset: Some("utf8mb4".into()),
+                collate: Some(46),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+    fn call(sig: tipb::ScalarFuncSig, args: Vec<tipb::Expr>, tp: tipb::FieldType) -> tipb::Expr {
+        tipb::Expr {
+            tp: Some(tipb::ExprType::ScalarFunc as i32),
+            sig: Some(sig as i32),
+            children: args,
+            field_type: Some(tp),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn every_encoder_signature_has_a_typed_decoder() {
+        for signature in crate::pushdown_catalog::CATALOG
+            .iter()
+            .map(|row| row.sig)
+            .chain(crate::pushdown_catalog::implicit_cast_signatures())
+        {
+            assert!(supports_signature(signature), "missing {signature:?}");
+        }
+    }
+    #[test]
+    fn protobuf_signature_survives_display_name_changes() {
+        let pb = call(
+            tipb::ScalarFuncSig::UpperUtf8,
+            vec![text("abc")],
+            text("").field_type.unwrap(),
+        );
+        let Expression::ScalarFunction(mut function) = pb_to_expr(&pb, &[]).unwrap() else {
+            panic!("scalar");
+        };
+        assert_eq!(
+            function.pb_signature(),
+            Some(tipb::ScalarFuncSig::UpperUtf8)
+        );
+        function = function.clone();
+        function.func_name = CiString::new("lower");
+        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        assert_eq!(
+            function
+                .eval(&crate::NoColumns, row.to_row())
+                .unwrap()
+                .sql_string()
+                .unwrap(),
+            "ABC"
+        );
+    }
+    #[test]
+    fn protobuf_cast_preserves_wire_type_without_sql_rewriting() {
+        let tp = tipb::FieldType {
+            tp: Some(246),
+            flen: Some(12),
+            decimal: Some(3),
+            flag: Some(1),
+            ..Default::default()
+        };
+        let pb = call(
+            tipb::ScalarFuncSig::CastStringAsDecimal,
+            vec![text("12.125")],
+            tp.clone(),
+        );
+        let expr = pb_to_expr(&pb, &[]).unwrap();
+        assert_eq!(expr.static_type(), Some(&pb_type_to_field_type(&tp)));
+    }
+    #[test]
+    fn protobuf_mod_signedness_comes_from_the_selected_signature() {
+        let integer = |value| {
+            let mut bytes = Vec::new();
+            tidb_codec::encode_int(&mut bytes, value);
+            tipb::Expr {
+                tp: Some(tipb::ExprType::Int64 as i32),
+                val: Some(bytes),
+                ..Default::default()
+            }
+        };
+        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        for (signature, expected) in [
+            (tipb::ScalarFuncSig::ModIntSignedSigned, -2),
+            (tipb::ScalarFuncSig::ModIntUnsignedSigned, 2),
+        ] {
+            let pb = call(
+                signature,
+                vec![integer(-5), integer(3)],
+                tipb::FieldType {
+                    tp: Some(8),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(
+                pb_to_expr(&pb, &[])
+                    .unwrap()
+                    .eval(&crate::NoColumns, row.to_row())
+                    .unwrap(),
+                Datum::Int(expected)
+            );
+        }
+    }
+    #[test]
+    fn protobuf_json_replace_reuses_the_selected_implementation_across_rows() {
+        let column = |index| {
+            let mut bytes = Vec::new();
+            tidb_codec::encode_int(&mut bytes, index);
+            tipb::Expr {
+                tp: Some(tipb::ExprType::ColumnRef as i32),
+                val: Some(bytes),
+                ..Default::default()
+            }
+        };
+        let pb = call(
+            tipb::ScalarFuncSig::JsonReplaceSig,
+            vec![column(0), text("$.a"), column(1)],
+            tipb::FieldType {
+                tp: Some(245),
+                ..Default::default()
+            },
+        );
+        let expr = pb_to_expr(
+            &pb,
+            &[
+                FieldType::new(FieldTypeCode::Json),
+                FieldType::new(FieldTypeCode::LongLong),
+            ],
+        )
+        .unwrap();
+        for number in [2, 3] {
+            let row = tidb_chunk::mutrow::MutRow::from_datums(&[
+                Datum::Json(tidb_datatype::BinaryJSON::parse("{\"a\": 1}").unwrap()),
+                Datum::Int(number),
+            ]);
+            assert_eq!(
+                expr.eval(&crate::NoColumns, row.to_row()).unwrap(),
+                Datum::Json(
+                    tidb_datatype::BinaryJSON::parse(&format!("{{\"a\": {number}}}")).unwrap()
+                )
+            );
+        }
+    }
+    #[test]
+    fn protobuf_control_does_not_evaluate_the_unused_branch() {
+        let mut value = Vec::new();
+        tidb_codec::encode_int(&mut value, 1);
+        let condition = tipb::Expr {
+            tp: Some(tipb::ExprType::Int64 as i32),
+            val: Some(value),
+            ..Default::default()
+        };
+        let invalid = call(
+            tipb::ScalarFuncSig::CastStringAsInt,
+            vec![text("not an integer")],
+            tipb::FieldType {
+                tp: Some(8),
+                ..Default::default()
+            },
+        );
+        let pb = call(
+            tipb::ScalarFuncSig::IfInt,
+            vec![condition.clone(), condition, invalid],
+            tipb::FieldType {
+                tp: Some(8),
+                ..Default::default()
+            },
+        );
+        struct Strict;
+        impl crate::Columns for Strict {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> crate::ErrorLevel {
+                crate::ErrorLevel::Error
+            }
+        }
+        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        assert_eq!(
+            pb_to_expr(&pb, &[])
+                .unwrap()
+                .eval(&Strict, row.to_row())
+                .unwrap(),
+            Datum::Int(1)
+        );
+    }
+    #[test]
+    fn protobuf_binary_and_utf8_signatures_stay_distinct() {
+        let row = tidb_chunk::mutrow::MutRow::from_datums(&[]);
+        for (sig, expected) in [
+            (tipb::ScalarFuncSig::CharLength, 2),
+            (tipb::ScalarFuncSig::CharLengthUtf8, 1),
+        ] {
+            let pb = call(
+                sig,
+                vec![text("é")],
+                tipb::FieldType {
+                    tp: Some(8),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(
+                pb_to_expr(&pb, &[])
+                    .unwrap()
+                    .eval(&crate::NoColumns, row.to_row())
+                    .unwrap(),
+                Datum::Int(expected)
+            );
+        }
+    }
 }

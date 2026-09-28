@@ -226,3 +226,36 @@ fn no_arg_types(len: usize) -> Vec<Option<FieldType>> {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+/// Protobuf-selected JSON builtins share the root task's value kernels and
+/// constant-path cache. Dynamic paths keep their ordinary per-row validation.
+pub(crate) fn eval_pb(
+    sig: tidb_proto::tipb::ScalarFuncSig,
+    vals: &[Datum],
+    arg_types: &[Option<FieldType>],
+    ctx: &dyn crate::Columns,
+    paths_cache: Option<&crate::builtin_ext::BuiltinFuncCache<Option<Vec<JsonPath>>>>,
+) -> Result<Datum, EvalError> {
+    use tidb_proto::tipb::ScalarFuncSig;
+    match sig {
+        ScalarFuncSig::JsonMemberOfSig => json_member_of(vals),
+        ScalarFuncSig::JsonReplaceSig => {
+            if let Some(cache) = paths_cache {
+                let Some(document) = parse_json_document_argument(&vals[0])? else {
+                    return Ok(Datum::Null);
+                };
+                let paths =
+                    cache.get_or_init_cache(ctx.context_id(), || parse_json_modify_paths(vals))?;
+                let Some(paths) = paths.as_ref() else {
+                    return Ok(Datum::Null);
+                };
+                json_modify_with_document(document, vals, arg_types, JsonModifyMode::Replace, paths)
+            } else {
+                json_modify(vals, arg_types, JsonModifyMode::Replace)
+            }
+        }
+        ScalarFuncSig::JsonArrayAppendSig => json_array_append(vals, arg_types),
+        ScalarFuncSig::JsonMergePatchSig => json_merge_patch(vals),
+        _ => Err(EvalError::Unsupported("unknown JSON protobuf signature")),
+    }
+}

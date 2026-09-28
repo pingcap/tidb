@@ -432,7 +432,7 @@ fn current_clock_null_fsp_follows_each_go_signature() {
 #[test]
 fn go_time_vectors_cover_duration_scale_and_clamp() {
     assert_eq!(
-        sec_to_time(&[Datum::new_string("123.4".to_string())]).unwrap(),
+        sec_to_time(&[Datum::new_string("123.4".to_string())], &crate::NoColumns).unwrap(),
         Datum::new_string("00:02:03.400000".to_string())
     );
     // Go's TestSecToTime pins this row with the constant's field type set
@@ -440,19 +440,26 @@ fn go_time_vectors_cover_duration_scale_and_clamp() {
     // so the port represents it as one; a bare Real carries no scale and
     // answers Go's unspecified default of six digits.
     assert_eq!(
-        sec_to_time(&[Datum::Decimal(crate::Decimal::from_literal("86401.4"))]).unwrap(),
+        sec_to_time(
+            &[Datum::Decimal(crate::Decimal::from_literal("86401.4"))],
+            &crate::NoColumns
+        )
+        .unwrap(),
         Datum::new_string("24:00:01.4".to_string())
     );
     assert_eq!(
-        sec_to_time(&[Datum::Real(86_401.543_21)]).unwrap(),
+        sec_to_time(&[Datum::Real(86_401.543_21)], &crate::NoColumns).unwrap(),
         Datum::new_string("24:00:01.543210".to_string())
     );
     assert_eq!(
-        maketime(&[
-            Datum::Int(1_000),
-            Datum::Int(1),
-            Datum::Decimal(crate::Decimal::from_literal("1.0")),
-        ])
+        maketime(
+            &[
+                Datum::Int(1_000),
+                Datum::Int(1),
+                Datum::Decimal(crate::Decimal::from_literal("1.0")),
+            ],
+            &crate::NoColumns
+        )
         .unwrap(),
         Datum::new_string("838:59:59.0".to_string())
     );
@@ -541,12 +548,15 @@ fn sec_to_time_source_vectors() {
         (Datum::Real(86_401.543_21), "24:00:01.543210"),
     ] {
         assert_eq!(
-            sec_to_time(std::slice::from_ref(&input)).unwrap(),
+            sec_to_time(std::slice::from_ref(&input), &crate::NoColumns).unwrap(),
             Datum::new_string(want.to_string()),
             "SEC_TO_TIME({input:?})"
         );
     }
-    assert_eq!(sec_to_time(&[Datum::Null]).unwrap(), Datum::Null);
+    assert_eq!(
+        sec_to_time(&[Datum::Null], &crate::NoColumns).unwrap(),
+        Datum::Null
+    );
 }
 
 #[test]

@@ -1,0 +1,470 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `getSignatureByPB`: select an implementation from the wire enum.
+//! SQL function names are diagnostic metadata, never an overload selector here.
+
+use super::{
+    cast_json_argument_value, eval_numeric_operand_row, eval_numeric_row, logic_truthy,
+    ScalarFunction,
+};
+use crate::context::{Columns, EvalError};
+use crate::expression::ConstLevel;
+use tidb_ast::BinaryOp;
+use tidb_chunk::row::Row;
+use tidb_datatype::{Datum, EvalType, FieldType, UNSPECIFIED_LENGTH};
+use tidb_proto::tipb::ScalarFuncSig;
+
+type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
+
+#[derive(Clone, Copy, Debug)]
+enum Kernel {
+    Binary(BinaryOp, EvalType),
+    Logic(BinaryOp),
+    IntegerMod { unsigned: [bool; 2] },
+    IsNull,
+    Truth { negate: bool },
+    Case,
+    If,
+    IfNull,
+    Cast { source: EvalType, target: EvalType },
+    String { operation: StringOp, binary: bool },
+    Round,
+    FromUnixTime,
+    Regexp,
+    Json,
+    Values(ValuesKernel),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum StringOp {
+    Length,
+    Upper,
+    Lower,
+    Substring,
+}
+
+/// The selected implementation survives cloning independently of FuncName.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PbBuiltin {
+    signature: ScalarFuncSig,
+    kernel: Kernel,
+}
+
+impl PbBuiltin {
+    pub(crate) fn signature(self) -> ScalarFuncSig {
+        self.signature
+    }
+
+    pub(crate) fn new(signature: ScalarFuncSig) -> Option<Self> {
+        use ScalarFuncSig::*;
+        let kernel = match signature {
+            PlusInt => Kernel::Binary(BinaryOp::Plus, EvalType::Int),
+            PlusDecimal => Kernel::Binary(BinaryOp::Plus, EvalType::Decimal),
+            MinusDecimal => Kernel::Binary(BinaryOp::Minus, EvalType::Decimal),
+            MultiplyDecimal => Kernel::Binary(BinaryOp::Mul, EvalType::Decimal),
+            DivideReal => Kernel::Binary(BinaryOp::Div, EvalType::Real),
+            DivideDecimal => Kernel::Binary(BinaryOp::Div, EvalType::Decimal),
+            ModReal => Kernel::Binary(BinaryOp::Mod, EvalType::Real),
+            ModDecimal => Kernel::Binary(BinaryOp::Mod, EvalType::Decimal),
+            ModIntSignedSigned => Kernel::IntegerMod {
+                unsigned: [false, false],
+            },
+            ModIntSignedUnsigned => Kernel::IntegerMod {
+                unsigned: [false, true],
+            },
+            ModIntUnsignedSigned => Kernel::IntegerMod {
+                unsigned: [true, false],
+            },
+            ModIntUnsignedUnsigned => Kernel::IntegerMod {
+                unsigned: [true, true],
+            },
+            EqInt => Kernel::Binary(BinaryOp::Eq, EvalType::Int),
+            GtInt => Kernel::Binary(BinaryOp::Gt, EvalType::Int),
+            LogicalAnd => Kernel::Logic(BinaryOp::LogicAnd),
+            LogicalOr => Kernel::Logic(BinaryOp::LogicOr),
+            IntIsNull | RealIsNull | DecimalIsNull | StringIsNull | TimeIsNull | DurationIsNull
+            | VectorFloat32IsNull => Kernel::IsNull,
+            UnaryNotInt => Kernel::Truth { negate: true },
+            IntIsTrueWithNull => Kernel::Truth { negate: false },
+            CaseWhenInt | CaseWhenReal | CaseWhenDecimal | CaseWhenTime | CaseWhenDuration
+            | CaseWhenJson => Kernel::Case,
+            IfInt | IfReal | IfDecimal | IfTime | IfDuration | IfJson => Kernel::If,
+            IfNullInt | IfNullReal | IfNullDecimal | IfNullString | IfNullTime | IfNullDuration
+            | IfNullJson => Kernel::IfNull,
+            CharLength => Kernel::String {
+                operation: StringOp::Length,
+                binary: true,
+            },
+            CharLengthUtf8 => Kernel::String {
+                operation: StringOp::Length,
+                binary: false,
+            },
+            Upper => Kernel::String {
+                operation: StringOp::Upper,
+                binary: true,
+            },
+            UpperUtf8 => Kernel::String {
+                operation: StringOp::Upper,
+                binary: false,
+            },
+            Lower => Kernel::String {
+                operation: StringOp::Lower,
+                binary: true,
+            },
+            LowerUtf8 => Kernel::String {
+                operation: StringOp::Lower,
+                binary: false,
+            },
+            Substring2Args | Substring3Args => Kernel::String {
+                operation: StringOp::Substring,
+                binary: true,
+            },
+            Substring2ArgsUtf8 | Substring3ArgsUtf8 => Kernel::String {
+                operation: StringOp::Substring,
+                binary: false,
+            },
+            Acos => Kernel::Values(crate::math_fn::acos),
+            Asin => Kernel::Values(crate::math_fn::asin),
+            Atan1Arg => Kernel::Values(crate::math_fn::atan),
+            Atan2Args => Kernel::Values(crate::math_fn::atan2),
+            Cos => Kernel::Values(crate::math_fn::cos),
+            Cot => Kernel::Values(crate::math_fn::cot),
+            Sin => Kernel::Values(crate::math_fn::sin),
+            Pow => Kernel::Values(crate::math_fn::pow),
+            Pi => Kernel::Values(|values, _| crate::math_fn::pi(values)),
+            Conv => Kernel::Values(|values, _| crate::math_fn::conv(values)),
+            RoundInt | RoundReal | RoundDec => Kernel::Round,
+            Date => Kernel::Values(crate::time_fn::date),
+            DateDiff => Kernel::Values(|values, _| crate::time_fn::calendar::date_diff(values)),
+            DateFormatSig => Kernel::Values(|values, _| {
+                let [date, format] = values else {
+                    return Err(EvalError::WrongParameterCount("date_format"));
+                };
+                crate::time_fn::calendar::date_format(date, format)
+            }),
+            Hour => Kernel::Values(|values, _| {
+                crate::time_fn::calendar::time_part(values, |time| i64::from(time.0))
+            }),
+            Minute => Kernel::Values(|values, _| {
+                crate::time_fn::calendar::time_part(values, |time| i64::from(time.1))
+            }),
+            Second => Kernel::Values(|values, _| {
+                crate::time_fn::calendar::time_part(values, |time| i64::from(time.2))
+            }),
+            MicroSecond => Kernel::Values(|values, _| crate::time_fn::microsecond(values)),
+            Month => Kernel::Values(|values, _| crate::time_fn::month(values)),
+            WeekWithoutMode => Kernel::Values(|values, ctx| {
+                crate::time_fn::week(values, ctx.default_week_format())
+            }),
+            TimestampDiff => {
+                Kernel::Values(|values, _| crate::time_fn::calendar::timestamp_diff(values))
+            }
+            UnixTimestampInt | UnixTimestampDec => {
+                Kernel::Values(crate::time_fn::session_tz::unix_timestamp)
+            }
+            FromUnixTime1Arg | FromUnixTime2Arg => Kernel::FromUnixTime,
+            RegexpLikeSig => Kernel::Regexp,
+            JsonMemberOfSig | JsonReplaceSig | JsonArrayAppendSig | JsonMergePatchSig => {
+                Kernel::Json
+            }
+            _ => {
+                let (source, target) = cast_types(signature)?;
+                Kernel::Cast { source, target }
+            }
+        };
+        Some(Self { signature, kernel })
+    }
+
+    pub(super) fn eval(
+        self,
+        function: &ScalarFunction,
+        ctx: &dyn Columns,
+        row: Row<'_>,
+    ) -> Result<Datum, EvalError> {
+        let args = &function.args;
+        let argument = |index: usize| {
+            args.get(index)
+                .ok_or(EvalError::Unsupported("missing protobuf builtin argument"))?
+                .eval(ctx, row)
+        };
+        match self.kernel {
+            Kernel::Case => {
+                let (pairs, remainder) = args.as_chunks::<2>();
+                for pair in pairs {
+                    if logic_truthy(&pair[0].eval(ctx, row)?, ctx)? == Some(true) {
+                        return pair[1].eval(ctx, row);
+                    }
+                }
+                remainder
+                    .first()
+                    .map_or(Ok(Datum::Null), |value| value.eval(ctx, row))
+            }
+            Kernel::If => {
+                let branch = if logic_truthy(&argument(0)?, ctx)? == Some(true) {
+                    1
+                } else {
+                    2
+                };
+                argument(branch)
+            }
+            Kernel::IfNull => {
+                let value = argument(0)?;
+                if value.is_null() {
+                    argument(1)
+                } else {
+                    Ok(value)
+                }
+            }
+            Kernel::IsNull => Ok(Datum::Int(i64::from(argument(0)?.is_null()))),
+            Kernel::Truth { negate } => Ok(logic_truthy(&argument(0)?, ctx)?
+                .map_or(Datum::Null, |value| Datum::Int(i64::from(value ^ negate)))),
+            Kernel::Logic(op) => {
+                let left = logic_truthy(&argument(0)?, ctx)?;
+                if (op == BinaryOp::LogicAnd && left == Some(false))
+                    || (op == BinaryOp::LogicOr && left == Some(true))
+                {
+                    return Ok(Datum::Int(i64::from(left.unwrap())));
+                }
+                let right = logic_truthy(&argument(1)?, ctx)?;
+                Ok(match (op, left, right) {
+                    (BinaryOp::LogicAnd, _, Some(false)) => Datum::Int(0),
+                    (BinaryOp::LogicOr, _, Some(true)) => Datum::Int(1),
+                    (_, None, _) | (_, _, None) => Datum::Null,
+                    (_, _, Some(value)) => Datum::Int(i64::from(value)),
+                })
+            }
+            Kernel::IntegerMod { unsigned } => {
+                // The four Go MOD signatures bake signedness into the builtin,
+                // rather than reselecting it from each row or the SQL name.
+                let operand = |index: usize| -> Result<Datum, EvalError> {
+                    let value = argument(index)?;
+                    Ok(match crate::arg_eval_type::eval_int(&value)? {
+                        None => Datum::Null,
+                        Some(value) if unsigned[index] => Datum::UInt(value as u64),
+                        Some(value) => Datum::Int(value),
+                    })
+                };
+                let left = operand(0)?;
+                let right = operand(1)?;
+                crate::ops::eval_binary_full(
+                    BinaryOp::Mod,
+                    left,
+                    right,
+                    ctx.div_precision_increment(),
+                    function.derived_collation(),
+                    crate::ops::Operands::LITERALS,
+                    ctx,
+                )
+            }
+            Kernel::Binary(op, domain) => {
+                if args.len() != 2 {
+                    return Err(EvalError::Unsupported("protobuf binary builtin arity"));
+                }
+                let left = eval_numeric_operand_row(&args[0], ctx, row, domain)?;
+                if left.is_null() && !(op == BinaryOp::Mod && domain != EvalType::Decimal) {
+                    return Ok(Datum::Null);
+                }
+                let right = eval_numeric_operand_row(&args[1], ctx, row, domain)?;
+                function.eval_binary_values(op, left, right, ctx)
+            }
+            Kernel::Cast { source, target } => {
+                if args.len() != 1 {
+                    return Err(EvalError::Unsupported("protobuf cast arity"));
+                }
+                let value = eval_numeric_row(&args[0], ctx, row, source)?;
+                if value.is_null() {
+                    return Ok(Datum::Null);
+                }
+                if target == EvalType::Json {
+                    return cast_json_argument_value(function, value);
+                }
+                let field = function
+                    .get_static_type()
+                    .ok_or(EvalError::Unsupported("protobuf cast result type"))?;
+                use tidb_ast::CastType;
+                let len = u32::try_from(field.flen()).ok();
+                let fsp = u32::try_from(field.decimal()).ok();
+                let cast = match target {
+                    EvalType::Int if field.is_unsigned() => CastType::Unsigned,
+                    EvalType::Int => CastType::Signed,
+                    EvalType::Real => CastType::Double,
+                    EvalType::Decimal => CastType::Decimal {
+                        flen: len.unwrap_or(0),
+                        scale: if field.decimal() == UNSPECIFIED_LENGTH {
+                            crate::cast::UNSPECIFIED_CAST_SCALE
+                        } else {
+                            fsp.unwrap_or(0)
+                        },
+                    },
+                    EvalType::String if field.is_binary_string() => CastType::Binary {
+                        len: if field.code() == tidb_datatype::FieldTypeCode::String {
+                            len
+                        } else {
+                            None
+                        },
+                    },
+                    EvalType::String => CastType::Char {
+                        len,
+                        charset: Some(field.charset_name().to_owned()),
+                    },
+                    EvalType::Datetime | EvalType::Timestamp
+                        if field.code() == tidb_datatype::FieldTypeCode::Date =>
+                    {
+                        CastType::Date
+                    }
+                    EvalType::Datetime | EvalType::Timestamp => CastType::DateTime { fsp },
+                    EvalType::Duration => CastType::Time { fsp },
+                    EvalType::VectorFloat32 => CastType::Vector { dimensions: len },
+                    _ => return Err(EvalError::Unsupported("protobuf cast target")),
+                };
+                crate::cast::eval_cast(&cast, value, args[0].static_type(), ctx)
+            }
+            Kernel::Regexp => function.eval_regexp_like(ctx, row),
+            kernel => {
+                let mut values = Vec::with_capacity(args.len());
+                for arg in args {
+                    let value = arg.eval(ctx, row)?;
+                    if value.is_null() && !matches!(kernel, Kernel::Json) {
+                        return Ok(Datum::Null);
+                    }
+                    values.push(value);
+                }
+                match kernel {
+                    Kernel::Values(eval) => eval(&values, ctx),
+                    Kernel::Round => crate::math_fn::round_or_truncate_with_result_decimal(
+                        &values,
+                        true,
+                        function.ret_type.as_ref().map(FieldType::decimal),
+                        ctx,
+                    ),
+                    Kernel::String { operation, binary } => {
+                        let Some(value) = values.first_mut() else {
+                            return Err(EvalError::Unsupported("protobuf string builtin arity"));
+                        };
+                        if !value.is_null() {
+                            let bytes = crate::arg_eval_type::eval_string(value)?
+                                .ok_or(EvalError::Unsupported("protobuf string argument"))?;
+                            *value = if binary {
+                                Datum::Bytes(bytes)
+                            } else {
+                                Datum::new_string(bytes)
+                            };
+                        }
+                        match operation {
+                            StringOp::Length => Ok(match &values[0] {
+                                Datum::Null => Datum::Null,
+                                Datum::Bytes(bytes) => Datum::Int(bytes.len() as i64),
+                                value => Datum::Int(
+                                    crate::string_signature::StrUnits::of_with_signature(
+                                        value, false,
+                                    )?
+                                    .expect("non-NULL string")
+                                    .len() as i64,
+                                ),
+                            }),
+                            StringOp::Upper => crate::string_fn::case_convert(&values, true),
+                            StringOp::Lower => crate::string_fn::case_convert(&values, false),
+                            StringOp::Substring => crate::string_fn::substring(&values, ctx),
+                        }
+                    }
+                    Kernel::FromUnixTime => {
+                        let result = crate::time_fn::session_tz::from_unixtime(&values, ctx)?;
+                        if self.signature == ScalarFuncSig::FromUnixTime1Arg {
+                            crate::cast::parse_computed_time(
+                                &result,
+                                ctx,
+                                tidb_datatype::TimeType::DateTime,
+                                function.get_static_type().map(FieldType::decimal),
+                            )
+                        } else {
+                            Ok(result)
+                        }
+                    }
+                    Kernel::Json => {
+                        let types = args
+                            .iter()
+                            .map(|arg| arg.static_type().cloned())
+                            .collect::<Vec<_>>();
+                        let cache_paths = args.get(1..).is_some_and(|arguments| {
+                            !arguments.is_empty()
+                                && arguments
+                                    .iter()
+                                    .step_by(2)
+                                    .all(|arg| arg.const_level() >= ConstLevel::ONLY_IN_CONTEXT)
+                        });
+                        crate::builtin_ext::json::eval_pb(
+                            self.signature,
+                            &values,
+                            &types,
+                            ctx,
+                            cache_paths.then_some(&function.json_modify_path_cache),
+                        )
+                    }
+                    _ => unreachable!("lazy kernels were handled before evaluating arguments"),
+                }
+            }
+        }
+    }
+}
+
+fn cast_types(sig: ScalarFuncSig) -> Option<(EvalType, EvalType)> {
+    use ScalarFuncSig::*;
+    Some(match sig {
+        CastDecimalAsDuration => (EvalType::Decimal, EvalType::Duration),
+        CastDecimalAsInt => (EvalType::Decimal, EvalType::Int),
+        CastDecimalAsJson => (EvalType::Decimal, EvalType::Json),
+        CastDecimalAsReal => (EvalType::Decimal, EvalType::Real),
+        CastDecimalAsString => (EvalType::Decimal, EvalType::String),
+        CastDecimalAsTime => (EvalType::Decimal, EvalType::Datetime),
+        CastDurationAsDecimal => (EvalType::Duration, EvalType::Decimal),
+        CastDurationAsInt => (EvalType::Duration, EvalType::Int),
+        CastDurationAsJson => (EvalType::Duration, EvalType::Json),
+        CastDurationAsReal => (EvalType::Duration, EvalType::Real),
+        CastDurationAsString => (EvalType::Duration, EvalType::String),
+        CastDurationAsTime => (EvalType::Duration, EvalType::Datetime),
+        CastIntAsDecimal => (EvalType::Int, EvalType::Decimal),
+        CastIntAsDuration => (EvalType::Int, EvalType::Duration),
+        CastIntAsJson => (EvalType::Int, EvalType::Json),
+        CastIntAsReal => (EvalType::Int, EvalType::Real),
+        CastIntAsString => (EvalType::Int, EvalType::String),
+        CastIntAsTime => (EvalType::Int, EvalType::Datetime),
+        CastJsonAsDecimal => (EvalType::Json, EvalType::Decimal),
+        CastJsonAsDuration => (EvalType::Json, EvalType::Duration),
+        CastJsonAsInt => (EvalType::Json, EvalType::Int),
+        CastJsonAsReal => (EvalType::Json, EvalType::Real),
+        CastJsonAsString => (EvalType::Json, EvalType::String),
+        CastJsonAsTime => (EvalType::Json, EvalType::Datetime),
+        CastRealAsDecimal => (EvalType::Real, EvalType::Decimal),
+        CastRealAsDuration => (EvalType::Real, EvalType::Duration),
+        CastRealAsInt => (EvalType::Real, EvalType::Int),
+        CastRealAsJson => (EvalType::Real, EvalType::Json),
+        CastRealAsString => (EvalType::Real, EvalType::String),
+        CastRealAsTime => (EvalType::Real, EvalType::Datetime),
+        CastStringAsDecimal => (EvalType::String, EvalType::Decimal),
+        CastStringAsDuration => (EvalType::String, EvalType::Duration),
+        CastStringAsInt => (EvalType::String, EvalType::Int),
+        CastStringAsJson => (EvalType::String, EvalType::Json),
+        CastStringAsReal => (EvalType::String, EvalType::Real),
+        CastStringAsTime => (EvalType::String, EvalType::Datetime),
+        CastTimeAsDecimal => (EvalType::Datetime, EvalType::Decimal),
+        CastTimeAsDuration => (EvalType::Datetime, EvalType::Duration),
+        CastTimeAsInt => (EvalType::Datetime, EvalType::Int),
+        CastTimeAsJson => (EvalType::Datetime, EvalType::Json),
+        CastTimeAsReal => (EvalType::Datetime, EvalType::Real),
+        CastTimeAsString => (EvalType::Datetime, EvalType::String),
+        CastTimeAsTime => (EvalType::Datetime, EvalType::Datetime),
+        _ => return None,
+    })
+}
