@@ -2369,4 +2369,12 @@ func TestAnalyzeNDVRate(t *testing.T) {
 			job.CheckContain(tc.rate)
 		}
 	}
+	// ANALYZE sends the NDV rate even when TopN and histograms sample more
+	// rows: the adjusted SAMPLERATE of this one-row table is 1, and 5000000
+	// samples of 4e10 rows need a rate of 0.000125.
+	lastJob := "select job_info from mysql.analyze_jobs where table_name='ndv_large' order by id desc limit 1"
+	tk.MustExec("analyze table ndv_large with 0.001 NDVRATE")
+	tk.MustQuery(lastJob).CheckContain("1 samplerate, 0.001 ndvrate")
+	tk.MustExec("analyze table ndv_large with 0.0001 NDVRATE, 5000000 SAMPLES")
+	tk.MustQuery(lastJob).CheckContain("0.0001 ndvrate")
 }
