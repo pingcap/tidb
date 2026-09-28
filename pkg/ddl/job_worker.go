@@ -107,11 +107,12 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
-	// DXF propagates add-index reorganization RU v2 through:
-	// BackfillTaskMeta.Summary.IndexKVSize -> recordDistTaskRU -> reorgCtx.ru ->
-	// reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
-	// accountPendingReorgRU -> Job.RU. It is persisted only after the matching
-	// table-state transition succeeds.
+	// DXF propagates add-index reorganization RU v2 through recordDistTaskRU ->
+	// reorgCtx.ru -> reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
+	// accountPendingReorgRU -> Job.RU. Both the ingested index KV size
+	// (Summary.IndexKVSize) and the temp-index merge committed transaction bytes
+	// (Summary.MergeTempIndexTxnKVSize) are read from the task meta. RU is
+	// persisted only after the matching table-state transition succeeds.
 	pendingReorgRU float64
 
 	metaMut *meta.Mutator

@@ -72,8 +72,8 @@ type TaskManager interface {
 	// back to prev-state, if success, it will also update concurrency of all
 	// active subtasks.
 	ModifiedTask(ctx context.Context, task *proto.Task) error
-	// SucceedTask updates a task to success state.
-	SucceedTask(ctx context.Context, taskID int64) error
+	// SucceedTask updates a task to success state and persists its meta.
+	SucceedTask(ctx context.Context, task *proto.Task) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
 	// transaction. It will change task state too if we're switch from InitStep to
 	// next step.

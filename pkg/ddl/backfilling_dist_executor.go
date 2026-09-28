@@ -44,7 +44,12 @@ const (
 type BackfillTaskSummary struct {
 	// IndexKVSize is currently collected only for global-sort backfills and is
 	// primarily used for NextGen resource accounting.
-	IndexKVSize uint64 `json:"index_kv_size"`
+	IndexKVSize uint64 `json:"index_kv_size,omitempty"`
+	// MergeTempIndexTxnKVSize is the total size of the transactions committed
+	// while merging the temporary index. The merge runs as its own task and
+	// writes through transactions instead of ingest, so it is accounted
+	// separately from IndexKVSize.
+	MergeTempIndexTxnKVSize uint64 `json:"merge_temp_index_txn_kv_size,omitempty"`
 }
 
 // BackfillTaskMeta is the dist task meta for backfilling index.

@@ -590,12 +590,12 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 
 		// task done, but update failed, task state unchanged
 		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().SucceedTask(gomock.Any(), task.ID).Return(fmt.Errorf("update err"))
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(fmt.Errorf("update err"))
 		require.ErrorContains(t, scheduler.switch2NextStep(), "update err")
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		// task done successfully, task state changed
 		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().SucceedTask(gomock.Any(), task.ID).Return(nil)
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(nil)
 		require.NoError(t, scheduler.switch2NextStep())
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
