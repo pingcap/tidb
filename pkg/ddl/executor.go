@@ -1077,6 +1077,9 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
+	if err = checkStorageClassAdmission(tbInfo.EngineAttribute, tbInfo); err != nil {
+		return err
+	}
 
 	// Process region split policies from CREATE TABLE
 	if len(s.SplitIndex) > 0 {
@@ -1935,6 +1938,12 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			engineAttribute, hasEngineAttribute, engineAttributeErr := GetEngineAttributeFromStorageClassTableOptions(spec.Options)
 			if engineAttributeErr != nil {
 				return engineAttributeErr
+			}
+			// Check before other options in this statement can submit a job.
+			if hasEngineAttribute {
+				if err = checkStorageClassAdmission(engineAttribute, nil); err != nil {
+					return err
+				}
 			}
 			// Only allow COMPRESSION='NONE', reject others like 'ZLIB', 'LZ4'.
 			// Validate it before handling any other option, so that no option
