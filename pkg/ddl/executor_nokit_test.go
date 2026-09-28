@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -22,8 +23,59 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIsSessionDoneHandlesWrappedQueryInterrupted(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	done, killed := isSessionDone(sctx)
+	require.True(t, done)
+	require.Equal(t, uint32(1), killed)
+}
+
+func TestConvertKillFlag(t *testing.T) {
+	require.NoError(t, convertKillFlag(0))
+	err := convertKillFlag(1)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
+func TestWaitPendingTableThresholdAbortsOnKill(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	finished, _, _, forceCheck, killed := (&executor{}).waitPendingTableThreshold(sctx, 1, 1, 0, 0, 1)
+	require.True(t, finished)
+	require.False(t, forceCheck)
+	require.Equal(t, uint32(1), killed)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(convertKillFlag(killed)))
+}
+
+func TestIsRetryableDDLCancelErr(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		retry bool
+	}{
+		{name: "finished", err: dbterror.ErrCancelFinishedDDLJob, retry: false},
+		{name: "finished wrapped", err: dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(1), retry: false},
+		{name: "cannot cancel", err: dbterror.ErrCannotCancelDDLJob, retry: false},
+		{name: "cannot cancel wrapped", err: dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(1), retry: false},
+		{name: "not found", err: dbterror.ErrDDLJobNotFound, retry: false},
+		{name: "not found wrapped", err: dbterror.ErrDDLJobNotFound.GenWithStackByArgs(1), retry: false},
+		{name: "retryable processJobs error", err: errors.New("mock failed admin command on ddl jobs"), retry: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.retry, isRetryableDDLCancelErr(tt.err))
+		})
+	}
+}
 
 func TestBuildQueryStringFromJobs(t *testing.T) {
 	testCases := []struct {

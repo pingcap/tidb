@@ -417,7 +417,7 @@ func TestIssue67534PointUpdateAssignmentCasting(t *testing.T) {
 	}
 
 	// issue-64854-in-subquery-inside-not-in-list
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestWithDefaultPlanner(t, func(t *testing.T, tk *testkit.TestKit) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t0")
 		tk.MustExec("create table t0(c1 float8, c2 double, unique(c2, c1))")
