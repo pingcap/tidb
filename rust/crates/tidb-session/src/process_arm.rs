@@ -45,12 +45,17 @@ impl Session {
                             ))
                         }
                     };
-        // go `globalconn.ParseConnID` + `SimpleExec.execKillStmt`: the plain
-        // KILL decodes the id through the global-conn encoding BEFORE any
-        // lookup. A 32-bit id carrying the 64-bit marker bit warns
-        // "truncated" and does nothing; out-of-range ids warn the parse
-        // failure. `KILL TIDB ...` skips the global decode entirely.
-        if !kill.tidb_extension {
+        // go `globalconn.ParseConnID` + `SimpleExec.execKillStmt`: with the
+        // oracle's `enable-global-kill = true`, BOTH the plain `KILL` and
+        // the `KILL TIDB` forms decode the id through the global-conn
+        // encoding before any lookup (go runs the same ParseConnID block
+        // unconditionally once the config gate is passed -- simple.go's own
+        // `!EnableGlobalKill` early path never runs there). A 32-bit id
+        // carrying the 64-bit marker bit warns "truncated" and does
+        // nothing; out-of-range ids warn the parse failure.
+        // if !kill.tidb_extension {  -- the gate the pre-global-kill fork
+        // had; go's config-gated path makes the checks unconditional.
+        {
             if target & 0x8000_0000_0000_0000 > 0 {
                 self.append_warning(
                     crate::WarningLevel::Warning,

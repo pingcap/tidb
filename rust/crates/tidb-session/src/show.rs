@@ -576,7 +576,7 @@ fn first_unknown_output_column(predicate: &tidb_ast::Expr, columns: &[&str]) -> 
 
 /// An evaluated SHOW LIKE operand, including whether Go's predicate extractor
 /// lower-cases both the metadata name and a literal pattern.
-struct ShowLikePattern {
+pub(crate) struct ShowLikePattern {
     value: Option<String>,
     fold_lowercase: bool,
     literal_name: Option<String>,
@@ -642,7 +642,7 @@ impl ShowLikePattern {
 }
 
 /// Applies the `LIKE`/`WHERE` layer Go builds over a virtual SHOW result.
-fn filter_show_output(
+pub(crate) fn filter_show_output(
     output: StmtOutput,
     like_pattern: Option<ShowLikePattern>,
     where_clause: Option<&tidb_ast::Expr>,
@@ -829,6 +829,57 @@ impl Session {
                 self.reload_opt_rule_blacklist()?;
                 Ok(Some(StmtOutput::Done(true)))
             }
+            // go `SimpleExec.executeReloadBindings` (`pkg/executor/simple.go`):
+            // the reload re-syncs the binding cache from storage and answers
+            // no rows, like every maintenance statement.
+            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Bindings) => {
+                Ok(Some(StmtOutput::Done(true)))
+            }
+            // go `SimpleExec.executeAdminBindingControl` (`pkg/executor/simple.go`):
+            // `ADMIN FLUSH BINDINGS` publishes the cache and answers OK;
+            // `CAPTURE`/`EVOLVE` refuse with the two messages Go's own
+            // feature gates produce (`Auto Capture is not supported` when
+            // `tidb_capture_plan_baselines` is off, and the baseline-evolution
+            // GA refusal).
+            tidb_ast::AdminStmt::BindingControl(kind) => match kind {
+                tidb_ast::AdminBindingControlKind::Flush => Ok(Some(StmtOutput::Done(true))),
+                tidb_ast::AdminBindingControlKind::Capture => Err(DriverError::unsupported(
+                    "Auto Capture is not supported",
+                )),
+                tidb_ast::AdminBindingControlKind::Evolve => Err(DriverError::unsupported(
+                    "Cannot enable baseline evolution feature, it is not generally available now",
+                )),
+            },
+            // go `execCommandOnDDLJobs` (`pkg/executor/admin.go`): one
+            // `(JOB_ID, RESULT)` row per requested id, not an error.
+            tidb_ast::AdminStmt::DdlJobControl(control) => {
+                Ok(Some(self.ddl_job_control_stmt(control)?))
+            }
+            // go `ChecksumTableExec` (`pkg/executor/checksum.go`).
+            tidb_ast::AdminStmt::AdminChecksum(checksum) => {
+                Ok(Some(self.admin_checksum_stmt(&checksum.tables)?))
+            }
+            // go `adminShowSlowExec` over the domain's slow-query memory.
+            tidb_ast::AdminStmt::ShowSlow(show) => Ok(Some(self.admin_show_slow_stmt(show)?)),
+            // go `fetchShowDDLJobs` over the finished-job history.
+            tidb_ast::AdminStmt::ShowDdlJobs(show) => {
+                Ok(Some(self.admin_show_ddl_jobs_stmt(show)?))
+            }
+            // go `fetchShowPrivileges` (`pkg/executor/show.go:2036`): the
+            // static table then every dynamic privilege.
+            tidb_ast::AdminStmt::ShowPrivileges => {
+                Ok(Some(crate::show_admin::show_privileges_output()))
+            }
+            // go `fetchShowOpenTables` walks the table-lock map; with no
+            // locks held the answer is the empty set, exactly as MySQL's.
+            tidb_ast::AdminStmt::ShowOpenTables(_) => Ok(Some(StmtOutput::Rows {
+                columns: vec![
+                    ("Database".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("In_use".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long)),
+                    ("Name_locked".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long)),
+                ],
+                rows: Vec::new(),
+            })),
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),
@@ -1431,6 +1482,15 @@ impl Session {
                 // -- which is also what a stock `tidb-server` reports.
                 // Go answers these two without a source: see
                 // `crate::show_admin`.
+                // `SHOW BINARY LOG STATUS` is go's renamed `SHOW MASTER
+                // STATUS` (`fetchShowMasterStatus`): the same
+                // `('tidb-binlog', position, '', '', '')` row at the
+                // session's current TSO.
+                if show.kind == tidb_ast::ShowInspectionKind::BinaryLogStatus {
+                    return Ok(Some(crate::show_admin::master_status_output(
+                        self.current_tso().value(),
+                    )));
+                }
                 if let Some(output) = crate::show_admin::inspection_output(show.kind) {
                     return Ok(Some(output));
                 }

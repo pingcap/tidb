@@ -327,6 +327,14 @@ impl Session {
             // set, as they do in Go: all are `SimpleExec` there, which
             // produces no rows (`executeShutdown` answers before the
             // 1-second-delayed stop). `HELP` keeps the result-set shape.
+            // The same no-rows shape holds for the maintenance statements
+            // whose Go executors end in an empty schema: `ADMIN CHECK
+            // TABLE`/`CHECK INDEX` without ranges (`CheckTableExec` appends
+            // nothing on success), the blacklist/binding reloads
+            // (`ReloadExprPushdownBlacklist`/`ReloadOptRuleBlacklist`/
+            // `AdminReloadBindings`), `ADMIN FLUSH BINDINGS`, and
+            // `ADMIN CREATE WORKLOAD SNAPSHOT`. The ranged
+            // `ADMIN CHECK INDEX t idx (a, b)` form keeps its result set.
             Stmt::Admin(admin)
                 if match &**admin {
                     tidb_ast::AdminStmt::Kill(_) | tidb_ast::AdminStmt::Flush(_) => true,
@@ -335,6 +343,17 @@ impl Session {
                         tidb_ast::ServerControlStmt::Shutdown
                             | tidb_ast::ServerControlStmt::Restart
                     ),
+                    tidb_ast::AdminStmt::AdminCheck(check) => match check.as_ref() {
+                        tidb_ast::AdminCheckStmt::Table { .. } => true,
+                        tidb_ast::AdminCheckStmt::Index { handle_ranges, .. } => {
+                            handle_ranges.is_empty()
+                        }
+                    },
+                    tidb_ast::AdminStmt::Reload(_) => true,
+                    tidb_ast::AdminStmt::BindingControl(
+                        tidb_ast::AdminBindingControlKind::Flush,
+                    ) => true,
+                    tidb_ast::AdminStmt::CreateWorkloadSnapshot => true,
                     _ => false,
                 } =>
             {

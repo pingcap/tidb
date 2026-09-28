@@ -584,7 +584,7 @@ impl Session {
     /// Splits the `CURRENT_USER()` identity (`user@host`) this session
     /// authenticated as, for privilege-registry lookups. `None` for a
     /// session with no front end.
-    pub(crate) fn current_identity(&self) -> Option<(&str, &str)> {
+    pub fn current_identity(&self) -> Option<(&str, &str)> {
         let identity = self.current_user.as_deref()?;
         identity.split_once('@')
     }
