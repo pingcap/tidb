@@ -23,9 +23,9 @@ use super::cache::{
 };
 use super::recovery::RegionErrorRecoveryPlan;
 use super::{
-    BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, KeyRange,
-    LeaderRequest, RegionAttempt, RegionBackoffBudget, RegionCache,
-    RegionErrorDisposition, RegionGcRound, RegionLoader, RegionLocation, RegionQueryLoader,
+    BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, KeyRange, LeaderRequest,
+    RegionAttempt, RegionBackoffBudget, RegionBackoffKind, RegionCache, RegionErrorDisposition,
+    RegionGcRound, RegionLoadError, RegionLoader, RegionLocation, RegionQueryLoader,
     RegionRecoveryError, RegionRecoveryLoader, RegionRouteError, RegionVerId, RequestSelection,
     RequestSelector, StoreMaintenanceRound,
 };
@@ -555,11 +555,41 @@ impl<L> BackgroundRegionCache<L> {
     }
 }
 
-struct FailFastBatchBackoff;
+/// Retries transient PD batch-scan gaps like client-go's `BoPDRPC`.
+///
+/// PD can briefly return an incomplete topology while a TiDB/TiKV process is
+/// starting or a region split is being published. Go keeps the request alive
+/// through its PD backoff budget; failing on the first gap turns that normal
+/// transition into a user-visible lookup error.
+struct RetryingBatchBackoff {
+    budget: RegionBackoffBudget,
+    retries: usize,
+}
 
-impl BatchScanBackoff for FailFastBatchBackoff {
-    fn backoff(&mut self, _reason: BatchScanRetryReason) -> Result<(), RegionRouteError> {
-        Err(RegionRouteError::BatchScanGap)
+impl Default for RetryingBatchBackoff {
+    fn default() -> Self {
+        Self {
+            budget: RegionBackoffBudget::campaign_default(),
+            retries: 0,
+        }
+    }
+}
+
+impl BatchScanBackoff for RetryingBatchBackoff {
+    fn backoff(&mut self, reason: BatchScanRetryReason) -> Result<(), RegionRouteError> {
+        let delay = self
+            .budget
+            .next_delay(RegionBackoffKind::PdRpc)
+            .map_err(|exhausted| {
+                RegionRouteError::Loader(RegionLoadError::new(
+                    "pd_batch_scan_backoff",
+                    format!("batch scan retry exhausted after {reason:?}: {exhausted:?}"),
+                ))
+            })?;
+        std::thread::sleep(delay);
+        self.budget.finish_wait(true);
+        self.retries += 1;
+        Ok(())
     }
 }
 
@@ -572,7 +602,7 @@ impl<L: RegionLoader> BackgroundRegionCache<L> {
         ranges: &[KeyRange],
     ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError> {
         self.with_cache(|cache| {
-            let mut backoff = FailFastBatchBackoff;
+            let mut backoff = RetryingBatchBackoff::default();
             cache.batch_locate_key_ranges(
                 ranges,
                 BatchLoadOptions {
@@ -582,6 +612,21 @@ impl<L: RegionLoader> BackgroundRegionCache<L> {
                 &mut backoff,
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_scan_backoff_retries_transient_gaps() {
+        let mut backoff = RetryingBatchBackoff {
+            budget: RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 1),
+            retries: 0,
+        };
+        assert!(backoff.backoff(BatchScanRetryReason::CoverageGap).is_ok());
+        assert_eq!(backoff.retries, 1);
     }
 }
 
