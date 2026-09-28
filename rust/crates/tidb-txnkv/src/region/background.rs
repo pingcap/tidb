@@ -23,7 +23,8 @@ use super::cache::{
 };
 use super::recovery::RegionErrorRecoveryPlan;
 use super::{
-    KeyRange, LeaderRequest, RegionAttempt, RegionBackoffBudget, RegionCache,
+    BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, KeyRange,
+    LeaderRequest, RegionAttempt, RegionBackoffBudget, RegionCache,
     RegionErrorDisposition, RegionGcRound, RegionLoader, RegionLocation, RegionQueryLoader,
     RegionRecoveryError, RegionRecoveryLoader, RegionRouteError, RegionVerId, RequestSelection,
     RequestSelector, StoreMaintenanceRound,
@@ -551,6 +552,36 @@ impl<L> BackgroundRegionCache<L> {
             .lock()
             .map(|state| state.closed)
             .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)
+    }
+}
+
+struct FailFastBatchBackoff;
+
+impl BatchScanBackoff for FailFastBatchBackoff {
+    fn backoff(&mut self, _reason: BatchScanRetryReason) -> Result<(), RegionRouteError> {
+        Err(RegionRouteError::BatchScanGap)
+    }
+}
+
+impl<L: RegionLoader> BackgroundRegionCache<L> {
+    /// Locates many ranges using one client-go-compatible PD batch scan. The
+    /// ordinary locate_ranges path loads each miss independently, which makes
+    /// a prepared IN-list pay one PD round trip per point.
+    pub fn batch_locate_ranges(
+        &self,
+        ranges: &[KeyRange],
+    ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError> {
+        self.with_cache(|cache| {
+            let mut backoff = FailFastBatchBackoff;
+            cache.batch_locate_key_ranges(
+                ranges,
+                BatchLoadOptions {
+                    need_buckets: false,
+                    need_leader: false,
+                },
+                &mut backoff,
+            )
+        })
     }
 }
 

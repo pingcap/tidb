@@ -595,6 +595,15 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         self.region_cache.locate_ranges(ranges)
     }
 
+    /// Resolves many ranges through the PD batch-scan path.
+    pub fn batch_locate_ranges(
+        &self,
+        ranges: &[KeyRange],
+    ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError>
+    {
+        self.region_cache.batch_locate_ranges(ranges)
+    }
+
     /// Coalesces a store-check request into the sole maintenance worker.
     pub fn trigger_store_check(&self) -> Result<bool, BackgroundRegionCacheError> {
         self.region_cache.trigger_store_check()

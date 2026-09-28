@@ -306,6 +306,21 @@ pub trait RegionLoader {
         self.load_region(key)
     }
 
+    /// Loads regions for a sorted batch of key ranges. The default keeps
+    /// injected loaders source-compatible; PD-backed loaders override this
+    /// with one BatchScanRegions request, matching client-go.
+    fn batch_load_regions(
+        &mut self,
+        ranges: &[KeyRange],
+        _limit: usize,
+        _options: BatchLoadOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        ranges
+            .iter()
+            .map(|range| self.load_region(&range.start))
+            .collect()
+    }
+
     /// Returns the most recently resolved PD labels for one store.
     ///
     /// Loaders without a label-bearing control plane retain source-compatible

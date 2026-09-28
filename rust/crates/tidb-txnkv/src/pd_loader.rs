@@ -345,15 +345,6 @@ impl RegionLoader for PdRegionLoader {
         self.load_region_by_end_key_routed(key, true, false)
     }
 
-    fn store_labels(&self, store_id: u64) -> &[(String, String)] {
-        self.store_labels
-            .get(&store_id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-    }
-}
-
-impl BatchRegionLoader for PdRegionLoader {
     fn batch_load_regions(
         &mut self,
         ranges: &[KeyRange],
@@ -383,6 +374,13 @@ impl BatchRegionLoader for PdRegionLoader {
             }
             Err(error) => Err(region_load_error(error)),
         }
+    }
+
+    fn store_labels(&self, store_id: u64) -> &[(String, String)] {
+        self.store_labels
+            .get(&store_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 }
 

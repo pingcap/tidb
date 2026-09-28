@@ -25,14 +25,14 @@ use super::super::{
 };
 use super::lookup::{cache_misses, insert_loaded_into, preserve_newer_buckets};
 use super::{
-    cache_now_seconds, BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason,
+    cache_now_seconds, BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason,
     RegionCache, RegionQueryBackoff, RegionQueryLoader, RegionQueryOptions, RegionQueryRetryReason,
     RegionQueryRoute,
 };
 
 impl<L> RegionCache<L>
 where
-    L: BatchRegionLoader,
+    L: super::RegionLoader,
 {
     /// Resolves ordered key ranges through valid cache entries first and the
     /// exact PD batch-scan boundary second.

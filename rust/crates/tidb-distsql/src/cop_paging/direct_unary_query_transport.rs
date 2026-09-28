@@ -55,7 +55,7 @@ use super::{
     CopPagingState, CopReadTaskError, CopReadTaskRuntime, ReadEngineGeneration,
     TransportFailureAction,
 };
-use crate::{RegionTaskEpoch, RegionTaskTopology, ReplicaReadType};
+use crate::{RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology, ReplicaReadType};
 
 use super::cop_iterator::blocking;
 pub use super::forwarding::UnaryNetworkMetrics;
@@ -673,7 +673,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let cluster_id = self.shared_runtime.cluster_id();
         let locations = self
             .shared_runtime
-            .locate_ranges(&requested_ranges)
+            .batch_locate_ranges(&requested_ranges)
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle.to_string())?
             .map_err(|error| DirectUnaryTransportError::Route(error).to_string())?;
         let topology = topology_from_locations(locations);
@@ -824,13 +824,20 @@ fn metadata_region_ranges(
 fn topology_from_locations(locations: Vec<RegionLocation>) -> Vec<RegionTaskTopology> {
     let mut topology = Vec::with_capacity(locations.len());
     for location in locations {
-        // Go's `buildCopTasks` normally splits each located region by PD
-        // buckets so the small, stable ranges can be cached by TiKV and
-        // executed concurrently by the coprocessor worker pool.
-        // The rust direct-unary transport dispatches bucket fragments
-        // serially, so at concurrency=1 a single region scan becomes many
-        // sequential round trips. Keep the pre-bucket "one task per located
-        // region" behavior until the dispatcher can overlap fragments.
+        // Go's `buildCopTasks` carries the selected leader peer from the
+        // located region into every cop task. Preserve that peer here so the
+        // first RPC goes directly to the serving store; leaving it empty
+        // forces the selector to rediscover a peer for every point range.
+        let leader = location
+            .leader_peer_id
+            .and_then(|id| location.peers.iter().find(|peer| peer.id == id))
+            .or_else(|| location.peers.first());
+        let peer = leader.map(|peer| RegionTaskPeer {
+            id: peer.id,
+            store_id: peer.store_id,
+            role: peer.role.as_i32(),
+            is_witness: peer.is_witness,
+        });
         let (bucket_keys, buckets_version) = (Vec::new(), 0u64);
         topology.push(RegionTaskTopology {
             region_id: location.region.id,
@@ -838,7 +845,8 @@ fn topology_from_locations(locations: Vec<RegionLocation>) -> Vec<RegionTaskTopo
                 conf_ver: location.region.epoch.conf_ver,
                 version: location.region.epoch.version,
             }),
-            peer: None,
+            store_batch_eligible: location.leader_peer_id.is_some(),
+            peer,
             start_key: location.start_key,
             end_key: location.end_key,
             bucket_keys,
@@ -2188,7 +2196,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .collect();
         let locations = self
             .shared_runtime
-            .locate_ranges(&region_ranges)
+            .batch_locate_ranges(&region_ranges)
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
             .map_err(DirectUnaryTransportError::Route)?;
         Ok(topology_from_locations(locations))
