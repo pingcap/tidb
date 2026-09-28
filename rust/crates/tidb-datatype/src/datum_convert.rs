@@ -1067,6 +1067,27 @@ pub fn produce_string_with_type(
     produce_string_reported(value, target, pad_zero, &mut Diagnostics::new(None))
 }
 
+/// Go `ProduceStrWithSpecifiedTp` with statement diagnostics, without the
+/// charset conversion performed by general `Datum.ConvertTo`. Callers choose
+/// whether fixed binary targets should be padded after checking allocation limits.
+pub fn produce_string_with_type_in_context(
+    value: Vec<u8>,
+    target: &FieldType,
+    pad_zero: bool,
+    context: &crate::ConversionContext<'_>,
+) -> Result<DatumConversion, DatumValueError> {
+    let mut diagnostics = Diagnostics::new(Some(context));
+    let produced = produce_string_reported(value, target, pad_zero, &mut diagnostics)?;
+    Ok(DatumConversion {
+        value: if target.charset() == Charset::Binary {
+            Datum::new_bytes(produced.value)
+        } else {
+            Datum::new_collation_string(produced.value, target.collation())
+        },
+        error: diagnostics.error,
+    })
+}
+
 fn produce_string_reported(
     mut value: Vec<u8>,
     target: &FieldType,

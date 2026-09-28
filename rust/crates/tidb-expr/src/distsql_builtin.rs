@@ -73,10 +73,15 @@ fn pb_literal(
         ExprType::Uint64 => tidb_codec::decode_uint(val)
             .map(|(_, v)| constant(Datum::UInt(v), typed_or(expr, FieldTypeCode::LongLong)))
             .map_err(|e| bad("uint", &e)),
-        ExprType::String => Ok(constant(
-            Datum::Bytes(val.to_vec()),
-            typed_or(expr, FieldTypeCode::String),
-        )),
+        ExprType::String => {
+            // Go SetBytesAsString retains KindString, even for binary collation.
+            // Typed constant evaluation distinguishes it from KindBytes.
+            let field = typed_or(expr, FieldTypeCode::String);
+            Ok(constant(
+                Datum::new_collation_string(val.to_vec(), field.collation()),
+                field,
+            ))
+        }
         ExprType::Bytes => Ok(constant(
             Datum::Bytes(val.to_vec()),
             FieldType::new(FieldTypeCode::String),
@@ -275,9 +280,9 @@ pub fn pb_to_expr_in(
     } else {
         typed_or(expr, FieldTypeCode::Null)
     };
-    Ok(Expression::ScalarFunction(ScalarFunction::from_pb(
-        builtin, ret_type, args,
-    )))
+    ScalarFunction::from_pb(builtin, ret_type, args)
+        .map(Expression::ScalarFunction)
+        .map_err(|error| format!("protobuf function construction failed: {error:?}"))
 }
 
 #[cfg(test)]
@@ -500,6 +505,28 @@ mod tests {
                 .is_err(),
                 "{sig:?}"
             );
+        }
+    }
+
+    #[test]
+    fn protobuf_string_and_bytes_keep_distinct_datum_kinds() {
+        for collation in [46, 63] {
+            let mut pb = text("123");
+            pb.field_type.as_mut().unwrap().collate = Some(collation);
+            let expr = pb_to_expr(&pb, &[]).unwrap();
+            let Expression::Constant(constant) = expr else {
+                panic!("literal");
+            };
+            assert!(matches!(constant.value, Datum::String(_)));
+            assert_eq!(
+                constant.value.collation(),
+                Some(constant.ret_type.unwrap().collation())
+            );
+            pb.tp = Some(tipb::ExprType::Bytes as i32);
+            let Expression::Constant(constant) = pb_to_expr(&pb, &[]).unwrap() else {
+                panic!("literal");
+            };
+            assert!(matches!(constant.value, Datum::Bytes(_)));
         }
     }
 

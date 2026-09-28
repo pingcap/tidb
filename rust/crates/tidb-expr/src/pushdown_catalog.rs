@@ -245,8 +245,8 @@ impl BuiltinSignature {
     /// cast to; `own` is that argument's own evaluation type. Fixed-shape
     /// rows read `arg_types`. The variadic conditional rows type their slots
     /// the way Go's `getFunction` does (`builtin_control.go`): a CASE WHEN
-    /// condition and IF's first argument keep their own type
-    /// (`args[i].GetType()`), and every value slot is the return type.
+    /// condition and IF's first argument keep the type of the boolean wrapper
+    /// built by `wrapWithIsTrue` (`args[i].GetType()`), and every value slot is the return type.
     #[must_use]
     pub fn arg_type_at(&self, index: usize, arity: usize, own: EvalType) -> Option<EvalType> {
         if !self.arg_types.is_empty() {
@@ -286,7 +286,7 @@ impl BuiltinSignature {
             EvalType::Int => int_field_type(
                 FieldTypeCode::LongLong.mysql_type().into(),
                 flag,
-                if self.name == "isnull" {
+                if matches!(self.name, "isnull" | "istrue_with_null") {
                     1
                 } else {
                     MAX_INT_WIDTH
@@ -1263,17 +1263,30 @@ pub const CATALOG: &[BuiltinSignature] = &[
     // `piFunctionClass.getFunction`: no arguments, and `PI()` is a constant on
     // both sides of the wire.
     signature("pi", &[], &[], EvalType::Real, ScalarFuncSig::Pi, false),
-    // The boolean families Go's own expression BUILDER composes when a WHERE
-    // clause is lowered: `istrue_with_null` is the wrapper
-    // `builtinIsTrueWithNullSig` (IntIsTrueWithNull) that Go's rewriter puts
-    // under every NOT over an integer-valued predicate, and `not` over an
-    // integer argument is `UnaryNotInt`. Both return a nonzero-count TINYINT.
+    // Go wrapWithIsTrue selects the truth signature from the argument domain;
+    // nonnumeric domains use an implicit Real cast and NULL is preserved.
     signature(
         "istrue_with_null",
-        &[ArgPattern::ANY],
+        &[ArgPattern::eval(EvalType::Int)],
         &[EvalType::Int],
         EvalType::Int,
         ScalarFuncSig::IntIsTrueWithNull,
+        false,
+    ),
+    signature(
+        "istrue_with_null",
+        &[ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal],
+        EvalType::Int,
+        ScalarFuncSig::DecimalIsTrueWithNull,
+        false,
+    ),
+    signature(
+        "istrue_with_null",
+        &[ArgPattern::ANY],
+        &[EvalType::Real],
+        EvalType::Int,
+        ScalarFuncSig::RealIsTrueWithNull,
         false,
     ),
     signature(
@@ -2371,6 +2384,23 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
 /// Describes a call of `name` over `args`, when the catalog resolves one.
 #[must_use]
 pub fn build_call(name: &str, args: Vec<PbScalar>) -> Option<PbScalar> {
+    let arity = args.len();
+    let args = args
+        .into_iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            let condition = (name == "if" && arity == 3 && index == 0)
+                || (name == "case" && index % 2 == 0 && index + 1 < arity)
+                || (matches!(name, "and" | "or") && arity == 2);
+            if condition && argument.eval_type() != EvalType::Int {
+                // Go wraps non-integer conditions before selecting the control
+                // builtin. Casting directly to Int would lose nonzero fractions.
+                build_call("istrue_with_null", vec![argument])
+            } else {
+                Some(argument)
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
     let signature = resolve(name, &args)?;
     Some(PbScalar::Call { signature, args })
 }
@@ -3055,6 +3085,78 @@ mod tests {
         PbScalar::Column {
             offset: 0,
             field_type: FieldType::new(code),
+        }
+    }
+
+    #[test]
+    fn control_conditions_use_go_typed_truth_wrappers() {
+        for name in ["case", "if"] {
+            for (code, signature) in [
+                (FieldTypeCode::Double, ScalarFuncSig::RealIsTrueWithNull),
+                (
+                    FieldTypeCode::NewDecimal,
+                    ScalarFuncSig::DecimalIsTrueWithNull,
+                ),
+                (FieldTypeCode::VarString, ScalarFuncSig::RealIsTrueWithNull),
+            ] {
+                let call = build_call(
+                    name,
+                    vec![
+                        column(code),
+                        PbScalar::IntLiteral(1),
+                        PbScalar::IntLiteral(0),
+                    ],
+                )
+                .unwrap();
+                let pb = lower(&call).unwrap();
+                assert_eq!(pb.children[0].sig(), signature);
+                assert_eq!(pb.children[0].field_type.as_ref().unwrap().flen(), 1);
+                if code == FieldTypeCode::VarString {
+                    assert_eq!(
+                        pb.children[0].children[0].sig(),
+                        ScalarFuncSig::CastStringAsReal
+                    );
+                }
+                if code == FieldTypeCode::Double {
+                    let expression = crate::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+                    for (value, expected) in [
+                        (Datum::Real(0.5), 1),
+                        (Datum::Real(0.0), 0),
+                        (Datum::Null, 0),
+                    ] {
+                        let row = tidb_chunk::mutrow::MutRow::from_datums(&[value]);
+                        assert_eq!(
+                            expression.eval(&crate::NoColumns, row.to_row()).unwrap(),
+                            Datum::Int(expected)
+                        );
+                    }
+                }
+            }
+            let call = build_call(
+                name,
+                vec![
+                    column(FieldTypeCode::LongLong),
+                    PbScalar::IntLiteral(1),
+                    PbScalar::IntLiteral(0),
+                ],
+            )
+            .unwrap();
+            assert_eq!(lower(&call).unwrap().children[0].tp(), ExprType::ColumnRef);
+        }
+        for name in ["and", "or"] {
+            let call = build_call(
+                name,
+                vec![column(FieldTypeCode::Double), PbScalar::IntLiteral(1)],
+            )
+            .unwrap();
+            let pb = lower(&call).unwrap();
+            assert_eq!(pb.children[0].sig(), ScalarFuncSig::RealIsTrueWithNull);
+            let expression = crate::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+            let row = tidb_chunk::mutrow::MutRow::from_datums(&[Datum::Real(0.5)]);
+            assert_eq!(
+                expression.eval(&crate::NoColumns, row.to_row()).unwrap(),
+                Datum::Int(1)
+            );
         }
     }
 

@@ -8841,8 +8841,8 @@ fn pushed_conditional_signatures_evaluate_in_the_coprocessor_like_go() {
     assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE IFNULL(b, 0) < 3 ORDER BY id"), ["1", "3"]);
     assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE CAST(d AS SIGNED) > 20210000000000 ORDER BY id"), ["1"]);
     assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE IFNULL(CAST(j AS CHAR), 'n') = '\"yy\"' ORDER BY id"), ["3"]);
-    // A non-integer condition keeps its own type (Go `builtin_control.go`
-    // `args[i].GetType()`), so 0.5 is TRUE rather than truncated to 0.
+    // Go wraps non-integer conditions with typed IsTrueWithNull before
+    // the control builtin reads EvalInt, so a nonzero fraction stays TRUE.
     assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE CASE WHEN a / 10 THEN 1 ELSE 0 END = 1 ORDER BY id"), ["1", "2"]);
 }
 

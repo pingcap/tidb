@@ -35,6 +35,58 @@ use tidb_datatype::{
     JSON_TYPE_CODE_TIMESTAMP,
 };
 
+/// Go's protobuf cast-as-string signatures retain the complete wire field
+/// type. Producing the string and padding fixed binary values are separate
+/// operations; variable-width binary strings truncate but never pad.
+pub(crate) fn eval_string_cast_with_type(
+    value: Datum,
+    source: Option<&FieldType>,
+    target: &FieldType,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    let value = match value {
+        Datum::Int(value) if source.is_some_and(FieldType::is_unsigned) => {
+            Datum::UInt(value as u64)
+        }
+        value => value,
+    };
+    let bytes = match year_zero_string(&value, source) {
+        Some(text) => text.into_bytes(),
+        None => datum_binary_bytes(&value)?,
+    };
+    let warnings = crate::constant::ConversionWarnings(ctx);
+    let zone = ctx.time_zone();
+    let context = tidb_datatype::ConversionContext::new(
+        ctx.type_flags(),
+        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+        &warnings,
+    );
+    let converted =
+        tidb_datatype::produce_string_with_type_in_context(bytes, target, false, &context)
+            .map_err(|_| EvalError::Unsupported("protobuf string production"))?;
+    if let Some(error) = converted.error {
+        return Err(EvalError::Conversion(error));
+    }
+    let bytes = converted
+        .value
+        .as_raw_bytes()
+        .ok_or(EvalError::Unsupported("produced string datum"))?;
+    // Go pads only TypeString with binary collation, after successful production.
+    if target.code() == FieldTypeCode::String
+        && target.is_binary_string()
+        && target.flen() > bytes.len() as i64
+    {
+        if target.flen() as u64 > ctx.max_allowed_packet() {
+            ctx.handle_allowed_packet_overflowed("cast_as_binary")?;
+            return Ok(Datum::Null);
+        }
+        let mut padded = bytes.to_vec();
+        padded.resize(target.flen() as usize, 0);
+        return Ok(Datum::new_bytes(padded));
+    }
+    Ok(converted.value)
+}
+
 /// Internal marker used when a wrapper carries Go's `UnspecifiedLength`
 /// decimal scale through the AST-facing `CastType::Decimal` (whose fields are
 /// unsigned).  A wrapper cast with an unspecified scale must preserve the

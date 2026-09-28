@@ -607,4 +607,223 @@ mod next_boundary_audit {
             );
         }
     }
+    #[test]
+    fn audit_typed_if_preserves_conversion_errors() {
+        let context = ctx();
+        let bad = tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(b"invalid".to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let pb = call(tipb::ScalarFuncSig::IfInt, vec![int(1), bad, int(0)]);
+        let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+        let result = expr.eval(context.as_ref(), tidb_chunk::row::Row::empty());
+        assert!(
+            matches!(result, Err(tidb_expr::EvalError::Conversion(_))),
+            "Go typed IF returns conversion error: {result:?}"
+        );
+    }
+    #[test]
+    fn audit_typed_is_null_evaluates_its_domain() {
+        let context = ctx();
+        let bad = tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(b"invalid".to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let pb = call(tipb::ScalarFuncSig::RealIsNull, vec![bad]);
+        let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+        let result = expr.eval(context.as_ref(), tidb_chunk::row::Row::empty());
+        assert!(
+            matches!(result, Err(tidb_expr::EvalError::Conversion(_))),
+            "Go EvalReal propagates conversion error: {result:?}"
+        );
+    }
+    #[test]
+    fn audit_binary_varstring_cast_respects_wire_length() {
+        let input = tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(b"abcd".to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let mut pb = call(tipb::ScalarFuncSig::CastStringAsString, vec![input]);
+        pb.field_type = Some(tipb::FieldType {
+            tp: Some(253),
+            flen: Some(2),
+            charset: Some("binary".into()),
+            collate: Some(63),
+            flag: Some(128),
+            ..Default::default()
+        });
+        let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+        let result = expr
+            .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
+            .unwrap();
+        assert_eq!(result.sql_bytes().unwrap(), b"ab");
+    }
+    #[test]
+    fn audit_decoded_string_function_derives_coercibility() {
+        let text = |v: &[u8]| tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(v.to_vec()),
+            field_type: Some(tipb::FieldType {
+                tp: Some(253),
+                charset: Some("utf8mb4".into()),
+                collate: Some(46),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut pb = call(
+            tipb::ScalarFuncSig::IfNullString,
+            vec![text(b"x"), text(b"y")],
+        );
+        pb.field_type = text(b"").field_type;
+        let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+        assert_eq!(tidb_expr::collation_derive::coercibility_of(&expr).0, 4);
+    }
+
+    #[test]
+    fn typed_control_families_keep_request_warning_policy_and_laziness() {
+        use tipb::ScalarFuncSig::*;
+        let text = |v: &str| tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(v.as_bytes().to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let null = tipb::Expr::default();
+        for pb in [
+            call(IfInt, vec![int(1), text("invalid"), int(0)]),
+            call(IfNullInt, vec![text("invalid"), int(1)]),
+            call(CaseWhenInt, vec![int(1), text("invalid"), int(0)]),
+            call(IntIsNull, vec![text("invalid")]),
+            call(RealIsNull, vec![text("invalid")]),
+        ] {
+            let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+            for (flags, warning_count) in [
+                (0, 0),
+                (FLAG_TRUNCATE_AS_WARNING, 1),
+                (FLAG_IGNORE_TRUNCATE, 0),
+            ] {
+                let context = RequestEvalContext::new(SessionTimeZone::utc(), 4, flags);
+                let result = expr.eval(&context, tidb_chunk::row::Row::empty());
+                if flags == 0 {
+                    assert!(result.is_err(), "{:?}: {result:?}", pb.sig());
+                } else {
+                    assert_eq!(result.unwrap(), Datum::Int(0), "{:?}", pb.sig());
+                }
+                let warnings = context.take_warnings();
+                assert_eq!(
+                    warnings.len(),
+                    warning_count,
+                    "{:?}: {warnings:?}",
+                    pb.sig()
+                );
+                if warning_count != 0 {
+                    assert_eq!(warnings[0].0, 1292);
+                }
+            }
+        }
+        for pb in [
+            call(IfInt, vec![int(0), text("invalid"), int(7)]),
+            call(IfNullInt, vec![int(7), text("invalid")]),
+            call(CaseWhenInt, vec![null.clone(), text("invalid"), int(7)]),
+            call(
+                CaseWhenInt,
+                vec![int(0), text("invalid"), int(1), int(7), text("invalid")],
+            ),
+        ] {
+            let context = ctx();
+            let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+            assert_eq!(
+                expr.eval(context.as_ref(), tidb_chunk::row::Row::empty())
+                    .unwrap(),
+                Datum::Int(7)
+            );
+            assert!(context.take_warnings().is_empty());
+        }
+    }
+
+    #[test]
+    fn string_cast_field_types_preserve_bytes_padding_and_diagnostics() {
+        let input = |bytes: &[u8]| tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(bytes.to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        for (code, bytes, width, expected, warned) in [
+            (253, b"abcd".as_slice(), 2, b"ab".as_slice(), true),
+            (253, b"a".as_slice(), 3, b"a".as_slice(), false),
+            (254, b"a".as_slice(), 3, b"a\0\0".as_slice(), false),
+            (
+                253,
+                b"\xff\xfe\x00".as_slice(),
+                2,
+                b"\xff\xfe".as_slice(),
+                true,
+            ),
+            (253, b"abcd".as_slice(), -1, b"abcd".as_slice(), false),
+        ] {
+            for flags in [0, FLAG_TRUNCATE_AS_WARNING, FLAG_IGNORE_TRUNCATE] {
+                let context = RequestEvalContext::new(SessionTimeZone::utc(), 4, flags);
+                let mut pb = call(tipb::ScalarFuncSig::CastStringAsString, vec![input(bytes)]);
+                pb.field_type = Some(tipb::FieldType {
+                    tp: Some(code),
+                    flen: Some(width),
+                    charset: Some("binary".into()),
+                    collate: Some(63),
+                    flag: Some(128),
+                    ..Default::default()
+                });
+                let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+                let result = expr.eval(&context, tidb_chunk::row::Row::empty());
+                if warned && flags == 0 {
+                    assert!(result.is_err());
+                } else {
+                    assert_eq!(result.unwrap().sql_bytes().unwrap(), expected);
+                }
+                let warnings = context.take_warnings();
+                assert_eq!(
+                    warnings.len(),
+                    usize::from(warned && flags == FLAG_TRUNCATE_AS_WARNING)
+                );
+                if !warnings.is_empty() {
+                    assert_eq!(warnings[0].0, 1406);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_binary_padding_checks_packet_limit_before_allocation() {
+        let input = tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(b"a".to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let mut pb = call(tipb::ScalarFuncSig::CastStringAsString, vec![input]);
+        pb.field_type = Some(tipb::FieldType {
+            tp: Some(254),
+            flen: Some(i32::MAX),
+            charset: Some("binary".into()),
+            collate: Some(63),
+            flag: Some(128),
+            ..Default::default()
+        });
+        let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+        let context = RequestEvalContext::new(SessionTimeZone::utc(), 4, FLAG_TRUNCATE_AS_WARNING);
+        assert_eq!(
+            expr.eval(&context, tidb_chunk::row::Row::empty()).unwrap(),
+            Datum::Null
+        );
+        let warnings = context.take_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].0, 1301);
+    }
 }

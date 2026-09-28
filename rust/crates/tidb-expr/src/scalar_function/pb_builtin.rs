@@ -15,10 +15,7 @@
 //! Go `getSignatureByPB`: select an implementation from the wire enum.
 //! SQL function names are diagnostic metadata, never an overload selector here.
 
-use super::{
-    cast_json_argument_value, eval_numeric_operand_row, eval_numeric_row, logic_truthy,
-    ScalarFunction,
-};
+use super::{cast_json_argument_value, eval_numeric_operand_row, eval_numeric_row, ScalarFunction};
 use crate::context::{Columns, EvalError};
 use crate::expression::ConstLevel;
 use tidb_ast::BinaryOp;
@@ -45,13 +42,14 @@ enum Kernel {
     IntegerMultiply {
         unsigned: bool,
     },
-    IsNull,
+    IsNull(EvalType),
     Truth {
         negate: bool,
+        domain: EvalType,
     },
-    Case,
-    If,
-    IfNull,
+    Case(EvalType),
+    If(EvalType),
+    IfNull(EvalType),
     Cast {
         source: EvalType,
         target: EvalType,
@@ -153,15 +151,48 @@ impl PbBuiltin {
             LikeSig => Kernel::Like,
             LogicalAnd => Kernel::Logic(BinaryOp::LogicAnd),
             LogicalOr => Kernel::Logic(BinaryOp::LogicOr),
-            IntIsNull | RealIsNull | DecimalIsNull | StringIsNull | TimeIsNull | DurationIsNull
-            | VectorFloat32IsNull => Kernel::IsNull,
-            UnaryNotInt => Kernel::Truth { negate: true },
-            IntIsTrueWithNull => Kernel::Truth { negate: false },
-            CaseWhenInt | CaseWhenReal | CaseWhenDecimal | CaseWhenTime | CaseWhenDuration
-            | CaseWhenJson => Kernel::Case,
-            IfInt | IfReal | IfDecimal | IfTime | IfDuration | IfJson => Kernel::If,
-            IfNullInt | IfNullReal | IfNullDecimal | IfNullString | IfNullTime | IfNullDuration
-            | IfNullJson => Kernel::IfNull,
+            IntIsNull => Kernel::IsNull(EvalType::Int),
+            RealIsNull => Kernel::IsNull(EvalType::Real),
+            DecimalIsNull => Kernel::IsNull(EvalType::Decimal),
+            StringIsNull => Kernel::IsNull(EvalType::String),
+            TimeIsNull => Kernel::IsNull(EvalType::Datetime),
+            DurationIsNull => Kernel::IsNull(EvalType::Duration),
+            VectorFloat32IsNull => Kernel::IsNull(EvalType::VectorFloat32),
+            UnaryNotInt => Kernel::Truth {
+                negate: true,
+                domain: EvalType::Int,
+            },
+            IntIsTrueWithNull => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Int,
+            },
+            RealIsTrueWithNull => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Real,
+            },
+            DecimalIsTrueWithNull => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Decimal,
+            },
+            CaseWhenInt => Kernel::Case(EvalType::Int),
+            CaseWhenReal => Kernel::Case(EvalType::Real),
+            CaseWhenDecimal => Kernel::Case(EvalType::Decimal),
+            CaseWhenTime => Kernel::Case(EvalType::Datetime),
+            CaseWhenDuration => Kernel::Case(EvalType::Duration),
+            CaseWhenJson => Kernel::Case(EvalType::Json),
+            IfInt => Kernel::If(EvalType::Int),
+            IfReal => Kernel::If(EvalType::Real),
+            IfDecimal => Kernel::If(EvalType::Decimal),
+            IfTime => Kernel::If(EvalType::Datetime),
+            IfDuration => Kernel::If(EvalType::Duration),
+            IfJson => Kernel::If(EvalType::Json),
+            IfNullInt => Kernel::IfNull(EvalType::Int),
+            IfNullReal => Kernel::IfNull(EvalType::Real),
+            IfNullDecimal => Kernel::IfNull(EvalType::Decimal),
+            IfNullString => Kernel::IfNull(EvalType::String),
+            IfNullTime => Kernel::IfNull(EvalType::Datetime),
+            IfNullDuration => Kernel::IfNull(EvalType::Duration),
+            IfNullJson => Kernel::IfNull(EvalType::Json),
             CharLength => Kernel::String {
                 operation: StringOp::Length,
                 binary: true,
@@ -326,45 +357,56 @@ impl PbBuiltin {
                 .ok_or(EvalError::Unsupported("missing protobuf builtin argument"))?
                 .eval(ctx, row)
         };
+        let typed_argument = |index: usize, domain: EvalType| {
+            let arg = args
+                .get(index)
+                .ok_or(EvalError::Unsupported("missing protobuf builtin argument"))?;
+            eval_numeric_row(arg, ctx, row, domain)
+        };
+        let condition = |index: usize| -> Result<Option<bool>, EvalError> {
+            let value = typed_argument(index, EvalType::Int)?;
+            Ok(crate::arg_eval_type::eval_int(&value)?.map(|value| value != 0))
+        };
         match self.kernel {
-            Kernel::Case => {
+            Kernel::Case(domain) => {
                 let (pairs, remainder) = args.as_chunks::<2>();
-                for pair in pairs {
-                    if logic_truthy(&pair[0].eval(ctx, row)?, ctx)? == Some(true) {
-                        return pair[1].eval(ctx, row);
+                for (index, pair) in pairs.iter().enumerate() {
+                    if condition(index * 2)? == Some(true) {
+                        return eval_numeric_row(&pair[1], ctx, row, domain);
                     }
                 }
-                remainder
-                    .first()
-                    .map_or(Ok(Datum::Null), |value| value.eval(ctx, row))
+                remainder.first().map_or(Ok(Datum::Null), |value| {
+                    eval_numeric_row(value, ctx, row, domain)
+                })
             }
-            Kernel::If => {
-                let branch = if logic_truthy(&argument(0)?, ctx)? == Some(true) {
-                    1
-                } else {
-                    2
-                };
-                argument(branch)
+            Kernel::If(domain) => {
+                let branch = if condition(0)? == Some(true) { 1 } else { 2 };
+                typed_argument(branch, domain)
             }
-            Kernel::IfNull => {
-                let value = argument(0)?;
+            Kernel::IfNull(domain) => {
+                let value = typed_argument(0, domain)?;
                 if value.is_null() {
-                    argument(1)
+                    typed_argument(1, domain)
                 } else {
                     Ok(value)
                 }
             }
-            Kernel::IsNull => Ok(Datum::Int(i64::from(argument(0)?.is_null()))),
-            Kernel::Truth { negate } => Ok(logic_truthy(&argument(0)?, ctx)?
-                .map_or(Datum::Null, |value| Datum::Int(i64::from(value ^ negate)))),
+            Kernel::IsNull(domain) => {
+                Ok(Datum::Int(i64::from(typed_argument(0, domain)?.is_null())))
+            }
+            Kernel::Truth { negate, domain } => {
+                let value = typed_argument(0, domain)?;
+                Ok(crate::truthy_of(&value)?
+                    .map_or(Datum::Null, |value| Datum::Int(i64::from(value ^ negate))))
+            }
             Kernel::Logic(op) => {
-                let left = logic_truthy(&argument(0)?, ctx)?;
+                let left = condition(0)?;
                 if (op == BinaryOp::LogicAnd && left == Some(false))
                     || (op == BinaryOp::LogicOr && left == Some(true))
                 {
                     return Ok(Datum::Int(i64::from(left.unwrap())));
                 }
-                let right = logic_truthy(&argument(1)?, ctx)?;
+                let right = condition(1)?;
                 Ok(match (op, left, right) {
                     (BinaryOp::LogicAnd, _, Some(false)) => Datum::Int(0),
                     (BinaryOp::LogicOr, _, Some(true)) => Datum::Int(1),
@@ -507,6 +549,14 @@ impl PbBuiltin {
                 let field = function
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("protobuf cast result type"))?;
+                if target == EvalType::String {
+                    return crate::cast::eval_string_cast_with_type(
+                        value,
+                        args[0].static_type(),
+                        field,
+                        ctx,
+                    );
+                }
                 use tidb_ast::CastType;
                 let len = u32::try_from(field.flen()).ok();
                 let fsp = u32::try_from(field.decimal()).ok();
@@ -521,17 +571,6 @@ impl PbBuiltin {
                         } else {
                             fsp.unwrap_or(0)
                         },
-                    },
-                    EvalType::String if field.is_binary_string() => CastType::Binary {
-                        len: if field.code() == tidb_datatype::FieldTypeCode::String {
-                            len
-                        } else {
-                            None
-                        },
-                    },
-                    EvalType::String => CastType::Char {
-                        len,
-                        charset: Some(field.charset_name().to_owned()),
                     },
                     EvalType::Datetime | EvalType::Timestamp
                         if field.code() == tidb_datatype::FieldTypeCode::Date =>

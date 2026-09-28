@@ -668,14 +668,27 @@ impl ScalarFunction {
     }
 
     /// Go newDistSQLFunctionBySig: retain the wire type and implementation.
-    pub(crate) fn from_pb(builtin: PbBuiltin, ret_type: FieldType, args: Vec<Expression>) -> Self {
-        Self {
+    pub(crate) fn from_pb(
+        builtin: PbBuiltin,
+        ret_type: FieldType,
+        args: Vec<Expression>,
+    ) -> Result<Self, EvalError> {
+        // Go passes the generated wire enum name (not its SQL alias) to
+        // deriveCollation, then stores coercibility independently of the wire type.
+        let collation = crate::collation_derive::derive_collation(
+            builtin.signature().as_str_name(),
+            &args,
+            ret_type.eval_type(),
+        )?;
+        let function = Self {
             func_name: CiString::new(format!("sig_{:?}", builtin.signature())),
             ret_type: Some(ret_type),
             args,
             pb_builtin: Some(builtin),
             ..Default::default()
-        }
+        };
+        function.collation.set_coercibility(collation.coer);
+        Ok(function)
     }
 
     /// The signature selected by protobuf decoding, preserved by Clone.
