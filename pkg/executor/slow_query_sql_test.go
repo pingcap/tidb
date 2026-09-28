@@ -931,6 +931,7 @@ select * from t_truncated;
 func TestPointReadScanDetailsInDiagnostics(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
+	newCfg.Instance.EnableCollectExecutionInfo.Store(true)
 	newCfg.Log.SlowQueryFile = filepath.Join(t.TempDir(), "slow.log")
 	config.StoreGlobalConfig(&newCfg)
 	t.Cleanup(func() { config.StoreGlobalConfig(originCfg) })
