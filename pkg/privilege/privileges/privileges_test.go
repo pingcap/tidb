@@ -180,7 +180,7 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 	rootTk.MustExec("GRANT SELECT(a) ON t TO r;")
 	rootTk.MustExec("GRANT r TO u;")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u", Hostname: "%"}, nil, nil, nil))
-	tk.MustGetErrCode("SELECT a FROM test.t;", mysql.ErrColumnaccessDenied)
+	tk.MustGetErrCode("SELECT a FROM test.t;", mysql.ErrTableaccessDenied)
 	tk.MustExec("SET ROLE r;")
 	tk.MustQuery("SELECT a FROM test.t;")
 	tk.MustGetErrCode("SELECT b FROM test.t;", mysql.ErrColumnaccessDenied)
@@ -830,7 +830,7 @@ func TestPerformanceSchema(t *testing.T) {
 	tk.MustExec(`CREATE USER 'u1'@'localhost';`)
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustGetErrCode(`select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'`, errno.ErrColumnaccessDenied)
+	tk.MustGetErrCode(`select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'`, errno.ErrTableaccessDenied)
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT SELECT ON *.* TO 'u1'@'localhost';`)
@@ -1829,7 +1829,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		},
 		{
 			sql:     "select * from tmp join t where tmp.id=t.id",
-			errcode: mysql.ErrColumnaccessDenied,
+			errcode: mysql.ErrTableaccessDenied,
 		},
 		{
 			sql:     "(select * from tmp) union (select * from t)",
