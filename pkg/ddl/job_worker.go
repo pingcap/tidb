@@ -133,10 +133,7 @@ type jobContext struct {
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
 	// DXF propagates add-index reorganization RU v2 through recordDistTaskRU ->
 	// reorgCtx.ru -> reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
-	// accountPendingReorgRU -> Job.RU. Both the ingested index KV size
-	// (Summary.IndexKVSize) and the temp-index merge committed transaction bytes
-	// (Summary.MergeTempIndexTxnKVSize) are read from the task meta. RU is
-	// persisted only after the matching table-state transition succeeds.
+	// accountPendingReorgRU -> Job.RU, reading the workload from the task meta.
 	pendingReorgRU float64
 	// Keep storage-class history changes pending until a batched multi-schema
 	// step is known to commit its TableInfo changes.

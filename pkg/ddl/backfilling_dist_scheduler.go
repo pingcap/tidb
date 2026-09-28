@@ -247,23 +247,16 @@ func skipMergeSort(stats []simplesst.MultipleFilesStat, concurrency int) bool {
 
 // OnDone implements scheduler.Extension interface.
 // For the temp-index merge step it records the committed transaction bytes of
-// the succeeded subtasks into task.Meta. The framework persists the mutated meta
-// together with the success state transition, so the workload survives the
-// subtask history transfer and recordDistTaskRU can convert it to RU later.
-// The recorded size is best-effort: it is the sum of the subtask summaries that
-// were persisted, and bytes committed by a subtask that later failed are not
-// recoverable, see mergeTempIndexExecutor.RunSubtask.
+// the subtasks into task.Meta. The framework persists the mutated meta with the
+// success state transition, so recordDistTaskRU can convert it to RU later, even
+// after the subtasks are moved to the history tables. The recorded size is
+// best-effort, see mergeTempIndexExecutor.RunSubtask.
 func (sch *LitBackfillScheduler) OnDone(_ context.Context, h diststorage.TaskHandle, task *proto.Task) error {
-	// The temp-index merge workload is only accounted in NextGen, and reverted
-	// tasks are not accounted at all.
+	// Only the NextGen temp-index merge is accounted, and reverted tasks are not
+	// accounted at all.
 	if !kerneltype.IsNextGen() || task.State == proto.TaskStateReverting || !sch.MergeTempIndex {
 		return nil
 	}
-	// The temp-index merge writes through transactions, not ingest. Record the
-	// committed transaction bytes into the task meta, like IndexKVSize for the
-	// backfill task. The framework persists the new meta when the task succeeds,
-	// so recordDistTaskRU can convert it to RU even after the subtasks are moved
-	// to the history tables.
 	summaries, err := h.GetPreviousSubtaskSummary(task.ID, proto.BackfillStepMergeTempIndex)
 	if err != nil {
 		return errors.Trace(err)
@@ -274,9 +267,7 @@ func (sch *LitBackfillScheduler) OnDone(_ context.Context, h diststorage.TaskHan
 	}
 	var txnKVSize uint64
 	for _, summary := range summaries {
-		if size := summary.Processed.Load(); size > 0 {
-			txnKVSize += uint64(size)
-		}
+		txnKVSize += uint64(summary.Processed.Load())
 	}
 	if taskMeta.Summary == nil {
 		taskMeta.Summary = &BackfillTaskSummary{}
