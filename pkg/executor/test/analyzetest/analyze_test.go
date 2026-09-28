@@ -752,6 +752,8 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	for _, rate := range []string{"0", "1.01"} {
 		require.Error(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"))
 	}
+	// A statement can set NDVRATE below SAMPLERATE.
+	tk.MustExec("analyze table t with 0.1 NDVRATE, 0.2 SAMPLERATE")
 	// A zero tidb_analyze_sampled_ndv_threshold rejects NDVRATE. Otherwise
 	// NDVRATE replaces only the rate, so without a table above the threshold
 	// ANALYZE reads every row and says so.
