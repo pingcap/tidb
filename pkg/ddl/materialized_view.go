@@ -162,7 +162,6 @@ func BuildMaterializedViewLogTableInfo(
 	}
 
 	var purgeMethod, purgeStartWith, purgeNext string
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	logAccumulationAlertRows, err := BuildMLogAccumulationAlertRows(stmt.AccumulationAlert)
 	if err != nil {
 		return nil, err
@@ -194,7 +193,6 @@ func BuildMaterializedViewLogTableInfo(
 		PurgeNext:                purgeNext,
 		LogAccumulationAlertRows: logAccumulationAlertRows,
 		PurgeScheduleSQLMode:     ctx.GetSessionVars().SQLMode,
-		PurgeScheduleTimeZone:    model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 	}
 	return mlogTableInfo, nil
 }
@@ -638,10 +636,6 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 			Name:   tzName,
 			Offset: tzOffset,
 		},
-		RefreshScheduleTimeZone: model.TimeZoneLocation{
-			Name:   tzName,
-			Offset: tzOffset,
-		},
 	}
 
 	// CREATE MATERIALIZED VIEW is submitted as reorg DDL: create table first, then initial build in reorg phase.
@@ -1016,12 +1010,6 @@ func (e *executor) alterMaterializedViewLogPurge(ctx sessionctx.Context, schemaI
 		return err
 	}
 	updatePurgeSchedule := purge != nil && (purge.StartWith != nil || purge.Next != nil)
-	purgeScheduleTimeZone := sessionVars.Location()
-	purgeScheduleTimeZoneMeta := model.TimeZoneLocation{}
-	if updatePurgeSchedule {
-		tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-		purgeScheduleTimeZoneMeta = model.TimeZoneLocation{Name: tzName, Offset: tzOffset}
-	}
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
@@ -1035,12 +1023,11 @@ func (e *executor) alterMaterializedViewLogPurge(ctx sessionctx.Context, schemaI
 		SQLMode:        sessionVars.SQLMode,
 	}
 	args := &model.AlterMaterializedViewLogPurgeArgs{
-		PurgeMethod:           purgeMethod,
-		PurgeStartWith:        purgeStartWith,
-		PurgeNext:             purgeNext,
-		PurgeScheduleSQLMode:  sessionVars.SQLMode,
-		PurgeScheduleTimeZone: purgeScheduleTimeZoneMeta.Clone(),
-		UpdatePurgeSchedule:   updatePurgeSchedule,
+		PurgeMethod:          purgeMethod,
+		PurgeStartWith:       purgeStartWith,
+		PurgeNext:            purgeNext,
+		PurgeScheduleSQLMode: sessionVars.SQLMode,
+		UpdatePurgeSchedule:  updatePurgeSchedule,
 	}
 	if err := e.doDDLJob2(ctx, job, args); err != nil {
 		return errors.Trace(err)
@@ -1053,7 +1040,7 @@ func (e *executor) alterMaterializedViewLogPurge(ctx sessionctx.Context, schemaI
 	// a warning.
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
 	ddlSess := sess.NewSession(ctx)
-	nextPurgeUnixSeconds, shouldUpdateNextPurgeUnixSeconds, err := deriveMaterializedScheduleNextUnixSecondsForDDL(kctx, ddlSess, schemaName.O, mlogName.O, purgeStartWith, purgeNext, sessionVars.SQLMode, purgeScheduleTimeZone, logAlterMaterializedViewLogPurgeNextUnixSecondsUpdateNull)
+	nextPurgeUnixSeconds, shouldUpdateNextPurgeUnixSeconds, err := deriveMaterializedScheduleNextUnixSecondsForDDL(kctx, ddlSess, schemaName.O, mlogName.O, purgeStartWith, purgeNext, sessionVars.SQLMode, logAlterMaterializedViewLogPurgeNextUnixSecondsUpdateNull)
 	if err != nil {
 		return err
 	}
@@ -1070,12 +1057,6 @@ func (e *executor) alterMaterializedViewRefresh(ctx sessionctx.Context, schemaID
 		return err
 	}
 	updateRefreshSchedule := refresh != nil && (refresh.StartWith != nil || refresh.Next != nil)
-	refreshScheduleTimeZone := sessionVars.Location()
-	refreshScheduleTimeZoneMeta := model.TimeZoneLocation{}
-	if updateRefreshSchedule {
-		tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-		refreshScheduleTimeZoneMeta = model.TimeZoneLocation{Name: tzName, Offset: tzOffset}
-	}
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
@@ -1089,12 +1070,11 @@ func (e *executor) alterMaterializedViewRefresh(ctx sessionctx.Context, schemaID
 		SQLMode:        sessionVars.SQLMode,
 	}
 	args := &model.AlterMaterializedViewRefreshArgs{
-		RefreshMethod:           refreshMethod,
-		RefreshStartWith:        refreshStartWith,
-		RefreshNext:             refreshNext,
-		RefreshScheduleSQLMode:  sessionVars.SQLMode,
-		RefreshScheduleTimeZone: refreshScheduleTimeZoneMeta.Clone(),
-		UpdateRefreshSchedule:   updateRefreshSchedule,
+		RefreshMethod:          refreshMethod,
+		RefreshStartWith:       refreshStartWith,
+		RefreshNext:            refreshNext,
+		RefreshScheduleSQLMode: sessionVars.SQLMode,
+		UpdateRefreshSchedule:  updateRefreshSchedule,
 	}
 	if err := e.doDDLJob2(ctx, job, args); err != nil {
 		return errors.Trace(err)
@@ -1107,7 +1087,7 @@ func (e *executor) alterMaterializedViewRefresh(ctx sessionctx.Context, schemaID
 	// a warning.
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
 	ddlSess := sess.NewSession(ctx)
-	nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds, err := deriveMaterializedScheduleNextUnixSecondsForDDL(kctx, ddlSess, schemaName.O, viewName.O, refreshStartWith, refreshNext, sessionVars.SQLMode, refreshScheduleTimeZone, logAlterMaterializedViewRefreshNextUnixSecondsUpdateNull)
+	nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds, err := deriveMaterializedScheduleNextUnixSecondsForDDL(kctx, ddlSess, schemaName.O, viewName.O, refreshStartWith, refreshNext, sessionVars.SQLMode, logAlterMaterializedViewRefreshNextUnixSecondsUpdateNull)
 	if err != nil {
 		return err
 	}

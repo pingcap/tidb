@@ -590,12 +590,11 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 
 func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewRefreshArgs{
-		RefreshMethod:           "FAST",
-		RefreshStartWith:        "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
-		RefreshNext:             "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
-		RefreshScheduleSQLMode:  mysql.ModePipesAsConcat,
-		RefreshScheduleTimeZone: TimeZoneLocation{Name: "UTC", Offset: 0},
-		UpdateRefreshSchedule:   true,
+		RefreshMethod:          "FAST",
+		RefreshStartWith:       "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		RefreshNext:            "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		RefreshScheduleSQLMode: mysql.ModePipesAsConcat,
+		UpdateRefreshSchedule:  true,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -605,17 +604,6 @@ func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
-
-	j := &Job{Version: JobVersion1, Type: ActionAlterMaterializedViewRefresh}
-	j.FillArgs(inArgs)
-	inArgs.RefreshScheduleTimeZone.Name = "Asia/Shanghai"
-	encoded, err := j.Encode(true)
-	require.NoError(t, err)
-	decoded := &Job{}
-	require.NoError(t, decoded.Decode(encoded))
-	args, err := GetAlterMaterializedViewRefreshArgs(decoded)
-	require.NoError(t, err)
-	require.Equal(t, "UTC", args.RefreshScheduleTimeZone.Name)
 }
 
 func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
@@ -652,12 +640,11 @@ func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
 
 func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewLogPurgeArgs{
-		PurgeMethod:           "DEFERRED",
-		PurgeStartWith:        "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
-		PurgeNext:             "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
-		PurgeScheduleSQLMode:  mysql.ModeNoBackslashEscapes,
-		PurgeScheduleTimeZone: TimeZoneLocation{Name: "UTC", Offset: 0},
-		UpdatePurgeSchedule:   true,
+		PurgeMethod:          "DEFERRED",
+		PurgeStartWith:       "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		PurgeNext:            "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		PurgeScheduleSQLMode: mysql.ModeNoBackslashEscapes,
+		UpdatePurgeSchedule:  true,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -667,17 +654,6 @@ func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
-
-	j := &Job{Version: JobVersion1, Type: ActionAlterMaterializedViewLogPurge}
-	j.FillArgs(inArgs)
-	inArgs.PurgeScheduleTimeZone.Name = "Asia/Shanghai"
-	encoded, err := j.Encode(true)
-	require.NoError(t, err)
-	decoded := &Job{}
-	require.NoError(t, decoded.Decode(encoded))
-	args, err := GetAlterMaterializedViewLogPurgeArgs(decoded)
-	require.NoError(t, err)
-	require.Equal(t, "UTC", args.PurgeScheduleTimeZone.Name)
 }
 
 func TestGetAlterIndexVisibilityArgs(t *testing.T) {

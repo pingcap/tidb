@@ -877,7 +877,6 @@ type MaterializedViewInfo struct {
 	RefreshScheduleSQLMode          mysql.SQLMode       `json:"refresh_schedule_sql_mode"`
 	DefinitionDivPrecisionIncrement int                 `json:"definition_div_precision_increment"`
 	DefinitionTimeZone              TimeZoneLocation    `json:"definition_time_zone"`
-	RefreshScheduleTimeZone         TimeZoneLocation    `json:"refresh_schedule_time_zone"`
 }
 
 // Clone returns a deep copy of the materialized view metadata.
@@ -899,7 +898,6 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 		RefreshScheduleSQLMode:          i.RefreshScheduleSQLMode,
 		DefinitionDivPrecisionIncrement: i.DefinitionDivPrecisionIncrement,
 		DefinitionTimeZone:              i.DefinitionTimeZone.Clone(),
-		RefreshScheduleTimeZone:         i.RefreshScheduleTimeZone.Clone(),
 	}
 }
 
@@ -913,15 +911,14 @@ func (i *MaterializedViewInfo) GetInitBuildState() MViewInitBuildState {
 
 // MaterializedViewLogInfo is stored in TableInfo for a materialized view log table.
 type MaterializedViewLogInfo struct {
-	BaseTableID              int64            `json:"base_table_id"`
-	DependentMViewIDs        []int64          `json:"dependent_mview_ids,omitempty"`
-	Columns                  []ast.CIStr      `json:"columns"`
-	PurgeMethod              string           `json:"purge_method,omitempty"`
-	PurgeStartWith           string           `json:"purge_start_with,omitempty"`
-	PurgeNext                string           `json:"purge_next,omitempty"`
-	LogAccumulationAlertRows *uint64          `json:"log_accumulation_alert_rows,omitempty"`
-	PurgeScheduleSQLMode     mysql.SQLMode    `json:"purge_schedule_sql_mode"`
-	PurgeScheduleTimeZone    TimeZoneLocation `json:"purge_schedule_time_zone"`
+	BaseTableID              int64         `json:"base_table_id"`
+	DependentMViewIDs        []int64       `json:"dependent_mview_ids,omitempty"`
+	Columns                  []ast.CIStr   `json:"columns"`
+	PurgeMethod              string        `json:"purge_method,omitempty"`
+	PurgeStartWith           string        `json:"purge_start_with,omitempty"`
+	PurgeNext                string        `json:"purge_next,omitempty"`
+	LogAccumulationAlertRows *uint64       `json:"log_accumulation_alert_rows,omitempty"`
+	PurgeScheduleSQLMode     mysql.SQLMode `json:"purge_schedule_sql_mode"`
 }
 
 const (
@@ -949,14 +946,13 @@ func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 		return nil
 	}
 	clone := &MaterializedViewLogInfo{
-		BaseTableID:           i.BaseTableID,
-		DependentMViewIDs:     append([]int64(nil), i.DependentMViewIDs...),
-		Columns:               append([]ast.CIStr(nil), i.Columns...),
-		PurgeMethod:           i.PurgeMethod,
-		PurgeStartWith:        i.PurgeStartWith,
-		PurgeNext:             i.PurgeNext,
-		PurgeScheduleSQLMode:  i.PurgeScheduleSQLMode,
-		PurgeScheduleTimeZone: i.PurgeScheduleTimeZone.Clone(),
+		BaseTableID:          i.BaseTableID,
+		DependentMViewIDs:    append([]int64(nil), i.DependentMViewIDs...),
+		Columns:              append([]ast.CIStr(nil), i.Columns...),
+		PurgeMethod:          i.PurgeMethod,
+		PurgeStartWith:       i.PurgeStartWith,
+		PurgeNext:            i.PurgeNext,
+		PurgeScheduleSQLMode: i.PurgeScheduleSQLMode,
 	}
 	if i.LogAccumulationAlertRows != nil {
 		rows := *i.LogAccumulationAlertRows

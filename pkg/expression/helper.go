@@ -47,16 +47,12 @@ func boolToInt64(v bool) int64 {
 }
 
 // MaterializedScheduleTimeToUnixSeconds converts a materialized schedule time
-// interpreted in scheduleTimeZone to Unix seconds for persisting in internal
-// MV system tables.
-func MaterializedScheduleTimeToUnixSeconds(t *types.Time, scheduleTimeZone *time.Location) (*int64, error) {
+// interpreted in UTC to Unix seconds for persisting in internal MV system tables.
+func MaterializedScheduleTimeToUnixSeconds(t *types.Time) (*int64, error) {
 	if t == nil {
 		return nil, nil
 	}
-	if scheduleTimeZone == nil {
-		return nil, errors.New("materialized schedule timezone is unavailable")
-	}
-	goTime, err := t.GoTime(scheduleTimeZone)
+	goTime, err := t.GoTime(time.UTC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -94,7 +90,6 @@ func MaterializedScheduleErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMa
 func SetMaterializedScheduleEvalSession(
 	sctx sessionctx.Context,
 	sqlMode mysql.SQLMode,
-	scheduleTimeZone *time.Location,
 ) func() {
 	sessVars := sctx.GetSessionVars() //nolint:forbidigo
 	originalSQLMode := sessVars.SQLMode
@@ -110,8 +105,8 @@ func SetMaterializedScheduleEvalSession(
 	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
 	sessVars.StmtCtx.SetTypeFlags(MaterializedScheduleTypeFlagsWithSQLMode(sqlMode))
 	sessVars.StmtCtx.SetErrLevels(MaterializedScheduleErrLevelsWithSQLMode(sqlMode))
-	sessVars.TimeZone = scheduleTimeZone
-	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
+	sessVars.TimeZone = time.UTC
+	sessVars.StmtCtx.SetTimeZone(time.UTC)
 
 	return func() {
 		sessVars.SQLMode = originalSQLMode
@@ -129,7 +124,7 @@ func SetMaterializedScheduleEvalSession(
 
 // EvalMaterializedScheduleExpr parses and evaluates a persisted materialized
 // view schedule expression. The caller must configure evalSctx with the
-// schedule's SQL mode, conversion flags, error levels, and timezone first.
+// schedule's SQL mode, conversion flags, error levels, and UTC timezone first.
 func EvalMaterializedScheduleExpr(
 	evalSctx sessionctx.Context,
 	exprSQL string,
@@ -170,26 +165,22 @@ func EvalMaterializedScheduleExpr(
 }
 
 // DeriveMaterializedScheduleNextTime evaluates a runtime NEXT expression with
-// the SQL mode and timezone persisted in the MV/MLog metadata.
+// the SQL mode persisted in MV/MLog metadata and UTC as its timezone.
 func DeriveMaterializedScheduleNextTime(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
 	nextExpr string,
 	scheduleSQLMode mysql.SQLMode,
-	scheduleTimeZone *time.Location,
 ) (*types.Time, bool, error) {
 	if evalSctx == nil {
 		return nil, false, errors.New("runtime materialized schedule eval session is unavailable")
-	}
-	if scheduleTimeZone == nil {
-		return nil, false, errors.New("runtime materialized schedule timezone is unavailable")
 	}
 	nextExpr = strings.TrimSpace(nextExpr)
 	if nextExpr == "" {
 		return nil, true, nil
 	}
 
-	restore := SetMaterializedScheduleEvalSession(evalSctx, scheduleSQLMode, scheduleTimeZone)
+	restore := SetMaterializedScheduleEvalSession(evalSctx, scheduleSQLMode)
 	defer restore()
 
 	// Execute a separate statement to refresh the statement timestamp cache.

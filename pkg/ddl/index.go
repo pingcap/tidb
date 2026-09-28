@@ -1907,7 +1907,14 @@ func doReorgWorkForCreateIndex(
 				zap.String("table", tbl.Meta().Name.O))
 			return true, ver, nil
 		}
-		return runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		if done && err == nil {
+			// This path has no metadata transition of its own, so persist the RU
+			// staged by the backfill once the reorg is done. The merge process
+			// below accounts it after its own table-state transition instead.
+			accountPendingReorgRU(jobCtx, job, nil)
+		}
+		return done, ver, err
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
@@ -3032,6 +3039,7 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 			taskCtx.addedCount++
 		}
 
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillData", 3000)
@@ -4025,6 +4033,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 			}
 			taskCtx.addedCount++
 		}
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "cleanUpIndexBackfillDataInTxn", 3000)

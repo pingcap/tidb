@@ -717,21 +717,19 @@ func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 
 // AlterMaterializedViewRefreshArgs contains ALTER MATERIALIZED VIEW refresh arguments.
 type AlterMaterializedViewRefreshArgs struct {
-	RefreshMethod           string           `json:"refresh_method,omitempty"`
-	RefreshStartWith        string           `json:"refresh_start_with,omitempty"`
-	RefreshNext             string           `json:"refresh_next,omitempty"`
-	RefreshScheduleSQLMode  mysql.SQLMode    `json:"refresh_schedule_sql_mode,omitempty"`
-	RefreshScheduleTimeZone TimeZoneLocation `json:"refresh_schedule_time_zone,omitempty"`
-	UpdateRefreshSchedule   bool             `json:"update_refresh_schedule,omitempty"`
+	RefreshMethod          string        `json:"refresh_method,omitempty"`
+	RefreshStartWith       string        `json:"refresh_start_with,omitempty"`
+	RefreshNext            string        `json:"refresh_next,omitempty"`
+	RefreshScheduleSQLMode mysql.SQLMode `json:"refresh_schedule_sql_mode,omitempty"`
+	UpdateRefreshSchedule  bool          `json:"update_refresh_schedule,omitempty"`
 }
 
 func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
-	refreshScheduleTimeZone := a.RefreshScheduleTimeZone.Clone()
-	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext, a.RefreshScheduleSQLMode, &refreshScheduleTimeZone, a.UpdateRefreshSchedule}
+	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext, a.RefreshScheduleSQLMode, a.UpdateRefreshSchedule}
 }
 
 func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext, &a.RefreshScheduleSQLMode, &a.RefreshScheduleTimeZone, &a.UpdateRefreshSchedule))
+	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext, &a.RefreshScheduleSQLMode, &a.UpdateRefreshSchedule))
 }
 
 // GetAlterMaterializedViewRefreshArgs decodes ALTER MATERIALIZED VIEW refresh arguments.
@@ -765,21 +763,19 @@ func GetAlterMaterializedViewAttributesArgs(job *Job) (*AlterMaterializedViewAtt
 
 // AlterMaterializedViewLogPurgeArgs contains ALTER MATERIALIZED VIEW LOG purge arguments.
 type AlterMaterializedViewLogPurgeArgs struct {
-	PurgeMethod           string           `json:"purge_method,omitempty"`
-	PurgeStartWith        string           `json:"purge_start_with,omitempty"`
-	PurgeNext             string           `json:"purge_next,omitempty"`
-	PurgeScheduleSQLMode  mysql.SQLMode    `json:"purge_schedule_sql_mode,omitempty"`
-	PurgeScheduleTimeZone TimeZoneLocation `json:"purge_schedule_time_zone,omitempty"`
-	UpdatePurgeSchedule   bool             `json:"update_purge_schedule,omitempty"`
+	PurgeMethod          string        `json:"purge_method,omitempty"`
+	PurgeStartWith       string        `json:"purge_start_with,omitempty"`
+	PurgeNext            string        `json:"purge_next,omitempty"`
+	PurgeScheduleSQLMode mysql.SQLMode `json:"purge_schedule_sql_mode,omitempty"`
+	UpdatePurgeSchedule  bool          `json:"update_purge_schedule,omitempty"`
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
-	purgeScheduleTimeZone := a.PurgeScheduleTimeZone.Clone()
-	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext, a.PurgeScheduleSQLMode, &purgeScheduleTimeZone, a.UpdatePurgeSchedule}
+	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext, a.PurgeScheduleSQLMode, a.UpdatePurgeSchedule}
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext, &a.PurgeScheduleSQLMode, &a.PurgeScheduleTimeZone, &a.UpdatePurgeSchedule))
+	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext, &a.PurgeScheduleSQLMode, &a.UpdatePurgeSchedule))
 }
 
 // GetAlterMaterializedViewLogPurgeArgs decodes ALTER MATERIALIZED VIEW LOG purge arguments.
