@@ -482,7 +482,11 @@ pub fn set_preferred_join_type_and_order(
     if let Some(leading) = &hints.leading {
         let mut tables = Vec::new();
         collect_leading_tables(leading, &mut tables);
-        join.prefer_join_order = [lhs.as_ref(), rhs.as_ref()].iter().all(|alias| {
+        // go applies the LEADING hint when ANY of the join's tables appears
+        // in its list; the unlisted aliases float freely (oracle g-hint:
+        // LEADING(t2) over `hi t1, hi t2` applies without the unmatched
+        // warning).
+        join.prefer_join_order = [lhs.as_ref(), rhs.as_ref()].iter().any(|alias| {
             alias.is_some_and(|alias| {
                 tables.iter().any(|table| {
                     table.name.eq_ignore_ascii_case(&alias.table_name)
