@@ -1653,6 +1653,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 )?,
                 Command::Query(bytes) => {
                     let query_started = std::time::Instant::now();
+                    // Statements that crossed the session's slow threshold, in
+                    // order; recorded into the domain's memory once the last
+                    // result's engine borrow ends.
+                    let mut slow_statements: Vec<
+                        (String, std::time::SystemTime, std::time::Duration),
+                    > = Vec::new();
                     commands.text_query_commands += 1;
                     // `decode_command` has already trimmed exactly one terminal
                     // NUL for issue 1989. Embedded and repeated NUL bytes remain
@@ -1909,6 +1915,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 break;
                             }
                         }
+                        let statement_started = std::time::Instant::now();
+                        let slow_threshold = engine.slow_log_threshold();
                         let mut result = match execute_statement(&mut engine, sql, parsed.as_ref())
                         {
                             Ok(result) => result,
@@ -1938,7 +1946,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         };
                         sequence = next_sequence;
                         match write_result {
-                            Ok(_) => queries += 1,
+                            Ok(_) => {
+                                queries += 1;
+                                drop(result);
+                            }
                             Err(error) if !error.bytes_escaped => {
                                 write_error(
                                     &mut output,
@@ -1961,7 +1972,24 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 ));
                             }
                         }
-                        drop(result);
+                        let elapsed = statement_started.elapsed();
+                        if slow_threshold
+                            .is_some_and(|threshold| elapsed >= threshold)
+                        {
+                            // go `session.LogSlowQuery` lands the statement in
+                            // the domain's slow-query memory at the same
+                            // threshold (`ADMIN SHOW SLOW` reads it back). The
+                            // row records here, past the result's borrow of the
+                            // engine; the engine itself is touched at the
+                            // command boundary below.
+                            slow_statements.push((
+                                sql.to_owned(),
+                                std::time::SystemTime::now()
+                                    .checked_sub(elapsed)
+                                    .unwrap_or_else(std::time::SystemTime::now),
+                                elapsed,
+                            ));
+                        }
                         record_client_warnings(&output, &engine);
                     }
                     if !aborted {
@@ -1980,6 +2008,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // the whole command.
                     {
                         let elapsed = query_started.elapsed();
+                        for (statement_sql, start, statement_duration) in &slow_statements {
+                            engine.record_slow_query(statement_sql, *start, *statement_duration);
+                        }
                         if engine
                             .slow_log_threshold()
                             .is_some_and(|threshold| elapsed >= threshold)

@@ -237,6 +237,41 @@ fn is_analyze_table_sql(sql: &str) -> bool {
         .starts_with("analyze table")
 }
 
+/// The three statement shapes go refuses with their own errors before any
+/// catalog work, answered at [`ClusterSessionNode::schema_route_for_change`]
+/// (whose lowering cannot express them): `OPTIMIZE TABLE`'s 8200, `ADMIN
+/// REPAIR TABLE`'s 8215 REPAIR-MODE gate, and the `STATS_PERSISTENT` table
+/// option's unsupported-spec 8200.
+fn schema_shape_refusal(stmt: &tidb_ast::Stmt) -> Option<(u16, String)> {
+    let tidb_ast::Stmt::Ddl(ddl) = stmt else {
+        return None;
+    };
+    match &**ddl {
+        tidb_ast::DdlStmt::OptimizeTable(_) => {
+            Some((8200, "OPTIMIZE TABLE is not supported".to_owned()))
+        }
+        tidb_ast::DdlStmt::RepairTable(_) => Some((
+            8215,
+            "Failed to repair table: TiDB is not in REPAIR MODE".to_owned(),
+        )),
+        tidb_ast::DdlStmt::AlterTable(alter) => {
+            let stats_persistent = alter.actions.iter().any(|action| match action {
+                tidb_ast::AlterTableAction::SetTableOptions { options } => options
+                    .iter()
+                    .any(|option| matches!(option, tidb_ast::TableOption::StatsPersistent)),
+                _ => false,
+            });
+            stats_persistent.then(|| {
+                (
+                    8200,
+                    "This type of ALTER TABLE is currently unsupported".to_owned(),
+                )
+            })
+        }
+        _ => None,
+    }
+}
+
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
 /// same one the bounded node applies.
 const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -4339,6 +4374,13 @@ enum PessimisticStep {
 }
 
 impl ClusterServerSession {
+    fn execute_timed<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let stmt = self.session.parse_statement(sql).map_err(|error| {
+            self.session.record_parse_failure(&error);
+            map_error(error)
+        })?;
+        self.execute_parsed(sql, &stmt)
+    }
     fn binding_records_changed(&self) -> bool {
         self.bindings
             .as_ref()
@@ -5688,6 +5730,17 @@ impl ClusterServerSession {
                 if Session::is_local_temporary_create_parsed(stmt) {
                     return Ok(StatementRoute::LocalTemporaryDdl);
                 }
+                // Go refuses three statement shapes with their OWN errors
+                // before any catalog work: `OPTIMIZE TABLE` (SimpleExec's
+                // `ErrOptimizeTableUnsupported`, 8200), `ADMIN REPAIR TABLE`
+                // outside REPAIR MODE (8215), and the `STATS_PERSISTENT`
+                // table option (the alter-table spec walk's generic
+                // unsupported-spec 8200). The lowering cannot express any
+                // of the three, so their refusals fire here rather than
+                // collapsing into the generic route refusal.
+                if let Some((code, message)) = schema_shape_refusal(stmt) {
+                    return Err(SqlQueryError::new(code, *b"HY000", message));
+                }
                 // A CREATE VIEW resolves its body against this node's own
                 // catalog FIRST — a bad body fails here, at CREATE time,
                 // exactly where Go's `executeCreateView` preprocess fails —
@@ -6612,6 +6665,39 @@ impl QuerySession for ClusterServerSession {
         Some(std::time::Duration::from_millis(millis))
     }
 
+    /// go `session.LogSlowQuery` (`adapter.go:2007`): the statement lands in
+    /// the domain's in-memory slow-query memory at the same threshold the
+    /// dashboard histograms charge at. `ADMIN SHOW SLOW` reads the memory
+    /// back (`crate::show_admin`'s registry stands in for go's
+    /// `Domain.ShowSlowQuery` lists).
+    fn record_slow_query(
+        &mut self,
+        sql: &str,
+        start: std::time::SystemTime,
+        duration: std::time::Duration,
+    ) {
+        let Some(threshold) = self.slow_log_threshold() else {
+            return;
+        };
+        if duration < threshold {
+            return;
+        }
+        let (user, host) = self.session.current_identity().unwrap_or(("", ""));
+        let db = self.session.current_database().to_owned();
+        let digest = tidb_parser::normalize_digest(sql).1.to_string();
+        tidb_session::show_admin::record_slow_query(
+            tidb_session::show_admin::SlowQueryRecord {
+                sql: sql.to_owned(),
+                start,
+                duration,
+                conn_id: self.connection_id(),
+                user: format!("{user}@{host}"),
+                db,
+                digest,
+            },
+        );
+    }
+
     fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
         Some(Arc::new(self.session.begin_query_cancellation()))
     }
@@ -7356,6 +7442,8 @@ impl QuerySession for ClusterServerSession {
         self.execute_parsed(sql, &stmt)
     }
 
+
+
     /// One parse per command (Go `session.ParseSQL`, done by the connection
     /// through [`QuerySession::parse_statement`]).
     fn execute_parsed<'a>(
@@ -7522,3 +7610,34 @@ where
 
 #[cfg(test)]
 mod tests;
+
+impl ClusterServerSession {
+    /// go `session.LogSlowQuery` (`adapter.go:2007`): a statement whose cost
+    /// reached the session's slow threshold lands in the in-memory slow-query
+    /// memory `ADMIN SHOW SLOW` reads back.
+pub(crate) fn note_slow_query(&mut self, sql: &str, duration: std::time::Duration) {
+        let Some(threshold) = self.slow_log_threshold() else {
+            return;
+        };
+        if duration < threshold {
+            return;
+        }
+        let start = std::time::SystemTime::now()
+            .checked_sub(duration)
+            .unwrap_or_else(std::time::SystemTime::now);
+        let (user, host) = self.session.current_identity().unwrap_or(("", ""));
+        let db = self.session.current_database().to_owned();
+        let digest = tidb_parser::normalize_digest(sql).1.to_string();
+        tidb_session::show_admin::record_slow_query(
+            tidb_session::show_admin::SlowQueryRecord {
+                sql: sql.to_owned(),
+                start,
+                duration,
+                conn_id: self.connection_id(),
+                user: format!("{user}@{host}"),
+                db,
+                digest,
+            },
+        );
+    }
+}
