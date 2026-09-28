@@ -5133,7 +5133,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			user, host := auth.GetUserAndHostName(sessionVars.User)
 			selectErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, tableInfo.Name.L)
 		}
-		b.visitInfo = appendSelectVisitInfo(b.visitInfo, dbName.L, tableInfo.Name.L, "*", selectErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "*", selectErr)
 	}
 
 	if tbl.Type().IsVirtualTable() {
@@ -7859,34 +7859,6 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 		column:    col,
 		err:       err,
 	})
-}
-
-// appendSelectVisitInfo drops only redundant wildcard SELECT requirements. A
-// concrete column requirement implies the wildcard fallback used for
-// constant-only reads, while multiple concrete columns remain independent
-// requirements. Centralizing the normalization here makes the result
-// independent of expression-rewrite order.
-func appendSelectVisitInfo(vi []visitInfo, db, tbl, col string, err error) []visitInfo {
-	switch col {
-	case "*":
-		for _, v := range vi {
-			if v.privilege == mysql.SelectPriv && v.db == db && v.table == tbl && v.column != "" && v.column != "*" {
-				return vi
-			}
-		}
-	case "":
-		return appendVisitInfo(vi, mysql.SelectPriv, db, tbl, col, err)
-	default:
-		kept := vi[:0]
-		for _, v := range vi {
-			if v.privilege == mysql.SelectPriv && v.db == db && v.table == tbl && v.column == "*" {
-				continue
-			}
-			kept = append(kept, v)
-		}
-		vi = kept
-	}
-	return appendVisitInfo(vi, mysql.SelectPriv, db, tbl, col, err)
 }
 
 func appendMultiColumns2VisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl string, cols []*table.Column, err error) []visitInfo {

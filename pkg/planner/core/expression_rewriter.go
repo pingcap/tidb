@@ -2776,7 +2776,8 @@ func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName)
 	case len(views) > 0:
 		view := views[len(views)-1]
 		for _, colName := range columnVisited {
-			b.visitInfo = appendSelectVisitInfo(b.visitInfo,
+			b.visitInfo = appendVisitInfo(b.visitInfo,
+				mysql.SelectPriv,
 				colName.Schema.L,
 				colName.Table.L,
 				colName.Name.L,
@@ -2785,7 +2786,8 @@ func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName)
 		}
 	case b.checkColPriv == reportTableErrOption:
 		for _, colName := range columnVisited {
-			b.visitInfo = appendSelectVisitInfo(b.visitInfo,
+			b.visitInfo = appendVisitInfo(b.visitInfo,
+				mysql.SelectPriv,
 				colName.Schema.L,
 				colName.Table.L,
 				colName.Name.L,
@@ -2794,7 +2796,8 @@ func (b *PlanBuilder) appendColNamesToVisitInfo(columnVisited []*ast.ColumnName)
 		}
 	default:
 		for _, colName := range columnVisited {
-			b.visitInfo = appendSelectVisitInfo(b.visitInfo,
+			b.visitInfo = appendVisitInfo(b.visitInfo,
+				mysql.SelectPriv,
 				colName.Schema.L,
 				colName.Table.L,
 				colName.Name.L,

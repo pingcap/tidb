@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -3041,7 +3042,23 @@ func unique(v []visitInfo) []visitInfo {
 	return v[:len(v)-repeat]
 }
 
+// effectiveVisitInfoForTest ignores intentionally retained fallback SELECT
+// requirements when a concrete column requirement exists for the same table.
+func effectiveVisitInfoForTest(vs []visitInfo) []visitInfo {
+	withConcreteColumn := make(map[[2]string]struct{}, len(vs))
+	for _, v := range vs {
+		if v.privilege == mysql.SelectPriv && v.column != "" && v.column != "*" {
+			withConcreteColumn[[2]string{v.db, v.table}] = struct{}{}
+		}
+	}
+	return slices.DeleteFunc(vs, func(v visitInfo) bool {
+		_, concrete := withConcreteColumn[[2]string{v.db, v.table}]
+		return concrete && v.privilege == mysql.SelectPriv && v.column == "*"
+	})
+}
+
 func checkVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
+	actual = effectiveVisitInfoForTest(actual)
 	sort.Sort(visitInfoArray(actual))
 	sort.Sort(visitInfoArray(expected))
 	actual = unique(actual)

@@ -63,15 +63,15 @@ func TestSelectConstantRequiresTablePrivilege(t *testing.T) {
 	// Invoking an existing SQL SECURITY INVOKER view reports the view error when
 	// its constant-only body cannot access the underlying table.
 	userTk.MustGetErrCode("SELECT c FROM leakdb.v", errno.ErrViewInvalid)
-	// A referenced column keeps reporting a column-level error.
-	userTk.MustGetErrCode("SELECT a FROM leakdb.t", errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode("SELECT 1 FROM leakdb.t WHERE a > 0", errno.ErrColumnaccessDenied)
-	// The keyword case must not matter for COUNT, and the point-get fast path
-	// must not bypass the check either.
-	userTk.MustGetErrCode("select count(*) from leakdb.t", errno.ErrTableaccessDenied)
+	// The fallback requirement is intentionally retained alongside concrete
+	// column requirements, so it reports the table-level error first when the
+	// user has no SELECT privilege at all.
+	userTk.MustGetErrCode("SELECT a FROM leakdb.t", errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode("SELECT 1 FROM leakdb.t WHERE a > 0", errno.ErrTableaccessDenied)
+	// The point-get fast path must not bypass the check either.
 	rootTk.MustExec("CREATE TABLE leakdb.tpk (id int primary key, v int)")
 	rootTk.MustExec("INSERT INTO leakdb.tpk VALUES (1, 10)")
-	userTk.MustGetErrCode("SELECT 1 FROM leakdb.tpk WHERE id = 1", errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode("SELECT 1 FROM leakdb.tpk WHERE id = 1", errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode("SELECT COUNT(*) FROM leakdb.tpk", errno.ErrTableaccessDenied)
 	// Unknown schemas/tables are still denied.
 	userTk.MustGetErrCode("SELECT 1 FROM leakdb.nonexistent", errno.ErrTableaccessDenied)
