@@ -730,7 +730,7 @@ fn select_index_tasks(
                         .then(|| index.clone())
                     })
                     .ok_or_else(|| {
-                        ClusterAnalyzeError::Other(format!(
+                        ClusterAnalyzeError::MissingIndex(format!(
                             "Index '{name}' in field list does not exist in table '{}'",
                             table.name.original()
                         ))
@@ -920,11 +920,8 @@ fn find_statement_table<'catalog>(
                 .find(|stored| stored.name.lowercase() == statement.table.go_to_lower().as_str())
         })
         .ok_or_else(|| {
-            ClusterAnalyzeError::Other(
-                SystemTableError::Missing {
-                    name: format!("{}.{}", statement.schema, statement.table),
-                }
-                .to_string(),
+            ClusterAnalyzeError::MissingTable(
+                format!("{}.{}", statement.schema, statement.table),
             )
         })
 }
@@ -944,6 +941,11 @@ pub enum ClusterAnalyzeError {
     MissingPartitionItemStats(String),
     /// A determinate failure with its existing diagnostic.
     Other(String),
+    /// Go `infoschema.ErrTableNotExists` (1146): the named table is absent.
+    /// The string is the `schema.table` pair.
+    MissingTable(String),
+    /// Go `executor.ErrAnalyzeMissIndex` (8109): the named index is absent.
+    MissingIndex(String),
 }
 
 impl fmt::Display for ClusterAnalyzeError {
@@ -963,6 +965,8 @@ impl fmt::Display for ClusterAnalyzeError {
                 "Build global-level stats failed due to missing partition-level column stats: {detail}, please run analyze table to refresh columns of all partitions"
             ),
             Self::Other(detail) => formatter.write_str(detail),
+            Self::MissingTable(name) => write!(formatter, "Table '{name}' doesn't exist"),
+            Self::MissingIndex(detail) => formatter.write_str(detail),
         }
     }
 }

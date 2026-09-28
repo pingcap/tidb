@@ -429,6 +429,12 @@ pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError
             SqlQueryError::new(8244, *b"HY000", detail)
         }
         ClusterAnalyzeError::Other(detail) => SqlQueryError::unknown(detail),
+        ClusterAnalyzeError::MissingTable(name) => {
+            SqlQueryError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
+        }
+        ClusterAnalyzeError::MissingIndex(detail) => {
+            SqlQueryError::new(8109, *b"HY000", detail)
+        }
     }
 }
 
@@ -1166,6 +1172,12 @@ pub trait QuerySession {
     /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
     /// called after the SQL command has written its response.
     fn finish_execute_stmt(&mut self, _cost: Duration) {}
+
+    /// go `session.LogSlowQuery` (`adapter.go:2007`): a statement whose cost
+    /// reached the session's slow threshold lands in the domain's in-memory
+    /// slow-query memory, which `ADMIN SHOW SLOW` reads. The default keeps
+    /// sessions without the memory silent.
+    fn record_slow_query(&mut self, _sql: &str, _start: std::time::SystemTime, _duration: std::time::Duration) {}
 
     /// The session's `tidb_slow_log_threshold`, which gates the dashboard's
     /// slow-query histograms (`adapter.go:1958` reads it from the instance

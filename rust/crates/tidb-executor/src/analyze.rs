@@ -426,9 +426,12 @@ pub fn lower_analyze_admin(
     let analyze = match admin {
         tidb_ast::AdminStmt::AnalyzeTable(analyze) => analyze.as_ref(),
         tidb_ast::AdminStmt::AnalyzeIncremental(_) => {
+            // Go removed the feature and its planner answers the statement
+            // with this exact notice (`planbuilder.go`'s
+            // `AnalyzeIncremental` case over `ErrAnalyzeIncrementalRemoved`).
             return Err(AnalyzeError::Unsupported(
-                "this node does not run ANALYZE INCREMENTAL TABLE: it extends the previous \
-                 histogram from its last bound rather than rebuilding one"
+                "the incremental analyze feature has already been removed in TiDB v7.5.0, \
+                 so this will have no effect"
                     .to_owned(),
             ));
         }

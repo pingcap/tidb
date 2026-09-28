@@ -42,11 +42,12 @@ impl KeySetShard {
     }
 
     fn shard(&self, key: i64) -> &RwLock<HashMap<i64, Arc<Table>>> {
-        let index = key % KEY_SET_COUNT as i64;
-        let index = match usize::try_from(index) {
-            Ok(index) => index,
-            Err(_) => panic!("negative table ID is not a valid Go shard index: {key}"),
-        };
+        // Pseudo/meta table ids are negative (information_schema's own ids),
+        // and the analyze pipeline touches the cache through them; go's
+        // `key % count` lands those in a MAP bucket without ever indexing a
+        // slice, so the port must not panic either. `rem_euclid` gives every
+        // id — negative included — a valid shard.
+        let index = key.rem_euclid(KEY_SET_COUNT as i64) as usize;
         &self.shards[index]
     }
 
