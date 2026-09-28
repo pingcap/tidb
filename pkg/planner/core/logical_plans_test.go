@@ -1166,7 +1166,28 @@ func TestAggPrune(t *testing.T) {
 func TestVisitInfo(t *testing.T) {
 	t.Run("test non-column privilege visit info", testNormalVisitInfo)
 	t.Run("test column privilege visit info", testColumnPrivilegeVisitInfo)
+	t.Run("test raw select visit info retains fallback", testRawSelectVisitInfoRetainsFallback)
 	t.Run("test column privilege visit info with PointGet", testColumnPrivilegePointGetVisitInfo)
+}
+
+func testRawSelectVisitInfoRetainsFallback(t *testing.T) {
+	const sql = "SELECT a FROM t"
+	s := createPlannerSuite()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	require.NoError(t, Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is})))
+	sctx := MockContext()
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+	_, err = builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+
+	checkRawVisitInfo(t, builder.visitInfo, []visitInfo{
+		{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+		{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+	}, sql)
 }
 
 func testNormalVisitInfo(t *testing.T) {
@@ -3059,6 +3080,10 @@ func effectiveVisitInfoForTest(vs []visitInfo) []visitInfo {
 
 func checkVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
 	actual = effectiveVisitInfoForTest(actual)
+	checkRawVisitInfo(t, actual, expected, comment)
+}
+
+func checkRawVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
 	sort.Sort(visitInfoArray(actual))
 	sort.Sort(visitInfoArray(expected))
 	actual = unique(actual)
