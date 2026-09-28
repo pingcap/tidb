@@ -5111,13 +5111,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
 	}
 
-	if tbl.Type().IsVirtualTable() {
-		if tn.TableSample != nil {
-			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
-		}
-		return b.buildMemTable(ctx, dbName, tableInfo)
-	}
-
 	// Reading a table in a SELECT requires a SELECT privilege on that table even
 	// when the query does not reference any of its columns, such as
 	// `SELECT 1 FROM t` or `SELECT COUNT(*) FROM t`.
@@ -5141,6 +5134,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			selectErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, tableInfo.Name.L)
 		}
 		b.visitInfo = appendSelectVisitInfo(b.visitInfo, dbName.L, tableInfo.Name.L, "*", selectErr)
+	}
+
+	if tbl.Type().IsVirtualTable() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
+		}
+		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
 
 	tblName := *asName

@@ -894,6 +894,22 @@ func TestMetricsSchema(t *testing.T) {
 			},
 		},
 		{
+			"SELECT COUNT(*) FROM metrics_schema.up",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+			},
+		},
+		{
+			"SELECT 1 FROM metrics_schema.up LIMIT 1",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+			},
+		},
+		{
 			"SELECT * FROM metrics_schema.up",
 			"msprocess",
 			func(err error) {
