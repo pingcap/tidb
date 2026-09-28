@@ -419,6 +419,7 @@ impl TonicCoprocessorClient {
         call: &UnaryCallContext,
         run_loop: Option<CompletionRunLoop>,
     ) -> Result<BatchCoprocessorPending, DirectUnaryClientError> {
+        let send_metrics_started = std::time::Instant::now();
         if call.cancellation().is_cancelled() {
             return Err(DirectUnaryClientError::CallerCancelled);
         }
@@ -436,8 +437,14 @@ impl TonicCoprocessorClient {
                     pending.cancel();
                     return Err(error);
                 }
-            };
+        };
         pending.retain_barrier(barrier);
+        pending.observe_send_metrics(
+            send_metrics_started,
+            request.context.peer.as_ref().map_or(0, |peer| peer.store_id),
+            request.context.stale_read,
+            request.context.request_source.clone(),
+        );
         if call.cancellation().is_cancelled() {
             pending.cancel();
             return Err(DirectUnaryClientError::CallerCancelled);

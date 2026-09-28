@@ -19,7 +19,7 @@
 //! transport's sole route-scoped in-flight table.
 
 use crate::{rpc::DirectUnaryClientError, DirectUnaryResponse};
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, sync::Arc, time::Instant};
 
 use super::{
     reply_pair, BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchReply,
@@ -40,6 +40,14 @@ pub struct BatchCoprocessorPending {
     completion: CoprocessorCompletion,
     progress: Arc<BatchRequestProgress>,
     barrier: RefCell<Option<crate::rpc::transport_runtime::PublicationBarrier>>,
+    send_metrics: Option<SendMetricsObservation>,
+}
+
+struct SendMetricsObservation {
+    started_at: Instant,
+    store_id: u64,
+    stale_read: bool,
+    request_source: String,
 }
 
 impl BatchCoprocessorPending {
@@ -88,8 +96,36 @@ impl BatchCoprocessorPending {
                 completion: pull,
                 progress,
                 barrier: RefCell::new(None),
+                send_metrics: None,
             },
         )
+    }
+
+    pub(in crate::rpc) fn observe_send_metrics(
+        &mut self,
+        started_at: Instant,
+        store_id: u64,
+        stale_read: bool,
+        request_source: String,
+    ) {
+        self.send_metrics = Some(SendMetricsObservation {
+            started_at,
+            store_id,
+            stale_read,
+            request_source,
+        });
+    }
+
+    fn report_send_metrics(&mut self) {
+        if let Some(observation) = self.send_metrics.take() {
+            crate::client_go_metrics::observe_send_request_seconds(
+                "Cop",
+                observation.store_id,
+                observation.stale_read,
+                &observation.request_source,
+                observation.started_at.elapsed().as_secs_f64(),
+            );
+        }
     }
 
     pub(in crate::rpc) fn retain_barrier(
@@ -167,6 +203,9 @@ impl PendingRequest for BatchCoprocessorPending {
             CoprocessorCompletion::Response(pull) => pull.try_complete()?,
             CoprocessorCompletion::Callback(pull) => pull.try_complete()?,
         };
+        if result.is_some() {
+            self.report_send_metrics();
+        }
         Ok(result.map(|result| self.map_result(result)))
     }
 
@@ -185,6 +224,7 @@ impl PendingRequest for BatchCoprocessorPending {
             CoprocessorCompletion::Response(pull) => pull.complete(call)?,
             CoprocessorCompletion::Callback(pull) => pull.complete(call)?,
         };
+        self.report_send_metrics();
         Ok(self.map_result(result))
     }
 }
