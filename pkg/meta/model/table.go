@@ -184,9 +184,10 @@ type TableInfo struct {
 
 	View *ViewInfo `json:"view"`
 
-	MaterializedViewBase *MaterializedViewBaseInfo `json:"materialized_view_base,omitempty"`
-	MaterializedView     *MaterializedViewInfo     `json:"materialized_view,omitempty"`
-	MaterializedViewLog  *MaterializedViewLogInfo  `json:"materialized_view_log,omitempty"`
+	MaterializedViewBase   *MaterializedViewBaseInfo   `json:"materialized_view_base,omitempty"`
+	MaterializedView       *MaterializedViewInfo       `json:"materialized_view,omitempty"`
+	MaterializedViewShadow *MaterializedViewShadowInfo `json:"materialized_view_shadow,omitempty"`
+	MaterializedViewLog    *MaterializedViewLogInfo    `json:"materialized_view_log,omitempty"`
 
 	Sequence *SequenceInfo `json:"sequence"`
 
@@ -322,6 +323,9 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 	if t.MaterializedView != nil {
 		nt.MaterializedView = t.MaterializedView.Clone()
+	}
+	if t.MaterializedViewShadow != nil {
+		nt.MaterializedViewShadow = t.MaterializedViewShadow.Clone()
 	}
 	if t.MaterializedViewLog != nil {
 		nt.MaterializedViewLog = t.MaterializedViewLog.Clone()
@@ -877,6 +881,21 @@ type MaterializedViewInfo struct {
 	RefreshScheduleSQLMode          mysql.SQLMode       `json:"refresh_schedule_sql_mode"`
 	DefinitionDivPrecisionIncrement int                 `json:"definition_div_precision_increment"`
 	DefinitionTimeZone              TimeZoneLocation    `json:"definition_time_zone"`
+}
+
+// MaterializedViewShadowInfo identifies a physical shadow table used by a
+// complete out-of-place materialized view refresh.
+type MaterializedViewShadowInfo struct {
+	SourceMViewID int64 `json:"source_mview_id"`
+}
+
+// Clone clones MaterializedViewShadowInfo.
+func (i *MaterializedViewShadowInfo) Clone() *MaterializedViewShadowInfo {
+	if i == nil {
+		return nil
+	}
+	ni := *i
+	return &ni
 }
 
 // Clone returns a deep copy of the materialized view metadata.

@@ -417,13 +417,14 @@ func JobNeedGC(job *model.Job) bool {
 		switch job.Type {
 		case model.ActionDropSchema, model.ActionDropTable,
 			model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+			model.ActionDropMaterializedViewShadow,
 			model.ActionTruncateTable,
 			model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 			model.ActionDropColumn, model.ActionModifyColumn,
 			model.ActionAddIndex, model.ActionAddPrimaryKey,
 			model.ActionReorganizePartition, model.ActionRemovePartitioning,
-			model.ActionAlterTablePartitioning:
+			model.ActionAlterTablePartitioning, model.ActionMViewRefreshOutOfPlaceCutover:
 			return true
 		case model.ActionCreateMaterializedView:
 			// CREATE MATERIALIZED VIEW may create a physical table before the initial
@@ -724,6 +725,12 @@ func (w *worker) transitOneJobStep(
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
+			if err := w.checkBeforeCommit(); err != nil {
+				return 0, err
+			}
+			if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
+			}
 			job.State = model.JobStateSynced
 		}
 		// Inject the failpoint to prevent the progress of index creation.
@@ -1107,6 +1114,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
 	case model.ActionCreateTable:
 		ver, err = w.onCreateTable(jobCtx, job)
+	case model.ActionCreateMaterializedViewShadow:
+		ver, err = w.onCreateMaterializedViewShadow(jobCtx, job)
 	case model.ActionCreateMaterializedViewLog:
 		ver, err = w.onCreateMaterializedViewLog(jobCtx, job)
 	case model.ActionCreateMaterializedView:
@@ -1118,7 +1127,8 @@ func (w *worker) runOneJobStep(
 	case model.ActionCreateView:
 		ver, err = onCreateView(jobCtx, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
-		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		ver, err = w.onDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(jobCtx, job)
@@ -1166,6 +1176,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onAlterMaterializedViewAttributes(jobCtx, job, w.sess)
 	case model.ActionAlterMaterializedViewLogPurge:
 		ver, err = onAlterMaterializedViewLogPurge(jobCtx, job, w.sess)
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		ver, err = w.onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx, job)
 	case model.ActionModifyTableAutoIDCache:
 		ver, err = onModifyTableAutoIDCache(jobCtx, job)
 	case model.ActionAddTablePartition:

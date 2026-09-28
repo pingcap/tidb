@@ -293,7 +293,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		args, err := model.GetFinishedDropTableArgs(job)
@@ -314,6 +314,12 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return nil
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{job.TableID}, ea, "create materialized view rollback: table ID"))
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{args.OldMViewID}, ea, "refresh materialized view out-of-place cutover: old table ID"))
 	case model.ActionTruncateTable:
 		tableID := job.TableID
 		args, err := model.GetFinishedTruncateTableArgs(job)
