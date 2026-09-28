@@ -17,6 +17,7 @@ package snapclient
 import (
 	"cmp"
 	"context"
+	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -32,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
 
@@ -49,6 +52,18 @@ var (
 	GetSchemaVersionFromStatsMeta = getSchemaVersionFromStatsMeta
 	UpdateStatsMetaSchema         = updateStatsMetaSchema
 )
+
+func TestMVSystemTablesAreUnrecoverable(t *testing.T) {
+	for _, tableName := range []string{
+		"tidb_mview_refresh_info",
+		"tidb_mlog_purge_info",
+		"tidb_mview_refresh_hist",
+		"tidb_mview_refresh_alert",
+		"tidb_mlog_purge_hist",
+	} {
+		require.True(t, isUnrecoverableTable(mysql.SystemDB, tableName), tableName)
+	}
+}
 
 // MockClient create a fake Client used to test.
 func MockClient(dbs map[string]*metautil.Database) *SnapClient {

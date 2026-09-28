@@ -47,7 +47,7 @@ func TestImportCleanerBatchCleanUsesUnredactedStorageCredentials(t *testing.T) {
 	require.NoError(t, backend.CreateBucket("cleanup-bucket"))
 	require.NoError(t, backend.CreateBucket("other-cleanup-bucket"))
 	fakeS3 := gofakes3.New(backend).Server()
-	listRequests := make(chan string, len(taskIDs))
+	listRequests := make(chan string, len(buckets))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Authorization"), "Credential="+accessKey+"/") {
 			http.Error(w, "unexpected access key", http.StatusForbidden)
@@ -58,7 +58,10 @@ func TestImportCleanerBatchCleanUsesUnredactedStorageCredentials(t *testing.T) {
 		}
 		fakeS3.ServeHTTP(w, r)
 	}))
-	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		server.Client().CloseIdleConnections()
+		server.Close()
+	})
 
 	ctx := context.Background()
 	cloudStorageURIs := make([]string, 0, len(buckets))
@@ -74,6 +77,7 @@ func TestImportCleanerBatchCleanUsesUnredactedStorageCredentials(t *testing.T) {
 		require.NoError(t, err)
 		taskID := taskIDs[i]
 		require.NoError(t, store.WriteFile(ctx, fmt.Sprintf("%d/data", taskID), []byte("data")))
+		require.NoError(t, store.WriteFile(ctx, fmt.Sprintf("conflicted-rows/%d/attempt/data", taskID), []byte("row")))
 		if i == 0 || i == 2 {
 			require.NoError(t, store.WriteFile(ctx, "kept/data", []byte("data")))
 		}
@@ -101,6 +105,9 @@ func TestImportCleanerBatchCleanUsesUnredactedStorageCredentials(t *testing.T) {
 		exists, err := store.FileExists(ctx, fmt.Sprintf("%d/data", task.ID))
 		require.NoError(t, err)
 		require.False(t, exists)
+		exists, err = store.FileExists(ctx, fmt.Sprintf("conflicted-rows/%d/attempt/data", task.ID))
+		require.NoError(t, err)
+		require.True(t, exists)
 		if i == 0 || i == 2 {
 			exists, err = store.FileExists(ctx, "kept/data")
 			require.NoError(t, err)
@@ -108,6 +115,7 @@ func TestImportCleanerBatchCleanUsesUnredactedStorageCredentials(t *testing.T) {
 		}
 		store.Close()
 		require.NotContains(t, string(task.Meta), accessKey)
+		require.NotContains(t, string(task.Meta), "cleanup-secret")
 		require.Contains(t, string(task.Meta), "access-key=xxxxxx")
 	}
 }

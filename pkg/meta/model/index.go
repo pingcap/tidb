@@ -34,6 +34,7 @@ type DistanceMetric string
 
 // Note: tipb.VectorDistanceMetric's enum names must be aligned with these constant values.
 const (
+	// DistanceMetricL2 is L2 distance.
 	DistanceMetricL2 DistanceMetric = "L2"
 	// DistanceMetricCosine is cosine distance.
 	DistanceMetricCosine DistanceMetric = "COSINE"
@@ -66,6 +67,14 @@ const (
 	// GlobalIndexVersionV2 is the next, not yet implemented format (version 2) where partition ID
 	// is encoded in the key ONLY!
 	GlobalIndexVersionV2 uint8 = 2
+)
+
+// VectorIndexKind is the kind of vector index.
+type VectorIndexKind string
+
+const (
+	// VectorIndexKindHNSW is HNSW index.
+	VectorIndexKindHNSW VectorIndexKind = "HNSW"
 )
 
 // globalIndexV1Supported tracks whether all TiDB nodes in the cluster support
@@ -117,6 +126,8 @@ var IndexableDistanceMetricToFnName = map[DistanceMetric]string{
 
 // VectorIndexInfo is the information of vector index of a column.
 type VectorIndexInfo struct {
+	// Kind is the kind of vector index. Currently only HNSW is supported.
+	Kind VectorIndexKind `json:"kind"`
 	// Dimension is the dimension of the vector.
 	Dimension uint64 `json:"dimension"`
 	// DistanceMetric is the distance metric used by the index.

@@ -2022,6 +2022,54 @@ func (n *CompactTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	return v.Leave(n)
 }
 
+func (n *CancelMaterializedViewJobStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
+func (n *PurgeMaterializedViewLogStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.Table != nil {
+		if !n.Table.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *RefreshMaterializedViewImplementStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.RefreshStmt != nil {
+		if !n.RefreshStmt.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *RefreshMaterializedViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.ViewName != nil {
+		if !n.ViewName.AcceptInPlace(v) {
+			return false
+		}
+	}
+	if n.AsOf != nil {
+		if !n.AsOf.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
 func (n *PrepareStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)

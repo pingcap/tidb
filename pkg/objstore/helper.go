@@ -100,8 +100,10 @@ func UnmarshalDir[T any](ctx context.Context, walkOpt *storeapi.WalkOption, s st
 			})
 			return nil
 		})
-		if err == nil {
-			err = eg.Wait()
+		// Workers can still send results after WalkDir fails. Join them before
+		// closing ch, while preserving the original listing error.
+		if workerErr := eg.Wait(); err == nil {
+			err = workerErr
 		}
 		if err != nil {
 			select {
@@ -119,7 +121,14 @@ func UnmarshalDir[T any](ctx context.Context, walkOpt *storeapi.WalkOption, s st
 			return iter.Throw[*T](err)
 		case meta, ok := <-ch:
 			if !ok {
-				return iter.Done[*T]()
+				// An error is published before ch is closed. Both select cases may
+				// be ready, so do not mistake a listing/worker error for normal EOF.
+				select {
+				case err := <-errCh:
+					return iter.Throw[*T](err)
+				default:
+					return iter.Done[*T]()
+				}
 			}
 			return iter.Emit(meta)
 		}

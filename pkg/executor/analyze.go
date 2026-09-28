@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
@@ -578,6 +579,28 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	panic("unreachable")
 }
 
+// writeSavedAnalyzeOption appends one analyze option to the VALUES list of the
+// REPLACE INTO mysql.analyze_options statement. An option that is not set is
+// written as the DEFAULT keyword rather than a hardcoded value, so the column
+// default in the table definition is the source of truth for how "unset" is
+// persisted and this writer cannot drift from it across releases.
+// The reader keeps its own sentinels: getSavedAnalyzeOpts treats sample_num,
+// sample_rate and buckets as unset when not positive, and topn when negative.
+// Those must stay consistent with the column defaults; changing a default here
+// without changing the reader would turn "unset" into a pinned value.
+func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOptionType]uint64, optType ast.AnalyzeOptionType) {
+	val, ok := rawOpts[optType]
+	if !ok {
+		sql.WriteString("DEFAULT")
+		return
+	}
+	if optType == ast.AnalyzeOptSampleRate {
+		sqlescape.MustFormatSQL(sql, "%?", math.Float64frombits(val))
+		return
+	}
+	sqlescape.MustFormatSQL(sql, "%?", val)
+}
+
 func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
@@ -585,7 +608,16 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	// only to save table options if dynamic prune mode
 	dynamicPrune := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
+	resetOpts := make(map[ast.AnalyzeOptionType]struct{})
+	partitionIDs := make([]int64, 0)
 	for id, opts := range e.OptionsMap {
+		if dynamicPrune && opts.IsPartition {
+			partitionIDs = append(partitionIDs, id)
+			continue
+		}
+		for optType := range opts.ResetOpts {
+			resetOpts[optType] = struct{}{}
+		}
 		if !opts.IsPartition || !dynamicPrune {
 			toSaveMap[id] = opts
 		}
@@ -594,23 +626,21 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
 	idx := 0
 	for _, opts := range toSaveMap {
-		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
-		sampleRate := float64(0)
-		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
-			sampleRate = math.Float64frombits(val)
-		}
-		buckets := opts.RawOpts[ast.AnalyzeOptNumBuckets]
-		topn := int64(-1)
-		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
-			topn = int64(val)
-		}
 		colChoice := opts.ColChoice.String()
 		colIDs := make([]string, 0, len(opts.ColumnList))
 		for _, colInfo := range opts.ColumnList {
 			colIDs = append(colIDs, strconv.FormatInt(colInfo.ID, 10))
 		}
 		colIDStrs := strings.Join(colIDs, ",")
-		sqlescape.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		sqlescape.MustFormatSQL(sql, "(%?,", opts.PhyTableID)
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumSamples)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptSampleRate)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumBuckets)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumTopN)
+		sqlescape.MustFormatSQL(sql, ",%?,%?)", colChoice, colIDStrs)
 		if idx < len(toSaveMap)-1 {
 			sqlescape.MustFormatSQL(sql, ",")
 		}
@@ -622,7 +652,55 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	if err != nil {
 		return err
 	}
+	if dynamicPrune && len(resetOpts) > 0 && len(partitionIDs) > 0 {
+		if err := resetAnalyzeOptionsForPartitions(ctx, exec, resetOpts, partitionIDs); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// resetAnalyzeOptionsForPartitions clears only the options explicitly reset by
+// a whole-table ANALYZE in dynamic prune mode. Dynamic mode normally saves only
+// the table row, but old partition rows must not retain overrides that would
+// become effective again after switching back to static pruning.
+func resetAnalyzeOptionsForPartitions(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, resetOpts map[ast.AnalyzeOptionType]struct{}, partitionIDs []int64) error {
+	columns := []struct {
+		optType ast.AnalyzeOptionType
+		name    string
+	}{
+		{ast.AnalyzeOptNumSamples, "sample_num"},
+		{ast.AnalyzeOptSampleRate, "sample_rate"},
+		{ast.AnalyzeOptNumBuckets, "buckets"},
+		{ast.AnalyzeOptNumTopN, "topn"},
+	}
+	sql := new(strings.Builder)
+	sql.WriteString("UPDATE mysql.analyze_options SET ")
+	updated := 0
+	for _, column := range columns {
+		if _, ok := resetOpts[column.optType]; !ok {
+			continue
+		}
+		if updated > 0 {
+			sql.WriteString(",")
+		}
+		sql.WriteString(column.name)
+		sql.WriteString("=DEFAULT")
+		updated++
+	}
+	if updated == 0 {
+		return nil
+	}
+	sql.WriteString(" WHERE table_id IN (")
+	for i, partitionID := range partitionIDs {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		sqlescape.MustFormatSQL(sql, "%?", partitionID)
+	}
+	sql.WriteString(")")
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	return err
 }
 
 func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {

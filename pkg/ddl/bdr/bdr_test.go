@@ -196,6 +196,14 @@ func TestIsDenied(t *testing.T) {
 		{ast.BDRRoleSecondary, model.ActionDropTable, true},
 		{ast.BDRRoleNone, model.ActionDropTable, false},
 
+		// Roles for materialized view drop actions.
+		{ast.BDRRolePrimary, model.ActionDropMaterializedView, true},
+		{ast.BDRRoleSecondary, model.ActionDropMaterializedView, true},
+		{ast.BDRRoleNone, model.ActionDropMaterializedView, false},
+		{ast.BDRRolePrimary, model.ActionDropMaterializedViewLog, true},
+		{ast.BDRRoleSecondary, model.ActionDropMaterializedViewLog, true},
+		{ast.BDRRoleNone, model.ActionDropMaterializedViewLog, false},
+
 		// Roles for ActionAddColumn
 		{ast.BDRRolePrimary, model.ActionAddColumn, false},
 		{ast.BDRRoleSecondary, model.ActionAddColumn, true},

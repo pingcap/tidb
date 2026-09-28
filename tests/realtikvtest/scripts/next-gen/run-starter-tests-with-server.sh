@@ -20,6 +20,31 @@ export NEXT_GEN=1
 starter_data_dir=""
 starter_tidb_pid=""
 
+function preserve_starter_diagnostics() {
+    local log_file="$1"
+    local stdout_log_file="$2"
+    local config_file="$3"
+    local activate_response_file="$4"
+    local diagnostics_dir
+    local diagnostics_archive
+
+    diagnostics_dir="$(mktemp -d)"
+    diagnostics_archive="tidb-starter-diagnostics-$(date +%Y%m%d%H%M%S).tar.gz"
+    cp -f "${log_file}" "${diagnostics_dir}/tidb.log" 2>/dev/null || true
+    cp -f "${stdout_log_file}" "${diagnostics_dir}/tidb-stdout.log" 2>/dev/null || true
+    cp -f "${config_file}" "${diagnostics_dir}/starter.toml" 2>/dev/null || true
+    cp -f "${activate_response_file}" "${diagnostics_dir}/activate-response.json" 2>/dev/null || true
+    if tar -czf "${diagnostics_archive}" -C "${diagnostics_dir}" .; then
+        echo "Starter diagnostics saved to ${diagnostics_archive}"
+    else
+        echo "Failed to archive starter diagnostics to ${diagnostics_archive}." >&2
+    fi
+    rm -rf "${diagnostics_dir}"
+
+    tail -200 "${log_file}" || true
+    tail -200 "${stdout_log_file}" || true
+}
+
 function find_available_port() {
     local port="$1"
     while [[ "${port}" -lt 65536 ]]; do
@@ -297,13 +322,28 @@ function run_under_cluster() {
 deploy-mode = "starter"
 max-allowed-packet = ${max_allowed_packet}
 tikv-worker-url = "${tikv_worker_url}"
+EOF
 
+    if is_true "${STARTER_COLUMNAR_AP:-}"; then
+        cat >> "${config_file}" <<EOF
+disaggregated-tiflash = true
+EOF
+    fi
+
+    cat >> "${config_file}" <<EOF
 [tikv-client]
 txn-chunk-writer-addr = "${txn_chunk_writer_addr}"
 txn-chunk-writer-concurrency = ${txn_chunk_writer_concurrency}
 txn-chunk-max-size = ${txn_chunk_max_size}
 txn-file-min-mutation-size = ${txn_file_min_mutation_size}
 EOF
+
+    if is_true "${STARTER_COLUMNAR_AP:-}"; then
+        cat >> "${config_file}" <<EOF
+[cse]
+columnar-store-type = "columnar"
+EOF
+    fi
 
     local activate_metadata_json=""
     if is_true "${keyspace_observability}"; then
@@ -374,14 +414,27 @@ EOF
     export TIDB_STARTER_KEYSPACE_NAME="${keyspace_name}"
     export TIDB_STARTER_ACTIVATED_FROM_STANDBY="${starter_activated_from_standby}"
     export TIDB_STARTER_ACTIVATE_EXPORT_ID="${activate_export_id}"
+    if is_true "${STARTER_COLUMNAR_AP:-}"; then
+        export TIDB_STARTER_COLUMNAR_AP=1
+    else
+        unset TIDB_STARTER_COLUMNAR_AP
+    fi
+    unset TIDB_STARTER_RUN_EXIT_WAIT_TEST
     if is_true "${keyspace_observability}"; then
         export TIDB_STARTER_KEYSPACE_OBSERVABILITY=1
         export TIDB_STARTER_KEYSPACE_META_TENANT="${keyspace_meta_tenant}"
         export TIDB_STARTER_KEYSPACE_META_PROJECT="${keyspace_meta_project}"
+    else
+        unset TIDB_STARTER_KEYSPACE_OBSERVABILITY
+        unset TIDB_STARTER_KEYSPACE_META_TENANT
+        unset TIDB_STARTER_KEYSPACE_META_PROJECT
     fi
 
     echo "Running external starter tests: ./tests/realtikvtest/${test_suite}"
-    go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen -timeout "${suite_timeout}" "${extra_go_test_args[@]}"
+    if ! go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen -timeout "${suite_timeout}" "${extra_go_test_args[@]}"; then
+        preserve_starter_diagnostics "${log_file}" "${stdout_log_file}" "${config_file}" "${activate_response_file}"
+        return 1
+    fi
 
     if [[ -z "${run_exit_wait_test}" ]]; then
         if [[ "${test_suite}" == "startertest" && "${#extra_go_test_args[@]}" -eq 0 ]]; then
@@ -393,10 +446,13 @@ EOF
     if is_true "${run_exit_wait_test}" && [[ "${test_suite}" == "startertest" ]]; then
         export TIDB_STARTER_RUN_EXIT_WAIT_TEST=1
         echo "Running destructive external starter exit-wait test"
-        go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen \
+        if ! go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen \
             -timeout "${STARTER_EXIT_WAIT_TEST_TIMEOUT:-2m}" \
             -run '^TestExternalStarterExitWaitAndManagerNotifierContracts/graceful_exit_waits_for_open_connection$' \
-            -count=1
+            -count=1; then
+            preserve_starter_diagnostics "${log_file}" "${stdout_log_file}" "${config_file}" "${activate_response_file}"
+            return 1
+        fi
         if [[ -n "${starter_tidb_pid:-}" ]] && kill -0 "${starter_tidb_pid}" >/dev/null 2>&1; then
             wait "${starter_tidb_pid}" >/dev/null 2>&1 || true
         fi

@@ -33,6 +33,26 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+func TestURI(t *testing.T) {
+	for _, tc := range []struct {
+		prefix string
+		uri    string
+	}{
+		{"", "oss://bucket/"},
+		{"data", "oss://bucket/data/"},
+		{"data/", "oss://bucket/data/"},
+		{"data/nested%2E", "oss://bucket/data/nested%2E/"},
+	} {
+		t.Run(tc.prefix, func(t *testing.T) {
+			store := &OSSStore{Storage: newOSSStorageForTest(nil, &backuppb.S3{
+				Bucket: "bucket",
+				Prefix: tc.prefix,
+			}, nil)}
+			require.Equal(t, tc.uri, store.URI())
+		})
+	}
+}
+
 func TestStore(t *testing.T) {
 	// example: acs:ram::00000000000000:role
 	roleARNPrefix := "place-holder"

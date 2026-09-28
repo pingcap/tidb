@@ -10,6 +10,7 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
+        "//pkg/parser/mysql",
         "//pkg/util",
         "//pkg/util/parser",
         "@com_github_pingcap_errors//:errors",
@@ -27,6 +28,8 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/parser/opcode",
         "//pkg/testkit/testsetup",
         "//pkg/types/parser_driver",
         "@com_github_stretchr_testify//require",

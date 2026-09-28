@@ -58,10 +58,10 @@ func TestDDLVisitorCover(t *testing.T) {
 
 	for _, v := range stmts {
 		ce.reset()
-		v.node.Accept(checkVisitor{})
+		Walk(v.node, checkVisitor{})
 		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
 		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
-		v.node.Accept(visitor1{})
+		Walk(v.node, visitor1{})
 	}
 }
 

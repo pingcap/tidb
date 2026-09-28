@@ -459,7 +459,7 @@ func ParseServerInfo(src string) ServerInfo {
 			versionStr = tidbVersionRegex.FindString(src)
 			versionStr = strings.TrimPrefix(versionStr, "-")
 		}
-		// try to parse TiDB-X version if Classic tidb version parsing fails.
+		// try to parse TiDB X version if Classic tidb version parsing fails.
 		if versionStr == "" {
 			versionStr = parseTiDBXVersionToSemver(src)
 		}

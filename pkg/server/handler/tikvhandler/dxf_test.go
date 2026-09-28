@@ -15,13 +15,51 @@
 package tikvhandler
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDXFNodesHandler(t *testing.T) {
+	t.Run("read error", func(t *testing.T) {
+		h := &DXFNodesHandler{
+			getNodes: func(context.Context) ([]proto.ManagedNode, error) {
+				return nil, errors.New("injected read error")
+			},
+		}
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/dxf/nodes", nil))
+
+		require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		require.Equal(t, "injected read error", recorder.Body.String())
+	})
+
+	t.Run("canceled request", func(t *testing.T) {
+		var observedErr error
+		h := &DXFNodesHandler{
+			getNodes: func(ctx context.Context) ([]proto.ManagedNode, error) {
+				observedErr = ctx.Err()
+				return []proto.ManagedNode{}, nil
+			},
+		}
+		reqCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		req := httptest.NewRequest(http.MethodGet, "/dxf/nodes", nil).WithContext(reqCtx)
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, req)
+
+		require.ErrorIs(t, observedErr, context.Canceled)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		require.JSONEq(t, "[]", recorder.Body.String())
+	})
+}
 
 func TestParsePauseScaleInFlag(t *testing.T) {
 	_, _, err := parsePauseScaleInFlag(&http.Request{})

@@ -149,8 +149,6 @@ const (
 	MaxRequestUnitWrite                        = "MAX_REQUEST_UNIT_WRITE"
 	AvgQueuedRcTimeStr                         = "AVG_QUEUED_RC_TIME"
 	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
-	AvgRequestUnitV2                           = "AVG_REQUEST_UNIT_V2"
-	MaxRequestUnitV2                           = "MAX_REQUEST_UNIT_V2"
 	ResourceGroupName                          = "RESOURCE_GROUP"
 	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
 	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
@@ -544,12 +542,6 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	MaxQueuedRcTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxRUWaitDuration)
-	},
-	AvgRequestUnitV2: func(_ columnInfo, record *StmtRecord) any {
-		return avgSumFloat(record.SumRUV2, record.ExecCount)
-	},
-	MaxRequestUnitV2: func(_ columnInfo, record *StmtRecord) any {
-		return record.MaxRUV2
 	},
 	ResourceGroupName: func(_ columnInfo, record *StmtRecord) any {
 		return record.ResourceGroupName

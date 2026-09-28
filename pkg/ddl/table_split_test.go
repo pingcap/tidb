@@ -65,6 +65,45 @@ func TestTableSplit(t *testing.T) {
 	)`)
 	defer dom.Close()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+
+	tk.MustExec("create table t_implicit_split_disabled (a bigint)")
+	re := tk.MustQuery("show table t_implicit_split_disabled regions")
+	require.Len(t, re.Rows(), 1)
+
+	// Explicit split options should take effect even when automatic table splitting is disabled.
+	tk.MustExec(`create table t_pre_split_with_split_table_disabled (
+		a bigint
+	) shard_row_id_bits = 2 pre_split_regions = 2`)
+	re = tk.MustQuery("show table t_pre_split_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 4)
+
+	tk.MustExec(`create table t_split_policy_with_split_table_disabled (
+		a bigint primary key
+	) split between (0) and (10000) regions 4`)
+	re = tk.MustQuery("show table t_split_policy_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 4)
+
+	tk.MustExec("create table t_alter_split_policy_with_split_table_disabled (a bigint primary key)")
+	re = tk.MustQuery("show table t_alter_split_policy_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 1)
+	tk.MustExec("alter table t_alter_split_policy_with_split_table_disabled split between (0) and (10000) regions 4")
+	re = tk.MustQuery("show table t_alter_split_policy_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 4)
+	tk.MustExec("truncate table t_alter_split_policy_with_split_table_disabled")
+	re = tk.MustQuery("show table t_alter_split_policy_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 4)
+
+	tk.MustExec(`create table t_add_partition_with_split_table_disabled (
+		a bigint primary key
+	) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200)
+	) split between (0) and (10000) regions 4`)
+	tk.MustExec(`alter table t_add_partition_with_split_table_disabled
+		add partition (partition p2 values less than (300))`)
+	re = tk.MustQuery("show table t_add_partition_with_split_table_disabled partition (p2) regions")
+	require.Len(t, re.Rows(), 4)
+
 	infoSchema := dom.InfoSchema()
 	require.NotNil(t, infoSchema)
 	tbl, err := infoSchema.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb"))
@@ -356,31 +395,154 @@ func TestTableSplitPolicyMultipleIndexes(t *testing.T) {
 
 func TestTableSplitPolicyShowCreateRoundTrip(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_src, t_dst")
-	tk.MustExec(`create table t_src (
-		id bigint primary key,
-		user_id bigint,
-		index idx_user_id (user_id)
-	)
-	split between (0) and (1000000) regions 4
-	split index idx_user_id between (1000) and (100000) regions 3`)
 
-	createSQL := tk.MustQuery("show create table t_src").Rows()[0][1].(string)
-	require.Contains(t, createSQL, "/*T![region_split]")
+	t.Run("table-level-policy", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_src, t_dst")
+		tk.MustExec(`create table t_src (
+			id bigint primary key,
+			user_id bigint,
+			index idx_user_id (user_id)
+		)
+		split between (0) and (1000000) regions 4
+		split index idx_user_id between (1000) and (100000) regions 3`)
 
-	roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_src`", "CREATE TABLE `t_dst`", 1)
-	tk.MustExec(roundTripSQL)
+		createSQL := tk.MustQuery("show create table t_src").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "/*T![region_split]")
 
-	tbl := external.GetTableByName(t, tk, "test", "t_dst")
-	require.NotNil(t, tbl.Meta().TableSplitPolicy)
-	require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+		roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_src`", "CREATE TABLE `t_dst`", 1)
+		tk.MustExec(roundTripSQL)
 
-	idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
-	require.NotNil(t, idxInfo)
-	require.NotNil(t, idxInfo.RegionSplitPolicy)
-	require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+		tbl := external.GetTableByName(t, tk, "test", "t_dst")
+		require.NotNil(t, tbl.Meta().TableSplitPolicy)
+		require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+		idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
+		require.NotNil(t, idxInfo)
+		require.NotNil(t, idxInfo.RegionSplitPolicy)
+		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+	})
+
+	// The primary key branch of the grammar does not take an index name, so the
+	// non-clustered primary key policy must be emitted as `SPLIT PRIMARY KEY
+	// BETWEEN`, otherwise the output is not parseable
+	// (https://github.com/pingcap/tidb/issues/71467).
+	t.Run("primary-key-policy", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_pk_src, t_pk_dst")
+		tk.MustExec(`create table t_pk_src (
+			id bigint not null,
+			user_id bigint,
+			primary key (id) nonclustered,
+			index idx_user_id (user_id)
+		)`)
+		tk.MustExec("alter table t_pk_src split primary key between (0) and (1000000) regions 4")
+		tk.MustExec("alter table t_pk_src split index idx_user_id between (1000) and (100000) regions 3")
+
+		createSQL := tk.MustQuery("show create table t_pk_src").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "/*T![region_split]")
+		require.Contains(t, createSQL, "SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4")
+		require.NotContains(t, createSQL, "SPLIT PRIMARY KEY `PRIMARY`")
+
+		roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_pk_src`", "CREATE TABLE `t_pk_dst`", 1)
+		tk.MustExec(roundTripSQL)
+
+		tbl := external.GetTableByName(t, tk, "test", "t_pk_dst")
+		require.Nil(t, tbl.Meta().TableSplitPolicy)
+
+		pkInfo := tbl.Meta().FindIndexByName("primary")
+		require.NotNil(t, pkInfo)
+		require.NotNil(t, pkInfo.RegionSplitPolicy)
+		require.Equal(t, int64(4), pkInfo.RegionSplitPolicy.Regions)
+
+		idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
+		require.NotNil(t, idxInfo)
+		require.NotNil(t, idxInfo.RegionSplitPolicy)
+		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+	})
+
+	// A clustered primary key is the row handle itself, so there is no separate
+	// PRIMARY index to split and the policy is emitted as `SPLIT BETWEEN`.
+	t.Run("clustered-primary-key-policy", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@session.tidb_enable_clustered_index = ON")
+		tk.MustExec("drop table if exists t_ck_src, t_ck_dst")
+		tk.MustExec(`create table t_ck_src (
+			id bigint not null,
+			user_id bigint,
+			primary key (id) clustered,
+			index idx_user_id (user_id)
+		)
+		split between (0) and (1000000) regions 4
+		split index idx_user_id between (1000) and (100000) regions 3`)
+
+		createSQL := tk.MustQuery("show create table t_ck_src").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "/*T![clustered_index] CLUSTERED */")
+		require.Contains(t, createSQL, "SPLIT BETWEEN (0) AND (1000000) REGIONS 4")
+		require.NotContains(t, createSQL, "SPLIT PRIMARY KEY")
+
+		roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_ck_src`", "CREATE TABLE `t_ck_dst`", 1)
+		tk.MustExec(roundTripSQL)
+
+		tbl := external.GetTableByName(t, tk, "test", "t_ck_dst")
+		require.NotNil(t, tbl.Meta().TableSplitPolicy)
+		require.Equal(t, int64(4), tbl.Meta().TableSplitPolicy.Regions)
+
+		idxInfo := tbl.Meta().FindIndexByName("idx_user_id")
+		require.NotNil(t, idxInfo)
+		require.NotNil(t, idxInfo.RegionSplitPolicy)
+		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+	})
+
+	// The CREATE TABLE grammar places the split clauses after the partition
+	// clause, so a partitioned table with any split policy must emit them after
+	// `PARTITION BY`, otherwise the output is not parseable
+	// (https://github.com/pingcap/tidb/issues/71468).
+	t.Run("partitioned-table-policy", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_p_src, t_p_dst")
+		tk.MustExec(`create table t_p_src (
+			id bigint not null,
+			val bigint,
+			primary key (id) nonclustered,
+			index idx_val (val)
+		) partition by range (id) (
+			partition p0 values less than (1000),
+			partition p1 values less than (2000),
+			partition pmax values less than (maxvalue)
+		)
+		split between (0) and (10000) regions 5
+		split index idx_val between (0) and (10000) regions 3`)
+		tk.MustExec("alter table t_p_src split primary key between (0) and (1000000) regions 4")
+
+		createSQL := tk.MustQuery("show create table t_p_src").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "PARTITION BY RANGE (`id`)")
+		require.Contains(t, createSQL, "SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4")
+		require.NotContains(t, createSQL, "SPLIT PRIMARY KEY `PRIMARY`")
+		// The split clauses must follow the partition definition.
+		require.Less(t, strings.Index(createSQL, "PARTITION BY"), strings.Index(createSQL, "/*T![region_split]"))
+
+		roundTripSQL := strings.Replace(createSQL, "CREATE TABLE `t_p_src`", "CREATE TABLE `t_p_dst`", 1)
+		tk.MustExec(roundTripSQL)
+
+		tbl := external.GetTableByName(t, tk, "test", "t_p_dst")
+		require.NotNil(t, tbl.Meta().TableSplitPolicy)
+		require.Equal(t, int64(5), tbl.Meta().TableSplitPolicy.Regions)
+
+		pkInfo := tbl.Meta().FindIndexByName("primary")
+		require.NotNil(t, pkInfo)
+		require.NotNil(t, pkInfo.RegionSplitPolicy)
+		require.Equal(t, int64(4), pkInfo.RegionSplitPolicy.Regions)
+
+		idxInfo := tbl.Meta().FindIndexByName("idx_val")
+		require.NotNil(t, idxInfo)
+		require.NotNil(t, idxInfo.RegionSplitPolicy)
+		require.Equal(t, int64(3), idxInfo.RegionSplitPolicy.Regions)
+	})
 }
 
 func TestTableSplitPolicyRejectSplitIndexPrimaryOnClustered(t *testing.T) {

@@ -259,7 +259,6 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		OriginalSQL:                          sc.OriginalSQL,
 		KVVars:                               vars.KVVars,
 		KvExecCounter:                        sc.KvExecCounter,
-		RUV2Metrics:                          vars.RUV2Metrics,
 		SessionMemTracker:                    vars.MemTracker,
 		Location:                             sc.TimeZone(),
 		RuntimeStatsColl:                     sc.RuntimeStatsColl,

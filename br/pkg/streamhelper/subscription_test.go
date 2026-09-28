@@ -342,8 +342,16 @@ func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
 	c.advanceCheckpoints()
 	c.flushAll()
 
-	req.Eventually(func() bool {
-		err := sub.PendingErrors()
-		return err != nil && strings.Contains(err.Error(), "has no activity")
-	}, 3*time.Second, 10*time.Millisecond)
+	deadline := time.Now().Add(3 * time.Second)
+	var lastErr error
+	for {
+		lastErr = sub.PendingErrors()
+		if lastErr != nil && strings.Contains(lastErr.Error(), "has no activity") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pending errors did not contain %q within %s; last error: %v", "has no activity", 3*time.Second, lastErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

@@ -33,19 +33,19 @@ When writing complex features or significant refactors, use an ExecPlan from des
 
 | Task | Required action |
 | --- | --- |
-| Added/moved/renamed/removed Go files, changed the import section of an existing Go file, added a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
+| Build/test preparation or changes affecting Bazel metadata | Apply the complete trigger list in `Build Flow` -> `When make bazel_prepare is required`; use `tidb-bazel-prepare-gate` if the decision is unclear. |
 | Running package unit tests | SHOULD run targeted tests and avoid full-package runs unless needed (see `docs/agents/testing-flow.md` -> `Unit tests`). |
 | Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`). |
 | Recording integration tests | MUST use the recording command in `docs/agents/testing-flow.md` -> `Integration tests` (not `-record`; `-record` is for unit-test suites that explicitly support it). |
 | RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md` -> `RealTiKV tests`). |
 | Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
 | Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
-| During local coding iterations (not claiming completion) | SHOULD use the `WIP` verification profile from `.agents/skills/tidb-verify-profile` to run only scoped checks. |
-| Claiming task completion / PR readiness | MUST use the `Ready` verification profile from `.agents/skills/tidb-verify-profile`; if there are code changes, this includes `make lint`. `Ready` is mandatory before making final-status claims such as "fixed", "done", "all tests pass", "ready for review", or "ready for PR". |
+| During local coding iterations | SHOULD use the `WIP` verification profile from `.agents/skills/tidb-verify-profile` to run only scoped checks. |
+| Delivering repository changes or preparing a PR | MUST use the `Ready` verification profile from `.agents/skills/tidb-verify-profile`, selecting checks by change type. Code changes require `make lint`; documentation, testdata, and build changes retain their applicable checks. Read-only analysis does not trigger build/test checks. |
 | Creating or updating a GitHub issue | SHOULD use `.agents/skills/tidb-issue-metadata-guard` to preserve issue templates and label hygiene. |
 | Creating a PR or editing PR metadata | SHOULD use `.agents/skills/tidb-pr-metadata-guard` to preserve PR templates, title scope, and bot-parsed checklist sections. |
 | Before finishing | SHOULD self-review diff quality before finishing. |
-| Expensive optional sweeps (for example `make bazel_lint_changed`, broad package runs) | MUST run only when required by change scope, CI reproduction, or explicit user request. |
+| Expensive optional sweeps (for example broad package runs) | MUST run only when required by change scope, CI reproduction, or explicit user request. The stricter rule for `make bazel_lint_changed` is in `Build Flow`. |
 
 ### Skills
 
@@ -58,10 +58,10 @@ When writing complex features or significant refactors, use an ExecPlan from des
 ## Pre-flight Checklist
 
 1. Restate the task goal and acceptance criteria.
-2. Locate the owning subsystem and the closest existing tests (`Repository Map`, `Task -> Validation Matrix`). If the target package has `doc.go`, agents MUST read that package-level doc first before diving into implementation files.
+2. Locate the owning subsystem and the closest existing tests (`Repository Map`, `Task -> Validation Matrix`). Before changing or reviewing code behavior, agents MUST read the target package's `doc.go` when present. Pure spelling or formatting edits may skip this contract reading; reuse unchanged documentation already read during the task.
 3. Decide prerequisites before running tests/build (`docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`; `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`).
 4. Pick the smallest valid validation set and prepare final reporting items (`Agent Output Contract`).
-5. If `AGENTS.md` or docs under `docs/agents/` changed, follow the checklist in `docs/agents/agents-review-guide.md` before finishing.
+5. If `AGENTS.md`, repository skills, or docs under `docs/agents/` changed, follow `docs/agents/agents-review-guide.md` before delivery.
 
 ## Repository Map (Entry Points)
 
@@ -81,15 +81,15 @@ When writing complex features or significant refactors, use an ExecPlan from des
 
 - Follow `docs/agents/notes-guide.md`.
 - DDL module-only rules (applies to changes under `pkg/ddl/` and `docs/agents/ddl/`):
-  - MUST: Before making/reviewing any DDL changes in the DDL module, read `docs/agents/ddl/README.md` first and use it as the default map of the execution framework.
+  - MUST: Before changing or reviewing DDL behavior, read `docs/agents/ddl/README.md` and use it as the entrypoint to the execution framework. Pure spelling or formatting edits may skip this reading; reuse unchanged content already read during the task.
   - Debugging: You MAY reference `docs/agents/ddl/*`, but you MUST NOT treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
-  - Doc drift: If implementation and `docs/agents/ddl/*` differ, you MUST update the docs to match reality and call it out in the PR/issue. Do not defer.
+  - Doc drift: When implementation and `docs/agents/ddl/*` differ on behavior involved in the task, you MUST update the affected docs with the change and call it out in the PR/issue. In a read-only review, report the drift without editing files.
 
 ## Build Flow
 
 ### When `make bazel_prepare` is required
 
-Run `make bazel_prepare` before building when any of the following is true:
+When any condition below applies, MUST run `make bazel_prepare` before build/test and include resulting Bazel metadata changes (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`) in the change:
 
 - New workspace or fresh clone.
 - Bazel-related files changed (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
@@ -114,8 +114,9 @@ make bazel_prepare
 make bazel_bin
 make gogenerate   # optional: regenerate generated code
 go mod tidy       # optional: if go.mod/go.sum changed
-git fetch origin --prune
 ```
+
+Run `git fetch origin --prune` when the task needs current remote refs, such as comparing an upstream base or preparing a backport; it is not a build prerequisite.
 
 `make bazel_lint_changed` is intentionally excluded from the default local flow because it can be slow and resource-intensive on local macOS environments. Agents MUST NOT run `make bazel_lint_changed` unless the user explicitly requests it.
 
@@ -135,12 +136,14 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
 | Parser files (`pkg/parser/**`) | Parser-specific Make targets (`make parser`, `make parser_yacc`, `make parser_fmt`, `make parser_unit_test`) and related unit tests |
 | `tests/integrationtest/t/**` changed | Record and verify regenerated result correctness (see `docs/agents/testing-flow.md` -> `Integration tests`) |
 | `tests/realtikvtest/**` changed | Start playground, run scoped tests, then mandatory cleanup (see `docs/agents/testing-flow.md` -> `RealTiKV tests`) |
+| Agent instructions or skills only | Follow `docs/agents/agents-review-guide.md`; validate changed skill metadata and affected references. No code build/test is required for documentation-only changes. |
 
 ## Testing Policy
 
 - Detailed command playbooks live in `docs/agents/testing-flow.md`.
 - Select required test surfaces first (`Task -> Validation Matrix`), then run scoped commands from the playbook.
-- Use `.agents/skills/tidb-verify-profile` to pick a validation profile (`WIP` / `Ready` / `Heavy`). `Ready` is required before any final-status claim; trigger phrases are defined in `Quick Decision Matrix`.
+- Use `.agents/skills/tidb-verify-profile` to select checks for iteration or delivery as defined in `Quick Decision Matrix`. Completion depends on the applicable checks and evidence, not the wording of a status message.
+- Reuse completed checks when they still cover the delivered changes. Rerun affected checks after relevant changes or new failures invalidate that evidence; do not repeat checks solely to report status.
 - All other testing rules (failpoints, integration recording, RealTiKV lifecycle, regression tests) are stated once in `Quick Decision Matrix` above; do not duplicate them here.
 
 ## Code Style Guide
@@ -151,7 +154,6 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
 - Follow existing package-local conventions first and keep style consistent with nearby files.
 - Code SHOULD be self-documenting through clear naming and structure.
   - Example: when implementing a well-known algorithm, naming SHOULD be clear enough to make the approach recognizable; if naming alone may not make intent obvious, add a brief comment.
-- Keep changes focused; avoid unrelated refactors, renames, or moves in the same PR.
 - Keep error handling actionable and contextual; avoid silently swallowing errors.
 - For new source files (for example `*.go`), include the standard TiDB license header (copyright + Apache 2.0) by copying from a nearby file and updating year if needed.
 - Comments SHOULD explain non-obvious intent, constraints, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs, and SHOULD NOT restate what the code already makes clear.
@@ -172,10 +174,12 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
 
 ## Agent Output Contract
 
-When finishing a task, report:
+When delivering changes, report:
 
 1. Files changed.
 2. Validation profile used (`WIP`, `Ready`, or `Heavy`) and why.
 3. Risks: correctness, compatibility, performance.
 4. Exact commands run for validation.
 5. What was not verified locally.
+
+For read-only analysis, report findings, supporting evidence, and verification limits; a code-validation profile is not required.

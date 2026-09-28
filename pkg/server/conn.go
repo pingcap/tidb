@@ -113,6 +113,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -1298,7 +1299,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
 			vars := cc.getCtx().GetSessionVars()
-			for _, dbName := range session.GetDBNames(vars) {
+			for _, dbName := range metricsutil.GetDBNames(vars) {
 				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName, vars.ResourceGroupName).Inc()
 			}
 
@@ -1414,10 +1415,16 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 	if stmtType != "" {
 		sqlType = stmtType
 	}
+	commandSQLType := sqlType
+	if cmd == mysql.ComQuery && vars.InMultiStmts {
+		// The duration covers the whole command, not just its last statement.
+		// Other commands must not inherit the previous COM_QUERY's multi-statement flag.
+		commandSQLType = "MultiStmt"
+	}
 	execDetails := vars.StmtCtx.GetExecDetails()
 
-	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+	for _, dbName := range metricsutil.GetDBNames(vars) {
+		metrics.CommandDurationHistogram.WithLabelValues(commandSQLType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.RequestCount))
 		if execDetails.ScanDetail != nil {
 			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.ScanDetail.ProcessedKeys))
@@ -1857,6 +1864,8 @@ func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) 
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sessVars := cc.ctx.GetSessionVars()
+	// Reset before parsing so empty queries and parse errors cannot reuse the last request's flag.
+	sessVars.InMultiStmts = false
 	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
@@ -1880,8 +1889,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	parserWarns := warns[len(prevWarns):]
 
 	var pointPlans []base.Plan
-	cc.ctx.GetSessionVars().InMultiStmts = false
-	if len(stmts) > 1 {
+	sessVars.InMultiStmts = len(stmts) > 1
+	if sessVars.InMultiStmts {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely
@@ -1902,7 +1911,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				parserWarns = append(parserWarns, warn)
 			}
 		}
-		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts, sql)
@@ -2557,25 +2565,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	req := rs.NewChunk(cc.ctx.GetSessionVars().GetChunkAllocator())
 	gotColumnInfo := false
 	var columns []*column.Info
-	columnCount := 0
 	firstNext := true
 	validNextCount := 0
 	var start time.Time
 	stmtDetail := stmtExecDetailsFromContext(ctx)
-	totalRows := 0
-	defer func() {
-		cells := int64(totalRows) * int64(columnCount)
-		if cells <= 0 {
-			return
-		}
-		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-		if ruv2Metrics == nil {
-			ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
-		}
-		if ruv2Metrics != nil {
-			ruv2Metrics.AddResultChunkCells(cells)
-		}
-	}()
 	defer func() {
 		finishWriteSQLRespDuration(stmtDetail, &start)
 	}()
@@ -2604,7 +2597,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns = rs.Columns()
-			columnCount = len(columns)
 			start = beginWriteSQLRespDuration(stmtDetail)
 			if err = cc.writeColumnInfo(columns); err != nil {
 				return false, err
@@ -2622,7 +2614,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if rowCount == 0 {
 			break
 		}
-		totalRows += rowCount
 		validNextCount++
 		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
@@ -2668,12 +2659,8 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start      time.Time
 	)
 	data := cc.alloc.AllocWithLen(4, 1024)
-	writtenRows := 0
 	stmtDetail = stmtExecDetailsFromContext(ctx)
-	defer func() {
-		cells := int64(writtenRows) * int64(len(rs.Columns()))
-		resultset.ReportCursorRUV2Delta(rs, cells)
-	}()
+	defer resultset.ReportCursorRUV2Delta(rs)
 	defer func() {
 		finishWriteSQLRespDuration(stmtDetail, &start)
 	}()
@@ -2692,7 +2679,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
-		writtenRows++
 
 		iter.Next(ctx)
 	}

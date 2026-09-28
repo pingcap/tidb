@@ -250,6 +250,12 @@ func (h subscriber) handle(
 		return errors.Trace(storage.UpdateStatsVersion(ctx, sctx))
 	case model.ActionAddIndex:
 		// No need to update the stats meta for the adding index event.
+	case model.ActionAlterMaterializedViewRefresh,
+		model.ActionAlterMaterializedViewAttributes,
+		model.ActionAlterMaterializedViewLogPurge,
+		model.ActionCreateMaterializedViewLog,
+		model.ActionCreateMaterializedView:
+		// MV DDL updates metadata only and does not change table data or partition topology.
 	case model.ActionDropSchema:
 		miniDBInfo := change.GetDropSchemaInfo()
 		intest.Assert(miniDBInfo != nil)

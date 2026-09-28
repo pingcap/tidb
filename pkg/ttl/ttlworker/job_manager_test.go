@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -202,6 +204,7 @@ func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
 		types.NewFieldType(mysql.TypeDatetime), // status_update_time
 		types.NewFieldType(mysql.TypeString),   // state
 		types.NewFieldType(mysql.TypeDatetime), // created_time
+		types.NewFieldType(mysql.TypeLonglong), // scan_index_id
 	}, len(tasks))
 	var rows []chunk.Row
 
@@ -262,6 +265,12 @@ func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
 
 		createdTime := types.NewDatum(types.NewTime(types.FromGoTime(task.CreatedTime), mysql.TypeDatetime, types.MaxFsp))
 		c.AppendDatum(12, &createdTime)
+		if task.ScanIndexID == nil {
+			c.AppendNull(13)
+		} else {
+			scanIndexID := types.NewDatum(*task.ScanIndexID)
+			c.AppendDatum(13, &scanIndexID)
+		}
 	}
 
 	iter := chunk.NewIterator4Chunk(c)
@@ -286,7 +295,7 @@ func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cac
 	if createJobID == "" {
 		return m.lockHBTimeoutJob(ctx, se, table.ID, table.TableInfo.ID, now)
 	}
-	return m.lockNewJob(ctx, se, table, now, createJobID, checkInterval)
+	return m.lockNewJob(ctx, se, table, now, createJobID, checkInterval, true)
 }
 
 // RunningJobs returns the running jobs inside ttl job manager
@@ -892,7 +901,7 @@ func TestLockTable(t *testing.T) {
 			m.ctx = cache.SetMockExpireTime(context.Background(), newJobExpireTime)
 			var job *ttlJob
 			if c.isCreate {
-				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval)
+				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval, true)
 			} else {
 				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table.ID, c.table.TableInfo.ID, now)
 			}
@@ -919,6 +928,220 @@ func TestLockTable(t *testing.T) {
 				require.Equal(t, 1, len(m.runningJobs))
 				require.Same(t, job, m.runningJobs[0])
 			}
+		})
+	}
+}
+
+func TestLockNewJobIndexScanFallbacks(t *testing.T) {
+	oldEnableIndexScan := vardef.TTLEnableIndexScan.Load()
+	vardef.TTLEnableIndexScan.Store(true)
+	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
+
+	ttlTbl := newMockTTLTbl(t, "t1")
+	ttlTbl.ID = 1
+	ttlTbl.TableInfo.ID = 1
+	ttlTbl.Indices = []*model.IndexInfo{
+		{
+			ID:      10,
+			Name:    ast.NewCIStr("idx_time"),
+			Columns: []*model.IndexColumn{{Name: ttlTbl.TimeColumn.Name, Offset: ttlTbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
+			State:   model.StatePublic,
+			Unique:  true,
+		},
+	}
+
+	now := time.Date(2022, 12, 6, 1, 13, 5, 0, time.UTC)
+	expireTime := time.Date(2022, 12, 5, 16, 13, 5, 0, time.UTC)
+	m := NewJobManager("test-id", newMockSessionPool(t), nil, nil, nil)
+	m.infoSchemaCache.Tables[ttlTbl.ID] = ttlTbl
+	m.ctx = cache.SetMockExpireTime(context.Background(), expireTime)
+
+	se := newMockSession(t)
+	statusSQL, _ := cache.SelectFromTTLTableStatusWithID(1)
+	insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, expireTime, now)
+	require.NoError(t, err)
+	var taskArgs [][]any
+	se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+		switch sql {
+		case statusSQL + " FOR UPDATE NOWAIT":
+			return newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil
+		case setTableStatusOwnerTemplate:
+			return nil, nil
+		case createJobHistoryRowTemplate:
+			return nil, nil
+		case updateStatusSQL:
+			return newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil
+		}
+		require.Equal(t, insertTaskSQL, sql)
+		taskArgs = append(taskArgs, append([]any(nil), args...))
+		return nil, nil
+	}
+
+	lockJob := func(allowIndexScan bool) []any {
+		taskArgs = nil
+		job, err := m.lockNewJob(context.Background(), se, ttlTbl, now, "new-job-id", false, allowIndexScan)
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		require.Len(t, taskArgs, 1)
+		require.Empty(t, taskArgs[0][3])
+		require.Empty(t, taskArgs[0][4])
+		return taskArgs[0]
+	}
+
+	require.Equal(t, int64(10), lockJob(true)[7])
+	require.Nil(t, lockJob(false)[7])
+
+	// An index Region lookup failure is recoverable because the old PK scan
+	// task format covers the same rows. Use a RegionCache backed by an empty
+	// mock cluster to make LocateKeyRange exhaust its retries.
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	regionCache := tikv.NewRegionCache(pdClient)
+	defer regionCache.Close()
+	defer pdClient.Close()
+	defer func() { require.NoError(t, mockClient.Close()) }()
+	m.store = &mockTiKVStore{regionCache: regionCache}
+	// The unique TTL index does not need the hidden handle for pagination. The
+	// empty key column list also makes the PK fallback use one full range without
+	// consulting the intentionally broken RegionCache again.
+	ttlTbl.KeyColumns = nil
+	ttlTbl.KeyColumnTypes = nil
+	require.Nil(t, lockJob(true)[7])
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	taskArgs = nil
+	job, err := m.lockNewJob(canceledCtx, se, ttlTbl, now, "new-job-id", false, true)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, job)
+	require.Empty(t, taskArgs)
+}
+
+func TestHandleSubmitJobRequestIndexScanVersionGate(t *testing.T) {
+	oldEnableIndexScan := vardef.TTLEnableIndexScan.Load()
+	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
+
+	localVersion := serverinfo.VersionInfo{Version: "8.0.11-TiDB-v9.0.0", GitHash: "1111111"}
+	tests := []struct {
+		name            string
+		enableIndexScan bool
+		remoteVersion   serverinfo.VersionInfo
+		expectedScanID  any
+		expectedChecks  int
+		expectedError   bool
+	}{
+		{
+			name:            "same build enables index scan",
+			enableIndexScan: true,
+			remoteVersion:   localVersion,
+			expectedScanID:  int64(10),
+			expectedChecks:  2,
+		},
+		{
+			name:            "different build blocks until versions converge",
+			enableIndexScan: true,
+			remoteVersion: serverinfo.VersionInfo{
+				Version: localVersion.Version,
+				GitHash: "2222222",
+			},
+			expectedChecks: 2,
+			expectedError:  true,
+		},
+		{
+			name:            "disabled index scan uses PK scan during mixed build",
+			enableIndexScan: false,
+			remoteVersion: serverinfo.VersionInfo{
+				Version: localVersion.Version,
+				GitHash: "2222222",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vardef.TTLEnableIndexScan.Store(tt.enableIndexScan)
+			ttlTbl := newMockTTLTbl(t, "t1")
+			ttlTbl.Indices = []*model.IndexInfo{
+				{
+					ID:      10,
+					Name:    ast.NewCIStr("idx_time"),
+					Columns: []*model.IndexColumn{{Name: ttlTbl.TimeColumn.Name, Offset: ttlTbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
+					State:   model.StatePublic,
+					Unique:  true,
+				},
+			}
+
+			now := time.Date(2022, 12, 6, 1, 13, 5, 0, time.UTC)
+			expireTime := time.Date(2022, 12, 5, 16, 13, 5, 0, time.UTC)
+			m := NewJobManager("test-id", newMockSessionPool(t), nil, nil, func() bool { return true })
+			m.infoSchemaCache.Tables[ttlTbl.ID] = ttlTbl
+			m.ctx = cache.SetMockExpireTime(context.Background(), expireTime)
+			versionChecks := 0
+			remoteVersion := tt.remoteVersion
+			m.ctx = context.WithValue(m.ctx, getServerInfoForTestContextKey{}, func() (*serverinfo.ServerInfo, error) {
+				versionChecks++
+				return &serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{VersionInfo: localVersion}}, nil
+			})
+			m.ctx = context.WithValue(m.ctx, getAllServerInfoForTestContextKey{}, func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+				versionChecks++
+				return map[string]*serverinfo.ServerInfo{
+					"remote": {StaticInfo: serverinfo.StaticInfo{VersionInfo: remoteVersion}},
+				}, nil
+			})
+
+			se := newMockSession(t, ttlTbl)
+			statusSQL, _ := cache.SelectFromTTLTableStatusWithID(ttlTbl.ID)
+			insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", ttlTbl.ID, 0, nil, nil, expireTime, now)
+			require.NoError(t, err)
+			var taskArgs [][]any
+			se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+				switch sql {
+				case statusSQL + " FOR UPDATE NOWAIT":
+					return newTTLTableStatusRows(&cache.TableStatus{TableID: ttlTbl.ID}), nil
+				case setTableStatusOwnerTemplate, createJobHistoryRowTemplate:
+					return nil, nil
+				case updateStatusSQL:
+					return newTTLTableStatusRows(&cache.TableStatus{TableID: ttlTbl.ID}), nil
+				}
+				require.Equal(t, insertTaskSQL, sql)
+				taskArgs = append(taskArgs, append([]any(nil), args...))
+				return nil, nil
+			}
+
+			submitJob := func() error {
+				respCh := make(chan error, 1)
+				m.handleSubmitJobRequest(se, &SubmitTTLManagerJobRequest{
+					TableID: ttlTbl.TableInfo.ID, PhysicalID: ttlTbl.ID, RequestID: "new-job-id", RespCh: respCh,
+				})
+				return <-respCh
+			}
+
+			err = submitJob()
+			if tt.expectedError {
+				require.ErrorContains(t, err, "server build versions are inconsistent")
+				require.Equal(t, tt.expectedChecks, versionChecks)
+				require.Empty(t, taskArgs)
+
+				// The timer runtime retries a failed submission. Once the rolling
+				// upgrade converges and the mismatch cache expires, the next attempt
+				// creates the index scan task normally.
+				remoteVersion = localVersion
+				require.ErrorContains(t, submitJob(), "server build versions are inconsistent")
+				require.Equal(t, tt.expectedChecks, versionChecks)
+				require.Empty(t, taskArgs)
+
+				m.jobVersionChecker.lastCheckTime = time.Now().Add(-serverVersionMismatchCacheInterval)
+				require.NoError(t, submitJob())
+				require.Equal(t, tt.expectedChecks+2, versionChecks)
+				require.Len(t, taskArgs, 1)
+				require.Equal(t, int64(10), taskArgs[0][7])
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tt.expectedChecks, versionChecks)
+			require.Len(t, taskArgs, 1)
+			require.Equal(t, tt.expectedScanID, taskArgs[0][7])
 		})
 	}
 }

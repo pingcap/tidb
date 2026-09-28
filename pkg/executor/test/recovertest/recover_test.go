@@ -755,9 +755,16 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	}
 
 	wg.Wait()
-
-	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
-	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
+	var flashbackTs time.Time
+	require.Eventually(t, func() bool {
+		ts, err := store.CurrentVersion(oracle.GlobalTxnScope)
+		if err != nil {
+			return false
+		}
+		flashbackTs = oracle.GetTimeFromTS(ts.Ver)
+		sql := fmt.Sprintf("select count(*) from mysql.tidb_ddl_job as of timestamp '%s'", flashbackTs)
+		return tk.MustQuery(sql).Rows()[0][0] == "0"
+	}, 5*time.Second, 10*time.Millisecond)
 
 	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)

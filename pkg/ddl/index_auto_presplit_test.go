@@ -72,9 +72,26 @@ type fakeAutoPreSplitStore struct {
 	regionIDs []uint64
 	splitErr  error
 	splitFunc func(context.Context) ([]uint64, error)
+	calls     []recordedSplitRegionCall
 }
 
-func (s *fakeAutoPreSplitStore) SplitRegions(ctx context.Context, _ [][]byte, _ bool, _ *int64) ([]uint64, error) {
+type recordedSplitRegionCall struct {
+	keys       [][]byte
+	scatter    bool
+	groupID    int64
+	hasGroupID bool
+}
+
+func (s *fakeAutoPreSplitStore) SplitRegions(ctx context.Context, keys [][]byte, scatter bool, groupID *int64) ([]uint64, error) {
+	call := recordedSplitRegionCall{
+		keys:       keys,
+		scatter:    scatter,
+		hasGroupID: groupID != nil,
+	}
+	if groupID != nil {
+		call.groupID = *groupID
+	}
+	s.calls = append(s.calls, call)
 	if s.splitFunc != nil {
 		return s.splitFunc(ctx)
 	}
@@ -100,7 +117,7 @@ func newAutoPreSplitTestConfig() autoPreSplitConfig {
 
 func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 	sctx := mock.NewContext()
-	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(t, autoPreSplitTestTableSQL)
+	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(t, autoPreSplitTestTableSQL, 100)
 	cfg := newAutoPreSplitTestConfig()
 
 	topN := buildAutoPreSplitTopN(
@@ -298,7 +315,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			collationCfg := cfg
 			collationCfg.boundaryRatioStep = 0.4
 			stringTblInfo, stringIdxInfo := buildAutoPreSplitTestTableInfoFromSQL(t,
-				"create table t(a bigint, b varchar(32) collate "+collation+", index idx(b))")
+				"create table t(a bigint, b varchar(32) collate "+collation+", index idx(b))", 100)
 			values := []string{"A", "B"}
 			topN := buildAutoPreSplitTopN(
 				t, sctx.GetSessionVars().StmtCtx.TimeZone(), values, []uint64{50, 40},
@@ -337,7 +354,7 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 				collationCfg := cfg
 				collationCfg.boundaryRatioStep = 0.5
 				stringTblInfo, stringIdxInfo := buildAutoPreSplitTestTableInfoFromSQL(t,
-					"create table t(a bigint, b varchar(32) collate "+collation+", index idx(b))")
+					"create table t(a bigint, b varchar(32) collate "+collation+", index idx(b))", 100)
 				colInfo := stringTblInfo.Columns[1]
 				statsTbl := buildAutoPreSplitTestStats(
 					stringTblInfo.ID, 100, 0, colInfo, nil)
@@ -382,16 +399,16 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 
 func TestPlanAutoPreSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 	sctx := mock.NewContext()
-	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(t, autoPreSplitTestTableSQL)
+	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(t, autoPreSplitTestTableSQL, 100)
 	cfg := newAutoPreSplitTestConfig()
 	pseudoStats := buildAutoPreSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
 	pseudoStats.Pseudo = true
 	partitionTblInfo, partitionIdxInfo := buildAutoPreSplitTestTableInfoFromSQL(t,
-		"create table t(a bigint, b bigint, index idx(b)) partition by hash(a) partitions 2")
+		"create table t(a bigint, b bigint, index idx(b)) partition by hash(a) partitions 2", 100)
 	partialTblInfo, partialIdxInfo := buildAutoPreSplitTestTableInfoFromSQL(t,
-		"create table t(a bigint, b bigint, index idx(b) where a = 1)")
+		"create table t(a bigint, b bigint, index idx(b) where a = 1)", 100)
 	prefixTblInfo, prefixIdxInfo := buildAutoPreSplitTestTableInfoFromSQL(t,
-		"create table t(a bigint, b varchar(32) collate utf8mb4_general_ci, index idx(b(3)))")
+		"create table t(a bigint, b varchar(32) collate utf8mb4_general_ci, index idx(b(3)))", 100)
 	prefixStats := buildAutoPreSplitTestStats(prefixTblInfo.ID, 100, 0, prefixTblInfo.Columns[1], nil)
 	outdatedStats := buildAutoPreSplitTestStats(tblInfo.ID, 100, 80, tblInfo.Columns[1], nil)
 	setAutoPreSplitTestHistogram(
@@ -427,7 +444,7 @@ func TestPlanAutoPreSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 
 func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	sctx := mock.NewContext()
-	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(t, autoPreSplitTestTableSQL)
+	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(t, autoPreSplitTestTableSQL, 100)
 	statsTbl := buildAutoPreSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
 	reorgMeta := &model.DDLReorgMeta{}
 	args := &model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{{}}}
@@ -472,7 +489,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	require.Empty(t, capturedKeys)
 	t.Run("statistics load failure skips AUTO", func(t *testing.T) {
 		tblInfo, _ := buildAutoPreSplitTestTableInfoFromSQL(
-			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))")
+			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))", 100)
 		cachedStats := buildAutoPreSplitTestStats(
 			tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
 		cachedStats.GetCol(tblInfo.Columns[1].ID).StatsLoadedStatus =
@@ -505,7 +522,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 
 	t.Run("boundary planning failure is cached", func(t *testing.T) {
 		tblInfo, _ := buildAutoPreSplitTestTableInfoFromSQL(
-			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))")
+			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))", 100)
 		badTopN := statistics.NewTopN(1)
 		badTopN.AppendTopN([]byte{0xff}, 50)
 		statsTbl := buildAutoPreSplitTestStats(
@@ -538,7 +555,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 
 	t.Run("boundary planning skip reason is cached", func(t *testing.T) {
 		tblInfo, _ := buildAutoPreSplitTestTableInfoFromSQL(
-			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))")
+			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))", 100)
 		statsTbl := buildAutoPreSplitTestStats(
 			tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
 		statsTbl.GetCol(tblInfo.Columns[1].ID).StatsVer = statistics.Version1
@@ -584,7 +601,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 		sctx := mock.NewContext()
 		sctx.GetSessionVars().WaitSplitRegionTimeout = 1
 		tblInfo, _ := buildAutoPreSplitTestTableInfoFromSQL(
-			t, "create table t(a bigint, b bigint, index idx_manual(a), index idx_auto1(b), index idx_auto2(b, a))")
+			t, "create table t(a bigint, b bigint, index idx_manual(a), index idx_auto1(b), index idx_auto2(b, a))", 100)
 		statsTbl := buildAutoPreSplitTestStats(
 			tblInfo.ID, 100, 0, tblInfo.Columns[1], hotTopN)
 		setAutoPreSplitTestHistogram(
@@ -638,7 +655,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	})
 	t.Run("reuse boundaries for indexes sharing leading column", func(t *testing.T) {
 		tblInfo, _ := buildAutoPreSplitTestTableInfoFromSQL(
-			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))")
+			t, "create table t(a bigint, b bigint, index idx1(b), index idx2(b, a))", 100)
 		loadedStats := buildAutoPreSplitTestStats(
 			tblInfo.ID, 100, 0, tblInfo.Columns[1], hotTopN)
 		setAutoPreSplitTestHistogram(
@@ -855,13 +872,13 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	})
 }
 
-func buildAutoPreSplitTestTableInfoFromSQL(t *testing.T, createSQL string) (*model.TableInfo, *model.IndexInfo) {
+func buildAutoPreSplitTestTableInfoFromSQL(t *testing.T, createSQL string, tableID int64) (*model.TableInfo, *model.IndexInfo) {
 	t.Helper()
 	stmt, err := parser.New().ParseOneStmt(createSQL, "", "")
 	require.NoError(t, err)
 	tblInfo, err := BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
-	tblInfo.ID = 100
+	tblInfo.ID = tableID
 	return tblInfo, tblInfo.Indices[0]
 }
 
