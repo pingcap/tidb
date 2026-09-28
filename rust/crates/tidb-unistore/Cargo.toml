@@ -27,3 +27,4 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-stats = { path = "../tidb-stats" }
+tidb-model = { path = "../tidb-model" }

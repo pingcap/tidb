@@ -2013,6 +2013,27 @@ const fn cast_signature(from: EvalType, to: EvalType) -> Option<Option<ScalarFun
     }))
 }
 
+/// All coercions the protobuf encoder can insert around catalog arguments.
+/// Keep decoding tied to the same cast selection table as encoding.
+pub(crate) fn implicit_cast_signatures() -> impl Iterator<Item = ScalarFuncSig> {
+    const TYPES: [EvalType; 9] = [
+        EvalType::Int,
+        EvalType::Real,
+        EvalType::Decimal,
+        EvalType::String,
+        EvalType::Datetime,
+        EvalType::Timestamp,
+        EvalType::Duration,
+        EvalType::Json,
+        EvalType::VectorFloat32,
+    ];
+    TYPES.into_iter().flat_map(|from| {
+        TYPES
+            .into_iter()
+            .filter_map(move |to| cast_signature(from, to).flatten())
+    })
+}
+
 /// One node of a described builtin call: the description a lowering reads,
 /// carrying no evaluation behaviour of its own.
 #[derive(Clone, Debug, PartialEq)]

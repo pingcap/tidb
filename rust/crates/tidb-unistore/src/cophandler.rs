@@ -26,12 +26,15 @@
 //!
 //! * `flagsAndTzToSessionContext` / `globalLocationMap`: the time-zone name
 //!   resolves through Go's location cache into a `time.Location`. The parsed
-//!   name and offset are CARRIED here ([`DagContext::time_zone`]) and
-//!   resolution is the evaluation course's concern — nothing at the parse
-//!   layer reads the zone.
+//!   name and offset resolve into the request-owned expression context so
+//!   selection, aggregation and TopN use the same zone.
 //! * `mppCtx` / `HandleMPPDAGReq`: the MPP arm follows the MPP course.
 
 mod analyze;
+mod eval_context;
+
+use eval_context::{RequestEvalContext, SharedExpression};
+use std::sync::Arc;
 
 use prost::Message;
 use tidb_proto::coprocessor;
@@ -64,11 +67,12 @@ pub struct DagContext {
     pub key_ranges: Vec<coprocessor::KeyRange>,
     /// `startTS` — Go reads `req.StartTs`.
     pub start_ts: u64,
-    /// The request's time zone, parsed but unresolved (module header).
+    /// The request's time zone, resolved when building its expression context.
     pub time_zone: TimeZoneSpec,
     /// Go `DAGRequest.Flags`: controls error-tolerance in expression
     /// evaluation (truncate-as-warning, ignore-truncate, etc.).
     pub flags: u64,
+    expression_context: Arc<RequestEvalContext>,
 }
 
 /// Go `buildDAG`'s three-way time-zone switch, as DATA: empty name is a
@@ -151,7 +155,25 @@ fn handle_cop_dag_request(
         Ok(context) => context,
         Err(message) => return other_error(&message),
     };
-    exec_dag(_store, &context)
+    let mut response = exec_dag(_store, &context);
+    let warnings = context.expression_context.take_warnings();
+    if !warnings.is_empty() && response.other_error.is_empty() && response.locked.is_none() {
+        let mut select = match tipb::SelectResponse::decode(response.data.as_ref()) {
+            Ok(select) => select,
+            Err(error) => {
+                return other_error(&format!("decode coprocessor warnings response: {error}"));
+            }
+        };
+        select.warning_count = Some(select.warning_count.unwrap_or(0) + warnings.len() as i64);
+        select
+            .warnings
+            .extend(warnings.into_iter().map(|(code, message)| tipb::Error {
+                code: Some(i32::from(code)),
+                msg: Some(message),
+            }));
+        response.data = select.encode_to_vec().into();
+    }
+    response
 }
 
 /// The execution slice of Go `buildClosureExecutor` + `handleCopDAGRequest`
@@ -193,7 +215,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
                 return other_error("executor missing selection body");
             };
             for condition in &body.conditions {
-                match convert_expr(condition) {
+                match convert_expr_with_context(condition, &context.expression_context) {
                     Ok(expr) => conditions.push(expr),
                     Err(message) => return other_error(&message),
                 }
@@ -202,7 +224,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
             let Some(body) = above.top_n.as_ref() else {
                 return other_error("executor missing topN body");
             };
-            topn = Some(match TopNSpec::build(body) {
+            topn = Some(match TopNSpec::build(body, &context.expression_context) {
                 Ok(spec) => spec,
                 Err(message) => return other_error(&message),
             });
@@ -322,7 +344,11 @@ fn exec_index_scan(
     };
 
     let mut aggregator = match aggregation {
-        Some(aggregation) => match RegionAggregator::build(aggregation, &idx_scan.columns) {
+        Some(aggregation) => match RegionAggregator::build(
+            aggregation,
+            &idx_scan.columns,
+            &context.expression_context,
+        ) {
             Ok(aggregator) => Some(aggregator),
             Err(message) => return other_error(&message),
         },
@@ -591,7 +617,11 @@ fn exec_table_scan(
         Err(error) => return other_error(&error),
     };
     let mut aggregator = match aggregation {
-        Some(aggregation) => match RegionAggregator::build(aggregation, &tbl_scan.columns) {
+        Some(aggregation) => match RegionAggregator::build(
+            aggregation,
+            &tbl_scan.columns,
+            &context.expression_context,
+        ) {
             Ok(aggregator) => Some(aggregator),
             Err(message) => return other_error(&message),
         },
@@ -957,6 +987,7 @@ impl RegionAggregator {
     fn build(
         aggregation: &tipb::Aggregation,
         columns: &[tipb::ColumnInfo],
+        context: &Arc<RequestEvalContext>,
     ) -> Result<Self, String> {
         let collation_of_column = |expr: &SimpleExpr| -> tidb_datatype::Collation {
             let id = match expr {
@@ -973,7 +1004,7 @@ impl RegionAggregator {
             .group_by
             .iter()
             .map(|expr| {
-                let converted = convert_expr(expr)?;
+                let converted = convert_expr_with_context(expr, context)?;
                 if !matches!(converted, SimpleExpr::Column(_)) {
                     return Err("a computed group-by key is a later course".to_owned());
                 }
@@ -999,7 +1030,7 @@ impl RegionAggregator {
                 let [argument] = func.children.as_slice() else {
                     return Err("an aggregate function takes exactly one argument".to_owned());
                 };
-                let argument = convert_expr(argument)?;
+                let argument = convert_expr_with_context(argument, context)?;
                 let collation = collation_of_column(&argument);
                 Ok((kind, argument, collation))
             })
@@ -1282,13 +1313,13 @@ struct TopNSpec {
 
 impl TopNSpec {
     /// Go `buildTopNProcessor` (`closure_exec.go:384`).
-    fn build(top_n: &tipb::TopN) -> Result<Self, String> {
+    fn build(top_n: &tipb::TopN, context: &Arc<RequestEvalContext>) -> Result<Self, String> {
         let mut keys = Vec::with_capacity(top_n.order_by.len());
         for item in &top_n.order_by {
             let Some(pb_expr) = item.expr.as_ref() else {
                 return Err("order-by item missing expr".to_owned());
             };
-            let expr = convert_expr(pb_expr)?;
+            let expr = convert_expr_with_context(pb_expr, context)?;
             // Go orders each key under `by.Expr.FieldType.Collate`
             // (`topn.go:60`).
             let restored = tidb_datatype::restore_collation_id_if_needed(collation_of(pb_expr));
@@ -1427,7 +1458,25 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
         "System" => TimeZoneSpec::System,
         name => TimeZoneSpec::Named(name.to_owned()),
     };
+    let mut expression_context = RequestEvalContext::new(
+        time_zone.resolve()?,
+        dag_req
+            .div_precision_increment
+            .filter(|value| *value != 0)
+            .unwrap_or(4),
+        dag_req.flags.unwrap_or(0),
+    );
+    let columns = dag_req.executors.first().and_then(|scan| {
+        scan.tbl_scan
+            .as_ref()
+            .map(|scan| &scan.columns)
+            .or_else(|| scan.idx_scan.as_ref().map(|scan| &scan.columns))
+    });
+    if let Some(columns) = columns {
+        expression_context.column_types = columns.iter().map(field_type_from_pb_column).collect();
+    }
     Ok(DagContext {
+        expression_context: Arc::new(expression_context),
         key_ranges: req.ranges.clone(),
         start_ts: req.start_ts,
         flags: dag_req.flags.unwrap_or(0),
@@ -1510,9 +1559,9 @@ pub enum SimpleExpr {
     Time(tidb_datatype::Time),
     /// `ExprType_ScalarFunc` over a supported signature.
     Func(SimpleSig, Vec<SimpleExpr>),
-    /// A pushed signature this evaluator has no arm for, decoded by Go's
-    /// `PBToExpr` port into the shared builtin tree and evaluated there.
-    Shared(std::sync::Arc<tidb_expr::expression::Expression>),
+    /// A catalog-admitted scalar decoded into the shared builtin tree,
+    /// retaining the request that owns its evaluation settings.
+    Shared(Arc<SharedExpression>),
 }
 
 /// The date-argument channel of one upstream `AddDate`/`SubDate` type
@@ -1991,27 +2040,53 @@ pub enum SimpleSig {
     InInt,
 }
 
-/// Go `PBToExpr` for a signature outside this evaluator's arms: the shared
-/// builtin answers it, so every signature the pushdown catalog admits runs.
-fn convert_shared(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
-    tidb_expr::distsql_builtin::pb_to_expr(expr, &[])
-        .map(|shared| SimpleExpr::Shared(std::sync::Arc::new(shared)))
+/// Go `PBToExpr` for catalog-admitted signatures and their argument casts.
+fn convert_shared(
+    expr: &tipb::Expr,
+    context: &Arc<RequestEvalContext>,
+) -> Result<SimpleExpr, String> {
+    tidb_expr::distsql_builtin::pb_to_expr(expr, &context.column_types).map(|expression| {
+        SimpleExpr::Shared(Arc::new(SharedExpression {
+            expression,
+            context: Arc::clone(context),
+        }))
+    })
 }
 
 /// Evaluates a [`SimpleExpr::Shared`] node over one scanned row.
 fn eval_shared(
-    expr: &tidb_expr::expression::Expression,
+    expr: &SharedExpression,
     row: &[tidb_datatype::Datum],
 ) -> Result<tidb_datatype::Datum, String> {
-
     let row = tidb_chunk::mutrow::MutRow::from_datums(row);
-    expr.eval(&tidb_expr::NoColumns, row.to_row())
+    expr.expression
+        .eval(expr.context.as_ref(), row.to_row())
         .map_err(|err| format!("{err:?}"))
 }
 
-/// Convert one wire expression, refusing what the slice does not carry.
+/// Decode without a DAG for standalone callers. Request execution uses
+/// `convert_expr_with_context` to retain its own settings and scan types.
 pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
+    use tidb_expr::Columns;
+    let context = Arc::new(RequestEvalContext::new(
+        tidb_expr::NoColumns.time_zone(),
+        4,
+        tidb_model::flags::FLAG_TRUNCATE_AS_WARNING
+            | tidb_model::flags::FLAG_DIVIDED_BY_ZERO_AS_WARNING,
+    ));
+    convert_expr_with_context(expr, &context)
+}
+
+fn convert_expr_with_context(
+    expr: &tipb::Expr,
+    context: &Arc<RequestEvalContext>,
+) -> Result<SimpleExpr, String> {
     let tp = expr.tp();
+    if tp == tipb::ExprType::ScalarFunc
+        && tidb_expr::distsql_builtin::builtin_name_of(expr.sig()).is_some()
+    {
+        return convert_shared(expr, context);
+    }
     if tp == tipb::ExprType::Null {
         return Ok(SimpleExpr::Null);
     }
@@ -2599,12 +2674,12 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::GeTime => SimpleSig::GeTime,
             tipb::ScalarFuncSig::EqTime => SimpleSig::EqTime,
             tipb::ScalarFuncSig::NeTime => SimpleSig::NeTime,
-            _ => return convert_shared(expr),
+            _ => return convert_shared(expr, context),
         };
         let children = expr
             .children
             .iter()
-            .map(convert_expr)
+            .map(|child| convert_expr_with_context(child, context))
             .collect::<Result<Vec<_>, _>>()?;
         return Ok(SimpleExpr::Func(sig, children));
     }
@@ -4052,13 +4127,13 @@ pub fn eval_expr(
 ) -> Result<Option<i128>, String> {
     use tidb_datatype::Datum;
     let value = match expr {
-        // A truth value from the shared builtin: Go's `EvalInt` over a
-        // filter condition, NULL as UNKNOWN.
+        // Shared builtins retain their result type. Go converts a filter
+        // result with ToBool; NULL remains UNKNOWN.
         SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
             Datum::Int(value) => Some(i128::from(value)),
             Datum::UInt(value) => Some(i128::from(value)),
             Datum::Null => None,
-            other => return Err(format!("pushed expression answered non-integer {other:?}")),
+            other => Some(shared.context.condition_value(&other)?),
         },
         SimpleExpr::Null => None,
         SimpleExpr::Int(value) => Some(i128::from(*value)),
@@ -5628,6 +5703,10 @@ mod tests {
         let condition = tipb::Expr {
             tp: Some(tipb::ExprType::ScalarFunc as i32),
             sig: Some(tipb::ScalarFuncSig::EqInt as i32),
+            field_type: Some(tipb::FieldType {
+                tp: Some(8),
+                ..Default::default()
+            }),
             children: vec![
                 tipb::Expr {
                     tp: Some(tipb::ExprType::ColumnRef as i32),

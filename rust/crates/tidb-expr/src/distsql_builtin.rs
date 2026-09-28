@@ -42,7 +42,15 @@ pub fn pb_type_to_field_type(tp: &tipb::FieldType) -> FieldType {
 /// the signatures TiDB pushes (the catalog). `None` is Go's `default:` arm.
 #[must_use]
 pub fn builtin_name_of(sig: tipb::ScalarFuncSig) -> Option<&'static str> {
-    CATALOG.iter().find(|row| row.sig == sig).map(|row| row.name)
+    CATALOG
+        .iter()
+        .find(|row| row.sig == sig)
+        .map(|row| row.name)
+        .or_else(|| {
+            crate::pushdown_catalog::implicit_cast_signatures()
+                .any(|cast| cast == sig)
+                .then_some("cast")
+        })
 }
 
 fn constant(value: Datum, ret_type: FieldType) -> Expression {
@@ -170,6 +178,13 @@ pub fn pb_to_expr(expr: &tipb::Expr, column_types: &[FieldType]) -> Result<Expre
     let name = builtin_name_of(sig)
         .ok_or_else(|| format!("scalar signature {sig:?} is not a pushdown builtin"))?;
     let ret_type = typed_or(expr, FieldTypeCode::Null);
+    if name == "cast" {
+        let [argument]: [Expression; 1] = args
+            .try_into()
+            .map_err(|_| "a protobuf cast requires one argument".to_owned())?;
+        return crate::simple_expr::build_cast_function(argument, ret_type, false)
+            .map_err(|error| format!("invalid protobuf cast: {error:?}"));
+    }
     Ok(Expression::ScalarFunction(ScalarFunction::new(
         CiString::new(name),
         ret_type,

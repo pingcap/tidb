@@ -1,0 +1,306 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Request-owned expression context, matching Go flagsAndTzToSessionContext.
+
+use std::sync::{Arc, Mutex};
+use tidb_datatype::{Datum, SessionTimeZone};
+use tidb_expr::{Columns, ErrorLevel};
+use tidb_model::flags::*;
+
+#[derive(Debug)]
+pub(super) struct RequestEvalContext {
+    pub(super) zone: SessionTimeZone,
+    pub(super) division_precision: u32,
+    pub(super) flags: u64,
+    pub(super) column_types: Vec<tidb_datatype::FieldType>,
+    warnings: Mutex<Vec<(u16, String)>>,
+}
+
+impl RequestEvalContext {
+    pub(super) fn new(zone: SessionTimeZone, division_precision: u32, flags: u64) -> Self {
+        Self {
+            zone,
+            division_precision,
+            flags,
+            column_types: Vec::new(),
+            warnings: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(super) fn condition_value(&self, value: &Datum) -> Result<i128, String> {
+        let converted = value.to_bool().map_err(|err| format!("{err:?}"))?;
+        if converted.event.is_some() {
+            let text = match value {
+                Datum::String(value) => value.as_utf8().map_err(|err| err.to_string())?,
+                Datum::Bytes(value) => std::str::from_utf8(value).map_err(|err| err.to_string())?,
+                _ => return Err("unsupported condition conversion event".to_owned()),
+            };
+            self.handle_truncate(&format!(
+                "Truncated incorrect DOUBLE value: '{}'",
+                tidb_datatype::float_warning_input(text)
+            ))
+            .map_err(|err| format!("{err:?}"))?;
+        }
+        Ok(i128::from(converted.value))
+    }
+
+    pub(super) fn take_warnings(&self) -> Vec<(u16, String)> {
+        std::mem::take(&mut *self.warnings.lock().expect("coprocessor warnings"))
+    }
+}
+
+impl Columns for RequestEvalContext {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+    fn time_zone(&self) -> SessionTimeZone {
+        self.zone.clone()
+    }
+    fn div_precision_increment(&self) -> u32 {
+        self.division_precision
+    }
+    fn truncate_level(&self) -> ErrorLevel {
+        if self.flags & FLAG_IGNORE_TRUNCATE != 0 {
+            ErrorLevel::Ignore
+        } else if self.flags & FLAG_TRUNCATE_AS_WARNING != 0 {
+            ErrorLevel::Warn
+        } else {
+            ErrorLevel::Error
+        }
+    }
+    fn division_by_zero_level(&self) -> ErrorLevel {
+        if self.flags & FLAG_DIVIDED_BY_ZERO_AS_WARNING != 0 {
+            ErrorLevel::Warn
+        } else {
+            ErrorLevel::Error
+        }
+    }
+    fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+        tidb_datatype::DEFAULT_STATEMENT_FLAGS
+            .with_ignore_truncate_err(self.flags & FLAG_IGNORE_TRUNCATE != 0)
+            .with_truncate_as_warning(self.flags & FLAG_TRUNCATE_AS_WARNING != 0)
+            .with_ignore_zero_in_date_err(self.flags & FLAG_IGNORE_ZERO_IN_DATE != 0)
+            .with_allow_negative_to_unsigned(self.flags & FLAG_IN_INSERT_STMT == 0)
+    }
+    fn append_warning(&self, code: u16, message: &str) {
+        self.warnings
+            .lock()
+            .expect("coprocessor warnings")
+            .push((code, message.to_owned()));
+    }
+}
+
+/// A decoded builtin and the request that owns its evaluation settings.
+#[derive(Clone, Debug)]
+pub struct SharedExpression {
+    pub(super) expression: tidb_expr::expression::Expression,
+    pub(super) context: Arc<RequestEvalContext>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{RegionAggregator, TopNSpec, convert_expr_with_context, eval_datum};
+    use super::*;
+    use tidb_proto::tipb;
+
+    fn column(index: i64, tp: i32) -> tipb::Expr {
+        let mut val = Vec::new();
+        tidb_codec::encode_int(&mut val, index);
+        tipb::Expr {
+            tp: Some(tipb::ExprType::ColumnRef as i32),
+            val: Some(val),
+            field_type: Some(tipb::FieldType {
+                tp: Some(tp),
+                decimal: Some(0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+    fn call(sig: tipb::ScalarFuncSig, args: Vec<tipb::Expr>, tp: i32) -> tipb::Expr {
+        tipb::Expr {
+            tp: Some(tipb::ExprType::ScalarFunc as i32),
+            sig: Some(sig as i32),
+            children: args,
+            field_type: Some(tipb::FieldType {
+                tp: Some(tp),
+                decimal: Some(0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+    fn conditional(value: tipb::Expr) -> tipb::Expr {
+        call(
+            tipb::ScalarFuncSig::CaseWhenInt,
+            vec![column(0, 8), value],
+            8,
+        )
+    }
+    fn context(flags: u64) -> Arc<RequestEvalContext> {
+        Arc::new(RequestEvalContext::new(
+            SessionTimeZone::Named(chrono_tz::Asia::Shanghai),
+            8,
+            flags,
+        ))
+    }
+
+    #[test]
+    fn selection_aggregate_and_topn_share_request_context() {
+        let ctx = context(0);
+        let expr = conditional(call(
+            tipb::ScalarFuncSig::UnixTimestampInt,
+            vec![column(1, 12)],
+            8,
+        ));
+        let time = tidb_datatype::Time::from_date_checked(
+            2024,
+            3,
+            5,
+            14,
+            30,
+            0,
+            0,
+            tidb_datatype::TimeType::DateTime,
+            0,
+        )
+        .unwrap();
+        let row = [Datum::Int(1), Datum::Time(time)];
+        let expected = Datum::Int(1_709_620_200);
+        let selection = convert_expr_with_context(&expr, &ctx).unwrap();
+        assert_eq!(eval_datum(&selection, &row).unwrap(), expected);
+        let topn = TopNSpec::build(
+            &tipb::TopN {
+                order_by: vec![tipb::ByItem {
+                    expr: Some(expr.clone()),
+                    ..Default::default()
+                }],
+                limit: Some(1),
+                ..Default::default()
+            },
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(topn.evaluate(&row).unwrap(), [expected.clone()]);
+        let mut agg = RegionAggregator::build(
+            &tipb::Aggregation {
+                agg_func: vec![tipb::Expr {
+                    tp: Some(tipb::ExprType::Max as i32),
+                    children: vec![expr],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            &[],
+            &ctx,
+        )
+        .unwrap();
+        agg.update(&row).unwrap();
+        assert_eq!(agg.finish(), [vec![expected]]);
+    }
+
+    #[test]
+    fn shared_arithmetic_uses_request_division_precision() {
+        let ctx = context(0);
+        let mut division = call(
+            tipb::ScalarFuncSig::DivideDecimal,
+            vec![column(1, 246), column(2, 246)],
+            246,
+        );
+        division.field_type.as_mut().unwrap().decimal = Some(8);
+        let mut expr = call(
+            tipb::ScalarFuncSig::CaseWhenDecimal,
+            vec![column(0, 8), division],
+            246,
+        );
+        expr.field_type.as_mut().unwrap().decimal = Some(8);
+        let converted = convert_expr_with_context(&expr, &ctx).unwrap();
+        let row = [
+            Datum::Int(1),
+            Datum::Decimal(tidb_datatype::Decimal::from_int(1)),
+            Datum::Decimal(tidb_datatype::Decimal::from_int(3)),
+        ];
+        let Datum::Decimal(value) = eval_datum(&converted, &row).unwrap() else {
+            panic!("decimal result");
+        };
+        assert_eq!(value.to_string(), "0.33333333");
+    }
+
+    #[test]
+    fn shared_noninteger_condition_uses_sql_truth_conversion() {
+        let ctx = context(FLAG_TRUNCATE_AS_WARNING);
+        for (sig, tp, value, expected) in [
+            (
+                tipb::ScalarFuncSig::CaseWhenReal,
+                5,
+                Datum::Real(0.5),
+                Some(1),
+            ),
+            (
+                tipb::ScalarFuncSig::CaseWhenReal,
+                5,
+                Datum::Real(0.0),
+                Some(0),
+            ),
+            (tipb::ScalarFuncSig::CaseWhenReal, 5, Datum::Null, None),
+        ] {
+            let expr = call(sig, vec![column(0, 8), column(1, tp)], tp);
+            let converted = convert_expr_with_context(&expr, &ctx).unwrap();
+            assert_eq!(
+                super::super::eval_expr(&converted, &[Datum::Int(1), value], 8, &ctx.zone).unwrap(),
+                expected
+            );
+        }
+        let expr = call(tipb::ScalarFuncSig::Lower, vec![column(0, 253)], 253);
+        let converted = convert_expr_with_context(&expr, &ctx).unwrap();
+        assert_eq!(
+            super::super::eval_expr(&converted, &[Datum::Bytes(b"1tail".to_vec())], 8, &ctx.zone)
+                .unwrap(),
+            Some(1)
+        );
+        let warnings = ctx.take_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].0, 1292);
+    }
+
+    #[test]
+    fn shared_builtin_warnings_belong_to_the_request() {
+        let expr = conditional(call(
+            tipb::ScalarFuncSig::CastStringAsInt,
+            vec![column(1, 253)],
+            8,
+        ));
+        let row = [Datum::Int(1), Datum::Bytes(b"12tail".to_vec())];
+        for flags in [0, FLAG_TRUNCATE_AS_WARNING, FLAG_IGNORE_TRUNCATE] {
+            let ctx = context(flags);
+            let converted = convert_expr_with_context(&expr, &ctx).unwrap();
+            let result = eval_datum(&converted, &row);
+            if flags == 0 {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap(), Datum::Int(12));
+            }
+            let warnings = ctx.take_warnings();
+            assert_eq!(
+                warnings.len(),
+                usize::from(flags == FLAG_TRUNCATE_AS_WARNING)
+            );
+            if let Some((code, _)) = warnings.first() {
+                assert_eq!(*code, 1292);
+            }
+            assert!(ctx.take_warnings().is_empty());
+        }
+    }
+}

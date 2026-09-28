@@ -8845,3 +8845,27 @@ fn pushed_conditional_signatures_evaluate_in_the_coprocessor_like_go() {
     // `args[i].GetType()`), so 0.5 is TRUE rather than truncated to 0.
     assert_eq!(ids(&mut s, "SELECT id FROM test.pc WHERE CASE WHEN a / 10 THEN 1 ELSE 0 END = 1 ORDER BY id"), ["1", "2"]);
 }
+
+#[test]
+fn pushed_conditionals_keep_the_request_timezone() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(903))
+        .expect("session");
+    rows(
+        &mut session,
+        "CREATE TABLE test.cop_zone (id INT PRIMARY KEY, d DATETIME)",
+    );
+    session
+        .execute_write("INSERT INTO test.cop_zone VALUES (1, '2024-01-02 03:04:05')")
+        .unwrap();
+    for zone in ["+00:00", "+08:00", "America/New_York"] {
+        rows(&mut session, &format!("SET time_zone='{zone}'"));
+        // Compare a scalar with the identical builtin nested in a conditional
+        // tree. Both belong to this DAG's timezone.
+        let sql = "SELECT id FROM test.cop_zone WHERE \
+            CASE WHEN id>0 THEN UNIX_TIMESTAMP(d) ELSE 0 END = UNIX_TIMESTAMP(d)";
+        assert_eq!(displayed(rows(&mut session, sql)), [["1"]], "{zone}");
+    }
+}
