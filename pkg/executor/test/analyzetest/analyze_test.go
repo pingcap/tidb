@@ -387,10 +387,11 @@ func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T)
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 
 	// NDVRATE samples the columns, but indexes on virtual or prefix columns are
-	// analyzed separately and read every row.
+	// analyzed separately and read every row. TopN and histograms of these tiny
+	// tables would take every row and raise the NDV rate to 1, so set SAMPLERATE.
 	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
 	for _, tbl := range []string{"sampling_index_virtual_col", "sampling_index_prefix_col"} {
-		tk.MustExec("analyze table " + tbl + " with 0.5 NDVRATE")
+		tk.MustExec("analyze table " + tbl + " with 0.5 NDVRATE, 0.5 SAMPLERATE")
 		lastJob := "select job_info from mysql.analyze_jobs where table_name = '" + tbl + "' and job_info like '%s' order by id desc limit 1"
 		tk.MustQuery(fmt.Sprintf(lastJob, "analyze table%")).CheckContain("0.5 ndvrate")
 		tk.MustQuery(fmt.Sprintf(lastJob, "analyze ndv for index%")).CheckNotContain("ndvrate")
@@ -1978,9 +1979,10 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	))
 
 	// NDVRATE samples the columns, but multi-valued indexes are analyzed
-	// separately and read every row.
+	// separately and read every row. SAMPLERATE keeps the NDV rate of this tiny
+	// table from being raised to 1.
 	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
-	tk.MustExec("analyze table t with 0.5 NDVRATE")
+	tk.MustExec("analyze table t with 0.5 NDVRATE, 0.5 SAMPLERATE")
 	tk.MustQuery("select job_info from mysql.analyze_jobs where table_name = 't' and job_info like 'analyze table%' order by id desc limit 1").CheckContain("0.5 ndvrate")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name = 't' and job_info like 'analyze index ij%ndvrate%'").Check(testkit.Rows("0"))
 }
@@ -2338,8 +2340,10 @@ func TestAnalyzeNDVRate(t *testing.T) {
 		return fmt.Sprintf("select job_info from mysql.analyze_jobs where table_name='ndv' and partition_name='%s' order by id desc limit 1", partition)
 	}
 	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
-	// The mock server is a legacy peer: a sampled request may get full-input results.
-	tk.MustExec("analyze table ndv with 0.1 NDVRATE")
+	// The mock server is a legacy peer: a sampled request may get full-input
+	// results. The saved SAMPLERATE keeps TopN and histograms of these tiny
+	// partitions from taking every row, which would raise the NDV rate to 1.
+	tk.MustExec("analyze table ndv with 0.1 NDVRATE, 0.1 SAMPLERATE")
 	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
 	// Without NDVRATE, a partition above the threshold takes its rate from its
@@ -2353,9 +2357,12 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustQuery("show warnings").CheckContain("Ignore columns and options when analyze partition in dynamic mode")
 	tk.MustQuery(lastRate("p0")).CheckContain("0.25 ndvrate")
 	tk.MustQuery(lastRate("p1")).CheckContain("0.5 ndvrate")
-	// The rate falls with the row count until it reaches 0.05 at 20 times the threshold.
+	// The rate falls with the row count until it reaches 0.05 at 20 times the
+	// threshold. The injected count does not change the adjusted SAMPLERATE of
+	// this one-row table, so a saved SAMPLERATE keeps it from raising the rate.
 	tk.MustExec("create table ndv_large (a int)")
 	tk.MustExec("insert into ndv_large values (1)")
+	tk.MustExec("analyze table ndv_large with 0.01 samplerate")
 	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
 	for _, tc := range []struct{ rows, rate string }{{"500000000", ""}, {"2000000000", "0.25 ndvrate"}, {"20000000000", "0.05 ndvrate"}, {"40000000000", "0.05 ndvrate"}} {
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return("+tc.rows+")")
@@ -2367,12 +2374,25 @@ func TestAnalyzeNDVRate(t *testing.T) {
 			job.CheckContain(tc.rate)
 		}
 	}
-	// ANALYZE sends the NDV rate even when TopN and histograms sample more
-	// rows: the adjusted SAMPLERATE of this one-row table is 1, and 5000000
-	// samples of 4e10 rows need a rate of 0.000125.
+	// The NDV rate covers the rows that TopN and histograms sample: the saved
+	// SAMPLERATE, the adjusted SAMPLERATE of 1 of this one-row table, and 5000000
+	// samples of 4e10 rows. A rate raised to 1 still shows in the job.
 	lastJob := "select job_info from mysql.analyze_jobs where table_name='ndv_large' order by id desc limit 1"
 	tk.MustExec("analyze table ndv_large with 0.001 NDVRATE")
-	tk.MustQuery(lastJob).CheckContain("1 samplerate, 0.001 ndvrate")
+	tk.MustQuery("show warnings").CheckContain("Analyze raised the NDV rate from 0.001 to 0.01 for table test.ndv_large")
+	tk.MustQuery(lastJob).CheckContain("0.01 samplerate, 0.01 ndvrate")
+	tk.MustExec("analyze table ndv_large with 0.001 NDVRATE, default SAMPLERATE")
+	warnings := tk.MustQuery("show warnings")
+	warnings.CheckContain("Analyze raised the NDV rate from 0.001 to 1 for table test.ndv_large")
+	warnings.CheckNotContain("NDVRATE is not used")
+	tk.MustQuery(lastJob).CheckContain(", 1 ndvrate")
 	tk.MustExec("analyze table ndv_large with 0.0001 NDVRATE, 5000000 SAMPLES")
-	tk.MustQuery(lastJob).CheckContain("0.0001 ndvrate")
+	tk.MustQuery("show warnings").CheckContain("Analyze raised the NDV rate from 0.0001 to 0.000125 for table test.ndv_large")
+	tk.MustQuery(lastJob).CheckContain("0.000125 ndvrate")
+	// A rate of 1 already covers 5000000 samples of 2e6 rows, so nothing is raised.
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1000000")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return(2000000)")
+	tk.MustExec("analyze table ndv_large with 1 NDVRATE, 5000000 SAMPLES")
+	tk.MustQuery("show warnings").CheckNotContain("raised the NDV rate")
+	tk.MustQuery(lastJob).CheckNotContain("ndvrate")
 }
