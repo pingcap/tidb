@@ -143,6 +143,7 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	}
 	e.mergeCounter.Add(float64(collector.addCount))
 	e.RowCnt.Add(int64(collector.addCount))
+	e.Processed.Add(collector.writtenBytes)
 	e.totalRows += int64(collector.scanCount)
 	logutil.Logger(ctx).Info("merge temp index executor finish subtask", zap.Int("added", collector.addCount), zap.Int("scanned", collector.scanCount))
 	return err
@@ -150,13 +151,15 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 
 type mergeTempIndexCollector struct {
 	execute.NoopCollector
-	addCount  int
-	scanCount int
+	addCount     int
+	scanCount    int
+	writtenBytes int64
 }
 
-func (m *mergeTempIndexCollector) Processed(_, rows int64) {
+func (m *mergeTempIndexCollector) Processed(processedUnits, rows int64) {
 	m.addCount += int(rows)
 	m.scanCount += int(rows)
+	m.writtenBytes += processedUnits
 }
 
 func (e *mergeTempIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {

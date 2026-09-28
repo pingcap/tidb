@@ -1307,6 +1307,9 @@ func (w *mergeTempIndexWorker) handleOneRange(
 
 				result.addCount++
 			}
+			// Record the committed transaction size so the merge task can account
+			// RU from it, mirroring the transactional backfill workers.
+			result.writtenBytes = txn.Size()
 			return nil
 		})
 		if err != nil {
@@ -1382,7 +1385,7 @@ func (s *tempIndexResultSink) collectResult() error {
 			if !ok {
 				return nil
 			}
-			s.collector.Processed(0, int64(rs.addCount))
+			s.collector.Processed(int64(rs.writtenBytes), int64(rs.addCount))
 		}
 	}
 }
