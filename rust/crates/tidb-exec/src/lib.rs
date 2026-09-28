@@ -142,7 +142,6 @@ pub mod lack_handles;
 pub mod lazy_txn_state;
 pub mod lead_lag;
 pub mod mdl_info_load;
-pub mod metric_tables_def;
 pub mod metrics_reader;
 pub mod minmax_deque;
 pub mod mock_global_accessor;

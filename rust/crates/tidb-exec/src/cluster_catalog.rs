@@ -32,10 +32,10 @@ use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_hack::GoToLower;
 use tidb_meta::{key, value};
 use tidb_model::column::ColumnInfo;
-use tidb_model::GoSharedPointerSlice;
 use tidb_model::db::DBInfo;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION2, TABLE_INFO_VERSION3};
+use tidb_model::GoSharedPointerSlice;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
 /// Failure to read or interpret the stored catalog.
@@ -221,7 +221,7 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
         .any(|database| database.info.name.lowercase() == "metrics_schema")
     {
         let mut tables = Vec::new();
-        for (index, (name, labels)) in crate::metric_tables_def::METRIC_TABLES
+        for (index, (name, labels)) in tidb_executor::metric_tables_def::METRIC_TABLES
             .iter()
             .enumerate()
         {

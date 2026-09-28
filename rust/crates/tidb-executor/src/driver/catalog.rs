@@ -592,21 +592,50 @@ impl Default for Catalog {
             },
         );
         // go seeds metrics_schema/performance_schema/sys at bootstrap: the
-        // schemas exist (USE/SCHEMATA/SHOW DATABASES answer them) with no
-        // served tables here -- naming one of their tables refuses with
-        // 1146 exactly like go's own absent tables do.
+        // schemas exist (USE/SCHEMATA/SHOW DATABASES answer them). go's
+        // metrics_schema carries 642 storage-backed metric tables whose
+        // queries fail `query metric error: pd unavailable` (the metric
+        // storage is absent) -- mirrored here as empty MemTables of the
+        // same shape (oracle g-is).
+        let metric_tables: std::collections::HashMap<String, std::sync::Arc<TableEntry>> =
+            crate::metric_tables_def::METRIC_TABLES
+                .iter()
+                .map(|(name, labels)| {
+                    let mut columns =
+                        vec![("time".to_owned(), FieldType::new(FieldTypeCode::Datetime))];
+                    for label in *labels {
+                        columns.push((
+                            (*label).to_owned(),
+                            FieldType::new(FieldTypeCode::VarString),
+                        ));
+                    }
+                    columns.push(("value".to_owned(), FieldType::new(FieldTypeCode::Double)));
+                    (
+                        name.to_string(),
+                        std::sync::Arc::new(TableEntry::Mem(MemTable {
+                            columns,
+                            rows: Vec::new(),
+                        })),
+                    )
+                })
+                .collect();
         for (id, key, display) in [
             (4, "metrics_schema", "METRICS_SCHEMA"),
             (5, "performance_schema", "PERFORMANCE_SCHEMA"),
             (6, "sys", "sys"),
         ] {
+            let tables = if key == "metrics_schema" {
+                metric_tables.clone()
+            } else {
+                HashMap::new()
+            };
             databases.insert(
                 key.to_owned(),
                 Database {
                     id,
                     name: display.to_owned(),
                     charset: TableCharset::default(),
-                    tables: HashMap::new(),
+                    tables,
                 },
             );
         }
@@ -2321,11 +2350,10 @@ impl Catalog {
                 let (table_id, physical_ids) = match self.get_in(&database, &name) {
                     Some(TableEntry::Kv(table)) => (
                         table.table_id,
-                        table
-                            .partition()
-                            .map_or_else(|| vec![table.table_id], |partition| {
-                                partition.physical_ids()
-                            }),
+                        table.partition().map_or_else(
+                            || vec![table.table_id],
+                            |partition| partition.physical_ids(),
+                        ),
                     ),
                     _ => continue,
                 };
@@ -2425,12 +2453,14 @@ impl Catalog {
                 physical_ids
                     .iter()
                     .fold((0_i64, 0_i64), |(rows, modifications), physical_id| {
-                        values.get(physical_id).map_or((rows, modifications), |stats| {
-                            (
-                                rows.saturating_add(stats.row_count.max(0)),
-                                modifications.saturating_add(stats.modify_count.max(0)),
-                            )
-                        })
+                        values
+                            .get(physical_id)
+                            .map_or((rows, modifications), |stats| {
+                                (
+                                    rows.saturating_add(stats.row_count.max(0)),
+                                    modifications.saturating_add(stats.modify_count.max(0)),
+                                )
+                            })
                     });
             if current.row_count == row_count && current.modify_count == modify_count {
                 continue;

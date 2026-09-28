@@ -162,10 +162,14 @@ impl PhysicalRuntimeCounter {
         }
         if let Some(snapshot) = self.apply.as_ref().and_then(|sink| *sink.lock().unwrap()) {
             if snapshot.enabled {
-                let ratio = if snapshot.accesses == 0 { 0.0 } else {
+                let ratio = if snapshot.accesses == 0 {
+                    0.0
+                } else {
                     snapshot.hits as f64 / snapshot.accesses as f64 * 100.0
                 };
-                details.push(format!("concurrency:OFF, cache:ON, cacheHitRatio:{ratio:.3}%"));
+                details.push(format!(
+                    "concurrency:OFF, cache:ON, cacheHitRatio:{ratio:.3}%"
+                ));
             } else {
                 details.push("concurrency:OFF, cache:OFF".to_owned());
             }
@@ -217,10 +221,20 @@ pub(crate) fn runtime_plan_key(plan: &PhysicalPlan) -> usize {
 }
 
 impl BuildState {
-    fn apply_runtime_sink(&mut self, plan_key: usize) -> Option<crate::apply::native::ApplyRuntimeSink> {
-        let counter = self.runtime_counters.as_mut()?.entry(plan_key)
+    fn apply_runtime_sink(
+        &mut self,
+        plan_key: usize,
+    ) -> Option<crate::apply::native::ApplyRuntimeSink> {
+        let counter = self
+            .runtime_counters
+            .as_mut()?
+            .entry(plan_key)
             .or_insert_with(|| crate::executor::RowCount::default().into());
-        Some(Arc::clone(counter.apply.get_or_insert_with(|| Arc::new(Mutex::new(None)))))
+        Some(Arc::clone(
+            counter
+                .apply
+                .get_or_insert_with(|| Arc::new(Mutex::new(None))),
+        ))
     }
 
     fn adaptive_runtime_sink(
@@ -991,6 +1005,15 @@ fn build_mem_table(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    if scan.db_name.eq_ignore_ascii_case("metrics_schema") {
+        // go's metrics tables query the metric storage (Prometheus/PD),
+        // which is absent -- the queries fail `query metric error: pd
+        // unavailable` (oracle g-is: metrics_schema scans answer 1105).
+        return Err(DriverError::Mysql(crate::driver::MysqlError::new(
+            1105,
+            "query metric error: pd unavailable".to_owned(),
+        )));
+    }
     let super::TableEntry::Mem(table) = catalog
         .table_in(&scan.db_name, &scan.table_name)
         .ok_or_else(|| {
@@ -3417,7 +3440,8 @@ fn build_apply(
         apply.hash_join.join_type != LogicalJoinType::Inner,
         apply.can_use_cache,
         ctx.clone(),
-    ).with_runtime_sink(state.apply_runtime_sink(runtime_plan_key(plan)));
+    )
+    .with_runtime_sink(state.apply_runtime_sink(runtime_plan_key(plan)));
     Ok(Box::new(executor))
 }
 
@@ -4684,16 +4708,27 @@ fn build_with_state(
             // The physical index row is ordered by index keys and handles.
             // Go's reader OutputColumns restores the datasource's output.
             if child.schema().columns.len() == reader.output_columns.len()
-                && child.schema().columns.iter().zip(&reader.output_columns)
+                && child
+                    .schema()
+                    .columns
+                    .iter()
+                    .zip(&reader.output_columns)
                     .all(|(input, output)| input.unique_id == output.unique_id)
             {
                 Ok(child)
             } else {
-                let expressions = reader.output_columns.iter().cloned()
-                    .map(Expression::Column).collect::<Vec<_>>();
+                let expressions = reader
+                    .output_columns
+                    .iter()
+                    .cloned()
+                    .map(Expression::Column)
+                    .collect::<Vec<_>>();
                 let expressions = resolve_expressions(&expressions, child.schema())?;
                 Ok(Box::new(ProjectionExec::new(
-                    meta(ctx, plan, plan_schema(plan)?), expressions, child, ctx.clone(),
+                    meta(ctx, plan, plan_schema(plan)?),
+                    expressions,
+                    child,
+                    ctx.clone(),
                 )) as Box<dyn Executor>)
             }
         }
@@ -6870,7 +6905,10 @@ mod tests {
                         for (index, handle) in batch.handles.iter().enumerate() {
                             let id = handle.handle.int_value().unwrap();
                             if ordered {
-                                assert_eq!(batch.sort_keys.values(index), vec![Datum::Int(id * 10)]);
+                                assert_eq!(
+                                    batch.sort_keys.values(index),
+                                    vec![Datum::Int(id * 10)]
+                                );
                             } else {
                                 assert!(batch.sort_keys.is_empty());
                             }
