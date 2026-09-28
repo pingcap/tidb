@@ -3010,6 +3010,9 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
+	if ds.FtsPushDown != nil {
+		ts.FtsQueryInfo = ds.FtsPushDown.QueryInfo
+	}
 	return ts
 }
 
@@ -3510,6 +3513,9 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if isMatchProp && prop.VectorProp.VectorHelper == nil {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
+	}
+	if ds.FtsPushDown != nil {
+		ts.FtsQueryInfo = ds.FtsPushDown.QueryInfo
 	}
 	return ts, rowCount
 }

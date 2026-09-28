@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -1578,6 +1579,26 @@ func cleanAccessPathForMVIndexHint(ds *logicalop.DataSource) {
 	if len(validMVIndexPath) > 0 {
 		ds.PossibleAccessPaths = validMVIndexPath
 	}
+}
+
+// cleanAccessPathForFTS keeps only TiFlash access paths for a native full-text
+// query. The FTS index is a columnar index; sending the rewritten predicate to
+// TiKV would drop the original MATCH condition and change the result set.
+func cleanAccessPathForFTS(ds *logicalop.DataSource) error {
+	if ds.FtsPushDown == nil {
+		return nil
+	}
+	validPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
+	for _, path := range ds.PossibleAccessPaths {
+		if path.StoreType == kv.TiFlash {
+			validPaths = append(validPaths, path)
+		}
+	}
+	if len(validPaths) == 0 {
+		return plannererrors.ErrInternal.GenWithStack("Full text search can only be executed in TiFlash, but no TiFlash access path is available")
+	}
+	ds.PossibleAccessPaths = validPaths
+	return nil
 }
 
 // indexMergeContainSpecificIndex checks whether the index merge path contains at least one index in the `indexSet`

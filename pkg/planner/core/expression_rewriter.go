@@ -2285,8 +2285,12 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		er.matchAgainstToLike(v, numCols, stackLen)
 		return
 	}
+	if er.ftsNativeViable(v.Modifier, numCols, stackLen) {
+		er.matchAgainstToBuiltin(v, numCols, stackLen)
+		return
+	}
 	if !sessVars.EnableLocalMatchAgainst {
-		er.err = ErrLocalMatchDisabled
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST requires a TiFlash FULLTEXT index or tidb_enable_local_match_against")
 		return
 	}
 	if !expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
@@ -2406,6 +2410,148 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 	er.ctxStackAppend(fn, types.EmptyName)
 }
 
+// ftsNativeViable reports whether the MATCH(...) currently being rewritten
+// can be served on TiFlash by the native FTSMysqlMatchAgainst builtin. It
+// walks the resolved column FieldNames sitting on ctxNameStk (stack layout is
+// [..., col1, ..., colN, against]) and requires for each column:
+//   - the originating table has an available TiFlash replica;
+//   - the column is covered by a public FULLTEXT index on that table.
+//
+// In addition, BOOLEAN MODE requires the STANDARD parser and TiDB's default
+// analyzer settings because those are the only settings represented by the
+// current TiFlash protocol. Natural-language mode retains its existing native
+// viability rules; query expansion is not part of this feature.
+func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
+	if numCols <= 0 {
+		return false
+	}
+	if modifier.IsBooleanMode() && numCols != 1 {
+		return false
+	}
+	if !ftsModifierAllowsNativePushdown(modifier) {
+		return false
+	}
+	builder := er.planCtx.builder
+	sessVars := builder.ctx.GetSessionVars()
+	if modifier.IsBooleanMode() && !ftsNativeAnalyzerConfigSupported(sessVars) {
+		return false
+	}
+	nameStart := stackLen - numCols - 1
+	if nameStart < 0 || stackLen > len(er.ctxNameStk) || stackLen > len(er.ctxStack) {
+		return false
+	}
+	for i := range numCols {
+		name := er.ctxNameStk[nameStart+i]
+		if name == nil {
+			return false
+		}
+		tblName := name.OrigTblName
+		if tblName.L == "" {
+			tblName = name.TblName
+		}
+		if tblName.L == "" {
+			return false
+		}
+		dbName := name.DBName
+		if dbName.L == "" {
+			dbName = ast.NewCIStr(sessVars.CurrentDB)
+		}
+		tblInfo, err := builder.is.TableInfoByName(dbName, tblName)
+		if err != nil {
+			return false
+		}
+		if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available || tblInfo.TiFlashReplica.Count == 0 {
+			return false
+		}
+		colName := name.OrigColName
+		if colName.L == "" {
+			colName = name.ColName
+		}
+		if !tableHasPublicFTSIndexOnColumnWithParser(tblInfo, colName.L, modifier.IsBooleanMode()) {
+			return false
+		}
+	}
+	if modifier.IsBooleanMode() {
+		against := er.ctxStack[stackLen-1]
+		if constant, ok := against.(*expression.Constant); ok && !constant.Value.IsNull() {
+			if _, err := expression.BuildFTSBooleanQuery(constant.Value.GetString(), model.FullTextParserTypeStandardV1); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// ftsModifierAllowsNativePushdown reports whether an FTS modifier can be
+// safely served by the native FTSMysqlMatchAgainst builtin pushed to TiFlash.
+// BOOLEAN MODE is carried by FTSQueryInfo.boolean_query; query expansion still
+// has no protocol representation and is therefore rejected.
+func ftsModifierAllowsNativePushdown(modifier ast.FulltextSearchModifier) bool {
+	return !modifier.WithQueryExpansion()
+}
+
+// tableHasPublicFTSIndexOnColumn reports whether tblInfo has a public FULLTEXT
+// index covering the given column. TiDB's FULLTEXT index is single-column, so
+// each column in MATCH(...) needs its own FTS index for the native path to be
+// viable.
+func tableHasPublicFTSIndexOnColumn(tblInfo *model.TableInfo, columnNameL string) bool {
+	return tableHasPublicFTSIndexOnColumnWithParser(tblInfo, columnNameL, false)
+}
+
+func tableHasPublicFTSIndexOnColumnWithParser(tblInfo *model.TableInfo, columnNameL string, standardParserOnly bool) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.FullTextInfo == nil || !idx.IsPublic() {
+			continue
+		}
+		if standardParserOnly && idx.FullTextInfo.ParserType != model.FullTextParserTypeStandardV1 {
+			continue
+		}
+		if idx.FindColumnByName(columnNameL) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func ftsNativeAnalyzerConfigSupported(sessVars *variable.SessionVars) bool {
+	config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1)
+	return err == nil &&
+		config.InnodbFtMinTokenSize == 3 &&
+		config.InnodbFtMaxTokenSize == 84 &&
+		config.InnodbFtEnableStopword
+}
+
+// matchAgainstToBuiltin converts MATCH...AGAINST to the FTSMysqlMatchAgainst
+// builtin scalar function which can be pushed down to TiFlash for execution
+// against a fulltext index.
+func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
+	against := er.ctxStack[stackLen-1]
+	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
+
+	args := make([]expression.Expression, 0, 1+numCols)
+	args = append(args, against)
+	args = append(args, cols...)
+
+	er.ctxStackPop(numCols + 1)
+	fn, err := er.newFunction(ast.FTSMysqlMatchAgainst, &v.Type, args...)
+	if err != nil {
+		er.err = err
+		return
+	}
+	sf, ok := fn.(*expression.ScalarFunction)
+	if !ok {
+		er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
+		return
+	}
+	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
+		er.err = err
+		return
+	}
+	er.ctxStackAppend(fn, types.EmptyName)
+}
+
+// matchAgainstToLike converts MATCH...AGAINST to LIKE predicates as a
+// fallback when the native FTS pushdown path is not viable.
 func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, stackLen int) {
 	againstExpr := er.ctxStack[stackLen-1]
 

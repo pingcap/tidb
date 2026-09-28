@@ -47,7 +47,15 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tipb/go-tipb"
 )
+
+// FTSPushDown is the logical full-text search metadata extracted from
+// MATCH ... AGAINST before physical access path selection.
+type FTSPushDown struct {
+	IndexInfo *model.IndexInfo
+	QueryInfo *tipb.FTSQueryInfo
+}
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
@@ -130,6 +138,9 @@ type DataSource struct {
 	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
 	// index pruning early in the planning phase - which is an approximate heuristic.
 	InterestingColumns []*expression.Column
+
+	// FtsPushDown stores extracted full-text query metadata for a TiFlash scan.
+	FtsPushDown *FTSPushDown
 }
 
 // Init initializes DataSource.

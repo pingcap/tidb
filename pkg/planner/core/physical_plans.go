@@ -1029,6 +1029,11 @@ type PhysicalTableScan struct {
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 
+	// FtsQueryInfo is populated when a native MATCH ... AGAINST predicate is
+	// resolved to a TiFlash full-text index. It is serialized into the table
+	// scan request and must not be reused by a cached physical plan.
+	FtsQueryInfo *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"`
+
 	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`

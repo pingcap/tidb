@@ -18,10 +18,12 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var _ functionClass = &ftsMysqlMatchAgainstFunctionClass{}
@@ -29,6 +31,7 @@ var _ builtinFunc = &builtinFtsMysqlMatchAgainstSig{}
 
 type ftsMysqlMatchAgainstFunctionClass struct {
 	baseFunctionClass
+	expropt.SessionVarsPropReader
 }
 
 type builtinFtsMysqlMatchAgainstSig struct {
@@ -84,6 +87,16 @@ func SetFTSMysqlMatchAgainstModifier(sf *ScalarFunction, modifier ast.FulltextSe
 	}
 	sig.modifier = modifier
 	return nil
+}
+
+// GetFTSMysqlMatchAgainstModifier returns the modifier attached to the
+// internal `MATCH ... AGAINST` builtin signature.
+func GetFTSMysqlMatchAgainstModifier(sf *ScalarFunction) (ast.FulltextSearchModifier, bool) {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return ast.FulltextSearchModifierNaturalLanguageMode, false
+	}
+	return sig.modifier, true
 }
 
 // SetFTSMysqlMatchAgainstLocalEvalInfo authorises local no-score evaluation.
@@ -158,7 +171,16 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 	if err != nil {
 		return nil, err
 	}
-	return &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: bf}, nil
+
+	sessionVars, err := c.GetSessionVars(ctx.GetEvalCtx())
+	if err != nil {
+		return nil, err
+	}
+	sessionVars.StmtCtx.FTSFunctionIsUsed = true
+
+	sig := &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: bf}
+	sig.setPbCode(tipb.ScalarFuncSig_FTSMatchExpression)
+	return sig, nil
 }
 
 func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
