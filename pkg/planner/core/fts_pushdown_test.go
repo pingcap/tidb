@@ -72,6 +72,18 @@ func TestMatchAgainstBooleanPushdownToTiFlash(t *testing.T) {
 			plan := compilePhysicalPlan(t, tk, query.sql)
 			scan := findFTSTableScan(t, plan)
 			require.NotNil(t, scan.FtsQueryInfo)
+			// MATCH columns must be read by TiFlash even when they are not
+			// projected by the SQL query. The table reader still exposes only
+			// the requested id column.
+			require.Len(t, plan.Schema().Columns, 1)
+			scanColumnNames := make(map[string]struct{}, len(scan.Columns))
+			for _, col := range scan.Columns {
+				scanColumnNames[col.Name.L] = struct{}{}
+			}
+			require.Contains(t, scanColumnNames, "title")
+			if query.columnNum == 2 {
+				require.Contains(t, scanColumnNames, "body")
+			}
 
 			var expectedIndexID int64
 			for _, index := range tbl.Meta().Indices {
@@ -123,8 +135,18 @@ func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_local_match_against=OFF")
 
 	sql := "select id from ngram_articles where match(title) against('+tidb' in boolean mode)"
-	scan := findFTSTableScan(t, compilePhysicalPlan(t, tk, sql))
+	plan := compilePhysicalPlan(t, tk, sql)
+	scan := findFTSTableScan(t, plan)
 	require.NotNil(t, scan.FtsQueryInfo)
+	require.Len(t, plan.Schema().Columns, 1)
+	var hasTitle bool
+	for _, col := range scan.Columns {
+		if col.Name.L == "title" {
+			hasTitle = true
+			break
+		}
+	}
+	require.True(t, hasTitle, "the TiFlash table scan must include the NGRAM MATCH column")
 	require.Equal(t, string(model.FullTextParserTypeNgramV1), scan.FtsQueryInfo.QueryTokenizer)
 	require.NotNil(t, scan.FtsQueryInfo.BooleanQuery)
 	require.Equal(t, uint32(2), scan.FtsQueryInfo.BooleanQuery.NgramTokenSize)

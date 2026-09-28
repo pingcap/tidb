@@ -2290,7 +2290,7 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		return
 	}
 	if !sessVars.EnableLocalMatchAgainst {
-		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST requires a TiFlash FULLTEXT index or tidb_enable_local_match_against")
+		er.err = ErrLocalMatchDisabled
 		return
 	}
 	if !expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {

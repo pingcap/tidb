@@ -259,6 +259,18 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.Schema())
 
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.AllConds, nil)
+	// Native MATCH ... AGAINST is removed from the Selection when it is
+	// attached to a TiFlash scan. Keep its text columns alive through column
+	// pruning anyway: TiFlash evaluates the FTS query from the table-scan
+	// request and requires those columns even when they are not part of the SQL
+	// projection.
+	if ds.FtsPushDown != nil && ds.FtsPushDown.QueryInfo != nil {
+		for _, colInfo := range ds.FtsPushDown.QueryInfo.Columns {
+			if col := ds.TblColsByID[colInfo.GetColumnId()]; col != nil {
+				exprCols = append(exprCols, col)
+			}
+		}
+	}
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 
@@ -309,7 +321,9 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
 	// If the parent operator need no columns from the DataSource, we return the smallest column. Don't add the empty proj.
-	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
+	needProjectionForFTS := ds.FtsPushDown != nil
+	needProjectionForMPP := ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil
+	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && (needProjectionForFTS || needProjectionForMPP) {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
