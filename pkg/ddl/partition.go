@@ -2345,6 +2345,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// used by ApplyDiff in updateSchemaVersion
 		args.OldPhysicalTblIDs = physicalTableIDs
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		accountPendingReorgRU(jobCtx, job, err)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2658,6 +2659,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// used by ApplyDiff in updateSchemaVersion
 		args.ShouldUpdateAffectedPartitions = true
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		accountPendingReorgRU(jobCtx, job, err)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -3522,6 +3524,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		job.SchemaState = model.StateDeleteReorganization
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		accountPendingReorgRU(jobCtx, job, err)
 
 	case model.StateDeleteReorganization:
 		// Need to have one more state before completing, due to:
@@ -3950,6 +3953,7 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 			}
 			taskCtx.addedCount++
 		}
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)

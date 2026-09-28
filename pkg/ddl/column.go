@@ -904,6 +904,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		// Collect the warnings.
 		taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
 
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
