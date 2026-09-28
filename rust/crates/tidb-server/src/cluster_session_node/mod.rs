@@ -5350,6 +5350,7 @@ impl ClusterServerSession {
 
     fn record_write_details(&mut self, (write_size, write_keys): (isize, isize)) {
         if write_size > 0 {
+            tidb_txnkv::client_go_metrics::observe_txn_write_size_bytes(write_size, false);
             self.session
                 .txn_write_throughput_sli()
                 .add_txn_write_size(write_size, write_keys);

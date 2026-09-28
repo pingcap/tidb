@@ -631,6 +631,27 @@ pub fn observe_send_request_seconds(
     }
 }
 
+/// Go `clientConn.addQueryMetrics`' transaction write-size observation.
+///
+/// The client-go shortcut is already pre-bound with the exact `scope` label
+/// used by Go (`general` for user transactions and `internal` for internal
+/// ones), so commit code only supplies the measured encoded KV size.
+pub fn observe_txn_write_size_bytes(size: isize, internal: bool) {
+    if size <= 0 {
+        return;
+    }
+    let source = if internal {
+        "TxnWriteSizeHistogramInternal"
+    } else {
+        "TxnWriteSizeHistogramGeneral"
+    };
+    if let Some(tikv_client::metrics::ClientGoShortcut::Observer(observer)) =
+        tikv_client::metrics::global_metrics().shortcut(source)
+    {
+        observer.observe(size as f64);
+    }
+}
+
 /// Every client-go family under the `tidb`/`tikvclient` namespace as
 /// (fq name, help, kind), for the exposition header shim: Go's registry
 /// emits HELP/TYPE for registered-but-childless histogram vecs, and this
