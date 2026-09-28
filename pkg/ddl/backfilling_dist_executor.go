@@ -54,6 +54,10 @@ type BackfillTaskSummary struct {
 	// while merging the temporary index. The merge runs as its own task and
 	// writes through transactions instead of ingest, so it is accounted
 	// separately from IndexKVSize.
+	// It is summed from the succeeded subtask summaries on a best-effort basis:
+	// a subtask that fails after committing some ranges does not report those
+	// bytes, because the deleted temporary index keys cannot be reconstructed on
+	// retry. See mergeTempIndexExecutor.RunSubtask for details.
 	MergeTempIndexTxnKVSize uint64 `json:"merge_temp_index_txn_kv_size,omitempty"`
 }
 
