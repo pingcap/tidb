@@ -334,7 +334,6 @@ go_test(
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",
         "//pkg/dxf/framework/storage",
-        "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/operator",
         "//pkg/errctx",
