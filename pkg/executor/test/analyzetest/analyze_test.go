@@ -748,12 +748,12 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
 
-	// NDVRATE must be in (0, 1].
+	// NDVRATE must be in (0, 1], and TiKV draws TopN and histogram rows from the
+	// rows selected for NDV, so it must cover SAMPLERATE.
 	for _, rate := range []string{"0", "1.01"} {
 		require.Error(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"))
 	}
-	// A statement can set NDVRATE below SAMPLERATE.
-	tk.MustExec("analyze table t with 0.1 NDVRATE, 0.2 SAMPLERATE")
+	require.ErrorContains(t, tk.ExecToErr("analyze table t with 0.1 NDVRATE, 0.2 SAMPLERATE"), "NDVRATE must not be smaller than SAMPLERATE")
 	// A zero tidb_analyze_sampled_ndv_threshold rejects NDVRATE. Otherwise
 	// NDVRATE replaces only the rate, so without a table above the threshold
 	// ANALYZE reads every row and says so.

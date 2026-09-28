@@ -3189,7 +3189,7 @@ func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, map[ast.AnalyzeOptionType]struct{}, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionLimit))
 	resetOpts := make(map[ast.AnalyzeOptionType]struct{}, len(analyzeOptionLimit))
-	sampleNum, sampleRate := uint64(0), 0.0
+	sampleNum, sampleRate, ndvRate := uint64(0), 0.0, 0.0
 	for _, opt := range opts {
 		// Options are processed in statement order, so for repeated mentions of
 		// the same option the last one wins, matching the behavior for
@@ -3203,6 +3203,8 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 				sampleNum = 0
 			case ast.AnalyzeOptSampleRate:
 				sampleRate = 0
+			case ast.AnalyzeOptNDVRate:
+				ndvRate = 0
 			}
 			continue
 		}
@@ -3227,6 +3229,8 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 			}
 			if opt.Type == ast.AnalyzeOptSampleRate {
 				sampleRate = fVal
+			} else {
+				ndvRate = fVal
 			}
 			optMap[opt.Type] = math.Float64bits(fVal)
 		default:
@@ -3242,6 +3246,10 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 	}
 	if sampleNum > 0 && sampleRate > 0 {
 		return nil, nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
+	}
+	// TiKV draws the TopN and histogram rows from the rows selected for NDV.
+	if ndvRate > 0 && ndvRate < sampleRate {
+		return nil, nil, errors.Errorf("NDVRATE must not be smaller than SAMPLERATE")
 	}
 
 	return optMap, resetOpts, nil
