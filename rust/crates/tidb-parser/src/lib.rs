@@ -1199,6 +1199,16 @@ impl Parser {
         } else {
             false
         };
+        // go removed the legacy `EXPLAIN PARTITIONS ...` spellings: the yacc
+        // consumes EXPLAIN PARTITIONS and fails AT the next token (oracle:
+        // `EXPLAIN PARTITIONS SELECT * FROM p1 WHERE a < 20` →
+        // `column 25 near "SELECT * FROM p1 WHERE a < 20"`, i.e. at the
+        // SELECT token itself, which the rust parser wrongly accepted as an
+        // explainable statement).
+        if self.is_kw("PARTITIONS") {
+            self.bump();
+            return Err(self.err_here("legacy EXPLAIN PARTITIONS is not supported"));
+        }
         let mut format = "row".to_string();
         if self.is_kw("FORMAT") {
             self.bump();
