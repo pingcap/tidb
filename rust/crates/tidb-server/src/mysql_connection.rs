@@ -19,6 +19,7 @@ use std::fmt;
 use std::io::{BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
+use std::time::Instant;
 
 use tidb_protocol::result_encoder::ResultEncoder;
 use tidb_protocol::{
@@ -706,6 +707,33 @@ fn record_client_warnings<O: ConnectionPacketOutput + ?Sized, S: QuerySession>(
 ) {
     for code in session.warning_codes() {
         output.record_client_warning(code);
+    }
+}
+
+/// Mirrors Go `Server.getToken`/`releaseToken` around one command dispatch.
+///
+/// The Rust server does not yet enforce the configurable token limit, but the
+/// command boundary still owns the same observable metrics: active commands
+/// and the time spent acquiring a token. Keeping the decrement in `Drop`
+/// covers every early-return and protocol-error path in the dispatcher.
+struct CommandTokenMetrics {
+    started: Instant,
+}
+
+impl CommandTokenMetrics {
+    fn acquire() -> Self {
+        let started = Instant::now();
+        crate::server_metrics::TOKENS.inc();
+        Self { started }
+    }
+}
+
+impl Drop for CommandTokenMetrics {
+    fn drop(&mut self) {
+        crate::server_metrics::TOKENS.dec();
+        // Go records microseconds (despite the `_seconds` family name).
+        crate::server_metrics::GET_TOKEN_DURATION_SECONDS
+            .observe(self.started.elapsed().as_micros() as f64);
     }
 }
 
@@ -1543,6 +1571,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 .with_label_values(&[if in_txn { "1" } else { "0" }])
                 .observe(idle);
         }
+        let _command_token_metrics = CommandTokenMetrics::acquire();
         let dispatch_result = (|| -> Result<Option<ConnectionReport>, MysqlConnectionError> {
             let command = match decode_command(&payload) {
                 Ok(command) => command,
