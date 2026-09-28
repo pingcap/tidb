@@ -63,6 +63,9 @@ pub enum DriverError {
     /// the bytes. Build one with [`DriverError::unsupported`], which takes
     /// either.
     Unsupported(Cow<'static, str>),
+    /// Go `plannererrors.ErrUnknownExplainFormat` (1791), carrying the
+    /// unrecognized format name from `EXPLAIN ... FORMAT`.
+    UnknownExplainFormat(String),
     /// Go `dbterror.ErrSequenceUnsupportedTableOption` (8227), carrying the
     /// option value from `CreateSequenceStmt.TblOptions`.
     SequenceUnsupportedTableOption(String),

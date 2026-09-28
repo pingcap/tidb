@@ -41,8 +41,21 @@ impl Session {
         &mut self,
         explain: &tidb_ast::ExplainStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
+        if explain.format.is_empty() {
+            // go's schema builder answers an EMPTY format from its `default:`
+            // arm with the unsupported-format 1105 (oracle:
+            // `EXPLAIN FORMAT=''` answers
+            // `explain format '' is not supported now`).
+            return Err(DriverError::unsupported(format!(
+                "explain format '{}' is not supported now",
+                explain.format
+            )));
+        }
         let Some(format) = tidb_executor::ExplainFormat::parse(&explain.format) else {
-            return Err(DriverError::unsupported("unknown EXPLAIN format name"));
+            // go `plannererrors.ErrUnknownExplainFormat` (1791) names the
+            // format it could not match (oracle: `EXPLAIN FORMAT='tree'`
+            // answers `Unknown EXPLAIN format name: 'tree'`).
+            return Err(DriverError::UnknownExplainFormat(explain.format.clone()));
         };
         if explain.analyze && matches!(format, tidb_executor::ExplainFormat::PlanTree) {
             return Err(DriverError::unsupported(

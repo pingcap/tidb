@@ -62,6 +62,9 @@ pub enum ExplainFormat {
     /// port (`plan_cost_ver2.go`'s per-operator formula closures) and
     /// answers `renderer is not translated` until that lands.
     CostTrace,
+    /// Go's JSON plan report (`ExplainFormatJSON`): the row planner renders
+    /// the plan tree as one JSON document per root.
+    Json,
 }
 
 impl ExplainFormat {
@@ -84,6 +87,8 @@ impl ExplainFormat {
             Some(Self::Hint)
         } else if format.eq_ignore_ascii_case("cost_trace") {
             Some(Self::CostTrace)
+        } else if format.eq_ignore_ascii_case("json") {
+            Some(Self::Json)
         } else {
             None
         }
@@ -102,6 +107,7 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
         // Hint renders through the empty hint pair, never the row planner.
         ExplainFormat::Hint => PlannerExplainFormat::Row,
         ExplainFormat::CostTrace => PlannerExplainFormat::CostTrace,
+        ExplainFormat::Json => PlannerExplainFormat::Json,
     }
 }
 

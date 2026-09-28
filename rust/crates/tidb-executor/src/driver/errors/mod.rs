@@ -210,6 +210,10 @@ impl DriverError {
         }
         DriverError::DdlCoded { errno, message } => MysqlError::coded(errno, message),
         DriverError::Unsupported(message) => MysqlError::unknown(message),
+        DriverError::UnknownExplainFormat(name) => MysqlError::new(
+            1791,
+            format!("Unknown EXPLAIN format name: '{name}'"),
+        ),
         DriverError::NotSupportedWithSem(statement) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrNotSupportedWithSem,
             format!(
