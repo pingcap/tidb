@@ -21,6 +21,7 @@
 //! `FunctionCallGeneric` production families in `pkg/parser/parser.y`.
 
 use super::*;
+use tidb_lexer::is_reserved;
 
 impl Parser {
     /// Distinguishes `INTERVAL (expr) UNIT` from the unrelated scalar
@@ -755,6 +756,20 @@ impl Parser {
         // column reference (oracle: `CHAR(233, USING utf8mb4)` errors 1064
         // at the USING token, not at the charset).
         if self.peek().text.eq_ignore_ascii_case("using") {
+            return Err(self.err_here(""));
+        }
+        // A RESERVED keyword never starts a column reference either: go's
+        // grammar gives each reserved word its own token type and no
+        // simpleExpr production accepts it bare, so the syntax error lands
+        // ON the keyword token. Consuming it as a column name instead
+        // reports one token LATE (oracle: `SELECT XOR 1` errors at the XOR
+        // token itself -- `column 10 near "XOR 1"` -- not at the operand).
+        // The `(`-lookahead above already routed the reserved-but-function
+        // names (`REPEAT(x, y)`) to `parse_named_func`, and continuation
+        // segments after `.` stay ungated in `parse_column_ref_path` (go's
+        // own `parseColumnRef` takes the next token unconditionally there),
+        // so this gate fires exactly for the bare reserved-word prefix.
+        if self.peek().kind == TokenKind::Keyword && is_reserved(&self.peek().text) {
             return Err(self.err_here(""));
         }
         Ok(Expr::Column(self.parse_column_ref_path()?))
