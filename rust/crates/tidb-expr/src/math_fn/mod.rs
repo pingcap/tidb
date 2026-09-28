@@ -701,7 +701,7 @@ pub(crate) fn eval_rand_values(
             .map(Datum::Real)
             .ok_or(EvalError::Unsupported("RAND requires a session")),
         [value] => {
-            let seed = rand_seed(value)?;
+            let seed = rand_seed(value, cols)?;
             if arg_is_constant {
                 let key = function_key.ok_or(EvalError::Unsupported(
                     "RAND requires a stable function identity",
@@ -718,24 +718,24 @@ pub(crate) fn eval_rand_values(
     }
 }
 
-fn rand_seed(value: &Datum) -> Result<i64, EvalError> {
+fn rand_seed(value: &Datum, cols: &dyn Columns) -> Result<i64, EvalError> {
     match value {
         Datum::Null => Ok(0),
         Datum::Int(value) => Ok(*value),
         Datum::UInt(value) => Ok(*value as i64),
         Datum::Decimal(value) => value.round_to_i64().ok_or(EvalError::IntOverflow),
         Datum::Real(value) => Ok(*value as i64),
-        Datum::String(value) => Ok(value
-            .as_utf8()
-            .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))?
-            .trim()
-            .parse::<f64>()
-            .unwrap_or(0.0) as i64),
-        Datum::Bytes(value) => Ok(std::str::from_utf8(value)
-            .map_err(|_| EvalError::Unsupported("invalid UTF-8 byte datum"))?
-            .trim()
-            .parse::<f64>()
-            .unwrap_or(0.0) as i64),
+        Datum::String(value) => {
+            let text = value
+                .as_utf8()
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))?;
+            rand_string_seed(text, &Datum::String(value.clone()), cols)
+        }
+        Datum::Bytes(value) => {
+            let text = std::str::from_utf8(value)
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 byte datum"))?;
+            rand_string_seed(text, &Datum::Bytes(value.clone()), cols)
+        }
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel RAND seed"))
         }
@@ -744,6 +744,19 @@ fn rand_seed(value: &Datum) -> Result<i64, EvalError> {
             .map(|converted| converted.value)
             .map_err(|_| EvalError::Unsupported("RAND seed conversion")),
     }
+}
+
+/// go's `builtinRandWithSeedFirstGenSig` takes the seed argument through
+/// `types.ToInt`: the INTEGER PREFIX is the seed, and a remainder the scan
+/// did not consume warns `Truncated incorrect INTEGER value: '%s'` through
+/// `Context.HandleTruncate` (oracle: `RAND('x')` answers the zero seed with
+/// exactly that 1292 warning). The value half is [`str_int_prefix`]'s scan
+/// and the warning half is [`report_int_truncation`]'s -- the SAME pair the
+/// string-cast tier already verifies, so the two callers cannot drift.
+fn rand_string_seed(text: &str, datum: &Datum, cols: &dyn Columns) -> Result<i64, EvalError> {
+    let seed = crate::cast::str_int_prefix(text);
+    crate::cast::report_int_truncation(datum, cols)?;
+    Ok(seed)
 }
 
 /// This AST-only classifier mirrors the build-time distinction TiDB's

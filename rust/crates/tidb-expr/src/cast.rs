@@ -720,7 +720,7 @@ fn real_to_u64_saturating(f: f64, ctx: &dyn crate::Columns) -> u64 {
 /// different lifetimes in Go too: the prefix VALUE is returned to the caller
 /// unconditionally, while the truncation event goes through
 /// `Context.HandleTruncate` and may be discarded, warned, or raised.
-fn int_prefix_consumed_all(s: &str) -> bool {
+pub(crate) fn int_prefix_consumed_all(s: &str) -> bool {
     // Go `StrToInt`/`StrToUint` trim BOTH ends before scanning, so trailing
     // space is not a truncation; `CAST('  12  ' AS SIGNED)` is exact.
     let trimmed = s.trim();
@@ -951,7 +951,7 @@ fn signed_string_integer_parse_overflows(text: &str) -> bool {
     }
 }
 
-fn str_int_prefix(s: &str) -> i64 {
+pub(crate) fn str_int_prefix(s: &str) -> i64 {
     let s = s.trim_start();
     let (negative, rest) = match s.strip_prefix('-') {
         Some(r) => (true, r),
