@@ -452,12 +452,14 @@ impl<L> RegionCache<L> {
             normalize_loaded(&mut next_stores, &mut replacement, &labels);
             let region = replacement.region;
             let expire_after_ttl = !replacement.down_peer_ids.is_empty();
-            insert_loaded_into(&mut next, replacement)?;
+            let inserted = insert_loaded_into(&mut next, replacement)?;
             let mut state = CacheEntryState::new(self.next_expiry_at(now_seconds, region));
             if expire_after_ttl {
                 state.mark(CacheReloadState::ExpireAfterTtl);
             }
-            next_states.insert(region, state);
+            if inserted.is_some() {
+                next_states.insert(region, state);
+            }
         }
         self.regions = next;
         self.stores = next_stores;

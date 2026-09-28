@@ -488,8 +488,16 @@ impl<L> RegionCache<L> {
         preserve_newer_buckets(&self.regions, &mut loaded);
         normalize_loaded(&mut next_stores, &mut loaded, &labels);
         let region = loaded.region;
+        // PD may return an older view after a concurrent load or from a
+        // follower. Go's insertRegionToCache ignores that result and keeps
+        // the newer cached topology; publishing the stale entry would make
+        // the next request regress to an already-invalid epoch.
+        if let Some(index) = stale_region_index(&self.regions, &loaded) {
+            return Ok(index);
+        }
         let expire_after_ttl = !loaded.down_peer_ids.is_empty();
-        let index = insert_loaded_into(&mut next_regions, loaded)?;
+        let index = insert_loaded_into(&mut next_regions, loaded)?
+            .expect("stale region was checked before insertion");
         self.regions = next_regions;
         // Like Go insertRegionToCache, publishing an independent region must
         // not invalidate concurrent loads when their store metadata is still
@@ -676,26 +684,12 @@ pub(super) fn normalize_loaded(
 pub(in crate::region) fn insert_loaded_into(
     regions: &mut Vec<RegionLocation>,
     loaded: RegionLocation,
-) -> Result<usize, RegionRouteError> {
-    if let Some(current) = regions
-        .iter()
-        .find(|region| region.region.id == loaded.region.id)
-    {
-        if loaded.region.epoch.is_older_than(current.region.epoch) {
-            return Err(RegionRouteError::StaleRegionEpoch {
-                loaded: loaded.region,
-                cached: current.region,
-            });
-        }
-    }
-    if let Some(current) = regions.iter().find(|current| {
-        ranges_intersect(current, &loaded)
-            && current.region.epoch.version > loaded.region.epoch.version
-    }) {
-        return Err(RegionRouteError::StaleRegionEpoch {
-            loaded: loaded.region,
-            cached: current.region,
-        });
+) -> Result<Option<usize>, RegionRouteError> {
+    // client-go's insertRegionToCache returns false for a stale PD result.
+    // The caller keeps using the already cached region instead of surfacing a
+    // retryable topology race as a statement error.
+    if stale_region_index(regions, &loaded).is_some() {
+        return Ok(None);
     }
 
     regions.retain(|current| {
@@ -705,7 +699,14 @@ pub(in crate::region) fn insert_loaded_into(
         .binary_search_by(|region| region.start_key.cmp(&loaded.start_key))
         .unwrap_or_else(|index| index);
     regions.insert(index, loaded);
-    Ok(index)
+    Ok(Some(index))
+}
+
+fn stale_region_index(regions: &[RegionLocation], loaded: &RegionLocation) -> Option<usize> {
+    regions.iter().position(|current| {
+        (current.region.id == loaded.region.id || ranges_intersect(current, loaded))
+            && loaded.region.epoch.is_older_than(current.region.epoch)
+    })
 }
 
 fn ranges_intersect(left: &RegionLocation, right: &RegionLocation) -> bool {
@@ -862,5 +863,17 @@ mod insertion_tests {
             large < small * 8,
             "4x cache size must cost less than 8x insertion time: {small:?} -> {large:?}"
         );
+    }
+
+    #[test]
+    fn stale_region_load_is_ignored_like_go() {
+        let mut cached = region(7);
+        cached.region.epoch.version = 2;
+        let mut regions = vec![cached];
+        let mut stale = region(7);
+        stale.region.epoch.version = 1;
+
+        assert_eq!(insert_loaded_into(&mut regions, stale).unwrap(), None);
+        assert_eq!(regions[0].region.epoch.version, 2);
     }
 }

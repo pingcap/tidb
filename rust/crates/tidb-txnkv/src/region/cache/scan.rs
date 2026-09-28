@@ -25,8 +25,8 @@ use super::super::{
 };
 use super::lookup::{cache_misses, insert_loaded_into, preserve_newer_buckets};
 use super::{
-    cache_now_seconds, BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason,
-    RegionCache, RegionQueryBackoff, RegionQueryLoader, RegionQueryOptions, RegionQueryRetryReason,
+    cache_now_seconds, BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, RegionCache,
+    RegionQueryBackoff, RegionQueryLoader, RegionQueryOptions, RegionQueryRetryReason,
     RegionQueryRoute,
 };
 
@@ -137,7 +137,7 @@ where
         let mut preview = self.regions.clone();
         for mut region in fresh.iter().cloned() {
             preserve_newer_buckets(&preview, &mut region);
-            insert_loaded_into(&mut preview, region)?;
+            let _ = insert_loaded_into(&mut preview, region)?;
         }
         for region in fresh {
             self.insert_loaded_at(region, now_seconds)?;
@@ -207,7 +207,7 @@ where
         let mut preview = self.regions.clone();
         for mut region in loaded.iter().cloned() {
             preserve_newer_buckets(&preview, &mut region);
-            insert_loaded_into(&mut preview, region)?;
+            let _ = insert_loaded_into(&mut preview, region)?;
         }
         let now_seconds = cache_now_seconds();
         for region in loaded.iter().cloned() {
