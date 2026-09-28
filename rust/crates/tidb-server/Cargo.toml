@@ -13,7 +13,6 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
-prometheus = { version = "0.14", default-features = false }
 base64.workspace = true
 chrono.workspace = true
 crossbeam-channel = "0.5"

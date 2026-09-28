@@ -2040,41 +2040,17 @@ impl Session {
         capture_result_authority: bool,
         execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        tidb_util::tidb_metrics::init();
-        let parse_started = std::time::Instant::now();
         self.begin_statement_execution(sql)?;
         let table_delta_savepoint = self.table_delta_savepoint();
         let result = execute(self);
         if result.is_err() {
             self.restore_table_delta_savepoint(table_delta_savepoint);
         }
-        tidb_util::tidb_metrics::parse_duration()
-            .with_label_values(&[tidb_util::tidb_metrics::GENERAL_SQL_TYPE])
-            .observe(parse_started.elapsed().as_secs_f64());
-        let compile_started = std::time::Instant::now();
-        let result = execute(self);
-        tidb_util::tidb_metrics::compile_duration()
-            .with_label_values(&[tidb_util::tidb_metrics::GENERAL_SQL_TYPE])
-            .observe(compile_started.elapsed().as_secs_f64());
         let result_authority = (capture_result_authority
             && matches!(&result, Ok(StmtOutput::Rows { .. })))
         .then(|| self.result_materialization_authority());
-        let execute_started = std::time::Instant::now();
-        self.finish_statement_execution(result).map(|output| {
-            tidb_util::tidb_metrics::transaction_duration()
-                .with_label_values(&["pessimistic", "Query", "general"])
-                .observe(execute_started.elapsed().as_secs_f64());
-            tidb_util::tidb_metrics::tikv_request_duration()
-                .with_label_values(&["Cop", "0", "false", "general"])
-                .observe(0.0);
-            tidb_util::tidb_metrics::txn_write_size()
-                .with_label_values(&["general"])
-                .observe(0.0);
-            tidb_util::tidb_metrics::execute_duration()
-                .with_label_values(&[tidb_util::tidb_metrics::GENERAL_SQL_TYPE])
-                .observe(execute_started.elapsed().as_secs_f64());
-            (output, result_authority)
-        })
+        self.finish_statement_execution(result)
+            .map(|output| (output, result_authority))
     }
 
     // Go resets statement state before executor construction. Keep this
