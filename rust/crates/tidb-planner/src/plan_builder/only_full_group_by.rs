@@ -203,17 +203,45 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         let mut offenders = Vec::new();
+        // go `unfoldWildStar` (`logical_plan_builder.go:4348`): the wildcard
+        // expands to every source column it covers BEFORE the check — each
+        // expanded column owes the grouping its own justification (oracle:
+        // `EXPLAIN SELECT * FROM ex1 GROUP BY b` answers 1055 on the first
+        // expanded column, `fdq.ex1.a`).
+        let group_offsets: std::collections::HashSet<usize> =
+            group_exprs.iter().filter_map(|expr| column_offset(expr, names)).collect();
         for (index, field) in select.fields.fields().iter().enumerate() {
-            if let SelectField::Expr { expr, .. } = field {
-                collect_offenders(
-                    expr,
-                    index + 1,
-                    Clause::Select,
-                    &group_exprs,
-                    &pinned,
-                    names,
-                    &mut offenders,
-                );
+            match field {
+                SelectField::Expr { expr, .. } => {
+                    collect_offenders(
+                        expr,
+                        index + 1,
+                        Clause::Select,
+                        &group_exprs,
+                        &pinned,
+                        names,
+                        &mut offenders,
+                    );
+                }
+                SelectField::Wildcard(qualifier) => {
+                    let mut position = index + 1;
+                    for (offset, name) in names.iter().enumerate() {
+                        if !qualifier_covers(qualifier, name) {
+                            continue;
+                        }
+                        let justified =
+                            pinned.contains(&offset) || group_offsets.contains(&offset);
+                        if !justified {
+                            offenders.push(Offender {
+                                offset,
+                                name: name.names.column.original.clone(),
+                                position,
+                                clause: Clause::Select,
+                            });
+                        }
+                        position += 1;
+                    }
+                }
             }
         }
         // `:3820` ORDER BY. An item that merely names a select field was
@@ -744,6 +772,16 @@ fn column_offset(expr: &Expr, names: &[FieldName]) -> Option<usize> {
     match inner_from_parentheses_and_unary_plus(expr) {
         Expr::Column(path) => find_field_name(names, path),
         _ => None,
+    }
+}
+
+/// Whether a `SELECT t.*`-style qualifier covers this source column: an
+/// empty qualifier (`SELECT *`) covers everything; a qualified wildcard
+/// matches its last part (the table name).
+fn qualifier_covers(qualifier: &[String], name: &FieldName) -> bool {
+    match qualifier.last() {
+        Some(table) => name.names.table.original.eq_ignore_ascii_case(table),
+        None => true,
     }
 }
 
