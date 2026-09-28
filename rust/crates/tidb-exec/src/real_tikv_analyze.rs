@@ -302,6 +302,9 @@ pub struct ClusterAnalyzeReport {
     analyzed_index_ids: Vec<i64>,
     historical_stats_table_ids: Vec<i64>,
     cache_update_physical_ids: Vec<i64>,
+    /// go `builder.go:3194`'s build-time sample-rate NOTE, drained to the
+    /// session as Note-level 1105 rows.
+    pub sample_rate_notes: Vec<(u16, String)>,
 }
 
 impl ClusterAnalyzeReport {
@@ -334,6 +337,9 @@ pub struct ResolvedClusterAnalyze {
     ignored_partition_overrides: bool,
     run_full_sampling: bool,
     independent_index_ids: Vec<i64>,
+    /// go `builder.go:3194`'s build-time sample-rate NOTE (generic 1105),
+    /// one per auto-rated physical table.
+    sample_rate_notes: Vec<(u16, String)>,
 }
 
 impl ResolvedClusterAnalyze {
@@ -540,7 +546,16 @@ pub fn resolve_cluster_analyze_statement<
                     )
                     .ok()
                     .flatten()
-                    .map(|stats| realtime_count_of(stats.row_count));
+                    // go `GetPhysicalTableStats` reads the stats CACHE, and a
+                    // table whose statistics were never collected falls back
+                    // to `PseudoTable` there — whose RealtimeCount is
+                    // PseudoRowCount=10000, NOT the DML-maintained
+                    // `stats_meta` count (oracle: ANALYZE TABLE ol with
+                    // stats_meta count=2 answers the sample-rate note with
+                    // `use min(1, 110000/10000)`).
+                    .filter(|stats| stats.last_analyze_version > 0)
+                    .map(|stats| realtime_count_of(stats.row_count))
+                    .unwrap_or(tidb_stats::PSEUDO_ROW_COUNT);
                 realtime_counts.insert(physical_id, count);
             }
         }
@@ -578,20 +593,34 @@ pub fn resolve_cluster_analyze_statement<
         !statement.persist_options || statement.partitions.is_empty(),
         statement.dynamic_partition_prune,
     );
+    let mut sample_rate_notes = Vec::new();
     for options in &mut resolution.physical {
         options.columns = final_column_choice(&table, &options.columns)?;
         if options.effective.num_samples == 0 && options.effective.sample_rate.is_none() {
             let partition = partition_names
                 .get(&options.physical_id)
                 .map_or("", String::as_str);
-            options.effective.sample_rate = Some(automatic_sample_rate(
-                realtime_counts.get(&options.physical_id).copied().flatten(),
+            let (rate, reason) = automatic_sample_rate(
+                realtime_counts.get(&options.physical_id).copied(),
                 approximate_counts,
                 resource_group,
                 options.physical_id,
                 &statement.schema,
                 &statement.table,
                 partition,
+            );
+            options.effective.sample_rate = Some(rate);
+            // go appends this as a NOTE at build time
+            // (`builder.go:3194`, `sc.AppendNote`, generic 1105). The
+            // partition-named variant (builder.go:3185) has no cluster
+            // caller yet.
+            sample_rate_notes.push((
+                1105,
+                format!(
+                    "Analyze use auto adjusted sample rate {:.6} for table {}.{}, \
+                     reason to use this rate is \"{}\"",
+                    rate, statement.schema, statement.table, reason
+                ),
             ));
         }
     }
@@ -644,6 +673,7 @@ pub fn resolve_cluster_analyze_statement<
         ignored_partition_overrides: resolution.ignored_partition_overrides,
         run_full_sampling: index_tasks.run_full_sampling,
         independent_index_ids: index_tasks.independent_index_ids,
+        sample_rate_notes,
     })
 }
 
@@ -655,7 +685,7 @@ fn automatic_sample_rate(
     database: &str,
     table: &str,
     partition: &str,
-) -> f64 {
+) -> (f64, String) {
     let (approximate_count, has_pd) = approximate_counts.approximate_table_count(
         resource_group,
         physical_id,
@@ -663,7 +693,46 @@ fn automatic_sample_rate(
         table,
         partition,
     );
-    adjusted_sample_rate(realtime_count, has_pd.then_some(approximate_count))
+    let rate = adjusted_sample_rate(realtime_count, has_pd.then_some(approximate_count));
+    let reason = sample_rate_reason(
+        realtime_count,
+        has_pd.then_some(approximate_count),
+        rate,
+    );
+    (rate, reason)
+}
+
+/// go `getAdjustedSampleRate`'s reason strings, branch for branch
+/// (`pkg/executor/builder.go:3270`).
+fn sample_rate_reason(
+    realtime_count: Option<i64>,
+    approximate_count: Option<f64>,
+    rate: f64,
+) -> String {
+    let realtime = realtime_count.unwrap_or(0);
+    if realtime_count.is_none() && approximate_count.is_none() {
+        return format!(
+            "TiDB cannot get the row count of the table, use the default-rate={}",
+            0.001
+        );
+    }
+    if realtime == 0 && approximate_count.is_none() {
+        return "TiDB assumes that the table is empty and cannot get row count from PD, \
+                use sample-rate=1"
+            .to_owned();
+    }
+    if let Some(approximate) = approximate_count {
+        if (realtime as f64) * 5.0 < approximate {
+            return format!(
+                "Row count in stats_meta is much smaller compared with the row count got by PD, \
+                 use min(1, 150000/{approximate}) as the sample-rate={rate}"
+            );
+        }
+    }
+    if realtime == 0 {
+        return "TiDB assumes that the table is empty, use sample-rate=1".to_owned();
+    }
+    format!("use min(1, 110000/{realtime}) as the sample-rate={rate}")
 }
 
 #[derive(Debug)]
@@ -1069,6 +1138,7 @@ pub fn commit_cluster_analyze<
                 predicate_columns_empty,
                 killer,
                 resource_group,
+                &resolved.sample_rate_notes,
             )
         }));
         let task_result = match task_result {
@@ -1109,6 +1179,7 @@ pub fn commit_cluster_analyze<
         analyzed_index_ids: Vec::new(),
         historical_stats_table_ids: Vec::new(),
         cache_update_physical_ids: Vec::new(),
+        sample_rate_notes: Vec::new(),
     });
     for next in reports {
         merge_analyze_report(&mut report, next);
@@ -2177,6 +2248,7 @@ fn commit_cluster_analyze_target<
     predicate_columns_empty_for_task: bool,
     killer: &SqlKiller,
     resource_group: &str,
+    sample_rate_notes: &[(u16, String)],
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut sample_transaction = opener
         .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
@@ -2312,6 +2384,7 @@ fn commit_cluster_analyze_target<
                 analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
                 historical_stats_table_ids: Vec::new(),
                 cache_update_physical_ids: Vec::new(),
+                sample_rate_notes: sample_rate_notes.to_vec(),
             });
         }
         return Err(ClusterAnalyzeError::Other(
@@ -2336,6 +2409,7 @@ fn commit_cluster_analyze_target<
         analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
         historical_stats_table_ids: vec![report.stats.table_id],
         cache_update_physical_ids: Vec::new(),
+        sample_rate_notes: sample_rate_notes.to_vec(),
     };
     // The commit mints its own deadline here rather than inheriting one from
     // function entry: everything above it -- the catalog read, the previous
@@ -2422,6 +2496,7 @@ fn commit_cluster_independent_index<
         (report, write, inserted_meta)
     };
     let mut receipt = ClusterAnalyzeReport {
+        sample_rate_notes: Vec::new(),
         table_id: report.stats.table_id,
         version: start_ts,
         scanned_rows: report.scanned_rows,

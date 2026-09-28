@@ -442,6 +442,11 @@ impl ClusterServerSession {
             for (code, warning) in &report.global_stats_warnings {
                 self.session.append_routed_warning(*code, warning.clone());
             }
+            // go `builder.go:3194`: the sample-rate notice is a NOTE, not a
+            // warning — SHOW WARNINGS reports Level=Note.
+            for (code, note) in &report.sample_rate_notes {
+                self.session.append_routed_note(*code, note.clone());
+            }
             successful_table_ids.extend(report.historical_stats_table_ids());
             eprintln!(
                 "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
