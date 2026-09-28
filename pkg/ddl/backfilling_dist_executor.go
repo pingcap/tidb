@@ -46,13 +46,9 @@ type BackfillTaskSummary struct {
 	// primarily used for NextGen resource accounting.
 	IndexKVSize uint64 `json:"index_kv_size,omitempty"`
 	// MergeTempIndexTxnKVSize is the total size of the transactions committed
-	// while merging the temporary index. The merge runs as its own task and
-	// writes through transactions instead of ingest, so it is accounted
-	// separately from IndexKVSize.
-	// It is summed from the succeeded subtask summaries on a best-effort basis:
-	// a subtask that fails after committing some ranges does not report those
-	// bytes, because the deleted temporary index keys cannot be reconstructed on
-	// retry. See mergeTempIndexExecutor.RunSubtask for details.
+	// while merging the temporary index. The merge writes through transactions
+	// instead of ingest, so it is accounted separately from IndexKVSize. It is
+	// collected on a best-effort basis, see mergeTempIndexExecutor.RunSubtask.
 	MergeTempIndexTxnKVSize uint64 `json:"merge_temp_index_txn_kv_size,omitempty"`
 }
 
