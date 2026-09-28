@@ -153,6 +153,7 @@ func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
 	fkCascades := make([]*FKCascade, 0, len(tblInfo.ForeignKeys))
 	updateCols := p.buildOnDuplicateUpdateColumns()
+	skipReadOnlyCheck := skipReadOnlyCheckForReplica(ctx)
 	if len(updateCols) > 0 {
 		referredFKChecks, referredFKCascades, err := buildOnUpdateReferredFKTriggers(ctx, is, dbName, tblInfo, updateCols)
 		if err != nil {
@@ -163,6 +164,14 @@ func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 		}
 		if len(referredFKCascades) > 0 {
 			fkCascades = append(fkCascades, referredFKCascades...)
+			if !skipReadOnlyCheck {
+				for _, fk := range referredFKCascades {
+					fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
+					if ok && fkDBInfo.ReadOnly {
+						return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+					}
+				}
+			}
 		}
 	} else if p.IsReplace {
 		referredFKChecks, referredFKCascades, err := p.buildOnReplaceReferredFKTriggers(ctx, is, dbName, tblInfo)
