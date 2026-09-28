@@ -31,6 +31,12 @@ type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
 #[derive(Clone, Copy, Debug)]
 enum Kernel {
     Binary(BinaryOp, EvalType),
+    /// The string-comparison family (`LtString`/`LeString`/`GtString`/
+    /// `GeString`/`EqString`/`NeString`). Unlike [`Kernel::Binary`], whose
+    /// operands pass the numeric coercion first, both sides evaluate as
+    /// themselves and the comparison runs through the same collation-aware
+    /// value comparator the name-based path uses.
+    Compare(BinaryOp),
     Logic(BinaryOp),
     IntegerMod { unsigned: [bool; 2] },
     IsNull,
@@ -92,6 +98,12 @@ impl PbBuiltin {
             },
             EqInt => Kernel::Binary(BinaryOp::Eq, EvalType::Int),
             GtInt => Kernel::Binary(BinaryOp::Gt, EvalType::Int),
+            LtString => Kernel::Compare(BinaryOp::Lt),
+            LeString => Kernel::Compare(BinaryOp::Le),
+            GtString => Kernel::Compare(BinaryOp::Gt),
+            GeString => Kernel::Compare(BinaryOp::Ge),
+            EqString => Kernel::Compare(BinaryOp::Eq),
+            NeString => Kernel::Compare(BinaryOp::Ne),
             LogicalAnd => Kernel::Logic(BinaryOp::LogicAnd),
             LogicalOr => Kernel::Logic(BinaryOp::LogicOr),
             IntIsNull | RealIsNull | DecimalIsNull | StringIsNull | TimeIsNull | DurationIsNull
@@ -277,6 +289,22 @@ impl PbBuiltin {
                     return Ok(Datum::Null);
                 }
                 let right = eval_numeric_operand_row(&args[1], ctx, row, domain)?;
+                function.eval_binary_values(op, left, right, ctx)
+            }
+            Kernel::Compare(op) => {
+                if args.len() != 2 {
+                    return Err(EvalError::Unsupported("protobuf comparison arity"));
+                }
+                // NULL on either side answers NULL before the value
+                // comparison, mirroring the numeric arm's own short-circuit.
+                let left = argument(0)?;
+                if left.is_null() {
+                    return Ok(Datum::Null);
+                }
+                let right = argument(1)?;
+                if right.is_null() {
+                    return Ok(Datum::Null);
+                }
                 function.eval_binary_values(op, left, right, ctx)
             }
             Kernel::Cast { source, target } => {
