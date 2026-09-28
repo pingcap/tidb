@@ -113,6 +113,7 @@ pub mod table_rule_selector;
 pub mod texttree;
 pub use tidb_tikvutil as tikvutil;
 pub mod timeutil;
+pub mod tidb_metrics;
 /// TLS process state and MySQL-compatible names.
 pub mod tls;
 pub mod topsql_reporter;

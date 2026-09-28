@@ -28,6 +28,7 @@
 //!   Prometheus registry; configuration and schema routes require node sources.
 //! * `s.health.Load()` — the 500-during-shutdown arm — narrows with the
 //!   graceful-shutdown integration; this listener lives for the process.
+use prometheus::Encoder;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -152,6 +153,7 @@ pub fn start_status_listener_with_routes(
                                 body.len(),
                             )
                         } else if path == "/metrics" {
+                            tidb_util::tidb_metrics::init();
                             // Go's promhttp handler exports the shared registry,
                             // including metrics registered by statistics and SLI.
                             // `tidb_server_connections` is the real
@@ -275,6 +277,20 @@ mod tests {
             ),
             "Go's field order, exactly: {status}"
         );
+        let metrics = fetch("/metrics");
+        assert!(metrics.starts_with("HTTP/1.1 200 OK"), "{metrics}");
+        for family in [
+            "tidb_session_parse_duration_seconds_sum",
+            "tidb_session_compile_duration_seconds_sum",
+            "tidb_session_execute_duration_seconds_sum",
+            "tidb_server_get_token_duration_seconds_sum",
+            "tidb_server_tokens",
+            "tidb_session_transaction_duration_seconds_sum",
+            "tidb_tikvclient_request_seconds_sum",
+            "tidb_tikvclient_txn_write_size_bytes_sum",
+        ] {
+            assert!(metrics.contains(family), "missing {family}: {metrics}");
+        }
         assert!(fetch("/nosuch").starts_with("HTTP/1.1 404"));
     }
 }
