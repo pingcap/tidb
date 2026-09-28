@@ -200,13 +200,21 @@ impl PendingRequest for BatchCoprocessorPending {
         &mut self,
     ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError> {
         let result = match &mut self.completion {
-            CoprocessorCompletion::Response(pull) => pull.try_complete()?,
-            CoprocessorCompletion::Callback(pull) => pull.try_complete()?,
+            CoprocessorCompletion::Response(pull) => pull.try_complete(),
+            CoprocessorCompletion::Callback(pull) => pull.try_complete(),
         };
-        if result.is_some() {
-            self.report_send_metrics();
+        match result {
+            Ok(result) => {
+                if result.is_some() {
+                    self.report_send_metrics();
+                }
+                Ok(result.map(|result| self.map_result(result)))
+            }
+            Err(error) => {
+                self.report_send_metrics();
+                Err(error)
+            }
         }
-        Ok(result.map(|result| self.map_result(result)))
     }
 
     fn cancel(&mut self) {
@@ -221,16 +229,25 @@ impl PendingRequest for BatchCoprocessorPending {
         call: &crate::rpc::UnaryCallContext,
     ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
         let result = match &mut self.completion {
-            CoprocessorCompletion::Response(pull) => pull.complete(call)?,
-            CoprocessorCompletion::Callback(pull) => pull.complete(call)?,
+            CoprocessorCompletion::Response(pull) => pull.complete(call),
+            CoprocessorCompletion::Callback(pull) => pull.complete(call),
         };
-        self.report_send_metrics();
-        Ok(self.map_result(result))
+        match result {
+            Ok(result) => {
+                self.report_send_metrics();
+                Ok(self.map_result(result))
+            }
+            Err(error) => {
+                self.report_send_metrics();
+                Err(error)
+            }
+        }
     }
 }
 
 impl Drop for BatchCoprocessorPending {
     fn drop(&mut self) {
+        self.report_send_metrics();
         // The native response owner cancels only an unfinished receive on
         // drop. Do not cancel a consumed response or retire its request twice.
         if let CoprocessorCompletion::Callback(pull) = &mut self.completion {
