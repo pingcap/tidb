@@ -1428,6 +1428,7 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.RequestCount))
 		if execDetails.ScanDetail != nil {
 			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.ScanDetail.ProcessedKeys))
+			metrics.IACacheHitCount.WithLabelValues(sqlType, dbName).Add(float64(execDetails.ScanDetail.IaCacheHitCount))
 			iaStats := execdetails.GetIARemoteReadSegmentStats(execDetails.ScanDetail)
 			metrics.IARemoteReadSegmentCount.WithLabelValues(sqlType, dbName).Add(float64(iaStats.Count))
 			metrics.IARemoteReadSegmentSize.WithLabelValues(sqlType, dbName).Add(float64(iaStats.Bytes))
