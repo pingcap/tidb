@@ -337,10 +337,7 @@ impl RegionLoader for PdRegionLoader {
     fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
         let mut encoded_key = Vec::new();
         encode_bytes(&mut encoded_key, key);
-        let region = self
-            .client
-            .get_region(&encoded_key)
-            .map_err(region_load_error)?;
+        let region = self.retry_on_region_miss(|loader| loader.client.get_region(&encoded_key))?;
         self.project_region(region)
     }
 
