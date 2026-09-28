@@ -1481,9 +1481,21 @@ fn physical_explain_operator(
 ) -> ExplainOperator {
     // Price parents before children so scans retain their reader/task context,
     // matching Go's cached GetPlanCostVer2 during top-down EXPLAIN rendering.
-    let estimated_cost = costs.filter(|_| !matches!(plan, PhysicalPlan::Dml(_))).map(|coster| {
-        coster.plan_cost(plan, tidb_planner::task_type::TaskType::Root, false).value()
+    let priced = costs.filter(|_| !matches!(plan, PhysicalPlan::Dml(_))).map(|coster| {
+        match coster.cost_option() {
+            Some(option) => coster.plan_cost_with_option(
+                plan,
+                tidb_planner::task_type::TaskType::Root,
+                false,
+                *option,
+            ),
+            None => coster.plan_cost(plan, tidb_planner::task_type::TaskType::Root, false),
+        }
     });
+    let estimated_cost = priced.as_ref().map(|cost| cost.value());
+    let cost_formula = priced
+        .as_ref()
+        .and_then(|cost| cost.trace().map(|trace| trace.formula().to_owned()));
     let mut children = match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => vec![physical_explain_operator(
             costs,
@@ -1651,6 +1663,7 @@ fn physical_explain_operator(
                     label: String::new(),
                     estimated_rows: Some(0.0),
                     estimated_cost: None,
+            cost_formula: None,
                     actual_rows: None,
                     execution_info: None,
                     task: ExplainTask::Root,
@@ -1770,6 +1783,7 @@ fn physical_explain_operator(
         operator = operator.with_access_object(access_object);
     }
     operator.estimated_cost = estimated_cost;
+    operator.cost_formula = cost_formula;
     operator.label = label.to_owned();
     if let Some(rows) = plan
         .stats_info()
@@ -2435,8 +2449,23 @@ fn render_physical_plan(
         ));
     }
     let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
-    let coster = (format == ExplainFormat::Verbose).then(|| {
-        Ver2Coster::from_env(statement_context.optimizer_cost_env()).with_explain_cache()
+    let coster = (matches!(
+        format,
+        ExplainFormat::Verbose | ExplainFormat::CostTrace
+    ))
+    .then(|| {
+        let coster = Ver2Coster::from_env(statement_context.optimizer_cost_env())
+            .with_explain_cache();
+        if matches!(format, ExplainFormat::CostTrace) {
+            // go prices `ExplainFormatCostTrace` with
+            // `CostFlagTrace` so every operator's `CostVer2` carries
+            // its formula decomposition.
+            let mut option = tidb_planner::cost_usage::PlanCostOption::new();
+            option.with_cost_flag(tidb_planner::cost_usage::COST_FLAG_TRACE);
+            coster.with_cost_option(option)
+        } else {
+            coster
+        }
     });
     let roots = physical_explain_roots(
         coster.as_ref(),

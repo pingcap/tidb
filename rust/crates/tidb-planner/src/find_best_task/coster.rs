@@ -192,9 +192,18 @@ impl Ver2Coster {
         coster.plan_cost(plan, task_type, is_child_of_inl)
     }
 
-    fn cost_option(&self) -> Option<&crate::cost_usage::PlanCostOption> {
+    pub fn cost_option(&self) -> Option<&crate::cost_usage::PlanCostOption> {
         self.cost_option.as_ref()
     }
+
+    /// Pins the cost option for every pricing this coster performs — the
+    /// EXPLAIN cost-trace path builds its coster with
+    /// `COST_FLAG_TRACE` so each operator's `CostVer2` carries its formula.
+    pub fn with_cost_option(mut self, option: crate::cost_usage::PlanCostOption) -> Self {
+        self.cost_option = Some(option);
+        self
+    }
+
 
     fn rows(plan: &PhysicalPlan) -> f64 {
         crate::plan_cost_ver2::cardinality(plan.stats_info().map_or(1.0, |stats| stats.row_count()))

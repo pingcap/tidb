@@ -203,6 +203,10 @@ pub struct ExplainOperator {
     pub estimated_rows: Option<f64>,
     /// Cost from the statement's physical-plan cost model; absent for logical nodes.
     pub estimated_cost: Option<f64>,
+    /// go `costFormula` (`ExplainFormatCostTrace`): the traced cost
+    /// decomposition this operator's pricing produced; absent unless the
+    /// EXPLAIN priced with the trace flag.
+    pub cost_formula: Option<String>,
     /// Rows produced by this physical operator during `EXPLAIN ANALYZE`.
     pub actual_rows: Option<u64>,
     /// Collected runtime information; absent when this operator was not metered.
@@ -227,6 +231,7 @@ impl ExplainOperator {
             label: String::new(),
             estimated_rows: None,
             estimated_cost: None,
+            cost_formula: None,
             actual_rows: None,
             execution_info: None,
             task: ExplainTask::Root,
@@ -439,6 +444,7 @@ impl Explain {
                 | ExplainFormat::Brief
                 | ExplainFormat::PlanCache
                 | ExplainFormat::PlanTree
+                | ExplainFormat::CostTrace
         ) {
             return Err(ExplainError::RendererUnavailable(self.format));
         }
@@ -476,11 +482,14 @@ fn render_operator(
             |estimated_rows| format!("{estimated_rows:.2}"),
         ));
     }
-    if format == ExplainFormat::Verbose {
+    if matches!(format, ExplainFormat::Verbose | ExplainFormat::CostTrace) {
         row.push(operator.estimated_cost.map_or_else(
             || "N/A".to_owned(),
             |cost| format!("{cost:.2}"),
         ));
+    }
+    if format == ExplainFormat::CostTrace {
+        row.push(operator.cost_formula.clone().unwrap_or_default());
     }
     if runtime {
         row.push(

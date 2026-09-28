@@ -1554,6 +1554,24 @@ impl InitStats<'_> {
             .allow_use_modify_count;
         let statistics = stored_statistics.as_deref().map(|statistics| {
             let analyze_count = statistics.analyze_row_count().max(0.0) as i64;
+            // go `GetStatsTable`'s sync load answers `PseudoTable` for tables
+            // whose statistics were never collected
+            // (`tableStatsFromStorage` returns nil without collected
+            // histograms), so the estimate reads
+            // PseudoRowCount=10000 — oracle: EXPLAIN over a stats-less
+            // partition table answers estRows 10.00, not the DML count's
+            // 1.25.
+            eprintln!(
+                "DBG-PSEUDO pid={} row_count={} analyze_count={} pseudo={}",
+                source.physical_table_id, statistics.row_count, analyze_count, statistics.pseudo
+            );
+            if analyze_count == 0 {
+                let mut copied = statistics.clone();
+                copied.pseudo = true;
+                copied.row_count = tidb_stats::PSEUDO_ROW_COUNT;
+                copied.modify_count = 0;
+                return Cow::Owned(copied);
+            }
             let ignore_realtime_stats = !allow_use_modify_count
                 && (statistics.row_count != analyze_count || statistics.modify_count != 0);
             let outdated = self.enable_pseudo_for_outdated_stats && statistics.is_outdated();
@@ -1640,14 +1658,21 @@ impl InitStats<'_> {
                 // Go `cardinality.EstimateColumnNDV`: a pseudo or missing
                 // histogram uses `RealtimeCount * distinctFactor` (0.8),
                 // while an analyzed histogram scales its NDV from analyze
-                // time to the current realtime row count.
-                let ndv = statistics.map_or(row_count * 0.8, |statistics| {
+                // time to the current realtime row count. A PSEUDO or
+                // histogram-less column has no NDV to divide by: go answers
+                // its equality selectivity with `1.0 / pseudoEqualRate`
+                // (`pkg/planner/cardinality/selectivity.go:89`,
+                // pseudoEqualRate=1000) — the fixed pseudo NDV of 1000 — so
+                // `EXPLAIN SELECT * FROM p1 WHERE a = 5` over a stats-less
+                // partition table answers estRows 10.00, not the
+                // count/(count*0.8) = 1.25 the realtime fallback produced.
+                let ndv = statistics.map_or(1000.0, |statistics| {
                     if statistics.pseudo {
-                        row_count * 0.8
+                        1000.0
                     } else {
                         statistics
                             .estimate_column_ndv(metadata.id, &loaded_columns, &loaded_indexes)
-                            .unwrap_or(row_count * 0.8)
+                            .unwrap_or(1000.0)
                     }
                 });
                 (column.unique_id, ndv)
