@@ -3330,9 +3330,34 @@ fn get_mpp_hash_aggs(
         None
     };
     if let Some(preferred_mode) = preferred_mode {
-        result.retain(
-            |plan| matches!(plan, PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode == preferred_mode),
-        );
+        // go warns the invalid MPP pushdown and IGNORES the hint: the query
+        // plans normally (oracle g-hint: MPP_1PHASE_AGG over a tier without
+        // the MPP engine answers (3,) with `The agg can not push down to the
+        // MPP side, the MPP_1PHASE_AGG() hint is invalid`). When the window
+        // is empty the removed candidates are restored.
+        let mut preferred = Vec::new();
+        let mut removed = Vec::new();
+        for plan in result.drain(..) {
+            if matches!(
+                &plan,
+                PhysicalPlan::HashAgg(agg) if agg.mpp_run_mode == preferred_mode
+            ) {
+                preferred.push(plan);
+            } else {
+                removed.push(plan);
+            }
+        }
+        if preferred.is_empty() {
+            tidb_expr::constant_fold::record_fold_warning(
+                1815,
+                "The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid",
+            );
+            result.clear();
+            result.extend(removed);
+        } else {
+            result.clear();
+            result.extend(preferred);
+        }
     }
     result
 }
@@ -3416,6 +3441,28 @@ pub fn get_stream_aggs(
         .any(|func| func.mode == tidb_expr::aggregation::AggFunctionMode::Final)
     {
         return Vec::new();
+    }
+    // go warns the MPP agg hint over a non-MPP task and ignores the hint
+    // (oracle g-hint: MPP_1PHASE_AGG over a Root-task aggregate answers the
+    // query with `The agg can not push down to the MPP side, the
+    // MPP_1PHASE_AGG() hint is invalid`). The MPP-task context keeps its
+    // candidates without the warning.
+    let mpp_agg_bits = agg.prefer_agg_type
+        & (tidb_hint::PREFER_MPP_1_PHASE_AGG | tidb_hint::PREFER_MPP_2_PHASE_AGG);
+    if mpp_agg_bits != 0 && prop.task_tp != TaskType::Mpp {
+        for (bit, name) in [
+            (tidb_hint::PREFER_MPP_1_PHASE_AGG, "MPP_1PHASE_AGG"),
+            (tidb_hint::PREFER_MPP_2_PHASE_AGG, "MPP_2PHASE_AGG"),
+        ] {
+            if agg.prefer_agg_type & bit != 0 {
+                tidb_expr::constant_fold::record_fold_warning(
+                    1815,
+                    &format!(
+                        "The agg can not push down to the MPP side, the {name}() hint is invalid"
+                    ),
+                );
+            }
+        }
     }
     let group_by_cols = agg.get_group_by_cols();
     // Go's column pruning removes constant group-by items WITHOUT a

@@ -1491,23 +1491,64 @@ impl Session {
             // warnings are dropped.
             let value = self.relaxed_noop_gated_value(&name, value);
             let snapshot = self.vars.snapshot_system(&name);
-            if self.vars.set_system(&name, value).is_ok() {
-                // Go `StmtCtx.AddSetVarHintRestore` stores the value that
-                // preceded the FIRST overlay for a name. This matters when
-                // the query and its matched binding both carry SET_VAR for
-                // the same variable: restoring the binding-time snapshot
-                // would leave the query-time overlay installed.
-                for (key, previous) in snapshot {
-                    if !self
-                        .set_var_hint_restore
-                        .iter()
-                        .any(|(saved, _)| saved == &key)
-                    {
-                        self.set_var_hint_restore.push((key, previous));
+            let original_value = value.clone();
+            match self.vars.set_system(&name, value) {
+                Ok(_) => {
+                    // Go `StmtCtx.AddSetVarHintRestore` stores the value that
+                    // preceded the FIRST overlay for a name. This matters when
+                    // the query and its matched binding both carry SET_VAR for
+                    // the same variable: restoring the binding-time snapshot
+                    // would leave the query-time overlay installed.
+                    for (key, previous) in snapshot {
+                        if !self
+                            .set_var_hint_restore
+                            .iter()
+                            .any(|(saved, _)| saved == &key)
+                        {
+                            self.set_var_hint_restore.push((key, previous));
+                        }
                     }
                 }
-            } else if is_fix_control {
-                unreachable!("the source-shaped fix-control pre-validation just succeeded");
+                Err(VarError::WrongValueForVar(name, value)) if !is_fix_control => {
+                    // go's SET_VAR application validates the hint's variables
+                    // TWICE (the plan build and the execute pass), and each
+                    // pass's refusal lands in the warning buffer through the
+                    // statement error door (oracle m21/g-hint:
+                    // SET_VAR(sql_mode=STRICT) carries the 1231 row twice).
+                    let message = format!(
+                        "ERROR 1231 (42000): Variable '{name}' can't be set to the value of '{value}'"
+                    );
+                    for _ in 0..2 {
+                        self.append_warning(
+                            crate::warnings::WarningLevel::Warning,
+                            1105,
+                            message.clone(),
+                        );
+                    }
+                }
+                Err(_) if !is_fix_control && name == "sql_mode" => {
+                    // go's SET_VAR application validates the hint's variables
+                    // TWICE (the plan build and the execute pass), and each
+                    // pass's refusal lands in the warning buffer through the
+                    // statement error door (oracle m21/g-hint:
+                    // SET_VAR(sql_mode=STRICT) carries the 1231 row twice;
+                    // the sql_mode parse refuses through the validation-refused
+                    // arm, so key this arm on the variable name).
+                    let message = format!(
+                        "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of '{original_value}'"
+                    );
+                    for _ in 0..2 {
+                        self.append_warning(
+                            crate::warnings::WarningLevel::Warning,
+                            1105,
+                            message.clone(),
+                        );
+                    }
+                }
+                Err(_) if is_fix_control => {
+                    unreachable!("the source-shaped fix-control pre-validation just succeeded");
+                }
+                Err(_) => {}
             }
         }
         Ok(())
