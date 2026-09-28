@@ -1,0 +1,16 @@
+from pathlib import Path
+import re,json
+proto=Path('rust/crates/tidb-proto/proto/select.proto').read_text().split('enum ScalarFuncSig {',1)[1].split('\n}',1)[0]
+enums={n:int(v) for n,v in re.findall(r'^\s*(\w+)\s*=\s*(\d+)',proto,re.M)}
+norm=lambda x:x.lower().replace('_','')
+lookup={norm(n):n for n in enums}
+src=Path('rust/crates/tidb-expr/src/scalar_function/pb_builtin.rs').read_text()
+a=src.split('let kernel = match signature {',1)[1].split('Some(Self',1)[0]
+labels=re.findall(r'^\s*([A-Z]\w*(?:\s*\|\s*[A-Z]\w*)*)\s*=>',a,re.M)
+supported={lookup[norm(n)] for label in labels for n in re.split(r'\s*\|\s*',label) if norm(n) in lookup}
+supported|={lookup[norm(n)] for n in re.findall(r'^\s*(Cast\w+) =>',src,re.M)}
+go=Path('pkg/expression/distsql_builtin.go').read_text();go=re.sub(r'//[^\n]*','',go);go=re.sub(r'/\*.*?\*/','',go,flags=re.S)
+registry=go.split('func getSignatureByPB',1)[1].split('\nfunc ',1)[0]
+accepted=set(re.findall(r'tipb\.ScalarFuncSig_(\w+)',registry))
+Path('/private/tmp/pb-audit-inventory.json').write_text(json.dumps({'enum':enums,'rust':sorted(supported),'go':sorted(accepted),'missing':sorted(accepted-supported),'extra':sorted(supported-accepted)},indent=2))
+print('enums',len(enums),'Rust',len(supported),'Go',len(accepted),'missing',len(accepted-supported),'extra',sorted(supported-accepted))

@@ -1,0 +1,600 @@
+warning: missing documentation for a function
+   --> crates/tidb-datatype/src/charset.rs:692:1
+    |
+692 | pub fn get_charset_info(charset: &str) -> Result<CharsetInfo, CharsetError> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: missing documentation for a method
+   --> crates/tidb-datatype/src/decimal/mod.rs:596:5
+    |
+596 |     pub fn coefficient_i128(&self) -> Option<(i128, u32)> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `tidb-datatype` (lib) generated 2 warnings
+warning: unused import: `restore_cast_type_kw`
+  --> crates/tidb-ast/src/expr/restore.rs:18:38
+   |
+18 | use super::cast::{restore_cast_type, restore_cast_type_kw, restore_typed_literal};
+   |                                      ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/tidb-ast/src/expr/cast.rs:304:9
+    |
+304 |     let mut kw = |name: &str, out: &mut String| {
+    |         ----^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: missing documentation for a variant
+   --> crates/tidb-ast/src/stmt/ddl.rs:190:5
+    |
+190 |     AlterView(Box<crate::ddl::AlterViewStmt>),
+    |     ^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-ast` (lib) generated 3 warnings (run `cargo fix --lib -p tidb-ast` to apply 2 suggestions)
+warning: trait `RegionRetryState` is more private than the item `PlanBuilder<PdC, RetryableMultiRegion<P, PdC, R>, Targetted>`
+   --> third_party/tikv-client-rs/src/request/plan_builder.rs:969:1
+    |
+969 | / impl<PdC, P, R> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, R>, Targetted>
+970 | | where
+971 | |     PdC: PdClient,
+972 | |     P: Plan + Shardable,
+973 | |     P::Result: HasKeyErrors + HasRegionError,
+974 | |     R: RegionRetryState,
+    | |________________________^ implementation `PlanBuilder<PdC, RetryableMultiRegion<P, PdC, R>, Targetted>` is reachable at visibility `pub`
+    |
+note: but trait `RegionRetryState` is only usable at visibility `pub(crate)`
+   --> third_party/tikv-client-rs/src/request/plan.rs:686:1
+    |
+686 | pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_bounds)]` on by default
+
+warning: missing documentation for a constant
+    --> crates/tidb-vardef/src/tidb_vars.rs:1091:1
+     |
+1091 | pub const TIDB_MERGE_PARTITION_STATS_CONCURRENCY: &str = "tidb_merge_partition_stats_concurrency";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W missing-docs`
+
+warning: `tikv-client` (lib) generated 1 warning
+warning: `tidb-vardef` (lib) generated 1 warning
+warning: unused import: `crate::parse`
+    --> crates/tidb-parser/src/pipes_probe_test.rs:2:5
+     |
+   2 | use crate::parse;
+     |     ^^^^^^^^^^^^
+     |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+    --> crates/tidb-parser/src/lib.rs:1836:1
+     |
+1836 | mod pipes_probe_test;
+     | ^^^^^^^^^^^^^^^^^^^^^
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Stmt`
+    --> crates/tidb-parser/src/pipes_probe_test.rs:3:22
+     |
+   3 | use tidb_ast::{Expr, Stmt};
+     |                      ^^^^
+     |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+    --> crates/tidb-parser/src/lib.rs:1836:1
+     |
+1836 | mod pipes_probe_test;
+     | ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_alias_excluded_keyword` is never used
+    --> crates/tidb-parser/src/select.rs:1326:4
+     |
+1326 | fn is_alias_excluded_keyword(name: &str) -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `shape` is never used
+ --> crates/tidb-parser/src/pipes_probe_test.rs:5:4
+  |
+5 | fn shape(expr: &Expr) -> String {
+  |    ^^^^^
+
+warning: missing documentation for a struct field
+  --> crates/tidb-codec/src/join_keys.rs:50:13
+   |
+50 |     Fixed { data: &'a [u8], width: usize },
+   |             ^^^^^^^^^^^^^^
+   |
+   = note: requested on the command line with `-W missing-docs`
+
+warning: missing documentation for a struct field
+  --> crates/tidb-codec/src/join_keys.rs:50:29
+   |
+50 |     Fixed { data: &'a [u8], width: usize },
+   |                             ^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> crates/tidb-codec/src/join_keys.rs:52:16
+   |
+52 |     Variable { data: &'a [u8], offsets: &'a [i64] },
+   |                ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+  --> crates/tidb-codec/src/join_keys.rs:52:32
+   |
+52 |     Variable { data: &'a [u8], offsets: &'a [i64] },
+   |                                ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `SystemTime`
+  --> crates/tidb-log/src/log.rs:19:36
+   |
+19 | use std::time::{Duration, Instant, SystemTime};
+   |                                    ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tidb-parser` (lib) generated 4 warnings (run `cargo fix --lib -p tidb-parser` to apply 2 suggestions)
+warning: `tidb-codec` (lib) generated 4 warnings
+warning: `tidb-log` (lib) generated 1 warning (run `cargo fix --lib -p tidb-log` to apply 1 suggestion)
+warning: variable does not need to be mutable
+   --> crates/tidb-model/src/placement.rs:152:13
+    |
+152 |         let mut push_string = |out: &mut String, item: &str, value: &str| {
+    |             ----^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/tidb-model/src/placement.rs:166:13
+    |
+166 |         let mut push_int = |out: &mut String, item: &str, value: u64| {
+    |             ----^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: `tidb-model` (lib) generated 2 warnings (run `cargo fix --lib -p tidb-model` to apply 2 suggestions)
+warning: unused import: `Counter`
+  --> crates/tidb-util/src/memory_metrics.rs:26:18
+   |
+26 | use prometheus::{Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
+   |                  ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: missing documentation for a static
+   --> crates/tidb-util/src/memory_metrics.rs:125:1
+    |
+125 | pub static MEMORY_ARBITRATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-util` (lib) generated 2 warnings (run `cargo fix --lib -p tidb-util` to apply 1 suggestion)
+warning: unreachable expression
+   --> crates/tidb-pd-client/src/client/worker.rs:494:5
+    |
+400 | /     loop {
+401 | |         let snapshot = state.read().expect("PD state lock poisoned").clone();
+402 | |         let leader = snapshot.members.leader_url;
+403 | |         if stream
+...   |
+493 | |     }
+    | |_____- any code following this expression is unreachable
+494 |       Err(last_error.expect("bounded TSO retry loop records every failure"))
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable expression
+    |
+    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable `last_error` is assigned to, but never used
+   --> crates/tidb-pd-client/src/client/worker.rs:395:9
+    |
+395 |     let mut last_error = None;
+    |         ^^^^^^^^^^^^^^
+    |
+    = note: consider using `_last_error` instead
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `last_error` is never read
+   --> crates/tidb-pd-client/src/client/worker.rs:461:17
+    |
+461 |                 last_error = Some(error);
+    |                 ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `MAX_TSO_RETRIES` is never used
+  --> crates/tidb-pd-client/src/tso.rs:24:18
+   |
+24 | pub(crate) const MAX_TSO_RETRIES: usize = 20;
+   |                  ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tidb-pd-client` (lib) generated 4 warnings
+warning: unused imports: `Gauge` and `Registry`
+  --> crates/tidb-txnkv/src/client_go_metrics.rs:33:26
+   |
+33 |     Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry,
+   |                          ^^^^^                                               ^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `tikv_client::metrics::ClientGoMetrics`
+  --> crates/tidb-txnkv/src/client_go_metrics.rs:35:5
+   |
+35 | use tikv_client::metrics::ClientGoMetrics;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `BatchRegionLoader`
+  --> crates/tidb-txnkv/src/pd_loader.rs:22:23
+   |
+22 |     BatchLoadOptions, BatchRegionLoader, BucketMetadata, BucketStats, KeyRange, Peer, PeerRole,
+   |                       ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+  --> crates/tidb-txnkv/src/transaction/command_client.rs:28:5
+   |
+28 | use std::time::Duration;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> crates/tidb-txnkv/src/transaction/coordinator/commit.rs:63:9
+   |
+63 |         mut self,
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `INTERNAL_TXN_MVIEW_MAINTENANCE` is never used
+   --> crates/tidb-txnkv/src/option.rs:205:11
+    |
+205 | pub const INTERNAL_TXN_MVIEW_MAINTENANCE: &str = "mview_maintain";
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: missing documentation for an associated function
+   --> crates/tidb-txnkv/src/transaction/coordinator/opener.rs:167:5
+    |
+167 | /     pub fn from_capabilities(
+168 | |         opener: crate::SharedReadOpener<C, L>,
+169 | |         pd: P,
+170 | |         timeout: Duration,
+171 | |         gc_state: TxnSafePointRefresher,
+172 | |     ) -> Result<Self, OptimisticCoordinatorError> {
+    | |_________________________________________________^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-txnkv` (lib) generated 7 warnings (run `cargo fix --lib -p tidb-txnkv` to apply 5 suggestions)
+warning: unused imports: `Counter`, `GaugeVec`, and `Gauge`
+  --> crates/tidb-distsql/src/metrics.rs:26:18
+   |
+26 | use prometheus::{Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts};
+   |                  ^^^^^^^              ^^^^^  ^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: missing documentation for an associated function
+   --> crates/tidb-distsql/src/response_channel.rs:782:5
+    |
+782 | /     pub fn from_query_response(
+783 | |         response: Box<dyn QueryResponse + Send>,
+784 | |         final_field_types: Vec<FieldType>,
+785 | |         intermediate_output_types: Vec<Vec<FieldType>>,
+...   |
+789 | |         runtime_stats_collector_enabled: Option<bool>,
+790 | |     ) -> Self {
+    | |_____________^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: missing documentation for a static
+  --> crates/tidb-distsql/src/metrics.rs:68:1
+   |
+68 | pub static DISTSQL_QUERY: LazyLock<HistogramVec> = LazyLock::new(|| {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a static
+  --> crates/tidb-distsql/src/metrics.rs:79:1
+   |
+79 | pub static DISTSQL_SCAN_KEYS_NUM: LazyLock<HistogramVec> = LazyLock::new(|| {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a static
+  --> crates/tidb-distsql/src/metrics.rs:90:1
+   |
+90 | pub static DISTSQL_PARTIAL_NUM: LazyLock<HistogramVec> = LazyLock::new(|| {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a static
+   --> crates/tidb-distsql/src/metrics.rs:101:1
+    |
+101 | pub static DISTSQL_SCAN_KEYS_PARTIAL_NUM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a static
+   --> crates/tidb-distsql/src/metrics.rs:112:1
+    |
+112 | pub static DISTSQL_COPR_RESP_SIZE: LazyLock<HistogramVec> = LazyLock::new(|| {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `tidb-distsql` (lib) generated 7 warnings (run `cargo fix --lib -p tidb-distsql` to apply 1 suggestion)
+   Compiling tidb-expr v0.0.0 (/Users/qiliu/projects/tidb/rust/crates/tidb-expr)
+warning: unused import: `std::io::Write`
+  --> crates/tidb-expr/src/builtin_ext/crypto.rs:31:5
+   |
+31 | use std::io::Write;
+   |     ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `flate2::write::ZlibEncoder`
+  --> crates/tidb-expr/src/builtin_ext/crypto.rs:33:5
+   |
+33 | use flate2::write::ZlibEncoder;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Compression`
+  --> crates/tidb-expr/src/builtin_ext/crypto.rs:34:14
+   |
+34 | use flate2::{Compression, Decompress, FlushDecompress, Status};
+   |              ^^^^^^^^^^^
+
+warning: unused import: `super::text::format_json`
+  --> crates/tidb-expr/src/builtin_ext/json/construct.rs:29:5
+   |
+29 | use super::text::format_json;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> crates/tidb-expr/src/constant_fold.rs:794:1
+    |
+794 | / /// Warnings the constant-fold evaluation raised, stashed for the caller that
+795 | | /// owns the statement's warning buffer. The fold evaluates column-free
+796 | | /// expressions against a sessionless context whose `append_warning` would
+797 | | /// otherwise drop go's per-statement warnings (`ADDDATE('abc', INTERVAL 1
+798 | | /// DAY)` warns `Incorrect datetime value: 'abc'` on an empty table).
+    | |_--------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary parentheses around index expression
+   --> crates/tidb-expr/src/go_flate.rs:996:46
+    |
+996 |                 let hh = &mut self.hash_head[(hash as usize & HASH_MASK)];
+    |                                              ^                         ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+996 -                 let hh = &mut self.hash_head[(hash as usize & HASH_MASK)];
+996 +                 let hh = &mut self.hash_head[hash as usize & HASH_MASK];
+    |
+
+warning: unnecessary parentheses around index expression
+    --> crates/tidb-expr/src/go_flate.rs:1036:54
+     |
+1036 |                         let hh = &mut self.hash_head[(hash as usize & HASH_MASK)];
+     |                                                      ^                         ^
+     |
+help: remove these parentheses
+     |
+1036 -                         let hh = &mut self.hash_head[(hash as usize & HASH_MASK)];
+1036 +                         let hh = &mut self.hash_head[hash as usize & HASH_MASK];
+     |
+
+warning: unused imports: `FieldTypeValue`, `TimeType`, and `default_field_type_for_value`
+  --> crates/tidb-expr/src/rewriter.rs:31:5
+   |
+31 |     default_field_type_for_value, Datum, EvalType, FieldType, FieldTypeCode, FieldTypeValue,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^                                             ^^^^^^^^^^^^^^
+32 |     TimeType,
+   |     ^^^^^^^^
+
+warning: unused import: `crate::context::Columns`
+  --> crates/tidb-expr/src/expr_util/fold.rs:49:5
+   |
+49 | use crate::context::Columns;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable `n` is assigned to, but never used
+   --> crates/tidb-expr/src/go_flate.rs:432:13
+    |
+432 |         let mut n = self.out.len();
+    |             ^^^^^
+    |
+    = note: consider using `_n` instead
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `n` is never read
+   --> crates/tidb-expr/src/go_flate.rs:442:13
+    |
+442 |             n += 1;
+    |             ^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/tidb-expr/src/ops.rs:231:5
+    |
+231 |     mut l: Datum,
+    |     ----^
+    |     |
+    |     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/tidb-expr/src/ops.rs:232:5
+    |
+232 |     mut r: Datum,
+    |     ----^
+    |     |
+    |     help: remove this `mut`
+
+warning: unreachable pattern
+   --> crates/tidb-expr/src/rewriter.rs:639:21
+    |
+600 |                     tidb_datatype::EvalType::Decimal => {
+    |                     -------------------------------- matches all the relevant values
+...
+639 |                     tidb_datatype::EvalType::Decimal => {
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `fixed_constant`
+    --> crates/tidb-expr/src/rewriter.rs:1532:21
+     |
+1532 |                 let fixed_constant = matches!(&argument, Expression::Constant(constant)
+     |                     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_fixed_constant`
+
+warning: function `refine_comparison` is never used
+   --> crates/tidb-expr/src/builtin_compare.rs:585:15
+    |
+585 | pub(crate) fn refine_comparison<C: Columns>(
+    |               ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `bit_count` is never read
+   --> crates/tidb-expr/src/go_flate.rs:184:5
+    |
+182 | struct HuffmanEncoder {
+    |        -------------- field in this struct
+183 |     codes: Vec<Hcode>,
+184 |     bit_count: [i32; 17],
+    |     ^^^^^^^^^
+
+warning: field `level` is never read
+   --> crates/tidb-expr/src/go_flate.rs:359:5
+    |
+358 | struct LevelInfo {
+    |        --------- field in this struct
+359 |     level: i32,
+    |     ^^^^^
+    |
+    = note: `LevelInfo` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: constant `BUFFER_FLUSH_SIZE` is never used
+   --> crates/tidb-expr/src/go_flate.rs:412:7
+    |
+412 | const BUFFER_FLUSH_SIZE: usize = 240;
+    |       ^^^^^^^^^^^^^^^^^
+
+warning: fields `fast_skip_hashing` and `scratch` are never read
+   --> crates/tidb-expr/src/go_flate.rs:777:5
+    |
+770 | struct Compressor {
+    |        ---------- fields in this struct
+...
+777 |     fast_skip_hashing: i32,
+    |     ^^^^^^^^^^^^^^^^^
+...
+792 |     scratch: Vec<LiteralNode>,
+    |     ^^^^^^^
+
+warning: constant `HASH_MATCH_LEN` is never used
+   --> crates/tidb-expr/src/go_flate.rs:795:7
+    |
+795 | const HASH_MATCH_LEN: usize = MAX_MATCH_LENGTH - 1;
+    |       ^^^^^^^^^^^^^^
+
+warning: method `fill_window` is never used
+   --> crates/tidb-expr/src/go_flate.rs:880:8
+    |
+797 | impl Compressor {
+    | --------------- method in this implementation
+...
+880 |     fn fill_window(&mut self, b: &[u8]) {
+    |        ^^^^^^^^^^^
+
+warning: function `bulk_hash4` is never used
+    --> crates/tidb-expr/src/go_flate.rs:1088:4
+     |
+1088 | fn bulk_hash4(b: &[u8], dst: &mut [u32]) {
+     |    ^^^^^^^^^^
+
+warning: function `implicit_cast_signatures` is never used
+    --> crates/tidb-expr/src/pushdown_catalog.rs:2036:15
+     |
+2036 | pub(crate) fn implicit_cast_signatures() -> impl Iterator<Item = ScalarFuncSig> {
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> crates/tidb-expr/src/context.rs:139:33
+    |
+139 |     ConstantFloatCastOverflow { value: String },
+    |                                 ^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-expr` (lib) generated 25 warnings (run `cargo fix --lib -p tidb-expr` to apply 10 suggestions)
+   Compiling tidb-unistore v0.0.0 (/Users/qiliu/projects/tidb/rust/crates/tidb-unistore)
+warning: unused import: `Datum`
+    --> crates/tidb-unistore/src/cophandler.rs:6252:41
+     |
+6252 |         use tidb_datatype::{BinaryJSON, Datum};
+     |                                         ^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `tidb_datatype::Datum`
+    --> crates/tidb-unistore/src/cophandler.rs:6310:13
+     |
+6310 |         use tidb_datatype::Datum;
+     |             ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tidb_datatype::Datum`
+    --> crates/tidb-unistore/src/cophandler.rs:6575:13
+     |
+6575 |         use tidb_datatype::Datum;
+     |             ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Datum`
+    --> crates/tidb-unistore/src/cophandler.rs:6922:29
+     |
+6922 |         use tidb_datatype::{Datum, Time, TimeType};
+     |                             ^^^^^
+
+warning: unused import: `Datum`
+    --> crates/tidb-unistore/src/cophandler.rs:7125:29
+     |
+7125 |         use tidb_datatype::{Datum, Time, TimeType};
+     |                             ^^^^^
+
+warning: missing documentation for a variant
+    --> crates/tidb-unistore/src/cophandler.rs:2026:5
+     |
+2026 |     RegexpLike(i32),
+     |     ^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-unistore` (lib test) generated 6 warnings (run `cargo fix --lib -p tidb-unistore --tests` to apply 5 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.85s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-unistore/bfa644f1da0cbc1b/out/tidb_unistore-bfa644f1da0cbc1b)
+
+running 1 test
+test cophandler::eval_context::next_boundary_audit::audit_systematic_pb_matrix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 200 filtered out; finished in 0.03s
+

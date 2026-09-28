@@ -1,0 +1,2922 @@
+[
+  {
+    "name": "CastIntAsReal/unsigned/0",
+    "flags": 0,
+    "go": "1.8446744073709552e+19",
+    "rust": "-1.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsReal/unsigned/0",
+    "flags": 2,
+    "go": "1.8446744073709552e+19",
+    "rust": "-1.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsReal/unsigned/0",
+    "flags": 1,
+    "go": "1.8446744073709552e+19",
+    "rust": "-1.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsReal/uint64max",
+    "flags": 0,
+    "go": "1.8446744073709552e+19",
+    "rust": "-1.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsReal/uint64max",
+    "flags": 2,
+    "go": "1.8446744073709552e+19",
+    "rust": "-1.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsReal/uint64max",
+    "flags": 1,
+    "go": "1.8446744073709552e+19",
+    "rust": "-1.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "'-1.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1690]DECIMAL value is out of range in '(10, 2)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/unsigned/0",
+    "flags": 2,
+    "go": "'99999999.99'",
+    "rust": "'-1.00'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/unsigned/0",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'-1.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/base/3",
+    "flags": 0,
+    "go": "error",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]DECIMAL value is out of range in '(10, 2)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/base/3",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/unsigned/3",
+    "flags": 0,
+    "go": "error",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]DECIMAL value is out of range in '(10, 2)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/unsigned/3",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/uint64max",
+    "flags": 0,
+    "go": "error",
+    "rust": "'-1.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1690]DECIMAL value is out of range in '(10, 2)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/uint64max",
+    "flags": 2,
+    "go": "'99999999.99'",
+    "rust": "'-1.00'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsDecimal/uint64max",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'-1.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/base/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect time value: '-1'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/base/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect time value: '-1'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/unsigned/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/base/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect time value: '1'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/base/2",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/unsigned/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect time value: '1'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/unsigned/2",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/base/3",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect time value: '9223372036854775807'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/base/3",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/unsigned/3",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect time value: '9223372036854775807'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/unsigned/3",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/uint64max",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect time value: '-1'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/uint64max",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/timestamp",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect time value: '-1'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastIntAsTime/timestamp",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsInt/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "'18446744073709551615'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]constant -1 overflows bigint",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsInt/unsigned/0",
+    "flags": 1,
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsInt/base/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "'9223372036854775807'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]constant 1e+20 overflows bigint",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsInt/base/2",
+    "flags": 1,
+    "go": "'9223372036854775807'",
+    "rust": "'9223372036854775807'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsInt/unsigned/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "'18446744073709551615'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]constant 1e+20 overflows bigint",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsInt/unsigned/2",
+    "flags": 1,
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsDecimal/unsigned/0",
+    "flags": 0,
+    "go": "'-0.00'",
+    "rust": "'-1.26'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsDecimal/unsigned/0",
+    "flags": 2,
+    "go": "'-0.00'",
+    "rust": "'-1.26'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsDecimal/unsigned/0",
+    "flags": 1,
+    "go": "'-0.00'",
+    "rust": "'-1.26'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsDecimal/base/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]DECIMAL value is out of range in '(10, 2)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsDecimal/base/2",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsDecimal/unsigned/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]DECIMAL value is out of range in '(10, 2)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsDecimal/unsigned/2",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/base/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '-1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/base/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '-1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/unsigned/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/base/1",
+    "flags": 0,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/base/1",
+    "flags": 2,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/base/1",
+    "flags": 1,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/unsigned/1",
+    "flags": 0,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/unsigned/1",
+    "flags": 2,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/unsigned/1",
+    "flags": 1,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/base/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '100000000000000000000'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/base/2",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/unsigned/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '100000000000000000000'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/unsigned/2",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/timestamp",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '-1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastRealAsTime/timestamp",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsInt/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]%s value is out of range in '%s'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsInt/unsigned/0",
+    "flags": 1,
+    "go": "'0'",
+    "rust": "'0'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsDecimal/unsigned/0",
+    "flags": 0,
+    "go": "'-0.00'",
+    "rust": "'-1.26'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsDecimal/unsigned/0",
+    "flags": 2,
+    "go": "'-0.00'",
+    "rust": "'-1.26'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsDecimal/unsigned/0",
+    "flags": 1,
+    "go": "'-0.00'",
+    "rust": "'-1.26'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/base/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '-1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/base/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '-1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/unsigned/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/base/1",
+    "flags": 0,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/base/1",
+    "flags": 2,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/base/1",
+    "flags": 1,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/unsigned/1",
+    "flags": 0,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/unsigned/1",
+    "flags": 2,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/unsigned/1",
+    "flags": 1,
+    "go": "'0000-00-00 00:00:00.500'",
+    "rust": "'0000-00-00 00:00:00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/timestamp",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '-1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDecimalAsTime/timestamp",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/base/1",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0.00'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: 'invalid'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/base/1",
+    "flags": 1,
+    "go": "'0.00'",
+    "rust": "'0.00'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/1",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0.00'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: 'invalid'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/1",
+    "flags": 1,
+    "go": "'0.00'",
+    "rust": "'0.00'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/base/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024.00'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '2024-01-02 03:04:05'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/base/2",
+    "flags": 1,
+    "go": "'2024.00'",
+    "rust": "'2024.00'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024.00'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '2024-01-02 03:04:05'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/2",
+    "flags": 1,
+    "go": "'2024.00'",
+    "rust": "'2024.00'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/3",
+    "flags": 0,
+    "go": "'-0.00'",
+    "rust": "'-1.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/3",
+    "flags": 2,
+    "go": "'-0.00'",
+    "rust": "'-1.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/3",
+    "flags": 1,
+    "go": "'-0.00'",
+    "rust": "'-1.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/base/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 2,
+    "go_detail": "[types:1690]%s value is out of range in '%s'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/base/4",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 2,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 2,
+    "go_detail": "[types:1690]%s value is out of range in '%s'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsDecimal/unsigned/4",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 2,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/base/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/base/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/unsigned/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/base/1",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/base/1",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/unsigned/1",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/unsigned/1",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/base/3",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '-1'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/base/3",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/unsigned/3",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '-1'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/unsigned/3",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/base/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '1e99'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/base/4",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/unsigned/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '1e99'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/unsigned/4",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/timestamp",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastStringAsTime/timestamp",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastTimeAsDecimal/base/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]DECIMAL value is out of range in '(10, 2)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastTimeAsDecimal/base/0",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastTimeAsDecimal/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1690]DECIMAL value is out of range in '(10, 2)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastTimeAsDecimal/unsigned/0",
+    "flags": 1,
+    "go": "'99999999.99'",
+    "rust": "'99999999.99'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDurationAsDecimal/unsigned/2",
+    "flags": 0,
+    "go": "'-0.00'",
+    "rust": "'-1.50'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDurationAsDecimal/unsigned/2",
+    "flags": 2,
+    "go": "'-0.00'",
+    "rust": "'-1.50'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDurationAsDecimal/unsigned/2",
+    "flags": 1,
+    "go": "'-0.00'",
+    "rust": "'-1.50'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastDurationAsTime/base/0",
+    "flags": 0,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/base/0",
+    "flags": 2,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/base/0",
+    "flags": 1,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/0",
+    "flags": 0,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/0",
+    "flags": 2,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/0",
+    "flags": 1,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/base/1",
+    "flags": 0,
+    "go": "'2026-09-28 00:00:01.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/base/1",
+    "flags": 2,
+    "go": "'2026-09-28 00:00:01.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/base/1",
+    "flags": 1,
+    "go": "'2026-09-28 00:00:01.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/1",
+    "flags": 0,
+    "go": "'2026-09-28 00:00:01.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/1",
+    "flags": 2,
+    "go": "'2026-09-28 00:00:01.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/1",
+    "flags": 1,
+    "go": "'2026-09-28 00:00:01.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/base/2",
+    "flags": 0,
+    "go": "'2026-09-27 23:59:58.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/base/2",
+    "flags": 2,
+    "go": "'2026-09-27 23:59:58.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/base/2",
+    "flags": 1,
+    "go": "'2026-09-27 23:59:58.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/2",
+    "flags": 0,
+    "go": "'2026-09-27 23:59:58.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/2",
+    "flags": 2,
+    "go": "'2026-09-27 23:59:58.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/unsigned/2",
+    "flags": 1,
+    "go": "'2026-09-27 23:59:58.500'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/timestamp",
+    "flags": 0,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/timestamp",
+    "flags": 2,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastDurationAsTime/timestamp",
+    "flags": 1,
+    "go": "'2026-09-28 00:00:00.000'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "CastJsonAsInt/base/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect INTEGER value: 'null'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsInt/base/4",
+    "flags": 2,
+    "go": "'0'",
+    "rust": "'0'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect INTEGER value: 'null'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/4",
+    "flags": 2,
+    "go": "'0'",
+    "rust": "'0'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsReal/base/1",
+    "flags": 0,
+    "go": "1.26",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "TruncatedWrongValue(\"Truncated incorrect FLOAT value: '\\\"1.26\\\"'\")"
+  },
+  {
+    "name": "CastJsonAsReal/base/1",
+    "flags": 2,
+    "go": "1.26",
+    "rust": "0.0",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsReal/base/1",
+    "flags": 1,
+    "go": "1.26",
+    "rust": "0.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsReal/unsigned/1",
+    "flags": 0,
+    "go": "1.26",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "TruncatedWrongValue(\"Truncated incorrect FLOAT value: '\\\"1.26\\\"'\")"
+  },
+  {
+    "name": "CastJsonAsReal/unsigned/1",
+    "flags": 2,
+    "go": "1.26",
+    "rust": "0.0",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsReal/unsigned/1",
+    "flags": 1,
+    "go": "1.26",
+    "rust": "0.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsReal/base/3",
+    "flags": 0,
+    "go": "1.0",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "TruncatedWrongValue(\"Truncated incorrect FLOAT value: 'true'\")"
+  },
+  {
+    "name": "CastJsonAsReal/base/3",
+    "flags": 2,
+    "go": "1.0",
+    "rust": "0.0",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsReal/base/3",
+    "flags": 1,
+    "go": "1.0",
+    "rust": "0.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsReal/unsigned/3",
+    "flags": 0,
+    "go": "1.0",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "TruncatedWrongValue(\"Truncated incorrect FLOAT value: 'true'\")"
+  },
+  {
+    "name": "CastJsonAsReal/unsigned/3",
+    "flags": 2,
+    "go": "1.0",
+    "rust": "0.0",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsReal/unsigned/3",
+    "flags": 1,
+    "go": "1.0",
+    "rust": "0.0",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsDecimal/base/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '{}'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsDecimal/base/2",
+    "flags": 2,
+    "go": "'0.00'",
+    "rust": "'0.00'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsDecimal/unsigned/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '{}'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsDecimal/unsigned/2",
+    "flags": 2,
+    "go": "'0.00'",
+    "rust": "'0.00'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsDecimal/base/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: 'null'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsDecimal/base/4",
+    "flags": 2,
+    "go": "'0.00'",
+    "rust": "'0.00'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsDecimal/unsigned/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "'0.00'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: 'null'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsDecimal/unsigned/4",
+    "flags": 2,
+    "go": "'0.00'",
+    "rust": "'0.00'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect datetime value: '1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/0",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect datetime value: '1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/0",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/1",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/1",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/1",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Incorrect datetime value: '1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/1",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect datetime value: '{}'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/2",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/2",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect datetime value: '{}'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/2",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/3",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect datetime value: 'true'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/3",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/3",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect datetime value: 'true'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/3",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect datetime value: 'null'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/base/4",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/4",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect datetime value: 'null'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/unsigned/4",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/timestamp",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect timestamp value: '1.26'",
+    "rust_detail": ""
+  },
+  {
+    "name": "CastJsonAsTime/timestamp",
+    "flags": 1,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "LTTime/null_bad",
+    "flags": 0,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "LTTime/null_bad",
+    "flags": 2,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "LTTime/null_bad",
+    "flags": 1,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "LETime/null_bad",
+    "flags": 0,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "LETime/null_bad",
+    "flags": 2,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "LETime/null_bad",
+    "flags": 1,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "GTTime/null_bad",
+    "flags": 0,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "GTTime/null_bad",
+    "flags": 2,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "GTTime/null_bad",
+    "flags": 1,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "GETime/null_bad",
+    "flags": 0,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "GETime/null_bad",
+    "flags": 2,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "GETime/null_bad",
+    "flags": 1,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "EQTime/null_bad",
+    "flags": 0,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "EQTime/null_bad",
+    "flags": 2,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "EQTime/null_bad",
+    "flags": 1,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "NETime/null_bad",
+    "flags": 0,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "NETime/null_bad",
+    "flags": 2,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "NETime/null_bad",
+    "flags": 1,
+    "go": "panic",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": "Unsupported(\"constant is not in its declared evaluation domain\")"
+  },
+  {
+    "name": "PlusReal/null_bad",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect DOUBLE value: 'invalid'",
+    "rust_detail": ""
+  },
+  {
+    "name": "PlusReal/null_bad",
+    "flags": 2,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "ModIntSignedSigned/null_bad",
+    "flags": 2,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"un-cast types.ETInt argument\")"
+  },
+  {
+    "name": "ModIntSignedSigned/null_bad",
+    "flags": 1,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"un-cast types.ETInt argument\")"
+  },
+  {
+    "name": "ModIntSignedUnsigned/null_bad",
+    "flags": 2,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"un-cast types.ETInt argument\")"
+  },
+  {
+    "name": "ModIntSignedUnsigned/null_bad",
+    "flags": 1,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"un-cast types.ETInt argument\")"
+  },
+  {
+    "name": "ModIntUnsignedSigned/null_bad",
+    "flags": 2,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"un-cast types.ETInt argument\")"
+  },
+  {
+    "name": "ModIntUnsignedSigned/null_bad",
+    "flags": 1,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"un-cast types.ETInt argument\")"
+  },
+  {
+    "name": "ModIntUnsignedUnsigned/null_bad",
+    "flags": 2,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"un-cast types.ETInt argument\")"
+  },
+  {
+    "name": "ModIntUnsignedUnsigned/null_bad",
+    "flags": 1,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"un-cast types.ETInt argument\")"
+  },
+  {
+    "name": "Asin/0.5",
+    "flags": 0,
+    "go": "0.5235987755982989",
+    "rust": "0.5235987755982988",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "Asin/0.5",
+    "flags": 2,
+    "go": "0.5235987755982989",
+    "rust": "0.5235987755982988",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "Asin/0.5",
+    "flags": 1,
+    "go": "0.5235987755982989",
+    "rust": "0.5235987755982988",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "Pow/bad_then_null",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect DOUBLE value: 'invalid'",
+    "rust_detail": ""
+  },
+  {
+    "name": "Pow/bad_then_null",
+    "flags": 2,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "Atan2Args/bad_then_null",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect DOUBLE value: 'invalid'",
+    "rust_detail": ""
+  },
+  {
+    "name": "Atan2Args/bad_then_null",
+    "flags": 2,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "Substring3ArgsUTF8/bad_pos_then_null",
+    "flags": 0,
+    "go": "error",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect DOUBLE value: 'invalid'",
+    "rust_detail": ""
+  },
+  {
+    "name": "Substring3ArgsUTF8/bad_pos_then_null",
+    "flags": 2,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "DateDiff/bad_then_null",
+    "flags": 0,
+    "go": "panic",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": ""
+  },
+  {
+    "name": "DateDiff/bad_then_null",
+    "flags": 2,
+    "go": "panic",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": ""
+  },
+  {
+    "name": "DateDiff/bad_then_null",
+    "flags": 1,
+    "go": "panic",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "interface conversion: interface {} is nil, not types.Time",
+    "rust_detail": ""
+  },
+  {
+    "name": "UnixTimestampDec/normal",
+    "flags": 0,
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "UnixTimestampDec/normal",
+    "flags": 2,
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "UnixTimestampDec/normal",
+    "flags": 1,
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "JsonReplaceSig/null_before_bad_path",
+    "flags": 0,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "TruncatedWrongValue(\"Truncated incorrect INTEGER value: 'invalid'\")"
+  },
+  {
+    "name": "JsonReplaceSig/null_before_bad_path",
+    "flags": 2,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "JsonArrayAppendSig/null_before_bad_path",
+    "flags": 0,
+    "go": "null",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "TruncatedWrongValue(\"Truncated incorrect INTEGER value: 'invalid'\")"
+  },
+  {
+    "name": "JsonArrayAppendSig/null_before_bad_path",
+    "flags": 2,
+    "go": "null",
+    "rust": "null",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDatetimeReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-04 03:04:05.123'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDatetimeReal/normal",
+    "flags": 2,
+    "go": "'2024-01-04 03:04:05.123'",
+    "rust": "'2024-01-04 03:04:05.123'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDatetimeString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-03 03:04:05.123'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDatetimeString/normal",
+    "flags": 1,
+    "go": "'2024-01-03 03:04:05.123'",
+    "rust": "'2024-01-03 03:04:05.123'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDecimalReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-04'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDecimalReal/normal",
+    "flags": 2,
+    "go": "'2024-01-04'",
+    "rust": "'2024-01-04'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDecimalString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-03'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDecimalString/normal",
+    "flags": 1,
+    "go": "'2024-01-03'",
+    "rust": "'2024-01-03'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateDurationDecimalDatetime/normal",
+    "flags": 0,
+    "go": "'2026-09-30 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationDecimalDatetime/normal",
+    "flags": 2,
+    "go": "'2026-09-30 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationDecimalDatetime/normal",
+    "flags": 1,
+    "go": "'2026-09-30 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationIntDatetime/normal",
+    "flags": 0,
+    "go": "'2026-09-29 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationIntDatetime/normal",
+    "flags": 2,
+    "go": "'2026-09-29 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationIntDatetime/normal",
+    "flags": 1,
+    "go": "'2026-09-29 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationRealDatetime/normal",
+    "flags": 2,
+    "go": "'2026-09-30 00:00:01'",
+    "rust": "error",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationRealDatetime/normal",
+    "flags": 1,
+    "go": "'2026-09-30 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationStringDatetime/normal",
+    "flags": 2,
+    "go": "'2026-09-29 00:00:01'",
+    "rust": "error",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateDurationStringDatetime/normal",
+    "flags": 1,
+    "go": "'2026-09-29 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "AddDateIntReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-04'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateIntReal/normal",
+    "flags": 2,
+    "go": "'2024-01-04'",
+    "rust": "'2024-01-04'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateIntString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-03'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateIntString/normal",
+    "flags": 1,
+    "go": "'2024-01-03'",
+    "rust": "'2024-01-03'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateRealReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-04'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateRealReal/normal",
+    "flags": 2,
+    "go": "'2024-01-04'",
+    "rust": "'2024-01-04'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateRealString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-03'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateRealString/normal",
+    "flags": 1,
+    "go": "'2024-01-03'",
+    "rust": "'2024-01-03'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateStringReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-04'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateStringReal/normal",
+    "flags": 2,
+    "go": "'2024-01-04'",
+    "rust": "'2024-01-04'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateStringString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-03'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "AddDateStringString/normal",
+    "flags": 1,
+    "go": "'2024-01-03'",
+    "rust": "'2024-01-03'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDatetimeReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2023-12-31 03:04:05.123'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDatetimeReal/normal",
+    "flags": 2,
+    "go": "'2023-12-31 03:04:05.123'",
+    "rust": "'2023-12-31 03:04:05.123'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDatetimeString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-01 03:04:05.123'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDatetimeString/normal",
+    "flags": 1,
+    "go": "'2024-01-01 03:04:05.123'",
+    "rust": "'2024-01-01 03:04:05.123'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDecimalReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2023-12-31'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDecimalReal/normal",
+    "flags": 2,
+    "go": "'2023-12-31'",
+    "rust": "'2023-12-31'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDecimalString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-01'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDecimalString/normal",
+    "flags": 1,
+    "go": "'2024-01-01'",
+    "rust": "'2024-01-01'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateDurationDecimalDatetime/normal",
+    "flags": 0,
+    "go": "'2026-09-26 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationDecimalDatetime/normal",
+    "flags": 2,
+    "go": "'2026-09-26 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationDecimalDatetime/normal",
+    "flags": 1,
+    "go": "'2026-09-26 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationIntDatetime/normal",
+    "flags": 0,
+    "go": "'2026-09-27 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationIntDatetime/normal",
+    "flags": 2,
+    "go": "'2026-09-27 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationIntDatetime/normal",
+    "flags": 1,
+    "go": "'2026-09-27 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationRealDatetime/normal",
+    "flags": 2,
+    "go": "'2026-09-26 00:00:01'",
+    "rust": "error",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationRealDatetime/normal",
+    "flags": 1,
+    "go": "'2026-09-26 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationStringDatetime/normal",
+    "flags": 2,
+    "go": "'2026-09-27 00:00:01'",
+    "rust": "error",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateDurationStringDatetime/normal",
+    "flags": 1,
+    "go": "'2026-09-27 00:00:01'",
+    "rust": "error",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": "Unsupported(\"no statement clock for a TIME cast\")"
+  },
+  {
+    "name": "SubDateIntReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2023-12-31'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateIntReal/normal",
+    "flags": 2,
+    "go": "'2023-12-31'",
+    "rust": "'2023-12-31'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateIntString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-01'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateIntString/normal",
+    "flags": 1,
+    "go": "'2024-01-01'",
+    "rust": "'2024-01-01'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateRealReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2023-12-31'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateRealReal/normal",
+    "flags": 2,
+    "go": "'2023-12-31'",
+    "rust": "'2023-12-31'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateRealString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-01'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateRealString/normal",
+    "flags": 1,
+    "go": "'2024-01-01'",
+    "rust": "'2024-01-01'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateStringReal/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2023-12-31'",
+    "go_warnings": 0,
+    "rust_warnings": 0,
+    "go_detail": "[types:1292]Truncated incorrect 1.5 value: '%!s(MISSING)'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateStringReal/normal",
+    "flags": 2,
+    "go": "'2023-12-31'",
+    "rust": "'2023-12-31'",
+    "go_warnings": 1,
+    "rust_warnings": 0,
+    "go_detail": "",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateStringString/normal",
+    "flags": 0,
+    "go": "error",
+    "rust": "'2024-01-01'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "[types:1292]Truncated incorrect DECIMAL value: '1.5'",
+    "rust_detail": ""
+  },
+  {
+    "name": "SubDateStringString/normal",
+    "flags": 1,
+    "go": "'2024-01-01'",
+    "rust": "'2024-01-01'",
+    "go_warnings": 0,
+    "rust_warnings": 1,
+    "go_detail": "",
+    "rust_detail": ""
+  }
+]

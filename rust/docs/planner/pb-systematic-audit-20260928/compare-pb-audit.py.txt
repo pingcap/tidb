@@ -1,0 +1,21 @@
+from pathlib import Path
+import json,collections
+inv=json.loads(Path('/private/tmp/pb-audit-inventory.json').read_text());runtime=set(Path('/private/tmp/pb-systematic-rust-registry.txt').read_text().splitlines())
+print('runtime registry',len(runtime),'static delta',set(inv['rust'])^runtime)
+go={tuple(f[:2]):f for line in Path('/private/tmp/pb-systematic-go.tsv').read_text().splitlines() if (f:=line.split('\t'))}
+rust={tuple(f[:2]):f for line in Path('/private/tmp/pb-systematic-rust.tsv').read_text().splitlines() if (f:=line.split('\t'))}
+def human(x):
+ if x.startswith('value:'):return repr(bytes.fromhex(x[6:]).decode(errors='replace'))
+ if x.startswith('real:'):
+  import struct
+  return str(struct.unpack('>d',bytes.fromhex(x[5:]))[0])
+ return x
+rows=[]
+for key,g in go.items():
+ r=rust[key]
+ if g[3]!=r[2] or g[5]!=r[4]:
+  rows.append({'name':key[0],'flags':int(key[1]),'go':human(g[3]),'rust':human(r[2]),'go_warnings':int(g[5]),'rust_warnings':int(r[4]),'go_detail':bytes.fromhex(g[4]).decode(errors='replace'),'rust_detail':bytes.fromhex(r[3]).decode(errors='replace')})
+Path('/private/tmp/pb-systematic-diffs.json').write_text(json.dumps(rows,indent=2))
+print('cases',len(go),'mismatches',len(rows),'by signature',dict(collections.Counter(r['name'].split('/')[0] for r in rows)))
+for row in rows:
+ if row['flags']==0:print(row)
