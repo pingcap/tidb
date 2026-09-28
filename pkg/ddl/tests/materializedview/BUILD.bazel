@@ -17,6 +17,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/ddl/session",
         "//pkg/domain",
+        "//pkg/domain/affinity",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",

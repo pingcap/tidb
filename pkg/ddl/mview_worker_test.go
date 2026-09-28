@@ -129,6 +129,35 @@ func TestUpdateMaterializedViewBaseInfoOnCreateMissingBaseTable(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestGetTableInfoAndCancelNonExistJob(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	err = kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		require.NoError(t, metaMut.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+
+		for _, tc := range []struct {
+			name     string
+			tableID  int64
+			schemaID int64
+		}{
+			{name: "missing table", tableID: 2, schemaID: 1},
+			{name: "missing database", tableID: 2, schemaID: 2},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				job := &model.Job{State: model.JobStateRunning}
+				_, err := getTableInfoAndCancelNonExistJob(metaMut, job, tc.tableID, tc.schemaID)
+				require.Error(t, err)
+				require.Equal(t, model.JobStateCancelled, job.State)
+			})
+		}
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func TestUpdateMaterializedViewBaseInfoOnDropPropagatesGetTableError(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

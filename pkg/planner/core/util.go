@@ -56,27 +56,6 @@ func CheckMViewUpdatable(
 	return plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(aliasName, op)
 }
 
-// CheckMViewShadowReadable prevents users from reading the temporary table used by
-// complete out-of-place refresh. The table is visible only to maintenance sessions.
-func CheckMViewShadowReadable(
-	sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string,
-) error {
-	if tableInfo == nil || tableInfo.MaterializedViewShadow == nil {
-		return nil
-	}
-	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
-	if err != nil {
-		return err
-	}
-	if allowMaintenance || sv == nil || sv.User == nil {
-		return nil
-	}
-	if aliasName == "" {
-		aliasName = tableInfo.Name.O
-	}
-	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, aliasName)
-}
-
 func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
 	if sv == nil || !sv.InMViewMaintenance {
 		return false, nil
@@ -90,12 +69,28 @@ func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
 	return true, nil
 }
 
-// CheckMViewReadable checks whether a read on a materialized view should be rejected because
-// its initial build is not ready yet.
+// CheckMViewReadable checks whether a read on an MV-related table should be rejected.
 func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
-	if tableInfo == nil || tableInfo.MaterializedView == nil {
+	if tableInfo == nil || (tableInfo.MaterializedView == nil && tableInfo.MaterializedViewShadow == nil) {
 		return nil
 	}
+
+	if tableInfo.MaterializedViewShadow != nil {
+		// check mv shadow table
+		allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+		if err != nil {
+			return err
+		}
+		if allowMaintenance || sv == nil || sv.User == nil {
+			return nil
+		}
+		if aliasName == "" {
+			aliasName = tableInfo.Name.O
+		}
+		return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, aliasName)
+	}
+
+	// check mv table
 	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
 	if initBuildState.IsReady() {
 		return nil

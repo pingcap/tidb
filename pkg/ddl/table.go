@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -55,6 +56,39 @@ import (
 const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 
 const truncateTTLRestoreOldRegistrationLogKey = "truncate_ttl_restore_old_registration_failed"
+
+func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, job *model.Job) {
+	args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+	if err != nil {
+		logutil.DDLLogger().Warn(
+			"failed to decode materialized view cutover args for post-commit cleanup",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	// Materialized views in Stage-1 are non-partitioned, so their table-level
+	// affinity group ID is derived directly from the old physical table ID.
+	groupID := GetTableAffinityGroupID(args.OldMViewID)
+	if err := affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID}); err != nil {
+		logutil.DDLLogger().Warn(
+			"failed to delete old materialized view affinity group after cutover",
+			zap.Int64("tableID", args.OldMViewID),
+			zap.Error(err),
+		)
+	}
+
+	// TiFlash progress cleanup only needs the physical table ID for a
+	// non-partitioned table; the old TableInfo is already gone after cutover.
+	if err := infosync.DeleteTiFlashTableSyncProgress(&model.TableInfo{ID: args.OldMViewID}); err != nil {
+		logutil.DDLLogger().Warn(
+			"failed to delete old materialized view TiFlash sync progress after cutover",
+			zap.Int64("tableID", args.OldMViewID),
+			zap.Error(err),
+		)
+	}
+}
 
 func repairTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
 	err := checkTableInfoValid(tbInfo)
@@ -477,6 +511,17 @@ func checkTableExistAndCancelNonExistJob(t *meta.Mutator, job *model.Job, schema
 		job.State = model.JobStateCancelled
 	}
 	return nil, err
+}
+
+func getTableInfoAndCancelNonExistJob(t *meta.Mutator, job *model.Job, tableID, schemaID int64) (*model.TableInfo, error) {
+	tblInfo, err := getTableInfo(t, tableID, schemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return nil, err
+	}
+	return tblInfo, nil
 }
 
 func getTableInfo(t *meta.Mutator, tableID, schemaID int64) (*model.TableInfo, error) {
@@ -2032,7 +2077,7 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: stale old materialized view revision detected before cutover")
 	}
-	shadowTblInfo, err := getTableInfo(jobCtx.metaMut, args.ShadowTableID, job.SchemaID)
+	shadowTblInfo, err := getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, args.ShadowTableID, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2040,17 +2085,14 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: invalid shadow table metadata")
 	}
-	baseTblInfo, err := getTableInfo(jobCtx.metaMut, oldMViewTblInfo.MaterializedView.BaseTableIDs[0], job.SchemaID)
+	baseTblInfo, err := getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, oldMViewTblInfo.MaterializedView.BaseTableIDs[0], job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	var mlogTblInfo *model.TableInfo
 	if baseTblInfo.MaterializedViewBase != nil && baseTblInfo.MaterializedViewBase.MLogID != 0 {
-		mlogTblInfo, err = getTableInfo(jobCtx.metaMut, baseTblInfo.MaterializedViewBase.MLogID, job.SchemaID)
+		mlogTblInfo, err = getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, baseTblInfo.MaterializedViewBase.MLogID, job.SchemaID)
 		if err != nil {
-			if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
-				job.State = model.JobStateCancelled
-			}
 			return ver, errors.Trace(err)
 		}
 		if mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil || mlogTblInfo.MaterializedViewLog.BaseTableID != baseTblInfo.ID {
@@ -2078,14 +2120,17 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 	if err := w.deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx, args.OldMViewID); err != nil {
 		logutil.DDLLogger().Warn("refresh materialized view complete OUT OF PLACE cutover: failed to delete stale refresh alert", zap.Error(err))
 	}
-	if oldMViewTblInfo.TiFlashReplica != nil {
-		if err := infosync.DeleteTiFlashTableSyncProgress(oldMViewTblInfo); err != nil {
-			logutil.DDLLogger().Error("DeleteTiFlashTableSyncProgress fails during materialized view cutover", zap.Error(err), zap.Int64("tableID", oldMViewTblInfo.ID))
+	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverBeforeCommitError", func() {
+		failpointErr := errors.New("mock refresh materialized view complete OUT OF PLACE cutover error before commit")
+		w.sess.Rollback()
+		if err := w.sess.Begin(w.workCtx); err != nil {
+			failpoint.Return(ver, errors.Trace(err))
 		}
-	}
-	if err := deleteTableAffinityGroupsInPD(jobCtx, oldMViewTblInfo, nil); err != nil {
-		logutil.DDLLogger().Error("failed to delete old materialized view affinity groups during cutover", zap.Error(err), zap.Int64("tableID", oldMViewTblInfo.ID))
-	}
+		job.Error = toTError(failpointErr)
+		job.ErrorCount++
+		job.State = model.JobStateCancelled
+		failpoint.Return(ver, failpointErr)
+	})
 	if err := jobCtx.metaMut.DropTableOrView(job.SchemaID, args.OldMViewID); err != nil {
 		return ver, errors.Trace(err)
 	}

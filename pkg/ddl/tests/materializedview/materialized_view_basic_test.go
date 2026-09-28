@@ -24,6 +24,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -419,10 +422,12 @@ func TestMaterializedViewOutOfPlaceCutoverUpdatesMLogDependencies(t *testing.T) 
 	oldMView := mustGetMaterializedView(t, dom, "mv_cutover_dependency")
 	oldMViewID := oldMView.Meta().ID
 	shadowName := ast.NewCIStr("__mv_shadow_cutover_dependency")
-	shadowInfo := oldMView.Meta().Clone()
-	shadowInfo.ID = 0
-	shadowInfo.Name = shadowName
-	shadowInfo.MaterializedView = nil
+	shadowInfo, err := ddl.BuildTableInfoWithLike(
+		ast.Ident{Name: shadowName},
+		oldMView.Meta(),
+		&ast.CreateTableStmt{},
+	)
+	require.NoError(t, err)
 	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: oldMViewID}
 	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
@@ -462,10 +467,12 @@ func TestMaterializedViewOutOfPlaceCutoverFailureRollsBackMLogDependencies(t *te
 	oldMView := mustGetMaterializedView(t, dom, "mv_cutover_rollback")
 	oldMViewID := oldMView.Meta().ID
 	shadowName := ast.NewCIStr("__mv_shadow_cutover_rollback")
-	shadowInfo := oldMView.Meta().Clone()
-	shadowInfo.ID = 0
-	shadowInfo.Name = shadowName
-	shadowInfo.MaterializedView = nil
+	shadowInfo, err := ddl.BuildTableInfoWithLike(
+		ast.Ident{Name: shadowName},
+		oldMView.Meta(),
+		&ast.CreateTableStmt{},
+	)
+	require.NoError(t, err)
 	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: oldMViewID}
 	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
@@ -495,6 +502,77 @@ func TestMaterializedViewOutOfPlaceCutoverFailureRollsBackMLogDependencies(t *te
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", shadowTableID)).Check(testkit.Rows("0"))
 }
 
+func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cutover_affinity (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_cutover_affinity (a, b)")
+	tk.MustExec("create materialized view mv_cutover_affinity (a, s, cnt) as select a, sum(b), count(1) from t_cutover_affinity group by a")
+
+	oldMView := mustGetMaterializedView(t, dom, "mv_cutover_affinity")
+	oldMViewInfo := oldMView.Meta().Clone()
+	oldMViewInfo.Affinity = &model.TableAffinityInfo{Level: ast.TableAffinityLevelTable}
+	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+		return meta.NewMutator(txn).UpdateTable(dbInfo.ID, oldMViewInfo)
+	}))
+	affinityDefinitions, err := ddl.BuildAffinityGroupDefinitionsForTest(store.GetCodec(), oldMViewInfo, nil)
+	require.NoError(t, err)
+	require.NoError(t, affinity.CreateGroupsIfNotExists(context.Background(), affinityDefinitions))
+	require.NoError(t, dom.Reload())
+	oldMView = mustGetMaterializedView(t, dom, "mv_cutover_affinity")
+	oldMViewID := oldMView.Meta().ID
+	oldAffinityGroupID := ddl.GetTableAffinityGroupID(oldMViewID)
+	groups, err := affinity.GetGroups(context.Background(), []string{oldAffinityGroupID})
+	require.NoError(t, err)
+	require.Contains(t, groups, oldAffinityGroupID)
+
+	shadowName := ast.NewCIStr("__mv_shadow_cutover_affinity")
+	shadowInfo, err := ddl.BuildTableInfoWithLike(
+		ast.Ident{Name: shadowName},
+		oldMView.Meta(),
+		&ast.CreateTableStmt{},
+	)
+	require.NoError(t, err)
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: oldMViewID}
+	require.NoError(t, dom.DDLExecutor().CreateMaterializedViewShadowTable(tk.Session(), dbInfo.ID, dbInfo.Name, shadowInfo))
+	shadowTable, err := dom.InfoSchema().TableByName(context.Background(), dbInfo.Name, shadowName)
+	require.NoError(t, err)
+	shadowTableID := shadowTable.Meta().ID
+	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	// The fixture updates metadata directly, so this test intentionally does not
+	// pass an expected revision to the cutover job.
+
+	const cutoverFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverBeforeCommitError"
+	require.NoError(t, failpoint.Enable(cutoverFailpoint, "return"))
+	setRefreshCutoverQueryString(t, tk, "mv_cutover_affinity")
+	err = dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
+		123456789, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+	)
+	require.NoError(t, failpoint.Disable(cutoverFailpoint))
+	require.ErrorContains(t, err, "error before commit")
+
+	stillOldMView := mustGetMaterializedView(t, dom, "mv_cutover_affinity")
+	require.Equal(t, oldMViewID, stillOldMView.Meta().ID)
+	groups, err = affinity.GetGroups(context.Background(), []string{oldAffinityGroupID})
+	require.NoError(t, err)
+	require.Contains(t, groups, oldAffinityGroupID)
+
+	setRefreshCutoverQueryString(t, tk, "mv_cutover_affinity")
+	require.NoError(t, dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
+		123456790, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+	))
+	newMView := mustGetMaterializedView(t, dom, "mv_cutover_affinity")
+	require.Equal(t, shadowTableID, newMView.Meta().ID)
+	groups, err = affinity.GetGroups(context.Background(), []string{oldAffinityGroupID})
+	require.NoError(t, err)
+	require.NotContains(t, groups, oldAffinityGroupID)
+}
+
 func TestMaterializedViewShadowCanOnlyBeDroppedByInternalCleanup(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
@@ -504,10 +582,12 @@ func TestMaterializedViewShadowCanOnlyBeDroppedByInternalCleanup(t *testing.T) {
 	tk.MustExec("create materialized view mv_shadow_cleanup (a, s, cnt) as select a, sum(b), count(1) from t_shadow_cleanup group by a")
 	oldMView := mustGetMaterializedView(t, dom, "mv_shadow_cleanup")
 	shadowName := ast.NewCIStr("__mv_shadow_cleanup")
-	shadowInfo := oldMView.Meta().Clone()
-	shadowInfo.ID = 0
-	shadowInfo.Name = shadowName
-	shadowInfo.MaterializedView = nil
+	shadowInfo, err := ddl.BuildTableInfoWithLike(
+		ast.Ident{Name: shadowName},
+		oldMView.Meta(),
+		&ast.CreateTableStmt{},
+	)
+	require.NoError(t, err)
 	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: oldMView.Meta().ID}
 	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
@@ -520,6 +600,10 @@ func TestMaterializedViewShadowCanOnlyBeDroppedByInternalCleanup(t *testing.T) {
 	err = tk.ExecToErr("insert into `__mv_shadow_cleanup` values (1, 1, 1)")
 	require.ErrorContains(t, err, "is not updatable")
 	err = tk.ExecToErr("select * from `__mv_shadow_cleanup`")
+	require.ErrorContains(t, err, "SELECT command denied")
+	err = tk.ExecToErr("update t_shadow_cleanup n join __mv_shadow_cleanup s on n.a = s.a set n.b = s.s")
+	require.ErrorContains(t, err, "SELECT command denied")
+	err = tk.ExecToErr("delete n from t_shadow_cleanup n join __mv_shadow_cleanup s on n.a = s.a")
 	require.ErrorContains(t, err, "SELECT command denied")
 
 	err = tk.ExecToErr("drop table `__mv_shadow_cleanup`")
