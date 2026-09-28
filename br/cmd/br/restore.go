@@ -69,9 +69,6 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		// Need to be skipped when the cluster has TiDB type coprocessor tasks
-		conf.AdvertiseAddress = config.UnavailableIP
-
 		// No need to cache the coproceesor result
 		conf.TiKVClient.CoprCache.CapacityMB = 0
 	})

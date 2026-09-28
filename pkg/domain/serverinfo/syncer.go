@@ -589,6 +589,7 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *S
 			Keyspace:        config.GetGlobalKeyspaceName(),
 			AssumedKeyspace: assumedKS,
 			ServerIDGetter:  serverIDGetter,
+			TiDBRPCDisabled: cfg.TiDBRPCDisabled,
 		},
 		DynamicInfo: DynamicInfo{
 			Labels: maps.Clone(cfg.Labels),
