@@ -1089,9 +1089,10 @@ fn reorganize_partition_action(
     let mut start = None;
     let mut end = 0usize;
     for (index, definition) in partition.definitions.iter().enumerate() {
-        if names.iter().any(|name| {
-            super::table_partition::partition_names_equal(&definition.name, name)
-        }) {
+        if names
+            .iter()
+            .any(|name| super::table_partition::partition_names_equal(&definition.name, name))
+        {
             if start.is_none() {
                 start = Some(index);
             }
