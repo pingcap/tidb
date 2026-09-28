@@ -324,19 +324,6 @@ impl Session {
         // whose root is a TableDual is refused with its own reason (oracle
         // m21: EXECUTE st USING @p over `SELECT ? + 1` carries `skip
         // prepared plan-cache: get a TableDual plan`).
-        if let Err(reason) = &prepared.cacheable {
-            self.append_warning(
-                crate::WarningLevel::Warning,
-                1105,
-                format!("skip prepared plan-cache: {reason}"),
-            );
-        } else if plans_over_table_dual(&effective_statement) {
-            self.append_warning(
-                crate::WarningLevel::Warning,
-                1105,
-                "skip prepared plan-cache: get a TableDual plan".to_owned(),
-            );
-        }
         if prepared.cacheable.is_ok()
             && self.prepared_plan_cache_allowed_for_statement(&effective_statement)
         {
@@ -428,7 +415,7 @@ fn is_unpreparable(stmt: &Stmt) -> bool {
 /// go's plan for a FROM-less `SELECT` roots at a `TableDual`, which the
 /// prepared plan cache refuses (oracle m21: `EXECUTE st USING @p` over
 /// `SELECT ? + 1` carries `skip prepared plan-cache: get a TableDual plan`).
-fn plans_over_table_dual(stmt: &Stmt) -> bool {
+pub(crate) fn plans_over_table_dual(stmt: &Stmt) -> bool {
     let Stmt::Query(query) = stmt else {
         return false;
     };

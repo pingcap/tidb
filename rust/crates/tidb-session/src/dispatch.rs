@@ -1206,6 +1206,27 @@ impl Session {
     ) -> Result<PendingExecution, DriverError> {
         let parameters = tidb_executor::bound_parameter_values(&mut stmt)?;
         self.begin_prepared_statement_boundary(&stmt, parameters);
+        // The plan-cache refusal warnings land AFTER the boundary reset so
+        // they survive it: go records the refusals on every EXECUTE (oracle
+        // m21: PREPARE/EXECUTE of a DDL carry the not-a-SELECT skip row and
+        // EXECUTE of `SELECT ? + 1` carries the TableDual skip row).
+        let cacheable = {
+            let catalog = self.lock_catalog()?;
+            self.prepared_statement_cacheable(&mut stmt, &catalog)
+        };
+        if let Err(reason) = cacheable {
+            self.append_warning(
+                crate::warnings::WarningLevel::Warning,
+                1105,
+                format!("skip prepared plan-cache: {reason}"),
+            );
+        } else if crate::prepared_statements::plans_over_table_dual(&stmt) {
+            self.append_warning(
+                crate::warnings::WarningLevel::Warning,
+                1105,
+                "skip prepared plan-cache: get a TableDual plan".to_owned(),
+            );
+        }
         self.prepare_parsed_statement_with_optional_physical_plan(
             sql,
             stmt,
