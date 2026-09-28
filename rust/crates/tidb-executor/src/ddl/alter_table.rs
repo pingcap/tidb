@@ -642,7 +642,6 @@ fn run_alter_table_in_inner(
                 definitions,
                 ..
             }) => {
-                eprintln!("DBG-REORG arm entered names={names:?}");
                 reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?
             }
             // The four metadata-only actions: a name or a flag changes while

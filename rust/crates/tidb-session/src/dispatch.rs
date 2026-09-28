@@ -2043,7 +2043,7 @@ impl Session {
             // statistics-outdated row) drain here: DDL statements produce no
             // record set, so the record-set-only drain never runs for them.
             let statement_ctx = self.statement_context(false);
-            eprintln!("DBG-DRAIN apply_schema path");
+            let drained_count = statement_ctx.warning_count();
             self.drain_eval_warnings(&statement_ctx);
             return Ok(PendingExecution::Complete(output));
         }

@@ -328,12 +328,10 @@ pub fn run_drop_table_in(
             let mut not_local = Vec::new();
             for path in &drop.names {
                 let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
-                eprintln!("DBG-TMPDROP local path db={database} name={name} kind={:?}", kind_of(catalog, database, name));
                 if kind_of(catalog, database, name) != Some(tidb_model::TempTableType::LOCAL) {
                     not_local.push(format!("{database}.{name}"));
                 }
             }
-            eprintln!("DBG-TMPDROP not_local={not_local:?}");
             if !not_local.is_empty() {
                 if drop.if_exists {
                     // Go files the same error as a NOTE and returns success,
