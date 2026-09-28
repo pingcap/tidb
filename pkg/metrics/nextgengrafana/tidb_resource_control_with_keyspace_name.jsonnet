@@ -262,7 +262,7 @@ local RUMaxPanel = graphPanel.new(
   legend_current=true,
   legend_rightSide=true,
   legend_alignAsTable=true,
-  description="Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Incomplete intervals remain gaps. Requires complete source coverage; excludes SQL CPU RU, RUv2 and untimed TiFlash aggregates.",
+  description="Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Incomplete intervals remain gaps. Covers the foreground RU that TiDB confirms by second; excludes TiFlash and background task RU, SQL CPU RU and RUv2.",
 ).addTarget(
   prometheus.target(
     'max_over_time(' + RUPeakRange + ')' +
