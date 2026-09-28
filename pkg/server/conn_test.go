@@ -72,11 +72,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
+	"github.com/prometheus/client_golang/prometheus"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestMatchIdentityWithVariantsStarter(t *testing.T) {
@@ -2790,6 +2792,48 @@ func TestConnAddMetrics(t *testing.T) {
 	// ok
 	cc.addQueryMetrics(mysql.ComStmtExecute, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
+}
+
+func TestConnIACacheMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	cc := &clientConn{}
+	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	vars := tk.Session().GetSessionVars()
+	vars.StmtCtx.StmtType = "Select"
+	dbNames := session.GetDBNames(vars)
+	require.Len(t, dbNames, 1)
+	hits := metrics.IACacheHitCount.WithLabelValues("Select", dbNames[0])
+	misses := metrics.IARemoteReadSegmentCount.WithLabelValues("Select", dbNames[0])
+
+	for _, tt := range []struct {
+		name string
+		scan *tikvutil.ScanDetail
+	}{
+		{"cache only", &tikvutil.ScanDetail{IaCacheHitCount: 7}},
+		{"remote only", &tikvutil.ScanDetail{IaRemoteReadSegmentCount: 3}},
+		{"mixed", &tikvutil.ScanDetail{IaCacheHitCount: 5, IaRemoteReadSegmentCount: 2}},
+		{"zero", &tikvutil.ScanDetail{}},
+		{"no scan details", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			vars.StmtCtx.SyncExecDetails.Reset()
+			vars.StmtCtx.MergeScanDetail(tt.scan)
+			hitsBefore, missesBefore := promtestutils.ToFloat64(hits), promtestutils.ToFloat64(misses)
+			cc.addQueryMetrics(mysql.ComQuery, time.Now(), nil)
+			var wantHits, wantMisses float64
+			if tt.scan != nil {
+				wantHits = float64(tt.scan.IaCacheHitCount)
+				wantMisses = float64(tt.scan.IaRemoteReadSegmentCount)
+			}
+			require.Equal(t, wantHits, promtestutils.ToFloat64(hits)-hitsBefore)
+			require.Equal(t, wantMisses, promtestutils.ToFloat64(misses)-missesBefore)
+		})
+	}
+	count, err := promtestutils.GatherAndCount(prometheus.DefaultGatherer, "tidb_server_ia_cache_hit_count")
+	require.NoError(t, err)
+	require.Positive(t, count)
 }
 
 func TestIssue54335(t *testing.T) {
