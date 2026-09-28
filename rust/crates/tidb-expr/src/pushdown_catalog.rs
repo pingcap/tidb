@@ -194,6 +194,8 @@ pub enum RetCollation {
     /// `binary`/`binary`: `deriveCollation`'s fallthrough for a non-`ETString`
     /// return, which is every numeric signature and `CHAR_LENGTH`.
     Numeric,
+    /// Aggregate all value branches using the native control-function inference.
+    ControlBranches,
     /// The first argument's own charset and collation, with the first
     /// argument's `flen` and `SetBinFlagOrBinStr`: `deriveCollation`'s
     /// `ast.Upper`/`ast.Lower` (through `args...`, a single argument) and
@@ -325,6 +327,8 @@ impl BuiltinSignature {
             // declares where its collation comes from, and
             // `every_catalog_row_is_well_formed` pins that.
             RetCollation::Numeric => None,
+            // Controls carry their already-inferred full field type on the call.
+            RetCollation::ControlBranches => None,
             RetCollation::ConnectionString => {
                 let (charset, collation) = crate::collation_derive::connection_charset_info();
                 Some(pb_field_type(
@@ -918,21 +922,6 @@ fn resolve_unix_timestamp(args: &[PbScalar]) -> Option<&'static BuiltinSignature
 /// MySQL's special rounding behaviour), is absent rather than flagged, so
 /// "not in the catalog" and "TiKV refuses it" are one answer.
 pub const CATALOG: &[BuiltinSignature] = &[
-    // Go `ifNullFunctionClass.getFunction` selects ETString for these
-    // string/string arguments, casts both operands to ETString and assigns
-    // `IfNullString`; TiKV admits that signature. Its result collation is
-    // inherited from the first argument for the ordinary column/literal
-    // cases represented here.
-    string_signature(
-        "ifnull",
-        &[
-            ArgPattern::eval(EvalType::String),
-            ArgPattern::eval(EvalType::String),
-        ],
-        &[EvalType::String, EvalType::String],
-        ScalarFuncSig::IfNullString,
-        RetCollation::FirstArgString,
-    ),
     // Go `regexpLikeFunctionClass.getFunction` coerces both REGEXP operands
     // to ETString and assigns `RegexpLikeSig`; TiKV admits it unless the
     // derived function charset and collation are both binary.
@@ -1726,11 +1715,27 @@ pub const CATALOG: &[BuiltinSignature] = &[
     // arity (cond/value pairs + an optional else), so these rows carry an
     // EMPTY selector: the generic matcher above can never select them, and
     // [`resolve_conditional`] answers for this family instead.
-    // The STRING variants are deliberately absent: GO derives their collation
-    // by aggregating the VALUE branches (not the condition), which this
-    // catalog's per-row collation sources cannot express — a string-resulting
-    // case/if/ifnull therefore stays in the root task, exactly where the
-    // refused pushdown leaves it.
+    string_signature(
+        "case",
+        &[],
+        &[],
+        ScalarFuncSig::CaseWhenString,
+        RetCollation::ControlBranches,
+    ),
+    string_signature(
+        "if",
+        &[],
+        &[],
+        ScalarFuncSig::IfString,
+        RetCollation::ControlBranches,
+    ),
+    string_signature(
+        "ifnull",
+        &[],
+        &[],
+        ScalarFuncSig::IfNullString,
+        RetCollation::ControlBranches,
+    ),
     signature(
         "case",
         &[],
@@ -2047,6 +2052,13 @@ pub(crate) fn implicit_cast_signatures() -> impl Iterator<Item = ScalarFuncSig> 
     })
 }
 
+/// Go's resolved control-function result, retained through encoding.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ControlMetadata {
+    field_type: FieldType,
+    collation: crate::expr_collation::ExprCollation,
+}
+
 /// One node of a described builtin call: the description a lowering reads,
 /// carrying no evaluation behaviour of its own.
 #[derive(Clone, Debug, PartialEq)]
@@ -2161,6 +2173,8 @@ pub enum PbScalar {
         signature: &'static BuiltinSignature,
         /// The call's arguments, in source order.
         args: Vec<PbScalar>,
+        /// Result metadata inferred once by the control-function constructor.
+        control: Option<Box<ControlMetadata>>,
     },
 }
 
@@ -2185,6 +2199,10 @@ impl PbScalar {
             | Self::DurationLiteral { field_type, .. }
             | Self::JsonLiteral { field_type, .. }
             | Self::VectorLiteral { field_type, .. } => Some(field_type),
+            Self::Call {
+                control: Some(control),
+                ..
+            } => Some(&control.field_type),
             Self::IntLiteral(_) | Self::Call { .. } => None,
         }
     }
@@ -2235,7 +2253,14 @@ impl PbScalar {
             | Self::DurationLiteral { field_type, .. }
             | Self::JsonLiteral { field_type, .. }
             | Self::VectorLiteral { field_type, .. } => field_type.is_unsigned(),
-            Self::Call { signature, args } => {
+            Self::Call {
+                signature,
+                args,
+                control,
+            } => {
+                if let Some(control) = control {
+                    return control.field_type.is_unsigned();
+                }
                 signature.ret_unsigned_from_first_arg
                     && args.first().is_some_and(PbScalar::is_unsigned)
             }
@@ -2269,7 +2294,14 @@ impl PbScalar {
             | Self::DurationLiteral { .. }
             | Self::JsonLiteral { .. }
             | Self::VectorLiteral { .. } => false,
-            Self::Call { signature, args } => match signature.ret_collation {
+            Self::Call {
+                signature,
+                args,
+                control,
+            } => match signature.ret_collation {
+                RetCollation::ControlBranches => control
+                    .as_ref()
+                    .is_some_and(|metadata| metadata.field_type.is_binary_string()),
                 RetCollation::Numeric | RetCollation::ConnectionString => false,
                 RetCollation::FirstArgString => {
                     args.first().is_some_and(PbScalar::is_binary_string)
@@ -2282,12 +2314,135 @@ impl PbScalar {
     }
 }
 
+/// Reconstruct metadata in the native expression model, without evaluating
+/// arguments or encoding/decoding protobufs. Literal repertoire and column
+/// coercibility must survive branch aggregation.
+fn metadata_expression(scalar: &PbScalar) -> Option<Expression> {
+    use crate::{column::Column, constant::Constant, scalar_function::ScalarFunction};
+    use tidb_ast::CiString;
+    let datum = match scalar {
+        PbScalar::Column { offset, field_type } => {
+            let mut column = Column::new(0, field_type.clone());
+            column.index = i64::from(*offset);
+            return Some(Expression::Column(column));
+        }
+        PbScalar::Call {
+            signature,
+            args,
+            control,
+        } => {
+            if let Some(control) = control {
+                // Only the immutable metadata is needed by an enclosing inference.
+                let mut expression = Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(signature.name),
+                    control.field_type.clone(),
+                    Vec::new(),
+                ));
+                crate::collation_derive::apply_derived_collation(
+                    &mut expression,
+                    &control.collation,
+                );
+                return Some(expression);
+            }
+            let arguments = args
+                .iter()
+                .map(metadata_expression)
+                .collect::<Option<Vec<_>>>()?;
+            let children = arguments
+                .iter()
+                .map(|arg| {
+                    Some(Expr {
+                        field_type: Some(field_type_to_pb(arg.static_type()?)?),
+                        ..Default::default()
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let field = crate::distsql_builtin::pb_type_to_field_type(
+                &signature.return_field_type(scalar.is_unsigned(), &children)?,
+            );
+            let collation = crate::collation_derive::derive_collation(
+                signature.name,
+                &arguments,
+                signature.ret,
+            )
+            .ok()?;
+            let mut expression = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(signature.name),
+                field,
+                arguments,
+            ));
+            crate::collation_derive::apply_derived_collation(&mut expression, &collation);
+            return Some(expression);
+        }
+        PbScalar::IntLiteral(value) => {
+            return Some(Expression::Constant(Constant::new(
+                Datum::Int(*value),
+                FieldType::new(FieldTypeCode::LongLong)
+                    .with_flen(value.to_string().len() as i64)
+                    .with_decimal(0)
+                    .with_flags(NOT_NULL_FLAG | BINARY_FLAG),
+            )))
+        }
+        PbScalar::NullLiteral { .. } => Datum::Null,
+        PbScalar::UIntLiteral { value, .. } => Datum::UInt(*value),
+        PbScalar::DecimalLiteral { value, .. } => Datum::Decimal(value.clone()),
+        PbScalar::RealLiteral { value, .. } => Datum::Real(*value),
+        PbScalar::Float32Literal { value, .. } => Datum::Float32(*value),
+        PbScalar::StringLiteral { value, field_type } => {
+            Datum::new_collation_string(value.clone(), field_type.collation())
+        }
+        PbScalar::BytesLiteral { value, .. } => Datum::Bytes(value.clone()),
+        PbScalar::BitLiteral { value, .. } => Datum::Bit(value.clone()),
+        PbScalar::EnumLiteral { value, field_type } => Datum::Enum(
+            tidb_datatype::parse_enum_value(&field_type.elems_snapshot(), *value).ok()?,
+            field_type.collation(),
+        ),
+        PbScalar::TimeLiteral { value, .. } => Datum::Time(*value),
+        PbScalar::DurationLiteral { value, .. } => Datum::Duration(*value),
+        PbScalar::JsonLiteral { value, .. } => Datum::Json(value.clone()),
+        PbScalar::VectorLiteral { value, .. } => Datum::VectorFloat32(value.clone()),
+    };
+    Some(Expression::Constant(Constant::new(
+        datum,
+        scalar.static_field_type()?.clone(),
+    )))
+}
+
+/// Go infers the complete result type from every value branch, then derives
+/// collation with the function's SQL name before choosing its typed signature.
+fn control_expression(name: &str, args: &[PbScalar]) -> Option<Expression> {
+    let arguments = args
+        .iter()
+        .map(metadata_expression)
+        .collect::<Option<Vec<_>>>()?;
+    let values = match name {
+        "if" if arguments.len() == 3 => arguments[1..].to_vec(),
+        "ifnull" if arguments.len() == 2 => arguments.clone(),
+        "case" if arguments.len() >= 2 => arguments
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| index % 2 == 1 || index + 1 == arguments.len())
+            .map(|(_, arg)| arg.clone())
+            .collect(),
+        _ => return None,
+    };
+    let field = crate::rewriter::infer_type4_control_funcs(name, &values)?;
+    let collation =
+        crate::collation_derive::derive_collation(name, &arguments, field.eval_type()).ok()?;
+    let mut expression = Expression::ScalarFunction(crate::scalar_function::ScalarFunction::new(
+        tidb_ast::CiString::new(name),
+        field,
+        arguments,
+    ));
+    crate::collation_derive::apply_derived_collation(&mut expression, &collation);
+    Some(expression)
+}
+
 /// Resolves GO's conditional family (`case`/`if`/`ifnull`).
 ///
 /// GO records each conditional's PbCode from the RESULT type that
-/// `inferType4ControlFuncs` derives; the first VALUE branch's own type stands
-/// in for that here. `case` takes a variable arity (flattened cond/value
-/// pairs with an optional trailing else, exactly GO's PB argument order), so
+/// `inferType4ControlFuncs` derives from all value branches. `case` takes a
+/// variable arity (flattened cond/value pairs with an optional trailing else, exactly GO's PB argument order), so
 /// the static matcher cannot answer for it.
 fn resolve_conditional(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
     match (name, args.len()) {
@@ -2296,7 +2451,12 @@ fn resolve_conditional(name: &str, args: &[PbScalar]) -> Option<&'static Builtin
         ("ifnull", 2) => {}
         _ => return None,
     }
-    let suffix = match args[1].eval_type() {
+    let inferred = control_expression(name, args)?;
+    resolve_control_type(name, inferred.static_type()?.eval_type())
+}
+
+fn resolve_control_type(name: &str, domain: EvalType) -> Option<&'static BuiltinSignature> {
+    let suffix = match domain {
         EvalType::Int => "Int",
         EvalType::Real => "Real",
         EvalType::Decimal => "Decimal",
@@ -2354,22 +2514,6 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
     if name == "unix_timestamp" {
         return resolve_unix_timestamp(args);
     }
-    if name == "ifnull"
-        && !matches!(
-            args,
-            [
-                PbScalar::Column { field_type, .. },
-                PbScalar::StringLiteral { field_type: literal_type, .. }
-            ] if field_type.eval_type() == EvalType::String
-                && literal_type.eval_type() == EvalType::String
-        )
-    {
-        // In this projection the IFNULL result collation is known to come
-        // from the implicit column operand only for column/string-literal
-        // pairs. Other coercibility combinations stay local instead of
-        // assigning a possibly wrong collation to the TiKV expression.
-        return None;
-    }
     CATALOG.iter().find(|candidate| {
         candidate.name == name
             && candidate.selector.len() == args.len()
@@ -2401,8 +2545,31 @@ pub fn build_call(name: &str, args: Vec<PbScalar>) -> Option<PbScalar> {
             }
         })
         .collect::<Option<Vec<_>>>()?;
-    let signature = resolve(name, &args)?;
-    Some(PbScalar::Call { signature, args })
+    let (signature, control) = if matches!(name, "case" | "if" | "ifnull") {
+        let expression = control_expression(name, &args)?;
+        let field_type = expression.static_type()?.clone();
+        let signature = resolve_control_type(name, field_type.eval_type())?;
+        let collation = crate::expr_collation::ExprCollation {
+            coer: crate::collation_derive::coercibility_of(&expression),
+            repe: crate::collation_derive::repertoire_of(&expression),
+            charset: field_type.charset_name().to_owned(),
+            collation: field_type.collation_name().to_owned(),
+        };
+        (
+            signature,
+            Some(Box::new(ControlMetadata {
+                field_type,
+                collation,
+            })),
+        )
+    } else {
+        (resolve(name, &args)?, None)
+    };
+    Some(PbScalar::Call {
+        signature,
+        args,
+        control,
+    })
 }
 
 /// Describes one already-resolved executor expression in the same catalog
@@ -2470,7 +2637,33 @@ fn from_expression_with_context(
                 };
                 args.push(argument);
             }
-            Ok(build_call(function.func_name.lowercase(), args))
+            let mut described = build_call(function.func_name.lowercase(), args);
+            if let Some(PbScalar::Call {
+                signature,
+                control: Some(control),
+                ..
+            }) = &mut described
+            {
+                // Go's encoder reads the resolved function, including explicit
+                // result metadata, rather than inferring it again from children.
+                let Some(field) = expression.static_type() else {
+                    return Ok(None);
+                };
+                let Some(resolved) =
+                    resolve_control_type(function.func_name.lowercase(), field.eval_type())
+                else {
+                    return Ok(None);
+                };
+                *signature = resolved;
+                control.field_type = field.clone();
+                control.collation = crate::expr_collation::ExprCollation {
+                    coer: crate::collation_derive::coercibility_of(expression),
+                    repe: crate::collation_derive::repertoire_of(expression),
+                    charset: field.charset_name().to_owned(),
+                    collation: field.collation_name().to_owned(),
+                };
+            }
+            Ok(described)
         }
         Expression::CorrelatedColumn(_) => Ok(None),
     }
@@ -2788,13 +2981,60 @@ pub fn to_pb_in(
             value.serialize(),
             field_type_to_pb(field_type)?,
         )),
-        PbScalar::Call { signature, args } => {
+        PbScalar::Call {
+            signature,
+            args,
+            control,
+        } => {
+            let control_field = control.as_ref().map(|metadata| &metadata.field_type);
             let mut children = Vec::with_capacity(args.len());
             for (index, argument) in args.iter().enumerate() {
                 let required = signature.arg_type_at(index, args.len(), argument.eval_type())?;
-                children.push(coerced_to_pb(argument, required, columns, zone)?);
+                // Go newBaseBuiltinFuncWithFieldTypes aligns decimal and temporal
+                // precision even when the argument already has that eval type.
+                if let Some(field) = control_field.filter(|_| {
+                    matches!(
+                        required,
+                        EvalType::Decimal
+                            | EvalType::Datetime
+                            | EvalType::Timestamp
+                            | EvalType::Duration
+                    )
+                }) {
+                    let mut child = to_pb_in(argument, columns, zone)?;
+                    let target = field_type_to_pb(field)?;
+                    if child.field_type.as_ref() != Some(&target) {
+                        let cast = match (argument.eval_type(), required) {
+                            (EvalType::Decimal, EvalType::Decimal) => {
+                                ScalarFuncSig::CastDecimalAsDecimal
+                            }
+                            (
+                                EvalType::Datetime | EvalType::Timestamp,
+                                EvalType::Datetime | EvalType::Timestamp,
+                            ) => ScalarFuncSig::CastTimeAsTime,
+                            (EvalType::Duration, EvalType::Duration) => {
+                                ScalarFuncSig::CastDurationAsDuration
+                            }
+                            (source, target) => cast_signature(source, target)??,
+                        };
+                        child = Expr {
+                            tp: Some(ExprType::ScalarFunc as i32),
+                            sig: Some(cast as i32),
+                            children: vec![child],
+                            field_type: Some(target),
+                            ..Default::default()
+                        };
+                    }
+                    children.push(child);
+                } else {
+                    children.push(coerced_to_pb(argument, required, columns, zone)?);
+                }
             }
-            let return_field_type = signature.return_field_type(scalar.is_unsigned(), &children)?;
+            let return_field_type = if let Some(field) = control_field {
+                field_type_to_pb(field)?
+            } else {
+                signature.return_field_type(scalar.is_unsigned(), &children)?
+            };
             Some(Expr {
                 tp: Some(ExprType::ScalarFunc as i32),
                 val: None,
@@ -2853,7 +3093,11 @@ fn coerced_to_pb(
             // Unlike numeric constants, Go keeps an integer child and emits
             // the corresponding temporal/JSON cast node.  Let the generic
             // path below build that node with the target metadata.
-            EvalType::Datetime | EvalType::Timestamp | EvalType::Duration | EvalType::Json => {
+            EvalType::String
+            | EvalType::Datetime
+            | EvalType::Timestamp
+            | EvalType::Duration
+            | EvalType::Json => {
                 // Fall through after the constant-specialization block.
                 let cast = cast_signature(argument.eval_type(), required)?;
                 let Some(cast) = cast else {
@@ -3081,11 +3325,121 @@ const fn leaf_column_family(code: FieldTypeCode) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn pb_contract_control_builder_aggregates_all_value_branches() {
+        let text = PbScalar::StringLiteral {
+            value: b"fallback".to_vec(),
+            field_type: FieldType::new(FieldTypeCode::VarString).with_flen(8),
+        };
+        let column = PbScalar::Column {
+            offset: 0,
+            field_type: FieldType::new(FieldTypeCode::Varchar)
+                .with_flen(30)
+                .with_collation_name("utf8mb4_general_ci"),
+        };
+        for (name, sig) in [
+            ("if", ScalarFuncSig::IfString),
+            ("case", ScalarFuncSig::CaseWhenString),
+            ("ifnull", ScalarFuncSig::IfNullString),
+        ] {
+            for branches in [
+                vec![column.clone(), text.clone()],
+                vec![text.clone(), column.clone()],
+            ] {
+                let mut args = branches;
+                if name != "ifnull" {
+                    args.insert(0, PbScalar::IntLiteral(1));
+                }
+                let call = build_call(name, args)
+                    .expect("Go derives string control metadata from all value branches");
+                let pb = lower(&call).unwrap();
+                assert_eq!(pb.sig(), sig);
+                let field = pb.field_type.as_ref().unwrap();
+                assert_eq!(
+                    field.collate(),
+                    tidb_datatype::collation_to_proto("utf8mb4_general_ci")
+                );
+                assert_eq!(field.flen(), 30);
+                crate::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+                let nested = build_call("ifnull", vec![text.clone(), call]).unwrap();
+                assert_eq!(
+                    lower(&nested).unwrap().field_type.unwrap().collate(),
+                    field.collate()
+                );
+            }
+        }
+        for name in ["if", "case", "ifnull"] {
+            let mut args = vec![
+                PbScalar::IntLiteral(1),
+                PbScalar::RealLiteral {
+                    value: 1.5,
+                    field_type: FieldType::new(FieldTypeCode::Double),
+                },
+            ];
+            if name != "ifnull" {
+                args.insert(0, PbScalar::IntLiteral(0));
+            }
+            let call = build_call(name, args).unwrap();
+            assert_eq!(call.eval_type(), EvalType::Real);
+            let pb = lower(&call).unwrap();
+            let expr = crate::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+            assert_eq!(
+                expr.eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+                    .unwrap(),
+                Datum::Real(if name == "ifnull" { 1.0 } else { 1.5 })
+            );
+        }
+    }
+
     fn column(code: FieldTypeCode) -> PbScalar {
         PbScalar::Column {
             offset: 0,
             field_type: FieldType::new(code),
         }
+    }
+
+    #[test]
+    fn pb_contract_controls_preserve_cast_precision_and_string_domains() {
+        let decimal = |value: &str, precision, scale| PbScalar::DecimalLiteral {
+            value: Decimal::parse_mysql(value).0,
+            field_type: FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen(precision)
+                .with_decimal(scale),
+        };
+        let call = build_call(
+            "if",
+            vec![
+                PbScalar::IntLiteral(1),
+                decimal("1.2", 2, 1),
+                decimal("1.234", 4, 3),
+            ],
+        )
+        .unwrap();
+        let pb = lower(&call).unwrap();
+        assert_eq!(pb.field_type.as_ref().unwrap().decimal(), 3);
+        assert_eq!(pb.children[1].sig(), ScalarFuncSig::CastDecimalAsDecimal);
+        assert_eq!(pb.children[1].field_type.as_ref().unwrap().decimal(), 3);
+        let value = crate::distsql_builtin::pb_to_expr(&pb, &[])
+            .unwrap()
+            .eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+            .unwrap();
+        assert_eq!(value.sql_string().unwrap(), "1.200");
+        let text = PbScalar::StringLiteral {
+            value: b"fallback".to_vec(),
+            field_type: FieldType::new(FieldTypeCode::VarString),
+        };
+        let call = build_call(
+            "if",
+            vec![PbScalar::IntLiteral(1), PbScalar::IntLiteral(42), text],
+        )
+        .unwrap();
+        let pb = lower(&call).unwrap();
+        assert_eq!(pb.sig(), ScalarFuncSig::IfString);
+        let value = crate::distsql_builtin::pb_to_expr(&pb, &[])
+            .unwrap()
+            .eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+            .unwrap();
+        assert_eq!(value.sql_bytes().unwrap(), b"42");
     }
 
     #[test]
@@ -3178,7 +3532,7 @@ mod tests {
             &call,
             PbScalar::Call { signature, .. }
                 if signature.sig == ScalarFuncSig::IfNullString
-                    && signature.arg_types == [EvalType::String, EvalType::String]
+                    && signature.arg_type_at(0, 2, EvalType::String) == Some(EvalType::String)
         ));
         let encoded = to_pb(&call, &descriptors(&call)).unwrap();
         assert_eq!(encoded.sig, Some(ScalarFuncSig::IfNullString as i32));
@@ -3187,10 +3541,12 @@ mod tests {
             Some(tidb_datatype::collation_to_proto("utf8mb4_general_ci"))
         );
 
-        // With the literal first and column second, the column's stronger
-        // coercibility supplies the result collation, so this row refuses
-        // rather than claiming the first argument's collation.
-        assert!(build_call("ifnull", vec![literal, column]).is_none());
+        // Column coercibility wins regardless of branch position.
+        let reverse = build_call("ifnull", vec![literal, column]).unwrap();
+        assert_eq!(
+            lower(&reverse).unwrap().field_type.unwrap().collate,
+            encoded.field_type.as_ref().unwrap().collate
+        );
     }
 
     #[test]

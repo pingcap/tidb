@@ -152,7 +152,8 @@ pub use datum::{
 };
 pub use datum_convert::{
     change_reverse_result_by_bound, get_max_value, get_min_value, produce_float_with_type,
-    produce_string_with_type, produce_string_with_type_in_context, DatumConversion, RoundingType,
+    produce_float_with_type_in_context, produce_string_with_type,
+    produce_string_with_type_in_context, DatumConversion, RoundingType,
 };
 pub use datum_eval::{compute_plus, DatumArithmeticError};
 pub use decimal::{

@@ -437,10 +437,8 @@ fn check_and_derive_collation_from_exprs_with_connection(
 /// `func_name` is this crate's rewriter spelling (`eq`, `lt`, `like`, ...),
 /// which maps 1:1 onto Go's `ast.EQ`/`ast.LT`/`ast.Like` constants.
 ///
-/// DEFERRED (documented) relative to Go's full switch: `case` (Go's own
-/// comment marks its aggregation as incorrect), and the JSON-returning family
-/// beyond `json_pretty`/`json_quote`. Every unlisted name lands in the same
-/// default arm Go uses.
+/// The JSON-returning family beyond `json_pretty`/`json_quote` remains
+/// deferred. Every unlisted name lands in the same default arm Go uses.
 #[allow(clippy::too_many_lines)]
 pub fn derive_collation(
     func_name: &str,
@@ -578,6 +576,19 @@ pub fn derive_collation_with_connection(
                 return Ok(ec);
             }
             Ok(default_collation(ret_type, connection))
+        }
+        // Go's CASE signature declares every value slot in the merged result
+        // domain. Only those slots participate in string collation aggregation.
+        "case" if args.len() >= 2 && ret_type == EvalType::String => {
+            let values = args
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| index % 2 == 1 || index + 1 == args.len())
+                .map(|(_, arg)| arg.clone())
+                .collect::<Vec<_>>();
+            check_and_derive_collation_from_exprs_with_connection(
+                func_name, ret_type, &values, connection,
+            )
         }
         // `IF(cond, a, b)` aggregates the two branches; `IFNULL(a, b)` both.
         "if" if args.len() == 3 => check_and_derive_collation_from_exprs_with_connection(

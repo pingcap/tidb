@@ -483,6 +483,154 @@ mod child_error_tests {
 mod next_boundary_audit {
     use super::*;
     use tidb_proto::tipb;
+
+    #[test]
+    fn pb_contract_string_controls() {
+        for sig in [
+            tipb::ScalarFuncSig::IfString,
+            tipb::ScalarFuncSig::CaseWhenString,
+        ] {
+            let text = |v: &str| tipb::Expr {
+                tp: Some(tipb::ExprType::String as i32),
+                val: Some(v.as_bytes().to_vec()),
+                field_type: Some(ty(253)),
+                ..Default::default()
+            };
+            let mut pb = call(sig, vec![int(1), text("yes"), text("no")]);
+            pb.field_type = Some(ty(253));
+            let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+            assert_eq!(
+                expr.eval(ctx().as_ref(), tidb_chunk::row::Row::empty())
+                    .unwrap()
+                    .sql_bytes()
+                    .unwrap(),
+                b"yes"
+            );
+        }
+    }
+    #[test]
+    fn pb_contract_conv_evaluates_bases_before_null_text() {
+        let text = tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(b"invalid".to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let bad = call(tipb::ScalarFuncSig::CastStringAsInt, vec![text]);
+        let mut pb = call(
+            tipb::ScalarFuncSig::Conv,
+            vec![tipb::Expr::default(), bad, int(10)],
+        );
+        pb.field_type = Some(ty(253));
+        let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+        assert!(expr
+            .eval(ctx().as_ref(), tidb_chunk::row::Row::empty())
+            .is_err());
+    }
+    #[test]
+    fn pb_contract_real_cast_keeps_precision() {
+        let text = tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(b"1.26".to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let mut pb = call(tipb::ScalarFuncSig::CastStringAsReal, vec![text]);
+        let mut ft = ty(5);
+        ft.flen = Some(3);
+        ft.decimal = Some(1);
+        pb.field_type = Some(ft);
+        let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+        assert_eq!(
+            expr.eval(ctx().as_ref(), tidb_chunk::row::Row::empty())
+                .unwrap(),
+            Datum::Real(1.3)
+        );
+    }
+
+    #[test]
+    fn pb_contract_conv_order_and_warning_policy() {
+        let text = |v: &str| tipb::Expr {
+            tp: Some(tipb::ExprType::String as i32),
+            val: Some(v.as_bytes().to_vec()),
+            field_type: Some(ty(253)),
+            ..Default::default()
+        };
+        let bad_int = call(tipb::ScalarFuncSig::CastStringAsInt, vec![text("invalid")]);
+        let bad_text = call(tipb::ScalarFuncSig::CastIntAsString, vec![bad_int.clone()]);
+        for (args, errors) in [
+            (vec![tipb::Expr::default(), bad_int.clone(), int(10)], true),
+            (
+                vec![bad_text.clone(), tipb::Expr::default(), bad_int.clone()],
+                false,
+            ),
+            (vec![bad_text, int(10), tipb::Expr::default()], false),
+            (vec![tipb::Expr::default(), int(10), bad_int], true),
+        ] {
+            let mut pb = call(tipb::ScalarFuncSig::Conv, args);
+            pb.field_type = Some(ty(253));
+            let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
+            for flags in [0, FLAG_TRUNCATE_AS_WARNING, FLAG_IGNORE_TRUNCATE] {
+                let context = RequestEvalContext::new(SessionTimeZone::utc(), 4, flags);
+                let result = expr.eval(&context, tidb_chunk::row::Row::empty());
+                if errors && flags == 0 {
+                    assert!(matches!(
+                        result,
+                        Err(tidb_expr::EvalError::TruncatedWrongValue(_))
+                    ));
+                } else {
+                    assert_eq!(result.unwrap(), Datum::Null);
+                }
+                assert_eq!(
+                    context.take_warnings().len(),
+                    usize::from(errors && flags == FLAG_TRUNCATE_AS_WARNING)
+                );
+            }
+        }
+    }
+    #[test]
+    fn pb_contract_real_production_has_source_specific_errors() {
+        for flags in [0, FLAG_TRUNCATE_AS_WARNING, FLAG_IGNORE_TRUNCATE] {
+            for (input, unsigned, expected) in [
+                ("1.26", false, Some(1.3)),
+                ("999", false, None),
+                ("-1.26", true, None),
+            ] {
+                let text = tipb::Expr {
+                    tp: Some(tipb::ExprType::String as i32),
+                    val: Some(input.as_bytes().to_vec()),
+                    field_type: Some(ty(253)),
+                    ..Default::default()
+                };
+                let mut pb = call(tipb::ScalarFuncSig::CastStringAsReal, vec![text]);
+                let mut ft = ty(5);
+                ft.flen = Some(3);
+                ft.decimal = Some(1);
+                ft.flag = Some(if unsigned { 32 } else { 0 });
+                pb.field_type = Some(ft.clone());
+                let context = RequestEvalContext::new(SessionTimeZone::utc(), 4, flags);
+                let result = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[])
+                    .unwrap()
+                    .eval(&context, tidb_chunk::row::Row::empty());
+                if let Some(expected) = expected {
+                    assert_eq!(result.unwrap(), Datum::Real(expected));
+                } else {
+                    assert!(matches!(result, Err(tidb_expr::EvalError::Conversion(_))));
+                }
+                assert!(context.take_warnings().is_empty());
+                // Go CastRealAsReal does not run the string producer.
+                pb.sig = Some(tipb::ScalarFuncSig::CastRealAsReal as i32);
+                pb.children = vec![real(1.26)];
+                assert_eq!(
+                    tidb_expr::distsql_builtin::pb_to_expr(&pb, &[])
+                        .unwrap()
+                        .eval(&context, tidb_chunk::row::Row::empty())
+                        .unwrap(),
+                    Datum::Real(1.26)
+                );
+            }
+        }
+    }
     fn ty(tp: i32) -> tipb::FieldType {
         tipb::FieldType {
             tp: Some(tp),

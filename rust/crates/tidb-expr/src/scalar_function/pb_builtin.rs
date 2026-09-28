@@ -32,6 +32,7 @@ enum Kernel {
     Compare(BinaryOp, EvalType),
     In(EvalType),
     Like,
+    Conv,
     DateArithmetic {
         subtract: bool,
     },
@@ -174,12 +175,14 @@ impl PbBuiltin {
                 negate: false,
                 domain: EvalType::Decimal,
             },
+            CaseWhenString => Kernel::Case(EvalType::String),
             CaseWhenInt => Kernel::Case(EvalType::Int),
             CaseWhenReal => Kernel::Case(EvalType::Real),
             CaseWhenDecimal => Kernel::Case(EvalType::Decimal),
             CaseWhenTime => Kernel::Case(EvalType::Datetime),
             CaseWhenDuration => Kernel::Case(EvalType::Duration),
             CaseWhenJson => Kernel::Case(EvalType::Json),
+            IfString => Kernel::If(EvalType::String),
             IfInt => Kernel::If(EvalType::Int),
             IfReal => Kernel::If(EvalType::Real),
             IfDecimal => Kernel::If(EvalType::Decimal),
@@ -234,7 +237,7 @@ impl PbBuiltin {
             Sin => Kernel::Values(crate::math_fn::sin),
             Pow => Kernel::Values(crate::math_fn::pow),
             Pi => Kernel::Values(|values, _| crate::math_fn::pi(values)),
-            Conv => Kernel::Values(|values, _| crate::math_fn::conv(values)),
+            Conv => Kernel::Conv,
             RoundInt | RoundReal | RoundDec => Kernel::Round,
             Date => Kernel::Values(crate::time_fn::date),
             DateDiff => Kernel::Values(|values, _| crate::time_fn::calendar::date_diff(values)),
@@ -521,6 +524,22 @@ impl PbBuiltin {
                 }
                 Ok(if has_null { Datum::Null } else { Datum::Int(0) })
             }
+            Kernel::Conv => {
+                if args.len() != 3 {
+                    return Err(EvalError::Unsupported("protobuf CONV arity"));
+                }
+                // Go evaluates the two bases before the ordinary text argument.
+                let from = typed_argument(1, EvalType::Int)?;
+                if from.is_null() {
+                    return Ok(Datum::Null);
+                }
+                let to = typed_argument(2, EvalType::Int)?;
+                if to.is_null() {
+                    return Ok(Datum::Null);
+                }
+                let text = typed_argument(0, EvalType::String)?;
+                crate::math_fn::conv(&[text, from, to])
+            }
             Kernel::Like => function.eval_like(ctx, row, false),
             Kernel::DateArithmetic { subtract } => {
                 if args.len() != 3 {
@@ -549,6 +568,29 @@ impl PbBuiltin {
                 let field = function
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("protobuf cast result type"))?;
+                if target == EvalType::Real && source == EvalType::String {
+                    let value = crate::cast::eval_cast(
+                        &tidb_ast::CastType::Double,
+                        value,
+                        args[0].static_type(),
+                        ctx,
+                    )?;
+                    let Datum::Real(value) = value else {
+                        unreachable!("real cast result")
+                    };
+                    let warnings = crate::constant::ConversionWarnings(ctx);
+                    let zone = ctx.time_zone();
+                    let context = tidb_datatype::ConversionContext::new(
+                        ctx.type_flags(),
+                        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                        &warnings,
+                    );
+                    let converted =
+                        tidb_datatype::produce_float_with_type_in_context(value, field, &context);
+                    return converted.error.map_or(Ok(converted.value), |error| {
+                        Err(EvalError::Conversion(error))
+                    });
+                }
                 if target == EvalType::String {
                     return crate::cast::eval_string_cast_with_type(
                         value,

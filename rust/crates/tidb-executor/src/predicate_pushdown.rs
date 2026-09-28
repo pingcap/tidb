@@ -773,7 +773,7 @@ fn remap_pb_scalar(
         tidb_expr::pushdown_catalog::PbScalar::Column { offset, .. } => {
             *offset = remapped_offset(*offset, keep)?;
         }
-        tidb_expr::pushdown_catalog::PbScalar::Call { signature, args } => {
+        tidb_expr::pushdown_catalog::PbScalar::Call { signature, args, .. } => {
             if signature.name == "isnull" {
                 if let [tidb_expr::pushdown_catalog::PbScalar::Column { offset, .. }] =
                     args.as_mut_slice()

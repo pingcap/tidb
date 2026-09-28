@@ -995,6 +995,20 @@ pub fn produce_float_with_type(value: f64, target: &FieldType) -> Converted<f64>
     produce_float_reported(value, target, &mut Diagnostics::new(None))
 }
 
+/// Go float production with its original error, without general Datum conversion.
+pub fn produce_float_with_type_in_context(
+    value: f64,
+    target: &FieldType,
+    context: &crate::ConversionContext<'_>,
+) -> DatumConversion {
+    let mut diagnostics = Diagnostics::new(Some(context));
+    let produced = produce_float_reported(value, target, &mut diagnostics);
+    DatumConversion {
+        value: Datum::Real(produced.value),
+        error: diagnostics.error,
+    }
+}
+
 fn produce_float_reported(
     value: f64,
     target: &FieldType,

@@ -6129,6 +6129,7 @@ mod remote_cursor_tests {
         let call = |name: &str, args: Vec<PbScalar>| PbScalar::Call {
             signature: resolve(name, &args).unwrap(),
             args,
+            control: None,
         };
         let null = call("isnull", vec![column.clone()]);
         let nested = ScanPredicate::Builtin(call("not", vec![null]));
