@@ -66,7 +66,7 @@ use crate::executor::{ExecError, Executor, ExecutorMeta};
 /// Lookups over at most this many handles are fetched inline by the calling
 /// worker instead of crossing the persistent `idx-lookup` pool channel. Go's
 /// `IndexLookUpExecutor` sends its first 100-handle window to a table worker;
-/// only point-select-sized windows are cheaper inline than that handoff.
+/// small point-lookup windows are cheaper inline than that handoff.
 /// Larger windows stay asynchronous so the index worker can overlap table
 /// response waits exactly as Go does. The answer is byte-identical.
 ///
@@ -74,7 +74,7 @@ use crate::executor::{ExecError, Executor, ExecutorMeta};
 /// whatever its size: the index stream is exhausted, so no table wait can
 /// overlap anything, and Go's goroutine handoff to its table worker costs
 /// nothing measurable where a native lane handoff costs two context switches.
-const INDEX_LOOKUP_INLINE_HANDLES: usize = 4;
+const INDEX_LOOKUP_INLINE_HANDLES: usize = 16;
 use crate::kv_table::{
     IndexRange, IndexRangeCursor, KvTable, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor,
     TableHandle,
@@ -2925,9 +2925,7 @@ impl IndexRangeSourceExec {
                 }
                 // A short window means the index stream ended inside it; with
                 // no earlier window in flight there is nothing to overlap.
-                let last_window_alone = handles.len() < target && inflight == 0;
-                let mut job = match self.build_lookup_job(handles, physical_ids, last_window_alone)
-                {
+                let mut job = match self.build_lookup_job(handles, physical_ids) {
                     Ok(job) => job,
                     Err(error) => {
                         if let Some(controller) = &self.adaptive_limit {
@@ -3103,15 +3101,14 @@ impl IndexRangeSourceExec {
         }
     }
 
-    /// Collects one lookup window into a pipeline job. Tiny lookups open and
-    /// consume their response here; larger jobs move cloneable table/request
-    /// state to the lookup worker, which opens and consumes the lazy response
-    /// there. A response iterator never crosses an OS-thread boundary.
+    /// Collects one lookup window into a pipeline job. The table worker opens
+    /// and consumes the lazy response on a persistent lookup lane, matching
+    /// Go's `IndexLookUpExecutor` table-worker pool. A response iterator never
+    /// crosses an OS-thread boundary.
     fn build_lookup_job(
         &mut self,
         handles: Vec<TableHandle>,
         physical_ids: Vec<i64>,
-        last_window_alone: bool,
     ) -> Result<LookupBatchJob, ExecError> {
         let handle_count = handles.len();
         if !physical_ids.is_empty() {
@@ -3289,17 +3286,6 @@ impl IndexRangeSourceExec {
                 Err(error) => Err(format!("{error:?}")),
             }
         };
-        if last_window_alone {
-            // See INDEX_LOOKUP_INLINE_HANDLES: the same request, without the
-            // lane handoff that nothing could overlap.
-            return Ok(LookupBatchJob {
-                physical_ids: Vec::new(),
-                handle_count,
-                adaptive_reserved_handles: 0,
-                receiver: None,
-                ready: Some(worker()),
-            });
-        }
         // Go's table worker is persistent across lookup tasks. Submit the
         // whole window to the source-owned lane set instead of creating one
         // native thread per window. Only Send table/request state enters the
@@ -7983,6 +7969,31 @@ mod tests {
             13
         );
         assert_eq!(source.batch_size, 13);
+        source.close().unwrap();
+    }
+
+    #[test]
+    fn ten_point_lookup_stays_inline_like_go() {
+        let table = KvTable::with_storage(
+            92,
+            vec![column("a", 1)],
+            Box::new(MemTableStorage::default()),
+        );
+        let mut source = IndexRangeSourceExec::new_with_context(
+            ExecutorMeta::new(Schema::new(vec![]), 0, 32, 32),
+            table,
+            1,
+            vec![IndexRange::full()],
+            crate::RowDecodeContext::for_test_query_utc(),
+        );
+        source.open().unwrap();
+        let handles = (1..=10).map(TableHandle::Int).collect();
+        let job = source.build_lookup_job(handles, Vec::new()).unwrap();
+        assert!(
+            job.receiver.is_none(),
+            "select_random_points must keep its ten handles on the calling worker"
+        );
+        assert!(job.ready.is_some());
         source.close().unwrap();
     }
 
