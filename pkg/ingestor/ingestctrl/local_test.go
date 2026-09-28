@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
@@ -64,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -76,6 +78,7 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/status"
 )
@@ -2872,6 +2875,42 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	require.Same(t, ctx, pdClientCtx)
 	require.ErrorContains(t, err, context.Canceled.Error())
 	require.Nil(t, b.tikvCli)
+
+	for _, diagnostic := range []bool{false, true} {
+		t.Run(fmt.Sprintf("diagnostic=%t", diagnostic), func(t *testing.T) {
+			if !intest.InTest {
+				t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+			}
+			t.Cleanup(diagnosticmode.SetForTest(diagnostic))
+			newPDClient = func(ctx context.Context, _ pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, opts ...opt.ClientOption) (pd.Client, error) {
+				options := opt.NewOption()
+				for _, apply := range opts {
+					apply(options)
+				}
+				// A terminal interceptor records forwarding without contacting PD.
+				dialOptions := append(options.GRPCDialOptions,
+					grpc.WithTransportCredentials(insecure.NewCredentials()),
+					grpc.WithChainUnaryInterceptor(func(context.Context, string, any, any, *grpc.ClientConn, grpc.UnaryInvoker, ...grpc.CallOption) error {
+						return status.Error(codes.Unimplemented, "forwarded")
+					}),
+				)
+				conn, err := grpc.NewClient("passthrough:///pd-interceptor-test", dialOptions...)
+				require.NoError(t, err)
+				defer conn.Close()
+				err = conn.Invoke(ctx, "/pdpb.PD/GetStore", nil, nil)
+				require.Equal(t, codes.Unimplemented, status.Code(err))
+				err = conn.Invoke(ctx, "/pdpb.PD/UpdateGCSafePoint", nil, nil)
+				if diagnostic {
+					require.Equal(t, codes.PermissionDenied, status.Code(err))
+				} else {
+					require.Equal(t, codes.Unimplemented, status.Code(err))
+				}
+				return nil, errors.New("stop after PD options check")
+			}
+			_, err := b.GetDupeController(context.Background(), 1, nil)
+			require.ErrorContains(t, err, "stop after PD options check")
+		})
+	}
 }
 
 type mockStoreHelper struct{}

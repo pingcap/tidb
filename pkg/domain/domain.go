@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -825,7 +826,6 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
-
 	do.isSyncer.SetMinJobIDRefresher(do.minJobIDRefresher)
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
@@ -839,8 +839,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.store, do.exit)
 	}, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
-	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
-	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
+	do.startRunawayLoops()
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
@@ -868,6 +867,13 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			return err
 		}
 	}
+	do.startSystemKSGCLoop()
+	do.initInferenceProviders()
+
+	return nil
+}
+
+func (do *Domain) startSystemKSGCLoop() {
 	// Only the SYSTEM keyspace domain runs this GC loop: user-keyspace domains
 	// only access the long-lived SYSTEM keyspace runtime, which is never evicted
 	// here.
@@ -875,14 +881,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	// they are only used in the path of creating session when the runtime is
 	// Acquired with a holder ID, so it's ok. we cannot remove those calls now
 	// as explained in the comments of GetKSStore.
-	if kv.IsSystemKS(do.store) {
+	if kv.IsSystemKS(do.store) && shouldRunBackgroundGC() {
 		do.wg.Run(func() {
 			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
 		}, "crossKSSessMgrGCLoop")
 	}
-	do.initInferenceProviders()
-
-	return nil
 }
 
 func (do *Domain) loadSysKSInfoSchema() error {
@@ -963,7 +966,28 @@ func (do *Domain) ExternalWorkloadManager() extworkload.Manager {
 	return do.extWorkloadMgr
 }
 
+func shouldStartLogBackupAdvancer() bool {
+	return !diagnosticmode.Enabled()
+}
+
+func (do *Domain) startRunawayLoops() {
+	if diagnosticmode.Enabled() {
+		return
+	}
+	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
+}
+
+func shouldRunBackgroundGC() bool {
+	return !diagnosticmode.Enabled()
+}
+
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
+	if !shouldStartLogBackupAdvancer() {
+		log.Info("don't run log backup advancer", zap.String("reason", "diagnostic mode"))
+		return nil
+	}
+
 	cfg := config.GetGlobalConfig()
 	if pdClient == nil || do.etcdClient == nil {
 		log.Warn("pd / etcd client not provided, won't begin Advancer.")
@@ -1620,8 +1644,7 @@ func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
-	err := do.BindingHandle().LoadFromStorageToCache(true, false)
+	err := do.LoadBindingHandle()
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1633,6 +1656,40 @@ func (do *Domain) InitBindingHandle() error {
 		return err
 	}
 	do.globalBindHandleWorkerLoop(owner)
+	return nil
+}
+
+// LoadBindingHandle loads existing bindings without starting binding maintenance.
+func (do *Domain) LoadBindingHandle() error {
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	return do.BindingHandle().LoadFromStorageToCache(true, false)
+}
+
+// LoadBindingLoop loads bindings and periodically refreshes the cache without
+// starting ownership, GC, or usage persistence. The caller owns handle cleanup.
+func (do *Domain) LoadBindingLoop() error {
+	if err := do.LoadBindingHandle(); err != nil {
+		return err
+	}
+	if bindinfo.Lease == 0 {
+		return nil
+	}
+
+	do.wg.Run(func() {
+		defer util.Recover(metrics.LabelDomain, "loadBindingLoop", nil, false)
+		ticker := time.NewTicker(bindinfo.Lease)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-ticker.C:
+				if err := do.BindingHandle().LoadFromStorageToCache(false, false); err != nil {
+					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+				}
+			}
+		}
+	}, "loadBindingLoop")
 	return nil
 }
 
@@ -1879,6 +1936,10 @@ func (do *Domain) GetDumpFileGCChecker() *dumpFileGcChecker {
 
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
+	if !shouldRunBackgroundGC() {
+		logutil.BgLogger().Info("don't run dump file GC checker", zap.String("reason", "diagnostic mode"))
+		return
+	}
 	do.wg.Run(func() {
 		logutil.BgLogger().Info("dumpFileGcChecker started")
 		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
@@ -2140,7 +2201,9 @@ func (do *Domain) loadStatsWorker() {
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 
-	ctx, cancelFunc := context.WithCancel(context.Background())
+	// Inherit Domain cancellation even if Close runs before this worker starts.
+	ctx, cancelFunc := context.WithCancel(do.ctx)
+	defer cancelFunc()
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
@@ -2904,7 +2967,10 @@ func (do *Domain) serverIDKeeper() {
 func (do *Domain) StartTTLJobManager() {
 	role, configured := do.ttlExternalWorkloadRole()
 	if !do.shouldStartTTLJobManager() {
-		fields := make([]zap.Field, 0, 1)
+		fields := make([]zap.Field, 0, 2)
+		if diagnosticmode.Enabled() {
+			fields = append(fields, zap.String("reason", "diagnostic mode"))
+		}
 		if configured {
 			fields = append(fields, zap.String("role", string(role)))
 		}
@@ -2931,6 +2997,10 @@ func (do *Domain) ttlExternalWorkloadRole() (config.ExternalWorkloadRole, bool) 
 }
 
 func (do *Domain) shouldStartTTLJobManager() bool {
+	if diagnosticmode.Enabled() {
+		return false
+	}
+
 	// Once external workload is configured, TTL jobs must run only on the
 	// dedicated TTL task worker with a live controller manager. Falling back to
 	// local TTL scheduling when controller coordination is unavailable can cause

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -35,6 +36,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
+	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -162,13 +164,17 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		apiCtx = pd.NewAPIContextV2(keyspaceName)
 	}
 
+	pdClientOptions := d.pdClientOptions()
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+	}
 	pdCli, err = pd.NewClientWithAPIContext(context.Background(), apiCtx, "tidb-tikv-driver", pdAddrsInConfigPath,
 		pd.SecurityOption{
 			CAPath:   d.security.ClusterSSLCA,
 			CertPath: d.security.ClusterSSLCert,
 			KeyPath:  d.security.ClusterSSLKey,
 		},
-		d.pdClientOptions()...)
+		pdClientOptions...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -202,10 +208,10 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	codec := pdClient.GetCodec()
-	rpcClient := tikv.NewRPCClient(
+	rpcClient := diagnosticclient.WrapKV(tikv.NewRPCClient(
 		tikv.WithSecurity(d.security),
 		tikv.WithCodec(codec),
-	)
+	))
 
 	safePointSetup, err := newSafePointKV(pdCli, codec, tlsConfig)
 	if err != nil {

@@ -24,12 +24,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func TestPrepareSortDir(t *testing.T) {
@@ -232,4 +238,40 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	_, _, err = GetRegionSplitSizeKeys(context.Background())
 	require.ErrorContains(t, err, "get region split size and keys failed")
 	// no positive case, more complex to mock it
+
+	for _, diagnostic := range []bool{false, true} {
+		t.Run(fmt.Sprintf("diagnostic=%t", diagnostic), func(t *testing.T) {
+			if !intest.InTest {
+				t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+			}
+			t.Cleanup(diagnosticmode.SetForTest(diagnostic))
+			NewClientWithAPIContext = func(ctx context.Context, _ pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, opts ...opt.ClientOption) (pd.Client, error) {
+				options := opt.NewOption()
+				for _, apply := range opts {
+					apply(options)
+				}
+				// A terminal interceptor records forwarding without contacting PD.
+				dialOptions := append(options.GRPCDialOptions,
+					grpc.WithTransportCredentials(insecure.NewCredentials()),
+					grpc.WithChainUnaryInterceptor(func(context.Context, string, any, any, *grpc.ClientConn, grpc.UnaryInvoker, ...grpc.CallOption) error {
+						return status.Error(codes.Unimplemented, "forwarded")
+					}),
+				)
+				conn, err := grpc.NewClient("passthrough:///pd-interceptor-test", dialOptions...)
+				require.NoError(t, err)
+				defer conn.Close()
+				err = conn.Invoke(ctx, "/pdpb.PD/GetStore", nil, nil)
+				require.Equal(t, codes.Unimplemented, status.Code(err))
+				err = conn.Invoke(ctx, "/pdpb.PD/UpdateGCSafePoint", nil, nil)
+				if diagnostic {
+					require.Equal(t, codes.PermissionDenied, status.Code(err))
+				} else {
+					require.Equal(t, codes.Unimplemented, status.Code(err))
+				}
+				return nil, errors.New("stop after PD options check")
+			}
+			_, _, err := GetRegionSplitSizeKeys(context.Background())
+			require.ErrorContains(t, err, "stop after PD options check")
+		})
+	}
 }

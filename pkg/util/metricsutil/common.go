@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
@@ -42,6 +43,7 @@ import (
 	unimetrics "github.com/pingcap/tidb/pkg/store/mockstore/unistore/metrics"
 	ttlmetrics "github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
@@ -76,8 +78,14 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	if tls.IsEnabled() {
 		securityOpt = tls.ToPDSecurityOption()
 	}
-	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec), opt.WithInitMetricsOption(false))
+	pdClientOptions := []opt.ClientOption{
+		opt.WithCustomTimeoutOption(timeoutSec),
+		opt.WithInitMetricsOption(false),
+	}
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+	}
+	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt, pdClientOptions...)
 	if err != nil {
 		return err
 	}

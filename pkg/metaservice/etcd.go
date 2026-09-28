@@ -20,8 +20,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -50,6 +52,9 @@ var defaultPDClientFactory PDClientFactory = func(
 	security pd.SecurityOption,
 	opts ...opt.ClientOption,
 ) (pd.Client, error) {
+	if diagnosticmode.Enabled() {
+		opts = append(opts, diagnosticclient.PDClientOption())
+	}
 	return pd.NewClientWithContext(ctx, callerComponent, svrAddrs, security, opts...)
 }
 

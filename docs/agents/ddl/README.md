@@ -89,6 +89,25 @@ sequenceDiagram
   E-->>S: return result
 ```
 
+## Diagnostic schema loading
+
+Diagnostic mode continues to use the ordinary Etcd schema syncer. The Domain
+schema-sync loop and InfoSchema reloads remain active so a diagnostic instance
+can load the existing schema, while MDL checking is skipped. Diagnostic startup
+requires an already bootstrapped keyspace and reads persisted startup settings
+without writing them back.
+
+`serverinfo.Syncer` does not register or refresh server and topology records in
+diagnostic mode; the independent Domain server-ID lease remains active. The
+regular min-start-ts reporting path is not disabled by diagnostic mode.
+
+`DDL.Start` returns immediately for `Normal` startup, without starting DDL
+execution resources. It returns `diagnosticmode.ErrDDLNotAllowed` for
+`Bootstrap`, `Upgrade`, and `BR` startup modes. `EnableDDL` and `SwitchMDL`
+also return that error, while `DisableDDL` is a no-op. Cross-keyspace runtimes
+skip server-info, MDL, and min-job-ID refresher background loops in diagnostic
+mode.
+
 ## Code map (where to look first)
 
 ### Front-end (SQL executor layer)
