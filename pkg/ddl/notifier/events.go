@@ -151,7 +151,10 @@ func NewMViewRefreshOutOfPlaceCutoverEvent(tableInfo, oldTableInfo *model.TableI
 }
 
 // GetMViewRefreshOutOfPlaceCutoverInfo returns the new and old MV metadata.
-func (s *SchemaChangeEvent) GetMViewRefreshOutOfPlaceCutoverInfo() (*model.TableInfo, *model.TableInfo) {
+func (s *SchemaChangeEvent) GetMViewRefreshOutOfPlaceCutoverInfo() (
+	newTableInfo *model.TableInfo,
+	oldTableInfo *model.TableInfo,
+) {
 	intest.Assert(s.inner.Tp == model.ActionMViewRefreshOutOfPlaceCutover)
 	return s.inner.TableInfo, s.inner.OldTableInfo
 }
