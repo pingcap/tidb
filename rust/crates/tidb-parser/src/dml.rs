@@ -870,7 +870,8 @@ impl Parser {
     fn parse_dml_hints(&mut self) -> PResult<Vec<Hint>> {
         if self.peek().kind == TokenKind::HintComment {
             let token = self.bump();
-            let result = parse_hint_comment(&token.text, self.source_line(token.offset), token.offset);
+            let result =
+                parse_hint_comment(&token.text, self.source_line(token.offset), token.offset);
             self.warnings.extend(result.diagnostics);
             Ok(result.hints)
         } else {

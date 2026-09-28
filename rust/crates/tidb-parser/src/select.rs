@@ -364,7 +364,8 @@ impl Parser {
         // itself never recognizes it as a hint in that position.
         let hints = if self.peek().kind == TokenKind::HintComment {
             let token = self.bump();
-            let result = parse_hint_comment(&token.text, self.source_line(token.offset), token.offset);
+            let result =
+                parse_hint_comment(&token.text, self.source_line(token.offset), token.offset);
             self.warnings.extend(result.diagnostics);
             result.hints
         } else {

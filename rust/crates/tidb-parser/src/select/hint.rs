@@ -899,6 +899,9 @@ fn parse_standalone_hint_occurrence(
             while !parser.at_eof() && !parser.is_op(")") {
                 parser.bump();
             }
+            if parser.is_op(")") {
+                parser.bump();
+            }
         }
     }
 }
@@ -931,7 +934,11 @@ fn hint_1064_diagnostic(initial_line: usize, column: usize, near: &str) -> HintD
 /// token-cursor primitives (`peek`/`bump`/`is_kw`/`expect_op`/...) every
 /// other parsing function in this crate already uses. The dispatch mirrors
 /// the semantic and unsupported-hint cases in `pkg/parser/hintparser.go`.
-pub(crate) fn parse_hint_comment(text: &str, initial_line: usize, column_base: usize) -> HintParseResult {
+pub(crate) fn parse_hint_comment(
+    text: &str,
+    initial_line: usize,
+    column_base: usize,
+) -> HintParseResult {
     parse_hint(text, false, initial_line, column_base)
 }
 
