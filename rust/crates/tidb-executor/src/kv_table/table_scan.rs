@@ -1350,7 +1350,13 @@ impl KvTable {
         let wire_rows = staged.cursor.rows_returned();
         let predicates_applied = staged.cursor.predicates_applied();
         let mut batches = Vec::new();
-        let mut rows = Vec::with_capacity(handles.len());
+        // Go only decodes the handle again when keep-order restoration is
+        // required. Unordered lookup batches are already requested in handle
+        // order, so retaining row positions can avoid one datum conversion
+        // and one TableHandle allocation per returned row.
+        let reorder = !handles.windows(2).all(|window| window[0] <= window[1]);
+        let mut rows = reorder.then(|| Vec::with_capacity(handles.len()));
+        let mut row_positions = Vec::with_capacity(handles.len());
         loop {
             let Some(batch) = staged
                 .cursor
@@ -1368,26 +1374,29 @@ impl KvTable {
             }
             let batch_index = batches.len();
             for row_index in 0..batch.num_rows() {
-                let row = batch.get_row(row_index);
-                let handle = match row.get_datum(
-                    staged.handle_position,
-                    &staged.cursor.field_types[staged.handle_position],
-                ) {
-                    Datum::Int(handle) => handle,
-                    Datum::UInt(handle) => handle as i64,
-                    _ => {
-                        return Err(KvTableError::Decode(
-                            "a coprocessor row carried no integer handle".to_owned(),
-                        ));
-                    }
-                };
-                rows.push((TableHandle::Int(handle), batch_index, row_index));
+                if let Some(rows) = rows.as_mut() {
+                    let row = batch.get_row(row_index);
+                    let handle = match row.get_datum(
+                        staged.handle_position,
+                        &staged.cursor.field_types[staged.handle_position],
+                    ) {
+                        Datum::Int(handle) => handle,
+                        Datum::UInt(handle) => handle as i64,
+                        _ => {
+                            return Err(KvTableError::Decode(
+                                "a coprocessor row carried no integer handle".to_owned(),
+                            ));
+                        }
+                    };
+                    rows.push((TableHandle::Int(handle), batch_index, row_index));
+                } else {
+                    row_positions.push((batch_index, row_index));
+                }
             }
             batches.push(batch);
         }
         let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
-        let mut ordered = rows;
-        if !handles.windows(2).all(|window| window[0] <= window[1]) {
+        if let Some(mut ordered) = rows {
             let positions = handles
                 .iter()
                 .enumerate()
@@ -1395,13 +1404,14 @@ impl KvTable {
                 .collect::<HashMap<_, _>>();
             ordered
                 .sort_by_key(|(handle, _, _)| positions.get(handle).copied().unwrap_or(usize::MAX));
+            row_positions = ordered
+                .into_iter()
+                .map(|(_, batch_index, row_index)| (batch_index, row_index))
+                .collect();
         }
         Ok(Some(FinishedLookupChunk {
             batches,
-            row_positions: ordered
-                .into_iter()
-                .map(|(_, batch_index, row_index)| (batch_index, row_index))
-                .collect(),
+            row_positions,
             handle_position: staged.handle_position,
             appended_handle: staged.appended_handle,
             predicates_applied,
