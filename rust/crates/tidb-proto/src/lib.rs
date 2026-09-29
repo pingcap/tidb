@@ -17,18 +17,23 @@ pub mod tipb {
 
 /// The generated dependency-closed coprocessor request package.
 pub mod coprocessor {
+    // Keep the public aliases while sharing the upstream-owned nested types.
+    pub use tikv_client_kvproto::kvrpcpb::{
+        ExecDetails, ExecDetailsV2, ScanDetail, ScanDetailV2, ScanInfo, TimeDetail, TimeDetailV2,
+    };
+    pub use tikv_client_kvproto::metapb::{Peer, RegionEpoch};
     include!(concat!(env!("OUT_DIR"), "/coprocessor.rs"));
 }
 
-/// The generated dependency-closed region-error package.
-pub mod errorpb {
-    include!(concat!(env!("OUT_DIR"), "/errorpb.rs"));
-}
+/// Complete region-error contract shared with the native client.
+pub use tikv_client_kvproto::errorpb;
 
-/// The generated dependency-closed TiKV request-context package.
+/// Complete KV request contract shared with the native client.
 pub mod kvrpcpb {
-    pub use tikv_client_kvproto::kvrpcpb::ExecDetailsV2;
-    include!(concat!(env!("OUT_DIR"), "/kvrpcpb.rs"));
+    pub use tikv_client_kvproto::deadlock::WaitForEntry;
+    pub use tikv_client_kvproto::kvrpcpb::*;
+    // Preserve existing consumer names without introducing another message type.
+    pub use tikv_client_kvproto::metapb::{Peer, RegionEpoch};
 }
 
 /// The generated dependency-closed TiKV gRPC service package.
@@ -36,10 +41,8 @@ pub mod tikvpb {
     include!(concat!(env!("OUT_DIR"), "/tikvpb.rs"));
 }
 
-/// The generated dependency-closed region metadata package.
-pub mod metapb {
-    include!(concat!(env!("OUT_DIR"), "/metapb.rs"));
-}
+/// Complete region metadata contract shared with the native client.
+pub use tikv_client_kvproto::metapb;
 
 /// The generated dependency-closed PD control-plane package.
 pub mod pdpb {
@@ -69,11 +72,8 @@ pub mod backup {
     include!(concat!(env!("OUT_DIR"), "/backup.rs"));
 }
 
-/// The generated dependency-closed encryption package used by BR task
-/// security configuration.
-pub mod encryptionpb {
-    include!(concat!(env!("OUT_DIR"), "/encryptionpb.rs"));
-}
+/// Complete encryption metadata contract shared with region metadata and BR.
+pub use tikv_client_kvproto::encryptionpb;
 
 pub use coprocessor::{
     BatchRequest as CoprocessorBatchRequest, ExecDetails as CoprocessorExecDetails,

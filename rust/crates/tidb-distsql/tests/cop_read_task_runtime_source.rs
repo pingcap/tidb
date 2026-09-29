@@ -68,6 +68,7 @@ fn response(data: &str, start: &str, end: &str, read_bytes: u64) -> CoprocessorR
             scan_detail_v2: Some(CoprocessorScanDetailV2 {
                 processed_versions_size: read_bytes,
                 total_versions_size: read_bytes,
+                ..Default::default()
             }),
             ..Default::default()
         }),

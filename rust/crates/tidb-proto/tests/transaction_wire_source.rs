@@ -265,3 +265,90 @@ fn point_read_responses_preserve_complete_execution_details() {
         );
     }
 }
+
+#[test]
+fn shared_context_preserves_resource_control_penalty() {
+    use tikv_client_kvproto::{kvrpcpb, resource_manager};
+    let original = kvrpcpb::PrewriteRequest {
+        context: Some(kvrpcpb::Context {
+            resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                resource_group_name: "foreground".into(),
+                penalty: Some(resource_manager::Consumption {
+                    r_r_u: 3.5,
+                    w_r_u: 7.0,
+                    ..Default::default()
+                }),
+                override_priority: 17,
+            }),
+            ..Default::default()
+        }),
+        start_version: 11,
+        ..Default::default()
+    };
+    let request = PrewriteRequest::decode(original.encode_to_vec().as_slice()).unwrap();
+    let round_trip = kvrpcpb::PrewriteRequest::decode(request.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(round_trip, original);
+}
+
+#[test]
+fn shared_errors_preserve_full_region_metadata() {
+    use tikv_client_kvproto::{errorpb, metapb};
+    let original = errorpb::Error {
+        epoch_not_match: Some(errorpb::EpochNotMatch {
+            current_regions: vec![metapb::Region {
+                id: 7,
+                encryption_meta: Some(Default::default()),
+                ..Default::default()
+            }],
+        }),
+        ..Default::default()
+    };
+    let error = RegionError::decode(original.encode_to_vec().as_slice()).unwrap();
+    let round_trip = errorpb::Error::decode(error.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(round_trip, original);
+}
+
+#[test]
+fn shared_packages_use_the_native_type_identity() {
+    let _: tikv_client_kvproto::kvrpcpb::ExecDetailsV2 =
+        tidb_proto::CoprocessorExecDetailsV2::default();
+    let _: tikv_client_kvproto::metapb::Peer = tidb_proto::CoprocessorPeer::default();
+    let _: tikv_client_kvproto::kvrpcpb::Context = tidb_proto::KvrpcContext::default();
+    let _: tikv_client_kvproto::errorpb::Error = tidb_proto::RegionError::default();
+    let _: tikv_client_kvproto::metapb::Region = tidb_proto::metapb::Region::default();
+    let _: tikv_client_kvproto::encryptionpb::MasterKey =
+        tidb_proto::encryptionpb::MasterKey::default();
+}
+
+#[test]
+fn shared_lock_lost_matches_upstream_wire_contract() {
+    let original = KeyError {
+        shared_lock_lost: Some(tidb_proto::kvrpcpb::SharedLockLost {
+            key: b"key".to_vec(),
+            start_ts: 42,
+        }),
+        ..Default::default()
+    };
+    let encoded = original.encode_to_vec();
+    assert_eq!(encoded[0], 14 << 3 | 2);
+    assert_eq!(KeyError::decode(encoded.as_slice()).unwrap(), original);
+}
+
+#[test]
+fn coprocessor_details_preserve_native_scan_counters() {
+    use tikv_client_kvproto::kvrpcpb;
+    let original = kvrpcpb::ExecDetailsV2 {
+        scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+            processed_versions: 5,
+            total_versions: 9,
+            processed_versions_size: 64,
+            total_versions_size: 128,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let details =
+        tidb_proto::CoprocessorExecDetailsV2::decode(original.encode_to_vec().as_slice()).unwrap();
+    let restored = kvrpcpb::ExecDetailsV2::decode(details.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(restored, original);
+}

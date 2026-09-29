@@ -70,6 +70,7 @@ fn region_peer_store_projection_round_trips_sparse_source_tags() {
             role: metapb::PeerRole::DemotingVoter as i32,
             is_witness: true,
         }],
+        ..Default::default()
     };
     let wire = region.encode_to_vec();
     assert!(wire.contains(&0x22)); // region_epoch, field 4
@@ -86,6 +87,7 @@ fn region_peer_store_projection_round_trips_sparse_source_tags() {
         }],
         node_state: metapb::NodeState::Removing as i32,
         status_address: "127.0.0.1:20180".to_owned(),
+        ..Default::default()
     };
     let wire = store.encode_to_vec();
     assert!(wire.contains(&0x22)); // labels, field 4

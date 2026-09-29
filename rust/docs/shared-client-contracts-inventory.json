@@ -1,0 +1,231 @@
+{
+  "go_master": "12b639a1161cd5a60126a47277f5ad14c320fd4a",
+  "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
+  "integration": "complete existing generated packages; no new transcreation claim",
+  "packages": {
+    "kvrpcpb": {
+      "go_artifacts": [
+        {
+          "path": "pkg/kvrpcpb/kvrpcpb.pb.go",
+          "sha256": "6e5bc4de1c373792f1d33800f61136a4855c244c4e31320a9a463f552bd0a367"
+        },
+        {
+          "path": "pkg/kvrpcpb/shared_lock_lost_test.go",
+          "sha256": "8a98a25a54d79ee8b382a96d399e4d40c2259538b38c97a6036b6a877f191a7d"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/kvrpcpb.rs",
+        "sha256": "76ed74335c8a86a88ec37fff0588e130033b87f44b075031dacbd1d2a69931b2"
+      },
+      "integration": "whole-package re-export and prost extern_path",
+      "source_test_mapping": "shared_lock_lost_matches_upstream_wire_contract",
+      "platform_variants": []
+    },
+    "errorpb": {
+      "go_artifacts": [
+        {
+          "path": "pkg/errorpb/errorpb.pb.go",
+          "sha256": "19ab9db6c540b1e345a66aeeccbb5bfeb7e47c42ec0af565609eeeb3970b9353"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/errorpb.rs",
+        "sha256": "a7693310bc6f0058c54aa7e5728f97832f1ee94c01c3746e3b1fc98082834210"
+      },
+      "integration": "whole-package re-export and prost extern_path",
+      "source_test_mapping": "no original package tests",
+      "platform_variants": []
+    },
+    "metapb": {
+      "go_artifacts": [
+        {
+          "path": "pkg/metapb/metapb.pb.go",
+          "sha256": "3e3056a2d8ee22b919fc899b1b78c6472a19bd2dd01e6b2c33d372e2728145ba"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/metapb.rs",
+        "sha256": "059cfdff8795c9eb20b9b05be8554562e778f4ce70691d75768c4447c38b5a48"
+      },
+      "integration": "whole-package re-export and prost extern_path",
+      "source_test_mapping": "no original package tests",
+      "platform_variants": []
+    },
+    "encryptionpb": {
+      "go_artifacts": [
+        {
+          "path": "pkg/encryptionpb/encryptionpb.pb.go",
+          "sha256": "f328e99ee88c9745b994f1b5eab9ed0f09d837da5864ef39feea2434a0c66db1"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/encryptionpb.rs",
+        "sha256": "93d2a0a0fac1729e7dc26029f4b4ca25ac49ebcec6e3351f65c20124ff755df9"
+      },
+      "integration": "whole-package re-export and prost extern_path",
+      "source_test_mapping": "no original package tests",
+      "platform_variants": []
+    }
+  },
+  "proto_import_closure": [
+    {
+      "import": "apipb.proto",
+      "go": {
+        "path": "proto/apipb.proto",
+        "sha256": "ec7e7672893c2c44544b10b8d591a2113f5ac851ce25d78422699df46b115a91"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/apipb.proto",
+        "sha256": "ec7e7672893c2c44544b10b8d591a2113f5ac851ce25d78422699df46b115a91"
+      },
+      "identical": true
+    },
+    {
+      "import": "deadlock.proto",
+      "go": {
+        "path": "proto/deadlock.proto",
+        "sha256": "35d2285b2463c542658698a1f9cc0ebc0b4c7d7eed22f8b34a4a3cea222519d8"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/deadlock.proto",
+        "sha256": "35d2285b2463c542658698a1f9cc0ebc0b4c7d7eed22f8b34a4a3cea222519d8"
+      },
+      "identical": true
+    },
+    {
+      "import": "encryptionpb.proto",
+      "go": {
+        "path": "proto/encryptionpb.proto",
+        "sha256": "0d78c7a484271be3a29638e10a54a5e7543a72fe40346667afe12735bb72f934"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/encryptionpb.proto",
+        "sha256": "0d78c7a484271be3a29638e10a54a5e7543a72fe40346667afe12735bb72f934"
+      },
+      "identical": true
+    },
+    {
+      "import": "errorpb.proto",
+      "go": {
+        "path": "proto/errorpb.proto",
+        "sha256": "9a217e2ab8a8a77ab407a508ee3224a26c5f99a9911192b1acc52d3d9c93e1ea"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/errorpb.proto",
+        "sha256": "9a217e2ab8a8a77ab407a508ee3224a26c5f99a9911192b1acc52d3d9c93e1ea"
+      },
+      "identical": true
+    },
+    {
+      "import": "gogoproto/gogo.proto",
+      "go": {
+        "path": "include/gogoproto/gogo.proto",
+        "sha256": "f2f77edf7de807ded7884813d851656f4ccb18262db717a8f31061995f3e7324"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/include/gogoproto/gogo.proto",
+        "sha256": "f2f77edf7de807ded7884813d851656f4ccb18262db717a8f31061995f3e7324"
+      },
+      "identical": true
+    },
+    {
+      "import": "google/protobuf/descriptor.proto",
+      "go": {
+        "path": "include/google/protobuf/descriptor.proto",
+        "sha256": "76ad50bfa8b723e65d8b364f0d8d853b39b944474d6b2ef30d694a8e02617849"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/include/google/protobuf/descriptor.proto",
+        "sha256": "76ad50bfa8b723e65d8b364f0d8d853b39b944474d6b2ef30d694a8e02617849"
+      },
+      "identical": true
+    },
+    {
+      "import": "kvrpcpb.proto",
+      "go": {
+        "path": "proto/kvrpcpb.proto",
+        "sha256": "a04481c7bc93576374217e84f1111f266725531ae4722139be6a8ee0c62b6b56"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/kvrpcpb.proto",
+        "sha256": "a04481c7bc93576374217e84f1111f266725531ae4722139be6a8ee0c62b6b56"
+      },
+      "identical": true
+    },
+    {
+      "import": "metapb.proto",
+      "go": {
+        "path": "proto/metapb.proto",
+        "sha256": "e1f5ea1f9f7701d087847a6a18385f3fa25f3355996fedc8435c55b8bca3a045"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/metapb.proto",
+        "sha256": "e1f5ea1f9f7701d087847a6a18385f3fa25f3355996fedc8435c55b8bca3a045"
+      },
+      "identical": true
+    },
+    {
+      "import": "resource_manager.proto",
+      "go": {
+        "path": "proto/resource_manager.proto",
+        "sha256": "cb7067e7b28da0d4b97021bffd225e93ff13842f0a2f4fe2eac8d74f0a990815"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/resource_manager.proto",
+        "sha256": "cb7067e7b28da0d4b97021bffd225e93ff13842f0a2f4fe2eac8d74f0a990815"
+      },
+      "identical": true
+    },
+    {
+      "import": "rustproto.proto",
+      "go": {
+        "path": "include/rustproto.proto",
+        "sha256": "ce3b069eab5fe972bd22eb10d224e57e41cb08307767cbfa53d2cf3e962f83d1"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/include/rustproto.proto",
+        "sha256": "ce3b069eab5fe972bd22eb10d224e57e41cb08307767cbfa53d2cf3e962f83d1"
+      },
+      "identical": true
+    },
+    {
+      "import": "tracepb.proto",
+      "go": {
+        "path": "proto/tracepb.proto",
+        "sha256": "7f16458e79e9c087ddf62aa61137a2537924fb83f17d3a081f3617ca1de75e98"
+      },
+      "native": {
+        "path": "rust/third_party/tikv-client-rs/proto/tracepb.proto",
+        "sha256": "7f16458e79e9c087ddf62aa61137a2537924fb83f17d3a081f3617ca1de75e98"
+      },
+      "identical": true
+    }
+  ],
+  "build_inputs": [
+    {
+      "path": "rust/third_party/tikv-client-rs/proto-build/src/main.rs",
+      "sha256": "f9dd3b4932fe75b61ff910e567da9286b3f803378fd12f417a594e7b836e0f4a"
+    },
+    {
+      "path": "rust/third_party/tikv-client-rs/proto-build/Cargo.toml",
+      "sha256": "5be7d363229e8516206f50e50404d5af9e92a40c96d6bf9fff5f1b65e4f1c670"
+    },
+    {
+      "path": "rust/third_party/tikv-client-rs/kvproto/src/lib.rs",
+      "sha256": "af675018ee2d4f2558eeaae84f5c6af396c305d7bf285f56245ff8c63db1b28c"
+    },
+    {
+      "path": "rust/third_party/tikv-client-rs/kvproto/Cargo.toml",
+      "sha256": "e46cb96fc5f846e2b45e8ebcb6404047a91f4a59f616c0f22684c951552f674e"
+    },
+    {
+      "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/file_descriptor_set.bin",
+      "sha256": "dd2f2687d2f6dcb8d2209636da5234820ff705f287b719d73a0802fd6de9ee12"
+    },
+    {
+      "path": "rust/crates/tidb-proto/build.rs",
+      "sha256": "f4a79850a7693111407f461a20ac10ee8e9c265149b375c5d387e270b4800554"
+    }
+  ]
+}

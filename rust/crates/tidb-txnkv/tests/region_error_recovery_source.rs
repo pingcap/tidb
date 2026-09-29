@@ -171,6 +171,7 @@ fn current_region(
                 is_witness: false,
             },
         ],
+        ..Default::default()
     }
 }
 

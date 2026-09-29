@@ -3542,6 +3542,7 @@ dependencies = [
  "tidb-proto",
  "tidb-txnkv",
  "tidb-util",
+ "tikv-client",
  "tokio",
 ]
 

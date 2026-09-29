@@ -14,45 +14,7 @@
 
 //! KV client variables re-exported by `pkg/kv/variables.go`.
 
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-
-/// Default lock-fast backoff in milliseconds.
-pub const DEFAULT_BACKOFF_LOCK_FAST: i32 = 10;
-/// Default maximum-backoff weight.
-pub const DEFAULT_BACKOFF_WEIGHT: i32 = 2;
-
-/// Variables shared with KV storage.
-#[derive(Debug, Clone)]
-pub struct KvVariables {
-    /// Lock-fast backoff base duration in milliseconds.
-    pub backoff_lock_fast: i32,
-    /// Weight applied to maximum backoff durations.
-    pub backoff_weight: i32,
-    /// Session kill-reason enum; zero means not killed.
-    pub killed: Arc<AtomicU32>,
-}
-
-impl KvVariables {
-    /// Creates the source default values around the caller-owned kill flag.
-    #[must_use]
-    pub fn new(killed: Arc<AtomicU32>) -> Self {
-        Self {
-            backoff_lock_fast: DEFAULT_BACKOFF_LOCK_FAST,
-            backoff_weight: DEFAULT_BACKOFF_WEIGHT,
-            killed,
-        }
-    }
-
-    /// Returns the current kill reason.
-    #[must_use]
-    pub fn kill_reason(&self) -> u32 {
-        self.killed.load(Ordering::Acquire)
-    }
-}
-
-impl Default for KvVariables {
-    fn default() -> Self {
-        Self::new(Arc::new(AtomicU32::new(0)))
-    }
-}
+pub use tikv_client::kv::{
+    Variables as KvVariables, DEF_BACKOFF_LOCK_FAST as DEFAULT_BACKOFF_LOCK_FAST,
+    DEF_BACKOFF_WEIGHT as DEFAULT_BACKOFF_WEIGHT,
+};

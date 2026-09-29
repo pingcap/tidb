@@ -401,6 +401,7 @@ fn lock_epoch_recovery_leaves_cache_available_during_metadata_loading() {
                     store_id: 201,
                     ..Default::default()
                 }],
+                ..Default::default()
             }],
         }),
         ..Default::default()

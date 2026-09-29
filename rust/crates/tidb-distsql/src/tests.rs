@@ -66,10 +66,10 @@ fn test_context_detach_preserves_handles_and_copies_owned_state() {
         &context.execution.cancel,
         &detached.execution.cancel
     ));
-    assert!(detached
-        .execution
-        .kv_vars
-        .shares_killer_with(&context.execution.killer));
+    assert!(Arc::ptr_eq(
+        &detached.execution.kv_vars.killed,
+        &context.execution.kv_vars.killed,
+    ));
 
     assert_eq!(context.execution.cpu_usage.samples(), &[3, 5, 8]);
     detached.execution.cpu_usage.push_sample(13);
@@ -399,4 +399,48 @@ fn test_kv_request_build_projects_dag_limit_and_partition_concurrency() {
     assert!(request.cacheable);
     assert_eq!(request.limit_size, 1);
     assert_eq!(request.concurrency, 3);
+}
+
+#[test]
+fn test_context_uses_native_variable_defaults() {
+    let state = ExecutionState::new();
+    assert_eq!(state.kv_vars.backoff_lock_fast, 10);
+    assert_eq!(state.kv_vars.backoff_weight, 2);
+}
+
+#[test]
+fn test_context_detach_keeps_all_native_variables_and_rebinds_kill_signal() {
+    struct Handler;
+    impl tikv_client::kv::KillSignalHandler for Handler {
+        fn handle_signal(&self) -> tikv_client::Result<()> {
+            Ok(())
+        }
+    }
+    let mut state = ExecutionState::new();
+    let callback: Arc<dyn tikv_client::kv::KillSignalHandler> = Arc::new(Handler);
+    state.kv_vars.disable_txn_file = true;
+    state.kv_vars.txn_file_min_mutation_size = 4096;
+    state.kv_vars.kill_signal_handler = Some(callback.clone());
+    // Go's detach rebinds Killed even if the source Variables had another signal.
+    state.kv_vars.killed = Arc::new(std::sync::atomic::AtomicU32::new(42));
+    let mut detached = state.detach();
+    let native: &tikv_client::kv::Variables = &detached.kv_vars;
+    assert!(native.disable_txn_file);
+    assert_eq!(native.txn_file_min_mutation_size, 4096);
+    assert!(Arc::ptr_eq(
+        native.kill_signal_handler.as_ref().unwrap(),
+        &callback
+    ));
+    assert_eq!(native.killed.load(std::sync::atomic::Ordering::Acquire), 0);
+    assert!(state.killer.request_kill(7));
+    assert_eq!(native.killed.load(std::sync::atomic::Ordering::Acquire), 7);
+    assert_eq!(
+        state
+            .kv_vars
+            .killed
+            .load(std::sync::atomic::Ordering::Acquire),
+        42
+    );
+    detached.kv_vars.txn_file_min_mutation_size = 8192;
+    assert_eq!(state.kv_vars.txn_file_min_mutation_size, 4096);
 }

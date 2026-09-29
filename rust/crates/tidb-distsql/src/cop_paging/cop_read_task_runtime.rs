@@ -38,7 +38,7 @@ use crate::{
 const MAX_RANGES_PER_TASK_BUILD: usize = 25_000;
 
 /// One immutable request attempt prepared before a transport owner exists.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PreparedCopReadTask {
     attempt_id: u64,
     logical_task_id: u64,

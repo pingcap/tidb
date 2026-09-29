@@ -928,6 +928,7 @@ fn valid_state() -> State {
                 version: 4,
             }),
             peers: peers.clone(),
+            ..Default::default()
         }),
         leader: Some(peers[0]),
         down_peers: vec![pdpb::PeerStats {
@@ -1055,6 +1056,7 @@ fn extended_region(id: u64, start: &[u8], end: &[u8], with_buckets: bool) -> pdp
                 version: id + 2,
             }),
             peers: vec![leader, pending],
+            ..Default::default()
         }),
         leader: Some(leader),
         down_peers: Vec::new(),
@@ -1099,6 +1101,7 @@ fn store_response(
             labels: Vec::new(),
             node_state: node_state as i32,
             status_address: String::new(),
+            ..Default::default()
         }),
     }
 }

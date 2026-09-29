@@ -28,7 +28,7 @@ const TXN_COMMIT_BATCH_BYTES: usize = 16 * 1024;
 const SNAPSHOT_BATCH_GET_KEYS: usize = 5120;
 
 /// One deterministically ordered batch routed to one exact region epoch.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RegionMutationBatch {
     region: RegionVerId,
     address: String,
@@ -73,7 +73,7 @@ impl RegionMutationBatch {
 }
 
 /// One deterministically ordered key-only batch used by Commit and rollback.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RegionKeyBatch {
     region: RegionVerId,
     address: String,

@@ -177,6 +177,7 @@ fn build_tikv_unary_request_inner(
         resource_control_context: Some(KvrpcResourceControlContext {
             resource_group_name: metadata.resource_group_name.clone(),
             override_priority: 0,
+            ..Default::default()
         }),
         // cmd/tidb-server sets client-go's process default to TiDB, and
         // tikvrpc.NewRequest fills an unknown context from that default before

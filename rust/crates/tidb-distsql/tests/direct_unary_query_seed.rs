@@ -134,6 +134,7 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
             scan_detail_v2: Some(CoprocessorScanDetailV2 {
                 processed_versions_size: 1_000_000,
                 total_versions_size: 1_000_000,
+                ..Default::default()
             }),
             ..Default::default()
         }),

@@ -135,6 +135,7 @@ fn response_read_bytes_matches_classic_and_next_generation_tables() {
                 scan_detail_v2: Some(CoprocessorScanDetailV2 {
                     processed_versions_size: processed,
                     total_versions_size: total,
+                    ..Default::default()
                 }),
                 ..Default::default()
             }),
@@ -284,6 +285,7 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
             scan_detail_v2: Some(CoprocessorScanDetailV2 {
                 processed_versions_size: 1_000_000,
                 total_versions_size: 2_000_000,
+                ..Default::default()
             }),
             ..Default::default()
         }),

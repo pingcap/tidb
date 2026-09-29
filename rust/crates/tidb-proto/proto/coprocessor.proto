@@ -2,7 +2,7 @@
 //
 // This is a dependency-closed projection of the coprocessor.Request wire
 // contract consumed by TiDB's coprocessor worker. The nested kvrpcpb.Context
-// has a dependency-closed owner in this crate and is kept as a typed message,
+// and execution details use the complete shared client protocol types,
 // so the RPC leaf can replace stale context without disturbing other request
 // fields. Table-shard metadata remains outside this leaf.
 syntax = "proto3";
@@ -11,6 +11,7 @@ package coprocessor;
 
 import "errorpb.proto";
 import "kvrpcpb.proto";
+import "metapb.proto";
 
 // [start, end)
 message KeyRange {
@@ -24,30 +25,13 @@ message VersionedKeyRange {
   uint64 read_ts = 2;
 }
 
-// Region epoch copied from kvproto/metapb.proto. This narrow projection keeps
-// the StoreBatchTask wire shape dependency-closed until the full metapb owner
-// is available.
-message RegionEpoch {
-  uint64 conf_ver = 1;
-  uint64 version = 2;
-}
-
-// Peer metadata copied from kvproto/metapb.proto. `role` remains an integer so
-// an unknown future enum value is preserved rather than guessed away.
-message Peer {
-  uint64 id = 1;
-  uint64 store_id = 2;
-  int32 role = 3;
-  bool is_witness = 4;
-}
-
 // A child task sent to one TiKV store in a batch coprocessor request. Field
 // numbers and nested wire types match kvproto/coprocessor.proto exactly; the
 // Rust owner stops before region routing, retries, and RPC dispatch.
 message StoreBatchTask {
   uint64 region_id = 1;
-  RegionEpoch region_epoch = 2;
-  Peer peer = 3;
+  metapb.RegionEpoch region_epoch = 2;
+  metapb.Peer peer = 3;
   repeated KeyRange ranges = 4;
   uint64 task_id = 5;
   repeated VersionedKeyRange versioned_ranges = 6;
@@ -83,7 +67,7 @@ message Request {
 // numbers and nested wire shapes match kvproto's coprocessor.RegionInfo.
 message RegionInfo {
   uint64 region_id = 1;
-  RegionEpoch region_epoch = 2;
+  metapb.RegionEpoch region_epoch = 2;
   repeated KeyRange ranges = 3;
 }
 
@@ -94,63 +78,13 @@ message BatchRequest {
   repeated RegionInfo regions = 4;
 }
 
-// Dependency-closed projections of the response fields consumed by adaptive
-// paging. Field numbers match kvproto's kvrpcpb and coprocessor contracts.
-message ScanDetailV2 {
-  uint64 processed_versions_size = 8;
-  uint64 total_versions_size = 14;
-}
-
-message TimeDetail {
-  uint64 wait_wall_time_ms = 1;
-  uint64 process_wall_time_ms = 2;
-  uint64 kv_read_wall_time_ms = 3;
-  uint64 total_rpc_wall_time_ns = 4;
-}
-
-message TimeDetailV2 {
-  uint64 wait_wall_time_ns = 1;
-  uint64 process_wall_time_ns = 2;
-  uint64 process_suspend_wall_time_ns = 3;
-  uint64 kv_read_wall_time_ns = 4;
-  uint64 total_rpc_wall_time_ns = 5;
-  uint64 kv_grpc_process_time_ns = 6;
-  uint64 kv_grpc_wait_time_ns = 7;
-}
-
-// Legacy execution details retained by TiKV for wire compatibility. Go's
-// coprocessor worker falls back to this field when the V2 time details are not
-// present, so the projection must keep response field 6 dependency-closed.
-message ScanInfo {
-  int64 total = 1;
-  int64 processed = 2;
-  int64 read_bytes = 3;
-}
-
-message ScanDetail {
-  ScanInfo write = 1;
-  ScanInfo lock = 2;
-  ScanInfo data = 3;
-}
-
-message ExecDetails {
-  TimeDetail time_detail = 1;
-  ScanDetail scan_detail = 2;
-}
-
-message ExecDetailsV2 {
-  TimeDetail time_detail = 1;
-  ScanDetailV2 scan_detail_v2 = 2;
-  TimeDetailV2 time_detail_v2 = 4;
-}
-
 message StoreBatchTaskResponse {
   bytes data = 1;
   errorpb.Error region_error = 2;
   kvrpcpb.LockInfo locked = 3;
   string other_error = 4;
   uint64 task_id = 5;
-  ExecDetailsV2 exec_details_v2 = 6;
+  kvrpcpb.ExecDetailsV2 exec_details_v2 = 6;
 }
 
 message Response {
@@ -159,11 +93,11 @@ message Response {
   kvrpcpb.LockInfo locked = 3;
   string other_error = 4;
   KeyRange range = 5;
-  ExecDetails exec_details = 6;
+  kvrpcpb.ExecDetails exec_details = 6;
   bool is_cache_hit = 7;
   uint64 cache_last_version = 8;
   bool can_be_cached = 9;
-  ExecDetailsV2 exec_details_v2 = 11;
+  kvrpcpb.ExecDetailsV2 exec_details_v2 = 11;
   uint64 latest_buckets_version = 12;
   repeated StoreBatchTaskResponse batch_responses = 13;
 }

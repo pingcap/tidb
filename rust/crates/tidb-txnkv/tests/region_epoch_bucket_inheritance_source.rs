@@ -107,6 +107,7 @@ fn current(location: &RegionLocation) -> metapb::Region {
             role: 0,
             is_witness: false,
         }],
+        ..Default::default()
     }
 }
 

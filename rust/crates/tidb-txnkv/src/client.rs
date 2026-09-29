@@ -120,7 +120,7 @@ pub const fn endpoint_type(source: u8, disaggregated_tiflash: bool) -> EndpointT
 /// DistSQL owns construction of the encoded coprocessor body. The KV client
 /// owns only dispatch and therefore cannot reach upward into planner or
 /// DistSQL types.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DirectUnaryRequest {
     /// Endpoint selected before dispatch. This bounded runtime admits TiKV.
     pub endpoint: EndpointType,

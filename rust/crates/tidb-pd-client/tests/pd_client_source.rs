@@ -48,6 +48,7 @@ fn store_labels_keep_the_pinned_kvproto_field_four_wire_contract() {
         }],
         node_state: metapb::NodeState::Preparing as i32,
         status_address: String::new(),
+        ..Default::default()
     };
     assert_eq!(
         store.encode_to_vec(),
@@ -357,6 +358,7 @@ fn region_response() -> pdpb::GetRegionResponse {
                 version: 4,
             }),
             peers: peers.clone(),
+            ..Default::default()
         }),
         // isSamePeer in client-go compares only peer and store identities;
         // region metadata remains authoritative for role and witness fields.
@@ -408,6 +410,7 @@ fn extended_region(id: u64, start_key: &[u8], end_key: &[u8]) -> pdpb::Region {
                 version: id + 2,
             }),
             peers: vec![leader, pending],
+            ..Default::default()
         }),
         leader: Some(leader),
         down_peers: vec![pdpb::PeerStats {
@@ -433,6 +436,7 @@ fn store_response(
             labels: Vec::new(),
             node_state: node_state as i32,
             status_address: String::new(),
+            ..Default::default()
         }),
     }
 }
@@ -449,6 +453,7 @@ fn store_record(
         labels: Vec::new(),
         node_state: node_state as i32,
         status_address: String::new(),
+        ..Default::default()
     }
 }
 

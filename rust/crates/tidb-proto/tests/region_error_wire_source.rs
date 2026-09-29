@@ -57,6 +57,7 @@ fn epoch_not_match_restores_exact_repeated_current_regions_field() {
             role: 0,
             is_witness: false,
         }],
+        ..Default::default()
     };
     let error = errorpb::EpochNotMatch {
         current_regions: vec![region.clone(), region],

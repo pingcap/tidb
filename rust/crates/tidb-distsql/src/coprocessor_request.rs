@@ -30,7 +30,7 @@ use crate::{KvRequestMetadata, RequestKeyRange};
 /// The fields map directly to the source `coprocessor.Request` wire contract.
 /// `ranges` must be the ranges for the one task being serialized; this type
 /// does not flatten partitioned `kv.KeyRanges` or perform region splitting.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CoprocessorRequestEnvelope {
     /// Typed `kvrpcpb.Context` (field 1).
     pub context: Option<KvrpcContext>,

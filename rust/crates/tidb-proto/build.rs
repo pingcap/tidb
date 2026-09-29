@@ -4,29 +4,25 @@ fn main() {
     println!("cargo:rerun-if-changed=proto/resourcetag.proto");
     println!("cargo:rerun-if-changed=proto/select.proto");
     println!("cargo:rerun-if-changed=proto/analyze.proto");
-    println!("cargo:rerun-if-changed=proto/errorpb.proto");
-    println!("cargo:rerun-if-changed=proto/kvrpcpb.proto");
     println!("cargo:rerun-if-changed=proto/coprocessor.proto");
     println!("cargo:rerun-if-changed=proto/tikvpb.proto");
-    println!("cargo:rerun-if-changed=proto/metapb.proto");
     println!("cargo:rerun-if-changed=proto/pdpb.proto");
     println!("cargo:rerun-if-changed=proto/mpp.proto");
     println!("cargo:rerun-if-changed=proto/mvccpb.proto");
     println!("cargo:rerun-if-changed=proto/etcdserverpb.proto");
     println!("cargo:rerun-if-changed=proto/brpb.proto");
-    println!("cargo:rerun-if-changed=proto/encryptionpb.proto");
     println!("cargo:rerun-if-changed=proto/explain.proto");
 
+    println!("cargo:rerun-if-changed=../../third_party/tikv-client-rs/proto");
     tonic_prost_build::configure()
-        // Share the full pinned response details with the native client stats
-        // owner. Never decode into a partial projection or transcode it later.
-        .extern_path(
-            ".kvrpcpb.ExecDetailsV2",
-            "::tikv_client_kvproto::kvrpcpb::ExecDetailsV2",
-        )
+        // Use the complete client protocol packages, including imported message
+        // identities. A local projection silently discards fields on decoding.
+        .extern_path(".kvrpcpb", "::tikv_client_kvproto::kvrpcpb")
+        .extern_path(".errorpb", "::tikv_client_kvproto::errorpb")
+        .extern_path(".metapb", "::tikv_client_kvproto::metapb")
+        .extern_path(".encryptionpb", "::tikv_client_kvproto::encryptionpb")
         .build_client(true)
         .build_server(true)
-        .boxed(".encryptionpb.MasterKey.backend.kms")
         // A coprocessor chunk's rows are sliced out of the response buffer
         // the way Go's chunk decoder points columns at the gRPC message
         // (`decodeColumn`: `col.data = buffer[:numDataBytes]`), so the
@@ -47,20 +43,20 @@ fn main() {
                 "proto/resourcetag.proto",
                 "proto/select.proto",
                 "proto/analyze.proto",
-                "proto/errorpb.proto",
-                "proto/kvrpcpb.proto",
                 "proto/coprocessor.proto",
                 "proto/tikvpb.proto",
-                "proto/metapb.proto",
                 "proto/pdpb.proto",
                 "proto/mpp.proto",
                 "proto/mvccpb.proto",
                 "proto/etcdserverpb.proto",
                 "proto/brpb.proto",
-                "proto/encryptionpb.proto",
                 "proto/explain.proto",
             ],
-            &["proto"],
+            &[
+                "proto",
+                "../../third_party/tikv-client-rs/proto",
+                "../../third_party/tikv-client-rs/proto/include",
+            ],
         )
         .expect("compile checked-in dependency-closed TiDB protocol inputs");
 }

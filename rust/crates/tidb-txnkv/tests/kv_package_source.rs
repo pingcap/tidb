@@ -1132,7 +1132,10 @@ fn variables_and_unistore_preserve_source_defaults() {
     let variables = KvVariables::new(killed);
     assert_eq!(variables.backoff_lock_fast, 10);
     assert_eq!(variables.backoff_weight, 2);
-    assert_eq!(variables.kill_reason(), 7);
+    assert_eq!(
+        variables.killed.load(std::sync::atomic::Ordering::Acquire),
+        7
+    );
 
     set_standalone_tidb(false);
     assert!(!standalone_tidb());

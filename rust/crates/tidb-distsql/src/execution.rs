@@ -18,12 +18,13 @@ use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
     Arc, Mutex, Weak,
 };
+pub use tidb_txnkv::KvVariables;
 use tidb_txnkv::UnaryCancellation;
 
 /// Shared kill signal corresponding to Go's `*sqlkiller.SQLKiller` identity.
 #[derive(Debug, Default)]
 pub struct KillHandle {
-    signal: AtomicU32,
+    signal: Arc<AtomicU32>,
 }
 
 impl KillHandle {
@@ -130,47 +131,7 @@ impl CpuUsage {
     }
 }
 
-/// The dependency-closed subset of TiKV client variables used by the context.
-///
-/// Go copies the variables struct during detach and rewires its `Killed`
-/// pointer to the shared SQL killer. The same shape is represented here by
-/// cloning scalar fields while retaining the killer handle identity.
-#[derive(Clone, Debug)]
-pub struct KvVariables {
-    /// Source `BackoffLockFast` setting.
-    pub backoff_lock_fast: u64,
-    /// Source `BackOffWeight` setting.
-    pub backoff_weight: u64,
-    /// Shared kill signal observed by KV operations.
-    pub killed: Arc<KillHandle>,
-}
-
-impl KvVariables {
-    /// Creates variables attached to a particular shared kill handle.
-    #[must_use]
-    pub fn with_killer(killer: Arc<KillHandle>) -> Self {
-        Self {
-            backoff_lock_fast: 0,
-            backoff_weight: 0,
-            killed: killer,
-        }
-    }
-
-    /// Returns whether this variable set observes the supplied killer.
-    #[must_use]
-    pub fn shares_killer_with(&self, killer: &Arc<KillHandle>) -> bool {
-        Arc::ptr_eq(&self.killed, killer)
-    }
-}
-
-impl Default for KvVariables {
-    fn default() -> Self {
-        Self::with_killer(Arc::new(KillHandle::default()))
-    }
-}
-
 /// Execution state carried beside a request context.
-#[derive(Debug)]
 pub struct ExecutionState {
     /// Shared kill handle; detach preserves this identity.
     pub killer: Arc<KillHandle>,
@@ -186,6 +147,30 @@ pub struct ExecutionState {
     pub detached: bool,
 }
 
+impl std::fmt::Debug for ExecutionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Native Variables contains a callback that need not implement Debug.
+        f.debug_struct("ExecutionState")
+            .field("killer", &self.killer)
+            .field("cancel", &self.cancel)
+            .field("cpu_usage", &self.cpu_usage)
+            .field("backoff_lock_fast", &self.kv_vars.backoff_lock_fast)
+            .field("backoff_weight", &self.kv_vars.backoff_weight)
+            .field("disable_txn_file", &self.kv_vars.disable_txn_file)
+            .field(
+                "txn_file_min_mutation_size",
+                &self.kv_vars.txn_file_min_mutation_size,
+            )
+            .field(
+                "has_kill_signal_handler",
+                &self.kv_vars.kill_signal_handler.is_some(),
+            )
+            .field("max_keys_read_counter", &self.max_keys_read_counter)
+            .field("detached", &self.detached)
+            .finish()
+    }
+}
+
 impl ExecutionState {
     /// Creates execution state with fresh kill and cancellation handles.
     #[must_use]
@@ -198,7 +183,7 @@ impl ExecutionState {
     #[must_use]
     pub fn with_handles(killer: Arc<KillHandle>, cancel: Arc<CancelHandle>) -> Self {
         Self {
-            kv_vars: KvVariables::with_killer(Arc::clone(&killer)),
+            kv_vars: KvVariables::new(Arc::clone(&killer.signal)),
             killer,
             cancel,
             cpu_usage: CpuUsage::default(),
@@ -210,15 +195,13 @@ impl ExecutionState {
     /// Returns a detached copy with Go-compatible ownership and identity.
     #[must_use]
     pub fn detach(&self) -> Self {
+        let mut kv_vars = self.kv_vars.clone();
+        kv_vars.killed = Arc::clone(&self.killer.signal);
         Self {
             killer: Arc::clone(&self.killer),
             cancel: Arc::clone(&self.cancel),
             cpu_usage: self.cpu_usage.clone(),
-            kv_vars: KvVariables {
-                backoff_lock_fast: self.kv_vars.backoff_lock_fast,
-                backoff_weight: self.kv_vars.backoff_weight,
-                killed: Arc::clone(&self.killer),
-            },
+            kv_vars,
             // Go allocates a fresh zeroed atomic when the source context had a
             // statement-wide accumulator; it does not carry the old count.
             max_keys_read_counter: self
