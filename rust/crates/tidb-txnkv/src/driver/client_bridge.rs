@@ -27,11 +27,11 @@ use prost::Message;
 use std::any::Any;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-use tikv_client::PdClient;
 use tikv_client::proto::{keyspacepb, kvrpcpb, metapb};
-use tikv_client::{RegionVerId, RegionWithLeader};
 use tikv_client::tikv::{Client as KvClient, RegionStore, Request, Store};
+use tikv_client::PdClient;
 use tikv_client::{Error, Key, Result, Timestamp, TimestampExt};
+use tikv_client::{RegionVerId, RegionWithLeader};
 
 pub(crate) fn runtime() -> Arc<tokio::runtime::Runtime> {
     static RUNTIME: OnceLock<Arc<tokio::runtime::Runtime>> = OnceLock::new();
@@ -385,6 +385,14 @@ pub struct ClientKv {
     address: String,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
 }
+struct CancelBackgroundCall(crate::rpc::UnaryCancellation);
+
+impl Drop for CancelBackgroundCall {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 #[async_trait]
 impl KvClient for ClientKv {
     async fn dispatch(&self, request: &dyn Request) -> Result<Box<dyn Any>> {
@@ -396,7 +404,15 @@ impl KvClient for ClientKv {
         timeout: Option<Duration>,
     ) -> Result<Box<dyn Any>> {
         let timeout = timeout.unwrap_or(Duration::from_secs(30));
-        let detached = request.as_any().is::<kvrpcpb::BatchRollbackRequest>()
+        let background = tikv_client::async_util::background_rpc_cancellation();
+        if background
+            .as_ref()
+            .is_some_and(|scope| scope.is_cancelled())
+        {
+            return Err(failure("context canceled"));
+        }
+        let detached = background.is_some()
+            || request.as_any().is::<kvrpcpb::BatchRollbackRequest>()
             || request.as_any().is::<kvrpcpb::PessimisticRollbackRequest>()
             || request.as_any().is::<kvrpcpb::TxnHeartBeatRequest>()
             || request
@@ -429,14 +445,26 @@ impl KvClient for ClientKv {
         if call.timeout().is_zero() {
             return Err(failure("context deadline exceeded"));
         }
+        // A dropped resolver future must cancel its blocking transport call.
+        // Foreground cancellation belongs to the statement and is never owned here.
+        let _cancel_background = background
+            .as_ref()
+            .map(|_| CancelBackgroundCall(call.cancellation().clone()));
         let backend = self.backend.clone();
         let address = self.address.clone();
         macro_rules! send {
             ($($request:ident),+) => { $(
                 if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
                     let request = request.clone();
-                    let response = tokio::task::spawn_blocking(move || backend.dispatch(&address, &request, &call))
-                        .await.map_err(failure)??;
+                    let pending = tokio::task::spawn_blocking(move || backend.dispatch(&address, &request, &call));
+                    let response = if let Some(owner) = &background {
+                        tokio::select! {
+                            result = pending => result.map_err(failure)??,
+                            _ = owner.cancelled() => return Err(failure("context canceled")),
+                        }
+                    } else {
+                        pending.await.map_err(failure)??
+                    };
                     return Ok(response);
                 }
             )+ }
@@ -786,5 +814,171 @@ impl ClientTrace {
             publication,
             result,
         });
+    }
+}
+
+#[cfg(test)]
+mod ownership_regressions {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct CleanupBackend {
+        calls: AtomicUsize,
+        blocking: bool,
+        started: tokio::sync::Notify,
+        finished: tokio::sync::Notify,
+    }
+    impl Backend for CleanupBackend {
+        fn timestamp(&self) -> Result<Timestamp> {
+            unreachable!()
+        }
+        fn cluster_id(&self) -> u64 {
+            1
+        }
+        fn locate_key(&self, _: &[u8], _: bool) -> Result<RegionWithLeader> {
+            unreachable!()
+        }
+        fn locate_id(&self, _: u64) -> Result<RegionLocation> {
+            unreachable!()
+        }
+        fn update_leader(&self, _: RegionVerId, _: metapb::Peer) -> Result<()> {
+            unreachable!()
+        }
+        fn update_regions(&self, _: Vec<RegionWithLeader>) -> Result<()> {
+            unreachable!()
+        }
+        fn invalidate_region(&self, _: RegionVerId) {
+            unreachable!()
+        }
+        fn invalidate_store(&self, _: u64) {
+            unreachable!()
+        }
+        fn dispatch(
+            &self,
+            _: &str,
+            request: &dyn Request,
+            call: &UnaryCallContext,
+        ) -> Result<Box<dyn Any + Send>> {
+            assert!(request.as_any().is::<kvrpcpb::ResolveLockRequest>());
+            assert!(!call.cancellation().is_cancelled());
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.blocking {
+                self.started.notify_one();
+                assert!(
+                    call.cancellation().wait_timeout(Duration::from_secs(5)),
+                    "dropped background call left the transport running"
+                );
+                self.finished.notify_one();
+                return Err(failure("context canceled"));
+            }
+            Ok(Box::<kvrpcpb::ResolveLockResponse>::default())
+        }
+    }
+
+    #[test]
+    fn background_resolve_lock_can_dispatch_after_statement_cancellation() {
+        let parent = UnaryCallContext::with_timeout(Duration::from_secs(30));
+        parent.cancellation().cancel();
+        let backend = Arc::new(CleanupBackend::default());
+        let client = ClientKv {
+            backend: backend.clone(),
+            address: "store1".to_owned(),
+            call: Arc::new(Mutex::new(Some(parent))),
+        };
+        // Native schedule_read_lock_cleanup sends this through the same client
+        // after returning the lock classification to the foreground reader.
+        let result = runtime().block_on(tikv_client::async_util::with_background_rpc_context(
+            tikv_client::async_util::Cancellation::default(),
+            client.dispatch(&kvrpcpb::ResolveLockRequest {
+                start_version: 10,
+                commit_version: 20,
+                keys: vec![b"key".to_vec()],
+                ..Default::default()
+            }),
+        ));
+        assert!(
+            result.is_ok(),
+            "background resolver inherited the statement context: {:?}",
+            result.err()
+        );
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn foreground_resolution_retains_statement_cancellation() {
+        let parent = UnaryCallContext::with_timeout(Duration::from_secs(30));
+        parent.cancellation().cancel();
+        let backend = Arc::new(CleanupBackend::default());
+        let client = ClientKv {
+            backend: backend.clone(),
+            address: "store1".to_owned(),
+            call: Arc::new(Mutex::new(Some(parent))),
+        };
+        let result = runtime().block_on(client.dispatch(&kvrpcpb::ResolveLockRequest::default()));
+        assert!(result.is_err());
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn background_resolution_obeys_its_owner_cancellation() {
+        let backend = Arc::new(CleanupBackend::default());
+        let client = ClientKv {
+            backend: backend.clone(),
+            address: "store1".to_owned(),
+            call: Arc::new(Mutex::new(None)),
+        };
+        let owner = tikv_client::async_util::Cancellation::default();
+        owner.cancel();
+        let result = runtime().block_on(tikv_client::async_util::with_background_rpc_context(
+            owner,
+            client.dispatch(&kvrpcpb::ResolveLockRequest::default()),
+        ));
+        assert!(result.is_err());
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    }
+    #[test]
+    fn inflight_background_cleanup_cancels_its_blocking_transport() {
+        for abort_task in [false, true] {
+            runtime().block_on(async {
+                let backend = Arc::new(CleanupBackend {
+                    blocking: true,
+                    ..Default::default()
+                });
+                let client = ClientKv {
+                    backend: backend.clone(),
+                    address: "store1".to_owned(),
+                    call: Arc::new(Mutex::new(None)),
+                };
+                let owner = tikv_client::async_util::Cancellation::default();
+                let operation_owner = owner.clone();
+                let task = tokio::spawn(async move {
+                    tikv_client::async_util::with_background_rpc_context(operation_owner, async {
+                        client
+                            .dispatch(&kvrpcpb::ResolveLockRequest::default())
+                            .await
+                            .map(|_| ())
+                    })
+                    .await
+                });
+                tokio::time::timeout(Duration::from_secs(2), backend.started.notified())
+                    .await
+                    .unwrap();
+                if abort_task {
+                    task.abort();
+                    assert!(task.await.unwrap_err().is_cancelled());
+                } else {
+                    owner.cancel();
+                    assert!(tokio::time::timeout(Duration::from_secs(2), task)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .is_err());
+                }
+                tokio::time::timeout(Duration::from_secs(2), backend.finished.notified())
+                    .await
+                    .unwrap();
+            });
+        }
     }
 }

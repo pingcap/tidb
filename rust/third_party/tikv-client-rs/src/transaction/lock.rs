@@ -140,6 +140,17 @@ pub(crate) fn format_key_for_log(key: &[u8]) -> String {
     format!("len={}, prefix={}", key.len(), HexRepr(&key[..prefix_len]))
 }
 
+#[derive(Default)]
+struct RetryForkCancellations(Vec<Cancellation>);
+
+impl Drop for RetryForkCancellations {
+    fn drop(&mut self) {
+        for cancellation in &self.0 {
+            cancellation.cancel();
+        }
+    }
+}
+
 /// client-go's `txnlock.ResolvedCacheSize`.
 pub const RESOLVED_CACHE_SIZE: usize = 2048;
 /// client-go `internal/client.MaxWriteExecutionTime`.
@@ -187,6 +198,22 @@ impl AsyncResolveTaskPool {
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        self.try_spawn_with_context(
+            resolve,
+            task_kind,
+            crate::async_util::background_rpc_cancellation(),
+        )
+    }
+
+    fn try_spawn_with_context<F>(
+        &self,
+        resolve: F,
+        task_kind: &'static str,
+        background: Option<Cancellation>,
+    ) -> std::result::Result<JoinHandle<()>, F>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
         if self.inner.closed.load(Ordering::Acquire) {
             return Err(resolve);
         }
@@ -207,9 +234,16 @@ impl AsyncResolveTaskPool {
             stats::add_lock_resolver_async_running_tasks(task_kind, 1);
             let _completion = AsyncResolveTaskCompletion { inner, task_kind };
             let _permit = permit;
-            tokio::select! {
-                _ = resolve => {}
-                _ = cancellation.cancelled() => {}
+            let run = async {
+                tokio::select! {
+                    _ = resolve => {}
+                    _ = cancellation.cancelled() => {}
+                }
+            };
+            if let Some(background) = background {
+                crate::async_util::with_background_rpc_context(background, run).await;
+            } else {
+                run.await;
             }
         }))
     }
@@ -1265,7 +1299,9 @@ async fn schedule_read_cleanup_task<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    match pool.try_spawn(resolve, task_kind) {
+    // Go uses the resolver context only after admission. A rejected task
+    // runs under its caller's context, which may itself be a background task.
+    match pool.try_spawn_with_context(resolve, task_kind, Some(pool.inner.cancellation.clone())) {
         Ok(task) => Some(task),
         Err(resolve) => {
             stats::increment_lock_resolver_action(fallback_action);
@@ -1364,13 +1400,13 @@ async fn schedule_grouped_read_cleanup(
             .await;
             let _ = result_tx.send(result);
         };
-        match async_resolve_pool.try_spawn(resolve, region_task_kind) {
-            Ok(_) => {}
-            Err(resolve) => {
-                stats::increment_lock_resolver_action(region_fallback_action);
-                resolve.await;
-            }
-        }
+        let _ = schedule_read_cleanup_task(
+            async_resolve_pool.clone(),
+            resolve,
+            region_task_kind,
+            region_fallback_action,
+        )
+        .await;
         region_results.push(result_rx);
     }
 
@@ -1509,7 +1545,7 @@ async fn check_secondary_locks_with_retry(
     context: ResolveLocksContext,
 ) -> Result<SecondaryLocksStatus> {
     let request = new_check_secondary_locks_request(keys, txn_id);
-    let plan = crate::request::PlanBuilder::new(pd_client, keyspace, request)
+    let builder = crate::request::PlanBuilder::new(pd_client, keyspace, request)
         .keyspace_name_option(keyspace_name.as_deref())
         .rpc_interceptor_option(context.rpc_interceptor)
         .resource_group_option(context.resource_group_name.as_deref())
@@ -1517,12 +1553,24 @@ async fn check_secondary_locks_with_retry(
         .ru_details_option(context.ru_details)
         .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
         .preserve_shard()
-        .count_lock_resolver_action("query_check_secondary_locks")
-        .retry_multi_region(DEFAULT_REGION_BACKOFF)
-        .extract_error()
-        .merge(CollectWithShard)
-        .plan();
-    plan.execute().await
+        .count_lock_resolver_action("query_check_secondary_locks");
+    if let Some(owner) = context.retry_owner {
+        builder
+            .retry_multi_region_with_source_retry_owner(DEFAULT_REGION_BACKOFF, owner)
+            .extract_error()
+            .merge(CollectWithShard)
+            .plan()
+            .execute()
+            .await
+    } else {
+        builder
+            .retry_multi_region(DEFAULT_REGION_BACKOFF)
+            .extract_error()
+            .merge(CollectWithShard)
+            .plan()
+            .execute()
+            .await
+    }
 }
 
 async fn resolve_lock_with_retry(
@@ -2534,12 +2582,24 @@ impl LockResolver {
                 .push(key);
         }
 
-        let mut region_results = Vec::with_capacity(regions.len());
+        // Go forks the caller for each region, selects the last completed
+        // child's history, and cancels the other children on every return path.
+        let mut cancellations = RetryForkCancellations::default();
+        let last_completed = Arc::new(StdMutex::new(None::<crate::retry::RetryBackoffer>));
+        let expected = regions.len();
+        let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
         for keys in regions.into_values() {
             let pd_client = pd_client.clone();
             let keyspace_name = keyspace_name.map(ToOwned::to_owned);
-            let context = self.ctx.clone();
-            let (result_tx, result_rx) = oneshot::channel();
+            let mut context = self.ctx.clone();
+            if let Some(owner) = &self.ctx.retry_owner {
+                let (child, cancellation) = owner.lock().await.fork();
+                cancellations.0.push(cancellation);
+                context.retry_owner = Some(Arc::new(Mutex::new(child)));
+            }
+            let child = context.retry_owner.clone();
+            let last_completed = last_completed.clone();
+            let result_tx = result_tx.clone();
             let check = async move {
                 let result = check_secondary_locks_with_retry(
                     keys,
@@ -2550,30 +2610,44 @@ impl LockResolver {
                     context,
                 )
                 .await;
+                if let Some(child) = child {
+                    let completed = child.lock().await.clone();
+                    *last_completed.lock().unwrap() = Some(completed);
+                }
                 let _ = result_tx.send(result);
             };
-            match self
+            if let Err(check) = self
                 .ctx
                 .async_resolve_pool
                 .try_spawn(check, "check_secondaries")
             {
-                Ok(_) => {}
-                Err(check) => {
-                    stats::increment_lock_resolver_action("async_check_secondaries_fallback");
-                    check.await;
-                }
+                stats::increment_lock_resolver_action("async_check_secondaries_fallback");
+                check.await;
             }
-            region_results.push(result_rx);
         }
-
-        let mut combined = SecondaryLocksStatus::empty();
-        for result in region_results {
-            let status = result.await.map_err(|_| {
-                Error::StringError("check-secondary resolver task was cancelled".to_owned())
-            })??;
-            combined.merge_from(status)?;
+        drop(result_tx);
+        let result = async {
+            let mut combined = SecondaryLocksStatus::empty();
+            let mut received = 0;
+            while let Some(result) = result_rx.recv().await {
+                received += 1;
+                combined.merge_from(result?)?;
+            }
+            if received != expected {
+                return Err(Error::StringError(
+                    "check-secondary resolver task was cancelled".to_owned(),
+                ));
+            }
+            Ok(combined)
         }
-        Ok(combined)
+        .await;
+        if let Some(parent) = &self.ctx.retry_owner {
+            let completed = last_completed.lock().unwrap().take();
+            if let Some(completed) = completed {
+                parent.lock().await.update_using_forked(&completed);
+            }
+        }
+        result
     }
 
     async fn batch_resolve_locks(
@@ -4701,5 +4775,159 @@ mod tests {
             format_key_for_log(&key),
             "len=20, prefix=000102030405060708090A0B0C0D0E0F"
         );
+    }
+}
+
+#[cfg(test)]
+mod ownership_regressions {
+    use super::*;
+    use crate::mock::{MockKvClient, MockPdClient};
+    use std::any::Any;
+
+    #[tokio::test]
+    async fn secondary_lock_retry_honors_the_callers_exhausted_budget() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let seen = attempts.clone();
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request| {
+                assert!(request.is::<kvrpcpb::CheckSecondaryLocksRequest>());
+                let response = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                    kvrpcpb::CheckSecondaryLocksResponse {
+                        region_error: Some(crate::proto::errorpb::Error {
+                            region_not_found: Some(Default::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }
+                } else {
+                    kvrpcpb::CheckSecondaryLocksResponse::default()
+                };
+                Ok(Box::new(response) as Box<dyn Any>)
+            },
+        )));
+        let mut budget = crate::retry::RetryBackoffer::new(Cancellation::default(), 1);
+        budget
+            .backoff(crate::retry::BO_REGION_MISS, "earlier status retry")
+            .await
+            .unwrap();
+        let owner = Arc::new(Mutex::new(budget));
+        let context = ResolveLocksContext {
+            retry_owner: Some(owner.clone()),
+            ..Default::default()
+        };
+        let result = check_secondary_locks_with_retry(
+            vec![vec![1]],
+            10,
+            pd,
+            Keyspace::Disable,
+            None,
+            context,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "exhausted caller budget was ignored: {} RPCs, caller sleep {}ms",
+            attempts.load(Ordering::SeqCst),
+            owner.lock().await.total_sleep_ms()
+        );
+    }
+
+    #[tokio::test]
+    async fn secondary_workers_merge_retry_history_on_success_and_error() {
+        for fail in [false, true] {
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let seen = attempts.clone();
+            let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |_| {
+                    let response = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                        kvrpcpb::CheckSecondaryLocksResponse {
+                            region_error: Some(crate::proto::errorpb::Error {
+                                region_not_found: Some(Default::default()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }
+                    } else if fail {
+                        kvrpcpb::CheckSecondaryLocksResponse {
+                            error: Some(kvrpcpb::KeyError {
+                                abort: "injected terminal error".into(),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }
+                    } else {
+                        kvrpcpb::CheckSecondaryLocksResponse::default()
+                    };
+                    Ok(Box::new(response) as Box<dyn Any>)
+                },
+            )));
+            let mut budget = crate::retry::RetryBackoffer::new(Cancellation::default(), 100);
+            budget
+                .backoff(crate::retry::BO_REGION_MISS, "earlier retry")
+                .await
+                .unwrap();
+            let owner = Arc::new(Mutex::new(budget));
+            let mut resolver = LockResolver::new(ResolveLocksContext {
+                retry_owner: Some(owner.clone()),
+                ..Default::default()
+            });
+            let result = resolver
+                .check_all_secondaries(pd, Keyspace::Disable, None, vec![vec![1]], 10)
+                .await;
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(attempts.load(Ordering::SeqCst), 2);
+            let owner = owner.lock().await;
+            assert_eq!(owner.times_by_type().get("regionMiss"), Some(&2));
+            assert_eq!(owner.total_sleep_ms(), 4);
+        }
+    }
+
+    #[tokio::test]
+    async fn saturated_read_cleanup_retains_the_callers_scope() {
+        let pool = AsyncResolveTaskPool::new(Arc::new(Semaphore::new(0)));
+        let task = schedule_read_cleanup_task(
+            pool,
+            async {
+                assert!(crate::async_util::background_rpc_cancellation().is_none());
+            },
+            "test_inline",
+            "test_fallback",
+        )
+        .await;
+        assert!(task.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_cleanup_and_nested_workers_keep_the_resolver_scope() {
+        let pool = AsyncResolveTaskPool::new(Arc::new(Semaphore::new(2)));
+        let child_pool = pool.clone();
+        let (send, receive) = oneshot::channel();
+        let task = schedule_read_cleanup_task(
+            pool.clone(),
+            async move {
+                assert!(crate::async_util::background_rpc_cancellation().is_some());
+                let child = child_pool
+                    .try_spawn(
+                        async move {
+                            send.send(crate::async_util::background_rpc_cancellation().unwrap())
+                                .ok();
+                        },
+                        "test_child",
+                    )
+                    .ok()
+                    .unwrap();
+                child.await.unwrap();
+            },
+            "test_parent",
+            "test_fallback",
+        )
+        .await
+        .unwrap();
+        let cancellation = receive.await.unwrap();
+        task.await.unwrap();
+        assert!(!cancellation.is_cancelled());
+        assert!(crate::async_util::background_rpc_cancellation().is_none());
+        pool.close().await;
+        assert!(cancellation.is_cancelled());
     }
 }

@@ -1,6 +1,5 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -278,9 +277,9 @@ pub struct Buffer {
     memdb: MemDb,
     keyspace: Keyspace,
     primary_key: Option<Key>,
-    /// Snapshot and pessimistic-lock returned-value cache only. Transaction
-    /// mutations and all key flags live exclusively in `memdb`.
-    entry_map: BTreeMap<Key, BufferEntry>,
+    /// Snapshot read cache only. Transaction mutations and lock flags live
+    /// exclusively in `memdb`; locking reads never populate this cache.
+    snapshot_entries: BTreeMap<Key, Option<ValueEntry>>,
     is_pessimistic: bool,
     snapshot_cache_hits: usize,
     snapshot_cache_size_bytes: i64,
@@ -296,7 +295,7 @@ impl Buffer {
             memdb: MemDb::new(),
             keyspace,
             primary_key: None,
-            entry_map: BTreeMap::new(),
+            snapshot_entries: BTreeMap::new(),
             is_pessimistic,
             snapshot_cache_hits: 0,
             snapshot_cache_size_bytes: 0,
@@ -341,15 +340,8 @@ impl Buffer {
 
     /// Discard values cached by snapshot reads while retaining transaction mutations.
     pub(crate) fn clear_cached_reads(&mut self) {
-        self.entry_map.retain(|_, entry| match entry {
-            BufferEntry::Cached(_) => false,
-            BufferEntry::Locked(value) | BufferEntry::SharedLocked(value) => {
-                *value = None;
-                true
-            }
-        });
-        // SetSnapshotTS drops the source cache map but deliberately leaves its
-        // cachedSize accounting untouched, just as it preserves hitCnt.
+        self.snapshot_entries.clear();
+        // Go SetSnapshotTS drops the map but retains cachedSize and hitCnt.
     }
 
     /// Return the number of source snapshot-cache hits observed by this
@@ -361,20 +353,13 @@ impl Buffer {
     /// Return the number of entries retained solely by snapshot reads.
     /// Cached misses count as entries, matching client-go's snapshot cache.
     pub(crate) fn snapshot_cache_size(&self) -> usize {
-        self.entry_map
-            .values()
-            .filter(|entry| matches!(entry, BufferEntry::Cached(_)))
-            .count()
+        self.snapshot_entries.len()
     }
 
     pub(crate) fn snapshot_cache(&self) -> BTreeMap<Key, ValueEntry> {
-        self.entry_map
+        self.snapshot_entries
             .iter()
-            .filter_map(|(key, entry)| match entry {
-                BufferEntry::Cached(Some(value)) => Some((key.clone(), value.clone())),
-                BufferEntry::Cached(None) => Some((key.clone(), ValueEntry::default())),
-                _ => None,
-            })
+            .map(|(key, value)| (key.clone(), value.clone().unwrap_or_default()))
             .collect()
     }
 
@@ -393,19 +378,8 @@ impl Buffer {
         size_limit: i64,
     ) {
         for key in keys {
-            let value = values.get(&key).cloned();
-            if !matches!(self.memdb_value(&key), MutationValue::Undetermined) {
-                continue;
-            }
-            match self.entry_map.get(&key) {
-                None | Some(BufferEntry::Cached(_)) => {
-                    self.update_source_snapshot_cache_entry(key, value);
-                }
-                // Snapshot instances are read-only, so source cache mutation
-                // never meets a write/lock entry. Preserve a transaction's
-                // higher-priority local state if this internal buffer is
-                // reused outside that facade.
-                Some(_) => {}
+            if matches!(self.memdb_value(&key), MutationValue::Undetermined) {
+                self.update_source_snapshot_cache_entry(key.clone(), values.get(&key).cloned());
             }
         }
         self.evict_unneeded_snapshot_cache(values, size_limit);
@@ -417,7 +391,7 @@ impl Buffer {
             // charges the key even when it is absent, and an existing entry
             // additionally charges only its ValueEntry size.
             self.snapshot_cache_size_bytes -= key.len() as i64;
-            if let Some(BufferEntry::Cached(value)) = self.entry_map.remove(&key) {
+            if let Some(value) = self.snapshot_entries.remove(&key) {
                 self.snapshot_cache_size_bytes -= value
                     .as_ref()
                     .map_or(std::mem::size_of::<ValueEntry>() as i64, |value| {
@@ -549,27 +523,11 @@ impl Buffer {
         F: FnOnce(Key) -> Fut,
         Fut: Future<Output = Result<Option<Value>>>,
     {
-        match self.memdb_value(&key) {
-            MutationValue::Determined(value) => Ok(value),
-            MutationValue::Undetermined => {
-                if let Some(entry) = self.entry_map.get(&key) {
-                    if matches!(entry, BufferEntry::Cached(_)) {
-                        self.snapshot_cache_hits += 1;
-                    }
-                    if let MutationValue::Determined(value) = entry.get_value() {
-                        return Ok(value);
-                    }
-                }
-                let value = f(key.clone()).await?;
-                if cache_result {
-                    self.update_point_snapshot_cache_entry(
-                        key,
-                        value.clone().map(|value| ValueEntry::new(value, 0)),
-                    );
-                }
-                Ok(value)
-            }
-        }
+        self.get_snapshot_entry_or_else(key, false, cache_result, |key| async move {
+            Ok(f(key).await?.map(|value| ValueEntry::new(value, 0)))
+        })
+        .await
+        .map(|entry| entry.map(|entry| entry.value))
     }
 
     /// Fetch a snapshot entry while retaining its optional commit timestamp.
@@ -589,49 +547,43 @@ impl Buffer {
         if let MutationValue::Determined(value) = self.memdb_value(&key) {
             return Ok(value.map(|value| ValueEntry::new(value, 0)));
         }
-
-        if let Some(BufferEntry::Cached(value)) = self.entry_map.get(&key) {
-            let eligible = value
-                .as_ref()
-                .is_none_or(|entry| !return_commit_ts || entry.commit_ts > 0);
-            if eligible {
-                self.snapshot_cache_hits += 1;
-                return Ok(value.as_ref().map(|entry| {
-                    let mut entry = entry.clone();
-                    if !return_commit_ts {
-                        entry.commit_ts = 0;
-                    }
-                    entry
-                }));
-            }
-
-            let value = f(key.clone()).await?;
-            if cache_result {
-                self.update_point_snapshot_cache_entry(key, value.clone());
-            }
+        if let Some(value) = self.cached_snapshot_entry(&key, return_commit_ts) {
             return Ok(value);
         }
-
-        match self
-            .entry_map
-            .get(&key)
-            .map(BufferEntry::get_value)
-            .unwrap_or(MutationValue::Undetermined)
-        {
-            MutationValue::Determined(value) => Ok(value.map(|value| ValueEntry::new(value, 0))),
-            MutationValue::Undetermined => {
-                let value = f(key.clone()).await?;
-                if cache_result {
-                    self.update_point_snapshot_cache_entry(key, value.clone());
-                }
-                Ok(value.map(|mut entry| {
-                    if !return_commit_ts {
-                        entry.commit_ts = 0;
-                    }
-                    entry
-                }))
-            }
+        let value = f(key.clone()).await?;
+        if cache_result {
+            self.update_point_snapshot_cache_entry(key, value.clone());
         }
+        Ok(value.map(|mut entry| {
+            if !return_commit_ts {
+                entry.commit_ts = 0;
+            }
+            entry
+        }))
+    }
+
+    // Lock flags belong to MemDB. Snapshot entries retain their full metadata
+    // regardless of whether the transaction subsequently locks the same key.
+    fn cached_snapshot_entry(
+        &mut self,
+        key: &Key,
+        return_commit_ts: bool,
+    ) -> Option<Option<ValueEntry>> {
+        let value = self.snapshot_entries.get(key)?;
+        if value
+            .as_ref()
+            .is_some_and(|value| return_commit_ts && value.commit_ts == 0)
+        {
+            return None;
+        }
+        self.snapshot_cache_hits += 1;
+        Some(value.as_ref().map(|value| {
+            let mut value = value.clone();
+            if !return_commit_ts {
+                value.commit_ts = 0;
+            }
+            value
+        }))
     }
 
     /// Get multiple values from the buffer. If any are not present, run `f` to
@@ -673,20 +625,9 @@ impl Buffer {
                     cached_results.push(KvPair(key, value));
                 }
                 MutationValue::Determined(None) => {}
-                MutationValue::Undetermined => match self.entry_map.get(&key) {
-                    Some(BufferEntry::Cached(value)) => {
-                        self.snapshot_cache_hits += 1;
-                        if let Some(value) = value {
-                            cached_results.push(KvPair(key, value.value.clone()));
-                        }
-                    }
-                    Some(entry) => match entry.get_value() {
-                        MutationValue::Determined(Some(value)) => {
-                            cached_results.push(KvPair(key, value));
-                        }
-                        MutationValue::Determined(None) => {}
-                        MutationValue::Undetermined => undetermined_keys.push(key),
-                    },
+                MutationValue::Undetermined => match self.cached_snapshot_entry(&key, false) {
+                    Some(Some(value)) => cached_results.push(KvPair(key, value.value)),
+                    Some(None) => {}
                     None => undetermined_keys.push(key),
                 },
             }
@@ -729,33 +670,15 @@ impl Buffer {
                     cached_results.insert(key, ValueEntry::new(value, 0));
                 }
                 MutationValue::Determined(None) => {}
-                MutationValue::Undetermined => match self.entry_map.get(&key) {
-                    Some(BufferEntry::Cached(value)) => {
-                        let eligible = value
-                            .as_ref()
-                            .is_none_or(|entry| !return_commit_ts || entry.commit_ts > 0);
-                        if eligible {
-                            self.snapshot_cache_hits += 1;
-                            if let Some(value) = value {
-                                let mut value = value.clone();
-                                if !return_commit_ts {
-                                    value.commit_ts = 0;
-                                }
-                                cached_results.insert(key, value);
-                            }
-                        } else {
-                            undetermined_keys.push(key);
+                MutationValue::Undetermined => {
+                    match self.cached_snapshot_entry(&key, return_commit_ts) {
+                        Some(Some(value)) => {
+                            cached_results.insert(key, value);
                         }
+                        Some(None) => {}
+                        None => undetermined_keys.push(key),
                     }
-                    Some(entry) => match entry.get_value() {
-                        MutationValue::Determined(Some(value)) => {
-                            cached_results.insert(key, ValueEntry::new(value, 0));
-                        }
-                        MutationValue::Determined(None) => {}
-                        MutationValue::Undetermined => undetermined_keys.push(key),
-                    },
-                    None => undetermined_keys.push(key),
-                },
+                }
             }
         }
 
@@ -906,40 +829,7 @@ impl Buffer {
         }
         let effective_shared =
             shared && (!current_flags.has_locked() || current_flags.has_locked_in_share_mode());
-        let cache_key = key.clone();
-        let entry = self.entry_map.entry(key);
-        match entry {
-            Entry::Vacant(entry) => {
-                if effective_shared {
-                    entry.insert(BufferEntry::SharedLocked(None));
-                } else {
-                    entry.insert(BufferEntry::Locked(None));
-                }
-            }
-            Entry::Occupied(mut entry) => match entry.get_mut() {
-                BufferEntry::Cached(value) => {
-                    self.snapshot_cache_size_bytes = self
-                        .snapshot_cache_size_bytes
-                        .saturating_sub(snapshot_cache_entry_size(&cache_key, value));
-                    let value = Some(value.take());
-                    if effective_shared {
-                        entry.insert(BufferEntry::SharedLocked(value));
-                    } else {
-                        entry.insert(BufferEntry::Locked(value));
-                    }
-                }
-                BufferEntry::SharedLocked(value) if !effective_shared => {
-                    let value = value.take();
-                    entry.insert(BufferEntry::Locked(value));
-                }
-                BufferEntry::Locked(value) if effective_shared => {
-                    let value = value.take();
-                    entry.insert(BufferEntry::SharedLocked(value));
-                }
-                BufferEntry::Locked(_) | BufferEntry::SharedLocked(_) => {}
-            },
-        }
-        let logical_key = self.logical_key(&cache_key);
+        let logical_key = self.logical_key(&key);
         let value_exists = returned_exists.unwrap_or(true);
         let value_flag = if value_exists {
             FlagsOp::SetKeyLockedValueExists
@@ -1045,19 +935,6 @@ impl Buffer {
             && self.memdb.get_readonly(&logical_key).is_err();
         if remove_flags_only {
             self.memdb.remove_from_buffer(&logical_key);
-        }
-        if let Some(value) = self.entry_map.get_mut(key) {
-            if let BufferEntry::Locked(v) | BufferEntry::SharedLocked(v) = value {
-                if let Some(v) = v {
-                    let cached = v.take();
-                    self.snapshot_cache_size_bytes = self
-                        .snapshot_cache_size_bytes
-                        .saturating_add(snapshot_cache_entry_size(key, &cached));
-                    *value = BufferEntry::Cached(cached);
-                } else {
-                    self.entry_map.remove(key);
-                }
-            }
         }
     }
 
@@ -1203,9 +1080,11 @@ impl Buffer {
     fn get_from_mutations(&self, key: &Key) -> MutationValue {
         match self.memdb_value(key) {
             MutationValue::Undetermined => self
-                .entry_map
+                .snapshot_entries
                 .get(key)
-                .map(BufferEntry::get_value)
+                .map(|value| {
+                    MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
+                })
                 .unwrap_or(MutationValue::Undetermined),
             determined => determined,
         }
@@ -1219,22 +1098,10 @@ impl Buffer {
         if !matches!(self.memdb_value(&key), MutationValue::Undetermined) {
             return;
         }
-        match self.entry_map.get(&key) {
-            Some(BufferEntry::Locked(None)) => {
-                self.entry_map.insert(key, BufferEntry::Locked(Some(value)));
-            }
-            Some(BufferEntry::SharedLocked(None)) => {
-                self.entry_map
-                    .insert(key, BufferEntry::SharedLocked(Some(value)));
-            }
-            None => {
-                self.replace_cached_entry(key, value);
-            }
-            Some(BufferEntry::Cached(v))
-            | Some(BufferEntry::Locked(Some(v)))
-            | Some(BufferEntry::SharedLocked(Some(v))) => {
-                assert!(&value == v);
-            }
+        if let Some(cached) = self.snapshot_entries.get(&key) {
+            assert_eq!(&value, cached);
+        } else {
+            self.replace_cached_entry(key, value);
         }
     }
 
@@ -1251,18 +1118,13 @@ impl Buffer {
         if !matches!(self.memdb_value(&key), MutationValue::Undetermined) {
             return;
         }
-        match self.entry_map.get(&key) {
-            None | Some(BufferEntry::Cached(_)) => {
-                let needed = BTreeMap::from([(key.clone(), value.clone().unwrap_or_default())]);
-                self.update_source_snapshot_cache_entry(key, value);
-                self.evict_unneeded_snapshot_cache(&needed, size_limit);
-            }
-            Some(_) => {}
-        }
+        let needed = BTreeMap::from([(key.clone(), value.clone().unwrap_or_default())]);
+        self.update_source_snapshot_cache_entry(key, value);
+        self.evict_unneeded_snapshot_cache(&needed, size_limit);
     }
 
     fn replace_cached_entry(&mut self, key: Key, value: Option<ValueEntry>) {
-        if let Some(BufferEntry::Cached(old)) = self.entry_map.get(&key) {
+        if let Some(old) = self.snapshot_entries.get(&key) {
             self.snapshot_cache_size_bytes = self
                 .snapshot_cache_size_bytes
                 .saturating_sub(snapshot_cache_entry_size(&key, old));
@@ -1270,7 +1132,7 @@ impl Buffer {
         self.snapshot_cache_size_bytes = self
             .snapshot_cache_size_bytes
             .saturating_add(snapshot_cache_entry_size(&key, &value));
-        self.entry_map.insert(key, BufferEntry::Cached(value));
+        self.snapshot_entries.insert(key, value);
     }
 
     fn update_source_snapshot_cache_entry(&mut self, key: Key, value: Option<ValueEntry>) {
@@ -1278,18 +1140,18 @@ impl Buffer {
         // only the old ValueEntry on replacement. This intentionally retains
         // client-go's cumulative key-byte accounting.
         self.snapshot_cache_size_bytes += snapshot_cache_entry_size(&key, &value);
-        if let Some(BufferEntry::Cached(old)) = self.entry_map.get(&key) {
+        if let Some(old) = self.snapshot_entries.get(&key) {
             self.snapshot_cache_size_bytes -= old
                 .as_ref()
                 .map_or(std::mem::size_of::<ValueEntry>() as i64, |value| {
                     value.size() as i64
                 });
         }
-        self.entry_map.insert(key, BufferEntry::Cached(value));
+        self.snapshot_entries.insert(key, value);
     }
 
     fn remove_cached_entry(&mut self, key: &Key) {
-        if let Some(BufferEntry::Cached(value)) = self.entry_map.remove(key) {
+        if let Some(value) = self.snapshot_entries.remove(key) {
             self.snapshot_cache_size_bytes = self
                 .snapshot_cache_size_bytes
                 .saturating_sub(snapshot_cache_entry_size(key, &value));
@@ -1305,76 +1167,15 @@ impl Buffer {
             return;
         }
         let candidates = self
-            .entry_map
+            .snapshot_entries
             .iter()
-            .filter(|(key, entry)| {
-                matches!(entry, BufferEntry::Cached(_)) && !needed.contains_key(*key)
-            })
+            .filter(|(key, _)| !needed.contains_key(*key))
             .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
         for key in candidates {
             self.remove_cached_entry(&key);
             if self.snapshot_cache_size_bytes < size_limit {
                 break;
-            }
-        }
-    }
-
-    fn insert_entry(&mut self, key: impl Into<Key>, entry: BufferEntry) {
-        let key = key.into();
-        if matches!(self.entry_map.get(&key), Some(BufferEntry::Cached(_))) {
-            self.remove_cached_entry(&key);
-        }
-        self.entry_map.insert(key, entry);
-    }
-}
-
-// The state of a key-value pair in the buffer.
-// It includes two kinds of state:
-//
-// This map contains only the cache of read requests. Mutation values and
-// flags live in the authoritative MemDB above.
-//
-//   - `Cached`, generated by normal read requests
-//   - `ReadLockCached`, generated by lock commands (`lock_keys`, `get_for_update`) and optionally read requests
-//
-#[derive(Debug, Clone)]
-enum BufferEntry {
-    // The value has been read from the server. None means there is no entry.
-    // Also means the entry isn't locked.
-    Cached(Option<ValueEntry>),
-    // Key is locked.
-    //
-    // Cached value:
-    //   - Outer Option: Whether there is cached value
-    //   - Inner Option: Whether the value is empty
-    //   - Note: The cache is not what the lock request reads, but what normal read (`get`) requests read.
-    //
-    // In optimistic transaction:
-    //   The key is locked by `lock_keys`.
-    //   It means letting the server check for conflicts when committing
-    //
-    // In pessimistic transaction:
-    //   The key is locked by `get_for_update` or `batch_get_for_update`
-    Locked(Option<Option<ValueEntry>>),
-    // A pessimistic shared lock. It is prewritten as `SharedLock` and cannot
-    // become the transaction primary.
-    SharedLocked(Option<Option<ValueEntry>>),
-}
-
-impl BufferEntry {
-    fn get_value(&self) -> MutationValue {
-        match self {
-            BufferEntry::Cached(value) => {
-                MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
-            }
-            BufferEntry::Locked(None) => MutationValue::Undetermined,
-            BufferEntry::Locked(Some(value)) => {
-                MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
-            }
-            BufferEntry::SharedLocked(None) => MutationValue::Undetermined,
-            BufferEntry::SharedLocked(Some(value)) => {
-                MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
             }
         }
     }
@@ -1759,23 +1560,18 @@ mod tests {
             .lock_with_returned_value(key.clone(), false, Some(&returned))
             .unwrap();
         assert!(
-            matches!(buffer.entry_map.get(&key), Some(BufferEntry::Locked(Some(Some(value)))) if value.value == b"old")
+            matches!(buffer.snapshot_entries.get(&key), Some(Some(value)) if value.value == b"old")
         );
         buffer.clear_cached_reads();
-        assert!(matches!(
-            buffer.entry_map.get(&key),
-            Some(BufferEntry::Locked(None))
-        ));
+        assert!(!buffer.snapshot_entries.contains_key(&key));
         assert!(buffer.memdb_flags(&key).has_locked());
 
         let absent: Key = b"absent".to_vec().into();
         buffer
             .lock_with_returned_value(absent.clone(), false, Some(&returned))
             .unwrap();
-        assert!(matches!(
-            buffer.entry_map.get(&absent),
-            Some(BufferEntry::Locked(None))
-        ));
+        assert!(!buffer.snapshot_entries.contains_key(&absent));
+        assert!(buffer.memdb_flags(&absent).has_locked());
     }
 
     #[test]
@@ -1959,7 +1755,7 @@ mod tests {
 
         macro_rules! assert_entry_none {
             ($key: ident) => {
-                assert!(buffer.entry_map.get(&$key).is_none())
+                assert!(buffer.snapshot_entries.get(&$key).is_none())
             };
         }
 
@@ -2003,10 +1799,7 @@ mod tests {
         assert_eq!(r.unwrap().unwrap(), val);
         buffer.lock(key.clone());
         buffer.unlock(&key);
-        assert!(matches!(
-            buffer.entry_map.get(&key),
-            Some(BufferEntry::Cached(Some(_)))
-        ));
+        assert!(matches!(buffer.snapshot_entries.get(&key), Some(Some(_))));
         assert_eq!(
             block_on(buffer.get_or_else(key, move |_| ready(Err(internal_err!("")))))
                 .unwrap()
@@ -2117,5 +1910,87 @@ mod tests {
         assert_snapshot_cache_mutation_preserves_entries_and_cached_misses();
         assert_snapshot_cache_limit_evicts_only_entries_unneeded_by_current_fill();
         assert_snapshot_cache_replacement_and_clean_keep_go_accounting();
+    }
+}
+
+#[cfg(test)]
+mod ownership_regressions {
+    use super::*;
+    #[tokio::test]
+    async fn locking_a_snapshot_cached_key_preserves_return_commit_ts() {
+        let mut buffer = Buffer::new(true);
+        let key: Key = vec![1].into();
+        buffer.update_snapshot_cache(
+            vec![key.clone()],
+            &BTreeMap::from([(key.clone(), ValueEntry::new(vec![42], 7))]),
+        );
+        buffer
+            .lock_with_returned_value(
+                key.clone(),
+                false,
+                Some(&crate::ReturnedValue {
+                    value: vec![43],
+                    exists: true,
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+        let entry = buffer
+            .get_snapshot_entry_or_else(key, true, true, |_| async {
+                panic!("already cached the commit timestamp")
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            entry.commit_ts, 7,
+            "locking must preserve snapshot ValueEntry metadata"
+        );
+    }
+
+    #[tokio::test]
+    async fn locked_snapshot_entries_share_cache_accounting_and_refetch_rules() {
+        for shared in [false, true] {
+            let key = Key::from(b"cached".to_vec());
+            let mut buffer = Buffer::new(true);
+            buffer.primary_key_or(&Key::from(b"primary".to_vec()));
+            buffer.update_snapshot_cache(
+                [key.clone()],
+                &BTreeMap::from([(key.clone(), ValueEntry::new(vec![42], 0))]),
+            );
+            let size = buffer.snapshot_cache_size_bytes;
+            buffer
+                .lock_with_returned_value(key.clone(), shared, None)
+                .unwrap();
+            assert_eq!(buffer.snapshot_cache_size(), 1);
+            assert_eq!(buffer.snapshot_cache_size_bytes, size);
+            let values = buffer
+                .batch_get_snapshot_entries_or_else(
+                    [key.clone()].into_iter(),
+                    true,
+                    true,
+                    |keys| async move {
+                        let key = keys.collect::<Vec<_>>().pop().unwrap();
+                        Ok(BTreeMap::from([(key, ValueEntry::new(vec![42], 7))]))
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(values[&key].commit_ts, 7);
+            let entry = buffer
+                .get_snapshot_entry_or_else(key.clone(), true, true, |_| async {
+                    panic!("eligible cache entry must be reused")
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(entry.commit_ts, 7);
+            assert_eq!(buffer.snapshot_cache_hit_count(), 1);
+            buffer.clean_snapshot_cache([key.clone()]);
+            assert_eq!(buffer.snapshot_cache_size(), 0);
+            assert!(buffer.memdb_flags(&key).has_locked());
+            buffer.unlock(&key);
+            assert_eq!(buffer.snapshot_cache_size(), 0);
+        }
     }
 }

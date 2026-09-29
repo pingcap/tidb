@@ -121,3 +121,76 @@ Correctness and compatibility evidence covers the affected retry, cache, mock tr
 
 
 `git -c core.hooksPath=hooks commit` ran the required `cd rust && cargo build --locked -p tidb-server` successfully, recorded in `/private/tmp/tidb-client-boundary-commit.log`. A separate fresh run of `cd rust && cargo build --locked -p tidb-server` also passed, recorded in `/private/tmp/tidb-client-boundary-prepush-build.log`. The final delivery command repeats this locked build immediately before `git push origin HEAD:hparser-integration`; a build failure stops the push. The final documentation amendment uses the same pre-commit hook. Both remotes were fetched again before delivery, with no competing commits and no change to the recorded Go master pin.
+
+
+## Review follow-through: one cache and explicit operation ownership
+
+
+The 2026-09-29 complete review tested five findings, recorded in `/private/tmp/client-tidb-complete-review.md`. Continue from clean TiDB `8e5efe8304` and native client `65b9a87`; both remotes were fetched again and those branches plus the Go master pin are unchanged. The duplicate transaction phase engines are already deleted. TiDB's coprocessor read path still uses `lock/resolver.rs`, `lock/pessimistic.rs`, `lock/async_resolve.rs` and a separate resolved-status cache; these are real remaining duplicate owners, not transaction facades. Do not report all duplication removed until these call sites delegate to the native resolver.
+
+The immediate acceptance criteria are that the four correctly attributed review reproductions pass as permanent regressions, snapshot values and lock flags have independent ownership, nested secondary checks share the caller's Go backoff fork/join lifecycle, explicit Rust retry overrides remain effective, and detached cleanup carries its own cancellation scope through TiDB's bridge. Fix client behavior in client-rust, update its master, then sync the vendor and commit/push TiDB using the existing mandatory gates. This remains integration and repair, not a whole-package transcreation claim.
+
+Alternatives considered: retaining the lock-tagged snapshot cache and patching each accessor would preserve duplicate lock state and leave cache accounting/eviction incorrect. Remove that second lock state and use MemDB flags as the sole authority. Inferring background lifetimes from RPC type cannot distinguish foreground ResolveLock from background ResolveLock; carry the existing client's operation lifetime through an explicit context scope instead. Independent retry counters for secondary checks would continue resetting caller budgets; fork and merge the supplied owner as Go does.
+
+Progress for this follow-through:
+
+- [x] Fetch both remotes; confirm transaction engine deletions and identify the remaining coprocessor resolver duplication.
+- [x] Reproduce four confirmed defects before fixes; retain test snippets and failure logs under `/private/tmp`. Withdraw the incorrectly attributed fifth finding as explained below.
+- [x] Add seven permanent native regressions and implement cache/retry ownership repairs; push client-rust master as 8b7a726.
+- [x] Carry foreground/background operation context across the native client and TiDB transport boundary, including cancellation of a running blocking RPC.
+- [ ] Retire the remaining TiDB lock resolver algorithms and duplicate status cache/cleanup pool once their caller contracts are covered.
+- [x] Run affected native and TiDB tests, make lint and self-review.
+- [x] Commit TiDB through the locked pre-commit server build; require the same fresh locked build in the final push command.
+
+Use targeted native library tests followed by the full serial native library suite because buffer and resolver changes affect every transaction. Validate TiDB snapshot, lock-resolver and coprocessor integration surfaces, embedded transaction tests and SQL transaction tests. Preserve independent baseline failures documented above; do not weaken assertions to hide behavioral changes. Update this plan with actual results and any remaining ownership boundaries before delivery.
+
+
+### Source-boundary correction
+
+
+The review's mock wake-up finding was incorrectly attributed. Client-go `internal/mockstore/mocktikv/mvcc_leveldb.go` explicitly does not implement server-side lock waiting; `rpc.go:simulateServerSideWaitLock` only sleeps 5 ms and returns the original lock error. TiDB `pkg/store/mockstore/unistore/tikv/server.go` is a different backend and returns WriteConflict on normal wake-up. Client-go `integration_tests/shared_lock_test.go:TestSharedLock` explicitly skips unless real TiKV is enabled. Rust's mock has pre-existing mixed waiter behavior, and Rust source-named shared-lock tests incorrectly run against that mock. Changing every normal mock wake to WriteConflict failed RetryPushTTL and PrewriteAssertion. That proposed fix and incorrectly grounded regression were withdrawn, not hidden by altering those tests. This backend/harness mismatch remains a separate audited gap; no mock parity claim is made by this change.
+
+The corrected full native library run passed 1378 tests with two ignored. A new saturation regression then failed because the initial cleanup scope implementation detached even rejected tasks. Go batchLiteResolveLocks calls the inline fallback with the original backoffer/context. Admission now installs the background scope only for accepted tasks, while nested accepted cleanup tasks use the same resolver owner. Saturated fallback retains the caller scope. The transport cancels blocking background RPCs on owner cancellation or task drop.
+
+
+### Native delivery evidence
+
+
+Client master `8b7a726` removes BufferEntry's duplicate Locked/SharedLocked state and centralizes snapshot cache access, metadata eligibility, eviction, and accounting. MemDB exclusively owns transaction lock flags. CheckSecondaryLocks uses the operation backoffer, and checkAllSecondaries forks that owner per worker, adopts the last completed worker's history on both success and error, and cancels forks on return. Explicit no-retry options no longer acquire Go-default retries through the lock-wait callback. Admitted cleanup tasks carry the resolver cancellation scope through nested workers; rejected cleanup stays in the caller scope.
+
+From `/Users/qiliu/projects/client-rust`, these passed:
+
+    cargo test --locked --lib ownership_regressions -- --test-threads=1
+    cargo test --locked --workspace --all-features --lib -- --test-threads=1
+    cargo test --locked --test public_injected_client_tests --test mocktikv_transaction_tests -- --test-threads=1
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::all
+    cargo fmt -- --check
+    git diff --check
+
+The counts are seven focused ownership cases; 1362 client tests (six ignored), two protocol-build tests, 46 reusable engine tests; and nine external consumer tests. Logs: `/private/tmp/client-ownership-final-regressions.log`, `client-ownership-all-features.log`, `client-ownership-public.log`, and `client-ownership-clippy.log`. The earlier default-feature run passed 1378 with two ignored, before the additional saturation case. `make lint` also passed from the TiDB root (`/private/tmp/tidb-ownership-lint.log`). The native commit and master push succeeded; no private vendor fix is needed.
+
+
+### TiDB integration evidence
+
+
+The vendor sync regenerated protocol outputs through `sync-tikv-client-rs.sh` and produced no generated-file changes. All 263 vendored files match the patched upstream staging checkout; only the four native source files and sync receipt changed. TiDB bridge regressions run against the old bridge failed three of four tests: detached ResolveLock inherited statement cancellation, a cancelled cleanup owner still sent an RPC, and cancelling an in-flight owner did not stop the blocking transport. Restoring the fixed bridge passes all four, including a second path that explicitly drops the async task. The complete txnkv library passed 139 tests (one existing ignore), and snapshot_lock_wait_source passed all 17 cases. Logs: `/private/tmp/tidb-ownership-bridge-red.log`, `/private/tmp/tidb-ownership-library.log`, `/private/tmp/tidb-ownership-snapshot.log`.
+
+
+The embedded `tidb-unistore` client transaction tests passed all 15 cases, and `tidb-server` SQL transaction tests passed all 25. Exact TiDB commands from `rust/`:
+
+    cargo test --locked -p tidb-txnkv --lib -- --test-threads=1
+    cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source -- --test-threads=1
+    cargo test --locked -p tidb-unistore --test client_transaction -- --nocapture
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::transactions
+
+No real TiKV, multi-node faults, Go differential execution, or sysbench/TPC-C/TPC-H/YCSB benchmarks were run. No performance improvement or complete package parity is claimed. Remaining structural work includes the TiDB coprocessor resolver and its separate status cache/pool, native cleanup paths that still use legacy retry budgets, and the mock/backend test-source mismatch above. These must be addressed at their shared ownership boundary, not bypassed by returning a fixed timestamp, adding another resolver mode, or weakening the source tests.
+
+
+The txnkv aggregate integration suite passed 419 tests with ten existing ignores and the same two documented region-cache baseline exclusions. Exact command from `rust/`:
+
+    cargo test --locked -p tidb-txnkv --test all -- --skip region_cache_source::stale_merge_parent_does_not_evict_newer_split_child --skip region_cache_source::stale_same_region_loader_result_is_rejected_without_eviction
+
+Self-review verified the source cache no longer carries lock-state variants, native worker scope is applied only after admission, secondary history is merged on both result paths, the transport drop guard owns only newly detached call cancellation, and no generated outputs were edited. The required delivery uses `git -c core.hooksPath=hooks commit`, followed immediately before push by `(cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration`.
+
+
+The TiDB pre-commit hook successfully ran `cd rust && cargo build --locked -p tidb-server` and created the integration commit. Its log is `/private/tmp/tidb-ownership-commit.log`. This final receipt amendment uses that hook again. Delivery remains guarded by a fresh invocation of the exact same locked build immediately before the branch push; failure prevents the push. The remaining coprocessor resolver milestone above is deliberately incomplete.

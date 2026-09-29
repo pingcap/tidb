@@ -5112,7 +5112,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                     self.options.retry_options.lock_backoff.clone(),
                     self.keyspace,
                     self.lock_resolver_context.clone(),
-                    Some(Arc::new(move || timing_for_wait.check_wait())),
+                    source_retry_owner.as_ref().map(|_| {
+                        Arc::new(move || timing_for_wait.check_wait())
+                            as Arc<dyn Fn() -> Result<()> + Send + Sync>
+                    }),
                 )
                 .preserve_shard();
             let result = if let Some(owner) = source_retry_owner.as_ref() {
@@ -22048,4 +22051,79 @@ mod tests {
     include!("integration_source_tests.rs");
     include!("integration_lock_source_tests.rs");
     include!("integration_2pc_source_tests.rs");
+}
+
+#[cfg(test)]
+mod ownership_regressions {
+    use super::*;
+    use crate::mock::{MockKvClient, MockPdClient};
+    use std::any::Any;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn explicit_no_retry_does_not_reissue_a_pessimistic_lock() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let seen = attempts.clone();
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![1],
+            lock_version: 1,
+            lock_ttl: 100_000,
+            lock_type: kvrpcpb::Op::PessimisticLock as i32,
+            ..Default::default()
+        };
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request| {
+                if request.is::<kvrpcpb::PessimisticLockRequest>() {
+                    let response = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                        kvrpcpb::PessimisticLockResponse {
+                            errors: vec![kvrpcpb::KeyError {
+                                locked: Some(lock.clone()),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }
+                    } else {
+                        kvrpcpb::PessimisticLockResponse::default()
+                    };
+                    return Ok(Box::new(response) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 100_000,
+                        lock_info: Some(lock.clone()),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                if request.is::<kvrpcpb::TxnHeartBeatRequest>() {
+                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse {
+                        lock_ttl: 100_000,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request");
+            },
+        )));
+        pd.set_timestamp(Timestamp::from_version(20));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(10),
+            pd,
+            TransactionOptions::new_pessimistic()
+                .retry_options(RetryOptions::none())
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let result = txn.get_for_update(vec![1]).await;
+        assert!(
+            result.is_err(),
+            "disabled lock retries returned {result:?} after {} lock RPCs",
+            attempts.load(Ordering::SeqCst)
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
 }
