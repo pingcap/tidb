@@ -165,9 +165,9 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, uint64(449123456789000000), row[13].GetUint64())
-		require.Equal(t, ^uint64(0), row[15].GetUint64())
-		requireNull(t, row, 1) // CLUSTER_NAME
-		requireNull(t, row, 7) // SOURCE_CLUSTER_NAME
+		requireNull(t, row, 15) // CHECKPOINT_LAG
+		requireNull(t, row, 1)  // CLUSTER_NAME
+		requireNull(t, row, 7)  // SOURCE_CLUSTER_NAME
 	})
 
 	t.Run("unsupported protection mode", func(t *testing.T) {
@@ -182,5 +182,46 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 		requireEnum(t, row, 9, "UNKNOWN")
 		requireNull(t, row, 1) // CLUSTER_NAME
 		requireNull(t, row, 7) // SOURCE_CLUSTER_NAME
+	})
+}
+
+func TestBuildLogReplStatusGlobalRow(t *testing.T) {
+	requireNull := func(t *testing.T, row []types.Datum, idx int) {
+		require.Equal(t, types.KindNull, row[idx].Kind())
+	}
+
+	const checkpointTS = uint64(449123456789000000)
+
+	t.Run("known checkpoint lag", func(t *testing.T) {
+		row := buildLogReplStatusGlobalRow(&pdpb.LogReplicationStatus{
+			Name:             "dr_east",
+			ReplicaClusterId: 1002,
+			CheckpointTs:     checkpointTS,
+			CheckpointLagSec: 5,
+		})
+		require.Len(t, row, 14)
+		require.Equal(t, checkpointTS, row[9].GetUint64()) // CHECKPOINT_TS
+		require.Equal(t, uint64(5), row[11].GetUint64())   // CHECKPOINT_LAG
+	})
+
+	t.Run("unknown checkpoint lag is null", func(t *testing.T) {
+		row := buildLogReplStatusGlobalRow(&pdpb.LogReplicationStatus{
+			Name:             "dr_east",
+			ReplicaClusterId: 1002,
+			CheckpointTs:     checkpointTS,
+			CheckpointLagSec: -1,
+		})
+		require.Len(t, row, 14)
+		require.Equal(t, checkpointTS, row[9].GetUint64()) // CHECKPOINT_TS
+		requireNull(t, row, 11)                            // CHECKPOINT_LAG
+	})
+
+	t.Run("no checkpoint", func(t *testing.T) {
+		row := buildLogReplStatusGlobalRow(&pdpb.LogReplicationStatus{
+			Name:             "dr_east",
+			ReplicaClusterId: 1002,
+		})
+		requireNull(t, row, 9)  // CHECKPOINT_TS
+		requireNull(t, row, 11) // CHECKPOINT_LAG
 	})
 }

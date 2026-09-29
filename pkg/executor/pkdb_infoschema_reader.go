@@ -27,61 +27,67 @@ func (e *memtableRetriever) setDataForLogReplStatusGlobal(ctx context.Context, s
 
 	rows := make([][]types.Datum, 0, len(statuses))
 	for _, status := range statuses {
-		row := make([]types.Datum, len(infoschema.TableLogReplStatusGlobalCols))
-		row[0].SetString(status.Name, mysql.DefaultCollationName) // REPLICATION_NAME
-		row[1].SetUint64(status.ReplicaClusterId)                 // REPLICA_CLUSTER_ID
-		if status.GetReplicaClusterName() != "" {
-			row[2].SetString(status.GetReplicaClusterName(), mysql.DefaultCollationName) // REPLICA_CLUSTER_NAME
-		}
-		row[3].SetUint64(status.SourceClusterId) // SOURCE_CLUSTER_ID
-		if status.GetSourceClusterName() != "" {
-			row[4].SetString(status.GetSourceClusterName(), mysql.DefaultCollationName) // SOURCE_CLUSTER_NAME
-		}
-
-		var protectionModeEnum types.Enum
-		switch status.GetProtectionMode() {
-		case pdpb.ProtectionMode_MAXIMUM_PERFORMANCE:
-			protectionModeEnum = infoschema.ProtectionModeMaximumPerformanceEnum
-		case pdpb.ProtectionMode_MAXIMUM_PROTECTION:
-			protectionModeEnum = infoschema.ProtectionModeMaximumProtectionEnum
-		case pdpb.ProtectionMode_MAXIMUM_AVAILABILITY:
-			protectionModeEnum = infoschema.ProtectionModeMaximumAvailabilityEnum
-		default:
-			protectionModeEnum = infoschema.ProtectionModeMaximumUnknownEnum
-		}
-		row[5].SetMysqlEnum(protectionModeEnum, mysql.DefaultCollationName) // PROTECTION_MODE
-
-		if status.GetProtectionMode() == pdpb.ProtectionMode_MAXIMUM_AVAILABILITY {
-			row[6].SetUint64(status.GetDegradeTimeoutSec()) // DEGRADE_TIMEOUT
-		}
-
-		row[7].SetString(status.State, mysql.DefaultCollationName) // REPLICATION_STATE
-
-		replicationModeEnum := infoschema.ReplicationModeUnknownEnum
-		if newEnum, err := types.ParseEnumName(infoschema.ReplicationModeStrs, status.ReplicationMode, mysql.DefaultCollationName); err == nil {
-			replicationModeEnum = newEnum
-		}
-		row[8].SetMysqlEnum(replicationModeEnum, mysql.DefaultCollationName) // REPLICATION_MODE
-
-		if status.CheckpointTs > 0 {
-			row[9].SetUint64(status.CheckpointTs) // CHECKPOINT_TS
-			goTime := oracle.GetTimeFromTS(status.CheckpointTs)
-			checkpointTime := types.NewTime(types.FromGoTime(goTime), mysql.TypeTimestamp, types.DefaultFsp)
-			row[10].SetMysqlTime(checkpointTime)               // CHECKPOINT_TIME
-			row[11].SetUint64(uint64(status.CheckpointLagSec)) // CHECKPOINT_LAG
-		}
-
-		row[12].SetFloat32(status.InitializingProgress) // INITIALIZING_PROGRESS
-		if status.LastHeartbeatTime > 0 {
-			goTime := time.Unix(int64(status.LastHeartbeatTime), 0)
-			lastHeartbeatTime := types.NewTime(types.FromGoTime(goTime), mysql.TypeTimestamp, types.DefaultFsp)
-			row[13].SetMysqlTime(lastHeartbeatTime) // LAST_HEARTBEAT_TIME
-		}
-		rows = append(rows, row)
+		rows = append(rows, buildLogReplStatusGlobalRow(status))
 	}
 
 	e.rows = rows
 	return nil
+}
+
+func buildLogReplStatusGlobalRow(status *pdpb.LogReplicationStatus) []types.Datum {
+	row := make([]types.Datum, len(infoschema.TableLogReplStatusGlobalCols))
+	row[0].SetString(status.Name, mysql.DefaultCollationName) // REPLICATION_NAME
+	row[1].SetUint64(status.ReplicaClusterId)                 // REPLICA_CLUSTER_ID
+	if status.GetReplicaClusterName() != "" {
+		row[2].SetString(status.GetReplicaClusterName(), mysql.DefaultCollationName) // REPLICA_CLUSTER_NAME
+	}
+	row[3].SetUint64(status.SourceClusterId) // SOURCE_CLUSTER_ID
+	if status.GetSourceClusterName() != "" {
+		row[4].SetString(status.GetSourceClusterName(), mysql.DefaultCollationName) // SOURCE_CLUSTER_NAME
+	}
+
+	var protectionModeEnum types.Enum
+	switch status.GetProtectionMode() {
+	case pdpb.ProtectionMode_MAXIMUM_PERFORMANCE:
+		protectionModeEnum = infoschema.ProtectionModeMaximumPerformanceEnum
+	case pdpb.ProtectionMode_MAXIMUM_PROTECTION:
+		protectionModeEnum = infoschema.ProtectionModeMaximumProtectionEnum
+	case pdpb.ProtectionMode_MAXIMUM_AVAILABILITY:
+		protectionModeEnum = infoschema.ProtectionModeMaximumAvailabilityEnum
+	default:
+		protectionModeEnum = infoschema.ProtectionModeMaximumUnknownEnum
+	}
+	row[5].SetMysqlEnum(protectionModeEnum, mysql.DefaultCollationName) // PROTECTION_MODE
+
+	if status.GetProtectionMode() == pdpb.ProtectionMode_MAXIMUM_AVAILABILITY {
+		row[6].SetUint64(status.GetDegradeTimeoutSec()) // DEGRADE_TIMEOUT
+	}
+
+	row[7].SetString(status.State, mysql.DefaultCollationName) // REPLICATION_STATE
+
+	replicationModeEnum := infoschema.ReplicationModeUnknownEnum
+	if newEnum, err := types.ParseEnumName(infoschema.ReplicationModeStrs, status.ReplicationMode, mysql.DefaultCollationName); err == nil {
+		replicationModeEnum = newEnum
+	}
+	row[8].SetMysqlEnum(replicationModeEnum, mysql.DefaultCollationName) // REPLICATION_MODE
+
+	if status.CheckpointTs > 0 {
+		row[9].SetUint64(status.CheckpointTs) // CHECKPOINT_TS
+		goTime := oracle.GetTimeFromTS(status.CheckpointTs)
+		checkpointTime := types.NewTime(types.FromGoTime(goTime), mysql.TypeTimestamp, types.DefaultFsp)
+		row[10].SetMysqlTime(checkpointTime) // CHECKPOINT_TIME
+		if status.CheckpointLagSec >= 0 {
+			row[11].SetUint64(uint64(status.CheckpointLagSec)) // CHECKPOINT_LAG
+		}
+	}
+
+	row[12].SetFloat32(status.InitializingProgress) // INITIALIZING_PROGRESS
+	if status.LastHeartbeatTime > 0 {
+		goTime := time.Unix(int64(status.LastHeartbeatTime), 0)
+		lastHeartbeatTime := types.NewTime(types.FromGoTime(goTime), mysql.TypeTimestamp, types.DefaultFsp)
+		row[13].SetMysqlTime(lastHeartbeatTime) // LAST_HEARTBEAT_TIME
+	}
+	return row
 }
 
 func (e *memtableRetriever) setDataForLogReplClusterStatusGlobal(ctx context.Context, sctx sessionctx.Context) error {
@@ -301,8 +307,10 @@ func buildLogReplStatusLocalRow(localStatus *pdpb.LogReplicationLocalStatus) ([]
 	if status.GetCheckpointTs() > 0 {
 		row[13].SetUint64(status.GetCheckpointTs()) // CHECKPOINT_TS
 		checkpointTime := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(status.GetCheckpointTs())), mysql.TypeTimestamp, types.DefaultFsp)
-		row[14].SetMysqlTime(checkpointTime)                    // CHECKPOINT_TIME
-		row[15].SetUint64(uint64(status.GetCheckpointLagSec())) // CHECKPOINT_LAG
+		row[14].SetMysqlTime(checkpointTime) // CHECKPOINT_TIME
+		if status.GetCheckpointLagSec() >= 0 {
+			row[15].SetUint64(uint64(status.GetCheckpointLagSec())) // CHECKPOINT_LAG
+		}
 	}
 
 	switchoverEnum := infoschema.ReadyStatusUnknownEnum
