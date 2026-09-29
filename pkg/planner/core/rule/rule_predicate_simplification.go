@@ -163,9 +163,24 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	newValues := make([]expression.Expression, 0, len(v.GetArgs()))
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	var lastValue *expression.Constant
+	// Get the collation from the IN expression to use for comparison.
+	// This is critical because:
+	// 1. Constant.Equal() uses binary collation, which doesn't match the IN expression's runtime collation
+	// 2. The IN expression's collation is determined by coercibility rules (column's collation has higher priority)
+	// 3. We must use the same collation as the IN expression to ensure consistency
+	// For example: if column x uses utf8mb4_0900_ai_ci (NO PAD), the IN expression will use that collation,
+	// so we must use it here too, not binary collation or the constant's collation.
+	_, collation := v.CharsetAndCollation()
+	collator := collate.GetCollator(collation)
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redundantValue := valueOK && value.Equal(evalCtx, notEQValue)
+		// Compare using the IN expression's collation, not binary collation or constant's collation.
+		// This ensures consistency with how the IN expression is evaluated at runtime.
+		redundantValue := false
+		if valueOK {
+			cmp, err := value.Value.Compare(evalCtx.TypeCtx(), &notEQValue.Value, collator)
+			redundantValue = (err == nil && cmp == 0)
+		}
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}

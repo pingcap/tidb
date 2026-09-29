@@ -515,6 +515,11 @@ func (c *Constant) Equal(ctx EvalContext, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
+	// TODO: Consider using the expression's actual collation instead of binary collator.
+	// Currently using binary collator for backward compatibility, but this may cause
+	// incorrect optimizations when comparing string constants with different collations.
+	// For example, ' ' and '' are equal under PAD SPACE collation but not under binary.
+	// See issue #71700 for details.
 	con, err := c.Value.Compare(typeCtx(ctx), &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
