@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package residual
+package orphandata
 
 import (
 	"context"
@@ -60,10 +60,8 @@ func TestMonitorRequest(t *testing.T) {
 			},
 		}
 		m := newTestMonitor(ctx, t, Config{
-			TaskCount: func(context.Context) (int, error) { return 0, nil },
-			StorageURI: func(context.Context) string {
-				return "memstore:///residual"
-			},
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			StorageURI:        "memstore:///residual",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			factoryCalls.Add(1)
@@ -131,8 +129,8 @@ func TestMonitorRequestStopRace(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	m := newTestMonitor(ctx, t, Config{
-		TaskCount:  func(context.Context) (int, error) { return 0, nil },
-		StorageURI: func(context.Context) string { return "" },
+		ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+		StorageURI:        "",
 	})
 	admissionEntered := make(chan struct{}, 1)
 	releaseAdmission := make(chan struct{})
@@ -147,7 +145,7 @@ func TestMonitorRequestStopRace(t *testing.T) {
 
 	var admissionCalls atomic.Int32
 	testfailpoint.EnableCall(t,
-		"github.com/pingcap/tidb/pkg/ingestor/globalsort/residual/beforeGlobalSortResidualMonitorRun",
+		"github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata/beforeGlobalSortResidualMonitorRun",
 		func() {
 			admissionCalls.Add(1)
 			select {
@@ -159,7 +157,7 @@ func TestMonitorRequestStopRace(t *testing.T) {
 	)
 	var workerCalls atomic.Int32
 	testfailpoint.EnableCall(t,
-		"github.com/pingcap/tidb/pkg/ingestor/globalsort/residual/globalSortResidualMonitorWorker",
+		"github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata/globalSortResidualMonitorWorker",
 		func() {
 			workerCalls.Add(1)
 			select {
@@ -242,10 +240,10 @@ func TestMonitorRequestDisabled(t *testing.T) {
 	m := NewMonitor(context.Background(), Config{
 		Enabled: false,
 		Logger:  zap.New(core),
-		TaskCount: func(context.Context) (int, error) {
-			t.Fatal("unexpected task count")
-			return 0, nil
-		},
+		ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) {
+			t.Fatal("unexpected active task check")
+			return false, nil
+		}),
 	})
 	m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 		factoryCalls.Add(1)

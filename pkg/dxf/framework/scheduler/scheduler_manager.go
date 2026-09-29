@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort/residual"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -108,6 +108,15 @@ type residualMonitor interface {
 	Stop()
 }
 
+type residualActiveTaskChecker struct {
+	taskMgr TaskManager
+}
+
+func (c residualActiveTaskChecker) HasActiveTasks(ctx context.Context) (bool, error) {
+	tasks, err := c.taskMgr.GetAllTasks(ctx)
+	return len(tasks) > 0, err
+}
+
 // Manager manage a bunch of schedulers.
 // Scheduler schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
@@ -147,6 +156,11 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 		logger = logger.With(zap.String("server-id", serverID))
 	}
 	subCtx, cancel := context.WithCancel(ctx)
+	nextGen := kerneltype.IsNextGen()
+	storageURI := ""
+	if nextGen {
+		storageURI = handle.GetCloudStorageURI(subCtx, store)
+	}
 	slotMgr := newSlotManager()
 	nodeMgr := newNodeManager(serverID)
 	schedulerManager := &Manager{
@@ -164,16 +178,11 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			serverID: serverID,
 		}),
 		logger: logger,
-		residual: residual.NewMonitor(subCtx, residual.Config{
-			Enabled: kerneltype.IsNextGen(),
-			TaskCount: func(ctx context.Context) (int, error) {
-				tasks, err := taskMgr.GetAllTasks(ctx)
-				return len(tasks), err
-			},
-			StorageURI: func(ctx context.Context) string {
-				return handle.GetCloudStorageURI(ctx, store)
-			},
-			Logger: logger,
+		residual: orphandata.NewMonitor(subCtx, orphandata.Config{
+			Enabled:           nextGen,
+			ActiveTaskChecker: residualActiveTaskChecker{taskMgr: taskMgr},
+			StorageURI:        storageURI,
+			Logger:            logger,
 		}),
 		// finishCh must be able to buffer finish signals for the largest runtime
 		// value of maxConcurrentTask. Otherwise, raising the limit after startup
