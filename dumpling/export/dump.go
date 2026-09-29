@@ -1839,7 +1839,7 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		if len(pdAddrs) == 0 {
 			// --pd is optional for a premium keyspace cluster: without it we
 			// cannot reach PD, so skip the automatic GC pause and only warn.
-			tctx.L().Warn("keyspace cluster detected but --pd is not specified; automatic GC pause is disabled",
+			tctx.L().Warn("dumping a keyspace cluster but --pd is not specified; automatic GC pause is disabled",
 				zap.String("keyspace-name", d.tidbKeyspaceName))
 			return nil
 		}
