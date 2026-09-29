@@ -255,7 +255,7 @@ func formatHandleColsInputOffsets(handleCols util.HandleCols) string {
 		return "[]"
 	}
 	offsets := make([]int, 0, handleCols.NumCols())
-	for i := 0; i < handleCols.NumCols(); i++ {
+	for i := range handleCols.NumCols() {
 		col := handleCols.GetCol(i)
 		if col != nil {
 			offsets = append(offsets, col.Index)

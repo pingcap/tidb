@@ -74,7 +74,9 @@ func (ctx *PlanCtxExtended) GetMLogCommitTSEstimation() *planctx.MLogCommitTSEst
 }
 
 // WithMLogCommitTSEstimation scopes mlog commit-ts estimation to a planner callback.
-func (ctx *PlanCtxExtended) WithMLogCommitTSEstimation(estimation *planctx.MLogCommitTSEstimation, fn func() error) error {
+func (ctx *PlanCtxExtended) WithMLogCommitTSEstimation(
+	estimation *planctx.MLogCommitTSEstimation, fn func() error,
+) error {
 	original := ctx.mlogCommitTSEstimation
 	ctx.mlogCommitTSEstimation = estimation
 	defer func() { ctx.mlogCommitTSEstimation = original }()
