@@ -50,46 +50,8 @@ var (
 )
 
 func init() {
-<<<<<<< HEAD
-	flag.BoolVar(&isMirror, "mirror", false, "enable mirror mode")
-	flag.BoolVar(&isUpload, "upload", false, "enable upload mode")
-}
-
-func formatSubURL(path, version string) string {
-	return fmt.Sprintf("gomod/%s/%s-%s.zip", path, modulePathToBazelRepoName(path), version)
-}
-
-func formatVPCPublicURL(path, version string) string {
-	return fmt.Sprintf("http://bazel-cache.pingcap.net:8080/%s", formatSubURL(path, version))
-}
-
-func formatVPCPrivateURL(path, version string) string {
-	return fmt.Sprintf("http://ats.apps.svc/%s", formatSubURL(path, version))
-}
-
-func formatCDNURL(path, version string) string {
-	return fmt.Sprintf("https://cache.hawkingrei.com/%s", formatSubURL(path, version))
-}
-
-func formatPublicURL(path, version string) string {
-	return fmt.Sprintf("https://storage.googleapis.com/pingcapmirror/%s", formatSubURL(path, version))
-}
-
-func getSha256OfFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to open %s: %w", path, err)
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-=======
 	flag.BoolVar(&isMirror, "mirror", false, "deprecated; ignored")
 	flag.BoolVar(&isUpload, "upload", false, "deprecated; ignored")
->>>>>>> 6c90f90bea7 (build: resolve Bazel Go deps through GOPROXY (#69503))
 }
 
 func copyFile(src, dst string) error {
@@ -313,80 +275,13 @@ def go_deps():
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
 		dumpBuildNamingConventionArgsForRepo(repoName)
-<<<<<<< HEAD
-		expectedVPCPrivateURL := formatVPCPrivateURL(replaced.Path, replaced.Version)
-		expectedCDNURL := formatCDNURL(replaced.Path, replaced.Version)
-		expectedPublicURL := formatPublicURL(replaced.Path, replaced.Version)
-		expectedVPCPublicURL := formatVPCPublicURL(replaced.Path, replaced.Version)
-=======
->>>>>>> 6c90f90bea7 (build: resolve Bazel Go deps through GOPROXY (#69503))
 		fmt.Printf("        importpath = \"%s\",\n", mod.Path)
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
 			return err
 		}
-<<<<<<< HEAD
-		oldMirror, ok := existingMirrors[repoName]
-		if ok &&
-			slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
-			slices.Contains(oldMirror.URL, expectedCDNURL) &&
-			slices.Contains(oldMirror.URL, expectedPublicURL) &&
-			slices.Contains(oldMirror.URL, expectedVPCPublicURL) {
-			// The URL matches, so just reuse the old mirror.
-			fmt.Printf(`        sha256 = "%s",
-        strip_prefix = "%s@%s",
-        urls = [
-			"%s",
-			"%s",
-			"%s",
-			"%s",
-        ],
-`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
-		} else if isMirror {
-			// We'll have to mirror our copy of the zip ourselves.
-			d := downloaded[replaced.Path]
-			sha, err := getSha256OfFile(d.Zip)
-			if err != nil {
-				return fmt.Errorf("could not get zip for %v: %w", *replaced, err)
-			}
-			if sha == "30cf0ef9aa63aea696e40df8912d41fbce69dd02986a5b99af7c5b75f277690c" {
-				sha = "ebe8386761761d53fac2de5f8f575ddf66c114ec9835947c761131662f1d38f3"
-			}
-			fmt.Printf(`        sha256 = "%s",
-        strip_prefix = "%s@%s",
-        urls = [
-            "%s",
-            "%s",
-            "%s",
-            "%s",
-        ],
-`, sha, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
-			g.Go(func() error {
-				return uploadFile(ctx, client, d.Zip, formatSubURL(replaced.Path, replaced.Version))
-			})
-		} else {
-			// We don't have a mirror and can't upload one, so just
-			// have Gazelle pull the repo for us.
-			d := downloaded[replaced.Path]
-			sum, version := d.Sum, d.Version
-			if mod.Replace != nil {
-				fmt.Printf("        replace = \"%s\",\n", replaced.Path)
-			}
-			artifact, ok := existingMirrors[replaced.Path]
-			if ok {
-				sum, version = artifact.Sha256, artifact.Version
-			}
-			// Note: `build/teamcity-check-genfiles.sh` checks for
-			// the presence of the "TODO: mirror this repo" comment.
-			// Don't update this comment without also updating the
-			// script.
-			fmt.Printf(`        sum = "%s",
-        version = "%s",
-`, sum, version)
-=======
 		d, ok := downloaded[replaced.Path]
 		if !ok {
 			return fmt.Errorf("could not find downloaded module for %s@%s", replaced.Path, replaced.Version)
->>>>>>> 6c90f90bea7 (build: resolve Bazel Go deps through GOPROXY (#69503))
 		}
 		if mod.Replace != nil {
 			fmt.Printf("        replace = \"%s\",\n", replaced.Path)
