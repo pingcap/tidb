@@ -1,0 +1,2 @@
+set global tidb_enable_metadata_lock = OFF;
+Error 1836 (HY000): Running in read-only mode

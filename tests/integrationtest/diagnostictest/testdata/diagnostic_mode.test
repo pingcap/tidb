@@ -1,0 +1,3 @@
+# TestDiagnosticModeDisallowsSwitchMDL
+-- error 1836
+set global tidb_enable_metadata_lock = OFF;

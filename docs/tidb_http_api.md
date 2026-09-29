@@ -4,7 +4,7 @@
 
 ## Diagnostic mode availability
 
-When the process is in diagnostic mode and `status.report-status` is enabled,
+When TiDB starts with `--diagnostic-mode` and `status.report-status` is enabled,
 the status listener exposes only the following GET endpoints:
 
 | Endpoint | Purpose and parameters | Example |
