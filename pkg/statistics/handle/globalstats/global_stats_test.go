@@ -1019,6 +1019,12 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	tk.MustExec(`insert into t (a) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)`)
 	// increase by 10 ^ 5 rows
 	tk.MustExec(`insert into t (a) select null from t, t t2, t t3, t t4, t t5`)
+	// The insert returns once its primary key is committed; the other rows
+	// are committed in the background and stay locked until then. Unistore's
+	// analyze only reads committed rows and does not check locks, so on a
+	// slow machine it can miss them. A normal read resolves all remaining
+	// locks, so run one before analyzing.
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100010"))
 
 	tk.MustExec(`analyze table t with 1 topn, 3 buckets`)
 	// Force a full stats cache refresh from storage so all columns/indexes are loaded.
