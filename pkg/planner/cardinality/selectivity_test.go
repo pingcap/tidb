@@ -1881,12 +1881,12 @@ func TestEqualEstimateOnZeroRepeatBucketUpper(t *testing.T) {
 	}
 	sctx := mock.NewContext()
 
-	est, err := getColumnRowCount(sctx, col, getRange(50, 50), 200, 0, false)
+	est, err := cardinality.GetColumnRowCount(sctx, col, getRange(50, 50), 200, 0, false)
 	require.NoError(t, err)
-	require.Equal(t, 2.0, est.Est,
+	require.Equal(t, 2.0, est,
 		"a zero Repeat must fall back to the uniform average, not report zero rows")
 
-	est, err = getColumnRowCount(sctx, col, getRange(100, 100), 200, 0, false)
+	est, err = cardinality.GetColumnRowCount(sctx, col, getRange(100, 100), 200, 0, false)
 	require.NoError(t, err)
-	require.Equal(t, 5.0, est.Est, "an observed Repeat must still be used as is")
+	require.Equal(t, 5.0, est, "an observed Repeat must still be used as is")
 }

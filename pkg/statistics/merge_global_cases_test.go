@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -33,6 +32,10 @@ import (
 // MergePartTopNAndHistToGlobal. Each case is one fixture; the driver
 // in merge_global_test.go runs structural invariants on every case
 // and additionally pins wantTopN / wantBuckets where they matter.
+// defaultTopN is the analyze default number of TopN entries, the only
+// value for which the global merge prunes singleton TopN candidates.
+const defaultTopN = 100
+
 func mergeCases() []mergeCase {
 	return []mergeCase{
 		// ----------------------------------------------------------------
@@ -897,9 +900,9 @@ func TestMergePartTopNAndHistToGlobalSingletonFilter(t *testing.T) {
 	// fires and drops the arbitrary singleton winners.
 	defaultTC := mergeCase{
 		name:       "default_topn_filters_singletons_over_budget",
-		numTopN:    statistics.DefaultTopNValue,
+		numTopN:    defaultTopN,
 		expBuckets: 128,
-		parts:      []partSpec{{hist: genSingletons(statistics.DefaultTopNValue + 50)}},
+		parts:      []partSpec{{hist: genSingletons(defaultTopN + 50)}},
 	}
 	dTopNs, dHists := buildInputs(t, sc, defaultTC)
 	dTopN, dHist, err := statistics.MergePartTopNAndHistToGlobal(
@@ -942,9 +945,9 @@ func TestMergePartTopNAndHistToGlobalSingletonFilter(t *testing.T) {
 	// candidate count from the merge walk instead.
 	exactTC := mergeCase{
 		name:       "global_topn_keeps_singletons_at_exact_capacity",
-		numTopN:    statistics.DefaultTopNValue,
+		numTopN:    defaultTopN,
 		expBuckets: 128,
-		parts:      []partSpec{{hist: genSingletons(statistics.DefaultTopNValue)}},
+		parts:      []partSpec{{hist: genSingletons(defaultTopN)}},
 	}
 	exactTopNs, exactHists := buildInputs(t, sc, exactTC)
 	exactGTopN, exactGHist, err := statistics.MergePartTopNAndHistToGlobal(
@@ -953,53 +956,7 @@ func TestMergePartTopNAndHistToGlobalSingletonFilter(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, exactGHist)
 	require.NotNil(t, exactGTopN, "singletons must be retained when the pool exactly fills the heap")
-	require.Equalf(t, statistics.DefaultTopNValue, len(exactGTopN.TopN),
-		"all %d singletons must appear in global TopN; got %d", statistics.DefaultTopNValue, len(exactGTopN.TopN))
+	require.Equalf(t, defaultTopN, len(exactGTopN.TopN),
+		"all %d singletons must appear in global TopN; got %d", defaultTopN, len(exactGTopN.TopN))
 	rowsPreserved(t, exactTC, exactGTopN, exactGHist)
-
-	// 5. The gate follows tidb_analyze_default_num_topn, mirroring
-	// BuildHistAndTopN: with the active default raised to 150,
-	// numTopN=150 prunes singletons, while numTopN=statistics.DefaultTopNValue
-	// (the constant, no longer the active default) is treated as an
-	// explicit user choice and keeps them.
-	oldDefault := vardef.AnalyzeDefaultNumTopN.Load()
-	vardef.AnalyzeDefaultNumTopN.Store(150)
-	defer vardef.AnalyzeDefaultNumTopN.Store(oldDefault)
-
-	sysvarTC := mergeCase{
-		name:       "sysvar_default_topn_filters_singletons",
-		numTopN:    150,
-		expBuckets: 128,
-		parts:      []partSpec{{hist: genSingletons(200)}},
-	}
-	sTopNs, sHists := buildInputs(t, sc, sysvarTC)
-	sTopN, sHist, err := statistics.MergePartTopNAndHistToGlobal(
-		sc, &killer, sTopNs, sHists, sysvarTC.numTopN, sysvarTC.expBuckets, sysvarTC.isIndex,
-	)
-	require.NoError(t, err)
-	require.NotNil(t, sHist)
-	if sTopN != nil {
-		for _, m := range sTopN.TopN {
-			require.GreaterOrEqualf(t, m.Count, uint64(2),
-				"numTopN matching the active default must not keep a value with count < 2; got %d", m.Count)
-		}
-	}
-	rowsPreserved(t, sysvarTC, sTopN, sHist)
-
-	constTC := mergeCase{
-		name:       "constant_default_is_explicit_when_sysvar_raised",
-		numTopN:    statistics.DefaultTopNValue,
-		expBuckets: 128,
-		parts:      []partSpec{{hist: genSingletons(statistics.DefaultTopNValue + 50)}},
-	}
-	cTopNs, cHists := buildInputs(t, sc, constTC)
-	cTopN, cHist, err := statistics.MergePartTopNAndHistToGlobal(
-		sc, &killer, cTopNs, cHists, constTC.numTopN, constTC.expBuckets, constTC.isIndex,
-	)
-	require.NoError(t, err)
-	require.NotNil(t, cHist)
-	require.NotNil(t, cTopN, "numTopN differing from the active default must retain singletons")
-	require.Equalf(t, int(constTC.numTopN), len(cTopN.TopN),
-		"numTopN=statistics.DefaultTopNValue with active default 150 should keep statistics.DefaultTopNValue singletons; got %d", len(cTopN.TopN))
-	rowsPreserved(t, constTC, cTopN, cHist)
 }

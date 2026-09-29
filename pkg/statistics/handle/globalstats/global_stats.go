@@ -350,19 +350,8 @@ func blockingMergePartitionStats2GlobalStats(
 			return
 		}
 
-<<<<<<< HEAD
-		// Merge histogram.
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
-		if err != nil {
-			return
-		}
-
-		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-=======
 		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 		// we just set the table-level NDV.
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 		if globalStats.Hg[i] != nil {
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}

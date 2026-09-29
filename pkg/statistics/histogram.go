@@ -21,7 +21,6 @@ import (
 	"math"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -299,61 +298,6 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.BucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
-<<<<<<< HEAD
-// BinarySearchRemoveVal removes the value from the TopN using binary search.
-func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
-	lowIdx, highIdx := 0, hg.Len()-1
-	column := hg.Bounds.Column(0)
-	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
-	if hg.Len() > 4 {
-		if cmpResult := bytes.Compare(column.GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
-			return
-		}
-		if cmpResult := bytes.Compare(column.GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
-			return
-		}
-	}
-	var midIdx = 0
-	var found bool
-	for lowIdx <= highIdx {
-		midIdx = (lowIdx + highIdx) / 2
-		cmpResult := bytes.Compare(column.GetRaw(midIdx*2), valCntPairs.Encoded)
-		if cmpResult > 0 {
-			highIdx = midIdx - 1
-			continue
-		}
-		cmpResult = bytes.Compare(column.GetRaw(midIdx*2+1), valCntPairs.Encoded)
-		if cmpResult < 0 {
-			lowIdx = midIdx + 1
-			continue
-		}
-		midbucket := &hg.Buckets[midIdx]
-
-		if midbucket.NDV > 0 {
-			midbucket.NDV--
-		}
-		if cmpResult == 0 {
-			midbucket.Repeat = 0
-		}
-		midbucket.Count -= int64(valCntPairs.Count)
-		if midbucket.Count < 0 {
-			midbucket.Count = 0
-		}
-		found = true
-		break
-	}
-	if found {
-		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
-			hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
-			if hg.Buckets[midIdx].Count < 0 {
-				hg.Buckets[midIdx].Count = 0
-			}
-		}
-	}
-}
-
-=======
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 // RemoveVals remove the given values from the histogram.
 // This function contains an **ASSUMPTION**: valCntPairs is sorted in ascending order.
 func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
@@ -1372,65 +1316,15 @@ func newBucketGroupCursor(sc *stmtctx.StatementContext, hists []*Histogram, tota
 		tz:         sc.TimeZone(),
 		isIndex:    isIndex,
 	}
-<<<<<<< HEAD
-}
-
-// buildBucket4Merging builds bucket4Merging from Histogram
-// Notice: Count in Histogram.Buckets is prefix sum but in bucket4Merging is not.
-func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
-	buckets := make([]*bucket4Merging, 0, hg.Len())
-	for i := 0; i < hg.Len(); i++ {
-		b := newbucket4MergingForRecycle()
-		hg.LowerToDatum(i, b.lower)
-		hg.UpperToDatum(i, b.upper)
-		b.Repeat = hg.Buckets[i].Repeat
-		b.NDV = hg.Buckets[i].NDV
-		b.Count = hg.Buckets[i].Count
-		if i != 0 {
-			b.Count -= hg.Buckets[i-1].Count
-=======
 	for hi, hist := range hists {
 		if hist == nil {
 			continue
 		}
 		if e, ok := c.firstNonEmptyBucket(uint16(hi), 0); ok {
 			c.heap.entries = append(c.heap.entries, e)
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 		}
 	}
-<<<<<<< HEAD
-	return buckets
-}
-
-func (b *bucket4Merging) Clone() bucket4Merging {
-	result := newbucket4MergingForRecycle()
-	result.Repeat = b.Repeat
-	result.NDV = b.NDV
-	b.upper.Copy(result.upper)
-	b.lower.Copy(result.lower)
-	result.Count = b.Count
-	result.disjointNDV = b.disjointNDV
-	return *result
-}
-
-// mergeBucketNDV merges bucket NDV from tow bucket `right` & `left`.
-// Before merging, you need to make sure that when using (upper, lower) as the comparison key, `right` is greater than `left`
-func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *bucket4Merging) (*bucket4Merging, error) {
-	res := right.Clone()
-	if left.NDV == 0 {
-		return &res, nil
-	}
-	if right.NDV == 0 {
-		left.lower.Copy(res.lower)
-		left.upper.Copy(res.upper)
-		res.NDV = left.NDV
-		return &res, nil
-	}
-	upperCompare, err := right.upper.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
-	if err != nil {
-=======
 	if err := c.heap.initHeap(); err != nil {
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 		return nil, err
 	}
 	return c, nil
@@ -1466,43 +1360,6 @@ func (c *bucketGroupCursor) firstNonEmptyBucket(histIdx uint16, startIdx int) (b
 			}, true
 		}
 	}
-<<<<<<< HEAD
-	res.NDV = right.NDV + right.disjointNDV
-
-	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
-	// and as the number of buckets increases, these assumptions become weak,
-	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
-	res.NDV = int64(float64(res.NDV) * math.Pow(1.15, float64(len(buckets)-1)))
-	if res.NDV > totNDV {
-		res.NDV = totNDV
-	}
-	return res, nil
-}
-
-func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
-	res := newbucket4MergingForRecycle()
-	d.Copy(res.lower)
-	d.Copy(res.upper)
-	res.Count = int64(t.Count)
-	res.Repeat = int64(t.Count)
-	res.NDV = int64(1)
-	return res
-}
-
-// MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
-	var totCount, totNull, bucketNumber, totColSize int64
-	if expBucketNumber == 0 {
-		return nil, errors.Errorf("expBucketNumber can not be zero")
-	}
-	// minValue is used to calc the bucket lower.
-	var minValue *types.Datum
-	// The empty hists is danger to merge. we cannot get the table information from histograms
-	// The empty hists is very rare. The DDL event was not processed, and in the previous analyze,
-	// this column was not marked as "predict," resulting in it not being analyzed.
-	if len(hists) == 0 {
-		return nil, nil
-=======
 	return bucketMergeEntry{}, false
 }
 
@@ -1550,7 +1407,6 @@ func (c *bucketGroupCursor) nextGroup(needEncoded bool) ([]byte, uint64, error) 
 			return nil, 0, err
 		}
 		sumRepeat += uint64(c.hists[e.histIdx].Buckets[e.bucketIdx].Repeat)
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 	}
 	if !needEncoded {
 		return nil, sumRepeat, nil
@@ -1690,57 +1546,6 @@ func sumPartitionTotals(hists []*Histogram) (totHistCount, totNull, totColSize i
 		}
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
-<<<<<<< HEAD
-		bucketNumber += int64(hist.Len())
-		if hist.Len() > 0 {
-			totCount += hist.Buckets[hist.Len()-1].Count
-			if minValue == nil {
-				minValue = hist.GetLower(0).Clone()
-				continue
-			}
-			tmpValue := hist.GetLower(0)
-			res, err := tmpValue.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
-			if err != nil {
-				return nil, err
-			}
-			if res < 0 {
-				minValue = tmpValue.Clone()
-			}
-		}
-	}
-
-	// If all the hist and the topn is empty, return a empty hist.
-	if bucketNumber+int64(len(popedTopN)) == 0 {
-		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
-	}
-	bucketNumber += int64(len(popedTopN))
-	buckets := make([]*bucket4Merging, 0, bucketNumber)
-	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
-
-	// init `buckets`.
-	for _, hist := range hists {
-		buckets = append(buckets, hist.buildBucket4Merging()...)
-	}
-
-	for _, meta := range popedTopN {
-		totCount += int64(meta.Count)
-		d, err := topNMetaToDatum(meta, hists[0].Tp.GetType(), isIndex, sc.TimeZone())
-		if err != nil {
-			return nil, err
-		}
-		if minValue == nil {
-			minValue = d.Clone()
-			continue
-		}
-		res, err := d.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
-		if err != nil {
-			return nil, err
-		}
-		if res < 0 {
-			minValue = d.Clone()
-		}
-		buckets = append(buckets, meta.buildBucket4Merging(&d))
-=======
 		histLen := hist.Len()
 		totalBuckets += histLen
 		if histLen > 0 {
@@ -1768,15 +1573,14 @@ func sumPartitionTotals(hists []*Histogram) (totHistCount, totNull, totColSize i
 // every candidate fit, singletons are the complete distinct-value
 // enumeration and carry exact range information; keep them.
 //
-// This pruning is gated on numTopN matching the active analyze
-// default (tidb_analyze_default_num_topn) to mirror per-table analyze:
-// BuildHistAndTopN (builder.go) only prunes when numTopN is that
-// default, treating any explicit size as a value the user wants
-// honored. Without this gate a partitioned table's global TopN would
+// This pruning is gated on numTopN matching the analyze default (100)
+// to mirror per-table analyze: BuildHistAndTopN (builder.go) only
+// prunes when numTopN is 100, treating any explicit size as a value
+// the user wants honored. Without this gate a partitioned table's global TopN would
 // drop singletons that an identical non-partitioned table keeps.
 func selectGlobalTopN(topNHeap *generic.BoundedMinHeap[topNCandidate], numTopN uint32, numCandidates int) (*TopN, map[hack.MutableString]struct{}, int64) {
 	topNSlice := topNHeap.ToSortedSlice()
-	if isAnalyzeDefaultValue(int(numTopN), vardef.AnalyzeDefaultNumTopN.Load()) && numCandidates > int(numTopN) {
+	if numTopN == 100 && numCandidates > int(numTopN) {
 		filtered := topNSlice[:0]
 		for _, e := range topNSlice {
 			if e.totalCount >= 2 {
@@ -1887,7 +1691,6 @@ func MergePartTopNAndHistToGlobal(
 	intest.Assert(expBucketNumber > 0, "expBucketNumber must be positive")
 	if len(hists) > math.MaxUint16 {
 		return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: too many partition histograms (%d > %d)", len(hists), math.MaxUint16)
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 	}
 
 	// Need at least one non-nil histogram to recover column type, ID, and
@@ -1909,25 +1712,6 @@ func MergePartTopNAndHistToGlobal(
 		return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: no partition histograms provided")
 	}
 
-<<<<<<< HEAD
-	var sortError error
-	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
-		res, err := i.upper.Compare(sc.TypeCtx(), j.upper, collate.GetBinaryCollator())
-		if err != nil {
-			sortError = err
-		}
-		if res != 0 {
-			return res
-		}
-		res, err = i.lower.Compare(sc.TypeCtx(), j.lower, collate.GetBinaryCollator())
-		if err != nil {
-			sortError = err
-		}
-		return res
-	})
-	if sortError != nil {
-		return nil, sortError
-=======
 	tz := sc.TimeZone()
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
 		zap.Int64("histID", firstHist.ID),
@@ -1950,7 +1734,6 @@ func MergePartTopNAndHistToGlobal(
 	allTopN, err := flattenSortedTopN(sc, topNs, firstHist.Tp, isIndex)
 	if err != nil {
 		return nil, nil, err
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 	}
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1a: sorted partition TopN",
 		zap.Int("topNEntries", len(allTopN)))
@@ -2375,37 +2158,6 @@ func buildGlobalHistogram(
 	globalBucketsRtl := make([]mergedBucket, 0, expBucketNumber)
 
 	var sum, prevSum int64
-<<<<<<< HEAD
-	r, prevR := len(buckets), 0
-	bucketCount := int64(1)
-	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
-	var bucketNDV int64
-	for i := len(buckets) - 1; i >= 0; i-- {
-		sum += buckets[i].Count
-		bucketNDV += buckets[i].NDV
-		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
-			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
-				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
-				if err != nil {
-					return nil, err
-				}
-				if res != 0 {
-					break
-				}
-				sum += buckets[i-1].Count
-				bucketNDV += buckets[i-1].NDV
-			}
-			merged, err := mergePartitionBuckets(sc, buckets[i:r])
-			if err != nil {
-				return nil, err
-			}
-			globalBuckets = append(globalBuckets, merged)
-			prevR = r
-			r = i
-			bucketCount++
-			prevSum = sum
-			bucketNDV = 0
-=======
 	bucketCount := int64(1)
 	var currentLeftMost *types.Datum
 	var mergedUpper *types.Datum
@@ -2420,7 +2172,6 @@ func buildGlobalHistogram(
 		c, err := refs.cmpBounds(d, currentLeftMost)
 		if err != nil {
 			return err
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 		}
 		if c < 0 {
 			v := *d
@@ -2428,17 +2179,6 @@ func buildGlobalHistogram(
 		}
 		return nil
 	}
-<<<<<<< HEAD
-	if r > 0 {
-		bucketSum := int64(0)
-		for _, b := range buckets[:r] {
-			bucketSum += b.Count
-		}
-
-		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
-			r = prevR
-			globalBuckets = globalBuckets[:len(globalBuckets)-1]
-=======
 
 	var checkKillCount uint32
 	for i := refs.numRefs() - 1; i >= 0; i-- {
@@ -2446,7 +2186,6 @@ func buildGlobalHistogram(
 			if err := killer.HandleSignal(); err != nil {
 				return nil, err
 			}
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 		}
 		checkKillCount++
 
@@ -2454,31 +2193,6 @@ func buildGlobalHistogram(
 		if err != nil {
 			return nil, err
 		}
-<<<<<<< HEAD
-		globalBuckets = append(globalBuckets, merged)
-	}
-	for i := 0; i < len(buckets); i++ {
-		releasebucket4MergingForRecycle(buckets[i])
-	}
-	// Because we merge backwards, we need to flip the slices.
-	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
-		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
-	}
-
-	// Calc the bucket lower.
-	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
-		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
-	}
-	minValue.Copy(globalBuckets[0].lower)
-	for i := 1; i < len(globalBuckets); i++ {
-		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
-			globalBuckets[i].upper.Copy(globalBuckets[i].lower)
-		} else {
-			globalBuckets[i-1].upper.Copy(globalBuckets[i].lower)
-		}
-		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
-	}
-=======
 		if mass <= 0 {
 			// Fully consumed by an earlier overlap scan, or a bucket
 			// fully owned by the global TopN.
@@ -2490,7 +2204,6 @@ func buildGlobalHistogram(
 			v := refUpper
 			mergedUpper = &v
 		}
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 
 		refs.lower(i, &refLower)
 		if err := updateLeftMost(&refLower); err != nil {
@@ -2499,8 +2212,6 @@ func buildGlobalHistogram(
 
 		sum += mass
 
-<<<<<<< HEAD
-=======
 		if fresh && repeat > 0 {
 			c, err := refs.cmpBounds(&refUpper, mergedUpper)
 			if err != nil {
@@ -2646,7 +2357,6 @@ func buildGlobalHistogram(
 	return globalHist, nil
 }
 
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 const (
 	// AllLoaded indicates all statistics are loaded
 	AllLoaded = iota

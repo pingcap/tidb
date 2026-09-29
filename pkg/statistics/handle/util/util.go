@@ -179,17 +179,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
-<<<<<<< HEAD
-	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMergePartitionStatsConcurrency)
-	if err != nil {
-		return err
-	}
-	ver, err = strconv.ParseInt(verInString, 10, 64)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
-
 	// timezone setting
 	// timezone used to datetime/timestamp conversion when collecting stats.
 	globalTZ, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TimeZone)
@@ -201,8 +190,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().StmtCtx.SetTimeZone(sctx.GetSessionVars().Location())
 
-=======
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 	// sync innodb_lock_wait_timeout
 	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InnodbLockWaitTimeout)
 	if err != nil {

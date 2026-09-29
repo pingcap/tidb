@@ -82,7 +82,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		totColSize      []int64
 		popedTopN       []topN4Test
 		expHist         []*bucket4Test
-		expBucketNumber int64
+		expBucketNumber int
 	}
 	tests := []testCase{
 		{
@@ -155,27 +155,20 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			expHist: []*bucket4Test{
 				{
 					lower:  1,
-					upper:  7,
-					count:  7,
-					repeat: 3,
-					ndv:    5,
-				},
-				{
-					lower:  7,
-					upper:  11,
-					count:  13,
-					repeat: 3,
-					ndv:    3,
+					upper:  9,
+					count:  10,
+					repeat: 2,
+					ndv:    7,
 				},
 				{
 					lower:  11,
 					upper:  17,
 					count:  22,
 					repeat: 1,
-					ndv:    6,
+					ndv:    8,
 				},
 			},
-			expBucketNumber: 3,
+			expBucketNumber: 2,
 		},
 		{
 			partitionHists: [][]*bucket4Test{
@@ -259,21 +252,21 @@ func TestMergePartitionLevelHist(t *testing.T) {
 					upper:  5,
 					count:  10,
 					repeat: 1,
-					ndv:    3,
+					ndv:    2,
 				},
 				{
-					lower:  5,
+					lower:  6,
 					upper:  12,
 					count:  22,
 					repeat: 3,
 					ndv:    6,
 				},
 				{
-					lower:  12,
+					lower:  13,
 					upper:  18,
 					count:  33,
 					repeat: 5,
-					ndv:    6,
+					ndv:    5,
 				},
 			},
 			expBucketNumber: 3,
@@ -423,7 +416,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 					upper:  9,
 					count:  17,
 					repeat: 2,
-					ndv:    10,
+					ndv:    8,
 				},
 				{
 					lower:  11,
@@ -433,23 +426,20 @@ func TestMergePartitionLevelHist(t *testing.T) {
 					ndv:    1,
 				},
 				{
-					lower:  11,
+					lower:  13,
 					upper:  18,
 					count:  55,
 					repeat: 5,
-					ndv:    8,
+					ndv:    6,
 				},
 			},
 			expBucketNumber: 3,
 		},
 	}
-<<<<<<< HEAD
-=======
 
 	killer := sqlkiller.SQLKiller{}
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 
-	for _, tt := range tests {
+	for ii, tt := range tests {
 		var expTotColSize int64
 		hists := make([]*Histogram, 0, len(tt.partitionHists))
 		for i := range tt.partitionHists {
@@ -468,9 +458,6 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			require.NoError(t, err)
 			topNs[0].AppendTopN(b, uint64(top.count))
 		}
-<<<<<<< HEAD
-		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, tt.expBucketNumber, true)
-=======
 		topNs[0].Sort()
 		for i := 1; i < len(topNs); i++ {
 			topNs[i] = NewTopN(0)
@@ -478,89 +465,20 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		_, globalHist, err := MergePartTopNAndHistToGlobal(
 			sc, &killer, topNs, hists, 0, int64(tt.expBucketNumber), true,
 		)
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 		require.NoError(t, err)
+		require.Equal(t, tt.expBucketNumber, len(globalHist.Buckets))
 		for i, b := range tt.expHist {
 			lo, err := ValueToString(ctx.GetSessionVars(), globalHist.GetLower(i), 1, []byte{types.KindInt64})
-			require.NoError(t, err)
+			require.NoError(t, err, "failed at #%d case, %d bucket", ii, i)
 			up, err := ValueToString(ctx.GetSessionVars(), globalHist.GetUpper(i), 1, []byte{types.KindInt64})
-<<<<<<< HEAD
-			require.NoError(t, err)
-			require.Equal(t, lo, fmt.Sprintf("%v", b.lower))
-			require.Equal(t, up, fmt.Sprintf("%v", b.upper))
-			require.Equal(t, globalHist.Buckets[i].Count, b.count)
-			require.Equal(t, globalHist.Buckets[i].Repeat, b.repeat)
-			require.Equal(t, globalHist.Buckets[i].NDV, b.ndv)
-=======
 			require.NoError(t, err, "failed at #%d case, %d bucket", ii, i)
 			require.Equal(t, fmt.Sprintf("%v", b.lower), lo, "failed at #%d case, %d bucket", ii, i)
 			require.Equal(t, fmt.Sprintf("%v", b.upper), up, "failed at #%d case, %d bucket", ii, i)
 			require.Equal(t, b.count, globalHist.Buckets[i].Count, "failed at #%d case, %d bucket", ii, i)
 			require.Equal(t, b.repeat, globalHist.Buckets[i].Repeat, "failed at #%d case, %d bucket", ii, i)
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 		}
-		require.Equal(t, expTotColSize, globalHist.TotColSize)
+		require.Equal(t, expTotColSize, globalHist.TotColSize, "failed at #%d case", ii)
 	}
-<<<<<<< HEAD
-}
-
-func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
-	l := types.NewIntDatum(lower)
-	r := types.NewIntDatum(upper)
-	return bucket4Merging{
-		lower: &l,
-		upper: &r,
-		Bucket: Bucket{
-			NDV: ndv,
-		},
-		disjointNDV: disjointNDV,
-	}
-}
-
-func TestMergeBucketNDV(t *testing.T) {
-	type testData struct {
-		left   bucket4Merging
-		right  bucket4Merging
-		result bucket4Merging
-	}
-	tests := []testData{
-		{
-			left:   genBucket4Merging4Test(1, 2, 2, 0),
-			right:  genBucket4Merging4Test(1, 2, 3, 0),
-			result: genBucket4Merging4Test(1, 2, 3, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 3, 2, 0),
-			right:  genBucket4Merging4Test(2, 3, 2, 0),
-			result: genBucket4Merging4Test(1, 3, 3, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 3, 2, 0),
-			right:  genBucket4Merging4Test(4, 6, 2, 2),
-			result: genBucket4Merging4Test(1, 3, 2, 4),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 5, 5, 0),
-			right:  genBucket4Merging4Test(2, 6, 5, 0),
-			result: genBucket4Merging4Test(1, 6, 6, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(3, 5, 3, 0),
-			right:  genBucket4Merging4Test(2, 6, 4, 0),
-			result: genBucket4Merging4Test(2, 6, 5, 0),
-		},
-	}
-	sc := mock.NewContext().GetSessionVars().StmtCtx
-	for _, tt := range tests {
-		res, err := mergeBucketNDV(sc, &tt.left, &tt.right)
-		require.NoError(t, err)
-		require.Equal(t, res.lower.GetInt64(), tt.result.lower.GetInt64())
-		require.Equal(t, res.upper.GetInt64(), tt.result.upper.GetInt64())
-		require.Equal(t, res.NDV, tt.result.NDV)
-		require.Equal(t, res.disjointNDV, tt.result.disjointNDV)
-	}
-=======
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 }
 
 func TestIndexQueryBytes(t *testing.T) {
@@ -724,38 +642,4 @@ func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
 		require.Equal(t, test.outputHistToStr, test.inputHist.ToString(1),
 			fmt.Sprintf("testData[%d].inputHist:%s", i, test.inputHistToStr))
 	}
-}
-
-func generateData(t *testing.T) *Histogram {
-	var data []*bucket4Test
-	sumCount := int64(0)
-	for n := 100; n < 10000; n = n + 100 {
-		sumCount += 100
-		data = append(data, &bucket4Test{
-			lower:  int64(n),
-			upper:  int64(n + 100),
-			count:  sumCount,
-			repeat: 10,
-			ndv:    10,
-		})
-	}
-	return genHist4Test(t, data, 0)
-}
-
-func TestVerifyHistsBinarySearchRemoveValAndRemoveVals(t *testing.T) {
-	data1 := generateData(t)
-	data2 := generateData(t)
-
-	require.Equal(t, data1, data2)
-	ctx := mock.NewContext()
-	sc := ctx.GetSessionVars().StmtCtx
-	b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(150))
-	require.NoError(t, err)
-	tmp := TopNMeta{
-		Encoded: b,
-		Count:   2,
-	}
-	data1.RemoveVals([]TopNMeta{tmp})
-	data2.BinarySearchRemoveVal(tmp)
-	require.Equal(t, data1, data2)
 }

@@ -296,14 +296,14 @@ partition by range (a) (
 	tk.MustQuery("show stats_buckets where is_index=0").Check(
 		// db table partition col is_idx bucket_id count repeats lower upper ndv
 		testkit.Rows("test t global a 0 0 7 2 1 6 0",
-			"test t global a 0 1 17 2 6 19 0",
+			"test t global a 0 1 17 2 11 19 0",
 			"test t p0 a 0 0 4 1 1 4 0",
 			"test t p0 a 0 1 7 2 5 6 0",
 			"test t p1 a 0 0 6 1 11 16 0",
 			"test t p1 a 0 1 10 2 17 19 0"))
 	tk.MustQuery("show stats_buckets where is_index=1").Check(
 		testkit.Rows("test t global a 1 0 7 2 1 6 0",
-			"test t global a 1 1 17 2 6 19 0",
+			"test t global a 1 1 17 2 11 19 0",
 			"test t p0 a 1 0 4 1 1 4 0",
 			"test t p0 a 1 1 7 2 5 6 0",
 			"test t p1 a 1 0 6 1 11 16 0",
@@ -346,7 +346,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tintint' and is_index=1").Check(testkit.Rows(
 		"test tintint global a 1 0 6 2 (1, 1) (2, 3) 0",    // (2, 3) is popped into it
-		"test tintint global a 1 1 11 2 (13, 1) (13, 1) 0", // (13, 1) is popped into it
+		"test tintint global a 1 1 11 2 (11, 1) (13, 1) 0", // (13, 1) is popped into it
 		"test tintint p0 a 1 0 3 1 (1, 1) (2, 1) 0",
 		"test tintint p0 a 1 1 4 1 (2, 2) (2, 2) 0",
 		"test tintint p1 a 1 0 2 1 (11, 1) (12, 1) 0",
@@ -380,7 +380,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tintstr' and is_index=1").Check(testkit.Rows(
 		"test tintstr global a 1 0 6 2 (1, 1) (2, 3) 0",    // (2, 3) is popped into it
-		"test tintstr global a 1 1 11 2 (13, 1) (13, 1) 0", // (13, 1) is popped into it
+		"test tintstr global a 1 1 11 2 (11, 1) (13, 1) 0", // (13, 1) is popped into it
 		"test tintstr p0 a 1 0 3 1 (1, 1) (2, 1) 0",
 		"test tintstr p0 a 1 1 4 1 (2, 2) (2, 2) 0",
 		"test tintstr p1 a 1 0 2 1 (11, 1) (12, 1) 0",
@@ -414,7 +414,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tintdouble' and is_index=1").Check(testkit.Rows(
 		"test tintdouble global a 1 0 6 2 (1, 1) (2, 3) 0",    // (2, 3) is popped into it
-		"test tintdouble global a 1 1 11 2 (13, 1) (13, 1) 0", // (13, 1) is popped into it
+		"test tintdouble global a 1 1 11 2 (11, 1) (13, 1) 0", // (13, 1) is popped into it
 		"test tintdouble p0 a 1 0 3 1 (1, 1) (2, 1) 0",
 		"test tintdouble p0 a 1 1 4 1 (2, 2) (2, 2) 0",
 		"test tintdouble p1 a 1 0 2 1 (11, 1) (12, 1) 0",
@@ -448,7 +448,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdoubledecimal' and is_index=1").Check(testkit.Rows(
 		"test tdoubledecimal global a 1 0 6 2 (1, 1.00) (2, 3.00) 0",    // (2, 3) is popped into it
-		"test tdoubledecimal global a 1 1 11 2 (13, 1.00) (13, 1.00) 0", // (13, 1) is popped into it
+		"test tdoubledecimal global a 1 1 11 2 (11, 1.00) (13, 1.00) 0", // (13, 1) is popped into it
 		"test tdoubledecimal p0 a 1 0 3 1 (1, 1.00) (2, 1.00) 0",
 		"test tdoubledecimal p0 a 1 1 4 1 (2, 2.00) (2, 2.00) 0",
 		"test tdoubledecimal p1 a 1 0 2 1 (11, 1.00) (12, 1.00) 0",
@@ -482,7 +482,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tstrdt' and is_index=1").Check(testkit.Rows(
 		"test tstrdt global a 1 0 6 2 (1, 2000-01-01 00:00:00) (2, 2000-01-03 00:00:00) 0",    // (2, 3) is popped into it
-		"test tstrdt global a 1 1 11 2 (13, 2000-01-01 00:00:00) (13, 2000-01-01 00:00:00) 0", // (13, 1) is popped into it
+		"test tstrdt global a 1 1 11 2 (11, 2000-01-01 00:00:00) (13, 2000-01-01 00:00:00) 0", // (13, 1) is popped into it
 		"test tstrdt p0 a 1 0 3 1 (1, 2000-01-01 00:00:00) (2, 2000-01-01 00:00:00) 0",
 		"test tstrdt p0 a 1 1 4 1 (2, 2000-01-02 00:00:00) (2, 2000-01-02 00:00:00) 0",
 		"test tstrdt p1 a 1 0 2 1 (11, 2000-01-01 00:00:00) (12, 2000-01-01 00:00:00) 0",
@@ -858,7 +858,6 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-<<<<<<< HEAD
 	for i, version := range []string{"1", "2"} {
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
 
@@ -931,74 +930,6 @@ func TestGlobalIndexStatistics(t *testing.T) {
 			Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
 				"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	}
-=======
-	// analyze table t
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
-		"PARTITION BY RANGE (a) (" +
-		"PARTITION p0 VALUES LESS THAN (10)," +
-		"PARTITION p1 VALUES LESS THAN (20)," +
-		"PARTITION p2 VALUES LESS THAN (30)," +
-		"PARTITION p3 VALUES LESS THAN (40))")
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-	<-h.DDLEventCh()
-	tk.MustExec("flush stats_delta *.*")
-	tk.MustExec("analyze table t")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-	tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-		Check(testkit.Rows("1", "2", "3", "15"))
-	// 4 rows actually match (b in {1,2,3,15}). All 6 distinct b values
-	// land in the global TopN, so the estimate comes from exact TopN
-	// membership rather than histogram-bucket interpolation.
-	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
-	// analyze table t index idx
-	tk.MustExec("drop table if exists t")
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered)" +
-		"PARTITION BY RANGE (a) (" +
-		"PARTITION p0 VALUES LESS THAN (10)," +
-		"PARTITION p1 VALUES LESS THAN (20)," +
-		"PARTITION p2 VALUES LESS THAN (30)," +
-		"PARTITION p3 VALUES LESS THAN (40));")
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-	<-h.DDLEventCh()
-	tk.MustExec("flush stats_delta *.*")
-	tk.MustExec("analyze table t index idx")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-	rows := tk.MustQuery("EXPLAIN FORMAT='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
-	require.Equal(t, "4.00", rows[0][1]) // see comment above; exact via TopN.
-
-	// analyze table t index
-	tk.MustExec("drop table if exists t")
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
-		"PARTITION BY RANGE (a) (" +
-		"PARTITION p0 VALUES LESS THAN (10)," +
-		"PARTITION p1 VALUES LESS THAN (20)," +
-		"PARTITION p2 VALUES LESS THAN (30)," +
-		"PARTITION p3 VALUES LESS THAN (40));")
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-	<-h.DDLEventCh()
-	tk.MustExec("flush stats_delta *.*")
-	tk.MustExec("analyze table t index")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
-		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 }
 
 func TestIssues24349(t *testing.T) {
@@ -1007,24 +938,8 @@ func TestIssues24349(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-<<<<<<< HEAD
 	defer testKit.MustExec("set @@tidb_analyze_version=1")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	testIssues24349(t, testKit, store)
-}
-
-func TestIssues24349WithConcurrency(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=1")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-=======
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 	testIssues24349(t, testKit, store)
 }
 

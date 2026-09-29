@@ -157,11 +157,11 @@ func (e estimator) rangeCount(lo, hi int64) float64 {
 	if e.isIndex {
 		est, err := cardinality.GetRowCountByIndexRanges(e.sctx, e.coll, e.id, []*ranger.Range{ran}, nil)
 		require.NoError(e.t, err)
-		return est.Est
+		return est
 	}
-	est, err := cardinality.GetRowCountByColumnRanges(e.sctx, e.coll, e.id, []*ranger.Range{ran}, false)
+	est, err := cardinality.GetRowCountByColumnRanges(e.sctx, e.coll, e.id, []*ranger.Range{ran})
 	require.NoError(e.t, err)
-	return est.Est
+	return est
 }
 
 // newEstimator wraps the merge output in the column or index stats the
@@ -182,7 +182,7 @@ func newEstimator(t *testing.T, tc mergeCase, hist *statistics.Histogram, topN *
 	if topN != nil {
 		rows += int64(topN.TotalCount())
 	}
-	coll := statistics.NewHistColl(id, rows, 0, 1, 1)
+	coll := statistics.NewHistColl(id, true, rows, 0, 1, 1)
 	if tc.isIndex {
 		coll.SetIdx(id, &statistics.Index{
 			Histogram:         h,

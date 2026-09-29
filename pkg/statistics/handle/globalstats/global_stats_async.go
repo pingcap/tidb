@@ -380,9 +380,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
-<<<<<<< HEAD
-	for i := 0; i < a.globalStats.Num; i++ {
-=======
 	statslogutil.StatsLogger().Info("global stats load: fmsketch",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
@@ -390,8 +387,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 		zap.Int("histIDs", a.globalStats.Num),
 		zap.Int("partitions", len(a.partitionIDs)),
 		zap.String("reads", "mysql.stats_fm_sketch"))
-	for i := range a.globalStats.Num {
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
+	for i := 0; i < a.globalStats.Num; i++ {
 		// load fmsketch from tikv
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
@@ -420,9 +416,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
 	failpoint.Inject("PanicInIOWorker", nil)
-<<<<<<< HEAD
-	for i := 0; i < a.globalStats.Num; i++ {
-=======
 	statslogutil.StatsLogger().Info("global stats load: cmsketch",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
@@ -430,8 +423,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 		zap.Int("histIDs", a.globalStats.Num),
 		zap.Int("partitions", len(a.partitionIDs)),
 		zap.String("reads", "mysql.stats_histograms"))
-	for i := range a.globalStats.Num {
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
+	for i := 0; i < a.globalStats.Num; i++ {
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
 				histID:      a.histIDs[i],
@@ -464,9 +456,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			failpoint.Return(errors.New("ErrorSameTime returned error"))
 		}
 	})
-<<<<<<< HEAD
-	for i := 0; i < a.globalStats.Num; i++ {
-=======
 	statslogutil.StatsLogger().Info("global stats load: histogram + topN",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
@@ -474,8 +463,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 		zap.Int("histIDs", a.globalStats.Num),
 		zap.Int("partitions", len(a.partitionIDs)),
 		zap.String("reads", "mysql.stats_histograms, mysql.stats_buckets, mysql.stats_top_n"))
-	for i := range a.globalStats.Num {
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
+	for i := 0; i < a.globalStats.Num; i++ {
 		hists := make([]*statistics.Histogram, 0, a.partitionNum)
 		topn := make([]*statistics.TopN, 0, a.partitionNum)
 		for _, partitionID := range a.partitionIDs {
@@ -582,10 +570,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// Combined TopN + histogram merge.
 			wrapper := item.item
 			globalHg := &(a.globalStats.Hg[item.idx])
-<<<<<<< HEAD
-			*globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
-				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
-=======
 			a.globalStats.TopN[item.idx], *globalHg, err = statistics.MergePartTopNAndHistToGlobal(
 				stmtCtx, killer,
 				wrapper.AllTopN, wrapper.AllHg,
@@ -593,7 +577,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 				int64(opts[ast.AnalyzeOptNumBuckets]),
 				isIndex,
 			)
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 			if err != nil {
 				return err
 			}

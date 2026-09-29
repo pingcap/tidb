@@ -2935,15 +2935,9 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-<<<<<<< HEAD
-		Scope: ScopeGlobal | ScopeSession, Name: TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(DefTiDBMergePartitionStatsConcurrency, 10), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency,
-		SetSession: func(s *SessionVars, val string) error {
-			s.AnalyzePartitionMergeConcurrency = TidbOptInt(val, DefTiDBMergePartitionStatsConcurrency)
-=======
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: "1", Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBMergePartitionStatsConcurrency, Value: "1", Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency,
 		SetSession: func(_ *SessionVars, _ string) error {
 			// Deprecated: do nothing.
->>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 			return nil
 		},
 		// Both read paths return "1" unconditionally. Validation alone is
@@ -2954,7 +2948,7 @@ var defaultSysVars = []*SysVar{
 		// would otherwise read that stale value.
 		GetSession: func(_ *SessionVars) (string, error) { return "1", nil },
 		GetGlobal:  func(_ context.Context, _ *SessionVars) (string, error) { return "1", nil },
-		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
 			if normalizedValue != "1" {
 				// Use errWarnDeprecatedSyntax (MySQL code 1287) for
 				// consistency with other deprecated sysvar warnings
