@@ -1798,6 +1798,45 @@ impl Session {
         })
     }
 
+    /// Opens a prepared statement while retaining a lazy query record set for
+    /// the wire front end. The collected variant above is kept for callers
+    /// that need an owned row vector; COM_STMT_EXECUTE uses this door so a
+    /// SELECT can stream executor chunks directly to the client.
+    pub fn open_prepared_with_result_authority(
+        &mut self,
+        prepared: &PreparedAst,
+        params: &[Datum],
+    ) -> Result<(OpenedStatement, Option<ResultMaterializationAuthority>), DriverError> {
+        self.restore_statement_variables();
+        let statement = prepared.bind(params)?;
+        let (effective_statement, binding_sql) =
+            self.prepared_statement_with_binding(prepared.statement());
+        let mut effective_statement = effective_statement.into_owned();
+        self.rewrite_fts_for_planning(&mut effective_statement);
+        if self.prepared_plan_cache_allowed_for_statement(&effective_statement) {
+            if let Some(cached) = prepared.select_plan().as_ref().and_then(|plan| {
+                self.bind_cached_prepared_select_for_statement(
+                    plan,
+                    params,
+                    &effective_statement,
+                    binding_sql.as_deref(),
+                )
+            }) {
+                let opened = self.open_prepared_record_set_for(&cached, prepared)?;
+                if binding_sql.is_some() {
+                    self.found_in_binding = true;
+                }
+                let authority = matches!(opened, OpenedStatement::Rows(_))
+                    .then(|| self.result_materialization_authority());
+                return Ok((opened, authority));
+            }
+        }
+        let opened = self.open_bound_record_set_for(statement, prepared)?;
+        let authority = matches!(opened, OpenedStatement::Rows(_))
+            .then(|| self.result_materialization_authority());
+        Ok((opened, authority))
+    }
+
     /// Plans a bound prepared query for its result metadata without opening
     /// or draining a storage reader. Go's `PrepareExec` builds the
     /// `PlanCacheStmt` and takes its schema from the plan; it does not execute

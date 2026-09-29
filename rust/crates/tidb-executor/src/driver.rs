@@ -744,6 +744,22 @@ pub fn open_query_meta_stmt_with_physical(
     }
 }
 
+/// Opens a prepared query whose sequence expressions were checked when the
+/// cache plan was created. Non-sequence prepared statements skip the AST copy
+/// and visitor walk on every cache hit.
+pub fn open_query_meta_stmt_with_physical_without_sequence_validation(
+    query: &QueryStmt,
+    physical: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<QueryRecordSet, DriverError> {
+    match physical {
+        Some(physical) => physical_builder::open_query(query, physical, catalog, ctx),
+        None => open_query_meta_stmt_with_physical(query, None, catalog, current_db, ctx),
+    }
+}
+
 /// Builds the ordinary physical query tree without opening an executor.
 ///
 /// Information-schema execution uses this to inspect the resolved, pruned

@@ -396,6 +396,7 @@ pub struct PreparedSelectPlan {
     limit_parameter_orders: Vec<usize>,
     statement: tidb_ast::Stmt,
     cached_plans: std::sync::Mutex<Vec<CachedSelectPlanEntry>>,
+    contains_sequence_functions: bool,
 }
 
 #[derive(Debug)]
@@ -611,6 +612,13 @@ impl PreparedSelectPlan {
     #[must_use]
     pub fn table_names(&self) -> &[(String, String)] {
         &self.table_names
+    }
+
+    /// Whether the prepared statement contains a sequence builtin whose name
+    /// must be validated again when the physical executor is opened.
+    #[must_use]
+    pub const fn contains_sequence_functions(&self) -> bool {
+        self.contains_sequence_functions
     }
 
     /// On the first execution for a schema and parameter-type key, runs the
@@ -1340,7 +1348,41 @@ pub fn build_prepared_select_plan(
         limit_parameter_orders,
         statement: stmt.clone(),
         cached_plans: std::sync::Mutex::new(Vec::new()),
+        contains_sequence_functions: statement_contains_sequence_functions(stmt),
     })
+}
+
+fn statement_contains_sequence_functions(stmt: &tidb_ast::Stmt) -> bool {
+    struct SequenceFunctionMarker {
+        found: bool,
+    }
+
+    impl tidb_ast::Visitor for SequenceFunctionMarker {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return self.found;
+            };
+            let (tidb_ast::Expr::Func { name, .. }
+            | tidb_ast::Expr::GenericFuncCall { name, .. }) = expr
+            else {
+                return self.found;
+            };
+            self.found = matches!(
+                name.to_ascii_lowercase().as_str(),
+                "nextval" | "lastval" | "setval"
+            );
+            self.found
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut marker = SequenceFunctionMarker { found: false };
+    let mut statement = stmt.clone();
+    tidb_ast::Visitable::accept(&mut statement, &mut marker);
+    marker.found
 }
 
 pub(super) fn prepared_limit_parameter_orders(stmt: &tidb_ast::Stmt) -> Vec<usize> {

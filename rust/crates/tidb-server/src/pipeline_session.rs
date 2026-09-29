@@ -38,14 +38,18 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
 use tidb_exec::{convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata};
 use tidb_protocol::ColumnInfo;
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
-use tidb_session::{GlobalSysvars, Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
+use tidb_session::{
+    GlobalSysvars, OpenedStatement, Session, SessionRecordSet, SharedCatalog, StatementExecution,
+    StmtKind, StmtOutput, StmtResult,
+};
 
-use crate::resultset_source::ResultSetSource;
+use crate::resultset_source::{ResultSetSource, StatementStatus};
 use crate::sql_node::{
     ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
@@ -273,6 +277,50 @@ impl QuerySessionFactory for PipelineSessionFactory {
     }
 }
 
+impl PipelineServerSession {
+    fn materialized_general_result<'a>(
+        &'a mut self,
+        process_statement: Option<tidb_session::process::ProcessStatementGuard>,
+        output: StmtOutput,
+        result_authority: Option<tidb_session::ResultMaterializationAuthority>,
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        Ok(match output {
+            StmtOutput::Rows { columns, rows } => {
+                let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
+                let result = QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                    select_columns(&columns),
+                    rows,
+                )))
+                .with_cursor_materialization(
+                    field_types,
+                    result_authority.expect("a row result carries materialization authority"),
+                )
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                )
+                .with_statement_output(
+                    0,
+                    self.session.statement_insert_id(),
+                    self.session.statement_message().as_bytes().to_vec(),
+                );
+                GeneralExecuteOutcome::Rows(match process_statement {
+                    Some(statement) => result.with_process_statement(statement),
+                    None => result,
+                })
+            }
+            StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
+                affected_rows: count,
+                last_insert_id: self.session.statement_insert_id(),
+            }),
+            StmtOutput::Done(_) => GeneralExecuteOutcome::Write(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }),
+        })
+    }
+}
+
 impl QuerySession for PipelineServerSession {
     fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
         self.session.finish_txn_write_throughput(cost);
@@ -452,48 +500,53 @@ impl QuerySession for PipelineServerSession {
             .session
             .retain_process_statement_with_digest(statement.sql(), statement.digest());
         let params = prepared_parameters(values);
-        let (output, result_authority) = if let Some(prepared) = statement.prepared_ast() {
-            self.session
-                .run_prepared_with_result_authority(prepared, &params)
-        } else {
-            self.session
+        let Some(prepared) = statement.prepared_ast() else {
+            let (output, result_authority) = self
+                .session
                 .run_with_params_and_result_authority(statement.sql(), &params)
-        }
-        .map_err(map_error)?;
-        Ok(match output {
-            StmtOutput::Rows { columns, rows } => {
-                let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
-                let result = QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                    select_columns(&columns),
-                    rows,
-                )))
-                .with_cursor_materialization(
-                    field_types,
-                    result_authority.expect("a row result carries materialization authority"),
-                )
-                .with_statement_status(
-                    self.session.wire_warning_count(),
-                    WireStatus::of_session(&self.session),
-                )
-                .with_statement_output(
-                    0,
-                    self.session.statement_insert_id(),
-                    self.session.statement_message().as_bytes().to_vec(),
-                );
-                GeneralExecuteOutcome::Rows(match process_statement {
-                    Some(statement) => result.with_process_statement(statement),
-                    None => result,
-                })
+                .map_err(map_error)?;
+            return self.materialized_general_result(process_statement, output, result_authority);
+        };
+
+        let (opened, result_authority) = self
+            .session
+            .open_prepared_with_result_authority(prepared, &params)
+            .map_err(map_error)?;
+        let state = match opened {
+            OpenedStatement::Rows(state) => state,
+            OpenedStatement::Complete(output) => {
+                return self.materialized_general_result(process_statement, output, result_authority);
             }
-            StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
-                affected_rows: count,
-                last_insert_id: self.session.statement_insert_id(),
-            }),
-            StmtOutput::Done(_) => GeneralExecuteOutcome::Write(WriteOutcome {
-                affected_rows: 0,
-                last_insert_id: 0,
-            }),
-        })
+        };
+        let (warnings, status, last_insert_id, info) = (
+            self.session.wire_warning_count(),
+            WireStatus::of_session(&self.session),
+            self.session.statement_insert_id(),
+            self.session.statement_message().as_bytes().to_vec(),
+        );
+        let field_types: Vec<_> = state
+            .columns()
+            .iter()
+            .map(|(_, field)| field.clone())
+            .collect();
+        let StatementExecution::Rows(state) = OpenedStatement::Rows(state).attach(&mut self.session)
+        else {
+            unreachable!();
+        };
+        let result = QueryResult::new(Box::new(PreparedRecordSet {
+            state,
+            field_types: field_types.clone(),
+        }))
+        .with_cursor_materialization(
+            field_types,
+            result_authority.expect("a row result carries materialization authority"),
+        )
+        .with_statement_status(warnings, status)
+        .with_statement_output(0, last_insert_id, info);
+        Ok(GeneralExecuteOutcome::Rows(match process_statement {
+            Some(statement) => result.with_process_statement(statement),
+            None => result,
+        }))
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
@@ -643,6 +696,69 @@ pub(crate) fn affected_rows_source(count: u64) -> MaterializedResultSetSource {
         select_columns(&[("affected_rows".to_owned(), field_type)]),
         vec![vec![Datum::UInt(count)]],
     )
+}
+
+/// A prepared SELECT backed by the session-owned executor record set.
+/// Keeping the session borrow in this source lets the wire writer pull native
+/// chunks without first collecting every row into nested vectors.
+pub struct PreparedRecordSet<'a> {
+    state: SessionRecordSet<'a>,
+    field_types: Vec<FieldType>,
+}
+
+impl ResultSetSource for PreparedRecordSet<'_> {
+    fn statement_status(&self) -> Option<StatementStatus<'_>> {
+        let session = self.state.session();
+        Some(StatementStatus {
+            warnings: session.wire_warning_count(),
+            status: WireStatus::of_session(session),
+            affected_rows: 0,
+            last_insert_id: session.statement_insert_id(),
+            info: session.statement_message().as_bytes(),
+        })
+    }
+
+    fn new_chunk(&self) -> Option<Chunk> {
+        Some(self.state.new_chunk())
+    }
+
+    fn field_types(&self) -> &[FieldType] {
+        &self.field_types
+    }
+
+    fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_executor::MysqlError> {
+        self.state
+            .next(chunk)
+            .map_err(|error| error.to_mysql_error())
+    }
+
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+        let mut chunk = self.state.new_chunk();
+        chunk.set_required_rows(max_rows as isize, max_rows);
+        self.next_chunk(&mut chunk)?;
+        Ok((0..chunk.num_rows())
+            .map(|index| chunk.get_row(index).get_datum_row(&self.field_types))
+            .collect())
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
+        Ok(select_columns(self.state.columns()))
+    }
+
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        self.state
+            .finish()
+            .map_err(|error| error.to_mysql_error())
+    }
+
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        self.state
+            .close()
+            .map_err(|error| error.to_mysql_error())
+    }
 }
 
 /// A fully materialized result-set source: the pipeline returns complete row

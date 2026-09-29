@@ -333,6 +333,12 @@ impl Session {
     /// snapshot, transaction, planner, or executor is opened.
     pub(crate) fn activate_statement_resource_group(&mut self, stmt: &Stmt) {
         self.active_resource_group.clone_from(&self.resource_group);
+        let Some(hints) = statement_hints(stmt) else {
+            return;
+        };
+        if hints.is_empty() {
+            return;
+        }
         let stmt_hints = parse_statement_hints_without_catalog(stmt, &self.current_db);
         if !stmt_hints.has_resource_group {
             return;
@@ -1428,6 +1434,9 @@ impl Session {
         let Some(hints) = statement_hints(stmt) else {
             return Ok(());
         };
+        if hints.is_empty() {
+            return Ok(());
+        }
         let current_database = self.current_db.clone();
         let (mut stmt_hints, _, warnings) = {
             let catalog = self.lock_catalog()?;

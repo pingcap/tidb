@@ -1381,12 +1381,93 @@ impl Session {
         prepared: &crate::PreparedAst,
     ) -> Result<crate::OpenedStatement, DriverError> {
         self.begin_statement_execution(prepared.sql())?;
-        let result = self.prepare_cached_select_execution(
-            execution,
-            prepared.sql(),
-            prepared.privilege_requests(),
-        );
+        let result = self.open_cached_prepared_select(execution, prepared)?;
+        let result = match result {
+            Some(result) => Ok(result),
+            None => self.prepare_cached_select_execution(
+                execution,
+                prepared.sql(),
+                prepared.privilege_requests(),
+            ),
+        };
         self.return_opened_record_set(result)
+    }
+
+    /// Opens a cache-rebuilt SELECT without re-running the ordinary
+    /// preprocess/planner funnel. Go's plan-cache hit returns the rebuilt
+    /// physical tree directly to executor construction; the old Rust path fed
+    /// that tree back through prepare_parsed_statement, which made every
+    /// prepared SELECT pay the full compile cost again.
+    fn open_cached_prepared_select(
+        &mut self,
+        execution: &tidb_executor::PreparedSelectExecution,
+        prepared: &crate::PreparedAst,
+    ) -> Result<Option<PendingExecution>, DriverError> {
+        let started = std::time::Instant::now();
+        let cache_hit = execution.cache_hit();
+        let schema_version = execution.schema_version();
+        let table_names = execution.plan().table_names().to_vec();
+        let parameters = execution.parameters();
+        self.set_statement_arbitration_key(prepared.sql());
+        self.active_resource_group.clone_from(&self.resource_group);
+        self.begin_cached_prepared_query_boundary();
+        for (level, code, message) in execution.take_planning_warnings() {
+            self.append_warning(crate::WarningLevel::from_executor(level), code, message);
+        }
+
+        let opened = execution.with_plan(|statement, physical| {
+            self.apply_set_var_hints(statement)?;
+            self.activate_statement_resource_group(statement);
+            self.check_table_privilege_requests(prepared.privilege_requests())?;
+            self.statement_insert_id = 0;
+            self.statement_kind = StatementKind::Select;
+            if self.in_transaction() {
+                self.record_mdl_related_table_names(&table_names);
+            }
+            let current_db = self.current_db.clone();
+            let stmt_ctx = self
+                .statement_context_for_stmt(statement, false)
+                .with_prepared_params(parameters.clone());
+            self.with_catalog_mut(|catalog| {
+                if schema_version != catalog.metadata_version() {
+                    return Ok(None);
+                }
+                let Stmt::Query(query) = statement else {
+                    return Err(DriverError::unsupported(
+                        "prepared SELECT cache entry is not a query",
+                    ));
+                };
+                let open_query = if execution.plan().contains_sequence_functions() {
+                    tidb_executor::driver::open_query_meta_stmt_with_physical
+                } else {
+                    tidb_executor::driver::open_query_meta_stmt_with_physical_without_sequence_validation
+                };
+                open_query(
+                    query,
+                    Some(physical),
+                    catalog,
+                    &current_db,
+                    &stmt_ctx,
+                )
+                .map(|record_set| Some((record_set, stmt_ctx)))
+            })
+        });
+        let Some(opened) = opened else {
+            return Err(DriverError::unsupported(
+                "prepared SELECT plan generation changed before executor construction",
+            ));
+        };
+        let Some((record_set, stmt_ctx)) = opened? else {
+            return Ok(None);
+        };
+
+        crate::metrics::observe_compile_duration(started.elapsed().as_secs_f64(), false);
+        self.found_in_plan_cache = cache_hit;
+        let mut query = PendingQuery::new(record_set, stmt_ctx);
+        if !self.in_transaction() {
+            query.transaction_end = QueryTransactionEnd::AutocommitRead;
+        }
+        Ok(Some(PendingExecution::Query(query)))
     }
 
     pub(crate) fn prepare_cached_select_execution(
