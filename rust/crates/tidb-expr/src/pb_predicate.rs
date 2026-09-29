@@ -325,6 +325,7 @@ pub fn string_comparison_to_pb(
             array: Some(false),
         }),
         has_distinct: Some(false),
+        agg_func_mode: None,
     })
 }
 
@@ -445,6 +446,7 @@ fn string_operand_to_pb(operand: StringPbOperand) -> Result<Expr, PbPredicateErr
         sig: Some(ScalarFuncSig::Unspecified as i32),
         field_type: Some(field_type),
         has_distinct: Some(false),
+        agg_func_mode: None,
     })
 }
 
@@ -697,6 +699,7 @@ fn boolean_scalar_func(signature: ScalarFuncSig, children: Vec<Expr>) -> Expr {
         )),
         // gogoproto nullable=false emits this field even at its default.
         has_distinct: Some(false),
+        agg_func_mode: None,
     }
 }
 
@@ -740,6 +743,7 @@ fn operand_to_pb(operand: IntPbOperand) -> Result<Expr, PbPredicateError> {
         sig: Some(ScalarFuncSig::Unspecified as i32),
         field_type: Some(field_type),
         has_distinct: Some(false),
+        agg_func_mode: None,
     })
 }
 
@@ -787,6 +791,7 @@ fn leaf_expr(tp: ExprType, value: Vec<u8>, field_type: FieldType) -> Expr {
         sig: Some(ScalarFuncSig::Unspecified as i32),
         field_type: Some(field_type),
         has_distinct: Some(false),
+        agg_func_mode: None,
     }
 }
 

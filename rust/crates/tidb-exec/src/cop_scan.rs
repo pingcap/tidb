@@ -1138,6 +1138,7 @@ fn lower_aggregate_function(
         sig: Some(ScalarFuncSig::Unspecified as i32),
         field_type: Some(tidb_expr::pushdown_catalog::field_type_to_pb(output_type)?),
         has_distinct: Some(false),
+        agg_func_mode: Some(tidb_proto::tipb::AggFunctionMode::Partial1Mode as i32),
     })
 }
 

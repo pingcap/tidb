@@ -182,7 +182,11 @@ mod tests {
 
     #[test]
     fn selection_aggregate_and_topn_share_request_context() {
-        let ctx = context(0);
+        let mut ctx = context(0);
+        Arc::get_mut(&mut ctx).unwrap().column_types = vec![
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime),
+        ];
         let expr = conditional(call(
             tipb::ScalarFuncSig::UnixTimestampInt,
             vec![column(1, 12)],
@@ -1112,3 +1116,7 @@ mod next_boundary_audit {
         assert_eq!(warnings[0].0, 1301);
     }
 }
+
+#[cfg(test)]
+#[path = "region_aggregate_tests.rs"]
+mod region_aggregate_tests;

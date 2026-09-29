@@ -15,9 +15,9 @@
 //! Go `pkg/expression/aggregation`: the aggregate-function DESCRIPTOR that the
 //! planner builds and the executor consumes.
 //!
-//! The Go package has two halves. This module ports the DESCRIPTOR half --
-//! the part that is shared vocabulary between planner and executor -- and
-//! deliberately leaves the EVALUATOR half where the workspace already put it.
+//! This module contains the shared descriptor and the distributed evaluator
+//! used by the mock coprocessor. Production executor/aggfuncs remains a separate
+//! evaluator, as it is in Go.
 //!
 //! # Ported (per Go file)
 //!
@@ -87,17 +87,13 @@
 //! # COMPLETE vs SEED
 //!
 //! This module is a **SEED** of `pkg/expression/aggregation`, not a complete
-//! package claim. The package's evaluator half -- the `Aggregation` interface
-//! (`aggregation.go:32`), `aggFunction` (`:154`), `AggEvaluateContext`
-//! (`:107`), `NewDistAggFunc` (`:51`), `GetAggFunc` (`descriptor.go:264`) and
-//! the eleven per-kind files (`avg.go`, `sum.go`, `sum_int.go`, `count.go`,
-//! `concat.go`, `first_row.go`, `max_min.go`, `bit_and.go`, `bit_or.go`,
-//! `bit_xor.go`, `util.go`'s `distinctChecker`/`calculateSum`) -- is NOT here.
-//! It is not missing from the workspace: it already lives in
-//! `tidb-executor`'s `hash_agg.rs` and `tidb-exec`'s `aggregate/runtime/`,
-//! ported from `pkg/executor/aggfuncs` (the production evaluator) rather than
-//! from this package's mock-coprocessor twin. Re-porting it here would be a
-//! third evaluator, which is exactly what this module exists to prevent.
+//! package claim. [`DistAggregate`] implements the `NewDistAggFunc` factory's
+//! COUNT, SUM, SUM_INT, AVG, FIRST_ROW, MIN/MAX and bit aggregate update/partial
+//! result paths. `GROUP_CONCAT`, local `GetAggFunc`/`GetResult`/`ResetContext`,
+//! DISTINCT state and the remaining descriptor methods still require a complete
+//! package audit. The distributed evaluator replaces the region loop's duplicate
+//! runtime logic; it does not replace `pkg/executor/aggfuncs`, which is also a
+//! separate evaluator in Go.
 //!
 //! [`wrap_cast`] is likewise a SEED: it holds only the `WrapWithCastAs*`
 //! family of `pkg/expression/builtin_cast.go`, because
@@ -214,16 +210,13 @@
 //!   PROJECTION of `tipb`: its `ExprType` enum has five members
 //!   (`Null`/`Int64`/`String`/`ColumnRef`/`ScalarFunc`) and carries NONE of
 //!   the ~25 aggregate/window `ExprType` values these functions switch on.
-//!   `tipb.AggFunctionMode` and `tipb.ByItem` are absent entirely, and
-//!   `tipb.Expr` in that projection has no `agg_func_mode`/`order_by` fields.
-//!   Porting would require extending `tidb-proto`, which this batch does not
-//!   own. [`AggFunctionMode::ordinal`] exposes the wire discriminant so the
-//!   conversion is a one-liner once the proto grows.
+//!   The schema now retains `agg_func_mode`, but the complete aggregate/window
+//!   descriptor conversion and order-by contract still require implementation.
 //! - **`window_func.go`'s `CanPushDownToTiFlash`** -- needs
 //!   `expression.CanExprsPushDown` over a `PushDownContext` (client +
 //!   converter), a distsql-layer object this crate does not model.
-//! - **`util.go`'s `distinctChecker`/`calculateSum`** and `bench_test.go` --
-//!   evaluator half, see COMPLETE vs SEED above.
+//! - **`util.go`'s `distinctChecker`** and `bench_test.go` remain unported.
+//!   `calculateSum` is shared by the distributed SUM/AVG evaluator.
 
 use crate::expression::Expression;
 use crate::infer_pushdown::{is_push_down_enabled, PushDownStore};
@@ -232,6 +225,7 @@ use tidb_datatype::FieldTypeCode;
 
 mod base_func;
 mod descriptor;
+mod dist;
 mod explain;
 pub mod names;
 mod window_func;
@@ -242,6 +236,7 @@ mod tests;
 
 pub use base_func::{AggDescError, BaseFuncDesc};
 pub use descriptor::{AggFuncDesc, ByItems};
+pub use dist::{DistAggregate, DistAggregateError, DistAggregateState};
 pub use explain::explain_agg_func_normalized;
 pub use window_func::{need_frame, use_default_frame, WindowFrameDefault, WindowFuncDesc};
 

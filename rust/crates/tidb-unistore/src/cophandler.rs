@@ -892,95 +892,27 @@ fn exec_table_scan(
     }
 }
 
-/// Go `buildHashAggProcessor` / `buildStreamAggProcessor`
-/// (`closure_exec.go`): the region-side partial aggregation over the
-/// surviving scan rows, narrowed to the shapes
-/// [`crate::cophandler::convert_expr`]'s column/literal leaves can carry --
-/// COUNT/SUM/MIN/MAX over one column (or `COUNT(1)`), grouped by columns.
-///
-/// The partial-row contract is the one the reader's FINAL stage consumes:
-/// aggregate results first, then the group keys, `COUNT` as `BIGINT`,
-/// `SUM` as `DECIMAL` (MySQL's sum type for integer input), extremes as
-/// the input datum. Hash groups leave in group-key order; a streamed
-/// aggregation emits each group as the ordered scan leaves it.
+/// Go's hash/stream aggregation processors own groups and row storage;
+/// `expression/aggregation` owns typed argument evaluation and aggregate state.
 struct RegionAggregator {
     group_by: Vec<(SimpleExpr, tidb_datatype::Collation)>,
-    functions: Vec<(RegionAggKind, SimpleExpr, tidb_datatype::Collation)>,
+    functions: Vec<tidb_expr::aggregation::DistAggregate>,
+    context: Arc<RequestEvalContext>,
+    row: tidb_chunk::mutrow::MutRow,
     streamed: bool,
-    hash: std::collections::BTreeMap<Vec<u8>, (Vec<tidb_datatype::Datum>, Vec<RegionAggValue>)>,
-    current: Option<(Vec<u8>, Vec<tidb_datatype::Datum>, Vec<RegionAggValue>)>,
+    hash: std::collections::BTreeMap<
+        Vec<u8>,
+        (
+            Vec<tidb_datatype::Datum>,
+            Vec<tidb_expr::aggregation::DistAggregateState>,
+        ),
+    >,
+    current: Option<(
+        Vec<u8>,
+        Vec<tidb_datatype::Datum>,
+        Vec<tidb_expr::aggregation::DistAggregateState>,
+    )>,
     ordered: Vec<Vec<tidb_datatype::Datum>>,
-}
-
-#[derive(Clone, Copy)]
-enum RegionAggKind {
-    Count,
-    Sum,
-    Min,
-    Max,
-}
-
-/// A region-local `SUM` in progress.
-///
-/// Go picks one of two aggregate signatures from the argument's eval type
-/// (`pkg/executor/aggfuncs/func_sum.go`): `sum4Decimal` for integer and
-/// decimal inputs, `sum4Float64` for real ones. Only the decimal arm
-/// existed here, so a pushed-down `SUM` over a `FLOAT`/`DOUBLE` column
-/// failed the whole coprocessor request instead of answering it.
-#[derive(Debug, Clone)]
-enum RegionSum {
-    Empty,
-    Decimal(tidb_datatype::Decimal),
-    Real(f64),
-}
-
-impl RegionSum {
-    /// Folds one row's value in, skipping NULLs as both Go signatures do.
-    fn accumulate(&mut self, input: &tidb_datatype::Datum) -> Result<(), String> {
-        use tidb_datatype::{Datum, Decimal};
-        let addend = match input {
-            Datum::Null => return Ok(()),
-            Datum::Int(value) => RegionSum::Decimal(Decimal::from_int(*value)),
-            Datum::UInt(value) => RegionSum::Decimal(Decimal::from_uint(*value)),
-            Datum::Decimal(value) => RegionSum::Decimal(value.clone()),
-            Datum::Real(value) | Datum::Float32(value) => RegionSum::Real(*value),
-            _ => return Err("partial SUM requires a numeric input".to_owned()),
-        };
-        // A single argument carries a single type in Go, so the families can
-        // only ever mix here; real is the family MySQL merges them into.
-        *self = match (std::mem::replace(self, RegionSum::Empty), addend) {
-            (RegionSum::Empty, addend) => addend,
-            (RegionSum::Decimal(current), RegionSum::Decimal(addend)) => {
-                RegionSum::Decimal(current.add(&addend))
-            }
-            (RegionSum::Real(current), RegionSum::Real(addend)) => {
-                RegionSum::Real(current + addend)
-            }
-            (RegionSum::Decimal(current), RegionSum::Real(addend)) => {
-                RegionSum::Real(current.to_f64() + addend)
-            }
-            (RegionSum::Real(current), RegionSum::Decimal(addend)) => {
-                RegionSum::Real(current + addend.to_f64())
-            }
-            (current, RegionSum::Empty) => current,
-        };
-        Ok(())
-    }
-
-    /// NULL when no non-NULL value was folded in, matching Go's aggregate.
-    fn into_datum(self) -> tidb_datatype::Datum {
-        match self {
-            RegionSum::Empty => tidb_datatype::Datum::Null,
-            RegionSum::Decimal(value) => tidb_datatype::Datum::Decimal(value),
-            RegionSum::Real(value) => tidb_datatype::Datum::Real(value),
-        }
-    }
-}
-
-enum RegionAggValue {
-    Count(i64),
-    Sum(RegionSum),
-    Extreme(Option<tidb_datatype::Datum>),
 }
 
 impl RegionAggregator {
@@ -1016,31 +948,21 @@ impl RegionAggregator {
             .agg_func
             .iter()
             .map(|func| {
-                let kind = match func.tp() {
-                    tipb::ExprType::Count => RegionAggKind::Count,
-                    tipb::ExprType::Sum => RegionAggKind::Sum,
-                    tipb::ExprType::Min => RegionAggKind::Min,
-                    tipb::ExprType::Max => RegionAggKind::Max,
-                    other => {
-                        return Err(format!(
-                            "aggregate function {other:?} is a later course of this port"
-                        ))
-                    }
-                };
-                let [argument] = func.children.as_slice() else {
-                    return Err("an aggregate function takes exactly one argument".to_owned());
-                };
-                let argument = convert_expr_with_context(argument, context)?;
-                let collation = collation_of_column(&argument);
-                Ok((kind, argument, collation))
+                tidb_expr::aggregation::DistAggregate::from_pb(
+                    func,
+                    &context.column_types,
+                    &context.zone,
+                )
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         if group_by.is_empty() && functions.is_empty() {
             return Err("an aggregation names a group key or a function".to_owned());
         }
         Ok(Self {
             group_by,
             functions,
+            row: tidb_chunk::mutrow::MutRow::from_types(&context.column_types),
+            context: Arc::clone(context),
             streamed: aggregation.streamed == Some(true),
             hash: std::collections::BTreeMap::new(),
             current: None,
@@ -1048,18 +970,18 @@ impl RegionAggregator {
         })
     }
 
-    fn new_values(&self) -> Vec<RegionAggValue> {
+    fn new_values(&self) -> Vec<tidb_expr::aggregation::DistAggregateState> {
         self.functions
             .iter()
-            .map(|(kind, _, _)| match kind {
-                RegionAggKind::Count => RegionAggValue::Count(0),
-                RegionAggKind::Sum => RegionAggValue::Sum(RegionSum::Empty),
-                RegionAggKind::Min | RegionAggKind::Max => RegionAggValue::Extreme(None),
-            })
+            .map(|func| func.create_state())
             .collect()
     }
 
     fn update(&mut self, row: &[tidb_datatype::Datum]) -> Result<(), String> {
+        if row.len() != self.row.len() {
+            return Err("aggregate row does not match input schema".to_owned());
+        }
+        self.row.set_datums(row);
         let mut key = Vec::new();
         let mut groups = Vec::with_capacity(self.group_by.len());
         for (expr, collation) in &self.group_by {
@@ -1084,7 +1006,8 @@ impl RegionAggregator {
                 .is_some_and(|(current_key, _, _)| current_key != &key)
             {
                 let (_, groups, values) = self.current.take().expect("current group exists");
-                self.ordered.push(Self::finish_group(groups, values));
+                self.ordered
+                    .push(Self::finish_group(&self.functions, groups, values));
             }
             if self.current.is_none() {
                 let values = self.new_values();
@@ -1092,7 +1015,7 @@ impl RegionAggregator {
             }
             let functions = &self.functions;
             let (_, _, values) = self.current.as_mut().expect("just ensured");
-            return Self::accumulate(functions, values, row);
+            return Self::accumulate(functions, values, &self.context, self.row.to_row());
         }
 
         if !self.hash.contains_key(&key) {
@@ -1101,62 +1024,32 @@ impl RegionAggregator {
         }
         let functions = &self.functions;
         let (_, values) = self.hash.get_mut(&key).expect("just ensured");
-        Self::accumulate(functions, values, row)
+        Self::accumulate(functions, values, &self.context, self.row.to_row())
     }
 
     fn accumulate(
-        functions: &[(RegionAggKind, SimpleExpr, tidb_datatype::Collation)],
-        values: &mut [RegionAggValue],
-        row: &[tidb_datatype::Datum],
+        functions: &[tidb_expr::aggregation::DistAggregate],
+        values: &mut [tidb_expr::aggregation::DistAggregateState],
+        context: &RequestEvalContext,
+        row: tidb_chunk::row::Row<'_>,
     ) -> Result<(), String> {
-        use tidb_datatype::Datum;
-        for ((kind, argument, collation), value) in functions.iter().zip(values.iter_mut()) {
-            let input = eval_datum(argument, row)?;
-            match (kind, value) {
-                (RegionAggKind::Count, RegionAggValue::Count(count)) => {
-                    if !matches!(input, Datum::Null) {
-                        *count += 1;
-                    }
-                }
-                (RegionAggKind::Sum, RegionAggValue::Sum(sum)) => sum.accumulate(&input)?,
-                (RegionAggKind::Min | RegionAggKind::Max, RegionAggValue::Extreme(value)) => {
-                    if matches!(input, Datum::Null) {
-                        continue;
-                    }
-                    let is_max = matches!(kind, RegionAggKind::Max);
-                    let replace = match value.as_ref() {
-                        None => true,
-                        Some(current) => {
-                            let ordering = extreme_ordering(&input, current, collation)?;
-                            if is_max {
-                                ordering.is_gt()
-                            } else {
-                                ordering.is_lt()
-                            }
-                        }
-                    };
-                    if replace {
-                        *value = Some(input);
-                    }
-                }
-                _ => return Err("aggregate value kind mismatch".to_owned()),
-            }
+        for (function, value) in functions.iter().zip(values.iter_mut()) {
+            function
+                .update(value, context, row)
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
 
     fn finish_group(
+        functions: &[tidb_expr::aggregation::DistAggregate],
         groups: Vec<tidb_datatype::Datum>,
-        values: Vec<RegionAggValue>,
+        values: Vec<tidb_expr::aggregation::DistAggregateState>,
     ) -> Vec<tidb_datatype::Datum> {
-        use tidb_datatype::Datum;
-        values
-            .into_iter()
-            .map(|value| match value {
-                RegionAggValue::Count(count) => Datum::Int(count),
-                RegionAggValue::Sum(sum) => sum.into_datum(),
-                RegionAggValue::Extreme(value) => value.unwrap_or(Datum::Null),
-            })
+        functions
+            .iter()
+            .zip(values)
+            .flat_map(|(function, value)| function.partial_result(value))
             .chain(groups)
             .collect()
     }
@@ -1164,13 +1057,14 @@ impl RegionAggregator {
     fn finish(mut self) -> Vec<Vec<tidb_datatype::Datum>> {
         if self.streamed {
             if let Some((_, groups, values)) = self.current.take() {
-                self.ordered.push(Self::finish_group(groups, values));
+                self.ordered
+                    .push(Self::finish_group(&self.functions, groups, values));
             }
             return self.ordered;
         }
         self.hash
             .into_values()
-            .map(|(groups, values)| Self::finish_group(groups, values))
+            .map(|(groups, values)| Self::finish_group(&self.functions, groups, values))
             .collect()
     }
 }
@@ -1265,43 +1159,6 @@ fn eval_datum(
         SimpleExpr::Func(..) => Err("a computed aggregate argument is a later course".to_owned()),
         SimpleExpr::Shared(shared) => eval_shared(shared, row),
     }
-}
-
-/// MIN/MAX ordering over the datum kinds a lowered scan can produce.
-/// Byte values order under the argument column's collation; the numeric
-/// kinds compare by value, crossing signedness the way Go's `CompareDatum`
-/// does for the int/uint pair.
-fn extreme_ordering(
-    candidate: &tidb_datatype::Datum,
-    current: &tidb_datatype::Datum,
-    collation: &tidb_datatype::Collation,
-) -> Result<std::cmp::Ordering, String> {
-    use std::cmp::Ordering;
-    use tidb_datatype::Datum;
-    let ordering = match (candidate, current) {
-        (Datum::Int(left), Datum::Int(right)) => left.cmp(right),
-        (Datum::UInt(left), Datum::UInt(right)) => left.cmp(right),
-        (Datum::Int(left), Datum::UInt(right)) => {
-            if *left < 0 {
-                Ordering::Less
-            } else {
-                (*left as u64).cmp(right)
-            }
-        }
-        (Datum::UInt(left), Datum::Int(right)) => {
-            if *right < 0 {
-                Ordering::Greater
-            } else {
-                left.cmp(&(*right as u64))
-            }
-        }
-        (Datum::Decimal(left), Datum::Decimal(right)) => left.cmp(right),
-        _ => match (candidate.as_raw_bytes(), current.as_raw_bytes()) {
-            (Some(left), Some(right)) => collation.key(left).cmp(&collation.key(right)),
-            _ => return Err("MIN/MAX over this datum pair is a later course".to_owned()),
-        },
-    };
-    Ok(ordering)
 }
 
 /// Go `topNCtx` (`closure_exec.go:545`): the pushed-down bounded sort --
@@ -4929,7 +4786,10 @@ mod tests {
     #[test]
     fn unknown_executor_kind_is_not_a_default_table_scan() {
         let dag = tipb::DagRequest {
-            executors: vec![tipb::Executor { tp: Some(i32::MAX), ..Default::default() }],
+            executors: vec![tipb::Executor {
+                tp: Some(i32::MAX),
+                ..Default::default()
+            }],
             ..Default::default()
         };
         let request = coprocessor::Request {
@@ -4938,7 +4798,9 @@ mod tests {
             ranges: vec![coprocessor::KeyRange::default()],
             ..Default::default()
         };
-        assert!(build_dag(&request).unwrap_err().contains("unknown executor type"));
+        assert!(build_dag(&request)
+            .unwrap_err()
+            .contains("unknown executor type"));
     }
 
     #[test]

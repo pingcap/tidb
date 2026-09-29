@@ -83,6 +83,47 @@ impl Datum {
         self.convert_to_reported(target, flags, zone, &mut Diagnostics::new(None))
     }
 
+    /// Go `Datum.ToFloat64`: conversion diagnostics belong to the source
+    /// value, without ConvertTo's destination-width or non-finite checks.
+    pub fn to_f64_in_context(
+        &self,
+        context: &crate::ConversionContext<'_>,
+    ) -> Result<DatumConversion, DatumValueError> {
+        let mut diagnostics = Diagnostics::new(Some(context));
+        let converted = self.to_float_reported(&mut diagnostics)?;
+        if diagnostics.unmapped {
+            return Err(DatumValueError::Unsupported(
+                self.kind(),
+                "float conversion diagnostic",
+            ));
+        }
+        Ok(DatumConversion {
+            value: Datum::Real(converted.value),
+            error: diagnostics.error,
+        })
+    }
+
+    fn to_float_reported(
+        &self,
+        diagnostics: &mut Diagnostics<'_, '_>,
+    ) -> Result<Converted<f64>, DatumValueError> {
+        Ok(match self {
+            Self::String(value) => {
+                crate::convert::str_to_float_reported(value.as_utf8()?, false, diagnostics)
+            }
+            Self::Bytes(value) => crate::convert::str_to_float_reported(
+                std::str::from_utf8(value)?,
+                false,
+                diagnostics,
+            ),
+            _ => {
+                let converted = self.to_f64()?;
+                diagnostics.unhandled(converted.event.as_ref());
+                converted
+            }
+        })
+    }
+
     /// Converts through the same value engine while preserving each stage's
     /// typed diagnostics and the caller-owned warning order. The zone is the
     /// evaluated session location; the context supplies flags and warning policy.
@@ -134,21 +175,7 @@ impl Datum {
                 }
             }
             FieldTypeCode::Float | FieldTypeCode::Double => {
-                let converted = match self {
-                    Self::String(value) => {
-                        crate::convert::str_to_float_reported(value.as_utf8()?, false, diagnostics)
-                    }
-                    Self::Bytes(value) => crate::convert::str_to_float_reported(
-                        std::str::from_utf8(value)?,
-                        false,
-                        diagnostics,
-                    ),
-                    _ => {
-                        let converted = self.to_f64()?;
-                        diagnostics.unhandled(converted.event.as_ref());
-                        converted
-                    }
-                };
+                let converted = self.to_float_reported(diagnostics)?;
                 let produced = produce_float_reported(converted.value, target, diagnostics);
                 let event = numeric_conversion_event(converted.event, produced.event, flags);
                 Ok(Converted {

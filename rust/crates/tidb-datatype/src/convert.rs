@@ -688,6 +688,7 @@ pub(crate) fn str_to_int_reported(
         diagnostics.truncated_numeric_input(input);
     }
     let mut function_cast_consumed_all = true;
+    let mut prefix_error = None;
     let integer = if is_function_cast {
         let (prefix, consumed_all) = function_cast_integer_prefix(input);
         function_cast_consumed_all = consumed_all;
@@ -698,22 +699,21 @@ pub(crate) fn str_to_int_reported(
         match float_string_to_integer_string(float.value(), input) {
             Ok(value) => value,
             Err((value, error)) => {
-                let event = Some(ScalarConversionEvent::Overflow(error));
-                diagnostics.parsed_integer(event.as_ref());
-                return Converted {
-                    value: value.parse().unwrap_or_else(|_| {
-                        if value.starts_with('-') {
-                            i64::MIN
-                        } else {
-                            i64::MAX
-                        }
-                    }),
-                    event,
-                };
+                // Go still ParseInts the bounded prefix. If that fails, its
+                // overflow replaces floatStrToIntStr's original-input error.
+                prefix_error = Some(ScalarConversionEvent::Overflow(error));
+                value
             }
         }
     };
     match integer.parse::<i64>() {
+        Ok(value) if prefix_error.is_some() => {
+            diagnostics.parsed_integer(prefix_error.as_ref());
+            Converted {
+                value,
+                event: prefix_error,
+            }
+        }
         Ok(value) if float.truncated() || (is_function_cast && !function_cast_consumed_all) => {
             Converted::truncated(value)
         }

@@ -411,6 +411,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
         sig: Some(ScalarFuncSig::Unspecified as i32),
         field_type: conditions[2].children[0].field_type.clone(),
         has_distinct: Some(false),
+        agg_func_mode: None,
     };
     let scan = PhysicalTableScan::init(0, 0, TiKvTableScanSpec::new(46, columns));
     let request = construct_aggregate_read_only_dag_req_with_conditions(
@@ -480,6 +481,7 @@ fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wir
                     .expect("numeric q1 field type lowers"),
             ),
             has_distinct: Some(false),
+            agg_func_mode: None,
         }
     };
     let aggregate = |tp: ExprType, child: Expr, field_type: &FieldType| Expr {
@@ -492,6 +494,7 @@ fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wir
                 .expect("numeric q1 aggregate type lowers"),
         ),
         has_distinct: Some(false),
+        agg_func_mode: None,
     };
     let functions = vec![
         aggregate(ExprType::Count, column_ref(2, &value_type), &group_type),

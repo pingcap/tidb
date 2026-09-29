@@ -1,0 +1,64 @@
+Commands run from /Users/qiliu/projects/tidb unless noted; all cargo commands use --locked.
+
+Reference source comparison (exit 0):
+git diff --quiet 8936d7bdcb 12b639a1161cd5a60126a47277f5ad14c320fd4a -- pkg/expression/aggregation pkg/store/mockstore/unistore/cophandler pkg/types pkg/util/collate
+
+Go oracle (reference archive /private/tmp/tidb-go-structural-20260927):
+GOTOOLCHAIN=go1.25.14 GOFLAGS='-overlay=/private/tmp/region-aggregate-overlay.json' ./tools/check/failpoint-go-test.sh pkg/expression/aggregation -run '^TestRustRegionAggregateAudit$' -count=1 -v
+PASS. Final expanded capture 3,297 rows, no panics; failpoint refcount restored to zero.
+An initial sandboxed run could not write the Go cache; rerun with cache access passed.
+
+Before production changes:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-unistore --lib region_aggregate_matches_go_wire_fixture -- --test-threads=1
+FAILED as expected: 387 differences in 1,764 valid initial cases.
+Expanded intermediate regression found 36 numeric conversion/error differences, then one expression-error rendering difference; all fixed.
+
+Final regression and region library:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-unistore --lib -- --test-threads=1 --skip closure_executor_selection_over_point_range_answers_zero_rows
+PASS: 189 passed, 13 existing ignored, 1 excluded baseline failure. Includes all 3,129 fixture cases.
+
+Unfiltered library run:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-unistore --lib -- --test-threads=1
+189 passed, 13 ignored, 1 failed: closure_executor_selection_over_point_range_answers_zero_rows.
+Reproduced the identical failure on original b415a65bd8 by temporarily restoring tracked source inputs and restoring this change in a finally block:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-unistore --lib closure_executor_selection_over_point_range_answers_zero_rows -- --test-threads=1
+FAILED on baseline: TruncatedWrongValue("Truncated incorrect DOUBLE value: 'abc'").
+
+Shared conversion and descriptors:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-datatype --lib convert -- --test-threads=1
+PASS: 67 passed.
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-expr --lib aggregation -- --test-threads=1
+PASS: 86 passed, 18 existing ignored.
+
+Wire and producer integration:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-proto --test tipb_selection_expression_source
+PASS: 4 passed.
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --test cop_scan_partial_predicate_limit_source
+PASS: 8 passed, including explicit Partial1Mode on COUNT(*) requests.
+
+Additional integration checks after wire initializer updates:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --test all wide_scan_selection_source
+PASS: 16 passed, including TPC-H Q1/Q6 aggregation request shapes.
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-expr --test all pb_string_predicate_source
+PASS: 1 passed.
+The final mode decoder uses generated enum variants; the 3,129-case fixture was rerun afterward:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-unistore --lib region_aggregate_matches_go_wire_fixture -- --test-threads=1
+PASS.
+
+make lint
+PASS, including scalar enum synchronization, TiPB schema projection verification (44 messages, 10 enums), revive and dashboard lint.
+
+git diff --check
+PASS.
+
+Fetched and fast-forwarded to 5c875eae66 before publication; its only change is
+tidb-executor/src/kv_table/table_scan.rs. Go master and repaired sources did not change.
+
+Publication gates required after saving this receipt:
+TERM=xterm git -c core.hooksPath=hooks commit ...
+The hook must run cd rust && cargo build --locked -p tidb-server and abort on failure.
+Immediately before git push origin HEAD:hparser-integration:
+cd rust && cargo build --locked -p tidb-server
+Publication outcome and commit ID are reported in the task response.
+
+Not verified: all upstream Go package tests/variants, full Rust workspace tests, real TiKV execution, benchmarks (sysbench/TPC-C/TPC-H/YCSB), complete aggregation/descriptor package parity.

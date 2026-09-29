@@ -1,0 +1,96 @@
+package aggregation
+import (
+ "testing"
+ "encoding/hex"
+ "fmt"
+ "os"
+ "strings"
+ "strconv"
+ "time"
+ "math"
+ "github.com/pingcap/tidb/pkg/parser/mysql"
+ "github.com/pingcap/tidb/pkg/expression"
+ "github.com/pingcap/tidb/pkg/util/collate"
+ "github.com/pingcap/tidb/pkg/types"
+ "github.com/pingcap/tidb/pkg/util/chunk"
+ "github.com/pingcap/tidb/pkg/util/codec"
+ "github.com/pingcap/tidb/pkg/util/mock"
+ "github.com/pingcap/tipb/go-tipb"
+)
+func TestRustRegionAggregateAudit(t *testing.T) {
+ out,err:=os.Create("/private/tmp/region-aggregate-go.tsv");if err!=nil {t.Fatal(err)};defer out.Close()
+ ft:=func(domain string)*tipb.FieldType{
+  if domain=="UInt" {domain="Int"}
+  code:=map[string]byte{"Int":mysql.TypeLonglong,"Real":mysql.TypeDouble,"Float":mysql.TypeFloat,"Decimal":mysql.TypeNewDecimal,"String":mysql.TypeVarString,"Time":mysql.TypeDatetime,"Duration":mysql.TypeDuration,"Json":mysql.TypeJSON}[domain]
+  field:=&tipb.FieldType{Tp:int32(code),Flen:-1,Decimal:-1,Charset:"binary",Collate:63,Flag:128}
+  if domain=="String"||domain=="Json" {field.Charset="utf8mb4";field.Collate=46;field.Flag=0}
+  if domain=="Int" {field.Decimal=0};if domain=="Decimal" {field.Flen=10;field.Decimal=2};if domain=="Time"||domain=="Duration" {field.Decimal=3}
+  return field
+ }
+ var literal func(string,string)*tipb.Expr
+ literal=func(domain,value string)*tipb.Expr {
+  pb:=&tipb.Expr{FieldType:ft(domain)}
+  switch domain {
+  case "Null": pb.Tp=tipb.ExprType_Null
+  case "Int":n,_:=strconv.ParseInt(value,10,64);pb.Tp=tipb.ExprType_Int64;pb.Val=codec.EncodeInt(nil,n)
+  case "UInt":n,_:=strconv.ParseUint(value,10,64);pb.FieldType=ft("Int");pb.FieldType.Flag|=32;pb.Tp=tipb.ExprType_Uint64;pb.Val=codec.EncodeUint(nil,n)
+  case "Float":n,_:=strconv.ParseFloat(value,32);pb.Tp=tipb.ExprType_Float32;pb.Val=codec.EncodeFloat(nil,float64(float32(n)))
+  case "Real":n,_:=strconv.ParseFloat(value,64);pb.Tp=tipb.ExprType_Float64;pb.Val=codec.EncodeFloat(nil,n)
+  case "Decimal":d:=new(types.MyDecimal);if err:=d.FromString([]byte(value));err!=nil {panic(err)};pb.Tp=tipb.ExprType_MysqlDecimal;pb.Val,err=codec.EncodeDecimal(nil,d,0,0)
+  case "String":pb.Tp=tipb.ExprType_String;pb.Val=[]byte(value)
+  case "Duration":n,_:=strconv.ParseInt(value,10,64);pb.Tp=tipb.ExprType_MysqlDuration;pb.Val=codec.EncodeInt(nil,n)
+  case "Time":pb.Tp=tipb.ExprType_MysqlTime;day,_:=strconv.Atoi(value);v:=types.NewTime(types.FromDate(2024,1,day,3,4,5,123000),mysql.TypeDatetime,3);n,_:=v.ToPackedUint();pb.Val=codec.EncodeUint(nil,n)
+  case "Json":pb.Tp=tipb.ExprType_MysqlJson;j,e:=types.ParseBinaryJSONFromString(value);if e!=nil {panic(e)};pb.Val,err=codec.EncodeValue(time.UTC,nil,types.NewJSONDatum(j))
+  }
+  return pb
+ }
+ call:=func(sig,domain string,args ...*tipb.Expr)*tipb.Expr {
+  return &tipb.Expr{Tp:tipb.ExprType_ScalarFunc,Sig:tipb.ScalarFuncSig(tipb.ScalarFuncSig_value[sig]),FieldType:ft(domain),Children:args}
+ }
+
+ collate.SetNewCollationEnabledForTest(true);defer collate.SetNewCollationEnabledForTest(false)
+ run:=func(name,domain,wrapper string,values []string,coll int32,mode tipb.AggFunctionMode,kind tipb.ExprType,arity int){
+  for _,flags:=range []uint64{0,1,2}{func(){
+   ctx:=mock.NewContextDeprecated();ctx.GetSessionVars().StmtCtx.InitFromPBFlagAndTz(flags,time.UTC);ctx.GetSessionVars().TimeZone=time.UTC
+   source:=ft(domain);if domain=="UInt"{source.Flag|=32};if domain=="String"{source.Collate=coll}
+   col:=&tipb.ColumnInfo{ColumnId:1,Tp:source.Tp,ColumnLen:source.Flen,Decimal:source.Decimal,Flag:int32(source.Flag),Collation:source.Collate}
+   colWire,_:=col.Marshal()
+   arg:=&tipb.Expr{Tp:tipb.ExprType_ColumnRef,Val:codec.EncodeInt(nil,0),FieldType:source}
+   if wrapper=="lower" {arg=call("LowerUTF8","String",arg);arg.FieldType.Collate=coll}
+   args:=[]*tipb.Expr{};for i:=0;i<arity;i++{args=append(args,arg)}
+   bad:=call("CastStringAsInt","Int",literal("String","bad"))
+   null:=&tipb.Expr{Tp:tipb.ExprType_Null,FieldType:ft("Int")}
+   switch wrapper {
+    case "first-cast":args=[]*tipb.Expr{call("CastStringAsInt","Int",arg)}
+    case "count-null-first":args=[]*tipb.Expr{null,bad}
+    case "count-error-first":args=[]*tipb.Expr{bad,null}
+    case "avg-null-sum":args=[]*tipb.Expr{bad,null}
+   }
+   aggregate:=&tipb.Expr{Tp:kind,Children:args,FieldType:source,AggFuncMode:&mode}
+   pb:=&tipb.Aggregation{AggFunc:[]*tipb.Expr{aggregate}};wire,_:=pb.Marshal()
+   leaves:=[]string{};rows:=[]chunk.Row{}
+   for _,v:=range values {var leaf *tipb.Expr;if v=="NULL" {leaf=&tipb.Expr{Tp:tipb.ExprType_Null,FieldType:source}}else{leaf=literal(domain,v)};if domain=="String" {leaf.FieldType.Collate=coll};lw,_:=leaf.Marshal();leaves=append(leaves,hex.EncodeToString(lw));decoded,e:=expression.PBToExpr(ctx,leaf,nil);if e!=nil{panic(e)};value,e:=decoded.Eval(ctx,chunk.Row{});if e!=nil{panic(e)};rows=append(rows,chunk.MutRowFromDatums([]types.Datum{value}).ToRow())}
+   result,detail:="",""
+   defer func(){if p:=recover();p!=nil{result="panic";detail=fmt.Sprint(p)};warnings:=[]string{};for _,w:=range ctx.GetSessionVars().StmtCtx.GetWarnings(){warnings=append(warnings,hex.EncodeToString([]byte(w.Err.Error())))};fmt.Fprintf(out,"%s\t%d\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",name,flags,hex.EncodeToString(wire),hex.EncodeToString(colWire),strings.Join(leaves,","),result,hex.EncodeToString([]byte(detail)),len(warnings),strings.Join(warnings,","))}()
+   agg,_,e:=NewDistAggFunc(aggregate,[]*types.FieldType{expression.PbTypeToFieldType(source)},ctx);if e!=nil{result="build_error";detail=e.Error();return};state:=agg.CreateContext(ctx)
+   for _,row:=range rows{if e:=agg.Update(state,ctx.GetSessionVars().StmtCtx,row);e!=nil{result="error";detail=e.Error();return}}
+   results:=[]string{};for _,value:=range agg.GetPartialResult(state){switch value.Kind(){case types.KindNull:results=append(results,"null");case types.KindFloat64,types.KindFloat32:results=append(results,fmt.Sprintf("real:%016x",math.Float64bits(value.GetFloat64())));default:text,e:=value.ToString();if e!=nil{panic(e)};results=append(results,"value:"+hex.EncodeToString([]byte(text)))}};result=strings.Join(results,";")
+  }()}
+ }
+ samples:=map[string][]string{"Int":{"2","3"},"UInt":{"2","18446744073709551615"},"Real":{"1.25","2.5"},"Float":{"1.25","2.5"},"Decimal":{"1.25","2.50"},"String":{"1.25","2.5"},"Time":{"1","2"},"Duration":{"1000000000","2000000000"},"Json":{"1.25","2.5"}}
+ for _,domain:=range []string{"Int","UInt","Real","Float","Decimal","String","Time","Duration","Json"}{v:=samples[domain];for i,values:=range [][]string{{v[0]},{v[0],v[1]},{"NULL",v[0]},{"NULL","NULL"}}{for _,name:=range []string{"Count","Sum","Min","Max"}{for mode:=0;mode<4;mode++{run(fmt.Sprintf("%s/%s/%d/mode%d",name,domain,i,mode),domain,"column",values,46,tipb.AggFunctionMode(mode),tipb.ExprType(tipb.ExprType_value[name]),1)}}}}
+ for _,coll:=range []int32{46,45,224}{for _,wrapper:=range []string{"column","lower"}{for i,values:=range [][]string{{"Z","a"},{"á","z"},{"A","a"},{"ß","s"},{"a ","a"}}{for _,name:=range []string{"Min","Max"}{run(fmt.Sprintf("%s/collation%d/%s/%d",name,coll,wrapper,i),"String",wrapper,values,coll,tipb.AggFunctionMode_Partial1Mode,tipb.ExprType(tipb.ExprType_value[name]),1)}}}}
+ for _,arity:=range []int{0,2}{run(fmt.Sprintf("Count/arity%d",arity),"Int","column",[]string{"2","3"},46,tipb.AggFunctionMode_Partial1Mode,tipb.ExprType_Count,arity)}
+ for _,name:=range []string{"Avg","First","Agg_BitOr","Agg_BitXor","Agg_BitAnd","SumInt"}{run(name+"/capability","Int","column",[]string{"2","3"},46,tipb.AggFunctionMode_Partial1Mode,tipb.ExprType(tipb.ExprType_value[name]),1)}
+
+ for _,domain:=range []string{"Int","UInt","Real","Float","Decimal","String","Time","Duration","Json"}{v:=samples[domain];for i,values:=range [][]string{{v[0]},{v[0],v[1]},{"NULL",v[0]},{"NULL","NULL"}}{for _,name:=range []string{"Avg","First","Agg_BitOr","Agg_BitXor","Agg_BitAnd"}{for _,mode:=range []int{0,2}{run(fmt.Sprintf("%s/expanded/%s/%d/mode%d",name,domain,i,mode),domain,"column",values,46,tipb.AggFunctionMode(mode),tipb.ExprType(tipb.ExprType_value[name]),1)}}}}
+ for _,domain:=range []string{"Int","UInt"}{v:=samples[domain];for i,values:=range [][]string{{v[0],v[1]},{"NULL",v[0]},{"NULL","NULL"}}{for mode:=0;mode<4;mode++{run(fmt.Sprintf("SumInt/expanded/%s/%d/mode%d",domain,i,mode),domain,"column",values,46,tipb.AggFunctionMode(mode),tipb.ExprType_SumInt,1)}}}
+ for _,mode:=range []int{1,3}{for i,values:=range [][]string{{"2","3"},{"NULL","2"},{"NULL","NULL"}}{run(fmt.Sprintf("Avg/partials/%d/mode%d",i,mode),"Int","column",values,46,tipb.AggFunctionMode(mode),tipb.ExprType_Avg,2)}}
+ for _,domain:=range []string{"String","Real"}{for i,values:=range [][]string{{"Inf","2"},{"NaN","2"},{"1e309","1"},{"2x","3"},{"","3"},{"9223372036854775807","1"}}{for _,name:=range []string{"Sum","Avg","Agg_BitOr","Agg_BitXor","Agg_BitAnd"}{run(fmt.Sprintf("%s/edge/%s/%d",name,domain,i),domain,"column",values,46,tipb.AggFunctionMode_Partial1Mode,tipb.ExprType(tipb.ExprType_value[name]),1)}}}
+ for _,name:=range []string{"SumInt"}{run(name+"/signed-overflow","Int","column",[]string{"9223372036854775807","1"},46,tipb.AggFunctionMode_Partial1Mode,tipb.ExprType_SumInt,1)}
+
+ run("First/lazy-cast","String","first-cast",[]string{"NULL","bad"},46,tipb.AggFunctionMode_Partial1Mode,tipb.ExprType_First,1)
+ run("Count/lazy-null-first","Int","count-null-first",[]string{"1"},46,tipb.AggFunctionMode_Partial1Mode,tipb.ExprType_Count,2)
+ run("Count/lazy-error-first","Int","count-error-first",[]string{"1"},46,tipb.AggFunctionMode_Partial1Mode,tipb.ExprType_Count,2)
+ run("Avg/lazy-null-sum","Int","avg-null-sum",[]string{"1"},46,tipb.AggFunctionMode_FinalMode,tipb.ExprType_Avg,2)
+}

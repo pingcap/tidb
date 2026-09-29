@@ -2886,6 +2886,7 @@ pub fn to_pb_in(
             sig: Some(ScalarFuncSig::Unspecified as i32),
             field_type: Some(field_type_to_pb(field_type)?),
             has_distinct: Some(false),
+            agg_func_mode: None,
         }),
         PbScalar::IntLiteral(value) => Some(leaf(
             ExprType::Int64,
@@ -3042,6 +3043,7 @@ pub fn to_pb_in(
                 sig: Some(signature.sig as i32),
                 field_type: Some(return_field_type),
                 has_distinct: Some(false),
+                agg_func_mode: None,
             })
         }
     }
@@ -3111,6 +3113,7 @@ fn coerced_to_pb(
                     sig: Some(cast as i32),
                     field_type: Some(field_type),
                     has_distinct: Some(false),
+                    agg_func_mode: None,
                 });
             }
             _ => None,
@@ -3149,6 +3152,7 @@ fn coerced_to_pb(
         sig: Some(cast as i32),
         field_type: Some(field_type),
         has_distinct: Some(false),
+        agg_func_mode: None,
     })
 }
 
@@ -3246,6 +3250,7 @@ fn leaf(tp: ExprType, val: Vec<u8>, field_type: tidb_proto::tipb::FieldType) -> 
         sig: Some(ScalarFuncSig::Unspecified as i32),
         field_type: Some(field_type),
         has_distinct: Some(false),
+        agg_func_mode: None,
     }
 }
 

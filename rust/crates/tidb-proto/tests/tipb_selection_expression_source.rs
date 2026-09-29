@@ -37,6 +37,19 @@ fn bounded_selection_contract_keeps_upstream_numeric_values() {
 
 #[test]
 fn selection_executor_and_nonnullable_defaults_keep_exact_wire_tags() {
+    for mode in 0..=4 {
+        let expr = Expr {
+            agg_func_mode: Some(mode),
+            ..Default::default()
+        };
+        let wire = expr.encode_to_vec();
+        assert_eq!(wire, [0x48, mode as u8]);
+        assert_eq!(
+            Expr::decode(wire.as_slice()).unwrap().agg_func_mode,
+            Some(mode)
+        );
+    }
+
     let literal = Expr {
         tp: Some(ExprType::Int64 as i32),
         val: Some(vec![0x80, 0, 0, 0, 0, 0, 0, 1]),
@@ -44,6 +57,7 @@ fn selection_executor_and_nonnullable_defaults_keep_exact_wire_tags() {
         sig: Some(ScalarFuncSig::Unspecified as i32),
         field_type: None,
         has_distinct: Some(false),
+        agg_func_mode: None,
     };
     let executor = Executor {
         tp: Some(ExecType::TypeSelection as i32),

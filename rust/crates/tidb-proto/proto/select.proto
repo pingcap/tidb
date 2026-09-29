@@ -857,8 +857,7 @@ enum ScalarFuncSig {
 }
 
 // Dependency-closed projection of expression.proto Expr. RPN and order-by
-// fields are intentionally outside this bounded scalar/aggregate path. The
-// omitted aggFuncMode defaults to Partial1Mode in TiDB's PB decoder.
+// fields are intentionally outside this bounded scalar/aggregate path.
 message Expr {
   optional ExprType tp = 1;
   optional bytes val = 2;
@@ -866,6 +865,15 @@ message Expr {
   optional ScalarFuncSig sig = 4;
   optional FieldType field_type = 5;
   optional bool has_distinct = 7;
+  optional AggFunctionMode aggFuncMode = 9;
+}
+
+enum AggFunctionMode {
+  CompleteMode = 0;
+  FinalMode = 1;
+  Partial1Mode = 2;
+  Partial2Mode = 3;
+  DedupMode = 4;
 }
 
 // TiKV's list-based Selection carries no child: its input is the preceding

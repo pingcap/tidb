@@ -211,6 +211,10 @@ impl QueryTransport for FakeTransport {
                     .iter()
                     .find(|function| function.tp == Some(ExprType::Count as i32))
                     .expect("the aggregate request carries COUNT");
+                assert_eq!(
+                    count.agg_func_mode,
+                    Some(tidb_proto::tipb::AggFunctionMode::Partial1Mode as i32)
+                );
                 observation.count_children = count.children.clone();
             }
         }

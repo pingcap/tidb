@@ -36,6 +36,7 @@ fn string_in_deduplicates_large_lists_without_changing_survivor_order() {
             array: Some(false),
         }),
         has_distinct: Some(false),
+        agg_func_mode: None,
     };
     let mut literals = (0..2_000)
         .map(|value| format!("0x{value:040X}").into_bytes())
