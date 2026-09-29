@@ -2003,13 +2003,17 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table ru_report_modes (id int primary key, v int)")
 	tk.MustExec("insert into ru_report_modes values (1, 2)")
+	connectionID := tk.Session().GetSessionVars().ConnectionID
 	for _, mode := range []string{config.RUReportModeResult, config.RUReportModeFull} {
 		t.Run(mode, func(t *testing.T) {
 			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
 			var observed atomic.Int64
 			var frontendBytes float64
-			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(_ uint64, _ string,
+			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(observedConnectionID uint64, _ string,
 				_, _, _, frontendCompileBytes, _, _, _, _, _, _, _ float64) {
+				if observedConnectionID != connectionID {
+					return
+				}
 				observed.Add(1)
 				frontendBytes = frontendCompileBytes
 			})
