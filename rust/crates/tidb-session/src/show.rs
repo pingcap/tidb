@@ -372,7 +372,7 @@ pub(crate) fn text_columns_output(columns: &[&str]) -> StmtOutput {
             .iter()
             .map(|name| {
                 (
-                    (*name).to_owned(),
+                    (*name).into(),
                     FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
                 )
             })
@@ -518,7 +518,7 @@ fn show_row_matches(
     if let Some(missing) = first_unknown_output_column(predicate, columns) {
         return Err(DriverError::UnknownColumnInClause {
             column: missing,
-            clause: "where clause".to_owned(),
+            clause: "where clause".into(),
         });
     }
     let resolver = ShowRowResolver { columns, row };
@@ -928,7 +928,7 @@ impl Session {
                     .filter(|name| self.database_is_visible(name))
                     .collect();
                 let column_name = like_pattern.as_ref().map_or_else(
-                    || "Database".to_owned(),
+                    || "Database".into(),
                     |pattern| pattern.column_name("Database"),
                 );
                 let output = string_column_output(&column_name, names);
@@ -948,7 +948,7 @@ impl Session {
             tidb_ast::AdminStmt::ShowTableStatus(show) => {
                 let database = match &show.database {
                     Some(database) => database.clone(),
-                    None => self.require_current_database()?.to_owned(),
+                    None => self.require_current_database()?.into(),
                 };
                 // Go `fetchShowTableStatus` (`executor/show.go` around line
                 // 639) applies the same pre-lookup 1044 gate `SHOW TABLES`
@@ -1511,6 +1511,17 @@ impl Session {
                         self.current_tso().value(),
                     )));
                 }
+                // Go `ShowExec.fetchShowReplicaStatus` refuses outright:
+                // `This version of TiDB doesn't yet support 'SHOW {REPLICA |
+                // SLAVE} STATUS'` (1235).
+                if matches!(
+                    show.kind,
+                    tidb_ast::ShowInspectionKind::ReplicaStatus
+                ) {
+                    return Err(DriverError::NotSupportedYet(
+                        "SHOW {REPLICA | SLAVE} STATUS".into(),
+                    ));
+                }
                 if let Some(output) = crate::show_admin::inspection_output(show.kind) {
                     return Ok(Some(output));
                 }
@@ -1537,7 +1548,7 @@ impl Session {
                         .with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items()))?;
                     let output = StmtOutput::Rows {
                         columns: vec![(
-                            "HistogramsInFlight".to_owned(),
+                            "HistogramsInFlight".into(),
                             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                         )],
                         rows: vec![tidb_executor::show_stats::histograms_in_flight_row(count)],
@@ -1804,7 +1815,7 @@ impl Session {
                 };
                 let database = match &show.database {
                     Some(name) => name.clone(),
-                    None => self.require_current_database()?.to_owned(),
+                    None => self.require_current_database()?.into(),
                 };
                 let output = self.show_columns(&database, &show.table, None, show.full)?;
                 filter_show_output(output, like_pattern, where_clause).map(Some)
@@ -1834,7 +1845,7 @@ impl Session {
                 };
                 let database = match &show.database {
                     Some(name) => name.clone(),
-                    None => self.require_current_database()?.to_owned(),
+                    None => self.require_current_database()?.into(),
                 };
                 // Go `fetchShowTables` (`executor/show.go` around line 576)
                 // asks `DBIsVisible` BEFORE `SchemaExists`, so a schema this

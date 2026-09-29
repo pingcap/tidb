@@ -206,12 +206,10 @@ pub(crate) fn inspection_output(kind: tidb_ast::ShowInspectionKind) -> Option<St
             ],
             rows: Vec::new(),
         }),
-        tidb_ast::ShowInspectionKind::ReplicaStatus | tidb_ast::ShowInspectionKind::Affinity => {
-            Some(StmtOutput::Rows {
-                columns: vec![("1".to_owned(), FieldType::new(FieldTypeCode::Long))],
-                rows: Vec::new(),
-            })
-        }
+        tidb_ast::ShowInspectionKind::Affinity => Some(StmtOutput::Rows {
+            columns: vec![("1".to_owned(), FieldType::new(FieldTypeCode::Long))],
+            rows: Vec::new(),
+        }),
         _ => None,
     }
 }
