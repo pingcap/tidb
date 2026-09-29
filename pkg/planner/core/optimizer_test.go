@@ -695,21 +695,21 @@ func TestInternalSQLScanUserTableCollectsPredicateColumns(t *testing.T) {
 	sessVars := s.GetSCtx().GetSessionVars()
 	origRestricted := sessVars.InRestrictedSQL
 	origInternalScan := sessVars.InternalSQLScanUserTable
-	origMVMaintenance := sessVars.InMaterializedViewMaintenance
+	origMVMaintenance := sessVars.InMViewMaintenance
 	defer func() {
 		sessVars.InRestrictedSQL = origRestricted
 		sessVars.InternalSQLScanUserTable = origInternalScan
-		sessVars.InMaterializedViewMaintenance = origMVMaintenance
+		sessVars.InMViewMaintenance = origMVMaintenance
 	}()
 
 	sessVars.InRestrictedSQL = true
 	sessVars.InternalSQLScanUserTable = false
-	sessVars.InMaterializedViewMaintenance = false
+	sessVars.InMViewMaintenance = false
 	flags := adjustOptimizationFlags(baseFlags, lp)
 	require.Zero(t, flags&rule.FlagCollectPredicateColumnsPoint)
 	require.Zero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
 
-	sessVars.InMaterializedViewMaintenance = true
+	sessVars.InMViewMaintenance = true
 	flags = adjustOptimizationFlags(baseFlags, lp)
 	require.Zero(t, flags&rule.FlagCollectPredicateColumnsPoint)
 	require.Zero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
