@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "diagnosticclient",
+    name = "diagclient",
     srcs = ["client.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/diagnosticclient",
+    importpath = "github.com/pingcap/tidb/pkg/util/diagclient",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config/diagnosticmode",
@@ -18,10 +18,10 @@ go_library(
 )
 
 go_test(
-    name = "diagnosticclient_test",
+    name = "diagclient_test",
     timeout = "short",
     srcs = ["client_test.go"],
-    embed = [":diagnosticclient"],
+    embed = [":diagclient"],
     flaky = True,
     deps = [
         "//pkg/config/diagnosticmode",

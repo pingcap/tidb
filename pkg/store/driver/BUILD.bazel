@@ -16,7 +16,7 @@ go_library(
         "//pkg/store/driver/error",
         "//pkg/store/driver/txn",
         "//pkg/store/gcworker",
-        "//pkg/util/diagnosticclient",
+        "//pkg/util/diagclient",
         "//pkg/util/logutil",
         "//pkg/util/traceevent",
         "//pkg/util/tracing",

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package diagnosticclient provides diagnostic-mode guards for PD and TiKV RPCs.
-package diagnosticclient
+// Package diagclient provides diagnostic-mode guards for PD and TiKV RPCs.
+package diagclient
 
 import (
 	"context"

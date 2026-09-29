@@ -64,7 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
+	"github.com/pingcap/tidb/pkg/util/diagclient"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -855,7 +855,7 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 		pdClientOptions = append(pdClientOptions, opt.WithEnableRouterClient(false))
 	}
 	if diagnosticmode.Enabled() {
-		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
 	}
 	pdCliForTiKV, err := newPDClient(ctx, apiContext, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), pdClientOptions...)
 	if err != nil {
@@ -868,7 +868,7 @@ func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, e
 		_ = spkv.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	rpcCli := diagnosticclient.WrapKV(newTiKVRPCClient(rpcOpts...))
+	rpcCli := diagclient.WrapKV(newTiKVRPCClient(rpcOpts...))
 	tikvCli, err := newTiKVStore("lightning-local-backend", codecPDCli, spkv, rpcCli)
 	if err != nil {
 		if rpcCli != nil {

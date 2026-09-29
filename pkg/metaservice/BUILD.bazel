@@ -12,7 +12,7 @@ go_library(
         "//pkg/config/diagnosticmode",
         "//pkg/keyspace",
         "//pkg/util",
-        "//pkg/util/diagnosticclient",
+        "//pkg/util/diagclient",
         "//pkg/util/etcd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",

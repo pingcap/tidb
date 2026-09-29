@@ -58,7 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
+	"github.com/pingcap/tidb/pkg/util/diagclient"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -197,7 +197,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 	apiContext := keyspace.BuildAPIContext(tidbCfg.KeyspaceName)
 	var pdClientOptions []opt.ClientOption
 	if diagnosticmode.Enabled() {
-		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
 	}
 	pdCli, err := NewClientWithAPIContext(ctx, apiContext, caller.Component("tidb-table-importer"), addrs, tlsOpt, pdClientOptions...)
 	if err != nil {

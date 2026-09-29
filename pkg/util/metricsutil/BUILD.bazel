@@ -32,7 +32,7 @@ go_library(
         "//pkg/store/mockstore/unistore/metrics",
         "//pkg/ttl/metrics",
         "//pkg/util",
-        "//pkg/util/diagnosticclient",
+        "//pkg/util/diagclient",
         "//pkg/util/topsql/reporter/metrics",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_tikv_pd_client//:client",

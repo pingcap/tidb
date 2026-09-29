@@ -43,7 +43,7 @@ import (
 	unimetrics "github.com/pingcap/tidb/pkg/store/mockstore/unistore/metrics"
 	ttlmetrics "github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
+	"github.com/pingcap/tidb/pkg/util/diagclient"
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
@@ -83,7 +83,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 		opt.WithInitMetricsOption(false),
 	}
 	if diagnosticmode.Enabled() {
-		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
 	}
 	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt, pdClientOptions...)
 	if err != nil {

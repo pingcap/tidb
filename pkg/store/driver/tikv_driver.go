@@ -36,7 +36,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
-	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
+	"github.com/pingcap/tidb/pkg/util/diagclient"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -166,7 +166,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 
 	pdClientOptions := d.pdClientOptions()
 	if diagnosticmode.Enabled() {
-		pdClientOptions = append(pdClientOptions, diagnosticclient.PDClientOption())
+		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
 	}
 	pdCli, err = pd.NewClientWithAPIContext(context.Background(), apiCtx, "tidb-tikv-driver", pdAddrsInConfigPath,
 		pd.SecurityOption{
@@ -208,7 +208,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	codec := pdClient.GetCodec()
-	rpcClient := diagnosticclient.WrapKV(tikv.NewRPCClient(
+	rpcClient := diagclient.WrapKV(tikv.NewRPCClient(
 		tikv.WithSecurity(d.security),
 		tikv.WithCodec(codec),
 	))
