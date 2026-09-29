@@ -2956,7 +2956,6 @@ impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
             }
         } else if let Some(backoff) = self.snapshot_lock_backoff.as_mut() {
             if let Some(ttl) = ttl_ms.filter(|ttl| *ttl > 0) {
-                crate::stats::increment_lock_resolver_action("wait_expired");
                 backoff
                     .backoff_with_max_sleep_txn_lock_fast(
                         ttl as u64,
@@ -2970,9 +2969,6 @@ impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
                 .and_then(|ttl| u64::try_from(ttl).ok())
                 .map(Duration::from_millis)
                 .map_or(delay, |ttl| delay.min(ttl));
-            if ttl_ms.is_some_and(|ttl| ttl > 0) {
-                crate::stats::increment_lock_resolver_action("wait_expired");
-            }
             sleep(delay).await;
             if let Some(stats) = &self.snapshot_runtime_stats {
                 stats.record_backoff("txnLockFast", delay);

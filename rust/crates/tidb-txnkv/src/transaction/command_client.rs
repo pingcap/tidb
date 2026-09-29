@@ -151,7 +151,8 @@ pub type TransactionBatchGetFuture =
 /// publication result; begin methods return independently driven completions.
 pub trait TransactionCommandClient {
     /// Publishes an already encoded client-rust request. Production transport
-    /// overrides this to avoid a compatibility protobuf round trip.
+    /// overrides this to avoid a compatibility protobuf round trip. `None`
+    /// means unsupported, before publication; use the typed command instead.
     fn publish_raw_transaction<R: Message + Default>(
         &mut self,
         _address: &str,
@@ -159,8 +160,8 @@ pub trait TransactionCommandClient {
         _encoded_request: Vec<u8>,
         _context: &KvrpcContext,
         _call: &UnaryCallContext,
-    ) -> PublishedCommand<R> {
-        PublishedCommand::BeforePublication("raw transaction transport unavailable".to_owned())
+    ) -> Option<PublishedCommand<R>> {
+        None
     }
 
     /// Publishes one transactional Get at the caller's snapshot timestamp.
@@ -395,10 +396,15 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         encoded_request: Vec<u8>,
         context: &KvrpcContext,
         call: &UnaryCallContext,
-    ) -> PublishedCommand<R> {
-        TonicCoprocessorClient::publish_raw_transaction(
-            self, address, tag, encoded_request, context, call,
-        )
+    ) -> Option<PublishedCommand<R>> {
+        Some(TonicCoprocessorClient::publish_raw_transaction(
+            self,
+            address,
+            tag,
+            encoded_request,
+            context,
+            call,
+        ))
     }
 
     fn publish_transaction_get(

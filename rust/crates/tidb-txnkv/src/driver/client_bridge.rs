@@ -49,6 +49,28 @@ pub(crate) fn runtime() -> Arc<tokio::runtime::Runtime> {
         .clone()
 }
 
+#[derive(Debug)]
+pub(crate) enum ResolverBridgeError {
+    Timestamp(String),
+    CallerCancelled,
+}
+
+impl std::fmt::Display for ResolverBridgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timestamp(error) => f.write_str(error),
+            Self::CallerCancelled => f.write_str("context canceled"),
+        }
+    }
+}
+impl std::error::Error for ResolverBridgeError {}
+
+impl ResolverBridgeError {
+    fn native(self) -> Error {
+        Error::Io(std::io::Error::other(self))
+    }
+}
+
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::StringError(error.to_string())
 }
@@ -106,14 +128,23 @@ trait Backend: Send + Sync {
     ) -> Result<Box<dyn Any + Send>>;
 }
 
+type Dispatch<C, L> = fn(
+    &SharedReadRuntime<C, L>,
+    &Mutex<ClientTrace>,
+    &str,
+    &dyn Request,
+    &UnaryCallContext,
+) -> Result<Box<dyn Any + Send>>;
+
 struct StorageBackend<C, L, T> {
     storage: SharedReadRuntime<C, L>,
     timestamps: Mutex<T>,
     trace: Arc<Mutex<ClientTrace>>,
+    dispatch: Dispatch<C, L>,
 }
 impl<C, L, T> Backend for StorageBackend<C, L, T>
 where
-    C: TransactionCommandClient + LockRecoveryClient + Clone + Send + 'static,
+    C: Send + 'static,
     L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
     T: TimestampSource + Send + 'static,
 {
@@ -123,7 +154,7 @@ where
             .map_err(failure)?
             .current_ts()
             .map(Timestamp::from_version)
-            .map_err(failure)
+            .map_err(|error| ResolverBridgeError::Timestamp(error).native())
     }
     fn cluster_id(&self) -> u64 {
         self.storage.cluster_id()
@@ -156,44 +187,28 @@ where
             .map_err(failure)
     }
     fn update_regions(&self, regions: Vec<RegionWithLeader>) -> Result<()> {
-        self.storage
-            .with_region_cache(|cache| {
-                let mut stores = std::collections::BTreeMap::new();
-                let mut replacements = Vec::with_capacity(regions.len());
-                for region in regions {
-                    let mut proto = transcode::<_, tidb_proto::metapb::Region>(&region.region)?;
-                    // The client codec decoded EpochNotMatch. The shared loader
-                    // consumes PD/TiKV wire boundaries, so restore that domain.
-                    for boundary in [&mut proto.start_key, &mut proto.end_key] {
-                        if !boundary.is_empty() {
-                            let raw = std::mem::take(boundary);
-                            tidb_codec::encode_bytes(boundary, &raw);
-                        }
+        let regions = regions
+            .into_iter()
+            .map(|region| {
+                let mut proto = transcode::<_, tidb_proto::metapb::Region>(&region.region)?;
+                // The client codec decoded EpochNotMatch. The shared loader
+                // consumes PD/TiKV wire boundaries, so restore that domain.
+                for boundary in [&mut proto.start_key, &mut proto.end_key] {
+                    if !boundary.is_empty() {
+                        let raw = std::mem::take(boundary);
+                        tidb_codec::encode_bytes(boundary, &raw);
                     }
-                    let metadata =
-                        crate::region::recovery::region_metadata(&proto).map_err(failure)?;
-                    let leader_store = region.leader.as_ref().map_or(0, |peer| peer.store_id);
-                    let loaded = cache
-                        .with_loader(|loader| {
-                            loader.hydrate_region(&metadata, leader_store, &mut stores)
-                        })
-                        .map_err(failure)?;
-                    let labels = stores
-                        .iter()
-                        .filter_map(|(id, store)| {
-                            store.as_ref().map(|store| (*id, store.labels.clone()))
-                        })
-                        .collect();
-                    replacements.push((loaded, labels));
                 }
-                if let Some((first, _)) = replacements.first() {
-                    cache
-                        .replace_regions_atomically(first.region, replacements)
-                        .map_err(failure)?;
-                }
-                Ok(())
+                let metadata = crate::region::recovery::region_metadata(&proto).map_err(failure)?;
+                let leader_store = region.leader.as_ref().map_or(0, |peer| peer.store_id);
+                Ok((metadata, leader_store))
             })
+            .collect::<Result<Vec<_>>>()?;
+        self.storage
+            .region_cache_handle()
+            .update_client_regions(regions)
             .map_err(failure)?
+            .map_err(failure)
     }
     fn invalidate_region(&self, id: RegionVerId) {
         let _ = self
@@ -211,31 +226,54 @@ where
         request: &dyn Request,
         call: &UnaryCallContext,
     ) -> Result<Box<dyn Any + Send>> {
-        let mut client = self.storage.client().lock().map_err(failure)?.clone();
-        // Point gets dominate prepared point-update workloads. Keep the
-        // client-rust protobuf bytes intact across the transport boundary;
-        // decoding into tidb-proto and encoding again costs an allocation on
-        // every RPC.
-        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::GetRequest>() {
-            let mut context: tidb_proto::KvrpcContext = request
-                .context
-                .as_ref()
-                .map(transcode)
-                .transpose()?
-                .unwrap_or_default();
-            context.cluster_id = self.cluster_id();
-            context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
-            let published = client.publish_raw_transaction(
-                address,
-                crate::rpc::BatchCommandTag::Get,
-                request.encode_to_vec(),
-                &context,
-                call,
-            );
-            self.trace
+        (self.dispatch)(&self.storage, &self.trace, address, request, call)
+    }
+}
+
+fn encode_native_get(request: &kvrpcpb::GetRequest, context: &tidb_proto::KvrpcContext) -> Vec<u8> {
+    let mut request = request.clone();
+    let native_context = request.context.get_or_insert_with(Default::default);
+    native_context.cluster_id = context.cluster_id;
+    native_context.request_origin = context.request_origin;
+    request.encode_to_vec()
+}
+
+fn dispatch_transaction<C, L>(
+    storage: &SharedReadRuntime<C, L>,
+    trace: &Mutex<ClientTrace>,
+    address: &str,
+    request: &dyn Request,
+    call: &UnaryCallContext,
+) -> Result<Box<dyn Any + Send>>
+where
+    C: TransactionCommandClient + LockRecoveryClient + Clone,
+    L: RegionRecoveryLoader,
+{
+    let mut client = storage.client().lock().map_err(failure)?.clone();
+    // Point gets dominate prepared point-update workloads. Keep the
+    // client-rust protobuf bytes intact across the transport boundary;
+    // decoding into tidb-proto and encoding again costs an allocation on
+    // every RPC.
+    if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::GetRequest>() {
+        let mut context: tidb_proto::KvrpcContext = request
+            .context
+            .as_ref()
+            .map(transcode)
+            .transpose()?
+            .unwrap_or_default();
+        context.cluster_id = storage.cluster_id();
+        context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
+        if let Some(published) = client.publish_raw_transaction(
+            address,
+            crate::rpc::BatchCommandTag::Get,
+            encode_native_get(request, &context),
+            &context,
+            call,
+        ) {
+            trace
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .observe_native_get(&context, &published);
+                .observe_native_get(request, &context, &published);
             let response = match published {
                 PublishedCommand::BeforePublication(error) => return Err(failure(error)),
                 PublishedCommand::AfterPublication { error, .. } => {
@@ -245,97 +283,149 @@ where
             };
             return Ok(Box::new(response));
         }
-        macro_rules! command {
-            ($request:ident, $response:ident, $method:ident) => {
-                if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
-                    let mut request: tidb_proto::kvrpcpb::$request = transcode(request)?;
-                    let mut context = request.context.take().unwrap_or_default();
-                    context.cluster_id = self.cluster_id();
-                    context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
-                    request.context = Some(context.clone());
-                    let published = client.$method(address, &request, &context, call);
-                    self.trace
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .observe(&request, &context, address, &published);
-                    let response = match published {
-                        PublishedCommand::BeforePublication(error) => return Err(failure(error)),
-                        PublishedCommand::AfterPublication { error, .. } => {
-                            return Err(Error::GrpcAPI(tonic::Status::unavailable(error)))
-                        }
-                        PublishedCommand::Response(response) => response.response,
-                    };
-                    return Ok(Box::new(transcode::<_, kvrpcpb::$response>(&response)?));
-                }
-            };
-        }
-        command!(GetRequest, GetResponse, publish_transaction_get);
-        command!(
-            BatchGetRequest,
-            BatchGetResponse,
-            publish_transaction_batch_get
-        );
-        command!(ScanRequest, ScanResponse, publish_transaction_scan);
-        command!(PrewriteRequest, PrewriteResponse, publish_prewrite);
-        command!(CommitRequest, CommitResponse, publish_commit);
-        command!(
-            BatchRollbackRequest,
-            BatchRollbackResponse,
-            publish_batch_rollback
-        );
-        command!(
-            PessimisticLockRequest,
-            PessimisticLockResponse,
-            publish_pessimistic_lock
-        );
-        command!(
-            PessimisticRollbackRequest,
-            PessimisticRollbackResponse,
-            publish_pessimistic_rollback
-        );
-        command!(
-            TxnHeartBeatRequest,
-            TxnHeartBeatResponse,
-            publish_txn_heart_beat
-        );
-        macro_rules! lock_command {
-            ($request:ident, $response:ident, $method:ident) => {
-                if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
-                    let mut request: tidb_proto::kvrpcpb::$request = transcode(request)?;
-                    let mut context = request.context.take().unwrap_or_default();
-                    context.cluster_id = self.cluster_id();
-                    context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
-                    request.context = Some(context.clone());
-                    let response =
-                        client
-                            .$method(address, &request, &context, call)
-                            .map_err(|error| {
-                                Error::GrpcAPI(tonic::Status::unavailable(error.to_string()))
-                            })?;
-                    return Ok(Box::new(transcode::<_, kvrpcpb::$response>(&response)?));
-                }
-            };
-        }
-        lock_command!(
-            CheckTxnStatusRequest,
-            CheckTxnStatusResponse,
-            check_txn_status_for_lock
-        );
-        lock_command!(
-            CheckSecondaryLocksRequest,
-            CheckSecondaryLocksResponse,
-            check_secondary_locks_for_lock
-        );
-        lock_command!(
-            ResolveLockRequest,
-            ResolveLockResponse,
-            resolve_lock_for_read
-        );
-        Err(failure(format!(
-            "unsupported transaction RPC {}",
-            request.label()
-        )))
     }
+    macro_rules! command {
+        ($request:ident, $response:ident, $method:ident) => {
+            if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
+                let mut request: tidb_proto::kvrpcpb::$request = transcode(request)?;
+                let mut context = request.context.take().unwrap_or_default();
+                context.cluster_id = storage.cluster_id();
+                context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
+                request.context = Some(context.clone());
+                let published = client.$method(address, &request, &context, call);
+                trace
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .observe(&request, &context, address, &published);
+                let response = match published {
+                    PublishedCommand::BeforePublication(error) => return Err(failure(error)),
+                    PublishedCommand::AfterPublication { error, .. } => {
+                        return Err(Error::GrpcAPI(tonic::Status::unavailable(error)))
+                    }
+                    PublishedCommand::Response(response) => response.response,
+                };
+                return Ok(Box::new(transcode::<_, kvrpcpb::$response>(&response)?));
+            }
+        };
+    }
+    command!(GetRequest, GetResponse, publish_transaction_get);
+    command!(
+        BatchGetRequest,
+        BatchGetResponse,
+        publish_transaction_batch_get
+    );
+    command!(ScanRequest, ScanResponse, publish_transaction_scan);
+    command!(PrewriteRequest, PrewriteResponse, publish_prewrite);
+    command!(CommitRequest, CommitResponse, publish_commit);
+    command!(
+        BatchRollbackRequest,
+        BatchRollbackResponse,
+        publish_batch_rollback
+    );
+    command!(
+        PessimisticLockRequest,
+        PessimisticLockResponse,
+        publish_pessimistic_lock
+    );
+    command!(
+        PessimisticRollbackRequest,
+        PessimisticRollbackResponse,
+        publish_pessimistic_rollback
+    );
+    command!(
+        TxnHeartBeatRequest,
+        TxnHeartBeatResponse,
+        publish_txn_heart_beat
+    );
+    dispatch_lock_request(&mut client, storage.cluster_id(), address, request, call)
+}
+
+fn dispatch_resolver<C, L>(
+    storage: &SharedReadRuntime<C, L>,
+    _trace: &Mutex<ClientTrace>,
+    address: &str,
+    request: &dyn Request,
+    call: &UnaryCallContext,
+) -> Result<Box<dyn Any + Send>>
+where
+    C: LockRecoveryClient,
+    L: RegionRecoveryLoader,
+{
+    let worker = storage
+        .client()
+        .lock()
+        .map_err(failure)?
+        .fork_for_async_worker();
+    if let Some(mut worker) = worker {
+        dispatch_lock_request(
+            worker.as_mut(),
+            storage.cluster_id(),
+            address,
+            request,
+            call,
+        )
+    } else {
+        dispatch_lock_request(
+            &mut *storage.client().lock().map_err(failure)?,
+            storage.cluster_id(),
+            address,
+            request,
+            call,
+        )
+    }
+}
+
+fn dispatch_lock_request(
+    client: &mut dyn LockRecoveryClient,
+    cluster_id: u64,
+    address: &str,
+    request: &dyn Request,
+    call: &UnaryCallContext,
+) -> Result<Box<dyn Any + Send>> {
+    macro_rules! lock_command {
+        ($request:ident, $response:ident, $method:ident) => {
+            if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
+                let mut request: tidb_proto::kvrpcpb::$request = transcode(request)?;
+                let mut context = request.context.take().unwrap_or_default();
+                context.cluster_id = cluster_id;
+                context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
+                request.context = Some(context.clone());
+                let response = client.$method(address, &request, &context, call).map_err(
+                    |error| match error {
+                        crate::DirectUnaryClientError::CallerCancelled => {
+                            ResolverBridgeError::CallerCancelled.native()
+                        }
+                        error => Error::GrpcAPI(tonic::Status::unavailable(error.to_string())),
+                    },
+                )?;
+                return Ok(Box::new(transcode::<_, kvrpcpb::$response>(&response)?));
+            }
+        };
+    }
+    lock_command!(
+        CheckTxnStatusRequest,
+        CheckTxnStatusResponse,
+        check_txn_status_for_lock
+    );
+    lock_command!(
+        CheckSecondaryLocksRequest,
+        CheckSecondaryLocksResponse,
+        check_secondary_locks_for_lock
+    );
+    lock_command!(
+        PessimisticRollbackRequest,
+        PessimisticRollbackResponse,
+        pessimistic_rollback_for_lock
+    );
+    lock_command!(
+        ResolveLockRequest,
+        ResolveLockResponse,
+        resolve_lock_for_read
+    );
+    Err(failure(format!(
+        "unsupported transaction RPC {}",
+        request.label()
+    )))
 }
 
 /// One client engine's view of the existing store, with no second cache or transport.
@@ -343,6 +433,7 @@ pub struct ClientPd {
     trace: Arc<Mutex<ClientTrace>>,
     backend: Arc<dyn Backend>,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
+    transaction_tasks: bool,
 }
 impl ClientPd {
     /// Adapts process-owned transport, metadata and timestamp capabilities.
@@ -358,11 +449,37 @@ impl ClientPd {
                 storage,
                 timestamps: Mutex::new(timestamps),
                 trace: trace.clone(),
+                dispatch: dispatch_transaction::<C, L>,
             }),
             trace,
             call: Arc::new(Mutex::new(None)),
+            transaction_tasks: true,
         })
     }
+    /// Adapts the existing read transport without requiring transaction commands.
+    pub(crate) fn new_resolver<C, L, T>(
+        storage: SharedReadRuntime<C, L>,
+        timestamps: Arc<T>,
+    ) -> Arc<Self>
+    where
+        C: LockRecoveryClient + Send + 'static,
+        L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
+        T: TimestampSource + Send + Sync + 'static + ?Sized,
+    {
+        let trace = Arc::new(Mutex::new(ClientTrace::default()));
+        Arc::new(Self {
+            backend: Arc::new(StorageBackend {
+                storage,
+                timestamps: Mutex::new(timestamps),
+                trace: trace.clone(),
+                dispatch: dispatch_resolver::<C, L>,
+            }),
+            trace,
+            call: Arc::new(Mutex::new(None)),
+            transaction_tasks: false,
+        })
+    }
+
     pub(crate) fn observe_detached_commits(
         &self,
     ) -> std::sync::mpsc::Receiver<crate::transaction::DetachedCommitCompletion> {
@@ -417,6 +534,7 @@ pub struct ClientKv {
     backend: Arc<dyn Backend>,
     address: String,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
+    transaction_tasks: bool,
 }
 struct CancelBackgroundCall(crate::rpc::UnaryCancellation);
 
@@ -445,16 +563,17 @@ impl KvClient for ClientKv {
             return Err(failure("context canceled"));
         }
         let detached = background.is_some()
-            || request.as_any().is::<kvrpcpb::BatchRollbackRequest>()
-            || request.as_any().is::<kvrpcpb::PessimisticRollbackRequest>()
-            || request.as_any().is::<kvrpcpb::TxnHeartBeatRequest>()
-            || request
-                .as_any()
-                .downcast_ref::<kvrpcpb::CommitRequest>()
-                .is_some_and(|request| {
-                    request.commit_role == kvrpcpb::CommitRole::Secondary as i32
-                        || request.use_async_commit
-                });
+            || (self.transaction_tasks
+                && (request.as_any().is::<kvrpcpb::BatchRollbackRequest>()
+                    || request.as_any().is::<kvrpcpb::PessimisticRollbackRequest>()
+                    || request.as_any().is::<kvrpcpb::TxnHeartBeatRequest>()
+                    || request
+                        .as_any()
+                        .downcast_ref::<kvrpcpb::CommitRequest>()
+                        .is_some_and(|request| {
+                            request.commit_role == kvrpcpb::CommitRole::Secondary as i32
+                                || request.use_async_commit
+                        })));
         let call = if detached {
             UnaryCallContext::with_timeout(timeout)
         } else {
@@ -547,6 +666,7 @@ impl PdClient for ClientPd {
             backend: self.backend.clone(),
             address: address.clone(),
             call: self.call.clone(),
+            transaction_tasks: self.transaction_tasks,
         };
         Ok(RegionStore::new(region, Arc::new(client)).with_target(address))
     }
@@ -572,9 +692,20 @@ impl PdClient for ClientPd {
     }
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         let backend = self.backend.clone();
-        tokio::task::spawn_blocking(move || backend.timestamp())
+        let result = tokio::task::spawn_blocking(move || backend.timestamp())
             .await
-            .map_err(failure)?
+            .map_err(failure)?;
+        if !self.transaction_tasks
+            && self
+                .call
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .is_some_and(|call| call.cancellation().is_cancelled())
+        {
+            return Err(ResolverBridgeError::CallerCancelled.native());
+        }
+        result
     }
     async fn cluster_id(&self) -> u64 {
         self.backend.cluster_id()
@@ -632,6 +763,7 @@ struct ClientTrace {
 impl ClientTrace {
     fn observe_native_get(
         &mut self,
+        request: &kvrpcpb::GetRequest,
         context: &tidb_proto::KvrpcContext,
         published: &PublishedCommand<kvrpcpb::GetResponse>,
     ) {
@@ -644,6 +776,15 @@ impl ClientTrace {
                     epoch.conf_ver,
                     epoch.version,
                 );
+                if !response.response.not_found {
+                    if let Some(pages) = self.scan_pages.as_mut() {
+                        pages.push(ScanPage {
+                            region,
+                            end_key: Vec::new(),
+                            pairs: vec![(request.key.clone(), response.response.value.clone())],
+                        });
+                    }
+                }
                 self.reads.last_get = Some((region, response.publication.clone()));
             }
         }
@@ -874,6 +1015,71 @@ mod ownership_regressions {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[test]
+    fn native_get_bytes_keep_routed_context_and_lock_hints() {
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                region_id: 42,
+                resolved_locks: vec![7],
+                committed_locks: vec![8],
+                request_source: "external_test".into(),
+                ..Default::default()
+            }),
+            key: b"key".to_vec(),
+            version: 99,
+            ..Default::default()
+        };
+        let mut context: tidb_proto::KvrpcContext =
+            transcode(request.context.as_ref().unwrap()).unwrap();
+        context.cluster_id = 77;
+        context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
+        let bytes = encode_native_get(&request, &context);
+        let decoded = tidb_proto::KvrpcGetRequest::decode(bytes.as_slice()).unwrap();
+        assert_eq!(decoded.context, Some(context));
+        assert_eq!(decoded.key, b"key");
+        assert_eq!(decoded.version, 99);
+    }
+
+    #[test]
+    fn native_get_preserves_scan_recovery_observations() {
+        let mut trace = ClientTrace {
+            scan_pages: Some(Vec::new()),
+            ..Default::default()
+        };
+        let context = tidb_proto::KvrpcContext {
+            region_id: 42,
+            ..Default::default()
+        };
+        let response = PublishedCommand::Response(crate::rpc::TransactionBatchResponse {
+            response: kvrpcpb::GetResponse {
+                value: b"value".to_vec(),
+                ..Default::default()
+            },
+            publication: crate::rpc::TransactionBatchPublication::in_process(
+                crate::rpc::BatchCommandTag::Get,
+                "local",
+                7,
+            ),
+        });
+        trace.observe_native_get(
+            &kvrpcpb::GetRequest {
+                key: b"key".to_vec(),
+                ..Default::default()
+            },
+            &context,
+            &response,
+        );
+        let pages = trace.scan_pages.unwrap();
+        assert_eq!(
+            pages.len(),
+            1,
+            "a point Get resolving a scan lock retains its serving region"
+        );
+        assert_eq!(pages[0].region.id, 42);
+        assert_eq!(pages[0].pairs, vec![(b"key".to_vec(), b"value".to_vec())]);
+        assert_eq!(trace.reads.rpc_count, 1);
+    }
+
     #[derive(Default)]
     struct CleanupBackend {
         calls: AtomicUsize,
@@ -937,6 +1143,7 @@ mod ownership_regressions {
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
+            transaction_tasks: false,
         };
         // Native schedule_read_lock_cleanup sends this through the same client
         // after returning the lock classification to the foreground reader.
@@ -966,6 +1173,7 @@ mod ownership_regressions {
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
+            transaction_tasks: false,
         };
         let result = runtime().block_on(client.dispatch(&kvrpcpb::ResolveLockRequest::default()));
         assert!(result.is_err());
@@ -979,6 +1187,7 @@ mod ownership_regressions {
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(None)),
+            transaction_tasks: false,
         };
         let owner = tikv_client::async_util::Cancellation::default();
         owner.cancel();
@@ -1001,6 +1210,7 @@ mod ownership_regressions {
                     backend: backend.clone(),
                     address: "store1".to_owned(),
                     call: Arc::new(Mutex::new(None)),
+                    transaction_tasks: false,
                 };
                 let owner = tikv_client::async_util::Cancellation::default();
                 let operation_owner = owner.clone();

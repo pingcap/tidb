@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! DistSQL continuation for bounded optimistic lock recovery.
+//! DistSQL continuation using the process-owned native lock resolver.
 
+use std::sync::Arc;
 use tidb_txnkv::lock::{
     decode_blocking_lock_observation, resolve_blocking_locks_with_backoff, LockRecoveryClient,
     TimestampSource,
 };
-use tidb_txnkv::region::RegionRecoveryLoader;
+use tidb_txnkv::region::{RegionQueryLoader, RegionRecoveryLoader};
 use tidb_txnkv::SharedReadRuntime;
 
 use super::{LockedResponseAction, LockedResponseDelegate, LockedResponseObservation};
@@ -26,39 +27,41 @@ use super::{LockedResponseAction, LockedResponseDelegate, LockedResponseObservat
 /// Installs one injected TSO authority over the existing shared read runtime.
 #[derive(Debug)]
 pub struct OptimisticLockRecovery<S> {
-    timestamp_source: S,
+    timestamp_source: Arc<S>,
 }
 
 impl<S> OptimisticLockRecovery<S> {
     /// Creates a bounded recovery policy without another client or cache.
     #[must_use]
-    pub const fn new(timestamp_source: S) -> Self {
-        Self { timestamp_source }
+    pub fn new(timestamp_source: S) -> Self {
+        Self {
+            timestamp_source: Arc::new(timestamp_source),
+        }
     }
 
     /// Returns the injected timestamp authority.
     #[must_use]
-    pub const fn timestamp_source(&self) -> &S {
+    pub fn timestamp_source(&self) -> &S {
         &self.timestamp_source
     }
 }
 
 impl<C, L, S> LockedResponseDelegate<C, L> for OptimisticLockRecovery<S>
 where
-    C: LockRecoveryClient,
-    L: RegionRecoveryLoader,
-    S: TimestampSource + Send + Sync,
+    C: LockRecoveryClient + Send + 'static,
+    L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
+    S: TimestampSource + Send + Sync + 'static,
 {
     fn handle_locked_response(
         &self,
         runtime: &SharedReadRuntime<C, L>,
         observation: LockedResponseObservation<'_>,
-    ) -> Result<LockedResponseAction, String> {
+    ) -> Result<LockedResponseAction, tidb_txnkv::lock::LockRecoveryError> {
         // A coprocessor read meets pessimistic locks as readily as a point
         // read does, and Go's `resolveLocks` is shared between them --
         // dispatching on the lock's type, not on the caller's kind.
         let locks = decode_blocking_lock_observation(&observation.lock)
-            .map_err(|error| error.to_string())?;
+            .map_err(tidb_txnkv::lock::LockRecoveryError::Admission)?;
         let result = resolve_blocking_locks_with_backoff(
             runtime,
             &locks,
@@ -70,8 +73,7 @@ where
             // (`client_helper.go:57-58`), and a Cop request is a read.
             true,
             observation.backoff,
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         // The response owner applies TxnLockFast using its existing per-region
         // backoffer. TTL caps that backoff; it is not a sleep duration.
         // Go `ClientHelper.ResolveLocks` hands the two lists straight to the

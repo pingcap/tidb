@@ -22,11 +22,11 @@ use crate::direct_unary_client_fixture::*;
 
 #[test]
 fn unreachable_store_reselects_an_alternate_and_promotes_it_for_the_next_query() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let events = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let events = Arc::new(RwLock::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [
             Err(connection_failure(
                 "tikv-old:20160",
@@ -38,7 +38,7 @@ fn unreachable_store_reselects_an_alternate_and_promotes_it_for_the_next_query()
             Ok(response(b"promoted")),
         ],
         [Ok(StoreLiveness::Unreachable)],
-        Rc::clone(&events),
+        Arc::clone(&events),
         [location_with_second_peer(
             1,
             "a",
@@ -62,14 +62,15 @@ fn unreachable_store_reselects_an_alternate_and_promotes_it_for_the_next_query()
     assert_eq!(second.next_raw().unwrap(), None);
     assert_eq!(
         calls
-            .borrow()
+            .read()
+            .unwrap()
             .iter()
             .map(|call| call.address.as_str())
             .collect::<Vec<_>>(),
         ["tikv-old:20160", "tikv-new:20160", "tikv-new:20160"]
     );
     assert_eq!(
-        events.borrow()[..2],
+        events.read().unwrap()[..2],
         [
             ClientEvent::Send("tikv-old:20160".to_owned()),
             ClientEvent::Liveness {
@@ -83,8 +84,8 @@ fn unreachable_store_reselects_an_alternate_and_promotes_it_for_the_next_query()
 
 #[test]
 fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let events = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let events = Arc::new(RwLock::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
     let shared_leader = Store {
         id: 201,
@@ -154,7 +155,7 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
         ..RegionLocation::default()
     };
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [
             Err(connection_failure(
                 "tikv-dead:20160",
@@ -166,7 +167,7 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
             Ok(response(b"second")),
         ],
         [Ok(StoreLiveness::Unreachable)],
-        Rc::clone(&events),
+        Arc::clone(&events),
         [first, second],
         DirectUnaryRuntimeConfig {
             region_retry_waiter: retry_control,
@@ -180,7 +181,8 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
     assert_eq!(result.next_raw().unwrap(), None);
     assert_eq!(
         calls
-            .borrow()
+            .read()
+            .unwrap()
             .iter()
             .map(|call| (call.region_id, call.address.as_str()))
             .collect::<Vec<_>>(),
@@ -192,7 +194,8 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
     );
     assert_eq!(
         events
-            .borrow()
+            .read()
+            .unwrap()
             .iter()
             .filter(|event| matches!(event, ClientEvent::Send(_)))
             .count(),

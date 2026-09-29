@@ -138,7 +138,7 @@ Progress for this follow-through:
 - [x] Reproduce four confirmed defects before fixes; retain test snippets and failure logs under `/private/tmp`. Withdraw the incorrectly attributed fifth finding as explained below.
 - [x] Add seven permanent native regressions and implement cache/retry ownership repairs; push client-rust master as 8b7a726.
 - [x] Carry foreground/background operation context across the native client and TiDB transport boundary, including cancellation of a running blocking RPC.
-- [ ] Retire the remaining TiDB lock resolver algorithms and duplicate status cache/cleanup pool once their caller contracts are covered.
+- [x] Retire the remaining TiDB lock resolver algorithms and duplicate status cache/cleanup pool once their caller contracts are covered.
 - [x] Run affected native and TiDB tests, make lint and self-review.
 - [x] Commit TiDB through the locked pre-commit server build; require the same fresh locked build in the final push command.
 
@@ -272,10 +272,10 @@ The user's follow-Go instruction authorizes the five removals identified in the 
 
 - [x] Refresh both remotes and confirm the source package pin and live duplicate callers.
 - [x] Replace native cleanup's fixed-attempt/default retry resets with source-owned cumulative backoffers; preserve foreground fallback context and detach only admitted tasks, carrying request source without foreground resource attribution. Resolver and plan-builder regressions pass; broader validation is in progress.
-- [ ] Expose a source-shaped native resolver operation for external read callers, preserving caller budgets, exact request hints, TTL and resolved/committed transaction IDs.
+- [x] Expose a source-shaped native resolver operation for external read callers, preserving caller budgets, exact request hints, TTL and resolved/committed transaction IDs.
 - [x] Remove TiDB's second resolving-lock registry through the existing native record/update/done API; keep only the Rust lifetime/type adapter.
-- [ ] Route TiDB coprocessor recovery through the native owner and remove the second algorithms, status cache and cleanup pool (requires the pending public API approval).
-- [ ] Run red/green regressions, native library/consumer checks and affected TiDB transaction/coprocessor/SQL checks; run make lint and review the diff.
+- [x] Route TiDB coprocessor recovery through the native owner and remove the second algorithms, status cache and cleanup pool (approved by the user on 2026-09-29).
+- [x] Run red/green regressions, native library/consumer checks and affected TiDB transaction/coprocessor/SQL checks; run make lint and review the diff.
 - [ ] Commit and push client master, synchronize TiDB from that published revision, then commit/push hparser-integration through both locked server-build gates.
 
 ### Decision Log
@@ -339,3 +339,69 @@ From the repository root, `make lint` and `git diff --check` passed. Logs are `/
 The four coprocessor baseline failures are `client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered`, `ordered_regions_retain_logical_range_order`, `unordered_region_window_is_bounded_and_results_are_not_lost` and `unordered_regions_publish_first_completed_response`, all under `direct_unary_dispatch_contract`.
 
 Remaining correctness scope: TiDB's separate recovery algorithms, determined-status cache and cleanup pool require the proposed native public resolver boundary and caller-budget migration. No new facade was applied after automatic approval review rejected it, and its approval question remains pending. Performance benchmarks (sysbench/TPC-C/TPC-H/YCSB), real-cluster faults and complete Go differential execution were not run for this repair. Existing engine and API tests cover the changed retry, cancellation, attribution, observation and cleanup behavior; they do not constitute whole-package parity certification.
+
+
+### Approved native boundary and caller migration
+
+
+The user explicitly approved `/private/tmp/native-resolver-api-proposal.md` with “approved, do it” on 2026-09-29. The earlier automatic-review blocker is resolved by that narrower authorization. Continue the approved `txnkv::txnlock` API, caller backoffer ownership, TiDB transport adaptation and removal of the remaining algorithm/cache/pool without requesting the same permission again. The preceding accepted repair is published as client-rust `75ca650` and TiDB `e0c327cbf9`; both TiDB locked-build gates succeeded.
+
+Implementation will expose `LockResolver.resolve_locks_with_opts` over the existing native algorithm, with exact physical-request hints, logical key conversion, source result classification and caller-owned cumulative retry history. The Rust synchronous TiDB caller must share that history without inventing a new budget for each resolution pass. Preserve source cancellation, including accepted background tasks and saturated inline fallback, through the existing bridge. Retire obsolete production code only after the migrated behavioral tests exercise the native boundary. Keep per-reader hint sets, typed error/transport conversion and observation lifetime adapters.
+
+Validation adds public-consumer tests for empty/hinted/mixed locks, shared cache and registry visibility, metadata/cancellation and async-commit cleanup. Reuse the native and TiDB commands above, adding targeted regressions before each behavioral fix. The known six baseline failures remain documented; do not count excluded or baseline-failing tests as passing. No whole-package parity or throughput claim is authorized by compilation alone.
+
+- Published native boundary `448089c` to client-rust master. The empty canceled pass regression failed before its correction and passed afterward (`/private/tmp/resolver-api-empty-red.log`). The native workspace gate passed 1,372 client tests (six existing ignores), two proto-build tests, and 46 engine tests. The downstream gates passed five mock consumers and nine injected consumers, including exact hints, repeated IDs, shared cache/registry, background metadata/lifetime, and synchronous/asynchronous retry ownership. Strict all-target/all-feature Clippy and formatting passed.
+- Synced the maintained vendor copy through `bash rust/scripts/sync-tikv-client-rs.sh`; all four patches applied and protobufs regenerated without hand edits.
+- TiDB migration in progress: removed the duplicate resolver algorithm, pessimistic cleanup module, async worker module, and status cache. Transport and result adapters now call the native boundary. The synchronous retry adapter now delegates delay selection and completed/interrupted accounting to the same native backoffer; callers still need compilation and behavioral validation. No TiDB completion claim yet.
+
+
+### Approved migration implementation and evidence
+
+
+The public native boundary is published on client-rust master in `448089c`, with correctness follow-through in `1053bf6` and `8b890e2`. TiDB now calls that boundary through its existing transport and region-cache authority. `lock/async_resolve.rs` and `lock/pessimistic.rs` are deleted; `lock/resolver.rs` retains only type, error and synchronous-call adapters plus snapshot-local hints. The second determined-status cache and cleanup pool in `read_runtime.rs` are deleted. The native resolver owns cache eligibility, primary metadata, status classification, region cleanup, task admission and shutdown. TiDB's `RegionBackoffBudget` now adapts native prepare/finish/fork operations rather than maintaining another jitter schedule or accounting implementation. The coprocessor passes exact request hints to that resolver and does not charge a duplicate hint backoff. Interrupted synchronous waits record zero completed sleep. The copied metric increment wrappers are removed.
+
+The migration exposed concrete native defects, now covered by failing-then-passing regressions: TTL calculation used the observation before the status RPC; result sets lost per-input decisions when one transaction changed state during a pass; status conversion panicked on a nonzero TTL plus commit version and discarded primary metadata; zero-TTL unconditional resolution unnecessarily consulted PD; and the wait-expired metric lived in one caller rather than the resolver. Determined status and primary metadata now occupy one native cache entry. Status eligibility uses Go's IsRolledBack/IsCommitted predicates; pessimistic rollback actions do not invent a transaction-fate hint. Completed best-effort read cleanup preserves its classification even if cancellation arrives during cleanup, while active RPCs and timestamp acquisition still observe caller cancellation.
+
+An existing cache-availability test reproduced the native transport adapter holding the shared cache lock during EpochNotMatch metadata loading. The bridge now uses BackgroundRegionCache's shared loader outside the cache lock and publishes the hydrated replacements under the lock. The regression is in `/private/tmp/resolver-cache-lock-red.log` and passes in the complete resolver source suite. Nested native retry errors also retain their registered SQL identity through the coprocessor delegate instead of becoming strings; `/private/tmp/resolver-typed-error-red.log` records the regression without that conversion. The fixture migrations use thread-safe ownership and key-addressed secondary responses because Go's per-region workers can complete in either order. The original behavioral assertions remain, with inter-region completion order compared without imposing serialization. Snapshot timestamp-rescoping coverage remains in the adapter's unit tests.
+
+Native commands, from `/Users/qiliu/projects/client-rust`, all pass:
+
+    cargo test --locked --workspace --all-features --lib -- --test-threads=1
+    cargo test --locked --test public_injected_client_tests --test mocktikv_transaction_tests -- --test-threads=1
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::all
+    cargo fmt -- --check
+    git diff --check
+
+The final native library run passed 1,377 client tests with six existing ignores, two protocol tests and 46 embedded-engine tests. The external-consumer suites passed nine public API and five mock transaction tests. Logs are `/private/tmp/resolver-native-protocol-all.log`, `resolver-native-protocol-consumers.log` and `resolver-native-protocol-clippy.log`. Source-shaped public tests cover empty/cancelled input, request hints, exhausted and forked retry histories, mixed locks, shared status cache, source attribution and resolver-owned cleanup cancellation.
+
+TiDB commands from `rust/`:
+
+    cargo test --locked -p tidb-txnkv --test lock_resolver_source -- --test-threads=1
+    cargo test --locked -p tidb-txnkv --lib -- --test-threads=1
+    cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source -- --test-threads=1
+    cargo test --locked -p tidb-txnkv --test all -- --skip region_cache_source::stale_merge_parent_does_not_evict_newer_split_child --skip region_cache_source::stale_same_region_loader_result_is_rejected_without_eviction
+    cargo test --locked -p tidb-unistore --test client_transaction -- --nocapture
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::transactions
+    cargo test --locked -p tidb-distsql --test all direct_unary_ -- --test-threads=1
+    cargo build --locked -p tidb-server
+
+The resolver, library, snapshot, aggregate, embedded and SQL suites passed 32, 133, 17, 419, 15 and 25 tests respectively. The library has one existing ignore; the aggregate has ten existing ignores and the two explicitly excluded baseline region-cache failures. Logs are `/private/tmp/resolver-source-verified.log`, `resolver-library-verified.log`, `resolver-snapshot-verified.log`, `resolver-txnkv-all-verified.log`, `resolver-embedded-verified.log` and `resolver-sql-verified.log`. The locked server build passed; the required pre-commit and immediate pre-push invocations remain separate delivery gates.
+
+The expanded direct-unary suite produced 49 passes and 19 failures. A comparison against all relevant source files restored to unmodified TiDB HEAD reproduced exactly those same 49 passes and 19 failures. The temporary comparison saved and restored every migration file in a finally block. Evidence: `/private/tmp/resolver-distsql-final.log` and `/private/tmp/resolver-distsql-baseline-full.log`. The baseline failures are the four previously recorded dispatch-contract cases; seven `direct_unary_paging_and_close::concurrent` cases (`go_close_joins_rpc_and_response_channel_waiters`, `go_multiple_cop_tasks_start_on_open_and_close_cancels_pending_work`, `go_ordered_send_window_advances_but_stays_bounded_without_next`, `go_ordered_worker_pages_while_the_head_rpc_is_pending`, `go_split_switches_the_lite_reader_to_concurrent_progress`, `one_cop_worker_reuses_its_client_across_regions`, `unopened_region_tasks_do_not_fork_clients`); `direct_unary_query_seed::logical_tasks_in_one_query_share_the_bound_seed`; four `direct_unary_retry_budget` cases (`rebuild_splits_failed_task_in_place_and_keeps_future_task_order_and_attempt`, `region_evicted_after_task_build_rebuilds_ranges_before_any_rpc`, `split_child_region_gets_an_independent_budget`, `unordered_rebuild_replaces_the_completed_region_instead_of_the_first_region`); `direct_unary_store_not_match::shared_proxy_store_not_match_refreshes_only_affected_logical_target`; `direct_unary_store_selection::one_store_failure_stales_later_bound_regions_without_reordering_them`; and `direct_unary_transport_failures::return_region_error_and_non_connection_failures_close_without_future_dispatch`. These are not passing or resolved by this migration.
+
+From the repository root, `bash rust/scripts/sync-tikv-client-rs.sh` regenerated vendor artifacts from the published native commit, and `make lint` passed (`/private/tmp/resolver-vendor-delivery-sync.log` and `resolver-lint-verified.log`). No Go, module or Bazel inputs changed, so bazel_prepare and Go failpoint setup were not applicable. Remaining validation limits are real TiKV/multi-node faults, complete Go differential execution, and sysbench/TPC-C/TPC-H/YCSB performance runs. This removes the approved duplicate owners and validates their integration; it does not certify any complete upstream Go package as transcreated or claim measured performance improvements.
+
+
+Final caller checks: the direct-unary rerun with the 19 individually confirmed baseline failures excluded passed all 49 remaining tests (`/private/tmp/resolver-distsql-verified.log`; exact invocation saved in `resolver-distsql-verified-command.txt`). `cargo test --locked -p tidb-exec --lib pessimistic_lock_error::` passed 11 cases. `cargo test --locked -p tidb-distsql --test all active_cancellation_source:: -- --test-threads=1` passed two cases and failed `execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mutation` because its scripted PD loader ran out of regions. The exact command against unmodified HEAD reproduced the same two passes and one failure (`/private/tmp/resolver-cancellation-baseline.log`), so the final known baseline count is 20 coprocessor failures plus the two excluded region-cache cases. This additional result is not omitted from the receipt.
+
+The error-boundary review also added `hinted_resolution_keeps_the_callers_pd_timeout_category`: when a caller's earlier PD wait exhausted its budget, a later lock-hint backoff must retain the PD timeout category. It failed as a generic RPC error before the adapter fix (`/private/tmp/resolver-pd-error-red.log`). Native retry configuration now also supplies category names directly; TiDB no longer duplicates their strings. The complete standalone resolver suite passed 32 tests after that fix; both retry-adapter unit tests and the coprocessor typed-error regression also passed.
+
+
+### Concurrent upstream integration
+
+
+Before delivery, fetching the target branch found `07cd21d778` (`perf: reduce native transaction RPC overhead`). The local implementation was rebased onto it. The overlapping bridge change retains upstream's 48-worker runtime, raw native Get publication and observation inside `dispatch_transaction`; lock-only dispatch continues through the shared resolver adapter. The native request bytes and upstream transaction behavior remain intact. Because this affects the transaction transport, repeat the core, snapshot, aggregate, embedded and SQL transaction checks on the combined tree, then amend through the locked build hook and run the immediate pre-push locked build. Baseline comparisons above were made against `e0c327cbf9`, before this concurrent commit.
+
+The combined-tree checks found compatibility regressions in the incoming raw-Get optimization: eight snapshot cases and eleven embedded-store cases failed with `raw transaction transport unavailable`. The optional raw transport now returns `None` when unsupported, and the bridge uses the existing typed command; actual publication failures never trigger a second attempt. The production Tonic implementation retains the raw fast path. Both suites then passed all 17 and 15 cases. A new native-Get observation regression also failed because resolving a scan pair via Get lost its serving-region/value observation; the raw observer now records the same scan observation as typed Get. The encoded-request regression failed because the bridge changed cluster ID/request origin only in its side metadata. The raw encoder now stamps those two fields into the native request while retaining the other native context fields, including lock hints, and avoiding the full request/response compatibility codec round trip. Red logs are `/private/tmp/resolver-rebased-core.log`, `resolver-rebased-embedded.log`, `resolver-native-get-observation-red.log` and `resolver-raw-context-red.log`.
+
+The combined-tree rerun passed 134 txnkv library tests (one existing ignore), all 32 resolver contracts, 17 snapshot tests, 15 embedded-store cases and 25 SQL transaction cases. The added raw-context regression then passed in the focused bridge suite. The aggregate suite also passed 419 tests after the rebase with its same two baseline exclusions and ten ignores. Logs: `/private/tmp/resolver-combined-core-verified.log`, `resolver-combined-embedded-verified.log`, `resolver-combined-sql-verified.log`, `resolver-rebased-txnkv-all.log` and `resolver-raw-contracts-green.log`.
