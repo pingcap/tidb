@@ -22,5 +22,3 @@ pub mod tikv_opener;
 pub mod tikv_pd_bridge;
 pub mod tikv_transaction;
 pub mod transaction_error;
-
-pub mod client_bridge;

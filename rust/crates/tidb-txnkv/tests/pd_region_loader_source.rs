@@ -27,14 +27,15 @@ use tidb_proto::pdpb::{
 };
 use tidb_txnkv::driver::tikv_pd_bridge::TidbPdBridge;
 use tidb_txnkv::region::{
-    BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, KeyRange, RegionCache, RegionLoader,
-    RegionQuery, RegionQueryLoader, RegionQueryOptions, RegionQueryRoute, RegionRouteError,
+    BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, KeyRange,
+    RegionCache, RegionLoader, RegionQuery, RegionQueryLoader, RegionQueryOptions,
+    RegionQueryRoute, RegionRouteError,
 };
 use tidb_txnkv::region::{
     PeerRole, RegionMetadata, RegionMetadataPeer, RegionRecoveryLoader, RegionVerId,
 };
 use tidb_txnkv::PdRegionLoader;
-use tikv_client::RegionCache as EngineRegionCache;
+use tikv_client::region_cache::RegionCache as EngineRegionCache;
 use tokio_stream::wrappers::ReceiverStream;
 
 const CLUSTER_ID: u64 = 84;
@@ -1143,7 +1144,7 @@ fn tidb_pd_bridge_get_region_for_cache_honors_leader_only() {
     // "follower", per client-go's own vocabulary) prove the override
     // actually changes *which* endpoint is contacted: this fails under the
     // old default, which would send both calls to the follower.
-    use tikv_client::RetryClientTrait;
+    use tikv_client::pd::RetryClientTrait;
 
     let leader = Server::start(valid_state());
     let follower = Server::start(valid_state());

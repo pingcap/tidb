@@ -663,9 +663,7 @@ fn reserve_delay(
         })
 }
 
-pub(crate) fn region_metadata(
-    region: &metapb::Region,
-) -> Result<RegionMetadata, RegionRecoveryError> {
+fn region_metadata(region: &metapb::Region) -> Result<RegionMetadata, RegionRecoveryError> {
     let epoch = region
         .region_epoch
         .as_ref()

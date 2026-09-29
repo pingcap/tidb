@@ -1,0 +1,45 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2b86705..61e1839 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -153,20 +153,20 @@ mod common;
+ mod compat;
+ pub mod config;
+ pub mod kv;
+-mod locate;
++pub mod locate;
+ pub mod oracle;
+-mod pd;
++pub mod pd;
+ // client-go consumes kvproto as a separate public module. Re-export the shared
+ // workspace crate's exact type identity: public mock/test-support APIs expose
+ // these wire types, and downstream crates must be able to name them to
+ // implement traits such as `CoprocessorHandler`.
+ pub mod proto;
+-mod region;
+-mod region_cache;
++pub mod region;
++pub mod region_cache;
+ mod region_request;
+ mod resource_control;
+ mod stats;
+-mod store;
++pub mod store;
+ mod timestamp;
+ pub mod util;
+ 
+diff --git a/src/store/mod.rs b/src/store/mod.rs
+index 21afee1..6d4848e 100644
+--- a/src/store/mod.rs
++++ b/src/store/mod.rs
+@@ -5,8 +5,8 @@ mod client;
+ mod command;
+ mod endpoint;
+ mod errors;
+-#[cfg(test)]
+-mod mockserver;
++#[cfg(any(test, feature = "mock"))]
++pub mod mockserver;
+ mod priority_queue;
+ mod request;
+ 

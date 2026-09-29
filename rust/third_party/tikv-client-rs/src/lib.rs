@@ -152,20 +152,20 @@ mod common;
 mod compat;
 pub mod config;
 pub mod kv;
-mod locate;
+pub mod locate;
 pub mod oracle;
-mod pd;
+pub mod pd;
 // client-go consumes kvproto as a separate public module. Re-export the shared
 // workspace crate's exact type identity: public mock/test-support APIs expose
 // these wire types, and downstream crates must be able to name them to
 // implement traits such as `CoprocessorHandler`.
 pub mod proto;
-mod region;
-mod region_cache;
+pub mod region;
+pub mod region_cache;
 mod region_request;
 mod resource_control;
 mod stats;
-mod store;
+pub mod store;
 mod timestamp;
 pub mod util;
 
@@ -258,10 +258,7 @@ pub use crate::pd::PdClient;
 #[doc(inline)]
 pub use crate::pd::{get_store_liveness_timeout, set_store_liveness_timeout};
 #[doc(inline)]
-pub use crate::pd::{
-    Cluster, CodecPdClient, PdRegionCodec, PdRpcClient, RegionScanOptions, RetryClient,
-    RetryClientTrait,
-};
+pub use crate::pd::{Cluster, CodecPdClient, PdRegionCodec, PdRpcClient, RetryClient};
 #[doc(inline)]
 pub use crate::raw::lowering as raw_lowering;
 #[doc(inline)]

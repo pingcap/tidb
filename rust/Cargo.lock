@@ -4475,7 +4475,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic",
- "tonic-prost",
 ]
 
 [[package]]
@@ -4498,8 +4497,6 @@ dependencies = [
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
- "tikv-client",
- "tokio",
 ]
 
 [[package]]

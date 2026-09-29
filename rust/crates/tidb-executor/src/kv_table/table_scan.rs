@@ -1755,7 +1755,7 @@ impl KvTable {
             desc,
             keep_order,
             // Order-free responses are opted into per call site below.
-            allow_unordered_response: !keep_order,
+            allow_unordered_response: false,
             snapshot_ts: 0,
             read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
             schema_version: 0,

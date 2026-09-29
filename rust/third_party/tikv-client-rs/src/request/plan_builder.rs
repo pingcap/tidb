@@ -454,7 +454,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
-        resolve_locks_context.request_source = self.plan.request_source().to_owned();
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -483,7 +482,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
                 record_async_batch_get_metric: false,
-                pessimistic_lock_wait: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -504,17 +502,13 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         backoff: Backoff,
         keyspace: Keyspace,
         mut resolve_locks_context: ResolveLocksContext,
-        check_wait: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
     ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P: Shardable,
         P::Result: HasLocks,
     {
         resolve_locks_context.pessimistic_region_resolve = true;
-        let mut builder =
-            self.resolve_lock_with_context(timestamp, backoff, keyspace, resolve_locks_context);
-        builder.plan.pessimistic_lock_wait = check_wait;
-        builder
+        self.resolve_lock_with_context(timestamp, backoff, keyspace, resolve_locks_context)
     }
 
     /// Resolve locks encountered by a snapshot read. Unlike a mutation,
@@ -535,7 +529,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
-        resolve_locks_context.request_source = self.plan.request_source().to_owned();
         resolve_locks_context.trace_context = crate::trace::current_trace_context();
         PlanBuilder {
             pd_client: self.pd_client.clone(),
@@ -567,7 +560,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
                 record_async_batch_get_metric: false,
-                pessimistic_lock_wait: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -593,7 +585,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
-        resolve_locks_context.request_source = self.plan.request_source().to_owned();
         resolve_locks_context.trace_context = crate::trace::current_trace_context();
         resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
         resolve_locks_context.resource_group_name = self.resource_group_name.clone();
@@ -620,7 +611,6 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
                 record_async_batch_get_metric: false,
-                pessimistic_lock_wait: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -976,8 +966,6 @@ where
     }
 }
 
-// Retry implementations stay client-owned, as on RetryableMultiRegion itself.
-#[allow(private_bounds)]
 impl<PdC, P, R> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, R>, Targetted>
 where
     PdC: PdClient,
@@ -1426,7 +1414,6 @@ mod tests {
             Backoff::no_jitter_backoff(0, 0, 1),
             Keyspace::Disable,
             shared.clone(),
-            None,
         )
         .force_lite_lock_resolution();
 
@@ -1439,26 +1426,6 @@ mod tests {
         assert!(builder.plan.resolve_locks_context.force_lite);
         assert!(!shared.pessimistic_region_resolve);
         assert!(!shared.force_lite);
-    }
-
-    #[test]
-    fn resolver_inherits_request_source_through_plan_wrappers() {
-        let builder = PlanBuilder::new(
-            Arc::new(MockPdClient::default()),
-            Keyspace::Disable,
-            kvrpcpb::GetRequest::default(),
-        )
-        .request_source("external_sql")
-        .preserve_shard()
-        .resolve_lock(
-            Timestamp::default(),
-            Backoff::no_backoff(),
-            Keyspace::Disable,
-        );
-        assert_eq!(
-            builder.plan.resolve_locks_context.request_source,
-            "external_sql"
-        );
     }
 
     #[test]

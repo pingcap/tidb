@@ -704,7 +704,6 @@ where
             cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
             cop_plan_ids,
             root_plan_id: request.statement.plan_id,
-            collect_execution_summaries: request.statement.collect_execution_summaries,
         };
         let iter = scan_result(|| open_scan(&self.factory, plan))
             .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
@@ -773,7 +772,6 @@ struct RemoteScanPlan {
     /// Physical IDs aligned with TiPB executors for runtime summaries.
     cop_plan_ids: Vec<isize>,
     root_plan_id: isize,
-    collect_execution_summaries: bool,
 }
 
 /// Go copIteratorWorker/liteCopIteratorWorker turns task panics into errors.
@@ -856,7 +854,7 @@ where
                 .with_time_zone(plan.time_zone),
             plan.cop_plan_ids,
             plan.root_plan_id,
-            plan.collect_execution_summaries,
+            true,
         )
         .map_err(|error| error.to_string())?;
     Ok(result.into_select_iter(Vec::new()))

@@ -21,24 +21,24 @@ use crate::direct_unary_client_fixture::*;
 
 #[test]
 fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
-    let events = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
-            calls: Arc::clone(&calls),
+            calls: Rc::clone(&calls),
             responses: VecDeque::from([Ok(response(b"sync-after-local-admission"))]),
-            events: Arc::clone(&events),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::from([DirectUnaryClientError::AdmissionBusy {
+            events: Rc::clone(&events),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::from([DirectUnaryClientError::AdmissionBusy {
                 address: "tikv-1:20160".to_owned(),
             }])),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Arc::new(RwLock::new(Vec::new())),
+            calls: Rc::new(RefCell::new(Vec::new())),
             regions: VecDeque::from([location(1, "a", "z", "tikv-1:20160")]),
         }),
         DirectUnaryRuntimeConfig {
@@ -56,9 +56,9 @@ fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
         Some(b"sync-after-local-admission".to_vec())
     );
     assert_eq!(result.next_raw().unwrap(), None);
-    assert_eq!(calls.read().unwrap().len(), 1);
+    assert_eq!(calls.borrow().len(), 1);
     assert_eq!(
-        events.read().unwrap().as_slice(),
+        events.borrow().as_slice(),
         [ClientEvent::Send("tikv-1:20160".to_owned())]
     );
     assert!(retry_control.sleeps.lock().unwrap().is_empty());

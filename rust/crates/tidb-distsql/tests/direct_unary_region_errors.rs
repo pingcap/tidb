@@ -23,12 +23,12 @@ use crate::direct_unary_client_fixture::*;
 
 #[test]
 fn unordered_region_retry_delivers_the_replacement_once() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.keep_order = false;
     request_metadata.concurrency = 1;
     let mut runtime = InjectedQueryRuntime::new(batch_first_transport(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [Ok(not_leader(1, Some((102, 202)))), Ok(response(b"fresh"))],
         [location_with_second_peer(
             1,
@@ -43,23 +43,23 @@ fn unordered_region_retry_delivers_the_replacement_once() {
 
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
-    assert_eq!(calls.read().unwrap().len(), 2);
+    assert_eq!(calls.borrow().len(), 2);
 }
 
 #[test]
 fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
-    let loader_calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
     let mut initial =
         location_with_second_peer(1, "a", "z", "tikv-leader:20160", "tikv-follower:20160");
     initial.peers.swap(0, 1);
     let transport = transport_with_loader_calls_and_config(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [Ok(data_is_not_ready()), Ok(response(b"fresh"))],
         [initial],
         9001,
-        Arc::clone(&loader_calls),
+        Rc::clone(&loader_calls),
         DirectUnaryRuntimeConfig {
             seed_read_bytes: 4096,
             observation_time,
@@ -75,7 +75,7 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
 
-    let calls = calls.read().unwrap();
+    let calls = calls.borrow();
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0].address, "tikv-leader:20160");
     assert_eq!(calls[0].replica_read_type, ClientReplicaReadType::Mixed);
@@ -86,7 +86,7 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
     assert!(calls[1].replica_read);
     assert!(!calls[1].stale_read);
     assert_eq!(
-        loader_calls.read().unwrap().as_slice(),
+        loader_calls.borrow().as_slice(),
         [b"a".to_vec()],
         "leader DataIsNotReady must not invalidate or reload the region"
     );
@@ -98,12 +98,12 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
 
 #[test]
 fn stale_data_not_ready_then_known_leader_retries_one_selector_and_publishes_once() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.replica_read = ReplicaReadType::Leader;
     request_metadata.is_staleness = true;
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [
             Ok(data_is_not_ready()),
             Ok(not_leader(1, Some((102, 202)))),
@@ -121,7 +121,7 @@ fn stale_data_not_ready_then_known_leader_retries_one_selector_and_publishes_onc
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
 
-    let calls = calls.read().unwrap();
+    let calls = calls.borrow();
     assert_eq!(calls.len(), 3);
     assert_eq!(calls[0].address, "tikv-follower:20160");
     assert!(!calls[0].replica_read);
@@ -148,16 +148,16 @@ fn stale_data_not_ready_then_known_leader_retries_one_selector_and_publishes_onc
 
 #[test]
 fn known_leader_region_error_resends_immediately_in_the_same_query() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
-    let loader_calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
     let first = location_with_second_peer(1, "a", "z", "tikv-old:20160", "tikv-new:20160");
     let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = transport_with_loader_calls_and_config(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [Ok(not_leader(1, Some((102, 202)))), Ok(response(b"fresh"))],
         [first],
         9001,
-        Arc::clone(&loader_calls),
+        Rc::clone(&loader_calls),
         DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(60),
             seed_read_bytes: 4096,
@@ -173,38 +173,38 @@ fn known_leader_region_error_resends_immediately_in_the_same_query() {
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
     assert_eq!(
-        loader_calls.read().unwrap().as_slice(),
+        loader_calls.borrow().as_slice(),
         [b"a".to_vec()],
         "known-leader retry must use the exact cache update without PD reload"
     );
-    assert_eq!(calls.read().unwrap()[0].address, "tikv-old:20160");
-    assert_eq!(calls.read().unwrap()[1].address, "tikv-new:20160");
-    assert_eq!(calls.read().unwrap()[1].peer_id, 102);
-    assert_eq!(calls.read().unwrap()[1].store_id, 202);
+    assert_eq!(calls.borrow()[0].address, "tikv-old:20160");
+    assert_eq!(calls.borrow()[1].address, "tikv-new:20160");
+    assert_eq!(calls.borrow()[1].peer_id, 102);
+    assert_eq!(calls.borrow()[1].store_id, 202);
     assert!(retry_control.sleeps.lock().unwrap().is_empty());
 }
 
 #[test]
 fn batch_known_leader_region_error_republishes_the_recovered_route() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
-    let loader_calls = Arc::new(RwLock::new(Vec::new()));
-    let batch_begins = Arc::new(AtomicUsize::new(0));
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let batch_begins = Rc::new(Cell::new(0));
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
-            calls: Arc::clone(&calls),
+            calls: Rc::clone(&calls),
             responses: VecDeque::from([
                 Ok(not_leader(1, Some((102, 202)))),
                 Ok(response(b"fresh-batch-route")),
             ]),
-            events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
-            batch_begin_count: Some(Arc::clone(&batch_begins)),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
+            batch_begin_count: Some(Rc::clone(&batch_begins)),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Arc::clone(&loader_calls),
+            calls: Rc::clone(&loader_calls),
             regions: VecDeque::from([location_with_second_peer(
                 1,
                 "a",
@@ -225,29 +225,28 @@ fn batch_known_leader_region_error_republishes_the_recovered_route() {
         Some(b"fresh-batch-route".to_vec())
     );
     assert_eq!(result.next_raw().unwrap(), None);
-    assert_eq!(loader_calls.read().unwrap().as_slice(), [b"a".to_vec()]);
+    assert_eq!(loader_calls.borrow().as_slice(), [b"a".to_vec()]);
     assert_eq!(
         calls
-            .read()
-            .unwrap()
+            .borrow()
             .iter()
             .map(|call| call.address.as_str())
             .collect::<Vec<_>>(),
         ["tikv-old:20160", "tikv-new:20160"]
     );
 
-    assert_eq!(batch_begins.load(Ordering::SeqCst), 2);
+    assert_eq!(batch_begins.get(), 2);
 }
 
 #[test]
 fn batch_connection_failure_republishes_the_cache_recovered_route() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
-    let events = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
-    let batch_begins = Arc::new(AtomicUsize::new(0));
+    let batch_begins = Rc::new(Cell::new(0));
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
-            calls: Arc::clone(&calls),
+            calls: Rc::clone(&calls),
             responses: VecDeque::from([
                 Err(connection_failure(
                     "tikv-old:20160",
@@ -257,15 +256,15 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
                 )),
                 Ok(response(b"recovered-batch-route")),
             ]),
-            events: Arc::clone(&events),
-            liveness: RwLock::new(VecDeque::from([Ok(StoreLiveness::Unreachable)])),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
-            batch_begin_count: Some(Arc::clone(&batch_begins)),
+            events: Rc::clone(&events),
+            liveness: RefCell::new(VecDeque::from([Ok(StoreLiveness::Unreachable)])),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
+            batch_begin_count: Some(Rc::clone(&batch_begins)),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Arc::new(RwLock::new(Vec::new())),
+            calls: Rc::new(RefCell::new(Vec::new())),
             regions: VecDeque::from([location_with_second_peer(
                 1,
                 "a",
@@ -291,15 +290,14 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
     assert_eq!(result.next_raw().unwrap(), None);
     assert_eq!(
         calls
-            .read()
-            .unwrap()
+            .borrow()
             .iter()
             .map(|call| call.address.as_str())
             .collect::<Vec<_>>(),
         ["tikv-old:20160", "tikv-new:20160"]
     );
     assert_eq!(
-        events.read().unwrap()[..2],
+        events.borrow()[..2],
         [
             ClientEvent::Send("tikv-old:20160".to_owned()),
             ClientEvent::Liveness {
@@ -310,5 +308,5 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
     );
     assert_eq!(retry_control.sleeps.lock().unwrap().len(), 1);
 
-    assert_eq!(batch_begins.load(Ordering::SeqCst), 2);
+    assert_eq!(batch_begins.get(), 2);
 }

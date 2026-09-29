@@ -512,7 +512,6 @@ pub struct PushdownStatementContext {
     pub cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
     /// Physical scan plan ID used by Go `RuntimeStatsColl`.
     pub plan_id: isize,
-    pub collect_execution_summaries: bool,
     /// Go `StatementContext.PushDownFlags()`; see
     /// [`crate::StmtContext::push_down_flags`].
     ///
@@ -562,7 +561,6 @@ impl Default for PushdownStatementContext {
     fn default() -> Self {
         Self {
             plan_id: 0,
-            collect_execution_summaries: false,
             push_down_flags: 0,
             cop_lite_worker: Arc::default(),
             warnings: WarningCollector::default(),
@@ -587,7 +585,6 @@ impl PushdownStatementContext {
     pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
         Self {
             plan_id: 0,
-            collect_execution_summaries: ctx.executor_runtime_stats_source().is_some(),
             push_down_flags: ctx.push_down_flags(),
             cop_lite_worker: ctx.cop_lite_worker(),
             warnings: ctx.cop_warning_sink(),

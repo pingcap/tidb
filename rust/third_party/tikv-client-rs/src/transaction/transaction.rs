@@ -254,31 +254,6 @@ struct PessimisticLockDispatchTiming {
 }
 
 impl PessimisticLockDispatchTiming {
-    /// Go handlePessimisticLockResponse checks the statement budget only when
-    /// the resolver reports a live owner. TiKV owns the actual lock wait.
-    fn check_wait(&self) -> Result<()> {
-        let wait_time = self.wait_time.unwrap_or(LOCK_ALWAYS_WAIT);
-        let now = SystemTime::now();
-        calculate_pessimistic_lock_wait_time(
-            self.killed.as_ref(),
-            wait_time,
-            self.wait_start_time,
-            self.max_execution_deadline,
-            now,
-        )?;
-        if wait_time == LOCK_NO_WAIT {
-            return Err(crate::error::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.into());
-        }
-        if wait_time != LOCK_ALWAYS_WAIT
-            && self
-                .wait_start_time
-                .is_some_and(|started| go_system_time_sub_millis(now, started) >= wait_time)
-        {
-            return Err(crate::error::ERR_LOCK_WAIT_TIMEOUT.into());
-        }
-        Ok(())
-    }
-
     fn prepare(&self, request: &mut kvrpcpb::PessimisticLockRequest) -> Result<()> {
         request.lock_ttl = self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl();
         if let Some(wait_time) = self.wait_time {
@@ -840,7 +815,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .may_backoff_region_error(Some(error))
                 .await
-                .map_err(Error::from),
+                .map_err(|error| Error::StringError(error.to_string())),
             Self::Legacy(backoff) => {
                 if error.epoch_not_match.is_some()
                     && !crate::retry::is_fake_region_error(Some(error))
@@ -864,7 +839,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff(BO_REGION_MISS, reason)
                 .await
-                .map_err(Error::from),
+                .map_err(|error| Error::StringError(error.to_string())),
             Self::Legacy(backoff) => {
                 let delay = backoff.next_delay_duration().ok_or_else(|| {
                     Error::StringError("txn file: region retry exhausted".to_owned())
@@ -883,7 +858,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff(BO_TIKV_RPC, reason)
                 .await
-                .map_err(Error::from),
+                .map_err(|error| Error::StringError(error.to_string())),
             Self::Legacy(backoff) => {
                 let delay = backoff.next_delay_duration().ok_or_else(|| {
                     Error::StringError("txn file: RPC retry exhausted".to_owned())
@@ -902,7 +877,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff_with_config_and_max_sleep(BO_TXN_LOCK, Some(max_sleep_ms), reason)
                 .await
-                .map_err(Error::from),
+                .map_err(|error| Error::StringError(error.to_string())),
             Self::Legacy(_) => {
                 tokio::time::sleep(Duration::from_millis(max_sleep_ms)).await;
                 Ok(())
@@ -1385,9 +1360,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.replica_read_config = config;
     }
 
-    /// Select client-go's asynchronous BatchGet response handling for future reads.
-    /// Embedded store owners may refresh this from their published configuration.
-    pub fn set_enable_async_batch_get(&mut self, enabled: bool) {
+    pub(crate) fn set_enable_async_batch_get(&mut self, enabled: bool) {
         self.enable_async_batch_get = enabled;
     }
 
@@ -1399,9 +1372,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         });
     }
 
-    /// Share the store-owned final-status cache, cleanup pool and resolving-lock
-    /// observations, as client-go KVTxn shares its store's LockResolver.
-    pub fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
+    pub(crate) fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
         self.lock_resolver_context = context;
     }
 
@@ -4169,21 +4140,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         if self.is_pipelined() {
             panic!("can not set a txn with pipelined memdb to pessimistic mode");
         }
-        // The source has one retry policy for KVTxn. Preserve an explicit
-        // override, but switching transaction kind must keep the native
-        // defaults eligible for the source retry owner.
-        let previous_defaults = if self.options.is_pessimistic() {
-            RetryOptions::default_pessimistic()
-        } else {
-            RetryOptions::default_optimistic()
-        };
-        if self.options.retry_options == previous_defaults {
-            self.options.retry_options = if pessimistic {
-                RetryOptions::default_pessimistic()
-            } else {
-                RetryOptions::default_optimistic()
-            };
-        }
         self.buffer.set_pessimistic(pessimistic);
         self.options.kind = if pessimistic {
             TransactionKind::Pessimistic(Timestamp::from_version(0))
@@ -4288,11 +4244,6 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub fn memory_hook_set(&self) -> bool {
         self.buffer.memdb_memory_hook_is_set()
-    }
-
-    /// Borrows the same authoritative MemDB without requiring a mutable txn.
-    pub fn get_mem_buffer_readonly(&self) -> &super::unionstore::MemDb {
-        self.buffer.mem_buffer_readonly()
     }
 
     /// Returns the exact staged MemDB used by transaction reads and commit.
@@ -4730,8 +4681,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             .scan_and_fetch(
                 range,
                 limit,
-                // Go Scanner never populates the snapshot's point-read cache.
-                false,
+                !key_only && !self.options.read_only,
                 reverse,
                 move |new_range, new_limit| async move {
                     let mut range = new_range;
@@ -5066,7 +5016,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         >::new()));
         loop {
             let timing_for_dispatch = timing.clone();
-            let timing_for_wait = timing.clone();
             let resource_group_tag = resource_group_tag.clone();
             let resource_group_tagger = resource_group_tagger.clone();
             let decorated_requests = Arc::clone(&decorated_requests);
@@ -5112,10 +5061,6 @@ impl<PdC: PdClient> Transaction<PdC> {
                     self.options.retry_options.lock_backoff.clone(),
                     self.keyspace,
                     self.lock_resolver_context.clone(),
-                    source_retry_owner.as_ref().map(|_| {
-                        Arc::new(move || timing_for_wait.check_wait())
-                            as Arc<dyn Fn() -> Result<()> + Send + Sync>
-                    }),
                 )
                 .preserve_shard();
             let result = if let Some(owner) = source_retry_owner.as_ref() {
@@ -6067,7 +6012,7 @@ async fn scatter_split_regions<PdC: PdClient>(
                         format!("scatter split region {region_id} failed: {error}"),
                     )
                     .await
-                    .map_err(Error::from)?,
+                    .map_err(|error| Error::StringError(error.to_string()))?,
             }
         }
     }
@@ -6104,7 +6049,7 @@ async fn wait_scatter_region_finish<PdC: PdClient>(rpc: Arc<PdC>, region_id: u64
         retry
             .backoff(BO_REGION_MISS, reason)
             .await
-            .map_err(Error::from)?;
+            .map_err(|error| Error::StringError(error.to_string()))?;
     }
 }
 
@@ -8883,7 +8828,6 @@ impl<PdC: PdClient> Committer<PdC> {
             self.options.retry_options.lock_backoff.clone(),
             self.keyspace,
             self.lock_resolver_context.clone(),
-            None,
         )
         .prewrite_lock_conflict(
             self.start_version.version(),
@@ -8927,7 +8871,7 @@ impl<PdC: PdClient> Committer<PdC> {
                                 format!("standard 2PC prewrite result undetermined: {error}"),
                             )
                             .await
-                            .map_err(Error::from)?;
+                            .map_err(|error| Error::StringError(error.to_string()))?;
                         return Box::pin(self.prewrite_with_retry_owner(Some(owner))).await;
                     }
                 }
@@ -9668,49 +9612,6 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
     use fail::FailScenario;
-
-    #[tokio::test]
-    async fn source_transaction_file_retry_preserves_terminal_error_identity() {
-        for kind in 0..4 {
-            let mut backoff = super::TxnFileRetryBackoff::Source(Arc::new(
-                tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
-                    crate::async_util::Cancellation::default(),
-                    1,
-                )),
-            ));
-            let expected = match kind {
-                1 => crate::error::ERR_TIKV_SERVER_TIMEOUT,
-                2 => crate::error::ERR_RESOLVE_LOCK_TIMEOUT,
-                _ => crate::error::ERR_REGION_UNAVAILABLE,
-            };
-            let mut terminal = None;
-            for _ in 0..8 {
-                let result = match kind {
-                    0 => backoff.backoff_region_miss("missing region").await,
-                    1 => backoff.backoff_rpc("RPC failed").await,
-                    2 => backoff.backoff_lock(1, "live lock").await,
-                    _ => {
-                        backoff
-                            .backoff_region_error(&crate::proto::errorpb::Error {
-                                region_not_found: Some(
-                                    crate::proto::errorpb::RegionNotFound::default(),
-                                ),
-                                ..Default::default()
-                            })
-                            .await
-                    }
-                };
-                if let Err(error) = result {
-                    terminal = Some(error);
-                    break;
-                }
-            }
-            assert!(
-                matches!(terminal, Some(Error::Static(error)) if error == expected),
-                "kind={kind}: {terminal:?}"
-            );
-        }
-    }
 
     #[test]
     fn source_uncovered_effective_wait_preserves_future_start_time() {
@@ -22051,168 +21952,4 @@ mod tests {
     include!("integration_source_tests.rs");
     include!("integration_lock_source_tests.rs");
     include!("integration_2pc_source_tests.rs");
-}
-
-#[cfg(test)]
-mod ownership_regressions {
-    use super::*;
-    use crate::mock::{MockKvClient, MockPdClient};
-    use std::any::Any;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[tokio::test]
-    async fn explicit_no_retry_does_not_reissue_a_pessimistic_lock() {
-        let attempts = Arc::new(AtomicUsize::new(0));
-        let seen = attempts.clone();
-        let lock = kvrpcpb::LockInfo {
-            key: vec![1],
-            primary_lock: vec![1],
-            lock_version: 1,
-            lock_ttl: 100_000,
-            lock_type: kvrpcpb::Op::PessimisticLock as i32,
-            ..Default::default()
-        };
-        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-            move |request| {
-                if request.is::<kvrpcpb::PessimisticLockRequest>() {
-                    let response = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
-                        kvrpcpb::PessimisticLockResponse {
-                            errors: vec![kvrpcpb::KeyError {
-                                locked: Some(lock.clone()),
-                                ..Default::default()
-                            }],
-                            ..Default::default()
-                        }
-                    } else {
-                        kvrpcpb::PessimisticLockResponse::default()
-                    };
-                    return Ok(Box::new(response) as Box<dyn Any>);
-                }
-                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
-                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
-                        lock_ttl: 100_000,
-                        lock_info: Some(lock.clone()),
-                        ..Default::default()
-                    }) as Box<dyn Any>);
-                }
-                if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
-                    return Ok(
-                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
-                    );
-                }
-                if request.is::<kvrpcpb::TxnHeartBeatRequest>() {
-                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse {
-                        lock_ttl: 100_000,
-                        ..Default::default()
-                    }) as Box<dyn Any>);
-                }
-                panic!("unexpected request");
-            },
-        )));
-        pd.set_timestamp(Timestamp::from_version(20));
-        let mut txn = Transaction::new(
-            Timestamp::from_version(10),
-            pd,
-            TransactionOptions::new_pessimistic()
-                .retry_options(RetryOptions::none())
-                .drop_check(CheckLevel::None),
-            Keyspace::Disable,
-        );
-        let result = txn.get_for_update(vec![1]).await;
-        assert!(
-            result.is_err(),
-            "disabled lock retries returned {result:?} after {} lock RPCs",
-            attempts.load(Ordering::SeqCst)
-        );
-        assert_eq!(attempts.load(Ordering::SeqCst), 1);
-    }
-    #[tokio::test]
-    async fn explicit_finite_retries_cover_live_and_recently_updated_locks() {
-        for recently_updated in [false, true] {
-            for allowed_retries in [0, 2] {
-                for release_after in [None, Some(1)] {
-                    let attempts = Arc::new(AtomicUsize::new(0));
-                    let seen = attempts.clone();
-                    let lock = kvrpcpb::LockInfo {
-                        key: vec![1],
-                        primary_lock: vec![1],
-                        lock_version: 1,
-                        lock_ttl: 100_000,
-                        lock_type: kvrpcpb::Op::PessimisticLock as i32,
-                        duration_to_last_update_ms: u64::from(recently_updated),
-                        ..Default::default()
-                    };
-                    let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-                        move |request| {
-                            if request.is::<kvrpcpb::PessimisticLockRequest>() {
-                                let attempt = seen.fetch_add(1, Ordering::SeqCst);
-                                let errors = if release_after.is_some_and(|after| attempt >= after)
-                                {
-                                    Vec::new()
-                                } else {
-                                    vec![kvrpcpb::KeyError {
-                                        locked: Some(lock.clone()),
-                                        ..Default::default()
-                                    }]
-                                };
-                                return Ok(Box::new(kvrpcpb::PessimisticLockResponse {
-                                    errors,
-                                    ..Default::default()
-                                }) as Box<dyn Any>);
-                            }
-                            if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
-                                assert!(!recently_updated, "recent locks must not be resolved");
-                                return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
-                                    lock_ttl: 100_000,
-                                    lock_info: Some(lock.clone()),
-                                    ..Default::default()
-                                }) as Box<dyn Any>);
-                            }
-                            if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
-                                return Ok(Box::<kvrpcpb::PessimisticRollbackResponse>::default()
-                                    as Box<dyn Any>);
-                            }
-                            if request.is::<kvrpcpb::TxnHeartBeatRequest>() {
-                                return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse {
-                                    lock_ttl: 100_000,
-                                    ..Default::default()
-                                }) as Box<dyn Any>);
-                            }
-                            panic!("unexpected request");
-                        },
-                    )));
-                    pd.set_timestamp(Timestamp::from_version(20));
-                    let mut txn = Transaction::new(
-                        Timestamp::from_version(10),
-                        pd,
-                        TransactionOptions::new_pessimistic()
-                            .retry_options(RetryOptions::new(
-                                Backoff::no_backoff(),
-                                Backoff::no_jitter_backoff(0, 0, allowed_retries),
-                            ))
-                            .heartbeat_option(HeartbeatOption::NoHeartbeat)
-                            .drop_check(CheckLevel::None),
-                        Keyspace::Disable,
-                    );
-                    let result = txn.get_for_update(vec![1]).await;
-                    let should_succeed =
-                        release_after.is_some_and(|after| after <= allowed_retries as usize);
-                    assert_eq!(
-                        result.is_ok(),
-                        should_succeed,
-                        "recent={recently_updated}, retries={allowed_retries}: {result:?}"
-                    );
-                    let expected = release_after
-                        .filter(|_| should_succeed)
-                        .unwrap_or(allowed_retries as usize)
-                        + 1;
-                    assert_eq!(
-                        attempts.load(Ordering::SeqCst),
-                        expected,
-                        "recent={recently_updated}, retries={allowed_retries}"
-                    );
-                }
-            }
-        }
-    }
 }

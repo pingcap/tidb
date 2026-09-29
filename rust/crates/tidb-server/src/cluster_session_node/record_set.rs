@@ -132,7 +132,6 @@ impl ClusterServerSession {
             self.buffer.restore(statement.savepoint);
             finished
         };
-        self.buffer.release(statement.savepoint);
         self.session.end_external_executor_breakpoint_scope();
         if statement.autocommit {
             self.session.current_tso().clear();

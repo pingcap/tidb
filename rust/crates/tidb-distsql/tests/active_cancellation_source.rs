@@ -55,10 +55,8 @@ impl<C, L> LockedResponseDelegate<C, L> for RejectUnexpectedLock {
         &self,
         _runtime: &SharedReadRuntime<C, L>,
         _observation: LockedResponseObservation<'_>,
-    ) -> Result<LockedResponseAction, tidb_txnkv::lock::LockRecoveryError> {
-        Err(tidb_txnkv::lock::LockRecoveryError::Rpc(
-            "unexpected lock in cancellation test".to_owned(),
-        ))
+    ) -> Result<LockedResponseAction, String> {
+        Err("unexpected lock in cancellation test".to_owned())
     }
 }
 

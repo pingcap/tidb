@@ -159,7 +159,7 @@ impl<L> RegionCache<L> {
         self.loader.clone()
     }
 
-    pub(crate) fn with_loader<R>(&self, operation: impl FnOnce(&mut L) -> R) -> R {
+    pub(super) fn with_loader<R>(&self, operation: impl FnOnce(&mut L) -> R) -> R {
         self.loader.with_loader(operation)
     }
 
@@ -187,26 +187,6 @@ impl<L> RegionCache<L> {
             self.advance_topology_revision();
         }
         removed
-    }
-
-    /// Invalidates the canonical store generation reported by a client send
-    /// failure. Region entries reload before they can reuse its old address.
-    pub(crate) fn invalidate_store(&mut self, store_id: u64) {
-        let Some(store) = self.stores.get_mut(&store_id) else {
-            return;
-        };
-        store.epoch = store.epoch.saturating_add(1);
-        store.resolve_state = StoreResolveState::NeedCheck;
-        for region in &self.regions {
-            if region.peers.iter().any(|peer| peer.store_id == store_id) {
-                if let Some(state) = self.entry_states.get_mut(&region.region) {
-                    state.mark(CacheReloadState::ReloadOnAccess);
-                }
-            }
-        }
-        self.preferred_proxies
-            .retain(|_, proxy| proxy.store_id != store_id);
-        self.advance_store_revision();
     }
 
     /// Forces this exact entry to reload on its next foreground access.
@@ -350,7 +330,7 @@ impl<L> RegionCache<L> {
         Ok(())
     }
 
-    pub(crate) fn update_leader(
+    pub(super) fn update_leader(
         &mut self,
         region: RegionVerId,
         peer_id: u64,
@@ -424,7 +404,7 @@ impl<L> RegionCache<L> {
         })
     }
 
-    pub(crate) fn replace_regions_atomically(
+    pub(super) fn replace_regions_atomically(
         &mut self,
         observed: RegionVerId,
         mut replacements: Vec<(RegionLocation, StoreLabels)>,

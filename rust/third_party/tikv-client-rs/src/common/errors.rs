@@ -237,28 +237,6 @@ impl Error {
     }
 }
 
-// Preserve client-go's terminal error identity across the native retry boundary.
-// TiDB dispatches SQL error codes by type, never by the displayed message.
-impl From<crate::retry::RetryError> for Error {
-    fn from(error: crate::retry::RetryError) -> Self {
-        use crate::retry::{RetryError, RetryTerminal};
-        match error {
-            RetryError::Exhausted {
-                terminal: Some(RetryTerminal::Static(error)),
-                ..
-            } => Error::Static(error),
-            RetryError::Exhausted {
-                terminal: Some(RetryTerminal::PdServerTimeout),
-                reason,
-                ..
-            } => Error::PdServerTimeout(crate::error::new_pd_server_timeout(reason)),
-            RetryError::Interrupted(error) => Error::QueryInterruptedWithSignal(error),
-            RetryError::KillHandler(error) => error,
-            other => Error::StringError(other.to_string()),
-        }
-    }
-}
-
 impl From<ProtoRegionError> for Error {
     fn from(e: ProtoRegionError) -> Error {
         Error::RegionError(Box::new(e))

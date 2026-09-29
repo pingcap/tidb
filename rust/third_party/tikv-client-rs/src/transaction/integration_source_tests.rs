@@ -1809,7 +1809,128 @@ async fn source_go_integration_tests_isolation_test_TestReadWriteConflict() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+#[allow(non_snake_case)]
+async fn source_go_integration_tests_shared_lock_test_TestSharedLockBlockExclusiveLock() {
+    for commit in [true, false] {
+        let (cluster, pd) = source_integration_store();
+        let suffix = if commit { "commit" } else { "rollback" };
+        let key = format!("~shared_lock/shared-block-exclusive/{suffix}/key").into_bytes();
+        let mut first = source_shared_transaction(&pd).await;
+        let mut second = source_shared_transaction(&pd).await;
+        let mut exclusive = source_shared_transaction(&pd).await;
+        source_shared_lock_primary(
+            &mut first,
+            &pd,
+            format!("~shared_lock/shared-block-exclusive/{suffix}/p1").as_bytes(),
+        )
+        .await;
+        source_shared_lock_primary(
+            &mut second,
+            &pd,
+            format!("~shared_lock/shared-block-exclusive/{suffix}/p2").as_bytes(),
+        )
+        .await;
+        source_shared_lock_key(&mut first, &pd, &key).await.unwrap();
+        source_shared_lock_key(&mut second, &pd, &key)
+            .await
+            .unwrap();
+        assert!(second.buffer.is_shared_locked(&Key::from(key.clone())));
+        source_shared_lock_primary(
+            &mut exclusive,
+            &pd,
+            format!("~shared_lock/shared-block-exclusive/{suffix}/p3").as_bytes(),
+        )
+        .await;
 
+        let blocker = tokio::spawn(async move {
+            let result = exclusive
+                .lock_keys_with_wait_time(1_000, [key.clone()])
+                .await;
+            (exclusive, result)
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!blocker.is_finished());
+        if commit {
+            Box::pin(first.commit()).await.unwrap();
+            Box::pin(second.commit()).await.unwrap();
+        } else {
+            first.rollback().await.unwrap();
+            second.rollback().await.unwrap();
+        }
+        let (mut exclusive, result) = tokio::time::timeout(Duration::from_secs(3), blocker)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.is_err(), "exclusive lock wait must report conflict");
+        exclusive.rollback().await.unwrap();
+        assert!(source_shared_locks(&cluster, b"", u64::MAX).is_empty());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+#[allow(non_snake_case)]
+async fn source_go_integration_tests_shared_lock_test_TestExclusiveLockBlockSharedLock() {
+    for commit in [true, false] {
+        let (_cluster, pd) = source_integration_store();
+        let suffix = if commit { "commit" } else { "rollback" };
+        let key = format!("~shared_lock/exclusive-block-shared/{suffix}/key").into_bytes();
+        let mut exclusive = source_shared_transaction(&pd).await;
+        source_shared_lock_primary(
+            &mut exclusive,
+            &pd,
+            format!("~shared_lock/exclusive-block-shared/{suffix}/p1").as_bytes(),
+        )
+        .await;
+        exclusive
+            .lock_keys_with_wait_time(1_000, [key.clone()])
+            .await
+            .unwrap();
+
+        let mut first_shared = source_shared_transaction(&pd).await;
+        let mut second_shared = source_shared_transaction(&pd).await;
+        source_shared_lock_primary(
+            &mut first_shared,
+            &pd,
+            format!("~shared_lock/exclusive-block-shared/{suffix}/p2").as_bytes(),
+        )
+        .await;
+        source_shared_lock_primary(
+            &mut second_shared,
+            &pd,
+            format!("~shared_lock/exclusive-block-shared/{suffix}/p3").as_bytes(),
+        )
+        .await;
+        let first_pd = pd.clone();
+        let first_key = key.clone();
+        let first = tokio::spawn(async move {
+            let result = source_shared_lock_key(&mut first_shared, &first_pd, &first_key).await;
+            (first_shared, result)
+        });
+        let second_pd = pd.clone();
+        let second_key = key.clone();
+        let second = tokio::spawn(async move {
+            let result = source_shared_lock_key(&mut second_shared, &second_pd, &second_key).await;
+            (second_shared, result)
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!first.is_finished());
+        assert!(!second.is_finished());
+        if commit {
+            Box::pin(exclusive.commit()).await.unwrap();
+        } else {
+            exclusive.rollback().await.unwrap();
+        }
+        let (mut first_shared, first_result) = first.await.unwrap();
+        let (mut second_shared, second_result) = second.await.unwrap();
+        assert!(first_result.is_err());
+        assert!(second_result.is_err());
+        first_shared.rollback().await.unwrap();
+        second_shared.rollback().await.unwrap();
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
@@ -2136,6 +2257,42 @@ fn source_go_integration_tests_shared_lock_test_TestPrewriteResolveExpiredShared
         .unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+#[allow(non_snake_case)]
+async fn source_go_integration_tests_shared_lock_test_TestForceLockRetryOnSharedLock() {
+    let (cluster, pd) = source_integration_store();
+    let key = b"~shared_lock/force/key".to_vec();
+    let mut shared = source_shared_transaction(&pd).await;
+    source_shared_lock_primary(&mut shared, &pd, b"~shared_lock/force/p1").await;
+    source_shared_lock_key(&mut shared, &pd, &key)
+        .await
+        .unwrap();
+    source_wait_shared_locks(&cluster, &key, u64::MAX, 1).await;
+
+    let mut exclusive = source_shared_transaction(&pd).await;
+    source_shared_lock_primary(&mut exclusive, &pd, b"~shared_lock/force/p2").await;
+    exclusive.start_aggressive_locking();
+    let force_key = key.clone();
+    let force = tokio::spawn(async move {
+        let result = exclusive.lock_keys_with_wait_time(1_000, [force_key]).await;
+        (exclusive, result)
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!force.is_finished());
+
+    shared.rollback().await.unwrap();
+    let (mut exclusive, result) = tokio::time::timeout(Duration::from_secs(5), force)
+        .await
+        .unwrap()
+        .unwrap();
+    result.unwrap();
+    exclusive.done_aggressive_locking().await.unwrap();
+    let locks = source_wait_shared_locks(&cluster, &key, u64::MAX, 1).await;
+    assert_eq!(locks[0].start_ts, exclusive.timestamp.version());
+    assert_eq!(locks[0].lock_type, unistore::Op::PessimisticLock);
+    exclusive.rollback().await.unwrap();
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]

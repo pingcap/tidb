@@ -2249,7 +2249,6 @@ mod tests {
             crate::transaction::ResolveLocksResult {
                 live_locks: Vec::new(),
                 ms_before_expired: 0,
-                ..Default::default()
             },
             locks.len(),
             batch.clone(),
@@ -2296,7 +2295,6 @@ mod tests {
                     ..Default::default()
                 }],
                 ms_before_expired: 10,
-                ..Default::default()
             },
             1,
             batch,

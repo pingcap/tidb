@@ -29,9 +29,11 @@
 
 #![allow(missing_docs)]
 
+pub use std::cell::{Cell, RefCell};
 pub use std::collections::VecDeque;
-pub use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-pub use std::sync::{Arc, Mutex, RwLock};
+pub use std::rc::Rc;
+pub use std::sync::atomic::{AtomicBool, Ordering};
+pub use std::sync::{Arc, Mutex};
 pub use std::time::Duration;
 
 pub use prost::Message;
@@ -119,7 +121,7 @@ pub struct ObservedCall {
 
 pub struct ScriptedLoader {
     pub cluster_id: u64,
-    pub calls: Arc<RwLock<Vec<Vec<u8>>>>,
+    pub calls: Rc<RefCell<Vec<Vec<u8>>>>,
     pub regions: VecDeque<RegionLocation>,
 }
 
@@ -129,42 +131,10 @@ impl RegionLoader for ScriptedLoader {
     }
 
     fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
-        self.calls.write().unwrap().push(key.to_vec());
+        self.calls.borrow_mut().push(key.to_vec());
         self.regions
             .pop_front()
             .ok_or_else(|| RegionLoadError::new("scripted-pd-empty", "no region"))
-    }
-}
-
-impl tidb_txnkv::region::RegionQueryLoader for ScriptedLoader {
-    fn query_region(
-        &mut self,
-        query: tidb_txnkv::region::RegionQuery<'_>,
-        _: tidb_txnkv::region::RegionQueryOptions,
-    ) -> Result<RegionLocation, RegionLoadError> {
-        match query {
-            tidb_txnkv::region::RegionQuery::Key(key) => self.load_region(key),
-            tidb_txnkv::region::RegionQuery::Id(id) => self
-                .regions
-                .pop_front()
-                .filter(|region| region.region.id == id)
-                .ok_or_else(|| RegionLoadError::new("scripted-pd-empty", "no matching region ID")),
-            _ => unreachable!("fixture does not query end keys"),
-        }
-    }
-    fn scan_regions_once(
-        &mut self,
-        _: &tidb_txnkv::region::KeyRange,
-        _: usize,
-        _: tidb_txnkv::region::RegionQueryOptions,
-    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
-        unreachable!()
-    }
-    fn load_store(
-        &mut self,
-        _: u64,
-    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
-        unreachable!()
     }
 }
 
@@ -183,13 +153,13 @@ impl RegionRecoveryLoader for ScriptedLoader {
 }
 
 pub struct ScriptedClient {
-    pub calls: Arc<RwLock<Vec<ObservedCall>>>,
+    pub calls: Rc<RefCell<Vec<ObservedCall>>>,
     pub responses: VecDeque<Result<Vec<u8>, DirectUnaryClientError>>,
-    pub events: Arc<RwLock<Vec<ClientEvent>>>,
-    pub liveness: RwLock<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
-    pub batch_errors: RwLock<VecDeque<DirectUnaryClientError>>,
-    pub batch_ready_immediately: RwLock<VecDeque<bool>>,
-    pub batch_begin_count: Option<Arc<AtomicUsize>>,
+    pub events: Rc<RefCell<Vec<ClientEvent>>>,
+    pub liveness: RefCell<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
+    pub batch_errors: RefCell<VecDeque<DirectUnaryClientError>>,
+    pub batch_ready_immediately: RefCell<VecDeque<bool>>,
+    pub batch_begin_count: Option<Rc<Cell<usize>>>,
 }
 
 pub struct ScriptedPending {
@@ -281,8 +251,7 @@ impl DirectUnaryClient for ScriptedClient {
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
         self.events
-            .write()
-            .unwrap()
+            .borrow_mut()
             .push(ClientEvent::ForceClose(address.to_owned()));
         Ok(())
     }
@@ -292,13 +261,10 @@ impl DirectUnaryClient for ScriptedClient {
         address: &str,
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
-        self.events
-            .write()
-            .unwrap()
-            .push(ClientEvent::CloseGeneration {
-                address: address.to_owned(),
-                version,
-            });
+        self.events.borrow_mut().push(ClientEvent::CloseGeneration {
+            address: address.to_owned(),
+            version,
+        });
         Ok(())
     }
 
@@ -307,13 +273,12 @@ impl DirectUnaryClient for ScriptedClient {
         address: &str,
         timeout: Duration,
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        self.events.write().unwrap().push(ClientEvent::Liveness {
+        self.events.borrow_mut().push(ClientEvent::Liveness {
             address: address.to_owned(),
             timeout,
         });
         self.liveness
-            .write()
-            .unwrap()
+            .borrow_mut()
             .pop_front()
             .unwrap_or(Ok(StoreLiveness::Unknown))
     }
@@ -332,14 +297,13 @@ impl ScriptedClient {
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         self.events
-            .write()
-            .unwrap()
+            .borrow_mut()
             .push(ClientEvent::Send(address.to_owned()));
         let wire = CoprocessorRequest::decode(request.encoded_request.as_slice()).unwrap();
         assert!(wire.context.is_none());
         let epoch = request.context.region_epoch.as_ref().unwrap();
         let peer = request.context.peer.as_ref().unwrap();
-        self.calls.write().unwrap().push(ObservedCall {
+        self.calls.borrow_mut().push(ObservedCall {
             address: address.to_owned(),
             forwarded_host: forwarded_host.map(str::to_owned),
             timeout,
@@ -398,10 +362,10 @@ impl AsyncRequestDispatcher for ScriptedClient {
         run_loop: CompletionRunLoop,
     ) -> Result<Self::Pending, DirectUnaryClientError> {
         if let Some(count) = &self.batch_begin_count {
-            count.fetch_add(1, Ordering::SeqCst);
+            count.set(count.get() + 1);
         }
         let (completion, pull) = completion_pair(run_loop, || {});
-        if let Some(error) = self.batch_errors.write().unwrap().pop_front() {
+        if let Some(error) = self.batch_errors.borrow_mut().pop_front() {
             completion.schedule(Err(error));
             return Ok(ScriptedPending {
                 completion: pull,
@@ -411,8 +375,7 @@ impl AsyncRequestDispatcher for ScriptedClient {
         let result = self.send_request_with_context(physical_address, request, call);
         let ready_immediately = self
             .batch_ready_immediately
-            .write()
-            .unwrap()
+            .borrow_mut()
             .pop_front()
             .unwrap_or(false);
         let deferred = if ready_immediately {
@@ -437,9 +400,9 @@ impl SynchronousBatchRequestDispatcher for ScriptedClient {
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         if let Some(count) = &self.batch_begin_count {
-            count.fetch_add(1, Ordering::SeqCst);
+            count.set(count.get() + 1);
         }
-        if let Some(error) = self.batch_errors.write().unwrap().pop_front() {
+        if let Some(error) = self.batch_errors.borrow_mut().pop_front() {
             return Err(error);
         }
         self.send_request_recorded(physical_address, forwarded_host, request, call.timeout())
@@ -742,7 +705,7 @@ pub fn connection_failure(
 }
 
 pub fn transport(
-    calls: Arc<RwLock<Vec<ObservedCall>>>,
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
     regions: impl IntoIterator<Item = RegionLocation>,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
@@ -750,7 +713,7 @@ pub fn transport(
 }
 
 pub fn transport_with_cluster_id(
-    calls: Arc<RwLock<Vec<ObservedCall>>>,
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
     regions: impl IntoIterator<Item = RegionLocation>,
     cluster_id: u64,
@@ -760,12 +723,12 @@ pub fn transport_with_cluster_id(
         responses,
         regions,
         cluster_id,
-        Arc::new(RwLock::new(Vec::new())),
+        Rc::new(RefCell::new(Vec::new())),
     )
 }
 
 pub fn batch_first_transport(
-    calls: Arc<RwLock<Vec<ObservedCall>>>,
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
     regions: impl IntoIterator<Item = RegionLocation>,
     ready_immediately: impl IntoIterator<Item = bool>,
@@ -775,17 +738,17 @@ pub fn batch_first_transport(
         responses,
         regions,
         ready_immediately,
-        Arc::new(RwLock::new(Vec::new())),
+        Rc::new(RefCell::new(Vec::new())),
         DirectUnaryRuntimeConfig::default(),
     )
 }
 
 pub fn batch_first_transport_with_config(
-    calls: Arc<RwLock<Vec<ObservedCall>>>,
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
     regions: impl IntoIterator<Item = RegionLocation>,
     ready_immediately: impl IntoIterator<Item = bool>,
-    loader_calls: Arc<RwLock<Vec<Vec<u8>>>>,
+    loader_calls: Rc<RefCell<Vec<Vec<u8>>>>,
     config: DirectUnaryRuntimeConfig,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
     DirectUnaryQueryTransport::new_injected_batch_first(
@@ -795,10 +758,10 @@ pub fn batch_first_transport_with_config(
                 .into_iter()
                 .map(|response| response.map_err(DirectUnaryClientError::InvalidRequest))
                 .collect(),
-            events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(ready_immediately.into_iter().collect()),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(ready_immediately.into_iter().collect()),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
@@ -813,11 +776,11 @@ pub fn batch_first_transport_with_config(
 }
 
 pub fn transport_with_loader_calls(
-    calls: Arc<RwLock<Vec<ObservedCall>>>,
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
     regions: impl IntoIterator<Item = RegionLocation>,
     cluster_id: u64,
-    loader_calls: Arc<RwLock<Vec<Vec<u8>>>>,
+    loader_calls: Rc<RefCell<Vec<Vec<u8>>>>,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
     transport_with_loader_calls_and_config(
         calls,
@@ -835,11 +798,11 @@ pub fn transport_with_loader_calls(
 }
 
 pub fn transport_with_loader_calls_and_config(
-    calls: Arc<RwLock<Vec<ObservedCall>>>,
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
     regions: impl IntoIterator<Item = RegionLocation>,
     cluster_id: u64,
-    loader_calls: Arc<RwLock<Vec<Vec<u8>>>>,
+    loader_calls: Rc<RefCell<Vec<Vec<u8>>>>,
     config: DirectUnaryRuntimeConfig,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
     DirectUnaryQueryTransport::new_injected(
@@ -849,10 +812,10 @@ pub fn transport_with_loader_calls_and_config(
                 .into_iter()
                 .map(|response| response.map_err(DirectUnaryClientError::InvalidRequest))
                 .collect(),
-            events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
@@ -867,10 +830,10 @@ pub fn transport_with_loader_calls_and_config(
 }
 
 pub fn transport_with_transport_failures(
-    calls: Arc<RwLock<Vec<ObservedCall>>>,
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: impl IntoIterator<Item = Result<Vec<u8>, DirectUnaryClientError>>,
     liveness: impl IntoIterator<Item = Result<StoreLiveness, DirectUnaryClientError>>,
-    events: Arc<RwLock<Vec<ClientEvent>>>,
+    events: Rc<RefCell<Vec<ClientEvent>>>,
     regions: impl IntoIterator<Item = RegionLocation>,
     config: DirectUnaryRuntimeConfig,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
@@ -879,14 +842,14 @@ pub fn transport_with_transport_failures(
             calls,
             responses: responses.into_iter().collect(),
             events,
-            liveness: RwLock::new(liveness.into_iter().collect()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            liveness: RefCell::new(liveness.into_iter().collect()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Arc::new(RwLock::new(Vec::new())),
+            calls: Rc::new(RefCell::new(Vec::new())),
             regions: regions.into_iter().collect(),
         }),
         config,

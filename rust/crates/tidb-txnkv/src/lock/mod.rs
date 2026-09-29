@@ -12,17 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! TiDB lock observations and adapters to client-rust's shared resolver.
+//! Bounded optimistic read-lock recovery.
 
+pub(crate) mod async_resolve;
 mod model;
+mod pessimistic;
 mod resolver;
+
+pub(crate) use resolver::async_resolve_pool;
 
 pub use model::{
     decode_blocking_lock_observation, decode_lock_observation, BlockingLock, LockAdmissionError,
     OptimisticLock, PessimisticLock,
 };
+pub(crate) use pessimistic::{record_blocking_locks, resolve_blocking_locks_recorded};
+pub use pessimistic::{
+    resolve_blocking_locks, resolve_blocking_locks_with_backoff, SKIP_RESOLVE_THRESHOLD_MS,
+};
 pub use resolver::{
-    resolve_blocking_locks, resolve_blocking_locks_with_backoff, resolve_optimistic_locks,
-    FixedTimestampSource, LockRecoveryClient, LockRecoveryError, LockRecoveryResult,
-    SnapshotLockSet, TimestampSource,
+    resolve_optimistic_locks, FixedTimestampSource, LockRecoveryClient, LockRecoveryError,
+    LockRecoveryResult, ResolvedTxnStatus, SnapshotLockSet, TimestampSource,
 };

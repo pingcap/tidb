@@ -29,7 +29,10 @@
 use std::sync::LazyLock;
 
 use prometheus::TextEncoder;
-use prometheus::{Counter, CounterVec, GaugeVec, HistogramOpts, HistogramVec, Opts};
+use prometheus::{
+    Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry,
+};
+use tikv_client::metrics::ClientGoMetrics;
 
 // GC-worker families from Go `pkg/metrics/gc_worker.go`, subsystem
 // `tikvclient` like the client-go set.
@@ -176,6 +179,104 @@ fn collector_counter(source: &str) -> Option<prometheus::Counter> {
         })
 }
 
+/// Go `LockResolverCountWithReadAsyncResolveFallback`.
+pub(crate) fn inc_lock_resolver_read_async_fallback() {
+    if let Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) =
+        tikv_client::metrics::global_metrics()
+            .shortcut("LockResolverCountWithReadAsyncResolveFallback")
+    {
+        counter.inc();
+    }
+}
+
+fn inc_lock_resolver_counter(shortcut_name: &'static str) {
+    if let Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) =
+        tikv_client::metrics::global_metrics().shortcut(shortcut_name)
+    {
+        counter.inc();
+    }
+}
+
+/// Go `LockResolverCountWithQueryTxnStatus` (cache misses only).
+pub(crate) fn inc_lock_resolver_query_txn_status() {
+    inc_lock_resolver_counter("LockResolverCountWithQueryTxnStatus");
+}
+
+/// Go `LockResolverCountWithQueryTxnStatusCommitted`.
+pub(crate) fn inc_lock_resolver_query_txn_status_committed() {
+    inc_lock_resolver_counter("LockResolverCountWithQueryTxnStatusCommitted");
+}
+
+/// Go `LockResolverCountWithQueryTxnStatusRolledBack`.
+pub(crate) fn inc_lock_resolver_query_txn_status_rolled_back() {
+    inc_lock_resolver_counter("LockResolverCountWithQueryTxnStatusRolledBack");
+}
+
+/// Go `LockResolverCountWithExpired`.
+pub(crate) fn inc_lock_resolver_expired() {
+    inc_lock_resolver_counter("LockResolverCountWithExpired");
+}
+
+/// Go `LockResolverCountWithNotExpired`.
+pub(crate) fn inc_lock_resolver_not_expired() {
+    inc_lock_resolver_counter("LockResolverCountWithNotExpired");
+}
+
+/// Go `LockResolverCountWithWaitExpired`.
+pub(crate) fn inc_lock_resolver_wait_expired() {
+    inc_lock_resolver_counter("LockResolverCountWithWaitExpired");
+}
+
+/// Go `LockResolverCountWithResolve`.
+pub(crate) fn inc_lock_resolver_resolve() {
+    inc_lock_resolver_counter("LockResolverCountWithResolve");
+}
+
+/// Go `LockResolverCountWithResolveAsync`.
+pub(crate) fn inc_lock_resolver_resolve_async() {
+    inc_lock_resolver_counter("LockResolverCountWithResolveAsync");
+}
+
+/// Go `LockResolverCountWithQueryCheckSecondaryLocks`.
+pub(crate) fn inc_lock_resolver_query_check_secondary_locks() {
+    inc_lock_resolver_counter("LockResolverCountWithQueryCheckSecondaryLocks");
+}
+
+/// Go `LockResolverCountWithResolveLocks`.
+pub(crate) fn inc_lock_resolver_resolve_locks() {
+    inc_lock_resolver_counter("LockResolverCountWithResolveLocks");
+}
+
+/// Go `LockResolverCountWithResolveLockLite`.
+pub(crate) fn inc_lock_resolver_resolve_lock_lite() {
+    inc_lock_resolver_counter("LockResolverCountWithResolveLockLite");
+}
+
+/// Go `LockResolverCountWithAsyncResolveAsyncCommitFallback`.
+pub(crate) fn inc_lock_resolver_async_resolve_async_commit_fallback() {
+    inc_lock_resolver_counter("LockResolverCountWithAsyncResolveAsyncCommitFallback");
+}
+
+/// Go `LockResolverCountWithAsyncCheckSecondariesFallback`.
+pub(crate) fn inc_lock_resolver_async_check_secondaries_fallback() {
+    inc_lock_resolver_counter("LockResolverCountWithAsyncCheckSecondariesFallback");
+}
+
+/// Go `LockResolverCountWithAsyncResolveAsyncCommitRegionFallback`.
+pub(crate) fn inc_lock_resolver_async_resolve_async_commit_region_fallback() {
+    inc_lock_resolver_counter("LockResolverCountWithAsyncResolveAsyncCommitRegionFallback");
+}
+
+/// Returns the client-go task gauge for one resolver worker category.
+pub(crate) fn lock_resolver_async_gauge(shortcut_name: &'static str) -> Option<prometheus::Gauge> {
+    tikv_client::metrics::global_metrics()
+        .shortcut(shortcut_name)
+        .and_then(|shortcut| match shortcut {
+            tikv_client::metrics::ClientGoShortcut::Gauge(gauge) => Some(gauge.clone()),
+            _ => None,
+        })
+}
+
 /// Renders the `tidb_tikvclient_*` exposition block for the status server.
 #[must_use]
 pub fn gather_text() -> String {
@@ -195,6 +296,100 @@ pub fn observe_pessimistic_lock_keys_duration(seconds: f64) {
         tikv_client::metrics::global_metrics().collector("TiKVPessimisticLockKeysDuration")
     {
         histogram.observe(seconds);
+    }
+}
+
+#[cfg(test)]
+mod lock_resolver_metric_tests {
+    use super::{
+        inc_lock_resolver_async_check_secondaries_fallback,
+        inc_lock_resolver_async_resolve_async_commit_fallback,
+        inc_lock_resolver_async_resolve_async_commit_region_fallback, inc_lock_resolver_expired,
+        inc_lock_resolver_not_expired, inc_lock_resolver_query_check_secondary_locks,
+        inc_lock_resolver_query_txn_status, inc_lock_resolver_query_txn_status_committed,
+        inc_lock_resolver_query_txn_status_rolled_back, inc_lock_resolver_resolve,
+        inc_lock_resolver_resolve_async, inc_lock_resolver_resolve_lock_lite,
+        inc_lock_resolver_resolve_locks, inc_lock_resolver_wait_expired, init_dashboard_series,
+        lock_resolver_async_gauge,
+    };
+
+    fn shortcut_count(shortcut_name: &'static str) -> f64 {
+        match tikv_client::metrics::global_metrics().shortcut(shortcut_name) {
+            Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) => counter.get(),
+            _ => panic!("client-go counter shortcut {shortcut_name} is registered"),
+        }
+    }
+
+    #[test]
+    fn lock_resolver_status_counters_use_the_client_go_shortcuts() {
+        init_dashboard_series();
+        let counters = [
+            (
+                "LockResolverCountWithQueryTxnStatus",
+                inc_lock_resolver_query_txn_status as fn(),
+            ),
+            (
+                "LockResolverCountWithQueryTxnStatusCommitted",
+                inc_lock_resolver_query_txn_status_committed,
+            ),
+            (
+                "LockResolverCountWithQueryTxnStatusRolledBack",
+                inc_lock_resolver_query_txn_status_rolled_back,
+            ),
+            ("LockResolverCountWithExpired", inc_lock_resolver_expired),
+            (
+                "LockResolverCountWithNotExpired",
+                inc_lock_resolver_not_expired,
+            ),
+            (
+                "LockResolverCountWithWaitExpired",
+                inc_lock_resolver_wait_expired,
+            ),
+            ("LockResolverCountWithResolve", inc_lock_resolver_resolve),
+            (
+                "LockResolverCountWithResolveAsync",
+                inc_lock_resolver_resolve_async,
+            ),
+            (
+                "LockResolverCountWithQueryCheckSecondaryLocks",
+                inc_lock_resolver_query_check_secondary_locks,
+            ),
+            (
+                "LockResolverCountWithResolveLocks",
+                inc_lock_resolver_resolve_locks,
+            ),
+            (
+                "LockResolverCountWithResolveLockLite",
+                inc_lock_resolver_resolve_lock_lite,
+            ),
+            (
+                "LockResolverCountWithAsyncResolveAsyncCommitFallback",
+                inc_lock_resolver_async_resolve_async_commit_fallback,
+            ),
+            (
+                "LockResolverCountWithAsyncCheckSecondariesFallback",
+                inc_lock_resolver_async_check_secondaries_fallback,
+            ),
+            (
+                "LockResolverCountWithAsyncResolveAsyncCommitRegionFallback",
+                inc_lock_resolver_async_resolve_async_commit_region_fallback,
+            ),
+        ];
+
+        for (shortcut_name, increment) in counters {
+            let before = shortcut_count(shortcut_name);
+            increment();
+            assert!(shortcut_count(shortcut_name) > before);
+        }
+
+        for shortcut_name in [
+            "LockResolverAsyncRunningTasksForReadResolve",
+            "LockResolverAsyncRunningTasksForResolveAsyncCommit",
+            "LockResolverAsyncRunningTasksForCheckSecondaries",
+            "LockResolverAsyncRunningTasksForResolveAsyncCommitRegion",
+        ] {
+            assert!(lock_resolver_async_gauge(shortcut_name).is_some());
+        }
     }
 }
 

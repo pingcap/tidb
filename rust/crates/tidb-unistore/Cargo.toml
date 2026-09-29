@@ -30,6 +30,4 @@ tidb-stats = { path = "../tidb-stats" }
 tidb-model = { path = "../tidb-model" }
 
 [dev-dependencies]
-tikv-client.workspace = true
-tokio.workspace = true
 flate2.workspace = true

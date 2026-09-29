@@ -38,6 +38,7 @@ impl std::error::Error for DeadlockError {}
 #[derive(Default)]
 pub struct DeadlockDetector {
     wait_for: Mutex<HashMap<u64, Vec<WaitForEntry>>>,
+    deadlocked: Mutex<HashSet<u64>>,
 }
 
 impl DeadlockDetector {
@@ -91,6 +92,11 @@ impl DeadlockDetector {
             &mut HashSet::new(),
         ) {
             wait_chain.push(edge);
+            let mut deadlocked = self
+                .deadlocked
+                .lock()
+                .expect("deadlocked transaction set poisoned");
+            deadlocked.extend(wait_chain.iter().map(|entry| entry.transaction));
             return Err(DeadlockError {
                 key_hash: deadlock_key_hash,
                 wait_chain,
@@ -143,6 +149,20 @@ impl DeadlockDetector {
             .lock()
             .expect("deadlock graph lock poisoned")
             .remove(&transaction);
+        self.deadlocked
+            .lock()
+            .expect("deadlocked transaction set poisoned")
+            .remove(&transaction);
+    }
+
+    /// Reports whether a transaction participated in a detected cycle. A
+    /// waiter in that cycle must return its original conflict after wakeup
+    /// instead of silently acquiring the released key.
+    pub fn was_deadlocked(&self, transaction: u64) -> bool {
+        self.deadlocked
+            .lock()
+            .expect("deadlocked transaction set poisoned")
+            .contains(&transaction)
     }
 
     /// Removes the first exact wait-for edge and its now-empty transaction.
@@ -171,6 +191,10 @@ impl DeadlockDetector {
             .lock()
             .expect("deadlock graph lock poisoned")
             .retain(|transaction, _| *transaction >= minimum_ts);
+        self.deadlocked
+            .lock()
+            .expect("deadlocked transaction set poisoned")
+            .retain(|transaction| *transaction >= minimum_ts);
     }
 
     #[cfg(test)]
@@ -237,9 +261,13 @@ mod tests {
             detector.detect(3, 1, 300).unwrap_err().to_string(),
             "deadlock(200)"
         );
+        assert!(detector.was_deadlocked(1));
+        assert!(detector.was_deadlocked(2));
+        assert!(detector.was_deadlocked(3));
 
         detector.clean_up(2);
         assert_eq!(detector.edge_count(2), None);
+        assert!(!detector.was_deadlocked(2));
 
         assert_eq!(detector.detect(3, 1, 300), Ok(()));
         assert_eq!(detector.edge_count(3), Some(1));

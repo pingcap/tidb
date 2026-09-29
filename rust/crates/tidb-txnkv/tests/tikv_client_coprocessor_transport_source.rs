@@ -28,7 +28,7 @@
 use std::sync::Arc;
 
 use tikv_client::mock::mocktikv::{MockPdClient, Session};
-use tikv_client::PdClient;
+use tikv_client::pd::PdClient;
 use tikv_client::proto::{coprocessor, kvrpcpb};
 use tikv_client::request::{Keyspace, Plan, PlanBuilder};
 use tikv_client::testutils::{bootstrap_with_single_store, new_mock_tikv, CoprRpcHandler};
