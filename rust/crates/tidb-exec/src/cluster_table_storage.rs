@@ -1682,33 +1682,42 @@ pub fn lock_pessimistic_statement_with<T>(
             snapshot(retry_read_ts).map_err(PessimisticStatementTransactionError::Build)?;
         let (value, mutations) =
             build(snapshot, start_ts).map_err(PessimisticStatementTransactionError::Build)?;
-        let buffer = mutation_buffer_from_mutations(mutations.clone());
         let mut keys = mutations
             .iter()
             .filter(|mutation| {
                 mutation.kind() == tidb_txnkv::transaction::OptimisticMutationKind::LockOnly
             })
             .map(|mutation| mutation.key().to_vec())
-            .chain(pessimistic_lock_delta(&[], &buffer.snapshot()))
+            .chain(mutations.iter().filter_map(|mutation| {
+                let value = match mutation.kind() {
+                    tidb_txnkv::transaction::OptimisticMutationKind::Delete
+                    | tidb_txnkv::transaction::OptimisticMutationKind::IndexDelete
+                    | tidb_txnkv::transaction::OptimisticMutationKind::MetaDelete
+                    | tidb_txnkv::transaction::OptimisticMutationKind::SystemRowDelete => None,
+                    tidb_txnkv::transaction::OptimisticMutationKind::LockOnly => return None,
+                    _ => Some(mutation.value()),
+                };
+                statement_key_needs_lock(mutation.key(), value).then(|| mutation.key().to_vec())
+            }))
             .collect::<Vec<_>>();
         keys.sort();
         keys.dedup();
         if keys.is_empty() {
             return Ok((value, mutations));
         }
-        let presume_not_exists = buffer
-            .presume_not_exists_keys()
-            .into_iter()
-            .filter(|key| keys.contains(key))
-            .collect::<BTreeSet<_>>();
-        let duplicate_hints = presume_not_exists
+        let presume_not_exists = mutations
             .iter()
-            .filter_map(|key| {
-                buffer
-                    .duplicate_key_hint_for(key)
-                    .map(|hint| (key.clone(), hint))
+            .filter(|mutation| {
+                matches!(
+                    mutation.kind(),
+                    tidb_txnkv::transaction::OptimisticMutationKind::Insert
+                        | tidb_txnkv::transaction::OptimisticMutationKind::UniqueIndexInsert
+                )
             })
-            .collect::<BTreeMap<_, _>>();
+            .map(|mutation| mutation.key().to_vec())
+            .filter(|key| keys.binary_search(key).is_ok())
+            .collect::<BTreeSet<_>>();
+        let duplicate_hints = BTreeMap::new();
         let lock_started = std::time::Instant::now();
         match lock(keys, presume_not_exists, duplicate_hints)
             .map_err(PessimisticStatementTransactionError::Build)?
