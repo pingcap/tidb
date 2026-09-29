@@ -21,10 +21,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -56,6 +58,87 @@ func TestMViewPhysicalPlanExplainInfo(t *testing.T) {
 		"op_offset:1, current_marker_offset:8, recomputed_marker_offset:10, current_group_keys_offset:[4,8], recomputed_group_keys_offset:[5,10], current_handle_offset:[7], current_row_offset:[4,6,8], recomputed_row_offset:[5,9,10]",
 		completeApply.ExplainInfo(),
 	)
+}
+
+func TestExplainMViewPhysicalPlanTree(t *testing.T) {
+	ctx := mock.NewContext()
+	stats := &property.StatsInfo{RowCount: 1}
+	left := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+	right := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+	join := physicalop.PhysicalHashJoin{
+		BasePhysicalJoin: physicalop.BasePhysicalJoin{
+			JoinType: base.InnerJoin,
+		},
+	}.Init(ctx, stats, 0)
+	join.SetChildren(left, right)
+	deltaMerge := (&MViewDeltaMerge{Source: join}).Init(ctx)
+	deltaMerge.SetSchema(join.Schema())
+	savedIgnoreExplainIDSuffix := ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+
+	explain := &Explain{
+		TargetPlan: deltaMerge,
+		Format:     types.ExplainFormatBrief,
+	}
+	explain.SetSCtx(ctx)
+	require.NoError(t, explain.RenderResult())
+	require.Len(t, explain.Rows, 4)
+	require.Equal(t, "MViewDeltaMerge", explain.Rows[0][0])
+	require.Equal(t, "└─HashJoin", explain.Rows[1][0])
+	require.Equal(t, "  ├─TableDual(Build)", explain.Rows[2][0])
+	require.Equal(t, "  └─TableDual(Probe)", explain.Rows[3][0])
+}
+
+func TestExplainMViewPhysicalPlanSpecialChildren(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	stats := &property.StatsInfo{RowCount: 1}
+	newDual := func() base.PhysicalPlan {
+		return physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+	}
+
+	tests := []struct {
+		name string
+		plan base.Plan
+		rows []string
+	}{
+		{
+			name: "mview delta merge full update",
+			plan: func() base.Plan {
+				plan := (&MViewDeltaMerge{
+					Source:                newDual(),
+					FullUpdateInnerSource: newDual(),
+				}).Init(ctx)
+				plan.SetSchema(plan.Source.Schema())
+				return plan
+			}(),
+			rows: []string{"MViewDeltaMerge", "├─TableDual", "└─TableDual"},
+		},
+		{
+			name: "mview complete delta apply",
+			plan: func() base.Plan {
+				plan := (&MViewCompleteDeltaApply{Source: newDual()}).Init(ctx)
+				plan.SetSchema(plan.Source.Schema())
+				return plan
+			}(),
+			rows: []string{"MViewCompleteDeltaApply", "└─TableDual"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			explain := &Explain{TargetPlan: tt.plan, Format: types.ExplainFormatBrief}
+			explain.SetSCtx(ctx)
+			require.NoError(t, explain.RenderResult())
+			require.Len(t, explain.Rows, len(tt.rows))
+			for i, row := range tt.rows {
+				require.Equal(t, row, explain.Rows[i][0])
+			}
+		})
+	}
 }
 
 func newExplainRUForestFixture(cteCount, scalarCount int) (*FlatPhysicalPlan, *ExplainRUResult) {
