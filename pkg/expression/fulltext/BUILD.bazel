@@ -31,7 +31,7 @@ go_test(
     ],
     embed = [":fulltext"],
     flaky = False,
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//pkg/kv",
         "//pkg/meta/model",
