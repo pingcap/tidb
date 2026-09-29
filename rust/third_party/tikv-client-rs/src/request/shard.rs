@@ -799,8 +799,10 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for ResolveLock<P, PdC> {
         owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
     ) {
         self.inner.set_snapshot_retry_owner(Arc::clone(&owner));
+        self.resolve_locks_context.retry_owner = Some(Arc::clone(&owner));
         if let Some(backoff) = self.snapshot_lock_backoff.as_mut() {
             backoff.set_owner(owner);
+            backoff.clear_stats();
         }
     }
 

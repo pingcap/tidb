@@ -1997,14 +1997,14 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                             "PD returned regions with gaps while batch loading",
                         )
                         .await
-                        .map_err(|error| Error::StringError(error.to_string()))?;
+                        .map_err(Error::from)?;
                     continue;
                 }
                 Err(error) => {
                     backoffer
                         .backoff(BO_PD_RPC, format!("PD ScanRegions failed: {error}"))
                         .await
-                        .map_err(|error| Error::StringError(error.to_string()))?;
+                        .map_err(Error::from)?;
                     continue;
                 }
             };
@@ -2020,7 +2020,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                         "PD returned only leaderless regions while batch loading",
                     )
                     .await
-                    .map_err(|error| Error::StringError(error.to_string()))?;
+                    .map_err(Error::from)?;
                 continue;
             }
             let mut prepared_regions = Vec::with_capacity(valid_regions.len());
@@ -2136,14 +2136,14 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                             "PD returned regions with gaps while batch scanning",
                         )
                         .await
-                        .map_err(|error| Error::StringError(error.to_string()))?;
+                        .map_err(Error::from)?;
                     continue;
                 }
                 Err(error) => {
                     backoffer
                         .backoff(BO_PD_RPC, format!("PD BatchScanRegions failed: {error}"))
                         .await
-                        .map_err(|error| Error::StringError(error.to_string()))?;
+                        .map_err(Error::from)?;
                     continue;
                 }
             };
@@ -2163,7 +2163,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                         "PD returned only leaderless regions while batch scanning",
                     )
                     .await
-                    .map_err(|error| Error::StringError(error.to_string()))?;
+                    .map_err(Error::from)?;
                 continue;
             }
             let mut prepared_regions = Vec::with_capacity(valid_regions.len());

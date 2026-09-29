@@ -707,6 +707,9 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     /// per-shard behavior.
     fn update_using_forked(&mut self, forked: &Self);
 
+    /// Publish the completed operation's selected retry history.
+    async fn record_stats(&self) {}
+
     /// Multi-region source owners regroup their remaining keys after
     /// `RegionRequestSender` returns a terminal region error. A one-region
     /// sender still returns the error; [`RetryableMultiRegion`] consumes this
@@ -808,37 +811,32 @@ impl RegionRetryState for SnapshotRegionBackoff {
         if self.disabled {
             return Ok(false);
         }
-        let mut backoff = self.backoff.lock().await;
-        let before_count = backoff
-            .times_by_type()
-            .get(config.name)
-            .copied()
-            .unwrap_or_default();
-        let before_sleep = backoff
-            .sleep_by_type()
-            .get(config.name)
-            .copied()
-            .unwrap_or_default();
-        let result = backoff.backoff(config, _reason).await;
-        let after_count = backoff
-            .times_by_type()
-            .get(config.name)
-            .copied()
-            .unwrap_or_default();
-        let after_sleep = backoff
-            .sleep_by_type()
-            .get(config.name)
-            .copied()
-            .unwrap_or_default();
-        if after_count > before_count {
-            if let Some(stats) = &self.stats {
-                stats.record_backoff(
-                    config.name,
-                    Duration::from_millis(after_sleep.saturating_sub(before_sleep)),
-                );
+        self.backoff
+            .lock()
+            .await
+            .backoff(config, _reason)
+            .await
+            .map(|_| true)
+            .map_err(Error::from)
+    }
+
+    async fn record_stats(&self) {
+        if let Some(stats) = &self.stats {
+            // Go records the caller's Backoffer after concurrent workers have
+            // selected the final child's history, including nested status RPCs.
+            let backoff = self.backoff.lock().await;
+            if backoff.total_sleep_ms() == 0 {
+                return;
+            }
+            for (&name, &count) in backoff.times_by_type() {
+                let millis = backoff
+                    .sleep_by_type()
+                    .get(name)
+                    .copied()
+                    .unwrap_or_default();
+                stats.record_backoff_totals(name, count, Duration::from_millis(millis));
             }
         }
-        result.map(|_| true).map_err(Error::from)
     }
 
     fn fork(&self) -> (Self, Cancellation) {
@@ -2363,7 +2361,7 @@ where
             self.concurrency.max(1)
         };
         let concurrency_permits = Arc::new(Semaphore::new(concurrency));
-        Self::single_plan_handler(
+        let (result, backoff) = Self::single_plan_handler(
             self.pd_client.clone(),
             self.inner.clone(),
             self.backoff.clone(),
@@ -2373,8 +2371,9 @@ where
             self.snapshot_region_scope,
             self.snapshot_async_batch_get,
         )
-        .await
-        .0
+        .await;
+        backoff.record_stats().await;
+        result
     }
 }
 
@@ -5693,6 +5692,32 @@ mod test {
                 "{error:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn snapshot_stats_record_only_the_completed_worker_history() {
+        let stats = Arc::new(SnapshotRuntimeStats::new());
+        let mut parent = SnapshotRegionBackoff::new(
+            crate::backoff::DEFAULT_REGION_BACKOFF,
+            Some(Arc::clone(&stats)),
+            Arc::new(Variables::default()),
+        );
+        let (mut first, _) = parent.fork();
+        let mut last = first.clone_for_snapshot_sibling();
+        first
+            .backoff(BO_REGION_MISS, "first worker".into())
+            .await
+            .unwrap();
+        last.backoff(BO_REGION_MISS, "last worker".into())
+            .await
+            .unwrap();
+        parent.update_using_forked(&last);
+        parent.record_stats().await;
+        assert_eq!(stats.backoff_count("regionMiss"), 1);
+        assert_eq!(
+            stats.backoff_duration("regionMiss"),
+            Duration::from_millis(last.backoff.lock().await.sleep_by_type()["regionMiss"])
+        );
     }
 
     #[test]

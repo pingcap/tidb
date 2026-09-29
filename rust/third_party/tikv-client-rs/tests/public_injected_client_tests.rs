@@ -121,3 +121,36 @@ fn ordinary_downstream_build_can_construct_an_injected_raw_client() {
     assert!(Arc::ptr_eq(&client.pd_client(), &pd));
     assert_eq!(tikv_client::raw::RAW_BATCH_PUT_SIZE, 16 * 1024);
 }
+
+#[test]
+fn synchronous_injected_transaction_uses_the_native_buffer_and_runtime_guard() {
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let native = Transaction::new(
+        Timestamp::from_version(42),
+        Arc::new(InProcessPdClient),
+        TransactionOptions::new_optimistic(),
+        Keyspace::Disable,
+    );
+    let mut transaction = tikv_client::SyncTransaction::new(native, runtime.clone());
+    let checkpoint = transaction.get_mem_buffer().staging();
+    transaction
+        .get_mem_buffer()
+        .set(b"staged", b"value")
+        .unwrap();
+    assert_eq!(transaction.inner().get_mem_buffer_readonly().len(), 1);
+    assert_eq!(
+        transaction.get(b"staged".to_vec()).unwrap(),
+        Some(b"value".to_vec())
+    );
+    transaction.inner_mut().get_mem_buffer().cleanup(checkpoint);
+    assert_eq!(transaction.inner().get_mem_buffer_readonly().len(), 0);
+
+    runtime.block_on(async {
+        assert!(matches!(
+            transaction.block_on(|inner| inner.put(b"nested".to_vec(), b"bad".to_vec())),
+            Err(Error::NestedRuntimeError(_))
+        ));
+    });
+    assert_eq!(transaction.inner().get_mem_buffer_readonly().len(), 0);
+    transaction.block_on(|inner| inner.rollback()).unwrap();
+}

@@ -34,7 +34,7 @@
 
 use std::sync::Arc;
 
-use tikv_client::pd::PdClient;
+use tikv_client::PdClient;
 use tikv_client::transaction::{MutationAssertion, MutationOptions, SyncTransaction, Transaction};
 use tikv_client::TimestampExt;
 

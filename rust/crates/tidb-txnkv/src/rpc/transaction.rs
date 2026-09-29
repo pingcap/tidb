@@ -36,37 +36,7 @@ use super::batch::{
     BatchRoute, OpaqueBatchCommand,
 };
 use super::TonicCoprocessorClient;
-use super::{
-    CompletionError, DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext,
-};
-
-/// Optional client-go runtime observation for one RPC or lock-helper call.
-/// Dropping the owner records its terminal duration exactly once.
-pub(crate) struct SnapshotRpcObservation {
-    stats: Arc<tikv_client::SnapshotRuntimeStats>,
-    command: tikv_client::SnapshotRpcCommand,
-    started_at: std::time::Instant,
-}
-
-impl SnapshotRpcObservation {
-    pub(crate) fn start(
-        stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
-        command: tikv_client::SnapshotRpcCommand,
-    ) -> Option<Self> {
-        stats.map(|stats| Self {
-            stats: Arc::clone(stats),
-            command,
-            started_at: std::time::Instant::now(),
-        })
-    }
-}
-
-impl Drop for SnapshotRpcObservation {
-    fn drop(&mut self) {
-        self.stats
-            .record_rpc(self.command, self.started_at.elapsed());
-    }
-}
+use super::{CompletionError, DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext};
 
 /// Immutable identity assigned before one transaction command enters tonic.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -406,29 +376,7 @@ impl TonicCoprocessorClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> Result<TransactionBatchPending<KvrpcBatchGetResponse>, DirectUnaryClientError> {
-        self.begin_transaction_batch_get_with_stats(
-            physical_address,
-            forwarded_host,
-            request,
-            context,
-            call,
-            None,
-        )
-    }
-
-    pub(crate) fn begin_transaction_batch_get_with_stats(
-        &mut self,
-        physical_address: &str,
-        forwarded_host: Option<&str>,
-        request: &KvrpcBatchGetRequest,
-        context: &KvrpcContext,
-        call: &UnaryCallContext,
-        stats: Option<&Arc<tikv_client::SnapshotRuntimeStats>>,
-    ) -> Result<TransactionBatchPending<KvrpcBatchGetResponse>, DirectUnaryClientError> {
-        let observation =
-            SnapshotRpcObservation::start(stats, tikv_client::SnapshotRpcCommand::BatchGet);
-        let (entry, mut pending) = batch_get_entry(request, context, forwarded_host);
-        pending.completion.observe_snapshot_rpc(observation);
+        let (entry, pending) = batch_get_entry(request, context, forwarded_host);
         self.publish_transaction_command(physical_address, entry, pending, call)
     }
 

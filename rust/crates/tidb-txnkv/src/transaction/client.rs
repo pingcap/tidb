@@ -121,6 +121,7 @@ where
             ));
         }
         let authority_id = runtime.authority_id();
+        let lock_resolver_context = runtime.native_lock_resolver_context();
         let client = ClientPd::new(runtime, timestamps);
         let mut transaction = tikv_client::Transaction::new(
             Timestamp::from_version(start_ts),
@@ -128,6 +129,7 @@ where
             TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn),
             tikv_client::request::Keyspace::Disable,
         );
+        transaction.set_lock_resolver_context(lock_resolver_context);
         let snapshot_stats = Arc::new(tikv_client::SnapshotRuntimeStats::default());
         transaction.set_snapshot_runtime_stats(Some(snapshot_stats.clone()));
         let commit_mode = Arc::new(std::sync::Mutex::new(None));
@@ -226,6 +228,14 @@ impl<C, L, T> ClientTransaction<C, L, T> {
     fn prepare_read(&mut self, read_ts: u64, call: &UnaryCallContext) {
         self.client.set_call(call);
         self.client.take_read_trace();
+        self.engine
+            .transaction_mut()
+            .inner_mut()
+            .set_enable_async_batch_get(
+                tidb_config::config_tree::config::get_global_config()
+                    .performance
+                    .enable_async_batch_get,
+            );
         if self.read_ts != read_ts {
             self.engine
                 .transaction_mut()
@@ -294,9 +304,10 @@ impl<C, L, T> ClientTransaction<C, L, T> {
         let values = self
             .engine
             .transaction_mut()
-            .batch_get(keys.iter().cloned())
+            .block_on(|transaction| transaction.batch_get_with_options(keys.iter().cloned(), &[]))
             .map_err(Self::client_read_error)?
-            .map(|pair| (Vec::from(pair.0), pair.1))
+            .into_iter()
+            .map(|(key, entry)| (Vec::from(key), entry.value))
             .collect();
         if self.client.take_read_trace().rpc_count > 0 {
             self.gc_state
@@ -659,7 +670,7 @@ impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
     }
     /// Allocates a fresh statement timestamp and forwards the native fair retry hook.
     pub fn advance_for_update_ts(&mut self) -> Result<u64, super::PessimisticLockFailure> {
-        use tikv_client::pd::PdClient;
+        use tikv_client::PdClient;
         let timestamp = client_bridge::runtime()
             .block_on(self.transaction.client.clone().get_timestamp())
             .map_err(|error| {

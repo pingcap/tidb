@@ -231,6 +231,7 @@ struct ScriptedTikv {
     /// When set, the first Prewrite answers `KeyIsLocked` with a lock whose
     /// `lock_version` is this timestamp. Every later Prewrite succeeds.
     prewrite_blocked_by: Arc<Mutex<Option<u64>>>,
+    rolled_back_txns: Arc<Mutex<std::collections::HashSet<u64>>>,
     recorded: Arc<Mutex<Recorded>>,
     /// Hold rollback replies until every region in the round is published.
     rollback_batch_width: usize,
@@ -248,6 +249,7 @@ impl ScriptedTikv {
         Self {
             locks: Arc::new(Mutex::new(locks)),
             prewrite_blocked_by: Arc::new(Mutex::new(None)),
+            rolled_back_txns: Arc::new(Mutex::new(Default::default())),
             recorded: Arc::new(Mutex::new(Recorded::default())),
             rollback_batch_width: 1,
             rollback_packets: Arc::new(Mutex::new(Vec::new())),
@@ -255,9 +257,10 @@ impl ScriptedTikv {
         }
     }
 
-    /// Scripts the first Prewrite to report a lock held by `lock_ts`.
+    /// Scripts a stale first-prewrite lock and its determined rollback status.
     fn block_first_prewrite_with(&self, lock_ts: u64) {
         *self.prewrite_blocked_by.lock().unwrap() = Some(lock_ts);
+        self.rolled_back_txns.lock().unwrap().insert(lock_ts);
     }
 
     /// Later attempts than the script describes are granted, which models a
@@ -582,6 +585,7 @@ impl ScriptedTikv {
 struct ScriptedService {
     inner: TikvServer<ScriptedTikv>,
     recorded: Arc<Mutex<Recorded>>,
+    rolled_back_txns: Arc<Mutex<std::collections::HashSet<u64>>>,
 }
 
 impl<B> Service<tonic::codegen::http::Request<B>> for ScriptedService
@@ -604,7 +608,10 @@ where
         if request.uri().path() != "/tikvpb.Tikv/KvCheckTxnStatus" {
             return self.inner.call(request);
         }
-        struct CheckStatus(Arc<Mutex<Recorded>>);
+        struct CheckStatus(
+            Arc<Mutex<Recorded>>,
+            Arc<Mutex<std::collections::HashSet<u64>>>,
+        );
         impl tonic::server::UnaryService<KvrpcCheckTxnStatusRequest> for CheckStatus {
             type Response = KvrpcCheckTxnStatusResponse;
             type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
@@ -614,6 +621,15 @@ where
                 request: tonic::Request<KvrpcCheckTxnStatusRequest>,
             ) -> Self::Future {
                 let request = request.into_inner();
+                if self.1.lock().unwrap().contains(&request.lock_ts) {
+                    self.0.lock().unwrap().status_checks.push(request);
+                    return Box::pin(async {
+                        Ok(tonic::Response::new(KvrpcCheckTxnStatusResponse {
+                            action: tidb_proto::kvrpcpb::Action::LockNotExistRollback as i32,
+                            ..Default::default()
+                        }))
+                    });
+                }
                 if request.lock_ts != BLOCKER_TS {
                     return Box::pin(async {
                         Err(tonic::Status::unimplemented(
@@ -632,9 +648,12 @@ where
             }
         }
         let recorded = Arc::clone(&self.recorded);
+        let rolled_back_txns = Arc::clone(&self.rolled_back_txns);
         Box::pin(async move {
             let mut grpc = tonic::server::Grpc::new(tonic_prost::ProstCodec::default());
-            Ok(grpc.unary(CheckStatus(recorded), request).await)
+            Ok(grpc
+                .unary(CheckStatus(recorded, rolled_back_txns), request)
+                .await)
         })
     }
 }
@@ -665,6 +684,7 @@ impl TestServer {
                 let server = tonic::transport::Server::builder()
                     .add_service(ScriptedService {
                         recorded: Arc::clone(&service.recorded),
+                        rolled_back_txns: Arc::clone(&service.rolled_back_txns),
                         inner: TikvServer::new(service),
                     })
                     .serve_with_shutdown(address, async {
@@ -1692,6 +1712,7 @@ fn a_pessimistic_committer_resolves_a_newer_prewrite_lock_instead_of_conflicting
     let service = ScriptedTikv::new(vec![LockOutcome::Granted]);
     // Strictly newer than this transaction, which is the whole shortcut.
     service.block_first_prewrite_with(START_TS + 50);
+    let recorded = Arc::clone(&service.recorded);
     let server = TestServer::start(service);
     let mut transaction = transaction(SingleRegion::new(server.store_address()));
     transaction
@@ -1710,8 +1731,16 @@ fn a_pessimistic_committer_resolves_a_newer_prewrite_lock_instead_of_conflicting
         )
         .expect("the two-phase commit runs to a terminal outcome");
 
-    assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)),
-        "a newer lock must enter the client's recovery/retry path, not report an optimistic conflict");
+    assert!(
+        matches!(outcome, OptimisticCommitOutcome::Committed(_)),
+        "a newer lock must enter the client's recovery/retry path: {outcome:?}"
+    );
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.prewrites.len(), 2);
+    assert!(recorded
+        .status_checks
+        .iter()
+        .any(|request| request.lock_ts == START_TS + 50));
 }
 
 // -----------------------------------------------------------------------------

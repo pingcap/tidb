@@ -1729,6 +1729,8 @@ pub struct ResolveLocksContext {
     pub(crate) trace_context: crate::trace::TraceContext,
     pub(crate) pessimistic_region_resolve: bool,
     pub(crate) force_lite: bool,
+    // Per-operation state; the store-owned context is cloned before attaching it.
+    pub(crate) retry_owner: Option<Arc<Mutex<crate::retry::RetryBackoffer>>>,
     async_resolve_pool: AsyncResolveTaskPool,
 }
 
@@ -1745,6 +1747,7 @@ impl Default for ResolveLocksContext {
             trace_context: crate::trace::current_trace_context(),
             pessimistic_region_resolve: false,
             force_lite: false,
+            retry_owner: None,
             async_resolve_pool: AsyncResolveTaskPool::new(ASYNC_READ_RESOLVE_LOCKS.clone()),
         }
     }
@@ -2415,20 +2418,37 @@ impl LockResolver {
             resolving_pessimistic_lock,
             is_txn_file,
         );
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
+        let builder = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
             .keyspace_name_option(keyspace_name)
             .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
             .resource_group_option(self.ctx.resource_group_name.as_deref())
             .resource_control_option(self.ctx.resource_control.clone())
             .ru_details_option(self.ctx.ru_details.clone())
             .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
-            .count_lock_resolver_action("query_txn_status")
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .merge(CollectSingle)
-            .extract_error()
-            .post_process_default()
-            .plan();
-        let mut status: TransactionStatus = match plan.execute().await {
+            .count_lock_resolver_action("query_txn_status");
+        let result = if let Some(owner) = &self.ctx.retry_owner {
+            builder
+                .retry_multi_region_with_source_retry_owner(
+                    DEFAULT_REGION_BACKOFF,
+                    Arc::clone(owner),
+                )
+                .merge(CollectSingle)
+                .extract_error()
+                .post_process_default()
+                .plan()
+                .execute()
+                .await
+        } else {
+            builder
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .merge(CollectSingle)
+                .extract_error()
+                .post_process_default()
+                .plan()
+                .execute()
+                .await
+        };
+        let mut status: TransactionStatus = match result {
             Ok(status) => status,
             Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
                 Some(Error::KeyError(key_err)) => {
@@ -2644,6 +2664,18 @@ impl LockResolver {
                         return Ok(Arc::new(status));
                     }
 
+                    if let Some(owner) = &self.ctx.retry_owner {
+                        owner
+                            .lock()
+                            .await
+                            .backoff(
+                                crate::retry::BO_TXN_NOT_FOUND,
+                                format!("transaction not found: {txn_not_found:?}"),
+                            )
+                            .await
+                            .map_err(Error::from)?;
+                        continue;
+                    }
                     if let Some(duration) = backoff.next_delay_duration() {
                         sleep(duration).await;
                         continue;
@@ -3034,6 +3066,74 @@ mod tests {
         .execute()
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn nested_status_retries_charge_the_callers_backoffer() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let dispatched = Arc::clone(&requests);
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request| {
+                assert!(request.is::<kvrpcpb::CheckTxnStatusRequest>());
+                let response = match dispatched.fetch_add(1, Ordering::SeqCst) {
+                    0 | 2 => kvrpcpb::CheckTxnStatusResponse {
+                        error: Some(kvrpcpb::KeyError {
+                            txn_not_found: Some(Default::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    1 => kvrpcpb::CheckTxnStatusResponse {
+                        region_error: Some(crate::proto::errorpb::Error {
+                            server_is_busy: Some(crate::proto::errorpb::ServerIsBusy {
+                                reason: "injected status retry".into(),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    _ => kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 10,
+                        ..Default::default()
+                    },
+                };
+                Ok(Box::new(response) as Box<dyn Any>)
+            },
+        )));
+        let owner = Arc::new(Mutex::new(crate::retry::RetryBackoffer::new(
+            Cancellation::default(),
+            10_000,
+        )));
+        let context = ResolveLocksContext {
+            retry_owner: Some(Arc::clone(&owner)),
+            ..Default::default()
+        };
+        let mut resolver = LockResolver::new(context);
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![1],
+            lock_version: 1,
+            lock_ttl: 10_000,
+            ..Default::default()
+        };
+        resolver
+            .get_txn_status_from_lock(
+                OPTIMISTIC_BACKOFF,
+                &lock,
+                20,
+                0,
+                false,
+                pd,
+                Keyspace::Disable,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(requests.load(Ordering::SeqCst), 4);
+        let owner = owner.lock().await;
+        assert_eq!(owner.times_by_type().get("txnNotFound"), Some(&2));
+        assert_eq!(owner.times_by_type().get("tikvServerBusy"), Some(&1));
     }
 
     #[tokio::test]

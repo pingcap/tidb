@@ -24,7 +24,7 @@ use tidb_txnkv::{
     SharedReadRuntime, TikvTransactionDriver, UnaryCallContext,
 };
 use tidb_unistore::{client::InProcessClient, region_loader::InProcessRegionLoader};
-use tikv_client::{pd::PdClient, Transaction, TransactionOptions};
+use tikv_client::{PdClient, Transaction, TransactionOptions};
 
 #[derive(Debug, Clone)]
 struct Oracle(Arc<tidb_unistore::tso::Tso>);

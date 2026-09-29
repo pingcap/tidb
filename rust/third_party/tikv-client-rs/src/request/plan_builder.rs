@@ -973,6 +973,8 @@ where
     }
 }
 
+// Retry implementations stay client-owned, as on RetryableMultiRegion itself.
+#[allow(private_bounds)]
 impl<PdC, P, R> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, R>, Targetted>
 where
     PdC: PdClient,

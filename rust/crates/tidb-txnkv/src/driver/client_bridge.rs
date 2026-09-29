@@ -27,10 +27,10 @@ use prost::Message;
 use std::any::Any;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-use tikv_client::pd::PdClient;
+use tikv_client::PdClient;
 use tikv_client::proto::{keyspacepb, kvrpcpb, metapb};
-use tikv_client::region::{RegionVerId, RegionWithLeader};
-use tikv_client::store::{KvClient, RegionStore, Request, Store};
+use tikv_client::{RegionVerId, RegionWithLeader};
+use tikv_client::tikv::{Client as KvClient, RegionStore, Request, Store};
 use tikv_client::{Error, Key, Result, Timestamp, TimestampExt};
 
 pub(crate) fn runtime() -> Arc<tokio::runtime::Runtime> {

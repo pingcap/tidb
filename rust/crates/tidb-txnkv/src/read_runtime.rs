@@ -52,6 +52,7 @@ pub struct ResolvingLock {
 
 #[derive(Default)]
 struct ResolvingLocks {
+    native: tikv_client::transaction::ResolveLocksContext,
     next_token: u64,
     entries: std::collections::HashMap<u64, Vec<ResolvingLock>>,
 }
@@ -248,6 +249,7 @@ where
         if let Some(pool) = &self.async_resolve_pool {
             pool.close_and_wait();
         }
+        self.close_native_lock_resolver();
         self.region_cache.shutdown()
     }
 
@@ -277,11 +279,25 @@ where
     }
 }
 
+impl<C, L> SharedReadAuthority<C, L> {
+    fn close_native_lock_resolver(&self) {
+        let context = self
+            .opener
+            .resolving_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .native
+            .clone();
+        futures::executor::block_on(context.close());
+    }
+}
+
 impl<C, L> Drop for SharedReadAuthority<C, L> {
     fn drop(&mut self) {
         if let Some(pool) = &self.async_resolve_pool {
             pool.close_and_wait();
         }
+        self.close_native_lock_resolver();
     }
 }
 
@@ -530,14 +546,43 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     /// Returns a point-in-time copy of all locks currently being resolved.
     #[must_use]
     pub fn resolving_locks(&self) -> Vec<ResolvingLock> {
+        let (mut locks, native) = {
+            let registry = self
+                .resolving_locks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                registry
+                    .entries
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                registry.native.clone(),
+            )
+        };
+        locks.extend(
+            futures::executor::block_on(native.resolving_locks())
+                .into_iter()
+                .map(|lock| ResolvingLock {
+                    txn_id: lock.txn_id,
+                    lock_txn_id: lock.lock_txn_id,
+                    key: lock.key,
+                    primary: lock.primary,
+                }),
+        );
+        locks
+    }
+
+    /// Native transaction sessions share the process store's resolver state.
+    pub(crate) fn native_lock_resolver_context(
+        &self,
+    ) -> tikv_client::transaction::ResolveLocksContext {
         self.resolving_locks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entries
-            .values()
-            .flatten()
-            .cloned()
-            .collect()
+            .native
+            .clone()
     }
 
     /// Returns a handle to the same region-cache authority.

@@ -840,7 +840,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .may_backoff_region_error(Some(error))
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 if error.epoch_not_match.is_some()
                     && !crate::retry::is_fake_region_error(Some(error))
@@ -864,7 +864,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff(BO_REGION_MISS, reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 let delay = backoff.next_delay_duration().ok_or_else(|| {
                     Error::StringError("txn file: region retry exhausted".to_owned())
@@ -883,7 +883,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff(BO_TIKV_RPC, reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 let delay = backoff.next_delay_duration().ok_or_else(|| {
                     Error::StringError("txn file: RPC retry exhausted".to_owned())
@@ -902,7 +902,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff_with_config_and_max_sleep(BO_TXN_LOCK, Some(max_sleep_ms), reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(_) => {
                 tokio::time::sleep(Duration::from_millis(max_sleep_ms)).await;
                 Ok(())
@@ -1385,7 +1385,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.replica_read_config = config;
     }
 
-    pub(crate) fn set_enable_async_batch_get(&mut self, enabled: bool) {
+    /// Select client-go's asynchronous BatchGet response handling for future reads.
+    /// Embedded store owners may refresh this from their published configuration.
+    pub fn set_enable_async_batch_get(&mut self, enabled: bool) {
         self.enable_async_batch_get = enabled;
     }
 
@@ -1397,7 +1399,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         });
     }
 
-    pub(crate) fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
+    /// Share the store-owned final-status cache, cleanup pool and resolving-lock
+    /// observations, as client-go KVTxn shares its store's LockResolver.
+    pub fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
         self.lock_resolver_context = context;
     }
 
@@ -4726,7 +4730,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             .scan_and_fetch(
                 range,
                 limit,
-                !key_only && !self.options.read_only,
+                // Go Scanner never populates the snapshot's point-read cache.
+                false,
                 reverse,
                 move |new_range, new_limit| async move {
                     let mut range = new_range;
@@ -6059,7 +6064,7 @@ async fn scatter_split_regions<PdC: PdClient>(
                         format!("scatter split region {region_id} failed: {error}"),
                     )
                     .await
-                    .map_err(|error| Error::StringError(error.to_string()))?,
+                    .map_err(Error::from)?,
             }
         }
     }
@@ -6096,7 +6101,7 @@ async fn wait_scatter_region_finish<PdC: PdClient>(rpc: Arc<PdC>, region_id: u64
         retry
             .backoff(BO_REGION_MISS, reason)
             .await
-            .map_err(|error| Error::StringError(error.to_string()))?;
+            .map_err(Error::from)?;
     }
 }
 
@@ -8919,7 +8924,7 @@ impl<PdC: PdClient> Committer<PdC> {
                                 format!("standard 2PC prewrite result undetermined: {error}"),
                             )
                             .await
-                            .map_err(|error| Error::StringError(error.to_string()))?;
+                            .map_err(Error::from)?;
                         return Box::pin(self.prewrite_with_retry_owner(Some(owner))).await;
                     }
                 }
@@ -9660,6 +9665,49 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
     use fail::FailScenario;
+
+    #[tokio::test]
+    async fn source_transaction_file_retry_preserves_terminal_error_identity() {
+        for kind in 0..4 {
+            let mut backoff = super::TxnFileRetryBackoff::Source(Arc::new(
+                tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                    crate::async_util::Cancellation::default(),
+                    1,
+                )),
+            ));
+            let expected = match kind {
+                1 => crate::error::ERR_TIKV_SERVER_TIMEOUT,
+                2 => crate::error::ERR_RESOLVE_LOCK_TIMEOUT,
+                _ => crate::error::ERR_REGION_UNAVAILABLE,
+            };
+            let mut terminal = None;
+            for _ in 0..8 {
+                let result = match kind {
+                    0 => backoff.backoff_region_miss("missing region").await,
+                    1 => backoff.backoff_rpc("RPC failed").await,
+                    2 => backoff.backoff_lock(1, "live lock").await,
+                    _ => {
+                        backoff
+                            .backoff_region_error(&crate::proto::errorpb::Error {
+                                region_not_found: Some(
+                                    crate::proto::errorpb::RegionNotFound::default(),
+                                ),
+                                ..Default::default()
+                            })
+                            .await
+                    }
+                };
+                if let Err(error) = result {
+                    terminal = Some(error);
+                    break;
+                }
+            }
+            assert!(
+                matches!(terminal, Some(Error::Static(error)) if error == expected),
+                "kind={kind}: {terminal:?}"
+            );
+        }
+    }
 
     #[test]
     fn source_uncovered_effective_wait_preserves_future_start_time() {
