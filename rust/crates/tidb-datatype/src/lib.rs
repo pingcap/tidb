@@ -151,7 +151,8 @@ pub use datum::{
     DatumValueError, StringDatum,
 };
 pub use datum_convert::{
-    change_reverse_result_by_bound, get_max_value, get_min_value, produce_float_with_type,
+    change_reverse_result_by_bound, get_max_value, get_min_value,
+    produce_decimal_with_type_in_context, produce_float_with_type,
     produce_float_with_type_in_context, produce_string_with_type,
     produce_string_with_type_in_context, DatumConversion, RoundingType,
 };

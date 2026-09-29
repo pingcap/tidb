@@ -990,6 +990,54 @@ impl Datum {
     }
 }
 
+/// Go `ProduceDecWithSpecifiedTp`, distinct from `Datum.ConvertTo(DECIMAL)`.
+/// Scale loss is a direct warning; overflow is returned for statement policy.
+pub fn produce_decimal_with_type_in_context(
+    mut value: Decimal,
+    target: &FieldType,
+    context: &crate::ConversionContext<'_>,
+) -> DatumConversion {
+    let mut error = None;
+    if target.flen() != UNSPECIFIED_LENGTH && target.decimal() != UNSPECIFIED_LENGTH {
+        if target.flen() < target.decimal() {
+            return DatumConversion {
+                value: Datum::Null,
+                error: Some(crate::ERR_M_BIGGER_THAN_D.generate(
+                    "For float(M,D), double(M,D) or decimal(M,D), M must be >= D".to_owned(),
+                )),
+            };
+        }
+        let original = value;
+        let rounded = original.round_to_scale(target.decimal() as i32);
+        value = match rounded.fit_precision_scale(target.flen() as u32, target.decimal() as u32) {
+            Some(value) => {
+                if value != original {
+                    context.append_warning(
+                        ERR_TRUNCATED_WRONG_VALUE
+                            .generate(format!("Truncated incorrect DECIMAL value: '{original}'",)),
+                    );
+                }
+                value
+            }
+            None => {
+                error = Some(decimal_target_overflow(target));
+                Decimal::max_or_min(
+                    rounded.is_negative(),
+                    target.flen() as u32,
+                    target.decimal() as u32,
+                )
+            }
+        };
+    }
+    if target.is_unsigned() && value.is_negative() {
+        value = value.unsigned_production_zero();
+    }
+    DatumConversion {
+        value: Datum::Decimal(value),
+        error,
+    }
+}
+
 /// Source `ProduceFloatWithSpecifiedTp`.
 pub fn produce_float_with_type(value: f64, target: &FieldType) -> Converted<f64> {
     produce_float_reported(value, target, &mut Diagnostics::new(None))

@@ -481,6 +481,72 @@ mod child_error_tests {
 }
 #[cfg(test)]
 mod next_boundary_audit {
+    #[test]
+    fn typed_pb_conversion_matches_go() {
+        use prost::Message;
+        use std::fmt::Write;
+        fn unhex(s: &str) -> Vec<u8> {
+            s.as_bytes()
+                .chunks_exact(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect()
+        }
+        fn hex(s: &[u8]) -> String {
+            let mut out = String::new();
+            for b in s {
+                write!(&mut out, "{b:02x}").unwrap();
+            }
+            out
+        }
+        let input = include_str!(
+            "../../../../docs/planner/pb-systematic-audit-20260928/pb-systematic-go.tsv"
+        );
+        let mut differences = Vec::new();
+        for line in input.lines() {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            let name = fields[0];
+            let signature = name.split('/').next().unwrap();
+            if !signature.starts_with("Cast")
+                || !(signature.ends_with("AsInt")
+                    || signature.ends_with("AsReal")
+                    || signature.ends_with("AsDecimal"))
+            {
+                continue;
+            }
+            let flags = fields[1].parse::<u64>().unwrap();
+            let context = RequestEvalContext::new(SessionTimeZone::utc(), 4, flags);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let pb = tidb_proto::tipb::Expr::decode(unhex(fields[2]).as_slice()).unwrap();
+                let expr = match tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]) {
+                    Ok(expr) => expr,
+                    Err(error) => return ("decode_error".to_owned(), error),
+                };
+                match expr.eval(&context, tidb_chunk::row::Row::empty()) {
+                    Err(tidb_expr::EvalError::Conversion(error)) => {
+                        let expected = String::from_utf8(unhex(fields[4])).unwrap();
+                        assert_eq!(error.to_string(), expected, "{name} flags={flags}");
+                        ("error".to_owned(), error.to_string())
+                    }
+                    Err(error) => ("error".to_owned(), format!("{error:?}")),
+                    Ok(Datum::Null) => ("null".to_owned(), String::new()),
+                    Ok(Datum::Real(value) | Datum::Float32(value)) => {
+                        (format!("real:{:016x}", value.to_bits()), String::new())
+                    }
+                    Ok(value) => (
+                        format!("value:{}", hex(&value.sql_bytes().unwrap())),
+                        String::new(),
+                    ),
+                }
+            }));
+            let (result, detail) = result.unwrap_or_else(|_| ("panic".to_owned(), String::new()));
+            let warnings = context.take_warnings();
+            if result != fields[3] || warnings.len().to_string() != fields[5] {
+                differences.push(format!("{name} flags={flags}: got {result}, {} warnings ({detail}); want {}, {} warnings", warnings.len(), fields[3], fields[5]));
+            }
+        }
+        assert!(differences.is_empty(), "{}", differences.join("\n"));
+    }
+
     use super::*;
     use tidb_proto::tipb;
 

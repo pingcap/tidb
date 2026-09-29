@@ -87,6 +87,251 @@ pub(crate) fn eval_string_cast_with_type(
     Ok(converted.value)
 }
 
+/// Evaluate numeric cast signatures without reducing their wire FieldType to
+/// an AST type. Go's source conversion and result production are separate steps.
+pub(crate) fn eval_numeric_cast_with_type(
+    value: Datum,
+    source: EvalType,
+    source_field: Option<&FieldType>,
+    target: &FieldType,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    use tidb_datatype::{DecimalError, MyDecimal, ScalarConversionError};
+    let warnings = crate::constant::ConversionWarnings(ctx);
+    let zone = ctx.time_zone();
+    let context = tidb_datatype::ConversionContext::new(
+        ctx.type_flags(),
+        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+        &warnings,
+    );
+    let handle = |error| {
+        context
+            .handle_truncate(error)
+            .map_or(Ok(()), |error| Err(EvalError::Conversion(error)))
+    };
+    let overflow = |error: ScalarConversionError| match error {
+        ScalarConversionError::Overflow { value, target } => {
+            tidb_datatype::ERR_OVERFLOW.generate(format!(
+                "constant {value} overflows {}",
+                tidb_datatype::type_str(target)
+            ))
+        }
+        _ => tidb_datatype::ERR_OVERFLOW.clone(),
+    };
+    let value = match value {
+        Datum::Int(value)
+            if source == EvalType::Int
+                && matches!(target.eval_type(), EvalType::Real | EvalType::Decimal)
+                && (target.is_unsigned() || source_field.is_some_and(FieldType::is_unsigned)) =>
+        {
+            Datum::UInt(value as u64)
+        }
+        value => value,
+    };
+    match target.eval_type() {
+        EvalType::Decimal => {
+            let decimal = if source == EvalType::String {
+                let bytes = value
+                    .as_raw_bytes()
+                    .ok_or(EvalError::Unsupported("decimal cast string"))?;
+                let text = String::from_utf8_lossy(bytes);
+                let text = text.trim();
+                let (decimal, error) = MyDecimal::from_string(text.as_bytes());
+                let error = error.map(|error| match error {
+                    DecimalError::Truncated => tidb_datatype::ERR_TRUNCATED_WRONG_VALUE
+                        .generate(format!("Truncated incorrect DECIMAL value: '{text}'")),
+                    DecimalError::Overflow => tidb_datatype::ERR_OVERFLOW.clone(),
+                    DecimalError::BadNumber => tidb_datatype::ERR_BAD_NUMBER.clone(),
+                    DecimalError::TruncatedWrongValue => tidb_datatype::ERR_TRUNCATED_WRONG_VALUE
+                        .generate(format!("Truncated incorrect DECIMAL value: '{text}'")),
+                });
+                handle(error)?;
+                Decimal::from_my_decimal(&decimal)
+            } else if let Datum::Real(value) | Datum::Float32(value) = value {
+                let (decimal, error) = MyDecimal::from_float64(value);
+                match error {
+                    // The cast signature explicitly ignores fraction loss.
+                    None | Some(DecimalError::Truncated) => {}
+                    Some(DecimalError::Overflow) => match ctx.truncate_level() {
+                        crate::ErrorLevel::Error => {
+                            return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()))
+                        }
+                        crate::ErrorLevel::Warn => ctx.append_warning(
+                            1292,
+                            &format!(
+                                "Truncated incorrect DECIMAL value: '{}'",
+                                tidb_datatype::format_float_g_shortest(value)
+                            ),
+                        ),
+                        crate::ErrorLevel::Ignore => {}
+                    },
+                    Some(_) => {
+                        return Err(EvalError::Conversion(tidb_datatype::ERR_BAD_NUMBER.clone()))
+                    }
+                }
+                Decimal::from_my_decimal(&decimal)
+            } else {
+                let (decimal, error) = value
+                    .to_decimal_with_context(&context)
+                    .map_err(|_| EvalError::Unsupported("numeric cast decimal source"))?;
+                // JSON conversion already applies its type context; numeric
+                // sources return their original diagnostic to the expression.
+                handle(error)?;
+                decimal
+            };
+            let result =
+                tidb_datatype::produce_decimal_with_type_in_context(decimal, target, &context);
+            handle(result.error)?;
+            Ok(result.value)
+        }
+        EvalType::Real => {
+            if source == EvalType::String {
+                let result = str_to_real_for_cast(&value, ctx)?;
+                let result =
+                    tidb_datatype::produce_float_with_type_in_context(result, target, &context);
+                return result
+                    .error
+                    .map_or(Ok(result.value), |error| Err(EvalError::Conversion(error)));
+            }
+            if let Datum::Json(json) = &value {
+                if let Some(bytes) = json.as_string() {
+                    // ConvertJSONToFloat uses StrToFloat(..., false), unlike
+                    // the explicit string-as-real signature's cast parser.
+                    let converted = Datum::new_string(bytes.to_vec())
+                        .convert_to_in_context(
+                            &FieldType::new(FieldTypeCode::Double),
+                            &context,
+                            &zone,
+                        )
+                        .map_err(|_| EvalError::Unsupported("JSON numeric string"))?;
+                    return converted.error.map_or(Ok(converted.value), |error| {
+                        Err(EvalError::Conversion(error))
+                    });
+                }
+            }
+            let converted = value
+                .to_f64()
+                .map_err(|_| EvalError::Unsupported("real cast source"))?;
+            if converted.event.is_some() {
+                handle(Some(tidb_datatype::ERR_TRUNCATED_WRONG_VALUE.generate(
+                    format!(
+                        "Truncated incorrect FLOAT value: '{}'",
+                        datum_sql_string(&value)?
+                    ),
+                )))?;
+            }
+            Ok(Datum::Real(converted.value))
+        }
+        EvalType::Int => {
+            let unsigned = target.is_unsigned();
+            let integer = |value: i64| {
+                if unsigned {
+                    Datum::UInt(value as u64)
+                } else {
+                    Datum::Int(value)
+                }
+            };
+            match value {
+                Datum::Int(value) => Ok(integer(value)),
+                Datum::UInt(value) => Ok(integer(value as i64)),
+                Datum::Real(value) | Datum::Float32(value) => {
+                    let result = if unsigned {
+                        tidb_datatype::convert_float_to_uint(
+                            ctx.type_flags(),
+                            value,
+                            u64::MAX,
+                            FieldTypeCode::LongLong,
+                        )
+                        .map(|value| value as i64)
+                        .map_err(|(value, error)| (value as i64, error))
+                    } else {
+                        tidb_datatype::convert_float_to_int(
+                            value,
+                            i64::MIN,
+                            i64::MAX,
+                            FieldTypeCode::LongLong,
+                        )
+                    };
+                    // Numeric conversion primitives return a saturated value beside the error.
+                    match result {
+                        Ok(value) => Ok(integer(value)),
+                        Err((converted, _error)) => {
+                            handle(Some(tidb_datatype::ERR_OVERFLOW.generate(format!(
+                                "constant {} overflows bigint",
+                                tidb_datatype::format_float_g_shortest(tidb_datatype::round_float(
+                                    value
+                                )),
+                            ))))?;
+                            Ok(integer(converted))
+                        }
+                    }
+                }
+                Datum::Decimal(value) => {
+                    let rounded = value.round_to_scale(0);
+                    let (result, error) = if unsigned {
+                        let (value, error) = rounded.to_u64_trunc();
+                        (value as i64, error)
+                    } else {
+                        rounded.to_i64_trunc()
+                    };
+                    if error.is_some() {
+                        let error = tidb_datatype::ERR_OVERFLOW.clone();
+                        match ctx.truncate_level() {
+                            crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
+                            crate::ErrorLevel::Warn => ctx.append_warning(
+                                1292,
+                                &format!("Truncated incorrect DECIMAL value: '{value}'"),
+                            ),
+                            crate::ErrorLevel::Ignore => {}
+                        }
+                    }
+                    Ok(integer(result))
+                }
+                Datum::Json(json) => {
+                    if let Some(bytes) = json.as_string() {
+                        // ConvertJSONToInt chooses StrToInt for a negative
+                        // string and StrToUint otherwise, independently of the
+                        // result's unsigned flag. Keep the parser diagnostics.
+                        let mut parsed_type = FieldType::new(FieldTypeCode::LongLong);
+                        if !(bytes.len() > 1 && bytes[0] == b'-') {
+                            parsed_type.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+                        }
+                        let converted = Datum::new_string(bytes.to_vec())
+                            .convert_to_in_context(&parsed_type, &context, &zone)
+                            .map_err(|_| EvalError::Unsupported("JSON integer string"))?;
+                        handle(converted.error)?;
+                        return match converted.value {
+                            Datum::Int(value) => Ok(integer(value)),
+                            Datum::UInt(value) => Ok(integer(value as i64)),
+                            _ => Err(EvalError::Unsupported("JSON integer conversion result")),
+                        };
+                    }
+                    let result = tidb_datatype::json_to_int64(&json, unsigned, ctx.type_flags());
+                    if let Some(event) = result.event {
+                        handle(Some(match event {
+                            ScalarConversionEvent::Overflow(error) => overflow(error),
+                            _ => tidb_datatype::ERR_TRUNCATED_WRONG_VALUE
+                                .generate(format!("Truncated incorrect INTEGER value: '{json}'")),
+                        }))?;
+                    }
+                    Ok(integer(result.value))
+                }
+                value => eval_cast_value(
+                    if unsigned {
+                        &CastType::Unsigned
+                    } else {
+                        &CastType::Signed
+                    },
+                    value,
+                    source_field,
+                    ctx,
+                ),
+            }
+        }
+        _ => Err(EvalError::Unsupported("non-numeric cast result")),
+    }
+}
+
 /// Internal marker used when a wrapper carries Go's `UnspecifiedLength`
 /// decimal scale through the AST-facing `CastType::Decimal` (whose fields are
 /// unsigned).  A wrapper cast with an unspecified scale must preserve the
@@ -108,6 +353,44 @@ pub(crate) fn eval_cast(
     cast_type: &CastType,
     v: Datum,
     source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    let mut target = match cast_type {
+        CastType::Signed | CastType::Unsigned => FieldType::new(FieldTypeCode::LongLong),
+        CastType::Double => FieldType::new(FieldTypeCode::Double),
+        CastType::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
+        _ => return eval_cast_value(cast_type, v, source, ctx),
+    };
+    if matches!(cast_type, CastType::Unsigned) {
+        target.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+    }
+    if let CastType::Decimal { flen, scale } = cast_type {
+        target.set_flen(if *flen == 0 {
+            tidb_datatype::UNSPECIFIED_LENGTH
+        } else {
+            i64::from(*flen)
+        });
+        target.set_decimal(if *scale == UNSPECIFIED_CAST_SCALE {
+            tidb_datatype::UNSPECIFIED_LENGTH
+        } else {
+            i64::from(*scale)
+        });
+    }
+    // AST callers may already have applied UNION's negative-to-zero rule.
+    // Go selects numeric signatures for hybrid types and binary literals.
+    let inferred = tidb_datatype::infer_param_type_from_datum(&v);
+    let domain = match &v {
+        Datum::BinaryLiteral(_) | Datum::Bit(_) => EvalType::Decimal,
+        Datum::Enum(..) | Datum::Set(..) => EvalType::Int,
+        _ => inferred.eval_type(),
+    };
+    eval_numeric_cast_with_type(v, domain, Some(source.unwrap_or(&inferred)), &target, ctx)
+}
+
+fn eval_cast_value(
+    cast_type: &CastType,
+    v: Datum,
+    source: Option<&FieldType>,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     if v.is_range_sentinel() {
@@ -238,21 +521,7 @@ pub(crate) fn eval_cast(
                 None => bytes,
             }))
         }
-        CastType::Decimal { flen, scale } => {
-            report_decimal_input_truncation(&v, ctx);
-            let source = to_decimal_for_cast(&v);
-            // `WrapWithCastAsDecimal` leaves the target scale unspecified for
-            // REAL/string/temporal sources. Go's `ProduceDecWithSpecifiedTp`
-            // returns that value unchanged when either half of the target
-            // shape is unspecified, so do not reinterpret the internal
-            // sentinel as scale 0.
-            if *scale == UNSPECIFIED_CAST_SCALE {
-                return Ok(Datum::Decimal(source));
-            }
-            let produced = source.cast_to_precision(*flen, *scale);
-            report_decimal_production(ctx, &source, &produced, *flen, *scale);
-            Ok(Datum::Decimal(produced))
-        }
+        CastType::Decimal { .. } | CastType::Double => eval_cast(cast_type, v, source, ctx),
         CastType::Date => cast_to_time(&v, source, ctx, tidb_datatype::TimeType::Date, 0),
         CastType::DateTime { fsp } => cast_to_time(
             &v,
@@ -262,10 +531,6 @@ pub(crate) fn eval_cast(
             i64::from(fsp.unwrap_or(0)),
         ),
         CastType::Year => cast_to_year(&v, ctx),
-        CastType::Double => {
-            let converted = str_to_real_for_cast(&v, ctx)?;
-            Ok(Datum::Real(converted))
-        }
         // go's FLOAT cast narrows through float32, and the two operand kinds
         // diverge (captured on the oracle): a TEXT value beyond the float32
         // range is `types.ErrOverflow`'s "constant 1e+300 overflows float"
@@ -465,56 +730,6 @@ fn report_data_too_long(ctx: &dyn crate::Columns, data_len: usize, field_len: us
         ctx.append_warning(
             1406,
             &format!("Data Too Long, field len {field_len}, data len {data_len}"),
-        );
-    }
-}
-
-/// Go `types.ProduceDecWithSpecifiedTp` (`pkg/types/datum.go:1629-1666`),
-/// warning half. Two mutually exclusive events, in Go's own `else if` order:
-///
-///  * the rounded value no longer fits `flen - scale` integer digits, so it
-///    is clamped to the max/min decimal and `ErrOverflow` (1690) reports
-///    `DECIMAL value is out of range in '(flen, scale)'`;
-///  * otherwise, if rounding to `scale` CHANGED the value, `ErrTruncatedWrongVal`
-///    (1292) reports `Truncated incorrect DECIMAL value: '<original>'` -- with
-///    the ORIGINAL text, not the rounded one.
-///
-/// The overflow arm suppresses the truncation arm even when both are true.
-/// Captured: `CAST(1234.56 AS DECIMAL(4,1))`, which both overflows AND loses
-/// a digit to rounding, warns 1690 ONLY -- that case is what makes the `else`
-/// load-bearing, and turning it into a second `if` is the mutation the corpus
-/// now catches. `CAST(123.456 AS DECIMAL(10,2))` warns 1292 with `'123.456'`.
-///
-/// Go's guard is `flen != UnspecifiedLength && decimal != UnspecifiedLength`;
-/// [`tidb_ast::CastType::Decimal`] carries `flen == 0` for unspecified, which
-/// is the same gate [`Decimal::cast_to_precision`] uses to skip the clamp.
-fn report_decimal_production(
-    ctx: &dyn crate::Columns,
-    source: &Decimal,
-    produced: &Decimal,
-    flen: u32,
-    scale: u32,
-) {
-    if flen == 0 {
-        return;
-    }
-    let rounded = source.round_to_scale(scale as i32);
-    let int_digits = rounded.coefficient_digits().len() as u32 - rounded.storage_scale();
-    if int_digits > flen.saturating_sub(scale) {
-        // go appends only the GenWithStackByArgs-formatted row here
-        // (`ProduceDecWithSpecifiedTp` -> `ec.HandleError`); the raw
-        // "%s value is out of range in '%s'" template row belongs to the
-        // string-to-decimal PARSE site's ErrOverflow, not to the production
-        // clamp (oracle: CAST('99999999999999999999' AS DECIMAL(10,2)) warns
-        // 1690 once, formatted).
-        ctx.append_warning(
-            1690,
-            &format!("DECIMAL value is out of range in '({flen}, {scale})'"),
-        );
-    } else if source.storage_scale() > scale && produced != source {
-        ctx.append_warning(
-            1292,
-            &format!("Truncated incorrect DECIMAL value: '{source}'"),
         );
     }
 }
@@ -1033,42 +1248,6 @@ fn binary_pad_truncate(s: &[u8], n: usize) -> Vec<u8> {
     bytes
 }
 
-/// Coerces an arbitrary source value to [`Decimal`] for `CAST(... AS
-/// DECIMAL(...))`'s own operand — a WIDER domain than `crate::ops`'s own
-/// `to_decimal`, which only ever sees `Int`/`Decimal` (guarded there by
-/// `eval_binary`'s upstream `Str`/`Float` interception; `CAST` has no
-/// such guard, so its operand can be any value).
-fn to_decimal_for_cast(v: &Datum) -> Decimal {
-    match v {
-        Datum::Decimal(d) => d.clone(),
-        Datum::Int(i) => Decimal::from_int(*i),
-        Datum::UInt(i) => Decimal::from_uint(*i),
-        // `f64`'s own `Display` is accepted by the decimal prefix parser;
-        // scientific notation remains exact through the same parser used for
-        // string operands.
-        Datum::Real(f) => decimal_prefix(&f.to_string()),
-        Datum::String(s) => s
-            .as_utf8()
-            .map(|text| Decimal::parse_mysql(text).0)
-            .unwrap_or_else(|_| Decimal::from_int(0)),
-        Datum::Bytes(s) => std::str::from_utf8(s)
-            .map(|text| Decimal::parse_mysql(text).0)
-            .unwrap_or_else(|_| Decimal::from_int(0)),
-        Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
-        other => other
-            .to_decimal()
-            .map_or_else(|_| Decimal::from_int(0), |converted| converted.value),
-    }
-}
-
-/// `to_f64_for_cast`'s numeric prefix scan: a FULLER prefix than
-/// [`str_int_prefix`]'s own digit-run-only scan —
-/// optional whitespace, sign, digits, optional `.` + digits, optional
-/// exponent (confirmed via `goeval`: `CAST('3.5abc' AS DECIMAL)` sees
-/// `3.5abc`'s leading `3.5`, and `CAST('1e2' AS DECIMAL)` is `100`, both
-/// stopping at the first character that doesn't extend the number). Exact
-/// digit-string arithmetic when there's no exponent (the common case);
-/// an exponent suffix falls back to an `f64` round-trip for REAL sources.
 fn decimal_prefix(s: &str) -> Decimal {
     let s = s.trim_start();
     let (negative, rest) = match s.strip_prefix('-') {

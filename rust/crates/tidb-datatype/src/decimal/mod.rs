@@ -621,6 +621,12 @@ impl Decimal {
         Self::new_with_storage(negative, digits.to_string(), scale, storage_scale)
     }
 
+    /// Go's in-place `MyDecimal.FromUint(0)` keeps sign and resultFrac.
+    /// Decimal result production uses it to clamp an unsigned negative value.
+    pub(crate) fn unsigned_production_zero(&self) -> Self {
+        Self::new_with_storage_preserving_zero_sign(true, "0".to_owned(), self.scale, self.scale)
+    }
+
     /// Returns the scale of the lossless stored coefficient.
     ///
     /// This can exceed [`Self::scale`], which is the rounded SQL presentation

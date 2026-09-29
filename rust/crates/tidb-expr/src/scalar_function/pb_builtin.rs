@@ -20,7 +20,7 @@ use crate::context::{Columns, EvalError};
 use crate::expression::ConstLevel;
 use tidb_ast::BinaryOp;
 use tidb_chunk::row::Row;
-use tidb_datatype::{Datum, EvalType, FieldType, UNSPECIFIED_LENGTH};
+use tidb_datatype::{Datum, EvalType, FieldType};
 use tidb_proto::tipb::ScalarFuncSig;
 
 type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
@@ -568,28 +568,14 @@ impl PbBuiltin {
                 let field = function
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("protobuf cast result type"))?;
-                if target == EvalType::Real && source == EvalType::String {
-                    let value = crate::cast::eval_cast(
-                        &tidb_ast::CastType::Double,
+                if matches!(target, EvalType::Int | EvalType::Real | EvalType::Decimal) {
+                    return crate::cast::eval_numeric_cast_with_type(
                         value,
+                        source,
                         args[0].static_type(),
+                        field,
                         ctx,
-                    )?;
-                    let Datum::Real(value) = value else {
-                        unreachable!("real cast result")
-                    };
-                    let warnings = crate::constant::ConversionWarnings(ctx);
-                    let zone = ctx.time_zone();
-                    let context = tidb_datatype::ConversionContext::new(
-                        ctx.type_flags(),
-                        tidb_datatype::ConversionLocation::from_time_zone(&zone),
-                        &warnings,
                     );
-                    let converted =
-                        tidb_datatype::produce_float_with_type_in_context(value, field, &context);
-                    return converted.error.map_or(Ok(converted.value), |error| {
-                        Err(EvalError::Conversion(error))
-                    });
                 }
                 if target == EvalType::String {
                     return crate::cast::eval_string_cast_with_type(
@@ -603,17 +589,6 @@ impl PbBuiltin {
                 let len = u32::try_from(field.flen()).ok();
                 let fsp = u32::try_from(field.decimal()).ok();
                 let cast = match target {
-                    EvalType::Int if field.is_unsigned() => CastType::Unsigned,
-                    EvalType::Int => CastType::Signed,
-                    EvalType::Real => CastType::Double,
-                    EvalType::Decimal => CastType::Decimal {
-                        flen: len.unwrap_or(0),
-                        scale: if field.decimal() == UNSPECIFIED_LENGTH {
-                            crate::cast::UNSPECIFIED_CAST_SCALE
-                        } else {
-                            fsp.unwrap_or(0)
-                        },
-                    },
                     EvalType::Datetime | EvalType::Timestamp
                         if field.code() == tidb_datatype::FieldTypeCode::Date =>
                     {
