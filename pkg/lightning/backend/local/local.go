@@ -451,6 +451,11 @@ type BackendConfig struct {
 	// default true.
 	DisableAutomaticCompactions bool
 	BlockSize                   int
+	// MinRegionNum is the table-level tikv-importer.min-region-num. It is only
+	// used directly for external engines: local engines are split independently
+	// per engine, so their caller assigns each engine a share of it through
+	// backend.LocalEngineConfig.MinRegionNum.
+	MinRegionNum int64
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -480,6 +485,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		TaskType:                    taskType,
 		RaftKV2SwitchModeDuration:   raftKV2SwitchModeDuration,
 		DisableAutomaticCompactions: true,
+		MinRegionNum:                cfg.TikvImporter.MinRegionNum,
 	}
 }
 
@@ -963,6 +969,7 @@ func getRegionSplitKeys(
 	engine common.Engine,
 	sizeLimit int64,
 	keysLimit int64,
+	minRegionNum int64,
 ) ([][]byte, error) {
 	startKey, endKey, err := engine.GetKeyRange()
 	if err != nil {
@@ -971,15 +978,26 @@ func getRegionSplitKeys(
 	if startKey == nil {
 		return nil, errors.New("could not find first pair")
 	}
+	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
+
+	if minRegionNum > 0 && engineFileTotalSize/sizeLimit < minRegionNum {
+		sizeLimit = max(1, engineFileTotalSize/minRegionNum)
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalSize", engineFileTotalSize), zap.Int64("minRegionNum", minRegionNum), zap.Int64("sizeLimit", sizeLimit))
+	}
+	if minRegionNum > 0 && engineFileLength/keysLimit < minRegionNum {
+		keysLimit = max(1, engineFileLength/minRegionNum)
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalCount", engineFileLength), zap.Int64("minRegionNum", minRegionNum), zap.Int64("keysLimit", keysLimit))
+	}
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
 		return [][]byte{startKey, endKey}, nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
-	keys, err := engine.GetRegionSplitKeys()
+	keys, err := engine.GetRegionSplitKeysWithLimit(sizeLimit, keysLimit)
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize),
 		zap.Int64("totalCount", engineFileLength),
@@ -1382,6 +1400,9 @@ func (local *Backend) ImportEngine(
 	}
 
 	var e common.Engine
+	// external engines are not part of a table-level engine set, so they use the
+	// backend-level config as-is.
+	minRegionNum := local.MinRegionNum
 	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
 		e = externalEngine
 	} else {
@@ -1393,6 +1414,9 @@ func (local *Backend) ImportEngine(
 		defer localEngine.unlock()
 		localEngine.regionSplitSize = regionSplitSize
 		localEngine.regionSplitKeyCnt = regionSplitKeys
+		// this engine's share of the table-level min-region-num, assigned when the
+		// engine was opened/closed. See LocalEngineConfig.MinRegionNum.
+		minRegionNum = localEngine.config.MinRegionNum
 		e = localEngine
 	}
 	lfTotalSize, lfLength := e.KVStatistics()
@@ -1403,7 +1427,7 @@ func (local *Backend) ImportEngine(
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys)
+	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys, minRegionNum)
 	if err != nil {
 		return err
 	}

@@ -2436,7 +2436,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
 			strings.ToLower(infoschema.TableColumnPrivileges),
 			strings.ToLower(infoschema.TableTablePrivileges),
-			strings.ToLower(infoschema.TableSchemaPrivileges):
+			strings.ToLower(infoschema.TableSchemaPrivileges),
+			strings.ToLower(infoschema.TableSchemataExtensions):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{

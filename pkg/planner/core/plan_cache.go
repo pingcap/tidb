@@ -159,6 +159,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		nodeW := resolve.NewNodeW(stmtAst.Stmt)
 		err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
+			// Archived is terminal, not a schema change; don't relabel it as ErrSchemaChanged.
+			if errors.ErrorEqual(err, infoschema.ErrSchemaInArchivedMode) {
+				return errors.Trace(err)
+			}
 			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		stmt.ResolveCtx = nodeW.GetResolveContext()

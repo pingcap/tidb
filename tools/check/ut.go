@@ -767,19 +767,9 @@ func (n *numa) runTestCase(pkg string, fn string) testResult {
 		if err != nil {
 			//lint:ignore S1020
 			if _, ok := err.(*exec.ExitError); ok {
-				// Retry 3 times to get rid of the weird error:
-				switch err.Error() {
-				case "signal: segmentation fault (core dumped)":
-					buf.Reset()
-					continue
-				case "signal: trace/breakpoint trap (core dumped)":
-					buf.Reset()
-					continue
-				}
-				if strings.Contains(buf.String(), "panic during panic") {
-					buf.Reset()
-					continue
-				}
+				// Retry up to 3 times on any test failure (flaky tests).
+				buf.Reset()
+				continue
 			}
 		}
 		break

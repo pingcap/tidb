@@ -61,9 +61,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
@@ -954,6 +957,10 @@ func (rc *LogClient) RestoreKVFiles(
 						logutil.CL(ectx).Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
 							zap.Uint64("min-ts", minTs), zap.Uint64("max-ts", maxTs), zap.String("cf", files[0].Cf),
 							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
+
+						metrics.KVApplyBatchDuration.Observe(time.Since(fileStart).Seconds())
+						metrics.KVApplyBatchSize.Observe(float64(size))
+						metrics.KVApplyBatchFiles.Observe(float64(len(files)))
 					}
 				}()
 
@@ -1219,6 +1226,10 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 	for i := 0; i < len(files); i++ {
 		progressInc()
 	}
+	metrics.MetaKVBatchFiles.WithLabelValues(cf).Observe(float64(len(files)))
+	metrics.MetaKVBatchFilteredKeys.WithLabelValues(cf).Observe(float64(len(filteredOutKvEntries)))
+	metrics.MetaKVBatchKeys.WithLabelValues(cf).Observe(float64(kvCount))
+	metrics.MetaKVBatchSize.WithLabelValues(cf).Observe(float64(size))
 	return filteredOutKvEntries, nil
 }
 
@@ -1442,6 +1453,85 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 	return nil
 }
 
+// RebaseAutoIncrementIDForSepAutoIncTables syncs the autoid service's in-memory
+// allocator to the persisted TiKV value for every restored AUTO_ID_CACHE=1 table.
+//
+// Tables with AUTO_ID_CACHE=1 (TableInfo.SepAutoInc()) have their auto-increment
+// counter served by the centralized autoid service. PiTR log replay restores the
+// persisted counter via raw KV writes but never notifies the autoid service, so
+// its cached in-memory base can remain stale and hand out already-restored IDs,
+// producing duplicate-key errors on the first insert after restore. Reading the
+// persisted value and force-rebasing the allocator repairs the stale cache.
+// See https://github.com/pingcap/tidb/issues/69485.
+func (rc *LogClient) RebaseAutoIncrementIDForSepAutoIncTables(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
+	infoSchema := rc.dom.InfoSchema()
+	store := rc.dom.Store()
+	for _, dbReplace := range schemaReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbReplace.DbID, tableReplace.TableID); err != nil {
+				// Best effort: a single table failing to rebase must not abort the
+				// whole restore, so log and continue.
+				log.Warn("failed to rebase auto-increment allocator after PiTR log replay",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name),
+					zap.Error(err))
+			}
+		}
+	}
+	return nil
+}
+
+// rebaseAutoIncrementIDForTable force-rebases the autoid service for a single
+// AUTO_ID_CACHE=1 table to the auto-increment counter currently persisted in
+// TiKV. It is a no-op for tables that do not use a separated auto-increment
+// allocator or that no longer exist in the info schema.
+func (rc *LogClient) rebaseAutoIncrementIDForTable(ctx context.Context, store kv.Storage, infoSchema infoschema.InfoSchema, dbID, tableID int64) error {
+	tbl, ok := infoSchema.TableByID(ctx, tableID)
+	if !ok {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	if !tblInfo.SepAutoInc() {
+		return nil
+	}
+	alloc := tbl.Allocators(nil).Get(autoid.AutoIncrementType)
+	if alloc == nil {
+		return nil
+	}
+	// Read the persisted auto-increment counter directly from TiKV, bypassing the
+	// autoid service cache which is exactly the stale state we want to repair.
+	var persisted int64
+	if err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		persisted, err = meta.NewMutator(txn).GetAutoIDAccessors(dbID, tableID).IncrementID(model.TableInfoVersion5).Get()
+		return err
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	if persisted <= 0 {
+		return nil
+	}
+	// The persisted value is the last allocated ID, so ForceRebase makes the next
+	// allocation persisted+1. It is idempotent when the service already sits at
+	// this value: the persisted counter is untouched and only the in-memory base
+	// is refreshed.
+	if err := alloc.ForceRebase(persisted); err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("rebased auto-increment allocator after PiTR log replay",
+		zap.Int64("schemaID", dbID),
+		zap.Int64("tableID", tableID),
+		zap.Int64("persistedBase", persisted))
+	return nil
+}
+
 // WrapCompactedFilesIterWithSplitHelper applies a splitting strategy to the compacted files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
 func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
@@ -1476,11 +1566,106 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, SplitFileThresholdDefault)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return wrapper.WithSplit(ctx, logIter, strategy), nil
+}
+
+// WrapLogFilesIterWithCheckpointFilter applies only the checkpoint skip filter to
+// the log files iterator, without performing any region splitting. Used when
+// pre-split has already been done and per-batch splitting is skipped, but
+// checkpoint-based file filtering still needs to happen.
+func (rc *LogClient) WrapLogFilesIterWithCheckpointFilter(
+	ctx context.Context,
+	logIter LogIter,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+) (LogIter, error) {
+	// splitFileThreshold is unused here: Accumulate is never called on this path.
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, 0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.FilterOut(logIter, func(file *LogDataFileInfo) bool {
+		return strategy.ShouldSkip(file)
+	}), nil
+}
+
+// PreSplitRegions performs a full pre-scan over ALL DML files and issues region
+// splits based on the total cumulative data volume. This avoids the problem where
+// per-batch splitting (4096 files at a time) resets accumulated sizes at each batch
+// boundary, producing insufficient splits for workloads that spread data across many
+// regions (e.g., secondary index builds).
+//
+// Returns (true, nil) when splits were successfully issued; (false, nil) when
+// there are no DML files to split; (false, err) on any failure. Callers that
+// receive true should skip the fallback per-batch split to avoid redundant
+// split+scatter work.
+func (rc *LogClient) PreSplitRegions(
+	ctx context.Context,
+	rules map[int64]*restoreutils.RewriteRules,
+	splitSize uint64,
+	splitKeys int64,
+) (bool, error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	splitter := split.NewPipelineRegionsSplitter(client, splitSize, splitKeys)
+	strategy := split.NewBaseSplitStrategy(rules)
+
+	logIter, err := rc.LoadDMLFiles(ctx)
+	if err != nil {
+		return false, errors.Annotate(err, "pre-split: load DML files")
+	}
+
+	var fileCount int
+	startTime := time.Now()
+	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
+		if r.Err != nil {
+			return false, errors.Annotate(r.Err, "pre-split: iterate DML files")
+		}
+		file := r.Item
+		if file.IsMeta {
+			continue
+		}
+		if _, exist := rules[file.TableId]; !exist {
+			continue
+		}
+		splitHelper, exist := strategy.TableSplitter[file.TableId]
+		if !exist {
+			splitHelper = split.NewSplitHelper()
+			strategy.TableSplitter[file.TableId] = splitHelper
+		}
+		splitHelper.Merge(split.Valued{
+			Key: split.Span{
+				StartKey: file.StartKey,
+				EndKey:   file.EndKey,
+			},
+			Value: split.Value{
+				Size:   file.Length,
+				Number: file.NumberOfEntries,
+			},
+		})
+		fileCount++
+	}
+	log.Info("pre-split: merged all files",
+		zap.Int("file-count", fileCount),
+		zap.Duration("merge-took", time.Since(startTime)))
+
+	if fileCount == 0 {
+		return false, nil
+	}
+
+	splitStart := time.Now()
+	accumulations := strategy.GetAccumulations()
+	if err := splitter.ExecuteRegions(ctx, accumulations); err != nil {
+		return false, errors.Annotate(err, "pre-split: execute regions")
+	}
+	log.Info("pre-split: completed",
+		zap.Duration("split-took", time.Since(splitStart)),
+		zap.Duration("total-took", time.Since(startTime)))
+	return true, nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(

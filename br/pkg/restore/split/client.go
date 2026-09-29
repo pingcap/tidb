@@ -10,11 +10,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -46,6 +48,10 @@ import (
 
 const (
 	splitRegionMaxRetryTime = 4
+
+	// debugRegionInfoTimeout is the timeout for querying TiKV's Debug service
+	// to verify region Raft state after split.
+	debugRegionInfoTimeout = 2 * time.Second
 )
 
 var (
@@ -124,6 +130,14 @@ type pdClient struct {
 	onSplit          func(key [][]byte)
 	splitConcurrency int
 	splitBatchKeyCnt int
+
+	// debugServiceDisabled is set atomically to 1 if TiKV returns
+	// UNIMPLEMENTED for the Debug service, disabling further checks.
+	debugServiceDisabled int32
+
+	// debugVerifyFn overrides the debug verification logic in tests.
+	// When nil, the real Debug service is used.
+	debugVerifyFn func(ctx context.Context, regionID uint64, peers []*metapb.Peer, leaderStoreID uint64) bool
 }
 
 type ClientOptionalParameter func(*pdClient)
@@ -540,7 +554,140 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 	}
 	// we ignore down peers for they are (normally) hard to be fixed in reasonable time.
 	// (or once there is a peer down, we may get stuck at waiting region get ready.)
-	return len(regionInfo.PendingPeers) == 0, nil
+	if len(regionInfo.PendingPeers) > 0 {
+		return false, nil
+	}
+
+	// Secondary verification: query each peer's TiKV Debug service to confirm
+	// the split has propagated and leader election has completed. After a split,
+	// TiKV may report empty PendingPeers while the peer is still a Candidate.
+	if regionInfo.Leader != nil && regionInfo.Leader.GetId() != 0 &&
+		regionInfo.Region != nil && len(regionInfo.Region.GetPeers()) > 0 {
+		if !c.verifyRegionViaDebug(ctx, regionID,
+			regionInfo.Region.GetPeers(), regionInfo.Leader.GetStoreId()) {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// verifyRegionViaDebug queries each peer's TiKV Debug service to confirm:
+//  1. All peers have the region in PeerState_Normal (split has propagated).
+//  2. The leader's HardState.Commit has advanced past TruncatedState.Index,
+//     indicating that leader election completed and the initial no-op was committed.
+//
+// Returns true if all checks pass or if the Debug service is unavailable (UNIMPLEMENTED).
+// Returns false on any other error or failed check (conservative: triggers retry in caller).
+func (c *pdClient) verifyRegionViaDebug(
+	ctx context.Context,
+	regionID uint64,
+	peers []*metapb.Peer,
+	leaderStoreID uint64,
+) bool {
+	if c.debugVerifyFn != nil {
+		return c.debugVerifyFn(ctx, regionID, peers, leaderStoreID)
+	}
+
+	if atomic.LoadInt32(&c.debugServiceDisabled) == 1 {
+		return true
+	}
+
+	for _, peer := range peers {
+		storeID := peer.GetStoreId()
+		store, err := c.GetStore(ctx, storeID)
+		if err != nil {
+			log.Debug("debug verify: failed to get store",
+				zap.Uint64("storeID", storeID),
+				zap.Error(err))
+			return false
+		}
+
+		opt := grpc.WithTransportCredentials(insecure.NewCredentials())
+		if c.tlsConf != nil {
+			opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
+		}
+
+		dialCtx, dialCancel := context.WithTimeout(ctx, debugRegionInfoTimeout)
+		conn, err := grpc.DialContext(dialCtx, store.GetAddress(), opt,
+			config.DefaultGrpcKeepaliveParams)
+		dialCancel()
+		if err != nil {
+			log.Debug("debug verify: failed to dial store",
+				zap.Uint64("storeID", storeID),
+				zap.String("addr", store.GetAddress()),
+				zap.Error(err))
+			return false
+		}
+
+		client := debugpb.NewDebugClient(conn)
+		rpcCtx, rpcCancel := context.WithTimeout(ctx, debugRegionInfoTimeout)
+		resp, err := client.RegionInfo(rpcCtx, &debugpb.RegionInfoRequest{
+			RegionId: regionID,
+		})
+		rpcCancel()
+		conn.Close()
+
+		if err != nil {
+			if status.Code(err) == codes.Unimplemented {
+				atomic.StoreInt32(&c.debugServiceDisabled, 1)
+				log.Warn("TiKV Debug service unavailable, skipping region verification",
+					zap.Uint64("storeID", storeID))
+				return true
+			}
+			log.Debug("debug verify: RegionInfo RPC failed",
+				zap.Uint64("regionID", regionID),
+				zap.Uint64("storeID", storeID),
+				zap.Error(err))
+			return false
+		}
+
+		// Check 1: Region exists and is in Normal state on this peer.
+		// PeerState_Normal == 0 in raft_serverpb.
+		regionState := resp.GetRegionLocalState()
+		if regionState == nil || regionState.GetState() != 0 {
+			log.Debug("debug verify: region not in Normal state",
+				zap.Uint64("regionID", regionID),
+				zap.Uint64("storeID", storeID))
+			return false
+		}
+
+		// Check 2 (leader only): Raft commit has advanced past the truncated
+		// state index, meaning a leader has been elected and committed its
+		// initial no-op entry. After a split, both values start equal at
+		// RAFT_INIT_LOG_INDEX (5).
+		if storeID == leaderStoreID {
+			raftState := resp.GetRaftLocalState()
+			applyState := resp.GetRaftApplyState()
+			if raftState == nil || applyState == nil {
+				log.Debug("debug verify: raft state is nil on leader",
+					zap.Uint64("regionID", regionID),
+					zap.Uint64("storeID", storeID))
+				return false
+			}
+			hardState := raftState.GetHardState()
+			truncated := applyState.GetTruncatedState()
+			if hardState == nil || truncated == nil {
+				log.Debug("debug verify: hard state or truncated state is nil",
+					zap.Uint64("regionID", regionID),
+					zap.Uint64("storeID", storeID))
+				return false
+			}
+			if hardState.GetCommit() <= truncated.GetIndex() {
+				log.Debug("debug verify: leader election not complete",
+					zap.Uint64("regionID", regionID),
+					zap.Uint64("storeID", storeID),
+					zap.Uint64("commit", hardState.GetCommit()),
+					zap.Uint64("truncatedIndex", truncated.GetIndex()))
+				return false
+			}
+		}
+	}
+
+	log.Debug("debug verify: all peers verified",
+		zap.Uint64("regionID", regionID),
+		zap.Int("peerCount", len(peers)))
+	return true
 }
 
 func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {

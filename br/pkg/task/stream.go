@@ -1429,6 +1429,10 @@ func RunStreamRestore(
 	log.Info("captured restore start timestamp for blocklist",
 		zap.Uint64("restoreStartTS", restoreStartTS))
 
+	if err = ensureTiKVConfigFromFile(ctx, g, mgr.GetStorage(), cfg.TikvRestoreConfigOverridesFile); err != nil {
+		return errors.Trace(err)
+	}
+
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
 		logStorage := cfg.Config.Storage
@@ -1463,6 +1467,9 @@ func RunStreamRestore(
 		ddlFiles:            ddlFiles,
 	}
 	if err := restoreStream(ctx, mgr, g, logRestoreConfig); err != nil {
+		return errors.Trace(err)
+	}
+	if err = ensureTiKVConfigFromFile(ctx, g, mgr.GetStorage(), cfg.TikvPostRestoreConfigOverridesFile); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1679,16 +1686,6 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
-	if err != nil {
-		return err
-	}
-
-	logFilesIter, err := client.LoadDMLFiles(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
@@ -1697,6 +1694,28 @@ func restoreStream(
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
+	// Pre-split regions based on total data volume across ALL files.
+	// On success the pipeline-level per-batch split is skipped to avoid
+	// redundant split+scatter work (see WrapLogFilesIterWithSplitHelper below).
+	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, splitSize, splitKeys)
+	if preSplitErr != nil {
+		log.Warn("pre-split regions failed, continuing with per-batch splitting",
+			zap.Error(preSplitErr))
+	}
+
+	logFilesIter, err := client.LoadDMLFiles(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
+	if err != nil {
+		return err
+	}
+
+	// TODO: need keep the order of ssts for compatible of rewrite rules
+	// compacted ssts will set ts range for filter out irrelevant data
+	// ingested ssts cannot use this ts range
 	addedSSTsIter := client.LogFileManager.GetIngestedSSTs(ctx)
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
@@ -1726,9 +1745,20 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
-		if err != nil {
-			return errors.Trace(err)
+		// Skip per-batch splitting when pre-split already covered all files;
+		// doing both passes would produce redundant split+scatter calls.
+		// Checkpoint filtering must still be applied on the pre-split path.
+		var logFilesIterWithSplit logclient.LogIter
+		if preSplitDone {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithCheckpointFilter(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		if cfg.UseCheckpoint {
@@ -1769,6 +1799,15 @@ func restoreStream(
 
 	// make sure schema reload finishes before proceeding
 	if err = waitUntilSchemaReload(ctx, client); err != nil {
+		return errors.Trace(err)
+	}
+
+	// PiTR log replay writes auto-increment counters straight to TiKV without
+	// notifying the autoid service, leaving its in-memory cache stale for
+	// AUTO_ID_CACHE=1 tables. Now that the schema is reloaded and the persisted
+	// counters are final, sync the service to avoid duplicate-key errors on the
+	// first post-restore insert (issue #69485).
+	if err = client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace); err != nil {
 		return errors.Trace(err)
 	}
 

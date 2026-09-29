@@ -53,6 +53,11 @@ type Engine interface {
 	// Currently, the start/end key of this import should also be included in the
 	// returned split keys.
 	GetRegionSplitKeys() ([][]byte, error)
+	// GetRegionSplitKeysWithLimit behaves like GetRegionSplitKeys but uses the
+	// provided regionSplitSize/regionSplitKeyCnt instead of the engine's
+	// configured values, so callers (e.g. min-region-num enforcement) can
+	// request a finer split.
+	GetRegionSplitKeysWithLimit(regionSplitSize, regionSplitKeyCnt int64) ([][]byte, error)
 	Close() error
 }
 

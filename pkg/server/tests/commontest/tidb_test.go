@@ -3707,3 +3707,74 @@ func TestAuditPluginRetrying(t *testing.T) {
 		runExplicitTransactionRetry(db, true)
 	})
 }
+
+// TestConnClosedAfterArchivedDenied verifies a statement denied for archive also closes the
+// connection. Uses a real TCP connection, not testkit.TestKit, to observe conn.go's dispatch loop.
+func TestConnClosedAfterArchivedDenied(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaArchiveDDL", "return")
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create database if not exists archived_db")
+		dbt.MustExec("create table archived_db.t(a int)")
+		dbt.MustExec("alter database archived_db archive = 1")
+
+		db := dbt.GetDB()
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		_, err = conn.ExecContext(ctx, "select * from archived_db.t")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "is in archived mode")
+
+		// The same pinned connection must now be dead, proving the disconnect actually happened.
+		_, err = conn.ExecContext(ctx, "select 1")
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "is in archived mode")
+	})
+}
+
+// TestConnNotClosedForUnrelatedErrorInMultiStatement verifies prefetchPointPlanKeys's speculative
+// Preprocess of a later, archived statement in a batch doesn't leak DisconnectAfterResponse when
+// an earlier, unrelated statement is the one that actually fails.
+func TestConnNotClosedForUnrelatedErrorInMultiStatement(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaArchiveDDL", "return")
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(config *mysql.Config) {
+		config.Params["multiStatements"] = "true"
+	}, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create database if not exists archived_db")
+		dbt.MustExec("create table archived_db.t2(id int primary key, v int)")
+		dbt.MustExec("insert into archived_db.t2 values (1, 1)")
+		dbt.MustExec("alter database archived_db archive = 1")
+		dbt.MustExec("create table test.t1(id int primary key, v int)")
+		dbt.MustExec("insert into test.t1 values (1, 1)")
+
+		db := dbt.GetDB()
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		_, err = conn.ExecContext(ctx, "begin")
+		require.NoError(t, err)
+
+		// Statement 1 fails for real (duplicate key) before the loop reaches statement 2, which
+		// only gets speculatively Preprocess'd by prefetchPointPlanKeys - the leak this guards.
+		_, err = conn.ExecContext(ctx,
+			"insert into test.t1 values (1, 100); update archived_db.t2 set v = 2 where id = 1;")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Duplicate entry")
+		require.NotContains(t, err.Error(), "is in archived mode")
+
+		_, err = conn.ExecContext(ctx, "rollback")
+		require.NoError(t, err)
+
+		// The connection must still be usable, since it must not have been disconnected.
+		_, err = conn.ExecContext(ctx, "select 1")
+		require.NoError(t, err)
+	})
+}

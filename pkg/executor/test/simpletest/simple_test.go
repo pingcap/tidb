@@ -758,6 +758,26 @@ func TestKillStmt(t *testing.T) {
 	// remote kill is tested in `tests/globalkilltest`
 }
 
+func TestSetResourceGroupFallbackToDefault(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
+	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+
+	// Setting an existing group works normally.
+	tk.MustExec("SET RESOURCE GROUP `rg1`")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
+
+	// Setting a non-existent group silently falls back to default instead of erroring.
+	tk.MustExec("SET RESOURCE GROUP `nonexistent_group`")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
+
+	// Empty name also falls back to default.
+	tk.MustExec("SET RESOURCE GROUP `rg1`")
+	tk.MustExec("SET RESOURCE GROUP ``")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
+}
+
 func TestSelectWhereInvalidDSTTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

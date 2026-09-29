@@ -709,6 +709,12 @@ func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 	return splitKeys, nil
 }
 
+// GetRegionSplitKeysWithLimit implements common.Engine. External engine split
+// keys are precomputed at engine-open time, so the limits are ignored.
+func (e *Engine) GetRegionSplitKeysWithLimit(_, _ int64) ([][]byte, error) {
+	return e.GetRegionSplitKeys()
+}
+
 // Close implements common.Engine.
 func (e *Engine) Close() error {
 	if e.smallBlockBufPool != nil {

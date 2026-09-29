@@ -1059,6 +1059,10 @@ func (w *worker) runOneJobStep(
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:
 		ver, err = onAlterTableAffinity(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = w.onModifySchemaReadOnly(jobCtx, job)
+	case model.ActionModifySchemaArchive:
+		ver, err = w.onModifySchemaArchive(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

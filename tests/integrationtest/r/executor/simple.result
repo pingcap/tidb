@@ -312,7 +312,9 @@ drop RESOURCE GROUP if exists rg1;
 drop RESOURCE GROUP if exists rg2;
 drop user if exists user1;
 SET RESOURCE GROUP rg1;
-Error 8249 (HY000): Unknown resource group 'rg1'
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
 CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
 create user user1;
 ALTER USER `user1` RESOURCE GROUP `rg1`;

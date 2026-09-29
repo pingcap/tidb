@@ -136,6 +136,7 @@ go_test(
         "//pkg/util/timeutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",

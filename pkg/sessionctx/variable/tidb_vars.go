@@ -677,6 +677,13 @@ const (
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
 
+	// TiDBEnableClientSideSlowScore controls whether the client-side slow score takes part in
+	// judging a store slow. Turning it off leaves TiKV's own health feedback as the only input;
+	// the score is still measured and exported either way. A store's slow verdict is per store,
+	// not per resource group, so under resource control one throttled tenant can steer every
+	// tenant's reads off that store.
+	TiDBEnableClientSideSlowScore = "tidb_enable_client_side_slow_score"
+
 	// TiDBMetricSchemaStep indicates the step when query metric schema.
 	TiDBMetricSchemaStep = "tidb_metric_query_step"
 
@@ -1440,6 +1447,7 @@ const (
 	DefTiDBEvolvePlanTaskEndTime            = "23:59 +0000"
 	DefInnodbLockWaitTimeout                = 50 // 50s
 	DefTiDBStoreLimit                       = 0
+	DefTiDBEnableClientSideSlowScore        = true
 	DefTiDBMetricSchemaStep                 = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration        = 60 // 60s
 	DefTiDBFoundInPlanCache                 = false

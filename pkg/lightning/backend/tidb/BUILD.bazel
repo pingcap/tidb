@@ -39,7 +39,7 @@ go_test(
     timeout = "short",
     srcs = ["tidb_test.go"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         ":tidb",
         "//pkg/errno",

@@ -1731,6 +1731,77 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	require.NoError(t, f.Close())
 }
 
+// TestGetRegionSplitKeysHonorsMinRegionNum guards the regression where the local
+// backend computed the min-region-num-shrunk sizeLimit/keysLimit but then split
+// using the engine's full regionSplitSize/regionSplitKeyCnt, so min-region-num
+// had no effect. With the fix the split count scales with min-region-num; before
+// the fix it was independent of it.
+func TestGetRegionSplitKeysHonorsMinRegionNum(t *testing.T) {
+	// Fine-grained size properties: 200 samples of 1 MiB / 1000 keys each
+	// (200 MiB / 200k keys total) so the region count can scale with
+	// min-region-num instead of being bound by sample granularity.
+	const numSamples = 200
+	backup := getSizePropertiesFn
+	getSizePropertiesFn = func(log.Logger, *pebble.DB, common.KeyAdapter) (*sizeProperties, error) {
+		props := newSizeProperties()
+		for i := 0; i < numSamples; i++ {
+			props.add(&rangeProperty{
+				Key:          []byte{1, byte(i)},
+				rangeOffsets: rangeOffsets{Size: 1 * units.MiB, Keys: 1000},
+			})
+		}
+		return props, nil
+	}
+	t.Cleanup(func() {
+		getSizePropertiesFn = backup
+	})
+
+	db, tmpPath := makePebbleDB(t, nil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel := context.WithCancel(context.Background())
+	f := &Engine{
+		UUID:              engineUUID,
+		sstDir:            tmpPath,
+		ctx:               engineCtx,
+		cancel:            cancel,
+		sstMetasChan:      make(chan metaOrFlush, 64),
+		keyAdapter:        common.NoopKeyAdapter{},
+		logger:            log.L(),
+		regionSplitSize:   96 * units.MiB,
+		regionSplitKeyCnt: 1_440_000,
+	}
+	f.TS = oracle.GoTimeToTS(time.Now())
+	f.db.Store(db)
+	f.TotalSize.Store(int64(numSamples) * units.MiB)
+	f.Length.Store(int64(numSamples) * 1000)
+	// Populate the DB so GetKeyRange brackets all sampled keys (keys starting
+	// with 0 are meta keys, so we prefix with 1).
+	for i := 0; i < numSamples; i++ {
+		require.NoError(t, db.Set([]byte{1, byte(i)}, []byte{1}, nil))
+	}
+	t.Cleanup(func() {
+		require.NoError(t, f.Close())
+	})
+
+	ctx := context.Background()
+
+	// Without min-region-num the split uses the full 96 MiB target -> few regions.
+	keysNoMin, err := getRegionSplitKeys(ctx, f, f.regionSplitSize, f.regionSplitKeyCnt, 0)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(keysNoMin)-1, 5,
+		"with min-region-num unset the 96 MiB target should yield only a few regions")
+
+	// With min-region-num=50 the shrunk limits must actually drive the split,
+	// producing ~50 regions. Pre-fix this stayed at the few-region count.
+	const minRegionNum = 50
+	keysWithMin, err := getRegionSplitKeys(ctx, f, f.regionSplitSize, f.regionSplitKeyCnt, minRegionNum)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(keysWithMin)-1, 40,
+		"min-region-num=50 should drive the split toward ~50 regions")
+	require.Greater(t, len(keysWithMin), len(keysNoMin),
+		"min-region-num must increase the region count")
+}
+
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	ctx := context.Background()
 	local := &Backend{
@@ -2838,6 +2909,10 @@ func (m *mockEngineWithData) GetRegionSplitKeys() ([][]byte, error) {
 		keys = append(keys, m.ranges[len(m.ranges)-1].End)
 	}
 	return keys, nil
+}
+
+func (m *mockEngineWithData) GetRegionSplitKeysWithLimit(_, _ int64) ([][]byte, error) {
+	return m.GetRegionSplitKeys()
 }
 
 func (m *mockEngineWithData) Close() error {

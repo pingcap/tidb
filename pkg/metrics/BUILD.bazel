@@ -18,6 +18,7 @@ go_library(
         "meta.go",
         "metrics.go",
         "owner.go",
+        "rawkv.go",
         "resource_group.go",
         "resourcemanager.go",
         "server.go",

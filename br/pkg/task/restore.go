@@ -113,6 +113,9 @@ const (
 
 	FlagSysCheckCollation = "sys-check-collation"
 
+	FlagTikvPostRestoreConfigOverrideFile = "tikv-post-restore-config-overrides-file"
+	FlagTikvRestoreConfigOverrideFile     = "tikv-restore-config-overrides-file"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -312,6 +315,9 @@ type RestoreConfig struct {
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
+
+	TikvPostRestoreConfigOverridesFile string `json:"tikv-post-restore-config-overrides-file" toml:"tikv-post-restore-config-overrides-file"`
+	TikvRestoreConfigOverridesFile     string `json:"tikv-restore-config-overrides-file" toml:"tikv-restore-config-overrides-file"`
 }
 
 func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
@@ -385,6 +391,8 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().String(FlagTikvPostRestoreConfigOverrideFile, "", "Configuration file containing TiKV configuration which should be applied after Stream Restore operation completes.")
+	command.Flags().String(FlagTikvRestoreConfigOverrideFile, "", "Configuration file containing TiKV configuration which should be applied during Stream Restore operation.")
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -423,6 +431,13 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.TikvPostRestoreConfigOverridesFile, err = flags.GetString(FlagTikvPostRestoreConfigOverrideFile); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.TikvRestoreConfigOverridesFile, err = flags.GetString(FlagTikvRestoreConfigOverrideFile); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -983,6 +998,24 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer restoreRegistry.Close()
 	cfg.RestoreRegistry = restoreRegistry
 
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	// Enable restore mode in PD before starting restore
+	if err := mgr.GetPDHTTPClient().SetPitrRestoreMark(ctx); err != nil {
+		return errors.Annotate(err, "failed to enable restore mode in PD")
+	}
+
+	// Ensure restore mode is disabled when function exits, fail restore if we cannot disable restore mode
+	defer func() {
+		if disableErr := mgr.GetPDHTTPClient().DeletePitrRestoreMark(ctx); disableErr != nil {
+			if restoreErr == nil {
+				restoreErr = errors.Annotate(disableErr, "failed to disable restore mode in PD")
+			} else {
+				log.Error("failed to disable restore mode in PD", zap.Error(disableErr))
+			}
+		}
+	}()
 	if IsStreamRestore(cmdName) {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
 			return errors.Trace(err)
@@ -1048,7 +1081,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Clear the checkpoint data if needed
 	cleanUpCheckpoints(c, cfg)
-	return nil
+	return restoreErr
 }
 
 func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {

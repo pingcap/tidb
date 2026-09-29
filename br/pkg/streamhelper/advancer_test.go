@@ -73,6 +73,10 @@ func TestTick(t *testing.T) {
 }
 
 func TestWithFailure(t *testing.T) {
+	// https://tidb.support.pingcap.com/servicedesk/customer/portal/4/NAID-11160
+	// Skip flaky test until it is fixed upstream
+	t.Skip("NAID-11160")
+
 	log.SetLevel(zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer func() {

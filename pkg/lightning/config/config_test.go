@@ -1074,6 +1074,16 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	require.Equal(t, ReplaceOnDup, cfg.Conflict.Strategy)
 
 	cfg.TikvImporter.Backend = BackendLocal
+	cfg.Conflict.Strategy = CustomizeOnDup
+	require.ErrorContains(t, cfg.Adjust(ctx), `customize on duplication without providing the on duplication customize statement`)
+
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.Conflict.Strategy = CustomizeOnDup
+	cfg.Conflict.CustomizeOnDupStatement = "a = VALUES(a)"
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, CustomizeOnDup, cfg.Conflict.Strategy)
+
+	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = true
 	cfg.Conflict.PrecheckConflictBeforeImport = true
@@ -1140,7 +1150,13 @@ func TestAdjustMaxRecordRows(t *testing.T) {
 	cfg.Conflict.MaxRecordRows = 1000
 	cfg.Conflict.Threshold = 100
 	require.NoError(t, cfg.Adjust(ctx))
-	require.EqualValues(t, 100, cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 1000, cfg.Conflict.MaxRecordRows)
+
+	// MaxRecordRows = 0 is honored (suppresses writes to the conflict logging table).
+	cfg.Conflict.MaxRecordRows = 0
+	cfg.Conflict.Threshold = 100
+	require.NoError(t, cfg.Adjust(ctx))
+	require.EqualValues(t, 0, cfg.Conflict.MaxRecordRows)
 }
 
 func TestRemoveAllowAllFiles(t *testing.T) {
@@ -1400,9 +1416,13 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
+	require.EqualValues(t, 1, cfg.Conflict.MaxRecordRows)
 	cfg.Conflict.MaxRecordRows = 2
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
-	require.EqualValues(t, 1, cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 2, cfg.Conflict.MaxRecordRows)
+	cfg.Conflict.MaxRecordRows = 0
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
+	require.EqualValues(t, 0, cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = ReplaceOnDup

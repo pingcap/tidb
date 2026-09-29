@@ -1225,6 +1225,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
+
+			// Close the connection so the client reconnects instead of retrying forever.
+			if cc.ctx.GetSessionVars().DisconnectAfterResponse {
+				cc.addMetrics(data[0], startTime, err)
+				server_metrics.DisconnectArchived.Inc()
+				return
+			}
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.SetSequence(0)
@@ -1303,6 +1310,8 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
+	// DisconnectAfterResponse only ever applies to this command; clear any stale value.
+	cc.ctx.GetSessionVars().DisconnectAfterResponse = false
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
@@ -1946,7 +1955,12 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		nodeW := resolve.NewNodeW(stmt)
-		if err = plannercore.Preprocess(ctx, cc.getCtx(), nodeW); err != nil {
+		// This speculative Preprocess's error is discarded, but its DisconnectAfterResponse
+		// side effect isn't - restore it so an unrelated later failure isn't misread as this.
+		disconnectBefore := vars.DisconnectAfterResponse
+		err = plannercore.Preprocess(ctx, cc.getCtx(), nodeW)
+		vars.DisconnectAfterResponse = disconnectBefore
+		if err != nil {
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}

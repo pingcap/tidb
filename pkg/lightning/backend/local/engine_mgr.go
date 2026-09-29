@@ -346,6 +346,7 @@ func (em *engineManager) closeEngine(
 		engine := &Engine{
 			UUID:               engineUUID,
 			sstMetasChan:       make(chan metaOrFlush),
+			config:             cfg.Local,
 			tableInfo:          cfg.TableInfo,
 			keyAdapter:         em.keyAdapter,
 			duplicateDetection: em.DupeDetectEnabled,

@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -869,6 +870,14 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatInt(tikvstore.StoreLimit.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		tikvstore.StoreLimit.Store(TidbOptInt64(val, DefTiDBStoreLimit))
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableClientSideSlowScore, Value: BoolToOnOff(DefTiDBEnableClientSideSlowScore), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		// Read the switch back off client-go rather than a mirror of it, so the
+		// variable cannot disagree with what replica selection is using.
+		return BoolToOnOff(!tikvclient.IsClientSideSlowScoreDisabled()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		tikvclient.SetClientSideSlowScoreDisabled(!TiDBOptOn(val))
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBTxnCommitBatchSize, Value: strconv.FormatUint(tikvstore.DefTxnCommitBatchSize, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 1 << 30,

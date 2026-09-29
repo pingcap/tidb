@@ -250,6 +250,19 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 		}
 		if len(referredFKCascades) > 0 {
 			fkCascades[tid] = append(fkCascades[tid], referredFKCascades...)
+			for _, fk := range referredFKCascades {
+				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
+				// Archive is checked first, matching preprocess.go's ordering.
+				if ok && fkDBInfo.Archived && !hasReplicaWriterBypass(ctx) {
+					ctx.GetSessionVars().DisconnectAfterResponse = true
+					return errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
+				// No bypass here (unlike Archived): the RESTRICTED_REPLICA_WRITER_ADMIN bypass
+				// was never extended to this pre-existing read-only cascade check.
+				if ok && fkDBInfo.ReadOnly {
+					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
+			}
 		}
 		childFKChecks, err := buildOnUpdateChildFKChecks(ctx, is, dbInfo.Name.L, tblInfo, updateCols)
 		if err != nil {
@@ -289,6 +302,17 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 			}
 			if fkCascade != nil {
 				fkCascades[tid] = append(fkCascades[tid], fkCascade)
+				fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
+				// Archive is checked first, matching preprocess.go's ordering.
+				if ok && fkDBInfo.Archived && !hasReplicaWriterBypass(ctx) {
+					ctx.GetSessionVars().DisconnectAfterResponse = true
+					return errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
+				// No bypass here (unlike Archived): the RESTRICTED_REPLICA_WRITER_ADMIN bypass
+				// was never extended to this pre-existing read-only cascade check.
+				if ok && fkDBInfo.ReadOnly {
+					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
 			}
 		}
 	}
@@ -404,9 +428,20 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 		fkCascade, err := buildFKCascade(ctx, tp, referredFK, childTable, fk)
 		return nil, fkCascade, err
 	default:
-		fkCheck, err := buildFKCheckForReferredFK(ctx, childTable, fk, referredFK)
+		fkCheck, err := buildFKCheckForReferredFK(ctx, is, childTable, fk, referredFK)
 		return fkCheck, nil, err
 	}
+}
+
+// checkFKCheckTargetNotArchived blocks building an FKCheck against an archived table: its
+// exists/not-exists result would otherwise leak whether a specific key exists there.
+func checkFKCheckTargetNotArchived(ctx base.PlanContext, is infoschema.InfoSchema, tbl table.Table) error {
+	dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
+	if ok && dbInfo.Archived && !hasReplicaWriterBypass(ctx) {
+		ctx.GetSessionVars().DisconnectAfterResponse = true
+		return errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(dbInfo.Name.O))
+	}
+	return nil
 }
 
 func isMapContainAnyCols(colsMap map[string]struct{}, cols ...pmodel.CIStr) bool {
@@ -424,6 +459,9 @@ func buildFKCheckOnModifyChildTable(ctx base.PlanContext, is infoschema.InfoSche
 	if err != nil {
 		return nil, nil
 	}
+	if err := checkFKCheckTargetNotArchived(ctx, is, referTable); err != nil {
+		return nil, err
+	}
 	fkCheck, err := buildFKCheck(ctx, referTable, fk.RefCols, failedErr)
 	if err != nil {
 		return nil, err
@@ -433,7 +471,10 @@ func buildFKCheckOnModifyChildTable(ctx base.PlanContext, is infoschema.InfoSche
 	return fkCheck, nil
 }
 
-func buildFKCheckForReferredFK(ctx base.PlanContext, childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
+func buildFKCheckForReferredFK(ctx base.PlanContext, is infoschema.InfoSchema, childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
+	if err := checkFKCheckTargetNotArchived(ctx, is, childTable); err != nil {
+		return nil, err
+	}
 	failedErr := plannererrors.ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 	fkCheck, err := buildFKCheck(ctx, childTable, fk.Cols, failedErr)
 	if err != nil {

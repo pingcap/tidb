@@ -132,6 +132,12 @@ func maybeGetDownloadableArtifact(call *syntax.CallExpr) (string, DownloadableAr
 					return "", DownloadableArtifact{}, err
 				}
 			}
+			if kwarg == "urls" {
+				url, err = ExpectSingletonStringList(bx.Y)
+				if err != nil {
+					return "", DownloadableArtifact{}, err
+				}
+			}
 		default:
 			return "", DownloadableArtifact{}, fmt.Errorf("unexpected expression in DEPS.bzl: %v", bx)
 		}
