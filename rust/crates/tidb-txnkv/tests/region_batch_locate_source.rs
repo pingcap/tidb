@@ -19,10 +19,9 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use tidb_txnkv::region::{
-    merge_loaded_and_cached, ranges_after_key, regions_have_gap, BatchLoadOptions,
-    BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, KeyRange, RegionCache, RegionEpoch,
-    RegionLoadError, RegionLoader, RegionLocation, RegionRouteError, RegionVerId,
-    DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
+    BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, DEFAULT_REGIONS_PER_BATCH, KeyRange,
+    MAX_RANGES_PER_BATCH, RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation,
+    RegionRouteError, RegionVerId, merge_loaded_and_cached, ranges_after_key, regions_have_gap,
 };
 
 #[derive(Default)]
@@ -166,9 +165,7 @@ impl RegionLoader for BatchLoader {
             "batch path required",
         ))
     }
-}
 
-impl BatchRegionLoader for BatchLoader {
     fn batch_load_regions(
         &mut self,
         requested: &[KeyRange],
@@ -240,9 +237,7 @@ impl RegionLoader for OrderedLoader {
             "batch path required",
         ))
     }
-}
 
-impl BatchRegionLoader for OrderedLoader {
     fn batch_load_regions(
         &mut self,
         requested: &[KeyRange],
@@ -344,9 +339,7 @@ impl RegionLoader for ReplyLoader {
             "batch path required",
         ))
     }
-}
 
-impl BatchRegionLoader for ReplyLoader {
     fn batch_load_regions(
         &mut self,
         _requested: &[KeyRange],

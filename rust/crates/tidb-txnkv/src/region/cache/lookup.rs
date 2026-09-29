@@ -26,9 +26,9 @@ use super::super::{
     RegionStoreTopology, RegionVerId, Store, StoreLiveness, StoreResolveState, StoreState,
 };
 use super::{
-    cache_now_seconds, RegionCache, RegionLoader, RegionLookupApplication, RegionLookupPlan,
-    RegionLookupResult, RegionLookupSelection, RegionQuery, RegionQueryLoader, RegionQueryOptions,
-    StoreLabels,
+    RegionCache, RegionLoader, RegionLookupApplication, RegionLookupPlan, RegionLookupResult,
+    RegionLookupSelection, RegionQuery, RegionQueryLoader, RegionQueryOptions, StoreLabels,
+    cache_now_seconds,
 };
 
 impl<L> RegionCache<L>
@@ -583,9 +583,19 @@ pub(in crate::region) fn cache_misses(
     for range in ranges {
         let mut cursor = range.start.clone();
         loop {
-            let current = cached.iter().find(|region| {
-                !unavailable.contains(&region.region) && region.contains_key(&cursor)
-            });
+            let current = cached
+                .binary_search_by(|region| {
+                    if region.contains_key(&cursor) {
+                        std::cmp::Ordering::Equal
+                    } else if region.start_key.as_slice() > cursor.as_slice() {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Less
+                    }
+                })
+                .ok()
+                .map(|index| &cached[index])
+                .filter(|region| !unavailable.contains(&region.region));
             let Some(current) = current else {
                 misses.push(KeyRange::new(cursor, range.end.clone()));
                 break;

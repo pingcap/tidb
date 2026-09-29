@@ -18,10 +18,10 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use tidb_txnkv::region::{
-    BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, CacheEntryState,
-    CacheReloadState, KeyRange, Peer, PeerRole, ReadPolicy, RegionCache, RegionEpoch,
-    RegionLoadError, RegionLoader, RegionLocation, RegionRouteError, RegionVerId, ReplicaReadMode,
-    RequestSelection, Store, StoreLiveness,
+    BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, CacheEntryState, CacheReloadState,
+    KeyRange, Peer, PeerRole, ReadPolicy, RegionCache, RegionEpoch, RegionLoadError, RegionLoader,
+    RegionLocation, RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection, Store,
+    StoreLiveness,
 };
 
 struct NoRetry;
@@ -131,9 +131,7 @@ impl RegionLoader for DisjointLoader {
         let version = loads.iter().filter(|loaded| **loaded == id).count() as u64;
         Ok(region(id, version, start, end))
     }
-}
 
-impl BatchRegionLoader for DisjointLoader {
     fn batch_load_regions(
         &mut self,
         _ranges: &[KeyRange],
@@ -206,9 +204,7 @@ impl RegionLoader for StableBatchLoader {
     fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
         Ok(self.location.clone())
     }
-}
 
-impl BatchRegionLoader for StableBatchLoader {
     fn batch_load_regions(
         &mut self,
         _ranges: &[KeyRange],

@@ -19,16 +19,23 @@
 //! remaining ranges, and `scanRegions`, whose contiguous-coverage contract is
 //! what makes a gap in PD's answer an error rather than a silent hole.
 
+use std::collections::BTreeMap;
+
 use super::super::{
+    DEFAULT_REGIONS_PER_BATCH, KeyRange, MAX_RANGES_PER_BATCH, RegionLocation, RegionRouteError,
     merge_loaded_and_cached, ranges_after_key, regions_have_gap, regions_intersecting_ranges,
-    KeyRange, RegionLocation, RegionRouteError, DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
 };
 use super::lookup::{cache_misses, insert_loaded_into, preserve_newer_buckets};
 use super::{
-    cache_now_seconds, BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, RegionCache,
-    RegionQueryBackoff, RegionQueryLoader, RegionQueryOptions, RegionQueryRetryReason,
-    RegionQueryRoute,
+    BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, RegionCache, RegionQueryBackoff,
+    RegionQueryLoader, RegionQueryOptions, RegionQueryRetryReason, RegionQueryRoute,
+    cache_now_seconds,
 };
+
+pub(in crate::region) struct BatchLocatePlan {
+    pub(in crate::region) cached: Vec<RegionLocation>,
+    pub(in crate::region) misses: Vec<KeyRange>,
+}
 
 impl<L> RegionCache<L>
 where
@@ -54,22 +61,8 @@ where
         backoff: &mut impl BatchScanBackoff,
         now_seconds: u64,
     ) -> Result<Vec<RegionLocation>, RegionRouteError> {
-        if ranges.iter().any(|range| !range.is_valid()) {
-            return Err(RegionRouteError::InvalidRange);
-        }
-        if ranges.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let unavailable = self.refresh_traversed_entries(ranges, now_seconds)?;
-        let cached_before_load = self
-            .regions
-            .iter()
-            .filter(|region| !unavailable.contains(&region.region))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let mut misses = cache_misses(&self.regions, ranges, &unavailable)?;
+        let plan = self.plan_batch_locate_key_ranges(ranges, now_seconds)?;
+        let mut misses = plan.misses.clone();
         let mut fresh = Vec::new();
         while !misses.is_empty() {
             let batch_len = misses.len().min(MAX_RANGES_PER_BATCH);
@@ -125,7 +118,42 @@ where
             }
         }
 
-        let merged = merge_loaded_and_cached(&cached_before_load, &fresh);
+        self.publish_batch_locate_key_ranges(ranges, &plan.cached, fresh, now_seconds)
+    }
+}
+
+impl<L> RegionCache<L>
+where
+    L: super::RegionLoader,
+{
+    pub(in crate::region) fn plan_batch_locate_key_ranges(
+        &mut self,
+        ranges: &[KeyRange],
+        now_seconds: u64,
+    ) -> Result<BatchLocatePlan, RegionRouteError> {
+        if ranges.iter().any(|range| !range.is_valid()) {
+            return Err(RegionRouteError::InvalidRange);
+        }
+        if ranges.is_empty() {
+            return Ok(BatchLocatePlan {
+                cached: Vec::new(),
+                misses: Vec::new(),
+            });
+        }
+        let unavailable = self.refresh_traversed_entries(ranges, now_seconds)?;
+        let cached = cached_regions_for_ranges(&self.regions, ranges, &unavailable)?;
+        let misses = cache_misses(&self.regions, ranges, &unavailable)?;
+        Ok(BatchLocatePlan { cached, misses })
+    }
+
+    pub(in crate::region) fn publish_batch_locate_key_ranges(
+        &mut self,
+        ranges: &[KeyRange],
+        cached: &[RegionLocation],
+        fresh: Vec<RegionLocation>,
+        now_seconds: u64,
+    ) -> Result<Vec<RegionLocation>, RegionRouteError> {
+        let merged = merge_loaded_and_cached(cached, &fresh);
         let result = regions_intersecting_ranges(&merged, ranges);
         if regions_have_gap(ranges, &result, 0) {
             return Err(RegionRouteError::BatchScanGap);
@@ -215,4 +243,43 @@ where
         }
         Ok(loaded)
     }
+}
+
+fn cached_regions_for_ranges(
+    cached: &[RegionLocation],
+    ranges: &[KeyRange],
+    unavailable: &std::collections::BTreeSet<super::super::RegionVerId>,
+) -> Result<Vec<RegionLocation>, RegionRouteError> {
+    let Some(first) = ranges.first() else {
+        return Ok(Vec::new());
+    };
+    let end = ranges
+        .last()
+        .and_then(|range| (!range.end.is_empty()).then_some(range.end.as_slice()));
+    let start = first.start.as_slice();
+    let start_index = cached
+        .binary_search_by(|region| {
+            if region.contains_key(start) {
+                std::cmp::Ordering::Equal
+            } else if region.start_key.as_slice() > start {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Less
+            }
+        })
+        .unwrap_or_else(|index| index);
+    let mut selected = BTreeMap::new();
+    for region in cached.iter().skip(start_index) {
+        if end.is_some_and(|end| region.start_key.as_slice() >= end) {
+            break;
+        }
+        if !unavailable.contains(&region.region) {
+            selected
+                .entry(region.region)
+                .or_insert_with(|| region.clone());
+        }
+    }
+    let mut selected: Vec<_> = selected.into_values().collect();
+    selected.sort_by(|left, right| left.start_key.cmp(&right.start_key));
+    Ok(selected)
 }

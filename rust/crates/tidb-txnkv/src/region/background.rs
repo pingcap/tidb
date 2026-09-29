@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::cache::{
     RegionLookupApplication, RegionLookupSelection, SharedRegionLoader, StoreLivenessApplication,
@@ -601,16 +601,91 @@ impl<L: RegionLoader> BackgroundRegionCache<L> {
         &self,
         ranges: &[KeyRange],
     ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError> {
+        let now_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
+        let plan = match self
+            .with_cache(|cache| cache.plan_batch_locate_key_ranges(ranges, now_seconds))?
+        {
+            Ok(plan) => plan,
+            Err(error) => return Ok(Err(error)),
+        };
+        let mut misses = plan.misses;
+        let mut fresh = Vec::new();
+        let options = BatchLoadOptions {
+            need_buckets: false,
+            need_leader: false,
+        };
+        let mut backoff = RetryingBatchBackoff::default();
+        let load_result = (|| -> Result<(), RegionRouteError> {
+            while !misses.is_empty() {
+                let batch_len = misses.len().min(super::MAX_RANGES_PER_BATCH);
+                let request = &misses[..batch_len];
+                let publishable = loop {
+                    let loaded = self.shared.loader.with_loader(|loader| {
+                        loader.batch_load_regions(
+                            request,
+                            super::DEFAULT_REGIONS_PER_BATCH,
+                            options,
+                        )
+                    });
+                    let loaded = loaded.map_err(RegionRouteError::Loader)?;
+                    let retry = if loaded.is_empty() {
+                        Some(BatchScanRetryReason::EmptyReply)
+                    } else if super::regions_have_gap(
+                        request,
+                        &loaded,
+                        super::DEFAULT_REGIONS_PER_BATCH,
+                    ) {
+                        Some(BatchScanRetryReason::CoverageGap)
+                    } else {
+                        None
+                    };
+                    if let Some(reason) = retry {
+                        backoff.backoff(reason)?;
+                        continue;
+                    }
+                    let publishable = if options.need_leader {
+                        loaded
+                            .iter()
+                            .filter(|region| region.leader_peer_id.is_some())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    } else {
+                        loaded
+                    };
+                    if publishable.is_empty() {
+                        backoff.backoff(BatchScanRetryReason::MissingLeader)?;
+                        continue;
+                    }
+                    break publishable;
+                };
+                let split_key = publishable
+                    .last()
+                    .expect("validated publishable batch reply is nonempty")
+                    .end_key
+                    .clone();
+                fresh.extend(publishable);
+                if split_key.is_empty() {
+                    misses.clear();
+                } else {
+                    let remaining_batch = super::ranges_after_key(request, &split_key);
+                    let mut remaining = remaining_batch;
+                    remaining.extend_from_slice(&misses[batch_len..]);
+                    if remaining == misses {
+                        return Err(RegionRouteError::NonProgressingBatchScan { split_key });
+                    }
+                    misses = remaining;
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = load_result {
+            return Ok(Err(error));
+        }
         self.with_cache(|cache| {
-            let mut backoff = RetryingBatchBackoff::default();
-            cache.batch_locate_key_ranges(
-                ranges,
-                BatchLoadOptions {
-                    need_buckets: false,
-                    need_leader: false,
-                },
-                &mut backoff,
-            )
+            cache.publish_batch_locate_key_ranges(ranges, &plan.cached, fresh, now_seconds)
         })
     }
 }
@@ -618,6 +693,53 @@ impl<L: RegionLoader> BackgroundRegionCache<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier, mpsc};
+
+    struct BlockingBatchLoader {
+        batch_started: Arc<Barrier>,
+        batch_release: Arc<Barrier>,
+    }
+
+    fn test_region(id: u64, start: &[u8], end: &[u8]) -> RegionLocation {
+        RegionLocation {
+            region: RegionVerId {
+                id,
+                epoch: super::super::RegionEpoch {
+                    conf_ver: 1,
+                    version: 1,
+                },
+            },
+            start_key: start.to_vec(),
+            end_key: end.to_vec(),
+            peers: Vec::new(),
+            leader_peer_id: None,
+            stores: Vec::new(),
+            buckets: None,
+            down_peer_ids: Vec::new(),
+            pending_peer_ids: Vec::new(),
+        }
+    }
+
+    impl RegionLoader for BlockingBatchLoader {
+        fn cluster_id(&self) -> u64 {
+            1
+        }
+
+        fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+            Ok(test_region(1, b"x", b""))
+        }
+
+        fn batch_load_regions(
+            &mut self,
+            _ranges: &[KeyRange],
+            _limit: usize,
+            _options: BatchLoadOptions,
+        ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+            self.batch_started.wait();
+            self.batch_release.wait();
+            Ok(vec![test_region(2, b"a", b"b")])
+        }
+    }
 
     #[test]
     fn batch_scan_backoff_retries_transient_gaps() {
@@ -627,6 +749,40 @@ mod tests {
         };
         assert!(backoff.backoff(BatchScanRetryReason::CoverageGap).is_ok());
         assert_eq!(backoff.retries, 1);
+    }
+
+    #[test]
+    fn batch_region_load_does_not_hold_cache_lock_during_pd_io() {
+        let batch_started = Arc::new(Barrier::new(2));
+        let batch_release = Arc::new(Barrier::new(2));
+        let loader = BlockingBatchLoader {
+            batch_started: Arc::clone(&batch_started),
+            batch_release: Arc::clone(&batch_release),
+        };
+        let mut cache = RegionCache::new(loader);
+        cache.locate_key(b"x").unwrap();
+        let background = Arc::new(BackgroundRegionCache::without_worker(cache));
+        let batch_background = Arc::clone(&background);
+        let batch_thread = std::thread::spawn(move || {
+            batch_background.batch_locate_ranges(&[KeyRange::new(b"a", b"b")])
+        });
+        batch_started.wait();
+
+        let (result_sender, result_receiver) = mpsc::channel();
+        let lookup_background = Arc::clone(&background);
+        std::thread::spawn(move || {
+            result_sender
+                .send(lookup_background.locate_key(b"x"))
+                .unwrap();
+        });
+        assert!(
+            result_receiver
+                .recv_timeout(Duration::from_millis(500))
+                .is_ok(),
+            "a cached lookup must not wait for an unrelated PD batch request"
+        );
+        batch_release.wait();
+        assert!(batch_thread.join().unwrap().is_ok());
     }
 }
 

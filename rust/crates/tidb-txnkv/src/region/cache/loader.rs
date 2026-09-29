@@ -166,7 +166,7 @@ impl<L> SharedRegionLoader<L> {
         }
     }
 
-    pub(super) fn with_loader<R>(&self, operation: impl FnOnce(&mut L) -> R) -> R {
+    pub(in crate::region) fn with_loader<R>(&self, operation: impl FnOnce(&mut L) -> R) -> R {
         let mut loader = self
             .inner
             .lock()
