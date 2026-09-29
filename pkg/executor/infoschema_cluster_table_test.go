@@ -244,12 +244,12 @@ func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
 
 	bytes, err := json.Marshal(map[string]any{
 		"br": map[string]any{
-			"ddl_id":            "br",
-			"ip":                "",
-			"listening_port":    4000,
-			"status_port":       10080,
-			"version":           "8.0.11-TiDB-v8.5.0",
-			"disable_rpc": true,
+			"ddl_id":         "br",
+			"ip":             "",
+			"listening_port": 4000,
+			"status_port":    10080,
+			"version":        "8.0.11-TiDB-v8.5.0",
+			"disable_rpc":    true,
 		},
 	})
 	require.NoError(t, err)
