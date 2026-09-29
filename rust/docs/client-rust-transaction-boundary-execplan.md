@@ -194,3 +194,69 @@ Self-review verified the source cache no longer carries lock-state variants, nat
 
 
 The TiDB pre-commit hook successfully ran `cd rust && cargo build --locked -p tidb-server` and created the integration commit. Its log is `/private/tmp/tidb-ownership-commit.log`. This final receipt amendment uses that hook again. Delivery remains guarded by a fresh invocation of the exact same locked build immediately before the branch push; failure prevents the push. The remaining coprocessor resolver milestone above is deliberately incomplete.
+
+
+## Follow Go for the five inline review comments
+
+
+The user explicitly requested following Go for all five review comments. Refresh both authorized branches before edits. Comments 1, 2, 3 and 5 are implemented by native 8b7a726 / TiDB 7fd550c3ce; rerun their regressions and extend explicit finite-retry coverage. Comment 4 must follow the owning package: client-go mocktikv `MVCCLevelDB.PessimisticLock` only waits 5 ms and returns its original Locked error. The normal-wake WriteConflict rule belongs to TiDB unistore and real TiKV, not this mock. Remove the mock RPC's invented server wait/reacquisition/TTL-recomputation pipeline as one unit. Keep wake-up assertions by moving tests that require actual waiter behavior to the existing real-TiKV integration harness, matching upstream shared_lock_test.go's withTiKV gate; never change production mock behavior to make those tests pass.
+
+The new mock regression fails on 8b7a726: after the holder rolls back, the same pending RPC returns success and acquires the lock. It must return the original Locked response in normal and ForceLock modes, leave the key unlocked, then allow acquisition by a new client request. Log: `/private/tmp/client-follow-go-mock-red.log`.
+
+Progress:
+
+- [x] Refresh remotes; verify correct source ownership and reproduce mock reacquisition defect.
+- [x] Remove the extra mock waiter and move four server waiter cases to the real-TiKV integration target; run all four plus an exclusive normal/force comparison on an isolated local cluster.
+- [x] Verify comments 1/2/3/5, extend secondary retry history to two regions, and fix the additional recently-updated-lock finite-retry gap.
+- [x] Validate and publish client master; sync and validate TiDB. Deliver TiDB through the mandatory locked pre-commit and pre-push server build gates below.
+
+This is source-boundary repair, not a whole-package parity claim. The separate coprocessor resolver milestone remains outstanding. A real-backend test that cannot run locally must remain executable under the existing integration-tests feature and be reported as unverified; do not count its compilation as a passing real-cluster test.
+
+
+Comment 1's additional finite-budget regression failed on the recently-updated-lock branch (one RPC instead of three with two retries allowed). Both that branch and ordinary live locks now use ResolveLock.wait_for_lock_retry; default Go callbacks, snapshot budgets, and explicit Rust limits retain their own configured policy. The matrix covers zero/two retries, normal/recent locks, and success before exhaustion. Comment 2's completed-history regression now retries in two independent regions and requires one child's history rather than their sum. Comments 3 and 5 retain the previously passing timestamp/cache and foreground/background cancellation tests.
+
+Four server waiter cases moved from library mock setup to `tests/integration_tests/lock_wait_source.rs`, under the existing integration-tests feature. Their normal-wake assertions now require the typed WriteConflict error, including the two/four-transaction deadlock chains. A fifth case tests an exclusive holder rolling back: normal mode returns WriteConflict, ForceLock succeeds. All five passed on local TiKV 9.0.0-beta.2 (commit 8e964719db0d2088d47a280a1dde3fefa1b31d6b, built 2026-08-21) with an isolated PD on port 22379. The playground was stopped and its task-owned data removed; no shared cluster was cleared.
+
+The real-server command, from client-rust, was:
+
+    PD_ADDRS=127.0.0.1:22379 cargo test --locked --features integration-tests --test integration_tests lock_wait_source -- --test-threads=1 --nocapture
+
+The runner used `tiup playground v9.0.0-beta.2.pre-nightly --mode tikv-slim --tag <unique_task_tag> --port-offset 20000 --kv 1 --pd 1 --without-monitor`, verified PD and an Up TiKV store, and trapped teardown. Logs are `/private/tmp/client-follow-go-realtikv-tests.log`, `client-follow-go-playground.log`, and `client-follow-go-realtikv-run.log`. This verifies the reviewed wake-up contracts; it is not a full real-cluster package certification or a benchmark run.
+
+
+Self-review removed the now-unused `MockEngine.transaction_was_deadlocked` accessor and the detector's separate deadlocked-transaction set. That state existed only to drive the invented waiter; client-go's mock detector owns its wait-for graph without retaining this second transaction state. Existing cycle, edge cleanup and expiration tests remain intact; assertions of the removed private state were deleted. All 46 engine tests and all-target/all-feature Clippy passed after this cleanup.
+
+Native validation passed: 1360 client library tests (six existing ignores), two protocol-build tests, 46 engine tests, nine external consumer tests, and five real-TiKV waiter tests. The full library command and consumer commands are recorded below; the first engine-only invocation used a nonexistent package name and was corrected to `unistore`, with all 46 tests passing.
+
+From client-rust:
+
+    cargo test --locked --workspace --all-features --lib -- --test-threads=1
+    cargo test --locked --test public_injected_client_tests --test mocktikv_transaction_tests -- --test-threads=1
+    cargo test --locked -p unistore --lib
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::all
+    cargo fmt -- --check
+    git diff --check
+
+Logs: `/private/tmp/client-follow-go-all-features.log`, `client-follow-go-consumer.log`, `client-follow-go-engine-final.log`, `client-follow-go-clippy-final.log`. `make lint` passed from the TiDB root (`/private/tmp/tidb-follow-go-lint.log`). Native master `53a8db9778cba60971f0dd17b63209848eebbbe8` is committed and pushed. The maintained vendor sync succeeded with all four compatibility patches, regenerated protocol outputs without changing them, and copied all 264 source files exactly. TiDB now consumes the published upstream fix rather than a private patch.
+
+
+### TiDB validation and delivery
+
+
+Against the updated client, the txnkv library passed 139 tests (one existing ignore), snapshot lock waiting passed all 17, embedded client transactions passed all 15, and SQL transaction behavior passed all 25. The aggregate txnkv integration target passed 419 tests, with ten existing ignores and the same two separately documented region-cache baseline exclusions. All four bridge tests passed: foreground resolution keeps statement cancellation, accepted background cleanup outlives the statement, cancelled owners send no RPC, and cancellation or future drop stops a running blocking transport. No additional bridge implementation change was needed in this follow-up.
+
+Commands from TiDB's `rust/` directory:
+
+    cargo test --locked -p tidb-txnkv --lib -- --test-threads=1
+    cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source -- --test-threads=1
+    cargo test --locked -p tidb-unistore --test client_transaction -- --nocapture
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::transactions
+    cargo test --locked -p tidb-txnkv --test all -- --skip region_cache_source::stale_merge_parent_does_not_evict_newer_split_child --skip region_cache_source::stale_same_region_loader_result_is_rejected_without_eviction
+
+Logs are `/private/tmp/tidb-follow-go-library.log`, `tidb-follow-go-snapshot.log`, `tidb-follow-go-embedded.log`, `tidb-follow-go-sql.log`, and `tidb-follow-go-all.log`. From the repository root, `make lint` and `git diff --check` passed. No Go source, Go modules or Bazel inputs changed, so Bazel preparation and Go failpoint toggling were unnecessary. Both repository diffs were reviewed, and client-rust master is clean and matches the published commit. The TiDB remote was fetched again with no competing branch changes.
+
+TiDB delivery uses `TERM=xterm git -c core.hooksPath=hooks commit`, whose hook runs `cd rust && cargo build --locked -p tidb-server` and rejects a failure. Immediately before push, run the same fresh locked build from the repository root:
+
+    (cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration
+
+This repair covers all five review comments at the correct Go package boundary, including the additional finite-budget gap. It does not certify all client-go or TiDB packages. The real-server checks used one local TiKV version; multi-node faults, Go differential execution and sysbench/TPC-C/TPC-H/YCSB throughput were not tested. The two unrelated region-cache failures and remaining TiDB coprocessor resolver ownership milestone are still open. The mock's removed deadlock-history accessor had no native or TiDB consumers after retiring the invented waiter.

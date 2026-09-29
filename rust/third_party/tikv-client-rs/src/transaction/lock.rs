@@ -4835,11 +4835,15 @@ mod ownership_regressions {
     #[tokio::test]
     async fn secondary_workers_merge_retry_history_on_success_and_error() {
         for fail in [false, true] {
-            let attempts = Arc::new(AtomicUsize::new(0));
+            let attempts = Arc::new([AtomicUsize::new(0), AtomicUsize::new(0)]);
             let seen = attempts.clone();
             let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
-                move |_| {
-                    let response = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                move |request| {
+                    let request = request
+                        .downcast_ref::<kvrpcpb::CheckSecondaryLocksRequest>()
+                        .unwrap();
+                    let region = usize::from(request.keys[0][0] >= 10);
+                    let response = if seen[region].fetch_add(1, Ordering::SeqCst) == 0 {
                         kvrpcpb::CheckSecondaryLocksResponse {
                             region_error: Some(crate::proto::errorpb::Error {
                                 region_not_found: Some(Default::default()),
@@ -4872,10 +4876,21 @@ mod ownership_regressions {
                 ..Default::default()
             });
             let result = resolver
-                .check_all_secondaries(pd, Keyspace::Disable, None, vec![vec![1]], 10)
+                .check_all_secondaries(
+                    pd,
+                    Keyspace::Disable,
+                    None,
+                    if fail {
+                        vec![vec![1]]
+                    } else {
+                        vec![vec![1], vec![20]]
+                    },
+                    10,
+                )
                 .await;
             assert_eq!(result.is_err(), fail);
-            assert_eq!(attempts.load(Ordering::SeqCst), 2);
+            assert_eq!(attempts[0].load(Ordering::SeqCst), 2);
+            assert_eq!(attempts[1].load(Ordering::SeqCst), if fail { 0 } else { 2 });
             let owner = owner.lock().await;
             assert_eq!(owner.times_by_type().get("regionMiss"), Some(&2));
             assert_eq!(owner.total_sleep_ms(), 4);

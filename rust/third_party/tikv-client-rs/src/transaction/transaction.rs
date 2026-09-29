@@ -22126,4 +22126,93 @@ mod ownership_regressions {
         );
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
+    #[tokio::test]
+    async fn explicit_finite_retries_cover_live_and_recently_updated_locks() {
+        for recently_updated in [false, true] {
+            for allowed_retries in [0, 2] {
+                for release_after in [None, Some(1)] {
+                    let attempts = Arc::new(AtomicUsize::new(0));
+                    let seen = attempts.clone();
+                    let lock = kvrpcpb::LockInfo {
+                        key: vec![1],
+                        primary_lock: vec![1],
+                        lock_version: 1,
+                        lock_ttl: 100_000,
+                        lock_type: kvrpcpb::Op::PessimisticLock as i32,
+                        duration_to_last_update_ms: u64::from(recently_updated),
+                        ..Default::default()
+                    };
+                    let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                        move |request| {
+                            if request.is::<kvrpcpb::PessimisticLockRequest>() {
+                                let attempt = seen.fetch_add(1, Ordering::SeqCst);
+                                let errors = if release_after.is_some_and(|after| attempt >= after)
+                                {
+                                    Vec::new()
+                                } else {
+                                    vec![kvrpcpb::KeyError {
+                                        locked: Some(lock.clone()),
+                                        ..Default::default()
+                                    }]
+                                };
+                                return Ok(Box::new(kvrpcpb::PessimisticLockResponse {
+                                    errors,
+                                    ..Default::default()
+                                }) as Box<dyn Any>);
+                            }
+                            if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                                assert!(!recently_updated, "recent locks must not be resolved");
+                                return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                                    lock_ttl: 100_000,
+                                    lock_info: Some(lock.clone()),
+                                    ..Default::default()
+                                }) as Box<dyn Any>);
+                            }
+                            if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                                return Ok(Box::<kvrpcpb::PessimisticRollbackResponse>::default()
+                                    as Box<dyn Any>);
+                            }
+                            if request.is::<kvrpcpb::TxnHeartBeatRequest>() {
+                                return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse {
+                                    lock_ttl: 100_000,
+                                    ..Default::default()
+                                }) as Box<dyn Any>);
+                            }
+                            panic!("unexpected request");
+                        },
+                    )));
+                    pd.set_timestamp(Timestamp::from_version(20));
+                    let mut txn = Transaction::new(
+                        Timestamp::from_version(10),
+                        pd,
+                        TransactionOptions::new_pessimistic()
+                            .retry_options(RetryOptions::new(
+                                Backoff::no_backoff(),
+                                Backoff::no_jitter_backoff(0, 0, allowed_retries),
+                            ))
+                            .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                            .drop_check(CheckLevel::None),
+                        Keyspace::Disable,
+                    );
+                    let result = txn.get_for_update(vec![1]).await;
+                    let should_succeed =
+                        release_after.is_some_and(|after| after <= allowed_retries as usize);
+                    assert_eq!(
+                        result.is_ok(),
+                        should_succeed,
+                        "recent={recently_updated}, retries={allowed_retries}: {result:?}"
+                    );
+                    let expected = release_after
+                        .filter(|_| should_succeed)
+                        .unwrap_or(allowed_retries as usize)
+                        + 1;
+                    assert_eq!(
+                        attempts.load(Ordering::SeqCst),
+                        expected,
+                        "recent={recently_updated}, retries={allowed_retries}"
+                    );
+                }
+            }
+        }
+    }
 }

@@ -456,102 +456,12 @@ impl RpcClient {
                     .map_or(0, |context| context.region_id),
             )
             .await;
-        let mut source = pessimistic_lock_request(request);
-        let (mut errors, mut results) = self.engine.pessimistic_lock(&source);
-        let had_live_lock = errors
-            .iter()
-            .flatten()
-            .any(|error| mock_error_has_live_holder(&self.engine, error));
-        if had_live_lock && request.wait_timeout > 0 {
-            let shared_conflict = errors
-                .iter()
-                .flatten()
-                .any(|error| matches!(error, MockError::SharedLocked { .. }))
-                || source
-                    .mutations
-                    .iter()
-                    .any(|mutation| mutation.op == unistore::Op::SharedPessimisticLock);
-            let wait_started = tokio::time::Instant::now();
-            let deadline = tokio::time::Instant::now()
-                + std::time::Duration::from_millis(request.wait_timeout as u64);
-            loop {
-                // The real client receives wakeups/lock errors and retries the
-                // request, recomputing lock TTL from transaction elapsed time.
-                // The in-process mock waits inside one RPC, so reissue the
-                // engine operation here and advance its TTL by the emulated
-                // client-side wait. Otherwise a waiter either returns the
-                // stale Locked error after wakeup or acquires an almost-expired
-                // lock, diverging from client-go's RetryPushTTL behavior.
-                // ForceLock owns retrying a failed per-key result. Once the
-                // shared holder is gone, let the emulated server-side waiter
-                // reissue the mutation and return a successful ForceLock
-                // result. Returning the stale shared-lock error instead makes
-                // the resolver consume the caller's lock-wait budget before
-                // ForceLock gets its source-defined retry.
-                let terminal_conflict = (shared_conflict
-                    && source.wake_up_mode != PessimisticWakeUpMode::ForceLock)
-                    || self
-                        .engine
-                        .transaction_was_deadlocked(request.start_version);
-                if terminal_conflict {
-                    if !errors
-                        .iter()
-                        .flatten()
-                        .any(|error| mock_error_has_live_holder(&self.engine, error))
-                    {
-                        // Go unistore reports WriteConflict on a normal
-                        // wake-up, including rollback (server.go's
-                        // KVPessimisticLock). A stale Locked reply would let
-                        // the client resolve it and silently acquire instead.
-                        let conflict_commit_ts =
-                            crate::oracle::system_time_to_timestamp(std::time::SystemTime::now())
-                                .max(request.for_update_ts.saturating_add(1));
-                        for error in errors.iter_mut().flatten() {
-                            let (key, conflict_start_ts) = match error {
-                                MockError::Locked { key, start_ts, .. } => (key.clone(), *start_ts),
-                                MockError::SharedLocked { key, locks } => {
-                                    (key.clone(), locks.first().map_or(0, |lock| lock.start_ts))
-                                }
-                                _ => continue,
-                            };
-                            *error = MockError::Conflict {
-                                start_ts: request.for_update_ts,
-                                conflict_start_ts,
-                                conflict_commit_ts,
-                                key,
-                                can_force_lock: false,
-                            };
-                        }
-                        break;
-                    }
-                } else {
-                    source.ttl = request.lock_ttl.saturating_add(
-                        wait_started
-                            .elapsed()
-                            .as_millis()
-                            .try_into()
-                            .unwrap_or(u64::MAX),
-                    );
-                    (errors, results) = self.engine.pessimistic_lock(&source);
-                    if !errors.iter().flatten().any(|error| {
-                        matches!(
-                            error,
-                            MockError::Locked { .. } | MockError::SharedLocked { .. }
-                        )
-                    }) {
-                        break;
-                    }
-                }
-                let now = tokio::time::Instant::now();
-                if now >= deadline {
-                    break;
-                }
-                tokio::time::sleep(
-                    std::time::Duration::from_millis(5).min(deadline.duration_since(now)),
-                )
-                .await;
-            }
-        } else if request.wait_timeout >= 0
+        let source = pessimistic_lock_request(request);
+        let (errors, results) = self.engine.pessimistic_lock(&source);
+        // client-go mocktikv does not implement server-side lock waiting.
+        // simulateServerSideWaitLock delays the original Locked response;
+        // only a subsequent client request may try to acquire the lock again.
+        if request.wait_timeout != -1
             && errors.iter().flatten().any(|error| {
                 matches!(
                     error,
@@ -586,9 +496,6 @@ impl RpcClient {
             .flatten()
             .map(key_error)
             .collect::<Vec<_>>();
-        // Go unistore returns the observed lock metadata unchanged. Inventing
-        // a recent heartbeat here makes the client skip status resolution on
-        // every retry, including NOWAIT, and can keep a live waiter spinning.
         let mut response = kvrpcpb::PessimisticLockResponse {
             errors: key_errors,
             ..Default::default()
@@ -1881,29 +1788,6 @@ fn proto_pair(pair: unistore::Pair) -> kvrpcpb::KvPair {
     }
 }
 
-fn mock_error_has_live_holder(engine: &MockEngine, error: &MockError) -> bool {
-    match error {
-        MockError::Locked {
-            primary, start_ts, ..
-        } => mock_lock_holder_is_live(engine, primary, *start_ts),
-        MockError::SharedLocked { locks, .. } => locks
-            .iter()
-            .any(|lock| mock_lock_holder_is_live(engine, &lock.primary, lock.start_ts)),
-        _ => false,
-    }
-}
-
-fn mock_lock_holder_is_live(engine: &MockEngine, primary: &[u8], start_ts: u64) -> bool {
-    let info = engine.mvcc_get_by_key(primary);
-    info.lock
-        .as_ref()
-        .is_some_and(|lock| lock.start_ts == start_ts)
-        || info
-            .shared_locks
-            .iter()
-            .any(|lock| lock.start_ts == start_ts)
-}
-
 fn proto_lock_info(lock: unistore::LockInfo) -> kvrpcpb::LockInfo {
     let lock_type = match lock.lock_type {
         Op::SharedLock => kvrpcpb::Op::Lock as i32,
@@ -2387,5 +2271,86 @@ mod tests {
             .downcast::<BatchCoprocessorStreamResponse>()
             .unwrap();
         assert_eq!(batch.first.unwrap().data, b"batch");
+    }
+}
+
+#[cfg(test)]
+mod wait_contract_tests {
+    use super::*;
+    use crate::mock::mocktikv::bootstrap_with_single_store;
+
+    #[tokio::test]
+    async fn mock_lock_wait_returns_the_original_lock_error_without_reacquiring() {
+        for wake_up_mode in [
+            kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal,
+            kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeForceLock,
+        ] {
+            let engine = MockEngine::new();
+            let cluster = Cluster::new(engine.clone());
+            let (store, peer, region) = bootstrap_with_single_store(&cluster);
+            let client = RpcClient::new(cluster.clone(), engine.clone())
+                .for_address(format!("store{store}"));
+            let context = kvrpcpb::Context {
+                region_id: region,
+                region_epoch: cluster.region(region).unwrap().0.region_epoch,
+                peer: Some(crate::proto::metapb::Peer {
+                    id: peer,
+                    store_id: store,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let mut request = kvrpcpb::PessimisticLockRequest {
+                context: Some(context),
+                mutations: vec![kvrpcpb::Mutation {
+                    key: b"key".to_vec(),
+                    op: kvrpcpb::Op::PessimisticLock as i32,
+                    ..Default::default()
+                }],
+                primary_lock: b"key".to_vec(),
+                start_version: 10,
+                for_update_ts: 10,
+                lock_ttl: 100_000,
+                ..Default::default()
+            };
+            assert!(client
+                .handle_pessimistic_lock(&request)
+                .await
+                .unwrap()
+                .errors
+                .is_empty());
+            request.start_version = 20;
+            request.for_update_ts = 20;
+            request.wait_timeout = 1000;
+            request.wake_up_mode = wake_up_mode as i32;
+            let pending = client.handle_pessimistic_lock(&request);
+            tokio::pin!(pending);
+            assert!(futures::poll!(pending.as_mut()).is_pending());
+            assert!(engine
+                .pessimistic_rollback(b"", b"", &[b"key".to_vec()], 10, 10)
+                .iter()
+                .all(Option::is_none));
+            let reply = tokio::time::timeout(std::time::Duration::from_millis(100), pending)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                reply.errors.len(),
+                1,
+                "mock RPC must return its original conflict: {reply:?}"
+            );
+            assert_eq!(reply.errors[0].locked.as_ref().unwrap().lock_version, 10);
+            assert!(
+                engine.mvcc_get_by_key(b"key").lock.is_none(),
+                "only a new client request may acquire the lock"
+            );
+            assert!(client
+                .handle_pessimistic_lock(&request)
+                .await
+                .unwrap()
+                .errors
+                .is_empty());
+            assert_eq!(engine.mvcc_get_by_key(b"key").lock.unwrap().start_ts, 20);
+        }
     }
 }
