@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/diagnosticclient"
+	"github.com/pingcap/tidb/pkg/util/diagclient"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -319,7 +319,7 @@ func TestDiagnosticSQLExecutionGuard(t *testing.T) {
 		// The diagnostic KV RPC wrapper forwards read RPCs in its allowlist and
 		// rejects write RPCs before they reach the underlying client.
 		rpcClient := &diagnosticRPCClient{}
-		guardedRPCClient := diagnosticclient.WrapKV(rpcClient)
+		guardedRPCClient := diagclient.WrapKV(rpcClient)
 		_, err = guardedRPCClient.SendRequest(
 			context.Background(),
 			"store-address",

@@ -230,7 +230,7 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
-        "//pkg/util/diagnosticclient",
+        "//pkg/util/diagclient",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/sqlexec",
