@@ -276,7 +276,7 @@ The user's follow-Go instruction authorizes the five removals identified in the 
 - [x] Remove TiDB's second resolving-lock registry through the existing native record/update/done API; keep only the Rust lifetime/type adapter.
 - [x] Route TiDB coprocessor recovery through the native owner and remove the second algorithms, status cache and cleanup pool (approved by the user on 2026-09-29).
 - [x] Run red/green regressions, native library/consumer checks and affected TiDB transaction/coprocessor/SQL checks; run make lint and review the diff.
-- [ ] Commit and push client master, synchronize TiDB from that published revision, then commit/push hparser-integration through both locked server-build gates.
+- [x] Commit and push client master, synchronize TiDB from that published revision, then commit/push hparser-integration through both locked server-build gates.
 
 ### Decision Log
 
@@ -405,3 +405,11 @@ Before delivery, fetching the target branch found `07cd21d778` (`perf: reduce na
 The combined-tree checks found compatibility regressions in the incoming raw-Get optimization: eight snapshot cases and eleven embedded-store cases failed with `raw transaction transport unavailable`. The optional raw transport now returns `None` when unsupported, and the bridge uses the existing typed command; actual publication failures never trigger a second attempt. The production Tonic implementation retains the raw fast path. Both suites then passed all 17 and 15 cases. A new native-Get observation regression also failed because resolving a scan pair via Get lost its serving-region/value observation; the raw observer now records the same scan observation as typed Get. The encoded-request regression failed because the bridge changed cluster ID/request origin only in its side metadata. The raw encoder now stamps those two fields into the native request while retaining the other native context fields, including lock hints, and avoiding the full request/response compatibility codec round trip. Red logs are `/private/tmp/resolver-rebased-core.log`, `resolver-rebased-embedded.log`, `resolver-native-get-observation-red.log` and `resolver-raw-context-red.log`.
 
 The combined-tree rerun passed 134 txnkv library tests (one existing ignore), all 32 resolver contracts, 17 snapshot tests, 15 embedded-store cases and 25 SQL transaction cases. The added raw-context regression then passed in the focused bridge suite. The aggregate suite also passed 419 tests after the rebase with its same two baseline exclusions and ten ignores. Logs: `/private/tmp/resolver-combined-core-verified.log`, `resolver-combined-embedded-verified.log`, `resolver-combined-sql-verified.log`, `resolver-rebased-txnkv-all.log` and `resolver-raw-contracts-green.log`.
+
+
+### Completed delivery
+
+
+Client-rust master contains the three approved-boundary commits through `8b890e2b0e1c40842f91dd865783431cf986a811`. TiDB implementation `dbab768b75` was pushed to `hparser-integration` on top of the concurrent `07cd21d778` performance change. `TERM=xterm git -c core.hooksPath=hooks commit --amend --no-edit` ran the required `cd rust && cargo build --locked -p tidb-server` successfully (`/private/tmp/resolver-tidb-final-commit.log`). A fresh `(cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration` then succeeded (`/private/tmp/resolver-tidb-prepush-build.log`). This receipt-only follow-up uses the same commit and pre-push build gates.
+
+The final focused command was `cargo test --locked -p tidb-txnkv --lib driver::client_bridge::ownership_regressions::`; all six cases passed, including raw request metadata, scan observations and foreground/background cancellation. The final `make lint` succeeded in `/private/tmp/resolver-delivery-lint.log`, and `git diff --check` passed. Native master and the TiDB integration are delivered; the baseline failures and unrun real-cluster/differential/performance validations above remain explicit limits. No duplicate TiDB resolver algorithm, determined-status cache, resolving registry, cleanup pool or retry scheduler remains in this approved boundary.
