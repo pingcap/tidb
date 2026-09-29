@@ -1294,6 +1294,10 @@ fn lower_alter_table_catalog(
         // Go's one ActionMultiSchemaChange job: expressible here exactly when
         // every action is a column add/drop the catalog transaction owns.
         let mut actions = Vec::with_capacity(alter.actions.len());
+        // `ALGORITHM=` records a request the executor would refuse; the 1846
+        // warning is raised only once an operation is known to run (see the
+        // arm below).
+        let mut pending_algorithm: Option<(&'static str, &'static str)> = None;
         for action in &alter.actions {
             match action {
                 tidb_ast::AlterTableAction::AddColumn {
@@ -1403,22 +1407,23 @@ fn lower_alter_table_catalog(
                     // ALGORITHM=INSTANT.`). The column-operation descriptor's
                     // default is INSTANT, which is why INSTANT itself warns
                     // nothing.
-                    let (specify, def_algorithm) = match algorithm {
-                        tidb_ast::AlterTableAlgorithm::Inplace => ("INPLACE", "INSTANT"),
-                        tidb_ast::AlterTableAlgorithm::Copy => ("COPY", "INSTANT"),
+                    //
+                    // The warning is ALSO conditional on there being an
+                    // operation to run: `ALTER TABLE t ALGORITHM=INPLACE,
+                    // LOCK=NONE` on an unchanged table answers a plain (ok)
+                    // with NO warning, because go never reaches
+                    // `getProperAlgorithm` for a job with no actions. Record
+                    // the request and decide after the loop, when `actions`
+                    // is known.
+                    pending_algorithm = match algorithm {
+                        tidb_ast::AlterTableAlgorithm::Inplace => Some(("INPLACE", "INSTANT")),
+                        tidb_ast::AlterTableAlgorithm::Copy => Some(("COPY", "INSTANT")),
                         _ => {
                             // DEFAULT and INSTANT are the operation's own
                             // default — no refusal.
                             continue;
                         }
                     };
-                    context.append_error_parts(
-                        1846,
-                        &format!(
-                            "ALGORITHM={specify} is not supported. Reason: \
-                             Cannot alter table by {specify}. Try ALGORITHM={def_algorithm}."
-                        ),
-                    );
                 }
                 _ => {
                     actions.clear();
@@ -1427,6 +1432,14 @@ fn lower_alter_table_catalog(
             }
         }
         if !actions.is_empty() {
+            if let Some((specify, def_algorithm)) = pending_algorithm {
+                context.append_error_parts(
+                    1846,
+                    &format!(
+                        "ALGORITHM={specify} is not supported. Reason: Cannot alter table by {specify}. Try ALGORITHM={def_algorithm}."
+                    ),
+                );
+            }
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             return Ok(Some(DdlStatement::MultiSchemaChange {
                 schema,
