@@ -26,9 +26,10 @@
 //! `DecodeRowToDatumMap`/`DecodeRecordKey`: the writes live with the table in
 //! the parent module, and this file is only the read direction.
 
-use super::row_decoder::RowDecoder;
+use super::row_decoder::{PreparedPointGetRowDecoder, RowDecoder};
 use super::{
-    index_entry_handle, IndexRange, KvIndex, KvTable, KvTableError, RowDecodeContext, TableHandle,
+    index_entry_handle, IndexRange, KvIndex, KvTable, KvTableError, PreparedPointGetDecodeContext,
+    RowDecodeContext, TableHandle,
 };
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::predicate_pushdown::ScanPredicate;
@@ -200,26 +201,110 @@ impl KvTable {
         // Each handle owns a contiguous window of physical keys. Preserve
         // handle order and the first matching partition without a second
         // key/handle collection or a tree lookup for every output row.
-        let decoder = self.row_decoder_projected(keep, context)?;
+        // The ordinary index-lookup shape has no generated or origin-default
+        // columns. Use the same projection-only decoder as Go's prepared
+        // point path so each returned record avoids rebuilding the general
+        // RowDecoder's dependency maps and full table row.
+        let prepared = self
+            .pk_handle_offset
+            .filter(|_| self.common_handle_offsets.is_empty())
+            .and_then(|pk_offset| {
+                let keep = keep?;
+                if keep.iter().any(|offset| {
+                    self.columns[*offset].generated.is_some()
+                        || self.columns[*offset].origin_default.is_some()
+                }) {
+                    return None;
+                }
+                PreparedPointGetRowDecoder::new_with_handles(
+                    &self.columns,
+                    Some(pk_offset),
+                    &[],
+                    keep,
+                )
+                .ok()
+            });
+        let prepared_context = prepared
+            .as_ref()
+            .map(|_| PreparedPointGetDecodeContext::for_query(false, context.zone().clone()));
+        let decoder = if prepared.is_none() {
+            Some(self.row_decoder_projected(keep, context)?)
+        } else {
+            None
+        };
         let mut rows = Vec::with_capacity(handles.len());
-        for (handle, keys) in handles.iter().zip(keys.chunks_exact(candidates)) {
-            let entry = keys.iter().find_map(|key| entries.get(key));
-            let Some(entry) = entry else {
+        for (handle_index, keys) in keys.chunks_exact(candidates).enumerate() {
+            let entry = if candidates == 1 {
+                entries.get(&keys[0]).map(|entry| (&keys[0], entry))
+            } else {
+                keys.iter()
+                    .find_map(|key| entries.get(key).map(|entry| (key, entry)))
+            };
+            let Some((key, entry)) = entry else {
                 rows.push(None);
                 continue;
             };
-            let (mut values, _) = decoder.decode_and_eval(handle, entry)?.into_parts();
-            if let Some(keep) = keep {
-                values = keep
-                    .iter()
-                    .map(|offset| std::mem::replace(&mut values[*offset], Datum::Null))
-                    .collect();
-            }
+            let values = if let (Some(prepared), Some(prepared_context)) =
+                (prepared.as_ref(), prepared_context.as_ref())
+            {
+                prepared.decode(&handles[handle_index], entry, prepared_context)?
+            } else {
+                decoder
+                    .as_ref()
+                    .expect("general decoder exists when prepared decoder is absent")
+                    .decode_record(key.as_bytes(), entry)?
+                    .1
+            };
             rows.push(Some(values));
         }
         Ok(rows)
     }
 
+    /// Batch-gets an unpartitioned integer-handle lookup with a decoder that
+    /// was compiled for the source's stable projection. Go's table worker
+    /// reuses its table-reader metadata for every task; keeping the prepared
+    /// decoder outside this method avoids rebuilding column maps for each
+    /// ten-handle `select_random_points` window.
+    pub(crate) fn get_rows_by_handles_prepared_with_context(
+        &mut self,
+        handles: &[TableHandle],
+        decoder: &PreparedPointGetRowDecoder,
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
+        if handles.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.partition.is_some()
+            || handles
+                .iter()
+                .any(|handle| !matches!(handle, TableHandle::Int(_)))
+        {
+            return Err(KvTableError::Decode(
+                "prepared integer handle lookup requires an unpartitioned table".to_owned(),
+            ));
+        }
+        let physical_id = self.table_id;
+        let keys = handles
+            .iter()
+            .map(|handle| {
+                Key::from_bytes(encode_row_key_with_handle(
+                    physical_id,
+                    &handle.record_handle(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let entries = self.store.batch_get(&keys).map_err(KvTableError::from)?;
+        handles
+            .iter()
+            .zip(keys)
+            .map(|(handle, key)| {
+                entries
+                    .get(&key)
+                    .map(|entry| decoder.decode(handle, entry, context))
+                    .transpose()
+            })
+            .collect()
+    }
     fn row_cursor_with_decoder(
         &mut self,
         decoder: RowDecoder,
@@ -932,7 +1017,7 @@ impl KvTable {
         statement: &PushdownStatementContext,
         required_rows: usize,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool)>, KvTableError> {
-        let Some(staged) = self.stage_rows_by_handles_filtered(
+        let Some(staged) = self.build_table_reader_from_handles(
             handles,
             scan_keep,
             predicates,
@@ -956,7 +1041,7 @@ impl KvTable {
     /// is thread-local, so the read is counted exactly where a serial walk
     /// would count it.
     #[allow(clippy::too_many_arguments)]
-    pub fn stage_rows_by_handles_filtered(
+    pub fn build_table_reader_from_handles(
         &mut self,
         handles: &[TableHandle],
         scan_keep: &[usize],
@@ -1011,44 +1096,7 @@ impl KvTable {
         else {
             return Ok(None);
         };
-        // Go's `buildTableReaderFromHandles` sorts the request copy but keeps
-        // duplicate handles. `TableHandlesToKVRanges` then emits one point
-        // range per duplicate, preserving the multiplicity of a non-unique
-        // index lookup. The index worker may deliberately hand us a
-        // descending index-order batch, so sort only the request copy and
-        // restore index order below.
-        let mut request_handles = handles.to_vec();
-        request_handles.sort();
-        // Go's `buildKeyRanges` over a sorted handle batch: consecutive
-        // handles collapse into one closed interval, so a bulk-loaded window
-        // arrives as a handful of wide ranges instead of one seek per row --
-        // TiKV scans the record span instead of seeking every key apart. A
-        // fragmented batch keeps its point intervals and pays only what it
-        // must; the gap rowids a merged interval spans match no stored row
-        // and answer nothing.
-        let mut ranges: Vec<IndexRange> = Vec::with_capacity(request_handles.len());
-        let mut range_hints: Vec<usize> = Vec::with_capacity(request_handles.len());
-        for handle in &request_handles {
-            let TableHandle::Int(value) = handle else {
-                unreachable!("handle kind checked above")
-            };
-            match (ranges.last_mut(), value.checked_sub(1)) {
-                // Consecutive handle: widen the open interval's high end.
-                (Some(range), Some(prev)) if range.high.first() == Some(&Datum::Int(prev)) => {
-                    range.high = vec![Datum::Int(*value)];
-                    *range_hints.last_mut().expect("every range has a hint") += 1;
-                }
-                _ => {
-                    ranges.push(IndexRange {
-                        low: vec![Datum::Int(*value)],
-                        high: vec![Datum::Int(*value)],
-                        low_exclusive: false,
-                        high_exclusive: false,
-                    });
-                    range_hints.push(1);
-                }
-            }
-        }
+        let (ranges, range_hints) = Self::table_reader_handle_ranges(handles)?;
         let context = RowDecodeContext::legacy_default(zone);
         let materialization = if keep
             .iter()
@@ -1094,6 +1142,71 @@ impl KvTable {
             materialization,
             required_rows: required_rows.max(1),
         }))
+    }
+
+    /// Compatibility entry point for callers that describe the operation as
+    /// staging. The implementation is the Rust counterpart of Go's
+    /// `buildTableReaderFromHandles`: sort a request copy, preserve duplicate
+    /// handles, merge only consecutive integer handles, and attach one row
+    /// count hint per resulting range.
+    pub fn stage_rows_by_handles_filtered(
+        &mut self,
+        handles: &[TableHandle],
+        scan_keep: &[usize],
+        predicates: &[ScanPredicate],
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+        required_rows: usize,
+    ) -> Result<Option<StagedHandlesLookup>, KvTableError> {
+        self.build_table_reader_from_handles(
+            handles,
+            scan_keep,
+            predicates,
+            zone,
+            statement,
+            required_rows,
+        )
+    }
+
+    /// Builds the handle ranges used by `buildTableReaderFromHandles`.
+    ///
+    /// The input order belongs to the index lookup and must remain untouched;
+    /// Go sorts only the request-owned slice before calling
+    /// `TableHandlesToKVRanges`. Equal handles therefore remain separate point
+    /// ranges, while a strictly consecutive run is one range with its exact
+    /// cardinality hint.
+    fn table_reader_handle_ranges(
+        handles: &[TableHandle],
+    ) -> Result<(Vec<IndexRange>, Vec<usize>), KvTableError> {
+        let mut sorted = handles.to_vec();
+        sorted.sort();
+        let mut ranges: Vec<IndexRange> = Vec::with_capacity(sorted.len());
+        let mut hints = Vec::with_capacity(sorted.len());
+        for handle in sorted {
+            let TableHandle::Int(value) = handle else {
+                return Err(KvTableError::Encode(
+                    "table reader handle ranges require integer handles".to_owned(),
+                ));
+            };
+            match (ranges.last_mut(), value.checked_sub(1)) {
+                (Some(range), Some(previous))
+                    if range.high.first() == Some(&Datum::Int(previous)) =>
+                {
+                    range.high = vec![Datum::Int(value)];
+                    *hints.last_mut().expect("every range has a hint") += 1;
+                }
+                _ => {
+                    ranges.push(IndexRange {
+                        low: vec![Datum::Int(value)],
+                        high: vec![Datum::Int(value)],
+                        low_exclusive: false,
+                        high_exclusive: false,
+                    });
+                    hints.push(1);
+                }
+            }
+        }
+        Ok((ranges, hints))
     }
 
     /// Drains a staged handle lookup and pairs each returned row back to the
@@ -5474,7 +5587,7 @@ mod remote_cursor_tests {
     use super::*;
     use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
     use crate::kv_table::KvColumn;
-    use crate::storage::{StorageError, TableStorage};
+    use crate::storage::{MemTableStorage, StorageError, TableStorage};
 
     #[test]
     fn a_full_width_projection_is_not_necessarily_identity() {
@@ -7228,7 +7341,7 @@ mod remote_cursor_tests {
 
         assert!(
             table
-                .stage_rows_by_handles_filtered(
+                .build_table_reader_from_handles(
                     &handles,
                     &[0],
                     &[],
@@ -7252,6 +7365,68 @@ mod remote_cursor_tests {
         // lookup.
         assert_eq!(request.ranges.len(), 3);
         assert_eq!(request.range_hints, vec![1, 1, 2]);
+        assert_eq!(
+            handles,
+            vec![
+                TableHandle::Int(8),
+                TableHandle::Int(5),
+                TableHandle::Int(7),
+                TableHandle::Int(5),
+            ],
+            "lookup order belongs to the index worker and must remain intact"
+        );
+    }
+
+    #[test]
+    fn prepared_handle_batch_get_preserves_projection_duplicates_and_missing_rows() {
+        let mut table = KvTable::with_storage(
+            91,
+            vec![bigint_column(1, "id"), bigint_column(2, "v")],
+            Box::new(MemTableStorage::new()),
+        );
+        table.set_pk_handle_offset(0);
+        table
+            .insert_row(
+                &[Datum::Int(1), Datum::Int(10)],
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+        table
+            .insert_row(
+                &[Datum::Int(2), Datum::Int(20)],
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+        let decoder = PreparedPointGetRowDecoder::new_with_handles(
+            &table.columns,
+            table.pk_handle_offset,
+            &[],
+            &[1, 0],
+        )
+        .unwrap();
+        let context =
+            PreparedPointGetDecodeContext::for_query(false, tidb_datatype::SessionTimeZone::utc());
+        let rows = table
+            .get_rows_by_handles_prepared_with_context(
+                &[
+                    TableHandle::Int(2),
+                    TableHandle::Int(1),
+                    TableHandle::Int(2),
+                    TableHandle::Int(99),
+                ],
+                &decoder,
+                &context,
+            )
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                Some(vec![Datum::Int(20), Datum::Int(2)]),
+                Some(vec![Datum::Int(10), Datum::Int(1)]),
+                Some(vec![Datum::Int(20), Datum::Int(2)]),
+                None,
+            ]
+        );
     }
 
     #[test]
