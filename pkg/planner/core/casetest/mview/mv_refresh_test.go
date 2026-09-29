@@ -1,0 +1,1525 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package mvrefresh
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/mview"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+)
+
+func mviewRefreshTestContext() *mock.Context {
+	sctx := coretestsdk.MockContext()
+	sctx.GetSessionVars().EnableMView = true
+	return sctx
+}
+
+func TestBuildDryRunRefreshMaterializedViewPlan(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	sctx.GetSessionVars().CurrentDB = "test"
+	is := infoschema.MockInfoSchema(nil)
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("mv"),
+		},
+		Type:        ast.RefreshMaterializedViewTypeFast,
+		ObserveType: ast.RefreshMaterializedViewObserveDryRun,
+	}
+
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+
+	dryRunPlan, ok := p.(*plannercore.DryRunRefreshMaterializedView)
+	require.True(t, ok)
+	require.Equal(t, 1, dryRunPlan.Schema().Len())
+	require.Equal(t, "refresh steps", dryRunPlan.OutputNames()[0].ColName.L)
+}
+
+func TestBuildProfileRefreshMaterializedViewPlan(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	sctx.GetSessionVars().CurrentDB = "test"
+	is := infoschema.MockInfoSchema(nil)
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	stmt := &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("mv"),
+		},
+		Type:        ast.RefreshMaterializedViewTypeFast,
+		ObserveType: ast.RefreshMaterializedViewObserveProfile,
+	}
+
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+
+	profilePlan, ok := p.(*plannercore.ProfileRefreshMaterializedView)
+	require.True(t, ok)
+	require.Equal(t, 1, profilePlan.Schema().Len())
+	require.Equal(t, "refresh steps", profilePlan.OutputNames()[0].ColName.L)
+}
+
+func TestBuildRefreshMVFastPlan(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1)
+	mlogID := int64(2)
+	mvID := int64(3)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlogTbl := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+			mkTestCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkTestCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "x", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkTestCol(3, "cnt_b", 2, mysql.TypeLonglong),
+			mkTestCol(4, "s", 3, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Name: mvTbl.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
+	require.True(t, ok)
+	require.NotNil(t, mergePlan.Source)
+	require.Equal(t, mvID, mergePlan.MVTableID)
+	require.Equal(t, baseID, mergePlan.BaseTableID)
+	require.Equal(t, mlogID, mergePlan.MLogTableID)
+	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
+	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
+	require.Equal(t, 1, mergePlan.CountStarMVOffset)
+	require.Len(t, mergePlan.AggInfos, 3)
+
+	var hasCountStar, hasCountExpr, hasSum bool
+	for _, aggInfo := range mergePlan.AggInfos {
+		switch aggInfo.Kind {
+		case mview.AggCountStar:
+			hasCountStar = true
+			require.Equal(t, []int{0}, aggInfo.Dependencies)
+		case mview.AggCount:
+			hasCountExpr = true
+			require.Equal(t, "b", aggInfo.ArgColName)
+			require.Equal(t, []int{1}, aggInfo.Dependencies)
+		case mview.AggSum:
+			hasSum = true
+			require.Equal(t, "b", aggInfo.ArgColName)
+			require.Equal(t, []int{2, 5}, aggInfo.Dependencies)
+		}
+	}
+	require.True(t, hasCountStar)
+	require.True(t, hasCountExpr)
+	require.True(t, hasSum)
+
+	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+	require.NotEmpty(t, explain.Rows)
+	require.Equal(t,
+		[]string{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], count(b)@2->[1], sum(b)@3->[2,5]]"},
+		explain.Rows[0],
+	)
+}
+
+func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(10001)
+	mlogID := int64(10002)
+	mvID := int64(10003)
+
+	baseColA := mkTestCol(1, "a", 0, mysql.TypeLong)
+	baseColB := mkTestCol(2, "b", 1, mysql.TypeLong)
+	baseColB.FieldType.AddFlag(mysql.NotNullFlag)
+	baseTbl := &model.TableInfo{
+		ID:      baseID,
+		Name:    ast.NewCIStr("t"),
+		State:   model.StatePublic,
+		Columns: []*model.ColumnInfo{baseColA, baseColB},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlogColA := mkTestCol(1, "a", 0, mysql.TypeLong)
+	mlogColB := mkTestCol(2, "b", 1, mysql.TypeLong)
+	mlogColB.FieldType.AddFlag(mysql.NotNullFlag)
+	mlogTbl := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mlogColA,
+			mlogColB,
+			mkTestCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkTestCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_minmax"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkTestCol(3, "mx", 2, mysql.TypeLong),
+			mkTestCol(4, "mn", 3, mysql.TypeLong),
+			mkTestCol(5, "s", 4, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Name: mvTbl.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
+	require.True(t, ok)
+	require.NotNil(t, mergePlan.Source)
+	require.NotNil(t, mergePlan.FullUpdateInnerSource)
+	minMaxCount := 0
+	for _, ai := range mergePlan.AggInfos {
+		if ai.Kind == mview.AggMin || ai.Kind == mview.AggMax {
+			minMaxCount++
+		}
+	}
+	require.Equal(t, len(mergePlan.GroupKeyMVOffsets)+minMaxCount, mergePlan.FullUpdateInnerColumnCount)
+	require.NotNil(t, mergePlan.FullUpdateIndexRanges)
+	require.Len(t, mergePlan.FullUpdateKeyOff2IdxOff, len(mergePlan.GroupKeyMVOffsets))
+	require.Len(t, mergePlan.FullUpdateKeyResultColIdxes, len(mergePlan.GroupKeyMVOffsets))
+	require.Len(t, mergePlan.FullUpdateOutputMVOffsets, mergePlan.FullUpdateInnerColumnCount)
+	for i, keyResultColIdx := range mergePlan.FullUpdateKeyResultColIdxes {
+		require.GreaterOrEqual(t, keyResultColIdx, 0)
+		require.Less(t, keyResultColIdx, mergePlan.FullUpdateInnerColumnCount)
+		require.Equal(t, mergePlan.GroupKeyMVOffsets[i], mergePlan.FullUpdateOutputMVOffsets[keyResultColIdx])
+	}
+	mvOffsetCount := make(map[int]int, len(mergePlan.FullUpdateOutputMVOffsets))
+	for _, mvOffset := range mergePlan.FullUpdateOutputMVOffsets {
+		mvOffsetCount[mvOffset]++
+	}
+	for _, ai := range mergePlan.AggInfos {
+		if ai.Kind == mview.AggMin || ai.Kind == mview.AggMax {
+			require.Equal(t, 1, mvOffsetCount[ai.MVOffset])
+		}
+	}
+
+	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+	require.NotEmpty(t, explain.Rows)
+	require.Contains(t, explain.Rows[0][4], "full_update:index_lookup")
+}
+
+func TestBuildRefreshMVFastAsOfTimestampPlanWithMinMaxCarriesFullUpdateSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_mview_enable = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_asof_plan (a int not null, b int not null, key idx_a(a))")
+	tk.MustExec("create materialized view log on t_mv_refresh_asof_plan (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_asof_plan (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_plan group by a")
+	tk.MustExec(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 -0700', 'All versions after safe point can be accessed. (DO NOT EDIT)')
+ON DUPLICATE KEY
+	UPDATE variable_value = '20060102-15:04:05 -0700', comment = 'All versions after safe point can be accessed. (DO NOT EDIT)'`)
+	tk.MustExec("begin")
+	defer tk.MustExec("rollback")
+
+	targetTSO := oracle.GoTimeToTS(time.Now().UTC().Add(time.Second))
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: ast.NewCIStr("test"),
+				Name:   ast.NewCIStr("mv_refresh_asof_plan"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 1,
+		TargetRefreshReadTSO:         targetTSO,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
+	require.True(t, ok)
+	require.NotNil(t, mergePlan.FullUpdateInnerSource)
+	require.NotNil(t, mergePlan.FullUpdateSnapshot)
+	require.Equal(t, targetTSO, mergePlan.FullUpdateSnapshot.TS)
+	require.NotNil(t, mergePlan.FullUpdateSnapshot.InfoSchema)
+}
+
+func TestExplainRefreshMVFastPlanUsesMLogCommitTSWindowSelectivity(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_mview_enable = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_est (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_est (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_est group by a")
+	tk.MustExec("begin")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-5000, 0)
+	targetTSO := oracle.ComposeTS(startPhysical-1000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: ast.NewCIStr("test"),
+				Name:   ast.NewCIStr("mv_mlog_commit_ts_est"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		TargetRefreshReadTSO:         targetTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+	retainedUpperTSO, err := txnMgr.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	expectedRows := fmt.Sprintf(
+		"%.2f",
+		10000*float64(oracle.ExtractPhysical(targetTSO)-oracle.ExtractPhysical(lastSuccessTSO))/
+			float64(oracle.ExtractPhysical(retainedUpperTSO)-oracle.ExtractPhysical(retainedLowerTSO)),
+	)
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_est._tidb_commit_ts", expectedRows)
+}
+
+func TestExplainRefreshMVFastPlanUsesForUpdateTSForUnboundedRefresh(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_mview_enable = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_for_update_est (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_for_update_est (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_for_update_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_for_update_est group by a")
+	tk.MustExec("begin pessimistic")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-5000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: ast.NewCIStr("test"),
+				Name:   ast.NewCIStr("mv_mlog_commit_ts_for_update_est"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+	retainedUpperTSO, err := txnMgr.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	retainedUpperPhysical := oracle.ExtractPhysical(retainedUpperTSO)
+	require.Greater(t, retainedUpperPhysical, startPhysical)
+	expectedRows := fmt.Sprintf(
+		"%.2f",
+		10000*float64(retainedUpperPhysical-(startPhysical-5000))/float64(retainedUpperPhysical-(startPhysical-10000)),
+	)
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_for_update_est._tidb_commit_ts", expectedRows)
+}
+
+func TestExplainRefreshMVFastPlanClampsMLogCommitTSFilterToRetainedWindow(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_mview_enable = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_clamp_est (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_clamp_est (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_clamp_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_clamp_est group by a")
+	tk.MustExec("begin")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-20000, 0)
+	targetTSO := oracle.ComposeTS(startPhysical+10000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: ast.NewCIStr("test"),
+				Name:   ast.NewCIStr("mv_mlog_commit_ts_clamp_est"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		TargetRefreshReadTSO:         targetTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts", "10000.00")
+	requireMLogCommitTSSelectionContains(
+		t,
+		explain.Rows,
+		"test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts",
+		fmt.Sprintf("gt(test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts, %d)", lastSuccessTSO),
+		fmt.Sprintf("le(test.$mlog$t_mlog_commit_ts_clamp_est._tidb_commit_ts, %d)", targetTSO),
+	)
+}
+
+func TestExplainRefreshMVFastPlanEstimatesZeroRowsForDisjointMLogCommitTSFilter(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_mview_enable = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_disjoint_est (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_disjoint_est (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_disjoint_est (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_disjoint_est group by a")
+	tk.MustExec("begin")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-20000, 0)
+	targetTSO := oracle.ComposeTS(startPhysical-15000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: ast.NewCIStr("test"),
+				Name:   ast.NewCIStr("mv_mlog_commit_ts_disjoint_est"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		TargetRefreshReadTSO:         targetTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+
+	requireMLogCommitTSSelectionEstRows(t, explain.Rows, "test.$mlog$t_mlog_commit_ts_disjoint_est._tidb_commit_ts", "0.00")
+	requireMLogCommitTSSelectionContains(
+		t,
+		explain.Rows,
+		"test.$mlog$t_mlog_commit_ts_disjoint_est._tidb_commit_ts",
+		fmt.Sprintf("gt(test.$mlog$t_mlog_commit_ts_disjoint_est._tidb_commit_ts, %d)", lastSuccessTSO),
+		fmt.Sprintf("le(test.$mlog$t_mlog_commit_ts_disjoint_est._tidb_commit_ts, %d)", targetTSO),
+	)
+}
+
+func TestExplainRefreshMVFastPlanObtainsForUpdateTSWhenNotProvided(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_mview_enable = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_commit_ts_stmt_for_update (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mlog_commit_ts_stmt_for_update (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mlog_commit_ts_stmt_for_update (a, cnt) refresh fast as select a, count(1) from t_mlog_commit_ts_stmt_for_update group by a")
+	tk.MustExec("begin pessimistic")
+	defer tk.MustExec("rollback")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startPhysical := oracle.ExtractPhysical(txn.StartTS())
+	retainedLowerTSO := oracle.ComposeTS(startPhysical-10000, 0)
+	lastSuccessTSO := oracle.ComposeTS(startPhysical-5000, 0)
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{
+				Schema: ast.NewCIStr("test"),
+				Name:   ast.NewCIStr("mv_mlog_commit_ts_stmt_for_update"),
+			},
+			Type: ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: lastSuccessTSO,
+		MLogRetainedLowerTSO:         retainedLowerTSO,
+	}
+
+	txnMgr := sessiontxn.GetTxnManager(tk.Session())
+	require.NoError(t, txnMgr.OnStmtStart(context.Background(), implementStmt))
+	defer txnMgr.OnStmtEnd()
+
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+	require.NotZero(t, tk.Session().GetSessionVars().TxnCtx.GetForUpdateTS())
+	require.NotNil(t, p)
+}
+
+func requireMLogCommitTSSelectionEstRows(t *testing.T, rows [][]string, commitTSInfo string, estRows string) {
+	t.Helper()
+
+	for _, row := range rows {
+		if strings.Contains(row[4], commitTSInfo) {
+			require.Equal(t, estRows, row[1])
+			return
+		}
+	}
+	require.Failf(t, "mlog commit-ts selection not found", "commitTSInfo=%s rows=%v", commitTSInfo, rows)
+}
+
+func requireMLogCommitTSSelectionContains(t *testing.T, rows [][]string, commitTSInfo string, contains ...string) {
+	t.Helper()
+
+	for _, row := range rows {
+		if strings.Contains(row[4], commitTSInfo) {
+			for _, expected := range contains {
+				require.Contains(t, row[4], expected)
+			}
+			return
+		}
+	}
+	require.Failf(t, "mlog commit-ts selection not found", "commitTSInfo=%s rows=%v", commitTSInfo, rows)
+}
+
+func TestExplainRefreshMVFastPlanTree(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(101)
+	mlogID := int64(102)
+	mvID := int64(103)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlogTbl := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, model.MaterializedViewLogDMLTypeColumnName, 1, mysql.TypeVarchar),
+			mkTestCol(3, model.MaterializedViewLogOldNewColumnName, 2, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a")},
+		},
+	}
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_explain"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Name: mvTbl.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+	require.Equal(t, [][]string{
+		{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0]]"},
+		{"└─HashJoin", "8000.00", "root", "", "left outer join, left side:HashAgg, equal:[nulleq(test.$mlog$t.a, test.mv_tbl_explain.a)]"},
+		{"  ├─HashAgg(Build)", "6400.00", "root", "", "group by:test.$mlog$t.a, funcs:sum_int(Column#11)->Column#6, funcs:firstrow(test.$mlog$t.a)->test.$mlog$t.a"},
+		{"  │ └─TableReader", "6400.00", "root", "", "data:HashAgg"},
+		{"  │   └─HashAgg", "6400.00", "cop[tikv]", "", "group by:test.$mlog$t.a, funcs:sum_int(test.$mlog$t._mlog$_old_new)->Column#11"},
+		{"  │     └─Selection", "8000.00", "cop[tikv]", "", "gt(test.$mlog$t._tidb_commit_ts, 0)"},
+		{"  │       └─TableFullScan", "10000.00", "cop[tikv]", "table:$mlog$t", "keep order:false, stats:pseudo"},
+		{"  └─TableReader(Probe)", "10000.00", "root", "", "data:TableFullScan"},
+		{"    └─TableFullScan", "10000.00", "cop[tikv]", "table:mv", "keep order:false, stats:pseudo"},
+	}, explain.Rows)
+}
+
+func TestExplainRefreshMVFastPlanTreeMinMax(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(201)
+	mlogID := int64(202)
+	mvID := int64(203)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	baseTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mlogTbl := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+			mkTestCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkTestCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mlogTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_explain_minmax"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkTestCol(3, "mx", 2, mysql.TypeLong),
+			mkTestCol(4, "mn", 3, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Name: mvTbl.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+	require.Equal(t, [][]string{
+		{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], max(b)@2->[1,2,3,4], min(b)@3->[5,6,7,8]], full_update:index_lookup"},
+		{"├─HashJoin", "8000.00", "root", "", "left outer join, left side:HashAgg, equal:[nulleq(test.$mlog$t.a, test.mv_tbl_explain_minmax.a)]"},
+		{"│ ├─HashAgg(Build)", "6400.00", "root", "", "group by:Column#31, funcs:sum_int(Column#22)->Column#7, funcs:max(Column#23)->Column#8, funcs:max_count(Column#24)->Column#9, funcs:max(Column#25)->Column#10, funcs:max_count(Column#26)->Column#11, funcs:min(Column#27)->Column#12, funcs:min_count(Column#28)->Column#13, funcs:min(Column#29)->Column#14, funcs:min_count(Column#30)->Column#15, funcs:firstrow(Column#31)->test.$mlog$t.a"},
+		{"│ │ └─Projection", "8000.00", "root", "", "test.$mlog$t._mlog$_old_new->Column#22, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#23, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#24, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#25, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#26, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#27, if(eq(test.$mlog$t._mlog$_old_new, 1), test.$mlog$t.b, <nil>)->Column#28, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#29, if(eq(test.$mlog$t._mlog$_old_new, -1), test.$mlog$t.b, <nil>)->Column#30, test.$mlog$t.a->Column#31"},
+		{"│ │   └─TableReader", "8000.00", "root", "", "data:Selection"},
+		{"│ │     └─Selection", "8000.00", "cop[tikv]", "", "gt(test.$mlog$t._tidb_commit_ts, 0)"},
+		{"│ │       └─TableFullScan", "10000.00", "cop[tikv]", "table:$mlog$t", "keep order:false, stats:pseudo"},
+		{"│ └─TableReader(Probe)", "10000.00", "root", "", "data:TableFullScan"},
+		{"│   └─TableFullScan", "10000.00", "cop[tikv]", "table:mv", "keep order:false, stats:pseudo"},
+		{"└─StreamAgg", "1.00", "root", "", "group by:test.t.a, funcs:max(test.t.b)->Column#40, funcs:min(test.t.b)->Column#41, funcs:firstrow(test.t.a)->test.t.a"},
+		{"  └─IndexLookUp", "1.00", "root", "", ""},
+		{"    ├─IndexRangeScan(Build)", "1.00", "cop[tikv]", "table:t, index:idx_a(a)", "range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo"},
+		{"    └─TableRowIDScan(Probe)", "1.00", "cop[tikv]", "table:t", "keep order:false, stats:pseudo"},
+	}, explain.Rows)
+}
+
+func TestExplainRefreshMViewCompleteDeltaPlanTree(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1001)
+	mvID := int64(1002)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	baseTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_complete_diff"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		PKIsHandle: true,
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName:     &ast.TableName{Name: mvTbl.Name},
+			Type:         ast.RefreshMaterializedViewTypeComplete,
+			CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	savedIgnoreExplainIDSuffix := sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = savedIgnoreExplainIDSuffix
+	}()
+
+	explain := &plannercore.Explain{
+		TargetPlan: p,
+		Format:     types.ExplainFormatBrief,
+		Analyze:    false,
+	}
+	explain.SetSCtx(p.SCtx())
+	require.NoError(t, explain.RenderResult())
+	require.NotEmpty(t, explain.Rows)
+
+	var hasApply, hasProjection, hasSelection, hasFullOuterJoin bool
+	for _, row := range explain.Rows {
+		switch {
+		case strings.HasSuffix(row[0], "MViewCompleteDeltaApply"):
+			hasApply = true
+		case strings.HasSuffix(row[0], "Projection"):
+			hasProjection = true
+		case strings.HasSuffix(row[0], "Selection"):
+			hasSelection = true
+		case strings.HasSuffix(row[0], "HashJoin"):
+			if strings.Contains(row[4], "full outer join") {
+				hasFullOuterJoin = true
+			}
+		}
+	}
+	require.True(t, hasApply)
+	require.True(t, hasProjection)
+	require.True(t, hasSelection)
+	require.True(t, hasFullOuterJoin)
+}
+
+func TestBuildRefreshMViewCompleteDeltaApplyPlan(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1101)
+	mvID := int64(1102)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	baseTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_complete_apply"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		PKIsHandle: true,
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+	mvTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName:     &ast.TableName{Name: mvTbl.Name},
+			Type:         ast.RefreshMaterializedViewTypeComplete,
+			CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	applyPlan, ok := p.(*plannercore.MViewCompleteDeltaApply)
+	require.True(t, ok)
+	require.NotNil(t, applyPlan.Source)
+	require.Equal(t, mvID, applyPlan.MVTableID)
+	require.Equal(t, len(mvTbl.Columns), applyPlan.MVColumnCount)
+	require.Equal(t, 0, applyPlan.OpColID)
+	require.Equal(t, 0, applyPlan.MarkerMVOffset)
+	require.Equal(t, []int{0}, applyPlan.GroupKeyMVOffsets)
+	require.Equal(t, []int{1, 2}, applyPlan.CurrentRowInputColIDs)
+	require.Equal(t, []int{3, 4}, applyPlan.RecomputedRowInputColIDs)
+	require.Equal(t, 1, applyPlan.CurrentHandleCols.NumCols())
+	require.Equal(t, 1, applyPlan.CurrentHandleCols.GetCol(0).Index)
+	require.Equal(
+		t,
+		"op_offset:0, current_marker_offset:1, recomputed_marker_offset:3, current_group_keys_offset:[1], recomputed_group_keys_offset:[3], current_handle_offset:[1], current_row_offset:[1,2], recomputed_row_offset:[3,4]",
+		applyPlan.ExplainInfo(),
+	)
+}
+
+func TestBuildRefreshMViewCompleteDeltaApplyPlanWithCascadesEnabled(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	sctx.GetSessionVars().SetEnableCascadesPlanner(true)
+	sctx.GetSessionVars().StmtCtx.HasEnableCascadesPlannerHint = true
+	sctx.GetSessionVars().StmtCtx.EnableCascadesPlanner = true
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1101)
+	mvID := int64(1102)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	baseTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_complete_apply_cascades"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		PKIsHandle: true,
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mvTbl.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+	mvTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName:     &ast.TableName{Name: mvTbl.Name},
+			Type:         ast.RefreshMaterializedViewTypeComplete,
+			CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	_, ok := p.(*plannercore.MViewCompleteDeltaApply)
+	require.True(t, ok)
+	require.True(t, sctx.GetSessionVars().GetEnableCascadesPlanner())
+	require.True(t, sctx.GetSessionVars().StmtCtx.HasEnableCascadesPlannerHint)
+	require.True(t, sctx.GetSessionVars().StmtCtx.EnableCascadesPlanner)
+}
+
+func TestBuildRefreshMViewCompleteDeltaApplyPlanNullableGroupKey(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(1201)
+	mvID := int64(1202)
+
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_complete_apply_nullable_gk"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "a", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mvTbl.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName:     &ast.TableName{Name: mvTbl.Name},
+			Type:         ast.RefreshMaterializedViewTypeComplete,
+			CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	applyPlan, ok := p.(*plannercore.MViewCompleteDeltaApply)
+	require.True(t, ok)
+	require.NotNil(t, applyPlan.Source)
+	require.Equal(t, mvID, applyPlan.MVTableID)
+	require.Equal(t, len(mvTbl.Columns), applyPlan.MVColumnCount)
+	require.Equal(t, 0, applyPlan.OpColID)
+	require.Equal(t, 1, applyPlan.MarkerMVOffset)
+	require.Equal(t, []int{0}, applyPlan.GroupKeyMVOffsets)
+	require.Equal(t, []int{2, 3}, applyPlan.CurrentRowInputColIDs)
+	require.Equal(t, []int{4, 5}, applyPlan.RecomputedRowInputColIDs)
+	require.Equal(t, 1, applyPlan.CurrentHandleCols.NumCols())
+	require.Equal(t, int64(model.ExtraHandleID), applyPlan.CurrentHandleCols.GetCol(0).ID)
+	require.Equal(t, 1, applyPlan.CurrentHandleCols.GetCol(0).Index)
+	require.Equal(
+		t,
+		"op_offset:0, current_marker_offset:3, recomputed_marker_offset:5, current_group_keys_offset:[2], recomputed_group_keys_offset:[4], current_handle_offset:[1], current_row_offset:[2,3], recomputed_row_offset:[4,5]",
+		applyPlan.ExplainInfo(),
+	)
+}
+
+func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
+	sctx := mviewRefreshTestContext()
+	// Ensure we have a non-zero StartTS; mock.Store.Begin returns nil, so create a fake txn first.
+	savedStore := sctx.Store
+	sctx.Store = nil
+	_, err := sctx.Txn(true)
+	require.NoError(t, err)
+	sctx.Store = savedStore
+
+	baseID := int64(11)
+	mlogID := int64(22)
+	mvID := int64(33)
+
+	baseColA := mkTestCol(1, "a", 0, mysql.TypeLong)
+	baseColB := mkTestCol(2, "b", 1, mysql.TypeLong)
+	baseColB.FieldType.AddFlag(mysql.NotNullFlag)
+	baseTbl := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			baseColA,
+			baseColB,
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+
+	mlogColA := mkTestCol(1, "a", 0, mysql.TypeLong)
+	mlogColB := mkTestCol(2, "b", 1, mysql.TypeLong)
+	mlogColB.FieldType.AddFlag(mysql.NotNullFlag)
+	mlogTbl := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mlogColA,
+			mlogColB,
+			mkTestCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkTestCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+
+	mvTbl := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_not_null"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkTestCol(1, "x", 0, mysql.TypeLong),
+			mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkTestCol(3, "s", 2, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
+		RefreshStmt: &ast.RefreshMaterializedViewStmt{
+			ViewName: &ast.TableName{Name: mvTbl.Name},
+			Type:     ast.RefreshMaterializedViewTypeFast,
+		},
+		LastSuccessfulRefreshReadTSO: 0,
+	}
+
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.NoError(t, err)
+
+	mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
+	require.True(t, ok)
+	require.NotNil(t, mergePlan.Source)
+	require.Equal(t, mvID, mergePlan.MVTableID)
+	require.Equal(t, baseID, mergePlan.BaseTableID)
+	require.Equal(t, mlogID, mergePlan.MLogTableID)
+	require.Equal(t, len(mvTbl.Columns), mergePlan.MVColumnCount)
+	require.Equal(t, []int{0}, mergePlan.GroupKeyMVOffsets)
+	require.Equal(t, 1, mergePlan.CountStarMVOffset)
+	require.Len(t, mergePlan.AggInfos, 2)
+
+	var hasCountStar, hasSum bool
+	for _, aggInfo := range mergePlan.AggInfos {
+		switch aggInfo.Kind {
+		case mview.AggCountStar:
+			hasCountStar = true
+			require.Equal(t, []int{0}, aggInfo.Dependencies)
+		case mview.AggSum:
+			hasSum = true
+			require.Equal(t, "b", aggInfo.ArgColName)
+			require.Equal(t, []int{1}, aggInfo.Dependencies)
+		}
+	}
+	require.True(t, hasCountStar)
+	require.True(t, hasSum)
+}
+
+func TestMViewBuildResultHandleCols(t *testing.T) {
+	type handleCase struct {
+		name               string
+		baseID             int64
+		mlogID             int64
+		mvID               int64
+		baseCols           []handleColDef
+		buildMV            func(baseID, mvID int64) *model.TableInfo
+		expectHandleIsInt  bool
+		expectHandleIdxs   []int
+		expectHandleLayout []string
+	}
+
+	cases := []handleCase{
+		{
+			name:   "tidb_rowid",
+			baseID: 1001,
+			mlogID: 1002,
+			mvID:   1003,
+			baseCols: []handleColDef{
+				{id: 1, name: "a", tp: mysql.TypeLong},
+			},
+			buildMV: func(baseID, mvID int64) *model.TableInfo {
+				return &model.TableInfo{
+					ID:    mvID,
+					Name:  ast.NewCIStr("mv_tidb_rowid"),
+					State: model.StatePublic,
+					Columns: []*model.ColumnInfo{
+						mkTestCol(1, "x", 0, mysql.TypeLong),
+						mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+					},
+					MaterializedView: &model.MaterializedViewInfo{
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select a, count(1) from t group by a",
+					},
+				}
+			},
+			expectHandleIsInt:  true,
+			expectHandleIdxs:   []int{3},
+			expectHandleLayout: []string{"__mview_mv_rowid"},
+		},
+		{
+			name:   "int_handle",
+			baseID: 2001,
+			mlogID: 2002,
+			mvID:   2003,
+			baseCols: []handleColDef{
+				{id: 1, name: "a", tp: mysql.TypeLong},
+			},
+			buildMV: func(baseID, mvID int64) *model.TableInfo {
+				pkCol := mkTestCol(2, "x", 1, mysql.TypeLong)
+				pkCol.AddFlag(mysql.PriKeyFlag)
+				pkCol.AddFlag(mysql.NotNullFlag)
+				return &model.TableInfo{
+					ID:         mvID,
+					Name:       ast.NewCIStr("mv_int_handle"),
+					State:      model.StatePublic,
+					PKIsHandle: true,
+					Columns: []*model.ColumnInfo{
+						mkTestCol(1, "cnt", 0, mysql.TypeLonglong),
+						pkCol,
+					},
+					MaterializedView: &model.MaterializedViewInfo{
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select count(1), a from t group by a",
+					},
+				}
+			},
+			expectHandleIsInt:  true,
+			expectHandleIdxs:   []int{2},
+			expectHandleLayout: []string{"x"},
+		},
+		{
+			name:   "common_handle",
+			baseID: 3001,
+			mlogID: 3002,
+			mvID:   3003,
+			baseCols: []handleColDef{
+				{id: 1, name: "a", tp: mysql.TypeLong},
+				{id: 2, name: "b", tp: mysql.TypeLong},
+			},
+			buildMV: func(baseID, mvID int64) *model.TableInfo {
+				return &model.TableInfo{
+					ID:             mvID,
+					Name:           ast.NewCIStr("mv_common_handle"),
+					State:          model.StatePublic,
+					IsCommonHandle: true,
+					Columns: []*model.ColumnInfo{
+						mkTestCol(1, "x", 0, mysql.TypeLong),
+						mkTestCol(2, "cnt", 1, mysql.TypeLonglong),
+						mkTestCol(3, "y", 2, mysql.TypeLong),
+					},
+					Indices: []*model.IndexInfo{
+						{
+							ID:      1,
+							Name:    ast.NewCIStr("PRIMARY"),
+							Primary: true,
+							Unique:  true,
+							State:   model.StatePublic,
+							Columns: []*model.IndexColumn{
+								{Name: ast.NewCIStr("y"), Offset: 2},
+								{Name: ast.NewCIStr("x"), Offset: 0},
+							},
+						},
+					},
+					MaterializedView: &model.MaterializedViewInfo{
+						BaseTableIDs: []int64{baseID},
+						SQLContent:   "select a, count(1), b from t group by a, b",
+					},
+				}
+			},
+			expectHandleIsInt:  false,
+			expectHandleIdxs:   []int{3, 1},
+			expectHandleLayout: []string{"y", "x"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			baseTbl, mlogTbl := buildBaseAndMLogForHandleTest(tc.baseID, tc.mlogID, tc.baseCols)
+			mvTbl := tc.buildMV(tc.baseID, tc.mvID)
+			res, outputNames := buildMViewResultForHandleTest(t, baseTbl, mlogTbl, mvTbl)
+			require.NotNil(t, res.MVTablePKCols)
+			require.Equal(t, tc.expectHandleIsInt, res.MVTablePKCols.IsInt())
+			require.Equal(t, len(tc.expectHandleIdxs), res.MVTablePKCols.NumCols())
+			for i, idx := range tc.expectHandleIdxs {
+				require.Equal(t, idx, res.MVTablePKCols.GetCol(i).Index)
+			}
+			assertHandleColsMatchMergeSourceLayout(t, res, outputNames, tc.expectHandleLayout)
+		})
+	}
+}
+
+type handleColDef struct {
+	id   int64
+	name string
+	tp   byte
+}
+
+func buildBaseAndMLogForHandleTest(baseID, mlogID int64, cols []handleColDef) (*model.TableInfo, *model.TableInfo) {
+	baseCols := make([]*model.ColumnInfo, 0, len(cols))
+	mlogCols := make([]*model.ColumnInfo, 0, len(cols)+2)
+	mlogPayloadCols := make([]ast.CIStr, 0, len(cols))
+	maxColID := int64(0)
+	for i, col := range cols {
+		if col.id > maxColID {
+			maxColID = col.id
+		}
+		baseCols = append(baseCols, mkTestCol(col.id, col.name, i, col.tp))
+		mlogCols = append(mlogCols, mkTestCol(col.id, col.name, i, col.tp))
+		mlogPayloadCols = append(mlogPayloadCols, ast.NewCIStr(col.name))
+	}
+
+	mlogCols = append(
+		mlogCols,
+		mkTestCol(maxColID+1, model.MaterializedViewLogDMLTypeColumnName, len(cols), mysql.TypeVarchar),
+		mkTestCol(maxColID+2, model.MaterializedViewLogOldNewColumnName, len(cols)+1, mysql.TypeTiny),
+	)
+
+	baseTbl := &model.TableInfo{
+		ID:      baseID,
+		Name:    ast.NewCIStr("t"),
+		State:   model.StatePublic,
+		Columns: baseCols,
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID: mlogID,
+		},
+	}
+	mlogTbl := &model.TableInfo{
+		ID:      mlogID,
+		Name:    ast.NewCIStr("$mlog$t"),
+		State:   model.StatePublic,
+		Columns: mlogCols,
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     mlogPayloadCols,
+		},
+	}
+	return baseTbl, mlogTbl
+}
+
+func buildMViewResultForHandleTest(
+	t *testing.T,
+	baseTbl, mlogTbl, mvTbl *model.TableInfo,
+) (*mview.BuildResult, types.NameSlice) {
+	t.Helper()
+	sctx := mviewRefreshTestContext()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mvTbl,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(res.MergeSourceSelect)
+	err = plannercore.Preprocess(
+		context.Background(),
+		sctx,
+		nodeW,
+		plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}),
+	)
+	require.NoError(t, err)
+	builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+	return res, p.OutputNames()
+}
+
+func assertHandleColsMatchMergeSourceLayout(
+	t *testing.T,
+	res *mview.BuildResult,
+	outputNames types.NameSlice,
+	expectedCols []string,
+) {
+	t.Helper()
+	require.NotNil(t, res)
+	require.NotNil(t, res.MVTablePKCols)
+	require.NotNil(t, res.MergeSourceSelect)
+	require.NotNil(t, res.MergeSourceSelect.Fields)
+	fields := res.MergeSourceSelect.Fields.Fields
+	require.Len(t, fields, res.SourceColumnCount)
+	require.Len(t, outputNames, res.SourceColumnCount)
+	require.Equal(t, len(expectedCols), res.MVTablePKCols.NumCols())
+	for i, expectedCol := range expectedCols {
+		idx := res.MVTablePKCols.GetCol(i).Index
+		require.GreaterOrEqual(t, idx, 0)
+		require.Less(t, idx, len(fields))
+		require.Equal(t, expectedCol, fields[idx].AsName.O)
+		require.Equal(t, expectedCol, outputNames[idx].ColName.O)
+	}
+}
+
+func mkTestCol(id int64, name string, offset int, tp byte) *model.ColumnInfo {
+	fieldType := types.NewFieldType(tp)
+	return &model.ColumnInfo{
+		ID:        id,
+		Name:      ast.NewCIStr(name),
+		Offset:    offset,
+		State:     model.StatePublic,
+		FieldType: *fieldType,
+	}
+}

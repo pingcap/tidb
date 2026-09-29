@@ -106,6 +106,13 @@ func (w *mlogCommitTSFilterWindow) addCond(
 	if !ok {
 		return false
 	}
+	// The selectivity estimate uses physical TSO milliseconds and models the
+	// interval as (lower, upper]. Normalize an inclusive SQL lower bound to the
+	// preceding millisecond. Retained lower bounds, including the UpdateTS
+	// fallback, must not be adjusted here.
+	if op == ast.GE {
+		value = normalizeMLogCommitTSInclusiveLower(value)
+	}
 	switch op {
 	case ast.GT, ast.GE:
 		if !w.hasLower || value > w.lowerTSO {
@@ -153,6 +160,14 @@ func extractMLogCommitTSFilterBound(
 	return "", 0, false
 }
 
+func normalizeMLogCommitTSInclusiveLower(value uint64) uint64 {
+	physical := oracle.ExtractPhysical(value)
+	if physical == 0 {
+		return value
+	}
+	return oracle.ComposeTS(physical-1, 0)
+}
+
 func estimateMLogCommitTSSelectivity(
 	estimation *planctx.MLogCommitTSEstimation,
 	mlogTableInfo *model.TableInfo,
@@ -168,6 +183,7 @@ func estimateMLogCommitTSSelectivity(
 	if retainedLowerTSO == 0 {
 		return 0, false
 	}
+	retainedLowerFromFallback := estimation.RetainedLowerTSO == 0
 
 	// Missing filter bounds are unbounded on that side, so use the retained mlog window boundary.
 	filterLowerTSO := retainedLowerTSO
@@ -179,6 +195,9 @@ func estimateMLogCommitTSSelectivity(
 		filterUpperTSO = filter.upperTSO
 	}
 	if filterLowerTSO >= filterUpperTSO {
+		if retainedLowerFromFallback && (!filter.hasLower || filter.lowerTSO <= retainedLowerTSO) {
+			return 0, false
+		}
 		return 0, true
 	}
 
