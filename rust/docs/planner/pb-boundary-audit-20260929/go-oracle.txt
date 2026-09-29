@@ -1,0 +1,121 @@
+package expression
+import (
+ "testing"
+ "encoding/hex"
+ "fmt"
+ "os"
+ "strings"
+ "strconv"
+ "time"
+ "math"
+ "github.com/pingcap/tidb/pkg/parser/mysql"
+ "github.com/pingcap/tidb/pkg/parser/charset"
+ "unicode"
+ "github.com/pingcap/tidb/pkg/errctx"
+ "github.com/pingcap/tidb/pkg/types"
+ "github.com/pingcap/tidb/pkg/util/chunk"
+ "github.com/pingcap/tidb/pkg/util/codec"
+ "github.com/pingcap/tidb/pkg/util/mock"
+ "github.com/pingcap/tipb/go-tipb"
+)
+func TestRustBoundaryPB(t *testing.T) {
+ out,err:=os.Create("/private/tmp/pb-boundary-go.tsv");if err!=nil {t.Fatal(err)};defer out.Close()
+ ft:=func(domain string)*tipb.FieldType{
+  code:=map[string]byte{"Int":mysql.TypeLonglong,"Real":mysql.TypeDouble,"Decimal":mysql.TypeNewDecimal,"String":mysql.TypeVarString,"Time":mysql.TypeDatetime,"Duration":mysql.TypeDuration,"Json":mysql.TypeJSON}[domain]
+  field:=&tipb.FieldType{Tp:int32(code),Flen:-1,Decimal:-1,Charset:"binary",Collate:63,Flag:128}
+  if domain=="String"||domain=="Json" {field.Charset="utf8mb4";field.Collate=46;field.Flag=0}
+  if domain=="Int" {field.Decimal=0};if domain=="Decimal" {field.Flen=10;field.Decimal=2};if domain=="Time"||domain=="Duration" {field.Decimal=3}
+  return field
+ }
+ var literal func(string,string)*tipb.Expr
+ literal=func(domain,value string)*tipb.Expr {
+  pb:=&tipb.Expr{FieldType:ft(domain)}
+  switch domain {
+  case "Null": pb.Tp=tipb.ExprType_Null
+  case "Int":n,_:=strconv.ParseInt(value,10,64);pb.Tp=tipb.ExprType_Int64;pb.Val=codec.EncodeInt(nil,n)
+  case "UInt":n,_:=strconv.ParseUint(value,10,64);pb.FieldType=ft("Int");pb.FieldType.Flag|=32;pb.Tp=tipb.ExprType_Uint64;pb.Val=codec.EncodeUint(nil,n)
+  case "Real":n,_:=strconv.ParseFloat(value,64);pb.Tp=tipb.ExprType_Float64;pb.Val=codec.EncodeFloat(nil,n)
+  case "Decimal":d:=new(types.MyDecimal);if err:=d.FromString([]byte(value));err!=nil {panic(err)};pb.Tp=tipb.ExprType_MysqlDecimal;pb.Val,err=codec.EncodeDecimal(nil,d,0,0)
+  case "String":pb.Tp=tipb.ExprType_String;pb.Val=[]byte(value)
+  case "Duration":n,_:=strconv.ParseInt(value,10,64);pb.Tp=tipb.ExprType_MysqlDuration;pb.Val=codec.EncodeInt(nil,n)
+  case "Time":pb.Tp=tipb.ExprType_MysqlTime;v:=types.NewTime(types.FromDate(2024,1,2,3,4,5,123000),mysql.TypeDatetime,3);n,_:=v.ToPackedUint();pb.Val=codec.EncodeUint(nil,n)
+  case "Json":pb.Tp=tipb.ExprType_MysqlJson;j,e:=types.ParseBinaryJSONFromString(value);if e!=nil {panic(e)};pb.Val,err=codec.EncodeValue(time.UTC,nil,types.NewJSONDatum(j))
+  }
+  return pb
+ }
+ call:=func(sig,domain string,args ...*tipb.Expr)*tipb.Expr {
+  if _,ok:=tipb.ScalarFuncSig_value[sig];!ok {panic(sig)}
+  return &tipb.Expr{Tp:tipb.ExprType_ScalarFunc,Sig:tipb.ScalarFuncSig(tipb.ScalarFuncSig_value[sig]),FieldType:ft(domain),Children:args}
+ }
+ count:=0
+ run:=func(name string,pb *tipb.Expr){
+  for _,flags:=range []uint64{0,2,1} {
+   func(){
+    ctx:=mock.NewContext();ctx.GetSessionVars().StmtCtx.SetTypeFlags(types.DefaultStmtFlags.WithIgnoreTruncateErr(flags==1).WithTruncateAsWarning(flags==2).WithIgnoreZeroInDate(false).WithAllowNegativeToUnsigned(true));ctx.GetSessionVars().TimeZone=time.UTC;ctx.GetSessionVars().StmtCtx.SetTimeZone(time.UTC);levels:=ctx.GetSessionVars().StmtCtx.ErrLevels();levels[errctx.ErrGroupDividedByZero]=errctx.LevelError;ctx.GetSessionVars().StmtCtx.SetErrLevels(levels)
+    input:=pb;row:=chunk.Row{};var columns []*types.FieldType;columnWire:=""
+    if strings.Contains(name,"/column/") {
+     leaf:=pb.Children[0];encoded,_:=leaf.Marshal();columnWire=hex.EncodeToString(encoded)
+     decoded,e:=PBToExpr(ctx,leaf,nil);if e!=nil {t.Fatal(e)};value,e:=decoded.Eval(ctx,chunk.Row{});if e!=nil {t.Fatal(e)}
+     row=chunk.MutRowFromDatums([]types.Datum{value}).ToRow();columns=[]*types.FieldType{PbTypeToFieldType(leaf.FieldType)}
+     clone:=*pb;clone.Children=[]*tipb.Expr{{Tp:tipb.ExprType_ColumnRef,Val:codec.EncodeInt(nil,0),FieldType:leaf.FieldType}};input=&clone
+    }
+    wire,e:=input.Marshal();if e!=nil {panic(e)}
+    result:="";detail:=""
+    defer func(){if r:=recover();r!=nil {result="panic";detail=fmt.Sprint(r)};warns:=[]string{};for _,w:=range ctx.GetSessionVars().StmtCtx.GetWarnings(){warns=append(warns,hex.EncodeToString([]byte(w.Err.Error())))};fmt.Fprintf(out,"%s\t%d\t%s\t%s\t%s\t%d\t%s\t%s\n",name,flags,hex.EncodeToString(wire),result,hex.EncodeToString([]byte(detail)),len(ctx.GetSessionVars().StmtCtx.GetWarnings()),strings.Join(warns,","),columnWire);count++}()
+    expr,e:=PBToExpr(ctx,input,columns);if e!=nil {result="decode_error";detail=e.Error();return}
+    value,e:=expr.Eval(ctx,row);if e!=nil {result="error";detail=e.Error();return}
+    switch value.Kind() {
+    case types.KindNull:result="null"
+    case types.KindFloat64,types.KindFloat32:result=fmt.Sprintf("real:%016x",math.Float64bits(value.GetFloat64()))
+    default: text,e:=value.ToString();if e!=nil {panic(e)};result="value:"+hex.EncodeToString([]byte(text))
+    }
+   }()
+  }
+ }
+
+ // Homogeneous operand and wire-result collations, avoiding coercibility conflicts.
+ for _,co:=range []struct{name,charset string;id int32}{{"binary","binary",63},{"utf8mb4_bin","utf8mb4",46},{"utf8mb4_general_ci","utf8mb4",45},{"utf8mb4_unicode_ci","utf8mb4",224},{"utf8mb4_0900_ai_ci","utf8mb4",255},{"ascii_bin","ascii",65},{"latin1_bin","latin1",47},{"gbk_bin","gbk",87},{"gb18030_bin","gb18030",249}} {
+  str:=func(v string)*tipb.Expr {p:=literal("String",v);p.FieldType.Charset=co.charset;p.FieldType.Collate=-co.id;return p}
+  invoke:=func(sig,domain string,args ...*tipb.Expr)*tipb.Expr {p:=call(sig,domain,args...);p.FieldType.Charset=co.charset;p.FieldType.Collate=-co.id;return p}
+  pairs:=[][2]string{{"a","A"},{"e","é"},{"ss","ß"},{"a","a "},{""," "},{"ä","z"},{"İ","i"},{"Σ","ς"},{"😀","😁"},{"é","e\u0301"},{"a\x00","a"},{"\xff","\xfe"}}
+  for i,pair:=range pairs {for _,sig:=range []string{"EQString","NEString","LTString","LEString","GTString","GEString","InString"} {run(fmt.Sprintf("%s/collation/%s/%d",sig,co.name,i),invoke(sig,"Int",str(pair[0]),str(pair[1])))}}
+  for i,pair:=range [][2]string{{"A","a"},{"é","e"},{"ß","ss"},{"a ","a"},{"😀","_"},{"a\x00b","a_b"},{"\xff","_"},{"x%y","x\\%y"},{"abc","%c"}} {run(fmt.Sprintf("LikeSig/collation/%s/%d",co.name,i),invoke("LikeSig","Int",str(pair[0]),str(pair[1]),literal("Int","92")))}
+  for i,v:=range []string{"abc","Straße","İΣςﬄ","é😀","a\xffb","\xe2\x82","abc ","\x80\x81","àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜ","µǅɡςϐϑϕ"} {
+   for _,sig:=range []string{"CharLength","CharLengthUTF8","Upper","UpperUTF8","Lower","LowerUTF8"} {domain:="String";if strings.HasPrefix(sig,"CharLength"){domain="Int"};run(fmt.Sprintf("%s/charset/%s/%d",sig,co.name,i),invoke(sig,domain,str(v)))}
+   for _,sig:=range []string{"Substring2Args","Substring2ArgsUTF8","Substring3Args","Substring3ArgsUTF8"} {for j,pos:=range []string{"-9223372036854775808","-2","0","1","2","9223372036854775807"} {args:=[]*tipb.Expr{str(v),literal("Int",pos)};if strings.HasPrefix(sig,"Substring3"){args=append(args,literal("Int","2"))};run(fmt.Sprintf("%s/charset/%s/%d/%d",sig,co.name,i,j),invoke(sig,"String",args...))}}
+  }
+ }
+ // Mixed signedness at the comparison boundary, with exact high-bit values.
+ ints:=[]struct{domain,value string}{{"Int","-9223372036854775808"},{"Int","-1"},{"Int","0"},{"Int","9223372036854775807"},{"UInt","0"},{"UInt","9223372036854775808"},{"UInt","18446744073709551615"}}
+ for i,a:=range ints {for j,b:=range ints {for _,sig:=range []string{"EQInt","NEInt","LTInt","LEInt","GTInt","GEInt","InInt"} {run(fmt.Sprintf("%s/signedness/%d/%d",sig,i,j),call(sig,"Int",literal(a.domain,a.value),literal(b.domain,b.value)))}}}
+ for _,domain:=range []string{"Real","Decimal"} {vs:=[]string{"-2.5","-1.5","-0.5","0.5","1.5","2.5","999999999999999999.5"};if domain=="Real" {vs=append(vs,"1e308","-1e308","5e-324","-0")}
+  round:=map[string]string{"Real":"RoundReal","Decimal":"RoundDec"}[domain]
+  for i,v:=range vs {run(fmt.Sprintf("%s/round/%d",round,i),call(round,domain,literal(domain,v)))}
+  for i,a:=range vs {for j,b:=range vs {for _,op:=range []string{"Plus","Minus","Multiply","Divide","Mod"} {sig:=op+domain;run(fmt.Sprintf("%s/extremes/%d/%d",sig,i,j),call(sig,domain,literal(domain,a),literal(domain,b)))}}}
+ }
+
+ for i,pattern:=range []string{`\d`,`\D`,`\w`,`\W`,`\s`,`\S`,`\bé\b`,`[[:alpha:]]`,`[a-z&&b]`,`(?u)a`,`a{1001}`,`\u{61}`,`a++`,`\p{Greek}`,`^.$`,`a$`,`\A.a\z`,`(?i)k`,`(?i)s`,`(?-u:\w)`} {
+  for j,text:=range []string{"١","é","\u00a0","a","b","aa","a\n","Σ","K","ſ","\xff"} {
+   for k,flags:=range []string{"","i","m","s","ic","ci"} {pb:=call("RegexpLikeSig","Int",literal("String",text),literal("String",pattern),literal("String",flags));pb.FieldType.Charset="utf8mb4";pb.FieldType.Collate=-46;run(fmt.Sprintf("RegexpLikeSig/regex/%d/%d/%d",i,j,k),pb)}
+  }
+ }
+ for i,value:=range []string{"0","0.1234999","0.9999999","1.4999999","1.9999999","32536771199.9999999","-0.0000001","1700000000.1234567","-0.5","-0.1"} {for _,fsp:=range []int32{0,1,2,3,6} {
+  for _,sig:=range []string{"FromUnixTime1Arg","FromUnixTime2Arg"} {args:=[]*tipb.Expr{literal("Decimal",value)};args[0].FieldType.Decimal=7;args[0].FieldType.Flen=30;domain:="Time";if sig=="FromUnixTime2Arg" {domain="String";args=append(args,literal("String","%Y-%m-%d %H:%i:%s.%f"))};pb:=call(sig,domain,args...);pb.FieldType.Decimal=fsp;run(fmt.Sprintf("%s/precision/%d/%d",sig,i,fsp),pb)}
+ }}
+
+ for _,table:=range []struct{name,cs string;id int32;ranges unicode.SpecialCase}{{"gbk","gbk",87,charset.GBKCase},{"gb18030","gb18030",249,charset.GB18030Case}} {
+  for _,span:=range table.ranges {for cp:=span.Lo;cp<=span.Hi;cp++ {for _,sig:=range []string{"UpperUTF8","LowerUTF8"} {
+   leaf:=literal("String",string(rune(cp)));leaf.FieldType.Charset=table.cs;leaf.FieldType.Collate=-table.id
+   pb:=call(sig,"String",leaf);pb.FieldType.Charset=table.cs;pb.FieldType.Collate=-table.id
+   run(fmt.Sprintf("%s/special_case/%s/%04x",sig,table.name,cp),pb)
+  }}}
+ }
+ for _,co:=range []struct{name,cs string;id int32}{{"gb18030_bin","gb18030",249},{"gbk_bin","gbk",87},{"utf8mb4_bin","utf8mb4",46}} {
+  for i,text:=range []string{"é","中","😀","\xff"} {for j,pattern:=range []string{"_","__","___","____","%","_%","%_","é","中","😀"} {
+   a,b:=literal("String",text),literal("String",pattern);for _,v:=range []*tipb.Expr{a,b} {v.FieldType.Charset=co.cs;v.FieldType.Collate=-co.id}
+   pb:=call("LikeSig","Int",a,b,literal("Int","92"));pb.FieldType.Charset=co.cs;pb.FieldType.Collate=-co.id
+   run(fmt.Sprintf("LikeSig/wildcard/%s/%d/%d",co.name,i,j),pb)
+  }}
+ }
+ t.Log("cases",count)
+}

@@ -1,0 +1,30 @@
+from pathlib import Path
+import hashlib
+import gzip
+import json
+
+root = Path(__file__).resolve().parent
+for line in (root / 'SHA256SUMS').read_text().splitlines():
+    expected, name = line.split('  ', 1)
+    assert hashlib.sha256((root / name).read_bytes()).hexdigest() == expected, name
+
+def rows(name):
+    data = [line.split('\t') for line in gzip.decompress((root / (name + '.gz')).read_bytes()).decode().splitlines()]
+    assert len({tuple(row[:2]) for row in data}) == len(data), name
+    return {tuple(row[:2]): row for row in data}
+
+go = rows('go.tsv')
+rust = rows('rust.tsv')
+primitive = rows('primitive.tsv')
+assert len(go) == len(rust) == 23568
+assert go.keys() == rust.keys()
+assert len(primitive) == 5064
+assert all(row[2] == go[key][3] for key, row in primitive.items())
+differences = json.loads((root / 'differences.json').read_text())
+assert len(differences) == 4032
+assert {key for key in go if go[key][3] != rust[key][2]} == {
+    (row['name'], str(row['flags'])) for row in differences
+}
+assert not any(row[3] == 'panic' for row in go.values())
+assert not any(row[2] == 'panic' for row in rust.values())
+print('Verified checksums, 23,568 paired rows, 4,032 differences, and 5,064 matching primitive rows.')

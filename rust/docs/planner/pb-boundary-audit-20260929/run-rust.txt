@@ -1,0 +1,14 @@
+from pathlib import Path
+import subprocess
+p=Path('rust/crates/tidb-unistore/src/cophandler/eval_context.rs');original=p.read_text()
+r=Path('rust/crates/tidb-expr/src/scalar_function/pb_builtin.rs');registry=r.read_text()
+try:
+ p.write_text(original.replace('mod next_boundary_audit {','mod next_boundary_audit {\n'+Path('/private/tmp/pb-boundary-rust-probe.rs').read_text(),1))
+ r.write_text(registry+Path('/private/tmp/pb-systematic-inventory-probe.rs').read_text())
+ for name,cmd in [('inventory',['cargo','test','--offline','--locked','--manifest-path','rust/Cargo.toml','-p','tidb-expr','--lib','audit_pb_registry_inventory','--','--test-threads=1']),('matrix',['cargo','test','--offline','--locked','--manifest-path','rust/Cargo.toml','-p','tidb-unistore','--lib','audit_boundary_pb_matrix','--','--test-threads=1'])]:
+  with open('/private/tmp/pb-boundary-rust-'+name+'.log','w') as log:
+   result=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT)
+  print(name,result.returncode,flush=True)
+  if result.returncode: raise SystemExit(result.returncode)
+finally:
+ p.write_text(original);r.write_text(registry)

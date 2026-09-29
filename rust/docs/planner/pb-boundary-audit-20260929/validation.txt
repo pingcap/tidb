@@ -1,0 +1,47 @@
+pb-boundary-go.log (final lines only)
+[2026/09/29 00:51:13.326 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+[2026/09/29 00:51:13.326 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+[2026/09/29 00:51:13.326 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+    rust_boundary_pb_test.go:120: cases 23568
+--- PASS: TestRustBoundaryPB (0.33s)
+PASS
+ok  	github.com/pingcap/tidb/pkg/expression	0.404s
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+Using existing github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
+[failpoint-state] action=disable backend=go log_channel=stderr log_color=auto refcount=1
+[failpoint-state] [DECISION] >>> decision=run-disable reason=refcount-reaches-zero <<<
+[failpoint-state] new_refcount=0
+
+pb-boundary-rust-inventory.log (final lines only)
+139 |     ConstantFloatCastOverflow { value: String },
+    |                                 ^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-expr` (lib test) generated 32 warnings (run `cargo fix --lib -p tidb-expr --tests` to apply 16 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.84s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-expr/860c448b13d5d896/out/tidb_expr-860c448b13d5d896)
+
+running 1 test
+test scalar_function::pb_builtin::audit_inventory::audit_pb_registry_inventory ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1336 filtered out; finished in 0.00s
+
+
+pb-boundary-rust-matrix.log (final lines only)
+2026 |     RegexpLike(i32),
+     |     ^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-unistore` (lib test) generated 6 warnings (run `cargo fix --lib -p tidb-unistore --tests` to apply 5 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.00s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-unistore/bfa644f1da0cbc1b/out/tidb_unistore-bfa644f1da0cbc1b)
+
+running 1 test
+test cophandler::eval_context::next_boundary_audit::audit_boundary_pb_matrix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 201 filtered out; finished in 1.90s
+

@@ -1,0 +1,1550 @@
+{
+  "pkg/expression": [
+    {
+      "path": "pkg/expression/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a45afdb928321cba04eb47e5bd2fd8f7c0461bab"
+    },
+    {
+      "path": "pkg/expression/OWNERS",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4360f466a4ea5d6106f1cbb08b39f4853b1c7a7b"
+    },
+    {
+      "path": "pkg/expression/aggregation/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "cab3be911cec284fc850290a647525c111ab393a"
+    },
+    {
+      "path": "pkg/expression/aggregation/agg_to_pb.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3f669724ed3e48914e5d5de1af55c3b576bdfbe1"
+    },
+    {
+      "path": "pkg/expression/aggregation/agg_to_pb_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e9b2c1e2b4864fd732b4a04efd08826237d0919b"
+    },
+    {
+      "path": "pkg/expression/aggregation/aggregation.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "7b5eac4611a8a09e7a0d784d0d56519a2ba877c2"
+    },
+    {
+      "path": "pkg/expression/aggregation/aggregation_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a868980bf6e119968a84343dbfe74fe5ee422b3a"
+    },
+    {
+      "path": "pkg/expression/aggregation/avg.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a4752728b0e549aa7276a88350fb61335113b169"
+    },
+    {
+      "path": "pkg/expression/aggregation/base_func.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "8376d8e49f7507be4122915b061e7659d98c2e71"
+    },
+    {
+      "path": "pkg/expression/aggregation/base_func_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e35e61374fcffe203f5569659d33bb9a66a11ab8"
+    },
+    {
+      "path": "pkg/expression/aggregation/bench_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d7e2486cb499e9328af50541d3b3454f9ddcd6f3"
+    },
+    {
+      "path": "pkg/expression/aggregation/bit_and.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "01d0a3ef433cdadb47eccd8b0e09f02b2f3c8d20"
+    },
+    {
+      "path": "pkg/expression/aggregation/bit_or.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "2e609ef45bf3a64a59bee2c44eeaff6a162ccc06"
+    },
+    {
+      "path": "pkg/expression/aggregation/bit_xor.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "6d9959163a67019776b1ea647af17e943e35d46d"
+    },
+    {
+      "path": "pkg/expression/aggregation/concat.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "96c4f28f606ff6a7ade6d1359b188dcf1c0a6df4"
+    },
+    {
+      "path": "pkg/expression/aggregation/count.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "c029289547ef955c73e14e6b1c82eeb9ced9b90b"
+    },
+    {
+      "path": "pkg/expression/aggregation/descriptor.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "34249093197793d7db398abc779de7580ec294c2"
+    },
+    {
+      "path": "pkg/expression/aggregation/explain.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d89fc08d88dc6f62bfd5c6d924514296efec73da"
+    },
+    {
+      "path": "pkg/expression/aggregation/first_row.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "fba939b315bfcbcb8f26503dacfcb861b6049df0"
+    },
+    {
+      "path": "pkg/expression/aggregation/main_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0603baef7ad9d85448db7af23aa041e7ef1b6a40"
+    },
+    {
+      "path": "pkg/expression/aggregation/max_min.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "968835e811b4ce136df6594cd98d8b1556bda7af"
+    },
+    {
+      "path": "pkg/expression/aggregation/max_min_count.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a5f296ad2f9b443e939f7d0f0f2f5c3140c5960e"
+    },
+    {
+      "path": "pkg/expression/aggregation/sum.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "74b5e8bdf72a06cea5da9272be7f9ded280c11d3"
+    },
+    {
+      "path": "pkg/expression/aggregation/sum_int.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3cf8f6cc238bbdd0a3583b1803c818fb2fb70084"
+    },
+    {
+      "path": "pkg/expression/aggregation/util.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "fef4575d8bf46e7d6e410ad224e4d0b49f873fc9"
+    },
+    {
+      "path": "pkg/expression/aggregation/util_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "1547ed3766cdebe88680483a9687b21ddf4cee65"
+    },
+    {
+      "path": "pkg/expression/aggregation/window_func.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "211535fa7605a0afa3fc7c4df5933f6851a0585a"
+    },
+    {
+      "path": "pkg/expression/bench_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4ce8d5bfa4a32a87ec4f6c0670c154347b661ceb"
+    },
+    {
+      "path": "pkg/expression/builtin.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9683de6ad2cd858a63ff5963066f1d75169ef6c9"
+    },
+    {
+      "path": "pkg/expression/builtin_arithmetic.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "6c76bf9a447609c99ab95bf50b47b90fa3bfb94b"
+    },
+    {
+      "path": "pkg/expression/builtin_arithmetic_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "338566d698d22b4c7bda2bd07bf71291a7709202"
+    },
+    {
+      "path": "pkg/expression/builtin_arithmetic_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b33658330fc61f40e0b9a0e12de003b47b17f4b8"
+    },
+    {
+      "path": "pkg/expression/builtin_arithmetic_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "bf388a7f467feb30a1f559716a92b85e3535876e"
+    },
+    {
+      "path": "pkg/expression/builtin_cast.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b2cfc5e629844d1cfabae6527dd9621b0401f8ee"
+    },
+    {
+      "path": "pkg/expression/builtin_cast_bench_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b313732f4816332ded94b2c2da57f067a871f112"
+    },
+    {
+      "path": "pkg/expression/builtin_cast_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e78aec00f0aed2aed531744e9bd8258cdd1e6389"
+    },
+    {
+      "path": "pkg/expression/builtin_cast_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "bf830ec6178c6418cefdc542f9fc04e09bb2f1f7"
+    },
+    {
+      "path": "pkg/expression/builtin_cast_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "202599d55cb6c73ba2d8be5e159afa17aaccfcac"
+    },
+    {
+      "path": "pkg/expression/builtin_compare.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "7be742b274fd477144e7343cf215b0e9e2f3faf1"
+    },
+    {
+      "path": "pkg/expression/builtin_compare_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "7835f20b82098a0b3c33ab0e037c3af892d6d3d9"
+    },
+    {
+      "path": "pkg/expression/builtin_compare_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d2847e9d8c67920c415f07817a182df63a10af8c"
+    },
+    {
+      "path": "pkg/expression/builtin_compare_vec_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "8f53e5c27ccbe271aafd5dafd87d764bc9e1a3d1"
+    },
+    {
+      "path": "pkg/expression/builtin_compare_vec_generated_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "25763c189b6a2a4269aa08f306395cb2e98704ff"
+    },
+    {
+      "path": "pkg/expression/builtin_compare_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ce44becbe2f96981283511e59591834023c03a04"
+    },
+    {
+      "path": "pkg/expression/builtin_control.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "657dfc66d28aab998df0f2e674854a3f21d7ab05"
+    },
+    {
+      "path": "pkg/expression/builtin_control_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "665fc5b30c36334b8eb5cf85dcda78ae74e78811"
+    },
+    {
+      "path": "pkg/expression/builtin_control_vec_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "c5e0204ed9d08ecb8216fc4e9817472dc6945351"
+    },
+    {
+      "path": "pkg/expression/builtin_control_vec_generated_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a342088d5db34b7d5a7511e791dfc8c4421e1a63"
+    },
+    {
+      "path": "pkg/expression/builtin_convert_charset.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "923e309b20c72f4e5de8d3585a75793f6ca42452"
+    },
+    {
+      "path": "pkg/expression/builtin_encryption.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "6fc6f77c9470add95fd89ad4f89e424e1d23fdd8"
+    },
+    {
+      "path": "pkg/expression/builtin_encryption_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b6fc17de405761088d3504bbb6fef9aa868d4a79"
+    },
+    {
+      "path": "pkg/expression/builtin_encryption_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "284af7a0391d6d719382f3e2626f2f42db8478b8"
+    },
+    {
+      "path": "pkg/expression/builtin_encryption_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f434be423a551314fb508e1d893bb303275919fd"
+    },
+    {
+      "path": "pkg/expression/builtin_fts.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "161e72b0c917306571148586538a7821d462b06e"
+    },
+    {
+      "path": "pkg/expression/builtin_func_param.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4157cf5fe18d554dbae71160acd5fa15422e3b82"
+    },
+    {
+      "path": "pkg/expression/builtin_grouping.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "82f37cd9639addaeefd080eca6c8ada5fffa674e"
+    },
+    {
+      "path": "pkg/expression/builtin_grouping_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "83b7001ce90a114ed56871f9ae93a8a1069f6b33"
+    },
+    {
+      "path": "pkg/expression/builtin_ilike.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "2293025c4a874df3a5d488d9b2fbed1925a98047"
+    },
+    {
+      "path": "pkg/expression/builtin_ilike_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "2b0ef167b04f76a80227be81d14056775fb38d90"
+    },
+    {
+      "path": "pkg/expression/builtin_ilike_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4c8b58c6f6834d5818d4e64f7f5ad8e48f6d01da"
+    },
+    {
+      "path": "pkg/expression/builtin_inference.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "03882929e74eed7c2533b117b83b22cdc6414259"
+    },
+    {
+      "path": "pkg/expression/builtin_inference_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "8a71d22d3ad989a82602003efbf518f245c63a68"
+    },
+    {
+      "path": "pkg/expression/builtin_info.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "88310d39c042039ded8f6733fda85fb553ca2476"
+    },
+    {
+      "path": "pkg/expression/builtin_info_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ace1f4cec3ad80854cdc8c2d922bac091ca17650"
+    },
+    {
+      "path": "pkg/expression/builtin_info_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "35fa9b71514c35f30dce8b79b43bff311353225e"
+    },
+    {
+      "path": "pkg/expression/builtin_info_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b9beaa4a00e569569fc738b20aa1b1667334c271"
+    },
+    {
+      "path": "pkg/expression/builtin_json.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "68f14ea923580fbd2a4f00b2530fffbd273f5053"
+    },
+    {
+      "path": "pkg/expression/builtin_json_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "79e852b030e3fa93b4528a1115c9a95309ef0084"
+    },
+    {
+      "path": "pkg/expression/builtin_json_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "65f09928d8812bde114b50d57257e8c4a329e856"
+    },
+    {
+      "path": "pkg/expression/builtin_json_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "c7150c0e2b9ac7d598305d886a804b580be0592e"
+    },
+    {
+      "path": "pkg/expression/builtin_like.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b40d60fad1c231721f81a08c98b47e55764e1f98"
+    },
+    {
+      "path": "pkg/expression/builtin_like_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "907dae74ac8b7b579fb8d0704dc5b0f877f9af30"
+    },
+    {
+      "path": "pkg/expression/builtin_like_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "1dec38e4d6bcc9a86b326a550e854844d51512e9"
+    },
+    {
+      "path": "pkg/expression/builtin_like_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "69bcb93735e3ee0701cce8cf0813fbdb583a0770"
+    },
+    {
+      "path": "pkg/expression/builtin_math.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f2c62f6cd0d13dc1cb8893c076b507ee02ae06f9"
+    },
+    {
+      "path": "pkg/expression/builtin_math_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f9a94d244a6c262bab8619f4743575dbebd133dd"
+    },
+    {
+      "path": "pkg/expression/builtin_math_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "fcacbd6f5dad2b4d87590cc7c0959ba23fa336cf"
+    },
+    {
+      "path": "pkg/expression/builtin_math_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b9adfe9f5c1c7dfbda48f112395b0e1ac7db3102"
+    },
+    {
+      "path": "pkg/expression/builtin_miscellaneous.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "603a9ad08813ec5026a29ccbbe203497a138acb0"
+    },
+    {
+      "path": "pkg/expression/builtin_miscellaneous_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "fbd92dfa29106d946c198798268b98736bdd7723"
+    },
+    {
+      "path": "pkg/expression/builtin_miscellaneous_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "7d25d4a6aec22b24570332c40ea87989fdb67268"
+    },
+    {
+      "path": "pkg/expression/builtin_miscellaneous_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "c0de6a3e1a792a6e13142ad9a72c3f720dfada71"
+    },
+    {
+      "path": "pkg/expression/builtin_op.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "8a9a6b66ec7d99fb6589be98d926de42d3d6b766"
+    },
+    {
+      "path": "pkg/expression/builtin_op_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4efccbc0ba24cb9312f27b2c34caf41204696629"
+    },
+    {
+      "path": "pkg/expression/builtin_op_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "80a6dd76784be2a3758c850c7b89a75ace47e397"
+    },
+    {
+      "path": "pkg/expression/builtin_op_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e728571f9af789b41582b4df42bc9cb0562a9a12"
+    },
+    {
+      "path": "pkg/expression/builtin_other.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "c988ced93ee4a457d2cc8cb30633c5247ff49969"
+    },
+    {
+      "path": "pkg/expression/builtin_other_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f8f67577e246d940985907546fe745b70c1cdd2b"
+    },
+    {
+      "path": "pkg/expression/builtin_other_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0c57599274be89b5ac3fe56b8a7cad3b40f1fd43"
+    },
+    {
+      "path": "pkg/expression/builtin_other_vec_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0294c85f3759b0ca996c452e98759ce50fddfab2"
+    },
+    {
+      "path": "pkg/expression/builtin_other_vec_generated_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "44d93cb0ba2f340f7e90e7a8cb6c0ed54fd76403"
+    },
+    {
+      "path": "pkg/expression/builtin_other_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "eb7419442f5ea29e92dfba4f6f8762265d651dbc"
+    },
+    {
+      "path": "pkg/expression/builtin_regexp.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "313384df5990caefa294910b3fee2458adb9f0c7"
+    },
+    {
+      "path": "pkg/expression/builtin_regexp_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "cb534c333bbe6ca16fccb9369e874c3d0f8f0081"
+    },
+    {
+      "path": "pkg/expression/builtin_regexp_util.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "85bad8b59a4a635ee7c18f6e0931278a35a639ad"
+    },
+    {
+      "path": "pkg/expression/builtin_regexp_vec_const_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0dcdba1888b843b88f80ac8307c6566059ee5532"
+    },
+    {
+      "path": "pkg/expression/builtin_registry.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0e89504da1d28c349d393e1ec1177bdfd265f37d"
+    },
+    {
+      "path": "pkg/expression/builtin_string.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "573b3976592f290cc1a30ac4ebcd68980ee7acac"
+    },
+    {
+      "path": "pkg/expression/builtin_string_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "69e2f11458833c1f33ad008f217243ac8ce6d8f9"
+    },
+    {
+      "path": "pkg/expression/builtin_string_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9de6e9237228833f4791450cef744b2818c97c91"
+    },
+    {
+      "path": "pkg/expression/builtin_string_vec_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ef8e29dd0af43fa436e23c30e03f70872fcdfd79"
+    },
+    {
+      "path": "pkg/expression/builtin_string_vec_generated_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "cbb989d970bd313e6eeeed3f080e01880d845b60"
+    },
+    {
+      "path": "pkg/expression/builtin_string_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "48c90d8c1a03cc2b0df82f9edbb7fd5f32d6c753"
+    },
+    {
+      "path": "pkg/expression/builtin_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ebd79862600bd3c48a147fd9b63022bcab847fe3"
+    },
+    {
+      "path": "pkg/expression/builtin_threadsafe_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "458f889dd075e0994486b3360ef3d1aa71760a6a"
+    },
+    {
+      "path": "pkg/expression/builtin_threadunsafe_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e3795d41eb2f5456586b734dc99941d6f8c8d6fc"
+    },
+    {
+      "path": "pkg/expression/builtin_time.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "60b846f97c7a87db7b9a56fb85ea8a22fbb2d696"
+    },
+    {
+      "path": "pkg/expression/builtin_time_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4998c27393eb6a1984fd4b717a1687f0f9ab69f2"
+    },
+    {
+      "path": "pkg/expression/builtin_time_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "83b47321a4659ad24d9effada17daa99cc4d67ee"
+    },
+    {
+      "path": "pkg/expression/builtin_time_vec_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "6cb53c94e97c76951249423859d29923dd3e5a84"
+    },
+    {
+      "path": "pkg/expression/builtin_time_vec_generated_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "43d5ef959e1cc0b7e228f894230f6d2599535626"
+    },
+    {
+      "path": "pkg/expression/builtin_time_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a4faf1f1e3f053d83ff51c3bb73b7a7a5faa9b67"
+    },
+    {
+      "path": "pkg/expression/builtin_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e1d837446182851bf98edd71c7a93146b3b1d3f2"
+    },
+    {
+      "path": "pkg/expression/builtin_vec_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "dd618282d7d088300d985720f814adc46179280a"
+    },
+    {
+      "path": "pkg/expression/builtin_vec_vec_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d70599a6f1f18825c7cf0ffc62222932a4e95383"
+    },
+    {
+      "path": "pkg/expression/builtin_vectorized.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "78480bbdfbab6acfe0e757e4f3d194a3905daa6b"
+    },
+    {
+      "path": "pkg/expression/builtin_vectorized_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "5dfcb7b395d985574dd6f673c8ea344d8624fca9"
+    },
+    {
+      "path": "pkg/expression/chunk_executor.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "5491fd1fd217c270e7f1e3c59916cbeb111d35b0"
+    },
+    {
+      "path": "pkg/expression/collation.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3b3ba1747400c9d625f3f5c1124dc4c26927cbd2"
+    },
+    {
+      "path": "pkg/expression/collation_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "75d8f8c3cbada44b4b2dcbaee71ba72e016b0740"
+    },
+    {
+      "path": "pkg/expression/column.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "df437dda999baea97f8afca071a4718759b73eb0"
+    },
+    {
+      "path": "pkg/expression/column_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0095b77c12588530fb074bc54cf20d4306df2313"
+    },
+    {
+      "path": "pkg/expression/constant.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3dc6d5325ec8d5c3ca6790378406c06ef7f4207f"
+    },
+    {
+      "path": "pkg/expression/constant_fold.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "7569bd2e9bb0c10fb9bc0dfa2f8639f3a6aa2759"
+    },
+    {
+      "path": "pkg/expression/constant_propagation.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9b4a10322ece37027521a42387cd29d61a0108a5"
+    },
+    {
+      "path": "pkg/expression/constant_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "31d9b2b63dede8db68a8b9843faf80fd43524788"
+    },
+    {
+      "path": "pkg/expression/context.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "56f37a616088cb12ce113e5ee11f60ab25c07f9d"
+    },
+    {
+      "path": "pkg/expression/distsql_builtin.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "45b0c03a2f840bbcceccf5840b4922356698555e"
+    },
+    {
+      "path": "pkg/expression/distsql_builtin_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ca52e767c69a47eb767595870ac84d847d7da9ba"
+    },
+    {
+      "path": "pkg/expression/errors.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "55e2c6b16fd2236a7353af82dd97b7519ce623f0"
+    },
+    {
+      "path": "pkg/expression/evaluator.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d7f262a3fab02bc641d9e10fe4e617b88a2d05da"
+    },
+    {
+      "path": "pkg/expression/evaluator_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "001809dc166eef08d0ff2905b06ed7c6ae9a1f70"
+    },
+    {
+      "path": "pkg/expression/explain.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4fe002db30956c1e85be084f6f9613234ed1e561"
+    },
+    {
+      "path": "pkg/expression/expr_to_pb.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0cfb1a2dc23af91b7555f33fb8eb39a0b6dec740"
+    },
+    {
+      "path": "pkg/expression/expr_to_pb_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ee8a9ee71b99eac6e3a293baaa9dfa9fa26a830d"
+    },
+    {
+      "path": "pkg/expression/exprctx/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "29691d44bfd7c8aa8fcf46c47f9146b8ddf6b52d"
+    },
+    {
+      "path": "pkg/expression/exprctx/context.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f97349caec41d0964f6dbd38cc783407675ec4f4"
+    },
+    {
+      "path": "pkg/expression/exprctx/context_override_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ab50918f203220ee2bbba347af7609fdc684a91b"
+    },
+    {
+      "path": "pkg/expression/exprctx/optional.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "5b7526b468e899abadc850202deeec30a10776e4"
+    },
+    {
+      "path": "pkg/expression/exprctx/optional_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e7290325e654ad0d6a442a957da5d0d6543fc4c1"
+    },
+    {
+      "path": "pkg/expression/exprctx/param.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "24e119e71e88532b9731a5c2b1b7d7db731d4f51"
+    },
+    {
+      "path": "pkg/expression/expression.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "cd28fdba3e415c9c38308362e5223c05833cd3e2"
+    },
+    {
+      "path": "pkg/expression/expression_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0f3949cc373da29aaca77bbd5bdd09ee4a3524ed"
+    },
+    {
+      "path": "pkg/expression/expropt/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "5752c70ae82fe02a6030a615a7c3c065be70afdf"
+    },
+    {
+      "path": "pkg/expression/expropt/advisory_lock.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "55bb4585b093265a469913e84ec763867ac3d9e0"
+    },
+    {
+      "path": "pkg/expression/expropt/current_user.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "7f4c684279fb8456a70811609aca13eb085194f9"
+    },
+    {
+      "path": "pkg/expression/expropt/ddlowner.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "05508ec30f1e963eeb9cc4da8496b17c1dbf194f"
+    },
+    {
+      "path": "pkg/expression/expropt/infoschema.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "cd103aa9912a07ccc853565f5da7f13c93693eae"
+    },
+    {
+      "path": "pkg/expression/expropt/kvstore.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "18c7d3d11d1c716ebb746a5ce66bcefc09f4005f"
+    },
+    {
+      "path": "pkg/expression/expropt/optional.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9cd8ae10576073cf0845f6fa645e6586f271f47d"
+    },
+    {
+      "path": "pkg/expression/expropt/optional_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "35a69807f6de093780c5eb212759525bfe293701"
+    },
+    {
+      "path": "pkg/expression/expropt/priv.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "2afed7089ca157868e8ea114de032ec689d8ef3d"
+    },
+    {
+      "path": "pkg/expression/expropt/sequence.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b00357bcd1b3834a8f32c7bf183600f2d81111c4"
+    },
+    {
+      "path": "pkg/expression/expropt/sessioncontext.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9965f54e4c67bde2c6478420d394cc6858cd24e2"
+    },
+    {
+      "path": "pkg/expression/expropt/sessionvars.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "8c0528baf9d0678d4f6d2779e9118d24710de058"
+    },
+    {
+      "path": "pkg/expression/expropt/sqlexec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a0bf9a43777d95522b85eb11164fe26f2804aa08"
+    },
+    {
+      "path": "pkg/expression/exprstatic/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "484660a6a4481020bff7525b5b91441bab4606a5"
+    },
+    {
+      "path": "pkg/expression/exprstatic/evalctx.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "5a60bb5ff9f9ab23d2cf7729e11d4ff9d5628da7"
+    },
+    {
+      "path": "pkg/expression/exprstatic/evalctx_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d2319d998666aa4e1f21b20d5a31613b6b4ccb8e"
+    },
+    {
+      "path": "pkg/expression/exprstatic/exprctx.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0704d0bfe80d107eeaba11a0d6c417c25e381ec8"
+    },
+    {
+      "path": "pkg/expression/exprstatic/exprctx_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "80d33b046b72ee15e7ae243290991dfcc20188b5"
+    },
+    {
+      "path": "pkg/expression/extension.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "eae90d695af121f79d0bc81398f07b37e0cfae13"
+    },
+    {
+      "path": "pkg/expression/fts_helper.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "795f85cfbecaa121b8c336ae4712ef53dcc8a984"
+    },
+    {
+      "path": "pkg/expression/fts_to_like.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "19e46dbbbe075c4ce9647efdc294e5229db75720"
+    },
+    {
+      "path": "pkg/expression/fts_to_like_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4f0581698c0a797245c4ef0eb77b3b28dc4620d4"
+    },
+    {
+      "path": "pkg/expression/function_traits.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "86104fe8791466dabadc86c563a54d7ce7f02c68"
+    },
+    {
+      "path": "pkg/expression/function_traits_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "50768d6db29d8ee5cfa979c45c8c7c5770cc9b8e"
+    },
+    {
+      "path": "pkg/expression/generator/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "23041ca21bbf36b2aad8a269cd40beca564dcc2b"
+    },
+    {
+      "path": "pkg/expression/generator/builtin_threadsafe.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d36eb952873f693914a22a5291a9f81d2b44fb64"
+    },
+    {
+      "path": "pkg/expression/generator/compare_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "37496dd2e7b60cd240144db345f605dca9330606"
+    },
+    {
+      "path": "pkg/expression/generator/control_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "6916044a0cc3ceb0507839aa6506111e95549c67"
+    },
+    {
+      "path": "pkg/expression/generator/helper/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f8c81a9c0ca0d39dae52ba634d04ca24e789820c"
+    },
+    {
+      "path": "pkg/expression/generator/helper/helper.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d56b4c118edb42eee41cfb00865f4e1a9fa47aa8"
+    },
+    {
+      "path": "pkg/expression/generator/other_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "19f0338fa534a31a5e496c8a9158e075a0a479c8"
+    },
+    {
+      "path": "pkg/expression/generator/string_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f3fafcf8a3ea2a7f1ad7fb9d4de67d9092f63564"
+    },
+    {
+      "path": "pkg/expression/generator/time_vec.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "49c5e7aefa9f1d3a59105e83f7456dcb1998c11b"
+    },
+    {
+      "path": "pkg/expression/grouping_sets.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "dcd7d4c5e99506b50a1b990ad8176e0e75b87b8b"
+    },
+    {
+      "path": "pkg/expression/grouping_sets_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0b76990b7e91e5155db7a30506866a3cacdfa656"
+    },
+    {
+      "path": "pkg/expression/helper.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "2ad6659f023332728810e98e3b1892737ddb9447"
+    },
+    {
+      "path": "pkg/expression/helper_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "4b07d6ffb73d8b9acd800ece7c45763dae3236ff"
+    },
+    {
+      "path": "pkg/expression/infer_pushdown.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ca5e14f8789123e4974b230d07ae0275b983b2aa"
+    },
+    {
+      "path": "pkg/expression/inference_helper.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "104bcf2460d2a8951a7aba49efbf4b4e3c27aa7b"
+    },
+    {
+      "path": "pkg/expression/inference_helper_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "90bc94edb78480619a856b33eea2b4466f438b39"
+    },
+    {
+      "path": "pkg/expression/integration_test/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "531bc1f867a362513bb0ffed01466ff2ee8bcfc9"
+    },
+    {
+      "path": "pkg/expression/integration_test/README.md",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "78311d5ff72921941eb8e4740e9734e10d534541"
+    },
+    {
+      "path": "pkg/expression/integration_test/integration_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ba63626bd90780a4d6765e02b3279270f339c3d4"
+    },
+    {
+      "path": "pkg/expression/integration_test/main_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b5bb1a3b8a5f88c9a9a441221839ccabd41fe574"
+    },
+    {
+      "path": "pkg/expression/main_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e9ad3e58956049babd0e62e35c4753d4bfc2596c"
+    },
+    {
+      "path": "pkg/expression/scalar_function.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "1d5530934f49e7ff310b46556250f67d953455e9"
+    },
+    {
+      "path": "pkg/expression/scalar_function_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "5097a0fade40c3a2c35658b0a3fef1b04357473d"
+    },
+    {
+      "path": "pkg/expression/schema.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e0808268ccc1f2e617393429329fd0eb1348b420"
+    },
+    {
+      "path": "pkg/expression/schema_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "44c72eff7e1a04e315e491314eeff0d88be6dcb4"
+    },
+    {
+      "path": "pkg/expression/sessionexpr/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "e1d179ca49f3ab78f75ea35cf9afb0d59dd052b3"
+    },
+    {
+      "path": "pkg/expression/sessionexpr/sessionctx.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ba58fb66e6db3af1b7f58c2e705fca1fd26657f1"
+    },
+    {
+      "path": "pkg/expression/sessionexpr/sessionctx_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "db39bac3f5fd92dd613d8108106bf14f34d6a205"
+    },
+    {
+      "path": "pkg/expression/simple_rewriter.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f99d6cb3bf0e80d6b1425b0c8c79f7845fb62741"
+    },
+    {
+      "path": "pkg/expression/simple_rewriter_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "6c15c9ea7db4e4c84b94562a79a9dfb6bbdb24c9"
+    },
+    {
+      "path": "pkg/expression/test/constantpropagation/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "14aa4f424b52569c292582c6810777fbae1065fb"
+    },
+    {
+      "path": "pkg/expression/test/constantpropagation/constant_propagation_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0d96361e97acc29dfc36041d66a5aa39745001e9"
+    },
+    {
+      "path": "pkg/expression/test/constantpropagation/main_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3f623f036bee2adc34b82850d1c1d94d23188b17"
+    },
+    {
+      "path": "pkg/expression/test/multivaluedindex/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "beb311cf6e7e01c2f4cd0d3ddc33cc51e62ff5b2"
+    },
+    {
+      "path": "pkg/expression/test/multivaluedindex/main_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "dde2ffb4d188eb1da51eafecafa5f41268b9b524"
+    },
+    {
+      "path": "pkg/expression/test/multivaluedindex/multi_valued_index_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a49d85b146270ee5c55017f79a1f51873029f9ed"
+    },
+    {
+      "path": "pkg/expression/typeinfer_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9f1c8827bacd71fb2341b631d055fdbf6346b824"
+    },
+    {
+      "path": "pkg/expression/util.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "6948825777e2cfc4e4c5e50e25ed93a456bdf2b4"
+    },
+    {
+      "path": "pkg/expression/util_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "dc8cce554a88d7a15bf411b727b00ceffb1ebd2b"
+    },
+    {
+      "path": "pkg/expression/vectorized.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d069511ad91f4266934ab8044c72193e4a18591c"
+    },
+    {
+      "path": "pkg/expression/vs_helper.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d5fbdb811568d97e9690ffa0eb2dd4ebcccd81f9"
+    }
+  ],
+  "pkg/parser/charset": [
+    {
+      "path": "pkg/parser/charset/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9f8c8b619577de7257b8bf43bea2dba821a65261"
+    },
+    {
+      "path": "pkg/parser/charset/charset.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "05957dd3bed34fa3405345fc27bdccc2e8567baf"
+    },
+    {
+      "path": "pkg/parser/charset/charset_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3675e099999d5b70abc3e4b049550e0722739315"
+    },
+    {
+      "path": "pkg/parser/charset/encoding.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "5451d74e047a5135b33b9d8b6f93bab7db7cb4fb"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_ascii.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "c0554c9248c6dee6243cbff63af28f7be1b037d9"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_base.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3ba7b2d462f738406eb4b9e9d8f0d4a16d912e7a"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_bin.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "c10823d8d00330cfddf07842607fe79e4c4630c8"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_gb18030.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ca1b694676ed56477c57c3689734da123f4a45a7"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_gb18030_data.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0fe92ef3b334bae5fabb98ade51c8d4d94d2829e"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_gbk.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "8b4589a4d176be55b7574a72abb724d9be4d5839"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_latin1.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "613dd7e0b177b10a50dc54c2b3b448bd04194307"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_table.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "24d61b07f9ba44e062daae0f3cf9c4020ae16f16"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "27d20673b6bb43642b7422029f6d03ed5acc11c8"
+    },
+    {
+      "path": "pkg/parser/charset/encoding_utf8.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "34e891d1eaf27f862f7f216798f648185789f946"
+    }
+  ],
+  "pkg/util/collate": [
+    {
+      "path": "pkg/util/collate/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "b593596c425d4ec1af085e876cbd9300192f2b9e"
+    },
+    {
+      "path": "pkg/util/collate/bin.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f8bf6f123596697b7adb31dca5d452a9edaf5703"
+    },
+    {
+      "path": "pkg/util/collate/charset.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "1015a026326e82eef1bff8ab90e8344c2fa11fab"
+    },
+    {
+      "path": "pkg/util/collate/collate.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "8158850bf4b515e3893ca1d1a4f6716f41d609b3"
+    },
+    {
+      "path": "pkg/util/collate/collate_bench_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0d6896fceab71a96d61c68e4d936808aba0ed360"
+    },
+    {
+      "path": "pkg/util/collate/collate_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3987022b7df8e1350f26536085fb8ed2561e84d3"
+    },
+    {
+      "path": "pkg/util/collate/gb18030_bin.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f8b5a06bdcc32c9a1975929c716db44bb93cd9c8"
+    },
+    {
+      "path": "pkg/util/collate/gb18030_chinese_ci.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "1ddf285822f89eb63025e6beb2444ce13638ac5f"
+    },
+    {
+      "path": "pkg/util/collate/gb18030_weight.data",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "90a8971c213c5f858e3f0e81797466c5998c90fe"
+    },
+    {
+      "path": "pkg/util/collate/gbk_bin.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ecbe937c9ca0574a44fefd23fd932da896edf47f"
+    },
+    {
+      "path": "pkg/util/collate/gbk_chinese_ci.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "623c8d16401e01d1947ff0927635448a8ce19acb"
+    },
+    {
+      "path": "pkg/util/collate/gbk_chinese_ci_data.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "01636cc3354cda84ab00182144ea6c45b310d34d"
+    },
+    {
+      "path": "pkg/util/collate/general_ci.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "2afc1c12651d608c0c6667c7c3d0b02c08720f5e"
+    },
+    {
+      "path": "pkg/util/collate/main_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "0d17190795229a3f365095c1d0cdda4778ec0532"
+    },
+    {
+      "path": "pkg/util/collate/pinyin_tidb_as_cs.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "a98f447700a35c1404de4608b0f79e1acd22d570"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "2f3fdb1a4331ce5bd8c277809f9b31fe9d2a745b"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/data.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "abe2d1610f510555d9a7be5537dee0e3edc78fe8"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/generator/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "619d15ffb9bde5aa976c9df381b3c2868e58427d"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/generator/allkeys-4.0.0.txt",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3b75f829d8b2c3540d8a9d9bb149326247fdba15"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/generator/allkeys-9.0.0.txt",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9c92b5e2ac7c0a9bb6c4f8162cf76a510a3015f9"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/generator/data.go.tpl",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "3d8e0b3222c18f2f5c5f01fbfd45e42e61415e9b"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/generator/magic.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "7e7f756e7f0a6b91915ce0d8a74bf7bbdcf35803"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/generator/main.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "d33547e8ddfc7b0fea404ee85e01b8fc4120c426"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/unicode_0900_ai_ci_data_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f8d012e0c55fab10e969dde97e32460881d4690e"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/unicode_0900_ai_ci_data_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "ae7f266c1866cfcf1dd9e32f46f0eebaf71e1112"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/unicode_ci_data_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "f009defdedf6e7aaff9f4b931977788d1675b6c5"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/unicode_ci_data_original_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "9b49ff0bf2bb8d49adefd10499bad2f066439ff6"
+    },
+    {
+      "path": "pkg/util/collate/ucadata/unicode_ci_data_test.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "105f59d0967ad6a531b7cc656c4d96e35210a3ff"
+    },
+    {
+      "path": "pkg/util/collate/ucaimpl/BUILD.bazel",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "fc48a5930bef7d989e14efef713e0a5fb460a85c"
+    },
+    {
+      "path": "pkg/util/collate/ucaimpl/main.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "83c4e9fabc2bc6d968c85e096a6d0fed44f0ba05"
+    },
+    {
+      "path": "pkg/util/collate/ucaimpl/unicode_ci.go.tpl",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "101d68aa355e5edb089b263cd31f76fb2392af22"
+    },
+    {
+      "path": "pkg/util/collate/unicode_0400_ci_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "18d212f3500067c91fd9511e3aa260d5c3389c74"
+    },
+    {
+      "path": "pkg/util/collate/unicode_0400_ci_impl.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "16c5656f9fab3bf5caf61f79eaf5ac6174a7ab95"
+    },
+    {
+      "path": "pkg/util/collate/unicode_0900_ai_ci_generated.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "418d7b036aaa18a07473feee8b24d1b736bda3cf"
+    },
+    {
+      "path": "pkg/util/collate/unicode_0900_ai_ci_impl.go",
+      "mode": "100644",
+      "kind": "blob",
+      "blob": "46aab8822bf263c5dd26ac1064cc5e069f2fe8bb"
+    }
+  ]
+}

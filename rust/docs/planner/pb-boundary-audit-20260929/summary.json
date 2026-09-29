@@ -1,0 +1,21 @@
+{
+  "rows": 23568,
+  "differences": 4032,
+  "by_signature": {
+    "UpperUTF8": 1266,
+    "LikeSig": 24,
+    "LowerUTF8": 1137,
+    "RegexpLikeSig": 1482,
+    "FromUnixTime2Arg": 72,
+    "FromUnixTime1Arg": 51
+  },
+  "primitive_rows": 5064,
+  "primitive_differences": 0,
+  "go_panics": 0,
+  "rust_panics": 0,
+  "package_artifacts": {
+    "pkg/expression": 208,
+    "pkg/parser/charset": 14,
+    "pkg/util/collate": 35
+  }
+}
