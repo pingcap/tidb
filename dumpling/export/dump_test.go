@@ -77,6 +77,7 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 		keyspaceMeta  []string // [name,id]
 		queryErr      error
 		confPD        string
+		nextGen       bool
 		expectErr     string
 		expectKSPName string
 		expectKSPID   uint32
@@ -117,6 +118,22 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			confPD:    "pd1:2379",
 			expectErr: "KEYSPACE_META",
 		},
+		{
+			// A next-gen cluster always exposes KEYSPACE_META, so a lookup error
+			// must not silently fall back to the classical global-safepoint path.
+			name:      "nextgen_keyspace_meta_error_is_fatal",
+			queryErr:  &mysql.MySQLError{Number: 1142, Message: "SELECT command denied to user 'cloud' for table 'KEYSPACE_META'"},
+			confPD:    "",
+			nextGen:   true,
+			expectErr: "denied",
+		},
+		{
+			name:      "nextgen_no_keyspace_meta_table_is_error",
+			queryErr:  &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			confPD:    "",
+			nextGen:   true,
+			expectErr: "KEYSPACE_META",
+		},
 	}
 
 	for _, tc := range cases {
@@ -144,6 +161,7 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			d.conf.ServerInfo = version.ServerInfo{
 				ServerType:    version.ServerTypeTiDB,
 				ServerVersion: gcSafePointVersion,
+				NextGen:       tc.nextGen,
 			}
 			d.conf.PDAddr = tc.confPD
 			err = tidbResolveKeyspaceMetaForGC(d)
@@ -180,6 +198,9 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 		// expectNoPDClient means the cluster is premium but --pd is absent, so
 		// tidbSetPDClientForGC must disable GC pause instead of failing.
 		expectNoPDClient bool
+		// expectSetPDErr means tidbSetPDClientForGC must fail with an actionable
+		// error instead of silently disabling GC pause.
+		expectSetPDErr string
 	}{
 		{
 			name:             "premium_uses_keyspace_barrier_api",
@@ -215,6 +236,16 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			expectKeyspace:   "ks1",
 			expectID:         42,
 			expectNoPDClient: true,
+		},
+		{
+			// A non-empty but unusable --pd (a typo such as ",") must surface as
+			// an error, not be treated as "flag not provided".
+			name:           "premium_malformed_pd_is_error",
+			keyspaceMeta:   []string{"ks1", "42"},
+			confPD:         " , ",
+			expectKeyspace: "ks1",
+			expectID:       42,
+			expectSetPDErr: "invalid --pd",
 		},
 	}
 
@@ -256,6 +287,17 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 				// Premium cluster without --pd: no error, and GC pause is
 				// disabled because no PD client is created.
 				require.NoError(t, tidbSetPDClientForGC(d))
+				require.Nil(t, d.tidbPDClientForGC)
+				require.False(t, d.tidbUseKeyspaceGC)
+				return
+			}
+
+			if tc.expectSetPDErr != "" {
+				// Premium cluster with a malformed --pd: fail with an actionable
+				// error and do not install a PD client.
+				err = tidbSetPDClientForGC(d)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectSetPDErr)
 				require.Nil(t, d.tidbPDClientForGC)
 				require.False(t, d.tidbUseKeyspaceGC)
 				return

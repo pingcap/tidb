@@ -1769,6 +1769,11 @@ func validateResolveAutoConsistency(d *Dumper) error {
 // the keyspace ID for the keyspace-level GC barrier. `--pd` is optional: when it
 // is not specified, dumpling disables the automatic GC pause and only warns.
 //
+// On a next-gen (keyspace) cluster KEYSPACE_META is always available, so a lookup
+// failure there is fatal: silently falling back to the classical global-safepoint
+// path would leave the keyspace's GC unprotected while the operator believes it is
+// paused. The lenient fallback is only meant for pre-KEYSPACE_META classical clusters.
+//
 // If KEYSPACE_META reports a classical cluster, `--pd` must not be specified.
 func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 	tctx, conf, db := d.tctx, d.conf, d.dbHandle
@@ -1781,8 +1786,9 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 
 	keyspaceName, keyspaceID, err := queryCurrentKeyspaceNameAndID(tctx, db)
 	if err != nil {
-		// If the user explicitly passes premium GC parameters, do not ignore this error.
-		if conf.PDAddr != "" {
+		// If the user explicitly passes premium GC parameters, or the server is a
+		// next-gen (keyspace) cluster, do not ignore this error.
+		if conf.PDAddr != "" || conf.ServerInfo.NextGen {
 			return err
 		}
 
@@ -1831,17 +1837,24 @@ func tidbSetPDClientForGC(d *Dumper) error {
 
 	// Premium cluster: PD endpoints are optionally passed from cloud control.
 	if d.tidbKeyspaceName != "" {
+		// --pd is optional for a premium keyspace cluster: without it we cannot
+		// reach PD, so skip the automatic GC pause and only warn.
+		if conf.PDAddr == "" {
+			tctx.L().Warn("dumping a keyspace cluster but --pd is not specified; automatic GC pause is disabled",
+				zap.String("keyspace-name", d.tidbKeyspaceName))
+			return nil
+		}
+
 		pdAddrs := strings.Split(conf.PDAddr, ",")
 		pdAddrs = slices.DeleteFunc(pdAddrs, func(s string) bool { return strings.TrimSpace(s) == "" })
 		for i := range pdAddrs {
 			pdAddrs[i] = strings.TrimSpace(pdAddrs[i])
 		}
 		if len(pdAddrs) == 0 {
-			// --pd is optional for a premium keyspace cluster: without it we
-			// cannot reach PD, so skip the automatic GC pause and only warn.
-			tctx.L().Warn("dumping a keyspace cluster but --pd is not specified; automatic GC pause is disabled",
-				zap.String("keyspace-name", d.tidbKeyspaceName))
-			return nil
+			// --pd was provided but holds no usable endpoint (for example "," or
+			// " , "). Surface it as an actionable error instead of silently
+			// disabling the GC pause, so a user typo is not mistaken for "unset".
+			return errors.Errorf("invalid --pd %q: no valid PD endpoint found", conf.PDAddr)
 		}
 
 		apiCtx := pd.NewAPIContextV2(d.tidbKeyspaceName)
