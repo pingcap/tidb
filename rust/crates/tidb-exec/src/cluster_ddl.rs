@@ -1044,7 +1044,7 @@ pub fn lower_ddl_with_context(
                 if_exists: *if_exists,
             }))
         }
-        DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema).map(Some),
+        DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema, false).map(Some),
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
         DdlStmt::CreatePlacementPolicy(create) => {
             // Go checks the pairing before building the settings, so a
@@ -2079,16 +2079,20 @@ fn lower_alter_add_index(
     index: &IndexConstraintDefinition,
     default_schema: &str,
 ) -> Result<DdlStatement, DdlAdmissionError> {
+    // go's `ADD PRIMARY KEY` is a unique index named PRIMARY whose columns
+    // gain NOT NULL+PRI — the same shape a CREATE TABLE PK carries
+    // (`ALTER TABLE pf ADD PRIMARY KEY(b(2))` → `PRIMARY KEY (b(2))
+    // /*T![clustered_index] NONCLUSTERED */` with the columns stamped
+    // NOT NULL), so it lowers through the same CreateIndex statement the
+    // other index kinds use.
+    let primary = index.kind == IndexConstraintKind::PrimaryKey;
+    let mut name: Option<String> = None;
     let kind = match index.kind {
         IndexConstraintKind::Key | IndexConstraintKind::Index => tidb_ast::IndexKind::Ordinary,
         IndexConstraintKind::Unique
         | IndexConstraintKind::UniqueKey
         | IndexConstraintKind::UniqueIndex => tidb_ast::IndexKind::Unique,
-        IndexConstraintKind::PrimaryKey => {
-            return Err(DdlAdmissionError::unsupported(
-                "ALTER TABLE ADD PRIMARY KEY is not supported by this node",
-            ))
-        }
+        IndexConstraintKind::PrimaryKey => tidb_ast::IndexKind::Unique,
         IndexConstraintKind::Fulltext => {
             return Err(DdlAdmissionError::unsupported(
                 "FULLTEXT index is only supported in starter deployment mode",
@@ -2105,7 +2109,19 @@ fn lower_alter_add_index(
             ))
         }
     };
-    let Some(name) = index.name.as_ref().filter(|name| !name.is_empty()) else {
+    // go's `ADD PRIMARY KEY` has a FIXED reserved name (`PRIMARY`), unlike
+    // the ordinary anonymous index forms, whose collision resolution needs
+    // the loaded table — so a PK admits an anonymous name here where the
+    // others still refuse one.
+    let name = index
+        .name
+        .as_ref()
+        .filter(|name| !name.is_empty())
+        .map_or_else(
+            || primary.then(|| "PRIMARY".to_owned()),
+            |name| Some(name.clone()),
+        );
+    let Some(name) = name else {
         // Go resolves anonymous names only after it has loaded the current
         // table and can avoid an existing name. This catalog lowerer is
         // intentionally stateless, so admitting it here would create a
@@ -2125,6 +2141,7 @@ fn lower_alter_add_index(
             online: Default::default(),
         },
         default_schema,
+        primary,
     )
 }
 
@@ -2539,7 +2556,11 @@ fn lower_create_table(
 fn lower_create_index(
     create: &CreateIndexStmt,
     default_schema: &str,
+    primary: bool,
 ) -> Result<DdlStatement, DdlAdmissionError> {
+    // go's `ADD PRIMARY KEY` lowers through the CreateIndex statement with
+    // `primary = true`; the caller decides, since the AST's own
+    // `CREATE INDEX` grammar has no PRIMARY spelling.
     let (schema, table) = split_name(&create.table, default_schema, "table")?;
     let unique = match create.kind {
         tidb_ast::IndexKind::Ordinary => false,
@@ -2603,7 +2624,7 @@ fn lower_create_index(
                 .index_type
                 .unwrap_or(tidb_ast::IndexType::BTREE),
             unique,
-            primary: false,
+            primary,
             invisible: create.options.visibility == Some(tidb_ast::IndexVisibility::Invisible),
             global: create.options.global,
             ..IndexInfo::default()
@@ -9359,11 +9380,36 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     }
                 }
             }
+            // go's `ADD PRIMARY KEY` stamps every key column NOT NULL+PRI
+            // (oracle: after `ALTER TABLE pf ADD PRIMARY KEY(b(2))`, SHOW
+            // CREATE prints `b` varchar(8) NOT NULL and SHOW INDEX adds the
+            // `PRIMARY` row with Sub_part=2).
+            let pk_columns: Vec<String> = if index.primary {
+                added
+                    .columns
+                    .iter_deref()
+                    .map(|column| column.read().name.original().to_owned())
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let mut info = stored.clone_like_go();
             info.max_index_id += 1;
             added.id = info.max_index_id;
             added.table = info.name.clone();
             set_global_index_version(&info, &mut added);
+            for stored_column in info.columns.iter_deref() {
+                let name = stored_column.read().name.lowercase().to_owned();
+                if pk_columns.iter().any(|pk| pk.go_to_lower() == name) {
+                    let mut column = stored_column.write();
+                    let mut field_type = column.field_type.clone();
+                    field_type.add_flags(
+                        tidb_datatype::FieldTypeFlags::PRI_KEY
+                            | tidb_datatype::FieldTypeFlags::NOT_NULL,
+                    );
+                    column.field_type = field_type;
+                }
+            }
             let added = GoShared::new(added);
             info.indices.push_handle_go(Some(added.clone()));
             info.update_ts = start_ts;

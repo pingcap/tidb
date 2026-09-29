@@ -49,7 +49,8 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
                     nullable: bool,
                     comment: &str,
                     visible: bool,
-                    global: bool| {
+                    global: bool,
+                    sub_part: Option<i64>| {
         rows.push(vec![
             text(table_name),
             Datum::Int(i64::from(!unique)),
@@ -58,7 +59,10 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
             column.map_or(Datum::Null, text),
             text("A"),
             Datum::Int(0),
-            Datum::Null,
+            // go `fetchShowIndex`'s Sub_part: the declared prefix length a
+            // key part stores (`IndexColumn.Length`), NULL for a whole-column
+            // part.
+            sub_part.map_or(Datum::Null, |length| Datum::Int(length)),
             Datum::Null,
             text(if nullable { "YES" } else { "" }),
             text("BTREE"),
@@ -82,6 +86,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
             "",
             true,
             false,
+            None,
         );
     }
     for index in table.indexes() {
@@ -95,6 +100,11 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
                 .as_ref()
                 .filter(|_| table.is_hidden(*offset))
                 .map(|generated| generated.expr_text.as_str());
+            let sub_part = index
+                .prefix_lengths
+                .get(position)
+                .copied()
+                .filter(|length| *length != tidb_executor::ddl::index_prefix::UNSPECIFIED_LENGTH);
             push(
                 &index.name,
                 index.unique,
@@ -106,6 +116,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
                 &index.comment,
                 index.visible,
                 index.global,
+                sub_part,
             );
         }
     }
