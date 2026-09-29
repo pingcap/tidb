@@ -95,13 +95,21 @@ func extractMVFullUpdateLookupTemplate(
 	if indexJoin == nil {
 		return nil, errors.New("mview full-update lookup template: expected index join plan but not found")
 	}
-	if indexJoin.InnerPlan == nil {
+	innerPlan := indexJoin.InnerPlan
+	if innerPlan == nil {
+		children := indexJoin.Children()
+		innerChildIdx := indexJoin.GetInnerChildIdx()
+		if innerChildIdx >= 0 && innerChildIdx < len(children) {
+			innerPlan = children[innerChildIdx]
+		}
+	}
+	if innerPlan == nil {
 		return nil, errors.New("mview full-update lookup template: index join inner plan is nil")
 	}
-	if indexJoin.InnerPlan.Schema().Len() != expectedInnerColumnCount {
+	if innerPlan.Schema().Len() != expectedInnerColumnCount {
 		return nil, errors.Errorf(
 			"mview full-update lookup template: unexpected inner schema length: got %d, expected %d",
-			indexJoin.InnerPlan.Schema().Len(),
+			innerPlan.Schema().Len(),
 			expectedInnerColumnCount,
 		)
 	}
@@ -141,12 +149,12 @@ func extractMVFullUpdateLookupTemplate(
 	keyResultColIdxes := make([]int, expectedGroupKeyCount)
 	for i := range indexJoin.InnerJoinKeys {
 		keyResultColIdx := indexJoin.InnerJoinKeys[i].Index
-		if keyResultColIdx < 0 || keyResultColIdx >= indexJoin.InnerPlan.Schema().Len() {
+		if keyResultColIdx < 0 || keyResultColIdx >= innerPlan.Schema().Len() {
 			return nil, errors.Errorf(
 				"mview full-update lookup template: invalid inner join key index %d at position %d for inner schema len %d",
 				keyResultColIdx,
 				i,
-				indexJoin.InnerPlan.Schema().Len(),
+				innerPlan.Schema().Len(),
 			)
 		}
 		keyResultColIdxes[i] = keyResultColIdx
@@ -155,15 +163,15 @@ func extractMVFullUpdateLookupTemplate(
 		expectedOutputMVOffsets,
 		groupKeyMVOffsets,
 		keyResultColIdxes,
-		indexJoin.InnerPlan.Schema().Len(),
+		innerPlan.Schema().Len(),
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	return &mvFullUpdateLookupTemplate{
-		InnerSource:      indexJoin.InnerPlan,
-		InnerColumnCount: indexJoin.InnerPlan.Schema().Len(),
+		InnerSource:      innerPlan,
+		InnerColumnCount: innerPlan.Schema().Len(),
 		// Clone mutable ranges for plan-cache style rebuild behavior; never share optimizer-owned instances.
 		IndexRanges:       indexJoin.Ranges.CloneForPlanCache(),
 		KeyOff2IdxOff:     keyOff2IdxOff,

@@ -232,7 +232,7 @@ func (r *CompleteDiffBuildResult) ValidateSourceLayout(schemaLen int) error {
 	if r.CurrentHandleCols == nil {
 		return errors.New("complete diff build result: CurrentHandleCols is nil")
 	}
-	for i := 0; i < r.CurrentHandleCols.NumCols(); i++ {
+	for i := range r.CurrentHandleCols.NumCols() {
 		col := r.CurrentHandleCols.GetCol(i)
 		if col != nil && col.ID == model.ExtraHandleID {
 			expected++
@@ -284,7 +284,7 @@ func (r *CompleteDiffBuildResult) ValidateSourceLayout(schemaLen int) error {
 			return errors.Errorf("complete diff build result: invalid RecomputedRowOffsets[%d]=%d", i, off)
 		}
 	}
-	for i := 0; i < r.CurrentHandleCols.NumCols(); i++ {
+	for i := range r.CurrentHandleCols.NumCols() {
 		col := r.CurrentHandleCols.GetCol(i)
 		if col == nil {
 			return errors.Errorf("complete diff build result: handle column %d is nil", i)
@@ -1146,7 +1146,7 @@ func validateAggDependencies(
 					ai.Dependencies,
 				)
 			}
-			for depPos := 0; depPos < 4; depPos++ {
+			for depPos := range 4 {
 				if ai.Dependencies[depPos] >= mvColumnOffsetBase {
 					return errors.Errorf(
 						"%v at mv offset %d has invalid delta dependency[%d] offset %d",
@@ -1236,7 +1236,7 @@ func reflectStructuralEqual(lhs, rhs reflect.Value) bool {
 		return reflectStructuralEqual(lhs.Elem(), rhs.Elem())
 	case reflect.Struct:
 		typ := lhs.Type()
-		for i := 0; i < lhs.NumField(); i++ {
+		for i := range lhs.NumField() {
 			f := typ.Field(i)
 			// Ignore unexported fields (e.g. parser location/cache fields).
 			if f.PkgPath != "" {
@@ -1251,7 +1251,7 @@ func reflectStructuralEqual(lhs, rhs reflect.Value) bool {
 		if lhs.Len() != rhs.Len() {
 			return false
 		}
-		for i := 0; i < lhs.Len(); i++ {
+		for i := range lhs.Len() {
 			if !reflectStructuralEqual(lhs.Index(i), rhs.Index(i)) {
 				return false
 			}

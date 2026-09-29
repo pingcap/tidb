@@ -297,11 +297,15 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	sessVars.SetEnableCascadesPlanner(false)
 	sessVars.StmtCtx.HasEnableCascadesPlannerHint = false
 	sessVars.StmtCtx.EnableCascadesPlanner = false
-	source, err := optimizeSelect(ctx, diffRes.DiffSourceSelect, b.is, false)
-	sessVars.EnableFullOuterJoin = savedFullOuterJoin
-	sessVars.SetEnableCascadesPlanner(savedCascades)
-	sessVars.StmtCtx.HasEnableCascadesPlannerHint = savedHint
-	sessVars.StmtCtx.EnableCascadesPlanner = savedStmtCascades
+	source, err := func() (base.PhysicalPlan, error) {
+		defer func() {
+			sessVars.EnableFullOuterJoin = savedFullOuterJoin
+			sessVars.SetEnableCascadesPlanner(savedCascades)
+			sessVars.StmtCtx.HasEnableCascadesPlannerHint = savedHint
+			sessVars.StmtCtx.EnableCascadesPlanner = savedStmtCascades
+		}()
+		return optimizeSelect(ctx, diffRes.DiffSourceSelect, b.is, false)
+	}()
 	if err != nil {
 		return nil, err
 	}

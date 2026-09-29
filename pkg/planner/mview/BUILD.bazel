@@ -37,7 +37,7 @@ go_test(
     ],
     embed = [":mview"],
     flaky = True,
-    shard_count = 20,
+    shard_count = 23,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
@@ -51,6 +51,7 @@ go_test(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/planctx",
         "//pkg/planner/util/coretestsdk",
         "//pkg/session",
         "//pkg/sessionctx",
@@ -58,5 +59,6 @@ go_test(
         "//pkg/util/hint",
         "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
     ],
 )
