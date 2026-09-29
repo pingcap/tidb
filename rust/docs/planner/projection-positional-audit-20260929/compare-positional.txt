@@ -1,0 +1,17 @@
+from pathlib import Path
+import json,collections
+rows=lambda p:[l.split('\t') for l in Path('/private/tmp/'+p).read_text().splitlines()]
+cases=rows('positional-cases.tsv');go=rows('positional-go.tsv');rust=rows('positional-rust.tsv');assert len(cases)==len(go)==len(rust)==19740
+out=[]
+for c,a,b in zip(cases,go,rust):
+ assert c[0]==a[0]==b[0]
+ if a[1]!=b[1] or a[3]!=b[3]:out.append(dict(id=c[0],group=c[1],function=c[2],args=c[3:],go=a[1],rust=b[1],go_error=bytes.fromhex(a[2]).decode(errors='replace'),rust_error=bytes.fromhex(b[2]).decode(errors='replace')))
+Path('/private/tmp/positional-differences.json').write_text(json.dumps(out,indent=2)+'\n')
+print('rows',len(go),'diffs',len(out),'Go panics',sum(a[1]=='panic' for a in go),'Rust panics',sum(a[1]=='panic' for a in rust));print(collections.Counter((x['group'],x['function']) for x in out))
+valid=[]
+for x in out:
+ if all(not a.startswith('s') or (lambda b: b.decode('utf8','ignore').encode()==b)(bytes.fromhex(a[1:])) for a in x['args']):valid.append(x)
+print('valid utf8 differences',len(valid))
+for x in valid[:12]:print(x)
+for x in out:
+ if x['function']=='regexp_substr' and x['args']==['sff61','s2e','i1','i1']:print('byte example',x)

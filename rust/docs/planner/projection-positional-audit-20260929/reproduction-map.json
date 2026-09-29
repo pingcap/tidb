@@ -1,0 +1,15 @@
+{
+  "build-positional.txt": "build-positional-cases.py",
+  "positional-go-oracle.txt": "positional_test.go",
+  "positional-go-overlay.json": "positional-overlay.json",
+  "positional-rust-probe.txt": "positional-rust-probe.rs",
+  "run-positional.txt": "run-positional-rust.py",
+  "compare-positional.txt": "compare-positional.py",
+  "batch-go-oracle.txt": "batch-cast_test.go",
+  "batch-go-overlay.json": "batch-cast-overlay.json",
+  "batch-rust-probe.txt": "batch-cast-probe.rs",
+  "run-batch.txt": "run-batch-cast.py",
+  "compare-batch.txt": "compare-batch-cast.py",
+  "sql-rust-probe.txt": "regexp-sql-probe.rs",
+  "run-sql.txt": "run-regexp-sql.py"
+}

@@ -1,0 +1,10 @@
+from pathlib import Path
+import subprocess
+p=Path('rust/crates/tidb-expr/src/scalar_function.rs');s=p.read_text()
+try:
+ p.write_text(s+Path('/private/tmp/batch-cast-probe.rs').read_text())
+ with open('/private/tmp/batch-cast-rust.log','w') as log:
+  r=subprocess.run(['cargo','test','--offline','--locked','--manifest-path','rust/Cargo.toml','-p','tidb-expr','--lib','audit_unsigned_decimal_paths','--','--test-threads=1'],stdout=log,stderr=subprocess.STDOUT)
+ print(r.returncode,flush=True)
+finally:p.write_text(s)
+raise SystemExit(r.returncode)

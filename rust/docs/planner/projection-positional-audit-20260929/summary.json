@@ -1,0 +1,25 @@
+{
+  "rust": "c8d2a9757630bdf8afd9684971003a570e387b36",
+  "go_master": "12b639a1161cd5a60126a47277f5ad14c320fd4a",
+  "go_archive": "8936d7bdcb",
+  "positional": {
+    "rows": 19740,
+    "differing_rows": 5116,
+    "go_panics": 1964,
+    "go_factory_rejections": 24,
+    "runtime_differences_excluding_panics_and_factory_rejections": 3128,
+    "rust_panics": 0
+  },
+  "batch": {
+    "shapes": 120,
+    "go_routes_per_shape": 4,
+    "rust_routes_per_shape": 5,
+    "comparable_rows": 480,
+    "differing_rows": 72,
+    "differing_shapes": 29,
+    "result_differences": 72,
+    "warning_count_differences": 24,
+    "warning_content_differences": 24,
+    "panics": 0
+  }
+}

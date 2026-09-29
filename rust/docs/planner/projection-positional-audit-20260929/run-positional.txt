@@ -1,0 +1,10 @@
+from pathlib import Path
+import subprocess
+p=Path('rust/crates/tidb-expr/src/builtin_ext/regexp.rs');original=p.read_text()
+try:
+ p.write_text(original+Path('/private/tmp/positional-rust-probe.rs').read_text())
+ with open('/private/tmp/positional-rust.log','w') as log:
+  r=subprocess.run(['cargo','test','--offline','--locked','--manifest-path','rust/Cargo.toml','-p','tidb-expr','--lib','audit_positional_boundaries','--','--test-threads=1'],stdout=log,stderr=subprocess.STDOUT)
+ print('capture',r.returncode,flush=True)
+finally:p.write_text(original)
+raise SystemExit(r.returncode)

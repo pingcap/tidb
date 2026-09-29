@@ -1,0 +1,33 @@
+#[test]
+fn audit_unsigned_decimal_paths(){
+ use tidb_datatype::{FieldTypeCode,FieldType};use crate::{column::Column,expression::Expression,Columns,ErrorLevel};
+ use std::io::Write;
+ struct Ctx{flags:u64,vectorized:bool,warnings:std::cell::RefCell<Vec<(u16,String)>>}
+ impl Columns for Ctx{
+ fn get(&self,_:&[String])->Option<Datum>{None}
+ fn enable_vectorized_expression(&self)->bool{self.vectorized}
+ fn truncate_level(&self)->ErrorLevel{match self.flags{1=>ErrorLevel::Ignore,2=>ErrorLevel::Warn,_=>ErrorLevel::Error}}
+ fn type_flags(&self)->tidb_datatype::ConversionFlags{tidb_datatype::DEFAULT_STATEMENT_FLAGS.with_ignore_truncate_err(self.flags==1).with_truncate_as_warning(self.flags==2)}
+ fn append_warning(&self,code:u16,text:&str){self.warnings.borrow_mut().push((code,text.to_owned()));}}
+ fn hex(s:&[u8])->String{s.iter().map(|b|format!("{b:02x}")).collect()}
+ fn result(r:Result<Datum,EvalError>)->(String,String){match r{Ok(Datum::Null)=>("null".to_owned(),String::new()),Ok(v)=>(format!("value:{}",hex(&v.sql_bytes().unwrap())),String::new()),Err(e)=>("error".to_owned(),format!("{e:?}"))}}
+ let mut out=std::fs::File::create("/private/tmp/batch-cast-rust.tsv").unwrap();
+ for su in [false,true] {for tu in [false,true] {for flen in [10,30] {for value in [-1i64,0,1,i64::MIN,i64::MAX] {for flags in [0,1,2] {for route in ["scalar","batch","fast","suite_on","suite_off"] {
+ let ctx=Ctx{flags,vectorized:route!="suite_off",warnings:Default::default()};
+ let source=FieldType::new(FieldTypeCode::LongLong).with_flags(if su{32}else{0});
+ let target=FieldType::new(FieldTypeCode::NewDecimal).with_flen(flen).with_decimal(2).with_flags(if tu{32}else{0});
+ let mut column=Column::new(1,source.clone());column.index=0;
+ let sf=ScalarFunction::new(CiString::new("cast_decimal"),target.clone(),vec![Expression::Column(column)]);
+ let expr=Expression::ScalarFunction(sf.clone());
+ let mut input=Chunk::new(&[source],1,1);input.append_int64(0,value);
+ let mut output=Chunk::new(&[target],1,1);
+ let (answer,error)=match route{
+ "scalar"=>result(sf.eval(&ctx,input.get_row(0))),
+ "batch"=>match try_eval_numeric_batch(&expr,&ctx,&input){Ok(Some(v))=>result(Ok(v[0].clone())),Ok(None)=>("declined".to_owned(),String::new()),Err(e)=>result(Err(e))},
+ "fast"=>match sf.vec_eval_decimal_arithmetic(&input,&mut output,0){Ok(true)=>(format!("value:{}",hex(&output.column(0).get_my_decimal(0).to_result_string_bytes())),String::new()),Ok(false)=>("declined".to_owned(),String::new()),Err(e)=>result(Err(e))},
+ _=>{let suite=crate::evaluator::EvaluatorSuite::new(vec![expr],true);match suite.run(&ctx,&mut input,&mut output){Ok(())=>(format!("value:{}",hex(&output.column(0).get_my_decimal(0).to_result_string_bytes())),String::new()),Err(e)=>("error".to_owned(),format!("{e:?}"))}}
+ };
+ let warnings=ctx.warnings.borrow();let warning_text=warnings.iter().map(|(c,m)|hex(format!("[{c}]{m}").as_bytes())).collect::<Vec<_>>().join(",");
+ writeln!(out,"{su}/{tu}/{flen}/{value}/{flags}\t{route}\t{answer}\t{}\t{}\t{warning_text}",hex(error.as_bytes()),warnings.len()).unwrap();
+ }}}}}}
+}

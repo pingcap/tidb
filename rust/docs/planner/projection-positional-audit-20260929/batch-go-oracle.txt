@@ -1,0 +1,18 @@
+package expression
+import("testing";"os";"fmt";"time";"encoding/hex";"strings";"math";"github.com/pingcap/tidb/pkg/types";"github.com/pingcap/tidb/pkg/util/mock";"github.com/pingcap/tidb/pkg/util/chunk";"github.com/pingcap/tidb/pkg/parser/mysql")
+func TestRustBatchCastAudit(t *testing.T){
+ out,e:=os.Create("/private/tmp/batch-cast-go.tsv");if e!=nil{t.Fatal(e)};defer out.Close()
+ for _,su:=range []bool{false,true}{for _,tu:=range []bool{false,true}{for _,flen:=range []int{10,30}{for _,value:=range []int64{-1,0,1,math.MinInt64,math.MaxInt64}{for _,flags:=range []uint64{0,1,2}{for _,route:=range []string{"scalar","batch","suite_on","suite_off"}{func(){
+  ctx:=mock.NewContextDeprecated();ctx.GetSessionVars().StmtCtx.InitFromPBFlagAndTz(flags,time.UTC);ctx.GetSessionVars().TimeZone=time.UTC
+  answer,detail:="","";defer func(){if p:=recover();p!=nil{answer="panic";detail=fmt.Sprint(p)};ws:=[]string{};for _,w:=range ctx.GetSessionVars().StmtCtx.GetWarnings(){ws=append(ws,hex.EncodeToString([]byte(w.Err.Error())))};fmt.Fprintf(out,"%t/%t/%d/%d/%d\t%s\t%s\t%s\t%d\t%s\n",su,tu,flen,value,flags,route,answer,hex.EncodeToString([]byte(detail)),len(ws),strings.Join(ws,","))}()
+  source:=types.NewFieldType(mysql.TypeLonglong);if su{source.AddFlag(mysql.UnsignedFlag)}
+  target:=types.NewFieldType(mysql.TypeNewDecimal);target.SetFlen(flen);target.SetDecimal(2);if tu{target.AddFlag(mysql.UnsignedFlag)}
+  expr:=BuildCastFunction(ctx,&Column{Index:0,UniqueID:1,RetType:source},target)
+  input:=chunk.NewChunkWithCapacity([]*types.FieldType{source},1);input.AppendInt64(0,value)
+  var result *types.MyDecimal;var err error;isNull:=false
+  switch route{case "scalar":result,isNull,err=expr.EvalDecimal(ctx,input.GetRow(0))
+  case "batch":if !expr.Vectorized(){panic("not vectorized")};col:=chunk.NewColumn(target,1);err=expr.VecEvalDecimal(ctx,input,col);if err==nil{isNull=col.IsNull(0);if !isNull{result=col.GetDecimal(0)}}
+  default:output:=chunk.NewChunkWithCapacity([]*types.FieldType{target},1);err=NewEvaluatorSuite([]Expression{expr},true).Run(ctx,route=="suite_on",input,output);if err==nil{isNull=output.Column(0).IsNull(0);if !isNull{result=output.Column(0).GetDecimal(0)}}}
+  if err!=nil{answer="error";detail=err.Error()}else if isNull{answer="null"}else{answer="value:"+hex.EncodeToString([]byte(result.String()))}
+ }()}}}}}}
+}

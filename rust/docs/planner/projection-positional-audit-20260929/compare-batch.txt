@@ -1,0 +1,20 @@
+from pathlib import Path
+import json,collections,re
+read=lambda n:{tuple(f[:2]):f for l in Path('/private/tmp/'+n).read_text().splitlines() if(f:=l.split('\t'))}
+g=read('batch-cast-go.tsv');r=read('batch-cast-rust.tsv');assert len(g)==480 and len(r)==600
+unhex=lambda s:bytes.fromhex(s).decode(errors='replace')
+norm=lambda s:re.sub(r'^\[[^]:]*:(\d+)\]',r'[\1]',s)
+d=[]
+for key,a in g.items():
+ b=r[key];gw=[norm(unhex(x)) for x in a[5].split(',') if x];rw=[norm(unhex(x)) for x in b[5].split(',') if x]
+ kinds=[]
+ if a[2]!=b[2]:kinds.append('result')
+ if a[4]!=b[4]:kinds.append('warning_count')
+ if gw!=rw:kinds.append('warning_content')
+ if kinds:d.append(dict(key=list(key),kinds=kinds,go=a[2],rust=b[2],go_error=unhex(a[3]),rust_error=unhex(b[3]),go_warnings=gw,rust_warnings=rw))
+Path('/private/tmp/batch-cast-differences.json').write_text(json.dumps(d,indent=2)+'\n')
+print('diff rows',len(d),'kinds',collections.Counter(k for x in d for k in x['kinds']),'routes',collections.Counter(x['key'][1] for x in d))
+print('Go routes equal results per shape',all(len({g[(key,route)][2] for route in ['scalar','batch','suite_on','suite_off']})==1 for key,_ in g))
+for shape in ['false/true/30/-1/0','false/false/10/9223372036854775807/0','false/false/10/9223372036854775807/1','false/false/10/9223372036854775807/2']:
+ for route in ['scalar','batch','fast','suite_on','suite_off']:
+  b=r[(shape,route)];a=g.get((shape,route));print(shape,route,'GO',a[2] if a else '-',a[4] if a else '-','RUST',b[2],b[4])

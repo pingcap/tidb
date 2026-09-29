@@ -1,0 +1,10 @@
+from pathlib import Path
+import subprocess
+p=Path('rust/crates/tidb-session/tests/regexp_family_source.rs');s=p.read_text()
+try:
+ p.write_text(s+Path('/private/tmp/regexp-sql-probe.rs').read_text())
+ with open('/private/tmp/regexp-sql-rust.log','w') as f:
+  r=subprocess.run(['cargo','test','--offline','--locked','--manifest-path','rust/Cargo.toml','-p','tidb-session','--test','all','audit_regexp_sql_boundary','--','--test-threads=1'],stdout=f,stderr=subprocess.STDOUT)
+ print(r.returncode,flush=True)
+finally:p.write_text(s)
+raise SystemExit(r.returncode)

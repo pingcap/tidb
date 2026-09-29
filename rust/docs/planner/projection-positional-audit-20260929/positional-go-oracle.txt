@@ -1,0 +1,20 @@
+package expression
+import("testing";"os";"strings";"encoding/hex";"strconv";"fmt";"github.com/pingcap/tidb/pkg/types";"github.com/pingcap/tidb/pkg/util/mock";"github.com/pingcap/tidb/pkg/util/chunk";"github.com/pingcap/tidb/pkg/parser/mysql")
+func TestRustPositionalAudit(t *testing.T){
+ data,e:=os.ReadFile("/private/tmp/positional-cases.tsv");if e!=nil{t.Fatal(e)};out,e:=os.Create("/private/tmp/positional-go.tsv");if e!=nil{t.Fatal(e)};defer out.Close()
+ for _,line:=range strings.Split(strings.TrimSpace(string(data)),"\n") {fields:=strings.Split(line,"\t");func(){
+  result,detail:="","";ctx:=mock.NewContext()
+  defer func(){if p:=recover();p!=nil{result="panic";detail=fmt.Sprint(p)};fmt.Fprintf(out,"%s\t%s\t%s\t%d\n",fields[0],result,hex.EncodeToString([]byte(detail)),len(ctx.GetSessionVars().StmtCtx.GetWarnings()))}()
+  args:=[]Expression{}
+  for _,wire:=range fields[3:]{var d types.Datum;var ft *types.FieldType
+   switch wire[0]{case 'n':d=types.NewDatum(nil);ft=types.NewFieldType(mysql.TypeNull)
+   case 'i':n,e:=strconv.ParseInt(wire[1:],10,64);if e!=nil{panic(e)};d=types.NewIntDatum(n);ft=types.NewFieldType(mysql.TypeLonglong)
+   case 's':s,e:=hex.DecodeString(wire[1:]);if e!=nil{panic(e)};d=types.NewStringDatum(string(s));ft=types.NewFieldType(mysql.TypeVarString);ft.SetCharset("utf8mb4");ft.SetCollate("utf8mb4_bin")
+   default:panic(wire)}
+   args=append(args,&Constant{Value:d,RetType:ft})
+  }
+  f,e:=funcs[fields[2]].getFunction(ctx,args);if e!=nil{result="build_error";detail=e.Error();return}
+  value,e:=evalBuiltinFunc(f,ctx,chunk.Row{});if e!=nil{result="error";detail=e.Error();return}
+  if value.IsNull(){result="null";return};s,e:=value.ToString();if e!=nil{panic(e)};result="value:"+hex.EncodeToString([]byte(s))
+ }() }
+}

@@ -1,0 +1,41 @@
+from pathlib import Path
+import collections,gzip,hashlib,json,re,shutil,sys
+root=Path(__file__).resolve().parent
+for line in (root/'SHA256SUMS').read_text().splitlines():
+    digest,name=line.split('  ',1)
+    assert hashlib.sha256((root/name).read_bytes()).hexdigest()==digest,name
+read=lambda name:[l.split('\t') for l in gzip.decompress((root/(name+'.gz')).read_bytes()).decode().splitlines()]
+c=read('positional-cases.tsv');g=read('positional-go.tsv');r=read('positional-rust.tsv')
+assert len(c)==len(g)==len(r)==19740 and len({x[0] for x in c})==19740
+assert [x[0] for x in c]==[x[0] for x in g]==[x[0] for x in r]
+d=[(a,b) for a,b in zip(g,r) if a[1]!=b[1] or a[3]!=b[3]]
+assert len(d)==5116
+assert sum(a[1]=='panic' for a in g)==1964 and all(a[1]!='panic' for a in r)
+assert sum(a[1]=='build_error' for a,b in d)==24
+assert sum(a[1] not in ['panic','build_error'] for a,b in d)==3128
+saved=json.loads(gzip.decompress((root/'positional-differences.json.gz').read_bytes()))
+assert {a[0] for a,b in d}=={a['id'] for a in saved}
+g={tuple(f[:2]):f for f in read('batch-cast-go.tsv')};r={tuple(f[:2]):f for f in read('batch-cast-rust.tsv')}
+assert len(g)==480 and len(r)==600
+assert all(x[2]!='panic' for x in list(g.values())+list(r.values()))
+assert all(len({tuple(g[(key,route)][2:]) for route in ['scalar','batch','suite_on','suite_off']})==1 for key,_ in g)
+unhex=lambda s:bytes.fromhex(s).decode(errors='replace')
+norm=lambda s:re.sub(r'^\[[^]:]*:(\d+)\]',r'[\1]',s)
+d=[]
+for key,a in g.items():
+    b=r[key]
+    gw=[norm(unhex(x)) for x in a[5].split(',') if x];rw=[norm(unhex(x)) for x in b[5].split(',') if x]
+    if a[2]!=b[2] or a[4]!=b[4] or gw!=rw:d.append(key)
+assert len(d)==72 and len({key for key,route in d})==29
+saved=json.loads(gzip.decompress((root/'batch-cast-differences.json.gz').read_bytes()))
+assert set(d)=={tuple(x['key']) for x in saved}
+assert collections.Counter(route for key,route in d)=={'scalar':11,'batch':22,'suite_on':28,'suite_off':11}
+fast=[(key,f) for (key,route),f in r.items() if route=='fast' and f[2]!='declined']
+assert len(fast)==60 and sum(f[2]!=g[(key,'batch')][2] for key,f in fast)==6
+print('Verified: 19,740 positional cases / 3,128 runtime differences (excluding Go panics/factory rejects); 480 comparable decimal-route rows / 72 differences; 60 accepted fast-path cases / 6 differences.')
+if '--prepare' in sys.argv:
+    mapping=json.loads((root/'reproduction-map.json').read_text())
+    for source,target in mapping.items():shutil.copyfile(root/source,Path('/private/tmp')/target)
+    for name in ['positional-cases.tsv','positional-go.tsv','batch-cast-go.tsv']:
+        (Path('/private/tmp')/name).write_bytes(gzip.decompress((root/(name+'.gz')).read_bytes()))
+    print('Prepared temporary inputs, oracles, probes and runners.')

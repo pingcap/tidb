@@ -1,0 +1,24 @@
+#[test]
+fn audit_positional_boundaries() {
+ use crate::{constant::Constant,expression::Expression,scalar_function::ScalarFunction,context::NoColumns};
+ use tidb_datatype::{FieldType,FieldTypeCode};
+ use tidb_ast::CiString;
+ use std::io::Write;
+ fn unhex(s:&str)->Vec<u8>{(0..s.len()).step_by(2).map(|i|u8::from_str_radix(&s[i..i+2],16).unwrap()).collect()}
+ fn hex(s:&[u8])->String{s.iter().map(|b|format!("{b:02x}")).collect()}
+ let input=std::fs::read_to_string("/private/tmp/positional-cases.tsv").unwrap();
+ let mut out=std::fs::File::create("/private/tmp/positional-rust.tsv").unwrap();
+ for line in input.lines(){let f:Vec<_>=line.split('\t').collect();
+  let mut args=Vec::new();
+  for wire in &f[3..] {
+   let (value,code)=match wire.as_bytes()[0] {b'n'=>(Datum::Null,FieldTypeCode::Null),b'i'=>(Datum::Int(wire[1..].parse().unwrap()),FieldTypeCode::LongLong),b's'=>(Datum::new_string(unhex(&wire[1..])),FieldTypeCode::VarString),_=>unreachable!()};
+   let mut ft=FieldType::new(code);if code==FieldTypeCode::VarString{ft.set_charset_name("utf8mb4");ft.set_collation_name("utf8mb4_bin");}
+   args.push(Expression::Constant(Constant::new(value,ft)));
+  }
+  let mut ret=FieldType::new(if f[2]=="regexp_instr"{FieldTypeCode::LongLong}else{FieldTypeCode::VarString});ret.set_charset_name("utf8mb4");ret.set_collation_name("utf8mb4_bin");
+  let function=ScalarFunction::new(CiString::new(f[2]),ret,args);
+  let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||function.eval(&NoColumns,tidb_chunk::row::Row::empty())));
+  let (value,error)=match result{Ok(Ok(Datum::Null))=>("null".to_owned(),String::new()),Ok(Ok(value))=>(format!("value:{}",hex(&value.sql_bytes().unwrap())),String::new()),Ok(Err(error))=>("error".to_owned(),format!("{error:?}")),Err(_)=>("panic".to_owned(),String::new())};
+  writeln!(out,"{}\t{}\t{}\t0",f[0],value,hex(error.as_bytes())).unwrap();
+ }
+}

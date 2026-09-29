@@ -1,0 +1,23 @@
+from pathlib import Path
+rows=[]
+def add(group,name,vals):
+ def enc(x):return 'n' if x is None else ('i'+str(x) if isinstance(x,int) else 's'+x.hex())
+ rows.append('\t'.join([str(len(rows)),group,name]+[enc(x) for x in vals]))
+texts=[b'',b'a',b'ab',b'aba','é中a'.encode(),b'\xffa',b'a\xffb',b'\xf0\x80a',b'\xe2\x82a',b'a\x00b']
+patterns=[b'.',b'a',b'a*',b'a?',b'^',b'$',b'()',b'(a)',b'(a)?b',b'(a)|(b)',b'\xef\xbf\xbd',b'^$']
+for text in texts:
+ for pattern in patterns:
+  for pos in [1,2,3,0,-1]:
+   for occ in [0,1,2,-1]:
+    add('position','regexp_substr',[text,pattern,pos,occ])
+    for end in [0,1]:add('position','regexp_instr',[text,pattern,pos,occ,end])
+    for repl in [b'#',b'\\0',b'\\1',b'\xff',b'\\'+ 'é'.encode()]:add('replacement','regexp_replace',[text,pattern,repl,pos,occ])
+for name in ['regexp_substr','regexp_instr','regexp_replace']:
+ for text in [None,b'a',b'\xff']:
+  for pattern in [None,b'',b'[',b'.',b'\xff']:
+   for pos in [None,0,1,2]:
+    for match in [None,b'',b'z']:
+     vals=[text,pattern,pos,1,match] if name=='regexp_substr' else [text,pattern,pos,1,0,match] if name=='regexp_instr' else [text,pattern,b'#',pos,0,match]
+     add('null-error-order',name,vals)
+Path('/private/tmp/positional-cases.tsv').write_text('\n'.join(rows)+'\n')
+print(len(rows))

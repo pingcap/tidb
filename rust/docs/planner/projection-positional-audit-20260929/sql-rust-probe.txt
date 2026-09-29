@@ -1,0 +1,7 @@
+#[test]
+fn audit_regexp_sql_boundary() {
+ let mut session=Session::new();let mut output=String::new();
+ for sql in ["select regexp_instr('', '.', 2)", "select regexp_instr('', 'a*', 2)","select regexp_substr('a', '', null)","select regexp_instr('a', '', null)","select regexp_replace('a', '', '#', null)","select regexp_substr(null, null)","create table audit_decimal(a bigint)","insert into audit_decimal values(9223372036854775807)","set tidb_enable_vectorized_expression=1","select cast(a as decimal(10,2)) from audit_decimal","show warnings","set tidb_enable_vectorized_expression=0","select cast(a as decimal(10,2)) from audit_decimal","show warnings"] {
+ let result=match session.run(sql){Ok(value)=>format!("{value:?}"),Err(error)=>format!("{:?}",error.to_mysql_error())};output.push_str(&format!("{sql}\t{result}\n"));}
+ std::fs::write("/private/tmp/positional-sql-rust.tsv",output).unwrap();
+}

@@ -1,0 +1,14 @@
+select regexp_instr('', '.', 2)	MysqlError { code: 1105, state: [72, 89, 48, 48, 48], message: "Index out of bounds in regular expression search", from_evaluation: true }
+select regexp_instr('', 'a*', 2)	MysqlError { code: 1105, state: [72, 89, 48, 48, 48], message: "Index out of bounds in regular expression search", from_evaluation: true }
+select regexp_substr('a', '', null)	Rows([[Null]])
+select regexp_instr('a', '', null)	Rows([[Null]])
+select regexp_replace('a', '', '#', null)	Rows([[Null]])
+select regexp_substr(null, null)	Rows([[Null]])
+create table audit_decimal(a bigint)	Done(true)
+insert into audit_decimal values(9223372036854775807)	Affected(1)
+set tidb_enable_vectorized_expression=1	Affected(0)
+select cast(a as decimal(10,2)) from audit_decimal	MysqlError { code: 1690, state: [50, 50, 48, 48, 51], message: "DECIMAL value is out of range in '(10, 2)'", from_evaluation: true }
+show warnings	Rows([])
+set tidb_enable_vectorized_expression=0	Affected(0)
+select cast(a as decimal(10,2)) from audit_decimal	Rows([[Decimal(Decimal { negative: false, digits: DecimalDigits([57, 57, 57, 57, 57, 57, 57, 57, 57, 57]), scale: 2, storage_scale: 2, declared_shape: Some((10, 2)) })]])
+show warnings	Rows([[Bytes([87, 97, 114, 110, 105, 110, 103]), Int(1690), Bytes([68, 69, 67, 73, 77, 65, 76, 32, 118, 97, 108, 117, 101, 32, 105, 115, 32, 111, 117, 116, 32, 111, 102, 32, 114, 97, 110, 103, 101, 32, 105, 110, 32, 39, 40, 49, 48, 44, 32, 50, 41, 39])]])
