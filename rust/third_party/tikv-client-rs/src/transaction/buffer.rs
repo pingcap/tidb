@@ -341,8 +341,13 @@ impl Buffer {
 
     /// Discard values cached by snapshot reads while retaining transaction mutations.
     pub(crate) fn clear_cached_reads(&mut self) {
-        self.entry_map
-            .retain(|_, entry| !matches!(entry, BufferEntry::Cached(_)));
+        self.entry_map.retain(|_, entry| match entry {
+            BufferEntry::Cached(_) => false,
+            BufferEntry::Locked(value) | BufferEntry::SharedLocked(value) => {
+                *value = None;
+                true
+            }
+        });
         // SetSnapshotTS drops the source cache map but deliberately leaves its
         // cachedSize accounting untouched, just as it preserves hitCnt.
     }
@@ -886,11 +891,8 @@ impl Buffer {
         allow_shared_upgrade: bool,
     ) -> std::result::Result<(), &'static str> {
         let returned_exists = returned.map(|value| value.exists);
-        let returned = returned.map(|value| {
-            value
-                .exists
-                .then(|| ValueEntry::new(value.value.clone(), 0))
-        });
+        // LockContext returns values at for_update_ts to TiDB's lock cache.
+        // They cannot populate the snapshot cache, which reads at start_ts.
         if shared {
             if self.primary_key.is_none() {
                 return Err("pessimistic lock in share mode requires primary key to be selected");
@@ -909,9 +911,9 @@ impl Buffer {
         match entry {
             Entry::Vacant(entry) => {
                 if effective_shared {
-                    entry.insert(BufferEntry::SharedLocked(returned));
+                    entry.insert(BufferEntry::SharedLocked(None));
                 } else {
-                    entry.insert(BufferEntry::Locked(returned));
+                    entry.insert(BufferEntry::Locked(None));
                 }
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
@@ -919,7 +921,7 @@ impl Buffer {
                     self.snapshot_cache_size_bytes = self
                         .snapshot_cache_size_bytes
                         .saturating_sub(snapshot_cache_entry_size(&cache_key, value));
-                    let value = returned.or_else(|| Some(value.take()));
+                    let value = Some(value.take());
                     if effective_shared {
                         entry.insert(BufferEntry::SharedLocked(value));
                     } else {
@@ -1738,6 +1740,42 @@ mod tests {
         assert_eq!(buffer.snapshot_cache_hit_count(), 1);
         assert_eq!(buffer.snapshot_cache_size(), 0);
         assert_eq!(buffer.snapshot_cache_size_bytes, accounted_size);
+    }
+
+    #[test]
+    fn lock_return_values_do_not_replace_snapshot_reads() {
+        let key: Key = b"record".to_vec().into();
+        let mut buffer = Buffer::new(true);
+        buffer.update_snapshot_cache(
+            vec![key.clone()],
+            &BTreeMap::from([(key.clone(), ValueEntry::new(b"old".to_vec(), 7))]),
+        );
+        let returned = crate::ReturnedValue {
+            value: b"new".to_vec(),
+            exists: true,
+            ..Default::default()
+        };
+        buffer
+            .lock_with_returned_value(key.clone(), false, Some(&returned))
+            .unwrap();
+        assert!(
+            matches!(buffer.entry_map.get(&key), Some(BufferEntry::Locked(Some(Some(value)))) if value.value == b"old")
+        );
+        buffer.clear_cached_reads();
+        assert!(matches!(
+            buffer.entry_map.get(&key),
+            Some(BufferEntry::Locked(None))
+        ));
+        assert!(buffer.memdb_flags(&key).has_locked());
+
+        let absent: Key = b"absent".to_vec().into();
+        buffer
+            .lock_with_returned_value(absent.clone(), false, Some(&returned))
+            .unwrap();
+        assert!(matches!(
+            buffer.entry_map.get(&absent),
+            Some(BufferEntry::Locked(None))
+        ));
     }
 
     #[test]

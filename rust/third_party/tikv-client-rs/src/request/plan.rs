@@ -838,9 +838,7 @@ impl RegionRetryState for SnapshotRegionBackoff {
                 );
             }
         }
-        result
-            .map(|_| true)
-            .map_err(|error| Error::StringError(error.to_string()))
+        result.map(|_| true).map_err(Error::from)
     }
 
     fn fork(&self) -> (Self, Cancellation) {
@@ -964,7 +962,7 @@ impl SnapshotLockBackoff {
                 );
             }
         }
-        result.map_err(|error| Error::StringError(error.to_string()))
+        result.map_err(Error::from)
     }
 
     async fn backoff_on_reported_lock_hint(&mut self, reason: String) -> Result<()> {
@@ -998,7 +996,7 @@ impl SnapshotLockBackoff {
                 );
             }
         }
-        result.map_err(|error| Error::StringError(error.to_string()))
+        result.map_err(Error::from)
     }
 }
 
@@ -1008,7 +1006,7 @@ impl RegionRetryState for RetryBackoffer {
         RetryBackoffer::backoff(self, config, reason)
             .await
             .map(|_| true)
-            .map_err(|error| Error::StringError(error.to_string()))
+            .map_err(Error::from)
     }
 
     fn fork(&self) -> (Self, Cancellation) {
@@ -2643,6 +2641,8 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     /// Count the first response of a native concurrent BatchGet shard using
     /// client-go's async callback result labels.
     pub(crate) record_async_batch_get_metric: bool,
+    /// Source LockCtx wait/deadline check after a pessimistic conflict.
+    pub(crate) pessimistic_lock_wait: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2679,6 +2679,7 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             prewrite_lock_conflict: self.prewrite_lock_conflict,
             max_timestamp_point_get: self.max_timestamp_point_get,
             record_async_batch_get_metric: self.record_async_batch_get_metric,
+            pessimistic_lock_wait: self.pessimistic_lock_wait.clone(),
         }
     }
 }
@@ -2838,8 +2839,8 @@ where
 
             // client-go's pessimistic-lock response handler deliberately does
             // not resolve a lock that TiKV reports as recently updated. Such
-            // a response is the terminal result of TiKV's lock wait, not an
-            // orphan-cleanup opportunity. Shared-lock wrappers have already
+            // a response needs another wait-budget check and lock attempt,
+            // not an orphan-cleanup RPC. Shared-lock wrappers have already
             // been expanded by `HasLocks`, so apply the source threshold to
             // every holder independently.
             if clone.resolve_locks_context.pessimistic_region_resolve {
@@ -2850,11 +2851,15 @@ where
                         || lock.duration_to_last_update_ms >= SKIP_RESOLVE_THRESHOLD_MS
                 });
                 if locks.is_empty() && before != 0 {
+                    if clone.pessimistic_lock_wait.is_some() {
+                        (result, request_lock_hints) = clone.execute_inner_retry().await?;
+                        continue;
+                    }
                     return Err(crate::error::ERR_LOCK_WAIT_TIMEOUT.into());
                 }
             }
 
-            if self.backoff.is_none() {
+            if self.backoff.is_none() && clone.pessimistic_lock_wait.is_none() {
                 return Err(Error::ResolveLockError(locks));
             }
 
@@ -2890,6 +2895,8 @@ where
                 }
             }
 
+            // Only resolve holders retained by the source filters above.
+            let resolver_locks = locks.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
             let pd_client = self.pd_client.clone();
             let started = self.snapshot_runtime_stats.as_ref().map(|_| Instant::now());
             let lock_result = match &self.read_lock_context {
@@ -2908,7 +2915,11 @@ where
                 None => {
                     resolve_locks_with_context_result(
                         resolver_locks,
-                        self.timestamp.clone(),
+                        if clone.pessimistic_lock_wait.is_some() {
+                            Timestamp::from_version(0)
+                        } else {
+                            self.timestamp.clone()
+                        },
                         pd_client.clone(),
                         self.keyspace,
                         self.keyspace_name.as_deref(),
@@ -2922,7 +2933,12 @@ where
             }
             let lock_result = lock_result?;
             let live_locks = lock_result.live_locks;
-            if live_locks.is_empty() {
+            if let Some(wait) = &clone.pessimistic_lock_wait {
+                if lock_result.ms_before_expired > 0 {
+                    wait()?;
+                }
+                (result, request_lock_hints) = clone.execute_inner_retry().await?;
+            } else if live_locks.is_empty() {
                 (result, request_lock_hints) = clone.execute_inner_retry().await?;
             } else if let Some(snapshot_lock_backoff) = clone.snapshot_lock_backoff.as_mut() {
                 // client-go only waits when the resolver reports a positive
@@ -5654,6 +5670,31 @@ mod test {
         ));
     }
 
+    #[tokio::test]
+    async fn snapshot_retry_exhaustion_retains_the_source_error_identity() {
+        for (config, terminal) in [
+            (BO_TIKV_RPC, crate::error::ERR_TIKV_SERVER_TIMEOUT),
+            (BO_REGION_MISS, crate::error::ERR_REGION_UNAVAILABLE),
+            (BO_TXN_LOCK_FAST, crate::error::ERR_RESOLVE_LOCK_TIMEOUT),
+        ] {
+            let owner = Arc::new(Mutex::new(RetryBackoffer::new(Cancellation::default(), 1)));
+            let mut region =
+                SnapshotRegionBackoff::with_owner(Backoff::no_jitter_backoff(1, 1, 1), owner);
+            region
+                .backoff(config, "injected retry".into())
+                .await
+                .unwrap();
+            let error = region
+                .backoff(config, "injected retry".into())
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, Error::Static(value) if value == terminal),
+                "{error:?}"
+            );
+        }
+    }
+
     #[test]
     fn snapshot_retry_owners_use_the_supplied_variables() {
         let mut variables = crate::Variables::default();
@@ -5784,6 +5825,7 @@ mod test {
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
                 record_async_batch_get_metric: false,
+                pessimistic_lock_wait: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

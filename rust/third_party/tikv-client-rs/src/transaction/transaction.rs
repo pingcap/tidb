@@ -254,6 +254,31 @@ struct PessimisticLockDispatchTiming {
 }
 
 impl PessimisticLockDispatchTiming {
+    /// Go handlePessimisticLockResponse checks the statement budget only when
+    /// the resolver reports a live owner. TiKV owns the actual lock wait.
+    fn check_wait(&self) -> Result<()> {
+        let wait_time = self.wait_time.unwrap_or(LOCK_ALWAYS_WAIT);
+        let now = SystemTime::now();
+        calculate_pessimistic_lock_wait_time(
+            self.killed.as_ref(),
+            wait_time,
+            self.wait_start_time,
+            self.max_execution_deadline,
+            now,
+        )?;
+        if wait_time == LOCK_NO_WAIT {
+            return Err(crate::error::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.into());
+        }
+        if wait_time != LOCK_ALWAYS_WAIT
+            && self
+                .wait_start_time
+                .is_some_and(|started| go_system_time_sub_millis(now, started) >= wait_time)
+        {
+            return Err(crate::error::ERR_LOCK_WAIT_TIMEOUT.into());
+        }
+        Ok(())
+    }
+
     fn prepare(&self, request: &mut kvrpcpb::PessimisticLockRequest) -> Result<()> {
         request.lock_ttl = self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl();
         if let Some(wait_time) = self.wait_time {
@@ -4140,6 +4165,21 @@ impl<PdC: PdClient> Transaction<PdC> {
         if self.is_pipelined() {
             panic!("can not set a txn with pipelined memdb to pessimistic mode");
         }
+        // The source has one retry policy for KVTxn. Preserve an explicit
+        // override, but switching transaction kind must keep the native
+        // defaults eligible for the source retry owner.
+        let previous_defaults = if self.options.is_pessimistic() {
+            RetryOptions::default_pessimistic()
+        } else {
+            RetryOptions::default_optimistic()
+        };
+        if self.options.retry_options == previous_defaults {
+            self.options.retry_options = if pessimistic {
+                RetryOptions::default_pessimistic()
+            } else {
+                RetryOptions::default_optimistic()
+            };
+        }
         self.buffer.set_pessimistic(pessimistic);
         self.options.kind = if pessimistic {
             TransactionKind::Pessimistic(Timestamp::from_version(0))
@@ -4244,6 +4284,11 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub fn memory_hook_set(&self) -> bool {
         self.buffer.memdb_memory_hook_is_set()
+    }
+
+    /// Borrows the same authoritative MemDB without requiring a mutable txn.
+    pub fn get_mem_buffer_readonly(&self) -> &super::unionstore::MemDb {
+        self.buffer.mem_buffer_readonly()
     }
 
     /// Returns the exact staged MemDB used by transaction reads and commit.
@@ -5016,6 +5061,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         >::new()));
         loop {
             let timing_for_dispatch = timing.clone();
+            let timing_for_wait = timing.clone();
             let resource_group_tag = resource_group_tag.clone();
             let resource_group_tagger = resource_group_tagger.clone();
             let decorated_requests = Arc::clone(&decorated_requests);
@@ -5061,6 +5107,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                     self.options.retry_options.lock_backoff.clone(),
                     self.keyspace,
                     self.lock_resolver_context.clone(),
+                    Some(Arc::new(move || timing_for_wait.check_wait())),
                 )
                 .preserve_shard();
             let result = if let Some(owner) = source_retry_owner.as_ref() {
@@ -8828,6 +8875,7 @@ impl<PdC: PdClient> Committer<PdC> {
             self.options.retry_options.lock_backoff.clone(),
             self.keyspace,
             self.lock_resolver_context.clone(),
+            None,
         )
         .prewrite_lock_conflict(
             self.start_version.version(),

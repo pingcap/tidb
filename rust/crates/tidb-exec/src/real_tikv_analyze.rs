@@ -2788,7 +2788,7 @@ mod tests {
             call: std::sync::Mutex::new(None),
         };
         assert_eq!(
-            automatic_sample_rate(Some(10_000), &provider, "oltp", 42, "test", "orders", "p0",),
+            automatic_sample_rate(Some(10_000), &provider, "oltp", 42, "test", "orders", "p0",).0,
             0.15
         );
         assert_eq!(

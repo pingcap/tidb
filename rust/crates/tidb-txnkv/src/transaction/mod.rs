@@ -17,17 +17,15 @@
 mod command_client;
 mod coordinator;
 mod mutation;
-mod mutation_buffer;
+mod mutation_plan;
 mod pessimistic;
-mod region_batches;
 mod schema_lease;
 mod state;
-mod ttl;
 
 pub use command_client::{
-    detached_flush_failures, DetachedCommitCompletion, OwnedTransactionCommitRequest,
-    PublishedCommand, TransactionBatchGetFuture, TransactionBatchGetRequest,
-    TransactionCommandClient, TransactionCommitRequest, TransactionPrewriteRequest,
+    DetachedCommitCompletion, PublishedCommand, TransactionBatchGetFuture,
+    TransactionBatchGetRequest, TransactionCommandClient, TransactionCommitRequest,
+    TransactionPrewriteRequest,
 };
 pub use coordinator::{
     CommitProtocol, OptimisticCoordinatorError, PdLockTimestampSource,
@@ -39,12 +37,11 @@ pub use mutation::{
     MutationSetError, OptimisticMutation, OptimisticMutationKind, MAX_OPTIMISTIC_KEY_BYTES,
     MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES, MAX_OPTIMISTIC_VALUE_BYTES,
 };
-pub use mutation_buffer::{MutationBufferError, TransactionMutationBuffer};
+pub use mutation_plan::MutationPlan;
 pub use pessimistic::{
     AcquiredLocks, DeadlockDetail, DeadlockWaitChainItem, LockWaitTime, PessimisticLockFailure,
     RealPessimisticTransaction,
 };
-pub use region_batches::RegionMutationBatch;
 pub use schema_lease::{SchemaLease, SchemaLeaseChecker, SchemaLeaseError};
 pub use state::{
     CleanupBatchFailure, CleanupFailedTransaction, CommittedProtocol, CommittedTransaction,
@@ -52,7 +49,6 @@ pub use state::{
     ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure, TransactionAttemptPhase,
     TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause, UndeterminedTransaction,
 };
-pub use ttl::{
-    HeartBeatFailure, KeepAliveReport, KeepAliveStop, LockKeepAlive, TxnHeartBeatSender,
-    MANAGED_LOCK_TTL_MS, MAX_CONSECUTIVE_FAILURES, MAX_TXN_TTL_MS,
-};
+
+/// Client-rust driver undergoing live-boundary validation.
+pub mod client;

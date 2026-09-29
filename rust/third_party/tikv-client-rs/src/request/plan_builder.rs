@@ -482,6 +482,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
                 record_async_batch_get_metric: false,
+                pessimistic_lock_wait: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -502,13 +503,17 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         backoff: Backoff,
         keyspace: Keyspace,
         mut resolve_locks_context: ResolveLocksContext,
+        check_wait: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
     ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
     where
         P: Shardable,
         P::Result: HasLocks,
     {
         resolve_locks_context.pessimistic_region_resolve = true;
-        self.resolve_lock_with_context(timestamp, backoff, keyspace, resolve_locks_context)
+        let mut builder =
+            self.resolve_lock_with_context(timestamp, backoff, keyspace, resolve_locks_context);
+        builder.plan.pessimistic_lock_wait = check_wait;
+        builder
     }
 
     /// Resolve locks encountered by a snapshot read. Unlike a mutation,
@@ -560,6 +565,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
                 record_async_batch_get_metric: false,
+                pessimistic_lock_wait: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -611,6 +617,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
                 record_async_batch_get_metric: false,
+                pessimistic_lock_wait: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -1414,6 +1421,7 @@ mod tests {
             Backoff::no_jitter_backoff(0, 0, 1),
             Keyspace::Disable,
             shared.clone(),
+            None,
         )
         .force_lite_lock_resolution();
 

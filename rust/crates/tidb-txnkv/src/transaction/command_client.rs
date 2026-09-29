@@ -25,7 +25,6 @@
 //! on demand.
 
 use prost::Message;
-use std::time::Duration;
 use tidb_proto::{
     KvrpcBatchGetRequest, KvrpcBatchGetResponse, KvrpcBatchRollbackRequest,
     KvrpcBatchRollbackResponse, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcContext,
@@ -39,188 +38,6 @@ use crate::rpc::{
     TonicCoprocessorClient, TransactionBatchPending, TransactionBatchPublication,
     TransactionBatchResponse, UnaryCallContext,
 };
-
-/// Detached secondary Commits that ended in a transport, region, or key error.
-/// The transaction is committed regardless; the counter exists so a probe can
-/// notice systematic flush failures without touching the session path.
-static DETACHED_FLUSH_FAILURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Reads the detached secondary-flush failure counter.
-///
-/// Go counts the same events on
-/// `metrics.SecondaryLockCleanupFailureCounterCommit` (`2pc.go`, inside the
-/// goroutine `spawnWithStorePool` runs for a classic commit's secondaries):
-/// the committed primary has already decided the transaction, so these
-/// failures never reach the caller — they surface only as a metric.
-pub fn detached_flush_failures() -> u64 {
-    DETACHED_FLUSH_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Retained executor for independent detached continuations. Network waiting
-/// suspends a task; it never occupies a worker or holds the client mutex.
-fn detached_flush_runtime() -> Option<&'static tokio::runtime::Runtime> {
-    static RUNTIME: std::sync::OnceLock<Result<tokio::runtime::Runtime, std::io::Error>> =
-        std::sync::OnceLock::new();
-    RUNTIME
-        .get_or_init(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .thread_name("txn-secondary-flush")
-                .enable_time()
-                .build()
-        })
-        .as_ref()
-        .ok()
-}
-
-async fn run_detached_flush<L: crate::region::RegionRecoveryLoader + Send + 'static>(
-    mut requests: Vec<OwnedTransactionCommitRequest>,
-    mut client: TonicCoprocessorClient,
-    authority: crate::SharedReadRuntime<TonicCoprocessorClient, L>,
-) {
-    // The captured owner outlives every pending response, just as Go's store
-    // wait group retains spawned work. The request clone has no shutdown power.
-    let call = UnaryCallContext::with_timeout(super::coordinator::secondary_commit_call_budget());
-    let mut backoff =
-        crate::region::RegionBackoffBudget::new(super::coordinator::COMMIT_SECONDARY_MAX_BACKOFF);
-    while !requests.is_empty() {
-        let mut pending = Vec::with_capacity(requests.len());
-        for request in requests.drain(..) {
-            match client.begin_transaction_commit(
-                &request.address,
-                None,
-                &request.request,
-                &request.context,
-                &call,
-            ) {
-                Ok(pending_request) => pending.push((pending_request, request)),
-                Err(error) => {
-                    DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if let Some(observer) = request.completion {
-                        let _ = observer.send(Err(format!("commit admission: {error:?}")));
-                    }
-                }
-            }
-        }
-        // Admit all region batches before awaiting any response. Other transaction
-        // tasks continue while these requests are in flight.
-        for (mut request, batch) in pending {
-            let result = tokio::time::timeout_at(
-                tokio::time::Instant::from_std(
-                    call.deadline()
-                        .expect("detached commits have a finite budget"),
-                ),
-                std::future::poll_fn(|cx| request.poll_complete(cx)),
-            )
-            .await;
-            let mut completion = match result {
-                Ok(Ok(Ok(response))) => Ok(response),
-                error => {
-                    request.cancel();
-                    Err(format!("commit completion: {error:?}"))
-                }
-            };
-            if let Ok(response) = &completion {
-                if let Some(error) = response.response.region_error.clone() {
-                    let routing = authority.clone();
-                    let retry_call = call.clone();
-                    let observer = batch.completion.clone();
-                    // Recovery may consult PD. Keep that blocking operation off
-                    // the async worker, while unrelated detached commits advance.
-                    let recovered = tokio::task::spawn_blocking(move || {
-                        let result = regroup_detached_commit(
-                            &routing,
-                            batch,
-                            &error,
-                            &mut backoff,
-                            &retry_call,
-                        );
-                        (backoff, result)
-                    })
-                    .await;
-                    match recovered {
-                        Ok((returned, Ok(regrouped))) => {
-                            backoff = returned;
-                            requests.extend(regrouped);
-                            continue;
-                        }
-                        Ok((returned, Err(error))) => {
-                            backoff = returned;
-                            completion = Err(error);
-                        }
-                        Err(error) => {
-                            DETACHED_FLUSH_FAILURES
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            if let Some(observer) = observer {
-                                let _ =
-                                    observer.send(Err(format!("commit recovery task: {error}")));
-                            }
-                            return;
-                        }
-                    }
-                    DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if let Some(observer) = observer {
-                        let _ = observer.send(completion);
-                    }
-                    continue;
-                }
-            }
-            let failed = completion.as_ref().map_or(true, |response| {
-                response.response.region_error.is_some() || response.response.error.is_some()
-            });
-            if failed {
-                // Primary success already decided the outcome. Secondary errors
-                // are diagnostic, not rollback or an undetermined primary.
-                DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            if let Some(observer) = batch.completion {
-                let _ = observer.send(completion);
-            }
-        }
-    }
-}
-
-fn regroup_detached_commit<L: crate::region::RegionRecoveryLoader>(
-    runtime: &crate::SharedReadRuntime<TonicCoprocessorClient, L>,
-    batch: OwnedTransactionCommitRequest,
-    error: &tidb_proto::RegionError,
-    backoff: &mut crate::region::RegionBackoffBudget,
-    call: &UnaryCallContext,
-) -> Result<Vec<OwnedTransactionCommitRequest>, String> {
-    super::coordinator::recover_region_error_with(runtime, backoff, error, &batch.attempt, call)
-        .map_err(|error| format!("secondary Commit recovery: {error:?}"))?;
-    let routes = super::region_batches::group_keys(runtime, &batch.request.keys)
-        .map_err(|error| format!("secondary Commit regroup: {error}"))?;
-    Ok(routes
-        .into_iter()
-        .map(|route| {
-            let mut request = batch.request.clone();
-            request.keys = route.keys().to_vec();
-            request.commit_role = if request.keys.contains(&request.primary_key) {
-                tidb_proto::KvrpcCommitRole::Primary as i32
-            } else {
-                tidb_proto::KvrpcCommitRole::Secondary as i32
-            };
-            // Preserve transaction policy and resource-group metadata, replacing
-            // only routing fields selected against the new topology.
-            let mut context = batch.context.clone();
-            context.region_id = route.context().region_id;
-            context
-                .region_epoch
-                .clone_from(&route.context().region_epoch);
-            context.peer.clone_from(&route.context().peer);
-            context.term = route.context().term;
-            context.is_retry_request = true;
-            OwnedTransactionCommitRequest {
-                address: route.address().to_owned(),
-                attempt: route.attempt().clone(),
-                request,
-                context,
-                completion: batch.completion.clone(),
-            }
-        })
-        .collect())
-}
 
 /// Outcome of one transaction command relative to the publication boundary.
 ///
@@ -292,22 +109,6 @@ pub struct TransactionCommitRequest<'a> {
     pub request: KvrpcCommitRequest,
     /// Region context stamped with the transaction's resolved locks.
     pub context: KvrpcContext,
-}
-
-/// An owned [`TransactionCommitRequest`]: the shape a detached secondary
-/// flush receives, because those requests must outlive the coordinator that
-/// grouped them and the session that already observed the commit.
-pub struct OwnedTransactionCommitRequest {
-    /// Cache-issued route observation retained for region-error recovery.
-    pub attempt: crate::region::RegionAttempt,
-    /// Physical TiKV leader address selected by the region cache.
-    pub address: String,
-    /// Region-scoped Commit request.
-    pub request: KvrpcCommitRequest,
-    /// Region context stamped with the transaction's resolved locks.
-    pub context: KvrpcContext,
-    /// Optional diagnostic sink; sending never waits for the observer.
-    pub completion: Option<std::sync::mpsc::Sender<DetachedCommitCompletion>>,
 }
 
 /// Actual response of a detached commit, or its admission/transport failure.
@@ -475,30 +276,6 @@ pub trait TransactionCommandClient {
                 self.publish_commit(request.address, &request.request, &request.context, call)
             })
             .collect()
-    }
-
-    /// Publishes a round of region-routed Commits WITHOUT waiting on their
-    /// responses, answering `true` only when the round was taken over.
-    ///
-    /// Go `twoPhaseCommitter.execute` (`2pc.go`): an async-commit transaction
-    /// is committed the moment its carrying prewrite succeeds — the follow-up
-    /// secondary Commits only materialize that decision, so the session is
-    /// released immediately and they are flushed on a goroutine
-    /// (`cleanWg.Add(1); go ...`). The caller passes its shared runtime so the
-    /// transport and routing authority outlive the transaction. Region errors
-    /// use the same recovery and key regrouping as foreground commits. The
-    /// default `false` leaves clients without detached execution awaiting the
-    /// coordinator's normal commit path.
-    fn publish_commits_detached<L: crate::region::RegionRecoveryLoader + Send + 'static>(
-        &mut self,
-        requests: Vec<OwnedTransactionCommitRequest>,
-        authority: crate::SharedReadRuntime<Self, L>,
-    ) -> bool
-    where
-        Self: Sized,
-    {
-        let _ = (requests, authority);
-        false
     }
 
     /// Publishes one BatchRollback cleaning possibly-prewritten keys.
@@ -756,24 +533,6 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         )
     }
 
-    fn publish_commits_detached<L: crate::region::RegionRecoveryLoader + Send + 'static>(
-        &mut self,
-        requests: Vec<OwnedTransactionCommitRequest>,
-        authority: crate::SharedReadRuntime<Self, L>,
-    ) -> bool
-    where
-        Self: Sized,
-    {
-        if requests.is_empty() {
-            return true;
-        }
-        let Some(runtime) = detached_flush_runtime() else {
-            return false;
-        };
-        runtime.spawn(run_detached_flush(requests, self.clone(), authority));
-        true
-    }
-
     fn publish_pessimistic_locks(
         &mut self,
         requests: &[TransactionPessimisticLockRequest<'_>],
@@ -916,6 +675,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn transaction_admission_errors_remain_before_publication() {

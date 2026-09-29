@@ -499,6 +499,29 @@ impl RpcClient {
                         .flatten()
                         .any(|error| mock_error_has_live_holder(&self.engine, error))
                     {
+                        // Go unistore reports WriteConflict on a normal
+                        // wake-up, including rollback (server.go's
+                        // KVPessimisticLock). A stale Locked reply would let
+                        // the client resolve it and silently acquire instead.
+                        let conflict_commit_ts =
+                            crate::oracle::system_time_to_timestamp(std::time::SystemTime::now())
+                                .max(request.for_update_ts.saturating_add(1));
+                        for error in errors.iter_mut().flatten() {
+                            let (key, conflict_start_ts) = match error {
+                                MockError::Locked { key, start_ts, .. } => (key.clone(), *start_ts),
+                                MockError::SharedLocked { key, locks } => {
+                                    (key.clone(), locks.first().map_or(0, |lock| lock.start_ts))
+                                }
+                                _ => continue,
+                            };
+                            *error = MockError::Conflict {
+                                start_ts: request.for_update_ts,
+                                conflict_start_ts,
+                                conflict_commit_ts,
+                                key,
+                                can_force_lock: false,
+                            };
+                        }
                         break;
                     }
                 } else {
@@ -558,16 +581,14 @@ impl RpcClient {
                 ..Default::default()
             })
             .collect();
-        let mut key_errors = errors
+        let key_errors = errors
             .into_iter()
             .flatten()
             .map(key_error)
             .collect::<Vec<_>>();
-        if had_live_lock {
-            for error in &mut key_errors {
-                set_lock_update_duration(error, 1);
-            }
-        }
+        // Go unistore returns the observed lock metadata unchanged. Inventing
+        // a recent heartbeat here makes the client skip status resolution on
+        // every retry, including NOWAIT, and can keep a live waiter spinning.
         let mut response = kvrpcpb::PessimisticLockResponse {
             errors: key_errors,
             ..Default::default()
@@ -1881,19 +1902,6 @@ fn mock_lock_holder_is_live(engine: &MockEngine, primary: &[u8], start_ts: u64) 
             .shared_locks
             .iter()
             .any(|lock| lock.start_ts == start_ts)
-}
-
-fn set_lock_update_duration(error: &mut kvrpcpb::KeyError, duration_ms: u64) {
-    let Some(lock) = error.locked.as_mut() else {
-        return;
-    };
-    if lock.shared_lock_infos.is_empty() {
-        lock.duration_to_last_update_ms = duration_ms;
-    } else {
-        for holder in &mut lock.shared_lock_infos {
-            holder.duration_to_last_update_ms = duration_ms;
-        }
-    }
 }
 
 fn proto_lock_info(lock: unistore::LockInfo) -> kvrpcpb::LockInfo {

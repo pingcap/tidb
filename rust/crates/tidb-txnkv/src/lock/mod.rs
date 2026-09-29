@@ -25,7 +25,6 @@ pub use model::{
     decode_blocking_lock_observation, decode_lock_observation, BlockingLock, LockAdmissionError,
     OptimisticLock, PessimisticLock,
 };
-pub(crate) use pessimistic::{record_blocking_locks, resolve_blocking_locks_recorded};
 pub use pessimistic::{
     resolve_blocking_locks, resolve_blocking_locks_with_backoff, SKIP_RESOLVE_THRESHOLD_MS,
 };

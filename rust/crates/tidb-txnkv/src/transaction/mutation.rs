@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeSet;
-
-use tidb_proto::{KvrpcAssertion, KvrpcMutation, KvrpcOp};
-
 /// One normal optimistic mutation admitted by the concrete TiKV coordinator.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OptimisticMutationKind {
@@ -198,30 +194,6 @@ impl OptimisticMutation {
     pub fn value(&self) -> &[u8] {
         &self.value
     }
-
-    pub(super) fn to_proto(&self) -> KvrpcMutation {
-        let (op, assertion) = match self.kind {
-            OptimisticMutationKind::Insert => (KvrpcOp::Insert, KvrpcAssertion::NotExist),
-            OptimisticMutationKind::PutExisting => (KvrpcOp::Put, KvrpcAssertion::Exist),
-            OptimisticMutationKind::Delete => (KvrpcOp::Del, KvrpcAssertion::Exist),
-            OptimisticMutationKind::IndexPut => (KvrpcOp::Put, KvrpcAssertion::None),
-            OptimisticMutationKind::UniqueIndexInsert => {
-                (KvrpcOp::Insert, KvrpcAssertion::NotExist)
-            }
-            OptimisticMutationKind::IndexDelete => (KvrpcOp::Del, KvrpcAssertion::None),
-            OptimisticMutationKind::MetaPut => (KvrpcOp::Put, KvrpcAssertion::None),
-            OptimisticMutationKind::MetaDelete => (KvrpcOp::Del, KvrpcAssertion::None),
-            OptimisticMutationKind::SystemRowPut => (KvrpcOp::Put, KvrpcAssertion::None),
-            OptimisticMutationKind::SystemRowDelete => (KvrpcOp::Del, KvrpcAssertion::None),
-            OptimisticMutationKind::LockOnly => (KvrpcOp::Lock, KvrpcAssertion::None),
-        };
-        KvrpcMutation {
-            op: op as i32,
-            key: self.key.clone(),
-            value: self.value.clone(),
-            assertion: assertion as i32,
-        }
-    }
 }
 
 /// Input errors rejected before allocating a transaction timestamp.
@@ -259,8 +231,6 @@ pub enum MutationSetError {
         /// Maximum admitted aggregate encoded bytes.
         limit: usize,
     },
-    /// A transaction has exactly one immutable mutation per encoded key.
-    DuplicateKey(Vec<u8>),
 }
 
 impl std::fmt::Display for MutationSetError {
@@ -288,49 +258,11 @@ impl std::fmt::Display for MutationSetError {
                 formatter,
                 "optimistic transaction encoded size {size} exceeds {limit}"
             ),
-            Self::DuplicateKey(_) => {
-                formatter.write_str("optimistic transaction contains a duplicate encoded key")
-            }
         }
     }
 }
 
 impl std::error::Error for MutationSetError {}
-
-pub(super) fn validate_and_sort(
-    mutations: Vec<OptimisticMutation>,
-) -> Result<Vec<OptimisticMutation>, MutationSetError> {
-    if mutations.is_empty() {
-        return Err(MutationSetError::Empty);
-    }
-    validate_plan(mutations.len(), checked_aggregate_bytes(&mutations))?;
-    let mut sorted = mutations;
-    sorted.sort_by(|left, right| left.key.cmp(&right.key));
-    let mut keys = BTreeSet::new();
-    for mutation in &sorted {
-        if !keys.insert(mutation.key.clone()) {
-            return Err(MutationSetError::DuplicateKey(mutation.key.clone()));
-        }
-    }
-    Ok(sorted)
-}
-
-fn checked_aggregate_bytes(mutations: &[OptimisticMutation]) -> usize {
-    checked_aggregate_sizes(
-        mutations
-            .iter()
-            .map(|mutation| (mutation.key.len(), mutation.value.len())),
-    )
-}
-
-fn checked_aggregate_sizes(sizes: impl IntoIterator<Item = (usize, usize)>) -> usize {
-    sizes
-        .into_iter()
-        .try_fold(0usize, |size, (key, value)| {
-            size.checked_add(key)?.checked_add(value)
-        })
-        .unwrap_or(usize::MAX)
-}
 
 /// The mutation-count budget the ordinary bounded normal-2PC callers declare.
 ///
@@ -353,7 +285,7 @@ fn checked_aggregate_sizes(sizes: impl IntoIterator<Item = (usize, usize)>) -> u
 /// index entry) for every global-scope system variable — echoing Go's own
 /// `doDMLWorks`, all ~720 rows land in the one transaction it seeds the
 /// cluster with — and 256 rejected that legitimate plan before the byte
-/// budget ever saw it. [`crate::transaction::region_batches`] already groups
+/// budget ever saw it. The client transaction engine already groups
 /// an arbitrary mutation count into per-region, byte-bounded RPC batches, so
 /// this ceiling is not load-bearing for that path either; it stays as a cheap
 /// guard against a plan large enough to be a bug rather than a scaling limit.
@@ -409,51 +341,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deterministic_primary_is_the_smallest_unique_nonempty_key() {
-        let sorted = validate_and_sort(vec![
-            OptimisticMutation::put_existing(b"z".to_vec(), b"3".to_vec()).unwrap(),
-            OptimisticMutation::insert(b"a".to_vec(), b"1".to_vec()).unwrap(),
-            OptimisticMutation::put_existing(b"m".to_vec(), b"2".to_vec()).unwrap(),
-        ])
-        .unwrap();
-        assert_eq!(sorted[0].key(), b"a");
-        assert_eq!(sorted[1].key(), b"m");
-        assert_eq!(sorted[2].key(), b"z");
-        assert_eq!(sorted[0].to_proto().op, KvrpcOp::Insert as i32);
-        assert_eq!(
-            sorted[0].to_proto().assertion,
-            KvrpcAssertion::NotExist as i32
-        );
-    }
-
-    #[test]
-    fn system_row_replace_and_delete_have_no_existence_assertion() {
-        let replace = OptimisticMutation::system_row_put(b"row".to_vec(), b"value".to_vec())
-            .expect("system row replacement is valid")
-            .to_proto();
-        assert_eq!(replace.op, KvrpcOp::Put as i32);
-        assert_eq!(replace.assertion, KvrpcAssertion::None as i32);
-
-        let delete = OptimisticMutation::system_row_delete(b"row".to_vec())
-            .expect("system row deletion is valid")
-            .to_proto();
-        assert_eq!(delete.op, KvrpcOp::Del as i32);
-        assert_eq!(delete.assertion, KvrpcAssertion::None as i32);
-    }
-
-    #[test]
-    fn duplicate_or_empty_keys_fail_before_storage() {
-        assert_eq!(validate_and_sort(Vec::new()), Err(MutationSetError::Empty));
+    fn empty_keys_fail_before_storage() {
         assert_eq!(
             OptimisticMutation::insert(Vec::new(), b"v".to_vec()),
             Err(MutationSetError::EmptyKey)
-        );
-        assert_eq!(
-            validate_and_sort(vec![
-                OptimisticMutation::insert(b"k".to_vec(), b"1".to_vec()).unwrap(),
-                OptimisticMutation::put_existing(b"k".to_vec(), b"2".to_vec()).unwrap(),
-            ]),
-            Err(MutationSetError::DuplicateKey(b"k".to_vec()))
         );
     }
 
@@ -482,61 +373,5 @@ mod tests {
             validate_plan(1, MAX_OPTIMISTIC_TRANSACTION_BYTES + 1),
             Err(MutationSetError::TransactionTooLarge { .. })
         ));
-
-        assert_eq!(
-            checked_aggregate_sizes([(usize::MAX, 0), (1, 0)]),
-            usize::MAX
-        );
-    }
-
-    #[test]
-    fn put_existing_is_not_an_unasserted_put() {
-        let mutation = OptimisticMutation::put_existing(b"k".to_vec(), b"v".to_vec())
-            .unwrap()
-            .to_proto();
-        assert_eq!(mutation.op, KvrpcOp::Put as i32);
-        assert_eq!(mutation.assertion, KvrpcAssertion::Exist as i32);
-    }
-
-    #[test]
-    fn delete_is_an_exists_asserted_del_with_no_value() {
-        // Go `TableCommon.removeRecord`: `setAssertion(key, kv.AssertExist)`
-        // then `txn.Delete(key)`.
-        let mutation = OptimisticMutation::delete(b"k".to_vec()).unwrap();
-        assert!(mutation.value().is_empty());
-        let proto = mutation.to_proto();
-        assert_eq!(proto.op, KvrpcOp::Del as i32);
-        assert_eq!(proto.assertion, KvrpcAssertion::Exist as i32);
-        assert!(proto.value.is_empty());
-    }
-
-    #[test]
-    fn index_entries_are_unasserted_puts_and_deletes() {
-        // Go `tables.index.create` uses `MemBuffer.Set` (Op_Put) and
-        // `tables.index.Delete` uses `MemBuffer.Delete` (Op_Del), both leaving
-        // the assertion unresolved on the optimistic lazy path -> proto `None`,
-        // unlike the row key's `Op_Insert`/`Exist`.
-        let put = OptimisticMutation::index_put(b"idx".to_vec(), b"0".to_vec())
-            .unwrap()
-            .to_proto();
-        assert_eq!(put.op, KvrpcOp::Put as i32);
-        assert_eq!(put.assertion, KvrpcAssertion::None as i32);
-        assert_eq!(put.value, b"0");
-
-        let delete = OptimisticMutation::index_delete(b"idx".to_vec()).unwrap();
-        assert!(delete.value().is_empty());
-        let delete = delete.to_proto();
-        assert_eq!(delete.op, KvrpcOp::Del as i32);
-        assert_eq!(delete.assertion, KvrpcAssertion::None as i32);
-    }
-
-    #[test]
-    fn unique_index_entry_is_an_absence_asserted_insert() {
-        let mutation = OptimisticMutation::unique_index_insert(b"idx".to_vec(), b"h".to_vec())
-            .unwrap()
-            .to_proto();
-        assert_eq!(mutation.op, KvrpcOp::Insert as i32);
-        assert_eq!(mutation.assertion, KvrpcAssertion::NotExist as i32);
-        assert_eq!(mutation.value, b"h");
     }
 }

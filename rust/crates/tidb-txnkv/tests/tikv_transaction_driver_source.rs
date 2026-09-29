@@ -247,3 +247,99 @@ fn pessimistic_locks_are_acquired_at_statement_time() {
     assert_eq!(reader.get(&k("row")).unwrap(), Some(b"v2".to_vec()));
     reader.rollback().unwrap();
 }
+
+// The live facade must use the same engine as these driver tests.
+#[test]
+fn live_transaction_has_one_protocol_owner() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/transaction");
+    let mut pending = vec![root];
+    while let Some(path) = pending.pop() {
+        if path.is_dir() {
+            pending.extend(
+                std::fs::read_dir(path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            let source = std::fs::read_to_string(&path).unwrap();
+            for retired_algorithm in [
+                "fn commit_inner(",
+                "fn build_prewrite_request(",
+                "struct PessimisticPrewritePlan",
+                "struct TransactionMutationBuffer",
+            ] {
+                assert!(!source.contains(retired_algorithm),
+                    "{} still owns {retired_algorithm}; transaction protocols belong to client-rust",
+                    path.display());
+            }
+        }
+    }
+}
+
+/// Source SQL operations set flags on MemDB; the client alone lowers wire mutations.
+#[test]
+fn sql_mutation_assertions_reach_the_authoritative_memdb() {
+    use tidb_txnkv::transaction::OptimisticMutation as Mutation;
+    use tidb_txnkv::AssertionState;
+    let runtime = runtime();
+    let pd = mock_store();
+    let mut txn = driver(&pd, &runtime);
+    let cases = [
+        (
+            Mutation::insert(b"insert".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::NotExists,
+            true,
+        ),
+        (
+            Mutation::put_existing(b"put".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::Exists,
+            false,
+        ),
+        (
+            Mutation::delete(b"delete".to_vec()).unwrap(),
+            AssertionState::Exists,
+            false,
+        ),
+        (
+            Mutation::unique_index_insert(b"unique".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::NotExists,
+            true,
+        ),
+        (
+            Mutation::index_put(b"index".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::Unset,
+            false,
+        ),
+        (
+            Mutation::index_delete(b"index_delete".to_vec()).unwrap(),
+            AssertionState::Unset,
+            false,
+        ),
+        (
+            Mutation::system_row_put(b"system".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::Unset,
+            false,
+        ),
+        (
+            Mutation::system_row_delete(b"system_delete".to_vec()).unwrap(),
+            AssertionState::Unset,
+            false,
+        ),
+    ];
+    for (mutation, assertion, presumed) in cases {
+        txn.stage_mutation(&mutation).unwrap();
+        let key = Key::from(mutation.key().to_vec());
+        let flags = txn.get_flags(&key).unwrap();
+        assert_eq!(flags.assertion(), assertion, "{mutation:?}");
+        assert_eq!(flags.has_presume_key_not_exists(), presumed, "{mutation:?}");
+        assert_eq!(txn.staged_value(&key).as_deref(), Some(mutation.value()));
+    }
+    txn.stage_mutation(&Mutation::put_existing(b"insert".to_vec(), b"updated".to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(
+        txn.get_flags(&k("insert")).unwrap().assertion(),
+        AssertionState::NotExists,
+        "first assertion wins across statements"
+    );
+    txn.rollback().unwrap();
+}
