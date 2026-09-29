@@ -1881,10 +1881,10 @@ async fn source_go_integration_tests_lock_with_tikv_test_TestPessimisticLockMaxE
 #[serial_test::serial]
 #[allow(non_snake_case)]
 async fn source_go_integration_tests_lock_test_TestResolveLockWithTiKVSideAsync() {
-    for commit_primary in [true, false] {
+    for (commit_primary, admitted) in [(true, true), (true, false), (false, true), (false, false)] {
         let (cluster, pd) = source_integration_store();
         let case = if commit_primary { "commit" } else { "rollback" };
-        let prefix = format!("~lock/tikv-async/{case}/");
+        let prefix = format!("~lock/tikv-async/{case}/{admitted}/");
         let keys = (0..20)
             .map(|index| format!("{prefix}{index:03}").into_bytes())
             .collect::<Vec<_>>();
@@ -1946,6 +1946,7 @@ async fn source_go_integration_tests_lock_test_TestResolveLockWithTiKVSideAsync(
         interceptor_chain.link(interceptor);
         let mut context = ResolveLocksContext::default();
         context.rpc_interceptor = Some(interceptor_chain);
+        context.set_async_resolve_pool_size(if admitted { keys.len() } else { 0 });
         let context_owner = context.clone();
         let read_locks = crate::transaction::ReadLockContext::default();
         let read_ts = crate::pd::PdClient::get_timestamp(Arc::clone(&pd))
@@ -1986,7 +1987,13 @@ async fn source_go_integration_tests_lock_test_TestResolveLockWithTiKVSideAsync(
         context_owner.close().await;
 
         let requests = requests.lock().unwrap();
-        assert!(!requests.is_empty());
+        if admitted {
+            // Detached cleanup uses the resolver context, so the statement's
+            // interceptor must not observe it. Inline fallback retains it.
+            assert!(requests.is_empty());
+        } else {
+            assert!(!requests.is_empty());
+        }
         assert!(requests.iter().all(|request| request.keys.is_empty()));
         assert!(requests
             .iter()

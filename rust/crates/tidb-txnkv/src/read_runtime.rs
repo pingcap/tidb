@@ -50,12 +50,7 @@ pub struct ResolvingLock {
     pub primary: Vec<u8>,
 }
 
-#[derive(Default)]
-struct ResolvingLocks {
-    native: tikv_client::transaction::ResolveLocksContext,
-    next_token: u64,
-    entries: std::collections::HashMap<u64, Vec<ResolvingLock>>,
-}
+type ResolvingLocks = tikv_client::transaction::ResolveLocksContext;
 
 const RESOLVED_TXN_STATUS_CACHE_SIZE: usize = 2048;
 
@@ -96,31 +91,44 @@ impl ResolvedTxnStatusCache {
     }
 }
 
-/// Scope guard for client-go's `RecordResolvingLocks` / `ResolveLocksDone`.
+/// Type adapter for the native resolver's observation slot lifetime.
 pub struct ResolvingLocksGuard {
-    registry: Arc<Mutex<ResolvingLocks>>,
-    token: u64,
+    registry: ResolvingLocks,
+    caller_start_ts: u64,
+    token: usize,
+}
+
+fn native_resolving_locks(
+    locks: impl IntoIterator<Item = ResolvingLock>,
+) -> Vec<tikv_client::proto::kvrpcpb::LockInfo> {
+    locks
+        .into_iter()
+        .map(|lock| tikv_client::proto::kvrpcpb::LockInfo {
+            lock_version: lock.lock_txn_id,
+            key: lock.key,
+            primary_lock: lock.primary,
+            ..Default::default()
+        })
+        .collect()
 }
 
 impl ResolvingLocksGuard {
-    /// Go UpdateResolvingLocks replaces this worker's current observation while
-    /// preserving the same RecordResolvingLocks / ResolveLocksDone token.
+    /// Replace the current observation while retaining the native slot token.
     pub fn update(&mut self, locks: impl Iterator<Item = ResolvingLock>) {
-        self.registry
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entries
-            .insert(self.token, locks.collect());
+        futures::executor::block_on(self.registry.update_resolving_locks(
+            &native_resolving_locks(locks),
+            self.caller_start_ts,
+            self.token,
+        ));
     }
 }
 
 impl Drop for ResolvingLocksGuard {
     fn drop(&mut self) {
-        self.registry
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entries
-            .remove(&self.token);
+        futures::executor::block_on(
+            self.registry
+                .resolving_locks_done(self.caller_start_ts, self.token),
+        );
     }
 }
 
@@ -160,7 +168,7 @@ pub struct SharedReadAuthority<C, L> {
 pub struct SharedReadOpener<C, L> {
     client: C,
     region_cache: BackgroundRegionCache<L>,
-    resolving_locks: Arc<Mutex<ResolvingLocks>>,
+    resolving_locks: ResolvingLocks,
     async_resolve_pool: Option<Arc<AsyncResolvePool>>,
     resolved_txn_statuses: Arc<Mutex<ResolvedTxnStatusCache>>,
     authority_id: u64,
@@ -171,7 +179,7 @@ impl<C: Clone, L> Clone for SharedReadOpener<C, L> {
         Self {
             client: self.client.clone(),
             region_cache: self.region_cache.clone_opener(),
-            resolving_locks: Arc::clone(&self.resolving_locks),
+            resolving_locks: self.resolving_locks.clone(),
             async_resolve_pool: self.async_resolve_pool.clone(),
             resolved_txn_statuses: Arc::clone(&self.resolved_txn_statuses),
             authority_id: self.authority_id,
@@ -207,7 +215,7 @@ where
         let opener = SharedReadOpener {
             client,
             region_cache: region_cache.opener_handle(),
-            resolving_locks: Arc::new(Mutex::new(ResolvingLocks::default())),
+            resolving_locks: ResolvingLocks::default(),
             async_resolve_pool: None,
             resolved_txn_statuses: Arc::new(Mutex::new(ResolvedTxnStatusCache::default())),
             authority_id,
@@ -281,14 +289,7 @@ where
 
 impl<C, L> SharedReadAuthority<C, L> {
     fn close_native_lock_resolver(&self) {
-        let context = self
-            .opener
-            .resolving_locks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .native
-            .clone();
-        futures::executor::block_on(context.close());
+        futures::executor::block_on(self.opener.resolving_locks.close());
     }
 }
 
@@ -337,7 +338,7 @@ where
         SharedReadRuntime::from_shared_authorities(
             self.client.clone(),
             self.region_cache.open_lease()?,
-            Arc::clone(&self.resolving_locks),
+            self.resolving_locks.clone(),
             self.async_resolve_pool.clone(),
             Arc::clone(&self.resolved_txn_statuses),
             self.authority_id,
@@ -358,7 +359,7 @@ where
 pub struct SharedReadRuntime<C, L> {
     client: Arc<Mutex<C>>,
     region_cache: BackgroundRegionCache<L>,
-    resolving_locks: Arc<Mutex<ResolvingLocks>>,
+    resolving_locks: ResolvingLocks,
     async_resolve_pool: Option<Arc<AsyncResolvePool>>,
     resolved_txn_statuses: Arc<Mutex<ResolvedTxnStatusCache>>,
     cluster_id: u64,
@@ -370,7 +371,7 @@ impl<C, L> Clone for SharedReadRuntime<C, L> {
         Self {
             client: Arc::clone(&self.client),
             region_cache: self.region_cache.clone(),
-            resolving_locks: Arc::clone(&self.resolving_locks),
+            resolving_locks: self.resolving_locks.clone(),
             async_resolve_pool: self.async_resolve_pool.clone(),
             resolved_txn_statuses: Arc::clone(&self.resolved_txn_statuses),
             cluster_id: self.cluster_id,
@@ -387,7 +388,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         Self {
             client: Arc::new(Mutex::new(client)),
             region_cache: BackgroundRegionCache::without_worker(region_cache),
-            resolving_locks: Arc::new(Mutex::new(ResolvingLocks::default())),
+            resolving_locks: ResolvingLocks::default(),
             async_resolve_pool: None,
             resolved_txn_statuses: Arc::new(Mutex::new(ResolvedTxnStatusCache::default())),
             cluster_id,
@@ -399,7 +400,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     fn from_shared_authorities(
         client: C,
         region_cache: BackgroundRegionCache<L>,
-        resolving_locks: Arc<Mutex<ResolvingLocks>>,
+        resolving_locks: ResolvingLocks,
         async_resolve_pool: Option<Arc<AsyncResolvePool>>,
         resolved_txn_statuses: Arc<Mutex<ResolvedTxnStatusCache>>,
         authority_id: u64,
@@ -443,7 +444,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
                     .clone(),
             )),
             region_cache: self.region_cache.clone(),
-            resolving_locks: Arc::clone(&self.resolving_locks),
+            resolving_locks: self.resolving_locks.clone(),
             async_resolve_pool: self.async_resolve_pool.clone(),
             resolved_txn_statuses: Arc::clone(&self.resolved_txn_statuses),
             cluster_id: self.cluster_id,
@@ -520,69 +521,36 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         txn_id: u64,
         locks: impl IntoIterator<Item = ResolvingLock>,
     ) -> ResolvingLocksGuard {
-        let mut registry = self
-            .resolving_locks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let token = registry.next_token;
-        registry.next_token = registry.next_token.wrapping_add(1);
-        registry.entries.insert(
-            token,
-            locks
-                .into_iter()
-                .map(|mut lock| {
-                    lock.txn_id = txn_id;
-                    lock
-                })
-                .collect(),
+        let token = futures::executor::block_on(
+            self.resolving_locks
+                .record_resolving_locks(&native_resolving_locks(locks), txn_id),
         );
-        drop(registry);
         ResolvingLocksGuard {
-            registry: Arc::clone(&self.resolving_locks),
+            registry: self.resolving_locks.clone(),
+            caller_start_ts: txn_id,
             token,
         }
     }
 
-    /// Returns a point-in-time copy of all locks currently being resolved.
+    /// Returns all native transaction and coprocessor observations.
     #[must_use]
     pub fn resolving_locks(&self) -> Vec<ResolvingLock> {
-        let (mut locks, native) = {
-            let registry = self
-                .resolving_locks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (
-                registry
-                    .entries
-                    .values()
-                    .flatten()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-                registry.native.clone(),
-            )
-        };
-        locks.extend(
-            futures::executor::block_on(native.resolving_locks())
-                .into_iter()
-                .map(|lock| ResolvingLock {
-                    txn_id: lock.txn_id,
-                    lock_txn_id: lock.lock_txn_id,
-                    key: lock.key,
-                    primary: lock.primary,
-                }),
-        );
-        locks
+        futures::executor::block_on(self.resolving_locks.resolving_locks())
+            .into_iter()
+            .map(|lock| ResolvingLock {
+                txn_id: lock.txn_id,
+                lock_txn_id: lock.lock_txn_id,
+                key: lock.key,
+                primary: lock.primary,
+            })
+            .collect()
     }
 
     /// Native transaction sessions share the process store's resolver state.
     pub(crate) fn native_lock_resolver_context(
         &self,
     ) -> tikv_client::transaction::ResolveLocksContext {
-        self.resolving_locks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .native
-            .clone()
+        self.resolving_locks.clone()
     }
 
     /// Returns a handle to the same region-cache authority.
@@ -644,8 +612,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     pub fn batch_locate_ranges(
         &self,
         ranges: &[KeyRange],
-    ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError>
-    {
+    ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError> {
         self.region_cache.batch_locate_ranges(ranges)
     }
 
@@ -745,6 +712,33 @@ mod async_resolve_tests {
                 "unexpected metadata hydration",
             ))
         }
+    }
+
+    #[test]
+    fn resolving_observation_uses_the_native_registry_and_guard_lifetime() {
+        let runtime = SharedReadRuntime::new_injected((), RegionCache::new(Loader));
+        let native = runtime.native_lock_resolver_context();
+        let lock = |key| ResolvingLock {
+            txn_id: 999,
+            lock_txn_id: 10,
+            key: vec![key],
+            primary: vec![1],
+        };
+        let mut first = runtime.record_resolving_locks(20, [lock(2)]);
+        let second = runtime.record_resolving_locks(20, [lock(3)]);
+        let observed = futures::executor::block_on(native.resolving_locks());
+        assert_eq!(observed.len(), 2, "TiDB registered in a separate owner");
+        assert!(observed.iter().all(|lock| lock.txn_id == 20));
+        first.update([lock(4)].into_iter());
+        drop(second);
+        let observed = futures::executor::block_on(native.resolving_locks());
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].txn_id, 20);
+        assert_eq!(observed[0].key, [4]);
+        assert_eq!(runtime.resolving_locks()[0].key, [4]);
+        drop(first);
+        assert!(futures::executor::block_on(native.resolving_locks()).is_empty());
+        assert!(runtime.resolving_locks().is_empty());
     }
 
     #[derive(Clone)]
@@ -911,13 +905,13 @@ mod async_resolve_tests {
             resolve_active: Arc::new(AtomicUsize::new(0)),
         };
         let cache = BackgroundRegionCache::without_worker(RegionCache::new(Loader));
-        let resolving_locks = Arc::new(Mutex::new(ResolvingLocks::default()));
+        let resolving_locks = ResolvingLocks::default();
         let resolved_txn_statuses = Arc::new(Mutex::new(ResolvedTxnStatusCache::default()));
         let authority_id = next_read_authority_id();
         let opener = SharedReadOpener {
             client: client.clone(),
             region_cache: cache.clone_opener(),
-            resolving_locks: Arc::clone(&resolving_locks),
+            resolving_locks: resolving_locks.clone(),
             async_resolve_pool: None,
             resolved_txn_statuses: Arc::clone(&resolved_txn_statuses),
             authority_id,
@@ -1117,13 +1111,13 @@ mod async_resolve_tests {
             resolve_requests: Arc::clone(&resolve_requests),
         };
         let cache = BackgroundRegionCache::without_worker(RegionCache::new(Loader));
-        let resolving_locks = Arc::new(Mutex::new(ResolvingLocks::default()));
+        let resolving_locks = ResolvingLocks::default();
         let resolved_txn_statuses = Arc::new(Mutex::new(ResolvedTxnStatusCache::default()));
         let authority_id = next_read_authority_id();
         let opener = SharedReadOpener {
             client: client.clone(),
             region_cache: cache.clone_opener(),
-            resolving_locks: Arc::clone(&resolving_locks),
+            resolving_locks: resolving_locks.clone(),
             async_resolve_pool: None,
             resolved_txn_statuses: Arc::clone(&resolved_txn_statuses),
             authority_id,
@@ -1227,13 +1221,13 @@ mod async_resolve_tests {
             resolve_requests: Arc::clone(&resolve_requests),
         };
         let cache = BackgroundRegionCache::without_worker(RegionCache::new(Loader));
-        let resolving_locks = Arc::new(Mutex::new(ResolvingLocks::default()));
+        let resolving_locks = ResolvingLocks::default();
         let resolved_txn_statuses = Arc::new(Mutex::new(ResolvedTxnStatusCache::default()));
         let authority_id = next_read_authority_id();
         let opener = SharedReadOpener {
             client: client.clone(),
             region_cache: cache.clone_opener(),
-            resolving_locks: Arc::clone(&resolving_locks),
+            resolving_locks: resolving_locks.clone(),
             async_resolve_pool: None,
             resolved_txn_statuses: Arc::clone(&resolved_txn_statuses),
             authority_id,

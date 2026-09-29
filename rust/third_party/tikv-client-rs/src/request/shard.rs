@@ -28,6 +28,10 @@ macro_rules! impl_inner_shardable {
     () => {
         type Shard = P::Shard;
 
+        fn request_source(&self) -> &str {
+            self.inner.request_source()
+        }
+
         fn shards(
             &self,
             pd_client: &Arc<impl PdClient>,
@@ -175,6 +179,11 @@ pub trait Shardable {
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()>;
+
+    /// Logical request attribution carried through sharding wrappers to helper RPCs.
+    fn request_source(&self) -> &str {
+        ""
+    }
 
     /// Stable source replica-selection settings retained across shard clones
     /// and retry wrappers. Attempt/error state remains selector-local.
@@ -380,6 +389,12 @@ pub trait NextBatch {
 
 impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     type Shard = Req::Shard;
+
+    fn request_source(&self) -> &str {
+        self.request
+            .tikv_context()
+            .map_or("", |context| context.request_source.as_str())
+    }
 
     fn shards(
         &self,
@@ -686,6 +701,10 @@ impl<Req: KvRequest + NextBatch> NextBatch for Dispatch<Req> {
 
 impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
     type Shard = P::Shard;
+
+    fn request_source(&self) -> &str {
+        self.inner.request_source()
+    }
 
     fn shards(
         &self,

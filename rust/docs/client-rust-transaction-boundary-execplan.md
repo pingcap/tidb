@@ -260,3 +260,82 @@ TiDB delivery uses `TERM=xterm git -c core.hooksPath=hooks commit`, whose hook r
     (cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration
 
 This repair covers all five review comments at the correct Go package boundary, including the additional finite-budget gap. It does not certify all client-go or TiDB packages. The real-server checks used one local TiKV version; multi-node faults, Go differential execution and sysbench/TPC-C/TPC-H/YCSB throughput were not tested. The two unrelated region-cache failures and remaining TiDB coprocessor resolver ownership milestone are still open. The mock's removed deadlock-history accessor had no native or TiDB consumers after retiring the invented waiter.
+
+
+## Consolidate the remaining resolver owners
+
+
+The user's follow-Go instruction authorizes the five removals identified in the read-only review. Both repositories were clean and refreshed; Go master remains 12b639a1161cd5a60126a47277f5ad14c320fd4a and pins client-go 8edb23f6c7ee. The acceptance criterion is one native resolver algorithm, determined-status cache, resolving-lock registry and cleanup pool shared by TiDB transactions and coprocessor reads. TiDB retains transport/type/error adapters and per-snapshot hints, which have distinct Go counterparts. This is a shared-boundary repair, not a new whole-package transcreation claim.
+
+### Progress
+
+
+- [x] Refresh both remotes and confirm the source package pin and live duplicate callers.
+- [x] Replace native cleanup's fixed-attempt/default retry resets with source-owned cumulative backoffers; preserve foreground fallback context and detach only admitted tasks, carrying request source without foreground resource attribution. Resolver and plan-builder regressions pass; broader validation is in progress.
+- [ ] Expose a source-shaped native resolver operation for external read callers, preserving caller budgets, exact request hints, TTL and resolved/committed transaction IDs.
+- [x] Remove TiDB's second resolving-lock registry through the existing native record/update/done API; keep only the Rust lifetime/type adapter.
+- [ ] Route TiDB coprocessor recovery through the native owner and remove the second algorithms, status cache and cleanup pool (requires the pending public API approval).
+- [ ] Run red/green regressions, native library/consumer checks and affected TiDB transaction/coprocessor/SQL checks; run make lint and review the diff.
+- [ ] Commit and push client master, synchronize TiDB from that published revision, then commit/push hparser-integration through both locked server-build gates.
+
+### Decision Log
+
+
+Decision: repair the native resolver contract first, then migrate all callers before deleting the TiDB implementation. Patching the two caches or cleanup pools independently leaves split ownership and repeats the earlier failure mode. Keep the source tests as behavioral acceptance tests even where their implementation-specific fixture setup must move to the new boundary. Never preserve another production resolver solely to satisfy a test helper.
+
+Native regression gates cover exhausted caller budgets in pessimistic/ordinary cleanup, cumulative background retry accounting, saturated inline fallback retaining caller context, admitted cleanup retaining only source-approved attribution, and public resolver results. TiDB acceptance covers common status-cache reuse, resolving-lock reporting, cancellation/shutdown, resource attribution, mixed optimistic/pessimistic locks, async commit and coprocessor request hints. Reuse the prior exact targeted commands and add the affected tidb-distsql tests. No Go/Bazel source changes are planned; reevaluate prerequisites if that changes.
+
+The native cleanup fixes passed 51 resolver tests and 12 plan-builder tests. New regressions were observed failing before their fixes: exhausted foreground budgets for ordinary/lite/pessimistic cleanup; admitted versus rejected background budget/resource selection; grouped foreground cleanup incorrectly detached all four RPCs and shared one budget instead of fork/join history; rejected ordinary read cleanup swallowed its error; and request-source metadata disappeared on all cleanup paths and between request-plan wrappers. Logs are `/private/tmp/resolver-consolidation-foreground-red.log`, `resolver-consolidation-admission-red.log`, `resolver-grouped-red.log`, `resolver-error-red.log`, `resolver-source-red.log`, and `resolver-plan-source-red.log`, with corresponding green logs from the resolver and plan-builder suites.
+
+Automatic approval review rejected the proposed public `txnkv::txnlock::ResolveLocksWithOpts` boundary as requiring narrower authorization for its retry, cancellation, hint and metadata semantics. No command from that rejected API implementation ran. A concrete API/migration proposal is saved at `/private/tmp/native-resolver-api-proposal.md`, and an asynchronous approval question is pending. Continue validating and publishing the accepted native cleanup fixes while the API and dependent TiDB resolver migration wait; do not route around that rejection. At that checkpoint the duplicate TiDB owners were still present. The independent registry removal below uses only the existing native API; the algorithm, status cache and cleanup pool remain pending.
+
+### Surprises & Discoveries
+
+
+The native GC `ResolveLocksOptions` and txnlock's operation options belong to different Go packages despite sharing a name. Preserve that distinction in the Rust public interface rather than mixing unrelated settings. Native cleanup currently rebuilds request policy from individual fields and uses 87 attempts to approximate a 40,000-ms budget. This loses the caller's backoffer on rejected admission and copies foreground resource-group/RU ownership into accepted cleanup, unlike newAsyncResolveBackoffer.
+
+### Outcomes & Retrospective
+
+
+Implementation and validation are in progress. Do not mark the earlier resolver-retirement milestone complete until the active coprocessor path delegates and the duplicate state/algorithms are deleted.
+
+
+### Accepted cleanup and registry repair
+
+
+Native master commit `75ca650` is published. The final native workspace library run passed 1,372 client tests (six existing ignores), two protocol-build tests and 46 engine tests; the external mock and injected consumers passed five plus four tests. Strict all-target/all-feature Clippy, formatting and diff checks passed. The engine test `TestResolveLockWithTiKVSideAsync` now covers admitted and inline cleanup separately: the foreground interceptor observes only inline cleanup, and both paths must clear the locks and expose the correct committed/rolled-back data. Grouped cleanup covers success/error under both admitted and inline workers, merging one completed fork and preserving foreground cancellation scope.
+
+From `/Users/qiliu/projects/client-rust`:
+
+    cargo test --locked --workspace --all-features --lib -- --test-threads=1
+    cargo test --locked --test public_injected_client_tests --test mocktikv_transaction_tests -- --test-threads=1
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::all
+    cargo fmt -- --check
+    git diff --check
+
+Logs are `/private/tmp/resolver-consolidation-workspace-final.log`, `resolver-consolidation-consumers.log`, and `resolver-consolidation-clippy-final.log`. Native implementation edits are confined to `src/transaction/lock.rs`, request-source forwarding in `src/request/plan_builder.rs` and `src/request/shard.rs`, and the engine regression in `src/transaction/integration_lock_source_tests.rs`.
+
+A safe independent removal was possible without the proposed new public API. `rust/crates/tidb-txnkv/src/read_runtime.rs` now owns a clone of the native `ResolveLocksContext`, with no extra registry map, token counter or outer mutex. Its local guard translates observation types and invokes the existing native record/update/done methods; native state remains the single authority. The regression first failed with zero native observations despite two live TiDB entries, then passed after migration. It covers two concurrent slots for the same caller, updates retaining caller identity, and cleanup as each guard drops. All eight shared-read-runtime tests passed (`/private/tmp/tidb-resolver-registry-red.log` and `tidb-resolver-registry-green.log`).
+
+The maintained vendor sync fetched published `75ca650`, applied all four compatibility patches and regenerated protocol artifacts without changing the generated outputs. TiDB behavioral validation is complete as recorded below; the mandatory commit and push build gates are next. The broader API/coprocessor migration remains unapproved and unapplied; no benchmark or whole-package parity claim is made.
+
+
+### TiDB validation for the accepted repair
+
+
+The synchronized client and unified registry passed 140 txnkv library tests (one existing ignore), 17 snapshot tests, 15 embedded-client transaction tests, 25 SQL transaction tests and 419 aggregate txnkv tests. The aggregate retains ten existing ignores and the two documented region-cache baseline exclusions from earlier delivery. The targeted coprocessor dispatch suite passed eight tests, including both shared-budget and ignored-hint regressions, but four unrelated routing fixtures failed with `scripted-pd-empty: no region` at `direct_unary_client_fixture.rs:878`. The same command against all five source files restored to unmodified HEAD reproduced exactly the same four failures and eight passes. Task changes were backed up, restored in a finally block, and verified after that comparison. These failures remain open; they are not claimed as passing or silently excluded.
+
+From `rust/`:
+
+    cargo test --locked -p tidb-txnkv --lib -- --test-threads=1
+    cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source -- --test-threads=1
+    cargo test --locked -p tidb-unistore --test client_transaction -- --nocapture
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::transactions
+    cargo test --locked -p tidb-txnkv --test all -- --skip region_cache_source::stale_merge_parent_does_not_evict_newer_split_child --skip region_cache_source::stale_same_region_loader_result_is_rejected_without_eviction
+    cargo test --locked -p tidb-distsql --test all direct_unary_dispatch_contract:: -- --test-threads=1
+
+From the repository root, `make lint` and `git diff --check` passed. Logs are `/private/tmp/tidb-resolver-library.log`, `tidb-resolver-snapshot.log`, `tidb-resolver-embedded.log`, `tidb-resolver-sql.log`, `tidb-resolver-all.log`, `tidb-resolver-coprocessor.log`, `tidb-resolver-coprocessor-baseline.log` and `tidb-resolver-lint.log`.
+
+The four coprocessor baseline failures are `client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered`, `ordered_regions_retain_logical_range_order`, `unordered_region_window_is_bounded_and_results_are_not_lost` and `unordered_regions_publish_first_completed_response`, all under `direct_unary_dispatch_contract`.
+
+Remaining correctness scope: TiDB's separate recovery algorithms, determined-status cache and cleanup pool require the proposed native public resolver boundary and caller-budget migration. No new facade was applied after automatic approval review rejected it, and its approval question remains pending. Performance benchmarks (sysbench/TPC-C/TPC-H/YCSB), real-cluster faults and complete Go differential execution were not run for this repair. Existing engine and API tests cover the changed retry, cancellation, attribution, observation and cleanup behavior; they do not constitute whole-package parity certification.

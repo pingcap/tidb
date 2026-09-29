@@ -214,18 +214,32 @@ impl AsyncResolveTaskPool {
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        self.try_spawn_with_factory(move |_| resolve, task_kind, background)
+            .map_err(|build| build(false))
+    }
+
+    fn try_spawn_with_factory<F, B>(
+        &self,
+        build: B,
+        task_kind: &'static str,
+        background: Option<Cancellation>,
+    ) -> std::result::Result<JoinHandle<()>, B>
+    where
+        F: Future<Output = ()> + Send + 'static,
+        B: FnOnce(bool) -> F + Send + 'static,
+    {
         if self.inner.closed.load(Ordering::Acquire) {
-            return Err(resolve);
+            return Err(build);
         }
         let permit = match self.inner.semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
-            Err(_) => return Err(resolve),
+            Err(_) => return Err(build),
         };
         self.inner.active.fetch_add(1, Ordering::AcqRel);
         if self.inner.closed.load(Ordering::Acquire) {
             self.inner.active.fetch_sub(1, Ordering::AcqRel);
             self.inner.idle.notify_waiters();
-            return Err(resolve);
+            return Err(build);
         }
 
         let inner = self.inner.clone();
@@ -236,7 +250,7 @@ impl AsyncResolveTaskPool {
             let _permit = permit;
             let run = async {
                 tokio::select! {
-                    _ = resolve => {}
+                    _ = build(true) => {}
                     _ = cancellation.cancelled() => {}
                 }
             };
@@ -699,7 +713,7 @@ async fn resolve_locks_with_context_body(
                             keyspace_name,
                             &lock_resolver.ctx,
                         )
-                        .await;
+                        .await?;
                         record_read_lock_status(
                             read_lock_context,
                             lock.lock_version,
@@ -719,12 +733,14 @@ async fn resolve_locks_with_context_body(
                             pd_client.clone(),
                             keyspace,
                             keyspace_name.map(ToOwned::to_owned),
+                            lock_resolver.ctx.request_source.clone(),
                             lock_resolver.ctx.rpc_interceptor.clone(),
                             lock_resolver.ctx.resource_group_name.clone(),
                             lock_resolver.ctx.resource_control.clone(),
                             lock_resolver.ctx.ru_details.clone(),
                             lock_resolver.ctx.async_resolve_pool.clone(),
                             OPTIMISTIC_BACKOFF,
+                            lock_resolver.ctx.retry_owner.clone(),
                             true,
                             false,
                             "resolve_async_commit_region",
@@ -796,7 +812,7 @@ async fn resolve_locks_with_context_body(
                                 keyspace_name,
                                 &lock_resolver.ctx,
                             )
-                            .await;
+                            .await?;
                             record_read_lock_status(
                                 read_lock_context,
                                 lock.lock_version,
@@ -819,12 +835,14 @@ async fn resolve_locks_with_context_body(
                             pd_client.clone(),
                             keyspace,
                             keyspace_name.map(ToOwned::to_owned),
+                            lock_resolver.ctx.request_source.clone(),
                             lock_resolver.ctx.rpc_interceptor.clone(),
                             lock_resolver.ctx.resource_group_name.clone(),
                             lock_resolver.ctx.resource_control.clone(),
                             lock_resolver.ctx.ru_details.clone(),
                             lock_resolver.ctx.async_resolve_pool.clone(),
                             OPTIMISTIC_BACKOFF,
+                            lock_resolver.ctx.retry_owner.clone(),
                             true,
                             false,
                             "resolve_async_commit_region",
@@ -900,7 +918,7 @@ async fn resolve_locks_with_context_body(
                                 &lock_resolver.ctx,
                                 force_lite,
                             )
-                            .await;
+                            .await?;
                             record_read_lock_status(
                                 read_lock_context,
                                 lock.lock_version,
@@ -926,7 +944,7 @@ async fn resolve_locks_with_context_body(
                                 &lock_resolver.ctx,
                                 force_lite,
                             )
-                            .await;
+                            .await?;
                             read_lock_context.add_resolved(lock.lock_version);
                             continue;
                         }
@@ -972,7 +990,7 @@ async fn resolve_locks_with_context_body(
                     &lock_resolver.ctx,
                     force_lite,
                 )
-                .await;
+                .await?;
                 record_read_lock_status(
                     read_lock_context,
                     lock.lock_version,
@@ -998,7 +1016,7 @@ async fn resolve_locks_with_context_body(
                 }
                 continue;
             }
-            let cleaned_region = resolve_lock_with_retry(
+            let cleaned_region = resolve_lock_with_retry_inner(
                 &lock.key,
                 lock.lock_version,
                 commit_version,
@@ -1008,11 +1026,14 @@ async fn resolve_locks_with_context_body(
                 pd_client.clone(),
                 keyspace,
                 keyspace_name,
+                &lock_resolver.ctx.request_source,
                 lock_resolver.ctx.rpc_interceptor.clone(),
                 lock_resolver.ctx.resource_group_name.as_deref(),
                 lock_resolver.ctx.resource_control.clone(),
                 lock_resolver.ctx.ru_details.clone(),
                 OPTIMISTIC_BACKOFF,
+                lock_resolver.ctx.retry_owner.clone(),
+                false,
             )
             .await?;
             if !resolve_lite {
@@ -1034,11 +1055,13 @@ async fn resolve_locks_with_context_body(
             pd_client.clone(),
             keyspace,
             keyspace_name,
+            &lock_resolver.ctx.request_source,
             lock_resolver.ctx.rpc_interceptor.clone(),
             lock_resolver.ctx.resource_group_name.as_deref(),
             lock_resolver.ctx.resource_control.clone(),
             lock_resolver.ctx.ru_details.clone(),
             OPTIMISTIC_BACKOFF,
+            lock_resolver.ctx.retry_owner.clone(),
             true,
             true,
         )
@@ -1081,7 +1104,7 @@ async fn schedule_or_collect_read_lite_cleanup(
     keyspace_name: Option<&str>,
     context: &ResolveLocksContext,
     force_lite: bool,
-) {
+) -> Result<()> {
     if force_lite || lock.txn_size < get_global_config().tikv_client.resolve_lock_lite_threshold {
         let cleanup = cleanups
             .entry(lock.lock_version)
@@ -1101,8 +1124,9 @@ async fn schedule_or_collect_read_lite_cleanup(
             keyspace_name,
             context,
         )
-        .await;
+        .await?;
     }
+    Ok(())
 }
 
 fn record_read_lock_status(
@@ -1122,10 +1146,9 @@ fn record_read_lock_status(
     }
 }
 
-/// Client-go schedules read cleanup outside the caller's context. A full
-/// semaphore runs it detached; saturation falls back to inline cleanup but
-/// deliberately ignores cleanup failure so the already-classified read can
-/// still retry with its TiKV lock hints.
+/// Client-go schedules read cleanup outside the caller's context when the
+/// pool admits it; saturation falls back to inline cleanup and
+/// propagates its error, as in client-go's ordinary resolveLock path.
 #[allow(clippy::too_many_arguments)]
 async fn schedule_read_lock_cleanup(
     lock: &kvrpcpb::LockInfo,
@@ -1134,46 +1157,39 @@ async fn schedule_read_lock_cleanup(
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
     context: &ResolveLocksContext,
-) {
-    let key = lock.key.clone();
-    let start_version = lock.lock_version;
-    let is_txn_file = lock.is_txn_file;
-    let txn_size = lock.txn_size;
+) -> Result<()> {
+    let lock = lock.clone();
     let keyspace_name = keyspace_name.map(ToOwned::to_owned);
-    let rpc_interceptor = context.rpc_interceptor.clone();
-    let resource_group_name = context.resource_group_name.clone();
-    let resource_control = context.resource_control.clone();
-    let ru_details = context.ru_details.clone();
-    let async_resolve_pool = context.async_resolve_pool.clone();
-    let resolve = Box::pin(async move {
-        let _ = resolve_lock_with_retry_for_read_cleanup(
-            &key,
-            start_version,
-            commit_version,
-            is_txn_file,
-            txn_size,
-            pd_client,
-            keyspace,
-            keyspace_name.as_deref(),
-            rpc_interceptor,
-            resource_group_name.as_deref(),
-            resource_control,
-            ru_details,
-            // The native attempt-based backoff has the source 40,000-ms
-            // async-cleanup budget when its 2-ms exponential prefix and
-            // 500-ms cap are allowed to make 87 attempts.
-            Backoff::no_jitter_backoff(2, 500, 87),
-        )
-        .await;
-    });
-
-    let _ = schedule_read_cleanup_task(
-        async_resolve_pool,
-        resolve,
+    schedule_read_cleanup_with_policy(
+        context.clone(),
+        true,
+        move |context| async move {
+            resolve_lock_with_retry_inner(
+                &lock.key,
+                lock.lock_version,
+                commit_version,
+                lock.is_txn_file,
+                lock.txn_size,
+                false,
+                pd_client,
+                keyspace,
+                keyspace_name.as_deref(),
+                &context.request_source,
+                context.rpc_interceptor,
+                context.resource_group_name.as_deref(),
+                context.resource_control,
+                context.ru_details,
+                OPTIMISTIC_BACKOFF,
+                context.retry_owner,
+                true,
+            )
+            .await
+            .map(|_| ())
+        },
         "read_resolve",
         "read_async_resolve_fallback",
     )
-    .await;
+    .await
 }
 
 /// Resolve the collected lite keys once per current region. The source defers
@@ -1187,46 +1203,36 @@ async fn schedule_read_lite_cleanup(
     keyspace_name: Option<&str>,
     context: &ResolveLocksContext,
 ) {
-    let primary_lock = cleanup.lock.primary_lock.clone();
-    let start_version = cleanup.lock.lock_version;
-    let commit_version = cleanup.commit_version;
-    let is_txn_file = cleanup.lock.is_txn_file;
-    let keys = cleanup.keys;
     let keyspace_name = keyspace_name.map(ToOwned::to_owned);
-    let rpc_interceptor = context.rpc_interceptor.clone();
-    let resource_group_name = context.resource_group_name.clone();
-    let resource_control = context.resource_control.clone();
-    let ru_details = context.ru_details.clone();
-    let async_resolve_pool = context.async_resolve_pool.clone();
-    let region_pool = async_resolve_pool.clone();
-    let resolve = Box::pin(async move {
-        let _ = schedule_grouped_read_cleanup(
-            keys,
-            primary_lock,
-            true,
-            start_version,
-            commit_version,
-            is_txn_file,
-            pd_client,
-            keyspace,
-            keyspace_name,
-            rpc_interceptor,
-            resource_group_name,
-            resource_control,
-            ru_details,
-            region_pool,
-            Backoff::no_jitter_backoff(2, 500, 87),
-            false,
-            true,
-            "read_resolve",
-            "read_async_resolve_fallback",
-        )
-        .await;
-    });
-
-    let _ = schedule_read_cleanup_task(
-        async_resolve_pool,
-        resolve,
+    let _ = schedule_read_cleanup_with_policy(
+        context.clone(),
+        true,
+        move |context| async move {
+            schedule_grouped_read_cleanup(
+                cleanup.keys,
+                cleanup.lock.primary_lock,
+                true,
+                cleanup.lock.lock_version,
+                cleanup.commit_version,
+                cleanup.lock.is_txn_file,
+                pd_client,
+                keyspace,
+                keyspace_name,
+                context.request_source.clone(),
+                context.rpc_interceptor,
+                context.resource_group_name,
+                context.resource_control,
+                context.ru_details,
+                context.async_resolve_pool,
+                OPTIMISTIC_BACKOFF,
+                context.retry_owner,
+                false,
+                true,
+                "read_resolve",
+                "read_async_resolve_fallback",
+            )
+            .await
+        },
         "read_resolve",
         "read_async_resolve_fallback",
     )
@@ -1245,51 +1251,78 @@ async fn schedule_read_async_commit_cleanup(
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
     context: &ResolveLocksContext,
-) {
-    let primary_lock = lock.primary_lock.clone();
-    let start_version = lock.lock_version;
-    let is_txn_file = lock.is_txn_file;
+) -> Result<()> {
+    let lock = lock.clone();
     let keyspace_name = keyspace_name.map(ToOwned::to_owned);
-    let rpc_interceptor = context.rpc_interceptor.clone();
-    let resource_group_name = context.resource_group_name.clone();
-    let resource_control = context.resource_control.clone();
-    let ru_details = context.ru_details.clone();
-    let async_resolve_pool = context.async_resolve_pool.clone();
-    let region_pool = async_resolve_pool.clone();
-    let resolve = Box::pin(async move {
-        let _ = schedule_grouped_read_cleanup(
-            keys,
-            primary_lock,
-            false,
-            start_version,
-            commit_version,
-            is_txn_file,
-            pd_client,
-            keyspace,
-            keyspace_name,
-            rpc_interceptor,
-            resource_group_name,
-            resource_control,
-            ru_details,
-            region_pool,
-            Backoff::no_jitter_backoff(2, 500, 87),
-            true,
-            false,
-            "resolve_async_commit_region",
-            "async_resolve_async_commit_region_fallback",
-        )
-        .await;
-    });
-
-    let _ = schedule_read_cleanup_task(
-        async_resolve_pool,
-        resolve,
+    schedule_read_cleanup_with_policy(
+        context.clone(),
+        false,
+        move |context| async move {
+            schedule_grouped_read_cleanup(
+                keys,
+                lock.primary_lock,
+                false,
+                lock.lock_version,
+                commit_version,
+                lock.is_txn_file,
+                pd_client,
+                keyspace,
+                keyspace_name,
+                context.request_source.clone(),
+                context.rpc_interceptor,
+                context.resource_group_name,
+                context.resource_control,
+                context.ru_details,
+                context.async_resolve_pool,
+                OPTIMISTIC_BACKOFF,
+                context.retry_owner,
+                true,
+                false,
+                "resolve_async_commit_region",
+                "async_resolve_async_commit_region_fallback",
+            )
+            .await
+        },
         "resolve_async_commit",
         "async_resolve_async_commit_fallback",
     )
-    .await;
+    .await
 }
 
+async fn schedule_read_cleanup_with_policy<F, B>(
+    context: ResolveLocksContext,
+    preserve_request_source: bool,
+    build: B,
+    task_kind: &'static str,
+    fallback_action: &'static str,
+) -> Result<()>
+where
+    F: Future<Output = Result<()>> + Send + 'static,
+    B: FnOnce(ResolveLocksContext) -> F + Send + 'static,
+{
+    let pool = context.async_resolve_pool.clone();
+    let (result_tx, result_rx) = oneshot::channel();
+    let deferred = move |admitted| async move {
+        let context = if admitted {
+            context.for_async_cleanup(preserve_request_source)
+        } else {
+            context
+        };
+        let _ = result_tx.send(build(context).await);
+    };
+    match pool.try_spawn_with_factory(deferred, task_kind, Some(pool.inner.cancellation.clone())) {
+        Ok(_) => Ok(()),
+        Err(deferred) => {
+            stats::increment_lock_resolver_action(fallback_action);
+            deferred(false).await;
+            result_rx
+                .await
+                .map_err(|_| Error::StringError("resolver cleanup cancelled".into()))?
+        }
+    }
+}
+
+#[cfg(test)]
 async fn schedule_read_cleanup_task<F>(
     pool: AsyncResolveTaskPool,
     resolve: F,
@@ -1325,12 +1358,14 @@ async fn schedule_grouped_read_cleanup(
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
     keyspace_name: Option<String>,
+    request_source: String,
     rpc_interceptor: Option<RpcInterceptorChain>,
     resource_group_name: Option<String>,
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
     async_resolve_pool: AsyncResolveTaskPool,
     region_backoff: Backoff,
+    retry_owner: Option<Arc<Mutex<crate::retry::RetryBackoffer>>>,
     always_fan_out: bool,
     lite_batch: bool,
     region_task_kind: &'static str,
@@ -1347,11 +1382,13 @@ async fn schedule_grouped_read_cleanup(
             pd_client,
             keyspace,
             keyspace_name.as_deref(),
+            &request_source,
             rpc_interceptor,
             resource_group_name.as_deref(),
             resource_control,
             ru_details,
             region_backoff,
+            retry_owner,
             lite_batch,
             lite_batch,
         )
@@ -1368,18 +1405,33 @@ async fn schedule_grouped_read_cleanup(
     }
 
     let mut region_results = Vec::with_capacity(regions.len());
+    let mut cancellations = RetryForkCancellations::default();
+    let last_completed = Arc::new(StdMutex::new(None::<crate::retry::RetryBackoffer>));
     for region_keys in regions.into_values() {
         let primary_lock = primary_lock.clone();
         let pd_client = pd_client.clone();
         let keyspace_name = keyspace_name.clone();
-        let rpc_interceptor = rpc_interceptor.clone();
-        let resource_group_name = resource_group_name.clone();
-        let resource_control = resource_control.clone();
-        let ru_details = ru_details.clone();
         let backoff = region_backoff.clone();
-        let (result_tx, result_rx) = oneshot::channel();
-        let resolve = async move {
-            let result = resolve_lite_locks_with_retry_for_read_cleanup(
+        let mut context = ResolveLocksContext {
+            request_source: request_source.clone(),
+            rpc_interceptor: rpc_interceptor.clone(),
+            resource_group_name: resource_group_name.clone(),
+            resource_control: resource_control.clone(),
+            ru_details: ru_details.clone(),
+            async_resolve_pool: async_resolve_pool.clone(),
+            retry_owner: retry_owner.clone(),
+            ..Default::default()
+        };
+        if !lite_batch {
+            if let Some(owner) = &retry_owner {
+                let (child, cancellation) = owner.lock().await.fork();
+                cancellations.0.push(cancellation);
+                context.retry_owner = Some(Arc::new(Mutex::new(child)));
+            }
+        }
+        let child = context.retry_owner.clone();
+        let resolve = move |context: ResolveLocksContext| async move {
+            resolve_lite_locks_with_retry_for_read_cleanup(
                 &region_keys,
                 &primary_lock,
                 false,
@@ -1389,24 +1441,46 @@ async fn schedule_grouped_read_cleanup(
                 pd_client,
                 keyspace,
                 keyspace_name.as_deref(),
-                rpc_interceptor,
-                resource_group_name.as_deref(),
-                resource_control,
-                ru_details,
+                &context.request_source,
+                context.rpc_interceptor,
+                context.resource_group_name.as_deref(),
+                context.resource_control,
+                context.ru_details,
                 backoff,
+                context.retry_owner,
                 false,
                 lite_batch,
             )
+            .await
+        };
+        if lite_batch {
+            // Go's for-read lite children are independently admitted and are
+            // not joined. Only accepted children receive a background budget.
+            let _ = schedule_read_cleanup_with_policy(
+                context,
+                true,
+                resolve,
+                region_task_kind,
+                region_fallback_action,
+            )
             .await;
+            continue;
+        }
+        let (result_tx, result_rx) = oneshot::channel();
+        let last_completed = last_completed.clone();
+        let resolve = async move {
+            let result = resolve(context).await;
+            if let Some(child) = child {
+                *last_completed.lock().unwrap() = Some(child.lock().await.clone());
+            }
             let _ = result_tx.send(result);
         };
-        let _ = schedule_read_cleanup_task(
-            async_resolve_pool.clone(),
-            resolve,
-            region_task_kind,
-            region_fallback_action,
-        )
-        .await;
+        // Async-commit region workers are joined children of the caller;
+        // scheduling alone must not detach foreground cancellation.
+        if let Err(resolve) = async_resolve_pool.try_spawn(resolve, region_task_kind) {
+            stats::increment_lock_resolver_action(region_fallback_action);
+            resolve.await;
+        }
         region_results.push(result_rx);
     }
 
@@ -1416,6 +1490,12 @@ async fn schedule_grouped_read_cleanup(
             Ok(Ok(())) => {}
             Ok(Err(error)) => errors.push(error.to_string()),
             Err(_) => errors.push("async resolver task was cancelled".to_owned()),
+        }
+    }
+    if let Some(parent) = &retry_owner {
+        let completed = last_completed.lock().unwrap().take();
+        if let Some(completed) = completed {
+            parent.lock().await.update_using_forked(&completed);
         }
     }
     if errors.is_empty() {
@@ -1438,11 +1518,13 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
+    request_source: &str,
     rpc_interceptor: Option<RpcInterceptorChain>,
     resource_group_name: Option<&str>,
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
     mut backoff: Backoff,
+    retry_owner: Option<Arc<Mutex<crate::retry::RetryBackoffer>>>,
     count_resolve: bool,
     count_lite: bool,
 ) -> Result<()> {
@@ -1464,7 +1546,7 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
                 .push(key.clone());
         }
 
-        let mut retry = false;
+        let mut retry = None;
         for (_, (store, region_keys)) in regions {
             let mut request =
                 requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
@@ -1478,6 +1560,7 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
             let plan_builder =
                 match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
                     .keyspace_name_option(keyspace_name)
+                    .request_source(request_source)
                     .rpc_interceptor_option(rpc_interceptor.clone())
                     .resource_group_option(resource_group_name)
                     .resource_control_option(resource_control.clone())
@@ -1488,8 +1571,11 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
                 {
                     Ok(plan_builder) => plan_builder,
                     Err(Error::LeaderNotFound { region }) => {
-                        pd_client.invalidate_region_cache(region).await;
-                        retry = true;
+                        pd_client.invalidate_region_cache(region.clone()).await;
+                        retry = Some((
+                            Some(crate::retry::BO_REGION_SCHEDULING),
+                            Error::LeaderNotFound { region },
+                        ));
                         break;
                     }
                     Err(err) => return Err(err),
@@ -1498,8 +1584,28 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
                 Ok(_) => {}
                 Err(Error::ExtractedErrors(mut errors)) => match errors.pop() {
                     Some(Error::RegionError(error)) => {
-                        handle_region_error(pd_client.clone(), *error, store).await?;
-                        retry = true;
+                        let action =
+                            handle_region_error(pd_client.clone(), *error.clone(), store).await?;
+                        use crate::request::plan::RegionErrorRetry;
+                        let config = match action {
+                            RegionErrorRetry::Backoff(config)
+                            | RegionErrorRetry::BackoffPreservingRegionError(config) => {
+                                Some(config)
+                            }
+                            RegionErrorRetry::Immediate => None,
+                            RegionErrorRetry::TerminalAfterBackoff(config) => {
+                                let terminal = Error::RegionError(error.clone());
+                                backoff_resolve_lock(
+                                    &retry_owner,
+                                    &mut backoff,
+                                    config,
+                                    Error::RegionError(error),
+                                )
+                                .await?;
+                                return Err(terminal);
+                            }
+                        };
+                        retry = Some((config, Error::RegionError(error)));
                         break;
                     }
                     Some(Error::KeyError(error)) => return Err(Error::KeyError(error)),
@@ -1516,22 +1622,21 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
                         store.region_with_leader.get_store_id().ok(),
                     )
                     .await;
-                    retry = true;
+                    retry = Some((Some(crate::retry::BO_TIKV_RPC), error));
                     break;
                 }
                 Err(error) => return Err(error),
             }
         }
-        if !retry {
+        let Some((config, error)) = retry else {
             return Ok(());
-        }
-        match backoff.next_delay_duration() {
-            Some(delay) => sleep(delay).await,
-            None => {
-                return Err(Error::StringError(
-                    "lite ResolveLock retry exhausted".to_owned(),
-                ))
-            }
+        };
+        if let Some(config) = config {
+            backoff_resolve_lock(&retry_owner, &mut backoff, config, error).await?;
+        } else if retry_owner.is_none() && backoff.next_delay_duration().is_none() {
+            return Err(error);
+        } else {
+            tokio::task::yield_now().await;
         }
     }
 }
@@ -1547,6 +1652,7 @@ async fn check_secondary_locks_with_retry(
     let request = new_check_secondary_locks_request(keys, txn_id);
     let builder = crate::request::PlanBuilder::new(pd_client, keyspace, request)
         .keyspace_name_option(keyspace_name.as_deref())
+        .request_source(context.request_source.clone())
         .rpc_interceptor_option(context.rpc_interceptor)
         .resource_group_option(context.resource_group_name.as_deref())
         .resource_control_option(context.resource_control)
@@ -1573,6 +1679,26 @@ async fn check_secondary_locks_with_retry(
     }
 }
 
+async fn backoff_resolve_lock(
+    owner: &Option<Arc<Mutex<crate::retry::RetryBackoffer>>>,
+    legacy: &mut Backoff,
+    config: crate::retry::RetryConfig,
+    error: Error,
+) -> Result<()> {
+    if let Some(owner) = owner {
+        owner
+            .lock()
+            .await
+            .backoff(config, error.to_string())
+            .await?;
+    } else {
+        let delay = legacy.next_delay_duration().ok_or(error)?;
+        sleep(delay).await;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 async fn resolve_lock_with_retry(
     #[allow(clippy::ptr_arg)] key: &Vec<u8>,
     start_version: u64,
@@ -1599,48 +1725,14 @@ async fn resolve_lock_with_retry(
         pd_client,
         keyspace,
         keyspace_name,
+        "",
         rpc_interceptor,
         resource_group_name,
         resource_control,
         ru_details,
         backoff,
+        None,
         false,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn resolve_lock_with_retry_for_read_cleanup(
-    key: &Vec<u8>,
-    start_version: u64,
-    commit_version: u64,
-    is_txn_file: bool,
-    txn_size: u64,
-    pd_client: Arc<impl PdClient>,
-    keyspace: Keyspace,
-    keyspace_name: Option<&str>,
-    rpc_interceptor: Option<RpcInterceptorChain>,
-    resource_group_name: Option<&str>,
-    resource_control: Option<ResourceGroupControllerHandle>,
-    ru_details: Option<Arc<crate::RuDetails>>,
-    backoff: Backoff,
-) -> Result<RegionVerId> {
-    resolve_lock_with_retry_inner(
-        key,
-        start_version,
-        commit_version,
-        is_txn_file,
-        txn_size,
-        false,
-        pd_client,
-        keyspace,
-        keyspace_name,
-        rpc_interceptor,
-        resource_group_name,
-        resource_control,
-        ru_details,
-        backoff,
-        true,
     )
     .await
 }
@@ -1656,11 +1748,13 @@ async fn resolve_lock_with_retry_inner(
     pd_client: Arc<impl PdClient>,
     keyspace: Keyspace,
     keyspace_name: Option<&str>,
+    request_source: &str,
     rpc_interceptor: Option<RpcInterceptorChain>,
     resource_group_name: Option<&str>,
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
     mut backoff: Backoff,
+    retry_owner: Option<Arc<Mutex<crate::retry::RetryBackoffer>>>,
     server_side_async: bool,
 ) -> Result<RegionVerId> {
     debug!("resolving locks with retry");
@@ -1684,6 +1778,7 @@ async fn resolve_lock_with_retry_inner(
         let plan_builder =
             match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
                 .keyspace_name_option(keyspace_name)
+                .request_source(request_source)
                 .rpc_interceptor_option(rpc_interceptor.clone())
                 .resource_group_option(resource_group_name)
                 .resource_control_option(resource_control.clone())
@@ -1695,13 +1790,14 @@ async fn resolve_lock_with_retry_inner(
                 Ok(plan_builder) => plan_builder,
                 Err(Error::LeaderNotFound { region }) => {
                     pd_client.invalidate_region_cache(region.clone()).await;
-                    match backoff.next_delay_duration() {
-                        Some(duration) => {
-                            sleep(duration).await;
-                            continue;
-                        }
-                        None => return Err(Error::LeaderNotFound { region }),
-                    }
+                    backoff_resolve_lock(
+                        &retry_owner,
+                        &mut backoff,
+                        crate::retry::BO_REGION_SCHEDULING,
+                        Error::LeaderNotFound { region },
+                    )
+                    .await?;
+                    continue;
                 }
                 Err(err) => return Err(err),
             };
@@ -1714,21 +1810,42 @@ async fn resolve_lock_with_retry_inner(
             Err(Error::ExtractedErrors(mut errors)) => {
                 // ResolveLockResponse can have at most 1 error
                 match errors.pop() {
-                    Some(Error::RegionError(e)) => match backoff.next_delay_duration() {
-                        Some(duration) => {
-                            let region_error_action =
-                                handle_region_error(pd_client.clone(), *e, store.clone()).await?;
-                            if matches!(
-                                region_error_action,
-                                crate::request::plan::RegionErrorRetry::Backoff(_)
-                                    | crate::request::plan::RegionErrorRetry::BackoffPreservingRegionError(_)
-                            ) {
-                                sleep(duration).await;
+                    Some(Error::RegionError(e)) => {
+                        let action =
+                            handle_region_error(pd_client.clone(), *e.clone(), store.clone())
+                                .await?;
+                        use crate::request::plan::RegionErrorRetry;
+                        match action {
+                            RegionErrorRetry::Immediate => {
+                                if retry_owner.is_none() && backoff.next_delay_duration().is_none()
+                                {
+                                    return Err(Error::RegionError(e));
+                                }
                             }
-                            continue;
+                            RegionErrorRetry::Backoff(config)
+                            | RegionErrorRetry::BackoffPreservingRegionError(config) => {
+                                backoff_resolve_lock(
+                                    &retry_owner,
+                                    &mut backoff,
+                                    config,
+                                    Error::RegionError(e),
+                                )
+                                .await?;
+                            }
+                            RegionErrorRetry::TerminalAfterBackoff(config) => {
+                                let terminal = Error::RegionError(e.clone());
+                                backoff_resolve_lock(
+                                    &retry_owner,
+                                    &mut backoff,
+                                    config,
+                                    Error::RegionError(e),
+                                )
+                                .await?;
+                                return Err(terminal);
+                            }
                         }
-                        None => return Err(Error::RegionError(e)),
-                    },
+                        continue;
+                    }
                     Some(Error::KeyError(key_err)) => {
                         // Keyspace is not truncated here because we need full key info for logging.
                         error!(
@@ -1745,20 +1862,18 @@ async fn resolve_lock_with_retry_inner(
                     None => unreachable!(),
                 }
             }
-            Err(e) if is_grpc_error(&e) => match backoff.next_delay_duration() {
-                Some(duration) => {
-                    pd_client.invalidate_region_cache(ver_id.clone()).await;
-                    invalidate_connection_for_error(
-                        pd_client.as_ref(),
-                        &e,
-                        store.region_with_leader.get_store_id().ok(),
-                    )
-                    .await;
-                    sleep(duration).await;
-                    continue;
-                }
-                None => return Err(e),
-            },
+            Err(e) if is_grpc_error(&e) => {
+                pd_client.invalidate_region_cache(ver_id.clone()).await;
+                invalidate_connection_for_error(
+                    pd_client.as_ref(),
+                    &e,
+                    store.region_with_leader.get_store_id().ok(),
+                )
+                .await;
+                backoff_resolve_lock(&retry_owner, &mut backoff, crate::retry::BO_TIKV_RPC, e)
+                    .await?;
+                continue;
+            }
             Err(e) => return Err(e),
         }
     }
@@ -1772,6 +1887,7 @@ pub struct ResolveLocksContext {
     pub(crate) clean_regions: Arc<RwLock<HashMap<u64, HashSet<RegionVerId>>>>,
     pub(crate) rpc_interceptor: Option<RpcInterceptorChain>,
     pub(crate) resource_group_name: Option<String>,
+    pub(crate) request_source: String,
     pub(crate) resource_control: Option<ResourceGroupControllerHandle>,
     pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
     pub(crate) trace_context: crate::trace::TraceContext,
@@ -1792,6 +1908,7 @@ impl Default for ResolveLocksContext {
             resource_group_name: None,
             resource_control: None,
             ru_details: None,
+            request_source: String::new(),
             trace_context: crate::trace::current_trace_context(),
             pessimistic_region_resolve: false,
             force_lite: false,
@@ -1889,6 +2006,25 @@ impl Default for ResolveLocksOptions {
 }
 
 impl ResolveLocksContext {
+    fn for_async_cleanup(&self, preserve_request_source: bool) -> Self {
+        Self {
+            request_source: if preserve_request_source {
+                self.request_source.clone()
+            } else {
+                String::new()
+            },
+            retry_owner: Some(Arc::new(Mutex::new(crate::retry::RetryBackoffer::new(
+                self.async_resolve_pool.inner.cancellation.clone(),
+                40_000,
+            )))),
+            rpc_interceptor: None,
+            resource_group_name: None,
+            resource_control: None,
+            ru_details: None,
+            ..self.clone()
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn set_async_resolve_pool_size(&mut self, size: usize) {
         self.async_resolve_pool = AsyncResolveTaskPool::new(Arc::new(Semaphore::new(size)));
@@ -2227,8 +2363,9 @@ impl LockResolver {
             lock.lock_version,
             for_update_ts,
         );
-        let plan = crate::request::PlanBuilder::new(pd_client, keyspace, request)
+        let builder = crate::request::PlanBuilder::new(pd_client, keyspace, request)
             .keyspace_name_option(keyspace_name)
+            .request_source(self.ctx.request_source.clone())
             .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
             .resource_group_option(self.ctx.resource_group_name.as_deref())
             .resource_control_option(self.ctx.resource_control.clone())
@@ -2239,11 +2376,22 @@ impl LockResolver {
                     request.keys.clear();
                 }
                 Ok(())
-            })
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .extract_error()
-            .plan();
-        plan.execute().await?;
+            });
+        if let Some(owner) = &self.ctx.retry_owner {
+            builder
+                .retry_multi_region_with_source_retry_owner(DEFAULT_REGION_BACKOFF, owner.clone())
+                .extract_error()
+                .plan()
+                .execute()
+                .await?;
+        } else {
+            builder
+                .retry_multi_region(DEFAULT_REGION_BACKOFF)
+                .extract_error()
+                .plan()
+                .execute()
+                .await?;
+        }
         if let Some(cleaned_region) = cleaned_region {
             cleaned_regions.insert(cleaned_region);
         }
@@ -2468,6 +2616,7 @@ impl LockResolver {
         );
         let builder = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
             .keyspace_name_option(keyspace_name)
+            .request_source(self.ctx.request_source.clone())
             .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
             .resource_group_option(self.ctx.resource_group_name.as_deref())
             .resource_control_option(self.ctx.resource_control.clone())
@@ -2663,6 +2812,7 @@ impl LockResolver {
         stats::increment_lock_resolver_action("batch_resolve");
         let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
             .keyspace_name_option(keyspace_name)
+            .request_source(self.ctx.request_source.clone())
             .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
             .resource_group_option(self.ctx.resource_group_name.as_deref())
             .resource_control_option(self.ctx.resource_control.clone())
@@ -4783,6 +4933,339 @@ mod ownership_regressions {
     use super::*;
     use crate::mock::{MockKvClient, MockPdClient};
     use std::any::Any;
+
+    #[rstest::rstest]
+    #[case::region(false, false)]
+    #[case::lite(false, true)]
+    #[case::pessimistic(true, false)]
+    #[tokio::test]
+    async fn all_foreground_cleanup_paths_keep_the_exhausted_caller_budget(
+        #[case] pessimistic: bool,
+        #[case] lite: bool,
+    ) {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let seen = attempts.clone();
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request| {
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: if pessimistic { 0 } else { 12 },
+                        action: kvrpcpb::Action::LockNotExistDoNothing as i32,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                let region_error = (seen.fetch_add(1, Ordering::SeqCst) == 0).then(|| {
+                    crate::proto::errorpb::Error {
+                        not_leader: Some(Default::default()),
+                        ..Default::default()
+                    }
+                });
+                if pessimistic {
+                    assert!(request.is::<kvrpcpb::PessimisticRollbackRequest>());
+                    Ok(Box::new(kvrpcpb::PessimisticRollbackResponse {
+                        region_error,
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                } else {
+                    assert!(request.is::<kvrpcpb::ResolveLockRequest>());
+                    Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                        region_error,
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                }
+            },
+        )));
+        let mut budget = crate::retry::RetryBackoffer::new(Cancellation::default(), 1);
+        budget
+            .backoff(crate::retry::BO_REGION_MISS, "earlier status retry")
+            .await
+            .unwrap();
+        let owner = Arc::new(Mutex::new(budget));
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![2],
+            lock_version: 10,
+            txn_size: if lite { 1 } else { u64::MAX },
+            lock_type: if pessimistic {
+                kvrpcpb::Op::PessimisticLock as i32
+            } else {
+                kvrpcpb::Op::Put as i32
+            },
+            ..Default::default()
+        };
+        let result = resolve_locks_with_context_result(
+            vec![lock],
+            Timestamp::from_version(20),
+            pd,
+            Keyspace::Disable,
+            None,
+            ResolveLocksContext {
+                retry_owner: Some(owner.clone()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "caller budget reset: pessimistic={pessimistic}, lite={lite}, attempts={}",
+            attempts.load(Ordering::SeqCst)
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(owner.lock().await.total_backoff_times(), 1);
+    }
+
+    #[rstest::rstest]
+    #[case::lite("lite")]
+    #[case::region("region")]
+    #[case::async_commit("async_commit")]
+    #[tokio::test]
+    async fn read_cleanup_admission_selects_retry_and_resource_ownership_together(
+        #[case] kind: &str,
+    ) {
+        for admitted in [false, true] {
+            let observed = Arc::new(StdMutex::new(Vec::new()));
+            let seen = observed.clone();
+            let (sent, received) = oneshot::channel();
+            let sent = StdMutex::new(Some(sent));
+            let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request| {
+                    let request = request
+                        .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                        .unwrap();
+                    let mut seen = seen.lock().unwrap();
+                    seen.push((
+                        request
+                            .context
+                            .as_ref()
+                            .unwrap()
+                            .resource_control_context
+                            .as_ref()
+                            .map(|c| c.resource_group_name.clone())
+                            .unwrap_or_default(),
+                        request.context.as_ref().unwrap().request_source.clone(),
+                    ));
+                    let first = seen.len() == 1;
+                    if let Some(sent) = sent.lock().unwrap().take() {
+                        let _ = sent.send(());
+                    }
+                    Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                        region_error: first.then(|| crate::proto::errorpb::Error {
+                            not_leader: Some(Default::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                },
+            )));
+            let mut budget = crate::retry::RetryBackoffer::new(Cancellation::default(), 1);
+            budget
+                .backoff(crate::retry::BO_REGION_MISS, "earlier read retry")
+                .await
+                .unwrap();
+            let owner = Arc::new(Mutex::new(budget));
+            let mut context = ResolveLocksContext {
+                retry_owner: Some(owner.clone()),
+                resource_group_name: Some("foreground".into()),
+                request_source: "external_sql".into(),
+                ..Default::default()
+            };
+            context.set_async_resolve_pool_size(usize::from(admitted));
+            let lock = kvrpcpb::LockInfo {
+                key: vec![1],
+                primary_lock: vec![2],
+                lock_version: 10,
+                txn_size: u64::MAX,
+                ..Default::default()
+            };
+            match kind {
+                "lite" => {
+                    schedule_read_lite_cleanup(
+                        ReadLiteCleanup {
+                            lock,
+                            commit_version: 12,
+                            keys: vec![vec![1]],
+                        },
+                        pd,
+                        Keyspace::Disable,
+                        None,
+                        &context,
+                    )
+                    .await
+                }
+                "region" => {
+                    let _ = schedule_read_lock_cleanup(
+                        &lock,
+                        12,
+                        pd,
+                        Keyspace::Disable,
+                        None,
+                        &context,
+                    )
+                    .await;
+                }
+                "async_commit" => {
+                    let _ = schedule_read_async_commit_cleanup(
+                        &lock,
+                        12,
+                        vec![vec![1]],
+                        pd,
+                        Keyspace::Disable,
+                        None,
+                        &context,
+                    )
+                    .await;
+                }
+                _ => unreachable!(),
+            }
+            received.await.unwrap();
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while context.async_resolve_pool.active() != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            context.close().await;
+            let seen = observed.lock().unwrap();
+            assert_eq!(
+                &*seen,
+                &if admitted {
+                    vec![
+                        (
+                            String::new(),
+                            if kind == "async_commit" {
+                                String::new()
+                            } else {
+                                "external_sql".into()
+                            }
+                        );
+                        2
+                    ]
+                } else {
+                    vec![("foreground".to_owned(), "external_sql".into())]
+                },
+                "admitted={admitted}"
+            );
+            assert_eq!(owner.lock().await.total_backoff_times(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_region_read_cleanup_propagates_its_error() {
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            |request| {
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        commit_version: 12,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                assert!(request.is::<kvrpcpb::ResolveLockRequest>());
+                Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                    error: Some(kvrpcpb::KeyError {
+                        abort: "cleanup failed".into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut context = ResolveLocksContext::default();
+        context.set_async_resolve_pool_size(0);
+        let result = resolve_locks_for_read_with_context(
+            vec![kvrpcpb::LockInfo {
+                key: vec![1],
+                primary_lock: vec![2],
+                lock_version: 10,
+                txn_size: u64::MAX,
+                ..Default::default()
+            }],
+            Timestamp::from_version(20),
+            pd,
+            Keyspace::Disable,
+            None,
+            context,
+            &ReadLockContext::default(),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "rejected ordinary cleanup failure was hidden"
+        );
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn grouped_cleanup_forks_the_caller_without_detaching_foreground_workers(
+        #[values(false, true)] fail: bool,
+        #[values(false, true)] admitted: bool,
+    ) {
+        let attempts = Arc::new([AtomicUsize::new(0), AtomicUsize::new(0)]);
+        let detached = Arc::new(AtomicUsize::new(0));
+        let seen = attempts.clone();
+        let scopes = detached.clone();
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::ResolveLockRequest>()
+                    .unwrap();
+                if crate::async_util::background_rpc_cancellation().is_some() {
+                    scopes.fetch_add(1, Ordering::SeqCst);
+                }
+                let region = usize::from(request.keys[0][0] >= 10);
+                let first = seen[region].fetch_add(1, Ordering::SeqCst) == 0;
+                Ok(Box::new(kvrpcpb::ResolveLockResponse {
+                    region_error: first.then(|| crate::proto::errorpb::Error {
+                        not_leader: Some(Default::default()),
+                        ..Default::default()
+                    }),
+                    error: (fail && !first).then(|| kvrpcpb::KeyError {
+                        abort: "cleanup failed".into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }) as Box<dyn Any>)
+            },
+        )));
+        let mut budget = crate::retry::RetryBackoffer::new(Cancellation::default(), 1000);
+        budget
+            .backoff(crate::retry::BO_REGION_MISS, "earlier retry")
+            .await
+            .unwrap();
+        let owner = Arc::new(Mutex::new(budget));
+        let pool =
+            AsyncResolveTaskPool::new(Arc::new(Semaphore::new(if admitted { 2 } else { 0 })));
+        let result = schedule_grouped_read_cleanup(
+            vec![vec![1], vec![20]],
+            vec![2],
+            false,
+            10,
+            12,
+            false,
+            pd,
+            Keyspace::Disable,
+            None,
+            String::new(),
+            None,
+            None,
+            None,
+            None,
+            pool.clone(),
+            OPTIMISTIC_BACKOFF,
+            Some(owner.clone()),
+            true,
+            false,
+            "resolve_async_commit_region",
+            "async_resolve_async_commit_region_fallback",
+        )
+        .await;
+        assert_eq!(result.is_err(), fail);
+        pool.close().await;
+        assert_eq!(attempts[0].load(Ordering::SeqCst), 2);
+        assert_eq!(attempts[1].load(Ordering::SeqCst), 2);
+        assert_eq!(detached.load(Ordering::SeqCst), 0);
+        assert_eq!(owner.lock().await.total_backoff_times(), 2);
+    }
 
     #[tokio::test]
     async fn secondary_lock_retry_honors_the_callers_exhausted_budget() {

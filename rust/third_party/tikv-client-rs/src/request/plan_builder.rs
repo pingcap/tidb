@@ -454,6 +454,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
+        resolve_locks_context.request_source = self.plan.request_source().to_owned();
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -534,6 +535,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
+        resolve_locks_context.request_source = self.plan.request_source().to_owned();
         resolve_locks_context.trace_context = crate::trace::current_trace_context();
         PlanBuilder {
             pd_client: self.pd_client.clone(),
@@ -591,6 +593,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
+        resolve_locks_context.request_source = self.plan.request_source().to_owned();
         resolve_locks_context.trace_context = crate::trace::current_trace_context();
         resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
         resolve_locks_context.resource_group_name = self.resource_group_name.clone();
@@ -1436,6 +1439,26 @@ mod tests {
         assert!(builder.plan.resolve_locks_context.force_lite);
         assert!(!shared.pessimistic_region_resolve);
         assert!(!shared.force_lite);
+    }
+
+    #[test]
+    fn resolver_inherits_request_source_through_plan_wrappers() {
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .request_source("external_sql")
+        .preserve_shard()
+        .resolve_lock(
+            Timestamp::default(),
+            Backoff::no_backoff(),
+            Keyspace::Disable,
+        );
+        assert_eq!(
+            builder.plan.resolve_locks_context.request_source,
+            "external_sql"
+        );
     }
 
     #[test]
