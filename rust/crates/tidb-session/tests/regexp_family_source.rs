@@ -55,3 +55,29 @@ fn regexp_operators_and_functions() {
         "i:1"
     );
 }
+
+#[test]
+fn shared_go_boundaries_reach_sql() {
+    let mut session = Session::new();
+    assert_eq!(
+        try_sql(
+            &mut session,
+            r"select regexp_like('١', '\\d'), regexp_like('é', '\\w'), regexp_like('a', '[a-z&&b]')"
+        ),
+        "i:0|i:0|i:1"
+    );
+    assert_eq!(
+        try_sql(
+            &mut session,
+            "select from_unixtime(-0.5), from_unixtime(-0.5, '%Y')"
+        ),
+        "Null|Null"
+    );
+    assert_eq!(
+        try_sql(
+            &mut session,
+            "select upper(convert('é' using gbk)), lower(convert('ς' using gb18030))"
+        ),
+        "s:é|s:σ"
+    );
+}

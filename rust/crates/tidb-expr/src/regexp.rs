@@ -11,13 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `[NOT] REGEXP`/`RLIKE` pattern matching — this workspace's first
-//! external dependency, the `regex` crate (see the workspace
-//! `Cargo.toml`'s own doc comment for why it's a high-fidelity match
-//! for real TiDB's own Go-`regexp`-package-based implementation, not
-//! an arbitrary choice). Shared by the operator and named-function evaluators.
+//! `[NOT] REGEXP`/`RLIKE` and SQL regexp compilation. The shared Go
+//! compatibility adapter owns syntax and character classes; this layer owns
+//! SQL match flags and statement-context caching.
 
-use regex::{Regex, RegexBuilder};
+use regex::Regex;
 
 use crate::EvalError;
 
@@ -48,12 +46,13 @@ fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
         }
     }
 
-    RegexBuilder::new(pattern)
-        .case_insensitive(case_insensitive)
-        .multi_line(multi_line)
-        .dot_matches_new_line(dot_matches_new_line)
-        .build()
-        .map_err(|_| EvalError::Unsupported("invalid regular expression pattern"))
+    tidb_util::go_regexp::compile_with_flags(
+        pattern,
+        case_insensitive,
+        multi_line,
+        dot_matches_new_line,
+    )
+    .map_err(|_| EvalError::Unsupported("invalid regular expression pattern"))
 }
 
 /// Compiles one of TiDB's RE2-compatible regular expressions for the scalar

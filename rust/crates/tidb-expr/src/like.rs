@@ -15,55 +15,25 @@
 //! default), with both binary and source-registered collation matching.
 //! Called directly from `crate::eval_in`'s `Expr::Like` arm.
 
-use std::cmp::Ordering;
-
 use tidb_datatype::Collation;
-use tidb_util::stringutil::{
-    compile_pattern, do_match_customized, lower_one_string, lower_one_string_excluding_escape_char,
-    PatternType,
-};
+use tidb_util::stringutil::{lower_one_string, lower_one_string_excluding_escape_char};
 
 /// Go `collate.WildcardPattern`, retained by `builtinLikeSig.patternCache`.
 /// The compiled wildcard tokens are immutable and safe to share across rows
 /// in one statement context.
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledLikePattern {
-    collation: Collation,
-    pattern: Vec<u8>,
-    escape: u8,
-    weights: Vec<char>,
-    types: Vec<PatternType>,
+    pattern: tidb_datatype::WildcardPattern,
 }
 
 impl CompiledLikePattern {
     pub(crate) fn new(pattern: &[u8], escape: u8, collation: Collation) -> Self {
-        let (weights, types) = compile_pattern(pattern, escape);
         Self {
-            collation,
-            pattern: pattern.to_vec(),
-            escape,
-            weights,
-            types,
+            pattern: collation.pattern(pattern, escape),
         }
     }
-
     pub(crate) fn is_match(&self, text: &[u8]) -> bool {
-        if self.collation == Collation::Binary
-            || (text.is_ascii()
-                && self.pattern.is_ascii()
-                && matches!(
-                    self.collation,
-                    Collation::AsciiBin
-                        | Collation::Latin1Bin
-                        | Collation::Utf8Bin
-                        | Collation::Utf8Mb4Bin
-                ))
-        {
-            return do_match_binary_pattern(text, &self.pattern, self.escape);
-        }
-        do_match_customized(text, &self.weights, &self.types, |left, right| {
-            collation_char_equal(left, right, self.collation)
-        })
+        self.pattern.is_match(text)
     }
 }
 
@@ -113,7 +83,7 @@ pub(crate) fn like_match(
 /// Matches a pattern using one of the collations translated into
 /// `tidb-datatype`.
 ///
-/// Go's `Collator.Pattern().DoMatch` compares one decoded rune at a time;
+/// Go's `Collator.Pattern().DoMatch` selects byte or rune units per collator;
 /// `%` and `_` retain their binary wildcard meaning while literal runes use
 /// the collation's weight table. This is deliberately a separate entry point
 /// from [`like_match`]: the expression evaluator's current default remains
@@ -126,116 +96,9 @@ pub fn like_match_with_collation(
     escape: Option<u8>,
     collation: Collation,
 ) -> bool {
-    let text = text.as_ref();
-    let pattern = pattern.as_ref();
-    let escape = escape.unwrap_or(b'\\');
-    if collation == Collation::Binary
-        || (text.is_ascii()
-            && pattern.is_ascii()
-            && matches!(
-                collation,
-                Collation::AsciiBin
-                    | Collation::Latin1Bin
-                    | Collation::Utf8Bin
-                    | Collation::Utf8Mb4Bin
-            ))
-    {
-        return do_match_binary_pattern(text, pattern, escape);
-    }
-    let (weights, types) = compile_pattern(pattern, escape);
-    do_match_customized(text, &weights, &types, |left, right| {
-        collation_char_equal(left, right, collation)
-    })
-}
-
-/// Matches a binary LIKE pattern without allocating compiled token vectors.
-///
-/// The evaluator invokes LIKE once per input row. Go compiles a constant
-/// pattern once, while this value-only seam receives the pattern as bytes on
-/// every call. Keeping the standard greedy `%` backtracking state on the
-/// stack reproduces `compile_pattern_binary`/`do_match_binary` for byte
-/// collations and removes that per-row allocation from large scans.
-fn do_match_binary_pattern(input: &[u8], pattern: &[u8], escape: u8) -> bool {
-    let (mut input_index, mut pattern_index) = (0usize, 0usize);
-    let (mut star, mut star_input) = (None, 0usize);
-    while input_index < input.len() {
-        if pattern_index < pattern.len() {
-            let current = pattern[pattern_index];
-            if current == escape {
-                let literal = pattern.get(pattern_index + 1).copied().unwrap_or(escape);
-                let width = if pattern_index + 1 < pattern.len() {
-                    2
-                } else {
-                    1
-                };
-                if input[input_index] == literal {
-                    input_index += 1;
-                    pattern_index += width;
-                    continue;
-                }
-            } else if current == b'_' {
-                input_index += 1;
-                pattern_index += 1;
-                continue;
-            } else if current == b'%' {
-                star = Some(pattern_index);
-                star_input = input_index;
-                pattern_index += 1;
-                continue;
-            } else if input[input_index] == current {
-                input_index += 1;
-                pattern_index += 1;
-                continue;
-            }
-        }
-        let Some(star_index) = star else {
-            return false;
-        };
-        if star_input == input.len() {
-            return false;
-        }
-        star_input += 1;
-        input_index = star_input;
-        pattern_index = star_index + 1;
-    }
-    while pattern_index < pattern.len() && pattern[pattern_index] == b'%' {
-        pattern_index += 1;
-    }
-    pattern_index == pattern.len()
-}
-
-/// Compares one source rune under a TiDB collation.
-///
-/// The Go general-CI table maps every rune above U+FFFF to one replacement
-/// weight, but the Unicode-CI wildcard callback intentionally keeps all
-/// supplementary-plane runes distinct; handling that boundary before the
-/// byte-level collation helper preserves both source contracts. For the
-/// remaining BMP runes, the generated `Collation::compare` tables are the
-/// same weights consumed by Go's wildcard callback.
-fn collation_char_equal(left: char, right: char, collation: Collation) -> bool {
-    if left == right {
-        return true;
-    }
-    if matches!(
-        collation,
-        Collation::Binary
-            | Collation::AsciiBin
-            | Collation::Latin1Bin
-            | Collation::Utf8Bin
-            | Collation::Utf8Mb4Bin
-    ) {
-        return false;
-    }
-    if matches!(
-        collation,
-        Collation::Utf8UnicodeCi | Collation::Utf8Mb4UnicodeCi
-    ) && ((left as u32) > 0xFFFF || (right as u32) > 0xFFFF)
-    {
-        return false;
-    }
-    let left = left.to_string();
-    let right = right.to_string();
-    collation.compare(left.as_bytes(), right.as_bytes()) == Ordering::Equal
+    collation
+        .pattern(pattern, escape.unwrap_or(b'\\'))
+        .is_match(text.as_ref())
 }
 
 /// Matches TiDB's `ILIKE` semantics: ASCII letters compare without case,

@@ -644,13 +644,27 @@ impl PbBuiltin {
                                     .len() as i64,
                                 ),
                             }),
-                            StringOp::Upper => crate::string_fn::case_convert(&values, true),
-                            StringOp::Lower => crate::string_fn::case_convert(&values, false),
+                            StringOp::Upper => crate::string_fn::case_convert_with_type(
+                                &values,
+                                true,
+                                args[0].static_type(),
+                                binary,
+                            ),
+                            StringOp::Lower => crate::string_fn::case_convert_with_type(
+                                &values,
+                                false,
+                                args[0].static_type(),
+                                binary,
+                            ),
                             StringOp::Substring => crate::string_fn::substring(&values, ctx),
                         }
                     }
                     Kernel::FromUnixTime => {
-                        let result = crate::time_fn::session_tz::from_unixtime(&values, ctx)?;
+                        let result = crate::time_fn::session_tz::from_unixtime_with_precision(
+                            &values,
+                            ctx,
+                            function.get_static_type().map(FieldType::decimal),
+                        )?;
                         if self.signature == ScalarFuncSig::FromUnixTime1Arg {
                             crate::cast::parse_computed_time(
                                 &result,

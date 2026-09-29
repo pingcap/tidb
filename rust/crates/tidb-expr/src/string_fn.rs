@@ -24,7 +24,6 @@ use crate::{Datum, EvalError};
 use tidb_datatype::{
     find_encoding, get_default_collation, Collation, FieldType, GoString, TransformOp,
 };
-use tidb_hack::{go_to_lower, go_to_upper};
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
@@ -62,52 +61,36 @@ pub(crate) fn concat_with_context(
 /// signatures from the argument FieldType before evaluation).  Numeric values
 /// still pass through the ordinary ETString conversion.
 pub(crate) fn case_convert(vals: &[Datum], upper: bool) -> Result<Datum, EvalError> {
-    if vals.len() != 1 {
-        return Err(EvalError::Unsupported("bad case-conversion arity"));
-    }
-    match &vals[0] {
-        Datum::Null => Ok(Datum::Null),
-        // `builtinUpperSig`/`builtinLowerSig` return the argument untouched --
-        // not even ASCII-folded -- for every binary-charset spelling, which is
-        // what `is_binary_str` decides in one place.
-        value if crate::string_signature::is_binary_str(value) => Ok(Datum::new_bytes(
-            coerce_str_bytes(value)?.expect("non-NULL value has bytes"),
-        )),
-        value => {
-            let Some(bytes) = coerce_str_bytes(value)? else {
-                return Ok(Datum::Null);
-            };
-            // Go's charset encoders receive a Go string. Their Unicode case
-            // path ranges over it, so each malformed byte becomes one
-            // RuneError before case mapping rather than causing an error or
-            // being collapsed with an adjacent malformed byte.
-            let text = GoString::from(bytes).to_utf8_lossy_go();
-            Ok(Datum::new_string(if upper {
-                go_simple_case(&text, true)
-            } else {
-                go_simple_case(&text, false)
-            }))
-        }
-    }
+    let binary = vals
+        .first()
+        .is_some_and(crate::string_signature::is_binary_str);
+    case_convert_with_type(vals, upper, None, binary)
 }
 
-/// TiDB maps case with `strings.ToUpper`/`ToLower`
-/// (`parser/charset/encoding_base.go`), which walk the string applying the
-/// SIMPLE per-rune mappings `unicode.ToUpper`/`ToLower`. Rust's
-/// `str::to_uppercase`/`to_lowercase` apply the FULL mappings instead,
-/// which diverge on 103 code points: `ß` expands to "SS", the ligatures
-/// (ﬁ, ﬄ) and Turkish `İ` grow extra characters, and the 27 Greek
-/// iota-subscript vowels change to a DIFFERENT single vowel
-/// (U+1FA4 -> U+1FAC) rather than expanding.
-///
-/// `tidb_hack::go_to_upper`/`go_to_lower` reproduce Go's simple tables
-/// exactly; see their docs for the per-code-point argument.
-fn go_simple_case(text: &str, upper: bool) -> String {
-    if upper {
-        go_to_upper(text)
-    } else {
-        go_to_lower(text)
+/// Go chooses the binary signature before evaluation, then the text signature
+/// selects an encoding from the argument FieldType (not the result value).
+pub(crate) fn case_convert_with_type(
+    vals: &[Datum],
+    upper: bool,
+    source: Option<&FieldType>,
+    binary: bool,
+) -> Result<Datum, EvalError> {
+    let [value] = vals else {
+        return Err(EvalError::Unsupported("bad case-conversion arity"));
+    };
+    let Some(bytes) = coerce_str_bytes(value)? else {
+        return Ok(Datum::Null);
+    };
+    if binary {
+        return Ok(Datum::new_bytes(bytes));
     }
+    let encoding = find_encoding(source.map_or("utf8mb4", FieldType::charset_name));
+    let text = GoString::from(bytes).to_utf8_lossy_go();
+    Ok(Datum::new_string(if upper {
+        encoding.to_upper(&text)
+    } else {
+        encoding.to_lower(&text)
+    }))
 }
 
 #[cfg(test)]

@@ -132,7 +132,9 @@ fn unix_arg_nanos(value: &Datum, cols: &dyn Columns) -> Result<Option<(i128, usi
     let Ok(int_part): Result<i64, _> = int_part.parse() else {
         return Ok(None);
     };
-    if int_part < 0 || frac_part.starts_with('-') {
+    // Test the whole magnitude before discarding fractional precision. A
+    // negative zero still denotes the epoch, as after Go's decimal conversion.
+    if text.starts_with('-') && text.bytes().any(|byte| matches!(byte, b'1'..=b'9')) {
         return Ok(None);
     }
     let frac_digits: String = frac_part.chars().take(9).collect();
@@ -152,12 +154,26 @@ fn unix_arg_nanos(value: &Datum, cols: &dyn Columns) -> Result<Option<(i128, usi
 
 /// `FROM_UNIXTIME(unix[, format])`.
 pub(crate) fn from_unixtime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    from_unixtime_with_precision(vals, cols, None)
+}
+
+/// Go evalFromUnixTime rounds once at the builtin's result precision. The
+/// untyped entry retains its inferred precision for value-only callers.
+pub(crate) fn from_unixtime_with_precision(
+    vals: &[Datum],
+    cols: &dyn Columns,
+    precision: Option<i64>,
+) -> Result<Datum, EvalError> {
     if !(1..=2).contains(&vals.len()) {
         return Err(EvalError::Unsupported("bad function arity"));
     }
     let Some((total_nanos, fsp)) = unix_arg_nanos(&vals[0], cols)? else {
         return Ok(Datum::Null);
     };
+    let fsp = precision.map_or(
+        fsp,
+        |value| if value < 0 { 6 } else { value.min(6) as usize },
+    );
     let integral = total_nanos / 1_000_000_000;
     if integral > i128::from(MAX_UNIX_SECS) {
         return Ok(Datum::Null);
@@ -431,6 +447,7 @@ mod tests {
             (Datum::Int(MAX_UNIX_SECS), "3001-01-19 10:59:59"),
             // A string argument carries MaxFsp.
             (s("1447430881.5"), "2015-11-14 03:08:01.500000"),
+            (s("-0.0"), "1970-01-01 11:00:00.000000"),
         ];
         for (arg, want) in cases {
             assert_eq!(
@@ -440,6 +457,8 @@ mod tests {
             );
         }
         assert_eq!(call(from_unixtime, &[Datum::Int(-1)]), Datum::Null);
+        assert_eq!(call(from_unixtime, &[dec("-0.5")]), Datum::Null);
+        assert_eq!(call(from_unixtime, &[dec("-0.0000000001")]), Datum::Null);
         assert_eq!(
             call(from_unixtime, &[Datum::Int(MAX_UNIX_SECS + 1)]),
             Datum::Null

@@ -1239,7 +1239,8 @@ impl ScalarFunction {
             .sql_bytes()
             .map_err(|_| EvalError::Unsupported("invalid LIKE pattern scalar domain"))?;
         let raw_escape = self.args[2].eval(ctx, row)?;
-        let int_escape = crate::cast::cast_arg_as_int(&raw_escape, self.args[2].static_type(), ctx)?;
+        let int_escape =
+            crate::cast::cast_arg_as_int(&raw_escape, self.args[2].static_type(), ctx)?;
         let Some(escape) = crate::arg_eval_type::eval_int(&int_escape)? else {
             return Ok(Datum::Null);
         };
@@ -1248,18 +1249,23 @@ impl ScalarFunction {
         let cache_escape = self.args[2].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
         let matched = if case_insensitive {
             if cache_pattern && cache_escape {
-                let cached = self
-                    .ilike_pattern_cache
-                    .get_or_init_cache(ctx.context_id(), || {
-                        Ok::<_, EvalError>(crate::like::CompiledIlikePattern::new(
-                            &pattern,
-                            escape,
-                            self.derived_collation(),
-                        ))
-                    })?;
+                let cached =
+                    self.ilike_pattern_cache
+                        .get_or_init_cache(ctx.context_id(), || {
+                            Ok::<_, EvalError>(crate::like::CompiledIlikePattern::new(
+                                &pattern,
+                                escape,
+                                self.derived_collation(),
+                            ))
+                        })?;
                 cached.is_match(&text)
             } else {
-                crate::like::ilike_match_with_collation(text, pattern, escape, self.derived_collation())
+                crate::like::ilike_match_with_collation(
+                    text,
+                    pattern,
+                    escape,
+                    self.derived_collation(),
+                )
             }
         } else {
             if cache_pattern && cache_escape {
@@ -1274,7 +1280,12 @@ impl ScalarFunction {
                     })?;
                 cached.is_match(&text)
             } else {
-                crate::like_match_with_collation(text, pattern, Some(escape), self.derived_collation())
+                crate::like_match_with_collation(
+                    text,
+                    pattern,
+                    Some(escape),
+                    self.derived_collation(),
+                )
             }
         };
         return Ok(Datum::Int(i64::from(matched)));
@@ -1316,9 +1327,9 @@ impl ScalarFunction {
         }
         if result_type
             .is_some_and(|field_type| field_type.code() == tidb_datatype::FieldTypeCode::Datetime)
-            && self.args[0]
-                .static_type()
-                .is_some_and(|field_type| field_type.code() == tidb_datatype::FieldTypeCode::Duration)
+            && self.args[0].static_type().is_some_and(|field_type| {
+                field_type.code() == tidb_datatype::FieldTypeCode::Duration
+            })
         {
             date = crate::cast::cast_arg_as_datetime(&date, self.args[0].static_type(), ctx)?;
         }
@@ -1334,9 +1345,12 @@ impl ScalarFunction {
             return Ok(result);
         };
         return match result_type.code() {
-            tidb_datatype::FieldTypeCode::Date => {
-                crate::cast::parse_computed_time(&result, ctx, tidb_datatype::TimeType::Date, Some(0))
-            }
+            tidb_datatype::FieldTypeCode::Date => crate::cast::parse_computed_time(
+                &result,
+                ctx,
+                tidb_datatype::TimeType::Date,
+                Some(0),
+            ),
             tidb_datatype::FieldTypeCode::Datetime => crate::cast::parse_computed_time(
                 &result,
                 ctx,
@@ -1368,21 +1382,20 @@ impl ScalarFunction {
             return None;
         }
         let output = self.get_static_type()?.eval_type();
-        let domain =
-            if op == BinaryOp::IntDiv {
-                if output != EvalType::Int {
-                    return None;
-                }
-                if self.args.iter().all(|arg| {
-                    crate::builtin_arithmetic::numeric_context_result_type(arg) == EvalType::Int
-                }) {
-                    EvalType::Int
-                } else {
-                    EvalType::Decimal
-                }
+        let domain = if op == BinaryOp::IntDiv {
+            if output != EvalType::Int {
+                return None;
+            }
+            if self.args.iter().all(|arg| {
+                crate::builtin_arithmetic::numeric_context_result_type(arg) == EvalType::Int
+            }) {
+                EvalType::Int
             } else {
-                output
-            };
+                EvalType::Decimal
+            }
+        } else {
+            output
+        };
         if (op == BinaryOp::Div && domain == EvalType::Int)
             || !matches!(domain, EvalType::Int | EvalType::Real | EvalType::Decimal)
             || self.args.iter().any(|arg| {
@@ -1664,10 +1677,18 @@ impl ScalarFunction {
             if value.is_null() {
                 return Ok(None);
             }
-            value
-                .sql_string()
-                .map(Some)
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP_LIKE argument"))
+            let bytes = value
+                .sql_bytes()
+                .map_err(|_| EvalError::Unsupported("invalid REGEXP_LIKE argument"))?;
+            if index == 0 {
+                Ok(Some(
+                    tidb_datatype::GoString::from(bytes).to_utf8_lossy_go(),
+                ))
+            } else {
+                String::from_utf8(bytes).map(Some).map_err(|_| {
+                    EvalError::Unsupported("invalid UTF-8 REGEXP_LIKE pattern or flags")
+                })
+            }
         };
         let Some(text) = string_arg(0)? else {
             return Ok(Datum::Null);
@@ -2116,9 +2137,12 @@ impl ScalarFunction {
             if pattern.is_null() {
                 return Ok(Datum::Null);
             }
-            let text = value
-                .sql_string()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP operand"))?;
+            let text = tidb_datatype::GoString::from(
+                value
+                    .sql_bytes()
+                    .map_err(|_| EvalError::Unsupported("invalid REGEXP operand"))?,
+            )
+            .to_utf8_lossy_go();
             let pattern = pattern
                 .sql_string()
                 .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP pattern"))?;
@@ -2819,6 +2843,19 @@ impl ScalarFunction {
             .map(|a| a.eval(ctx, row))
             .collect::<Result<_, _>>()?;
         let upper = name.to_ascii_uppercase();
+        if matches!(upper.as_str(), "UPPER" | "UCASE" | "LOWER" | "LCASE") && vals.len() == 1 {
+            let source = self.args[0].static_type();
+            let binary = source.map_or_else(
+                || crate::string_signature::is_binary_str(&vals[0]),
+                |field| field.charset_name() == "binary",
+            );
+            return crate::string_fn::case_convert_with_type(
+                &vals,
+                matches!(upper.as_str(), "UPPER" | "UCASE"),
+                source,
+                binary,
+            );
+        }
         // Go `builtinExtractDatetimeSig`/`builtinExtractDurationSig`: the
         // first argument is the unit keyword the parser stored as a VARCHAR
         // constant. Keep the value's static type when selecting the datetime,
@@ -3003,8 +3040,16 @@ impl ScalarFunction {
                 | "CONVERT_TZ"
                 | "FROM_UNIXTIME"
         ) {
-            let mut result = crate::time_fn::dispatch(&upper, &vals, ctx)
-                .expect("the native temporal family is registered")?;
+            let mut result = if upper == "FROM_UNIXTIME" {
+                crate::time_fn::session_tz::from_unixtime_with_precision(
+                    &vals,
+                    ctx,
+                    self.get_static_type().map(FieldType::decimal),
+                )?
+            } else {
+                crate::time_fn::dispatch(&upper, &vals, ctx)
+                    .expect("the native temporal family is registered")?
+            };
             if upper == "STR_TO_DATE"
                 && self.get_static_type().map(FieldType::code)
                     == Some(tidb_datatype::FieldTypeCode::Datetime)
