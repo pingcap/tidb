@@ -150,7 +150,7 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	// merged in the failed attempt are charged again. We accept this small
 	// under-count because persisting progress after every committed range would
 	// add a durable write to the merge hot path.
-	e.Processed.Add(collector.writtenBytes)
+	e.Bytes.Add(collector.writtenBytes)
 	e.totalRows += int64(collector.scanCount)
 	logutil.Logger(ctx).Info("merge temp index executor finish subtask", zap.Int("added", collector.addCount), zap.Int("scanned", collector.scanCount))
 	return err

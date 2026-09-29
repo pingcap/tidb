@@ -288,7 +288,7 @@ func (sch *LitBackfillScheduler) OnDone(_ context.Context, h diststorage.TaskHan
 	}
 	var txnKVSize uint64
 	for _, summary := range summaries {
-		txnKVSize += uint64(summary.Processed.Load())
+		txnKVSize += uint64(summary.Bytes.Load())
 	}
 	if taskMeta.Summary == nil {
 		taskMeta.Summary = &BackfillTaskSummary{}
