@@ -1,0 +1,32 @@
+{
+  "candidate_text_matches": 1229,
+  "go_package_artifacts": 5826,
+  "go_packages": 855,
+  "go_shared_artifacts": 1900,
+  "ignored_test_annotations": 1686,
+  "not_in_server_dependency_graph": [
+    "difftest",
+    "difftest-parser-tests",
+    "difftest-planner-tests",
+    "difftest-result-tests",
+    "difftest-transaction-tests",
+    "tidb-br",
+    "tidb-ddl-copr",
+    "tidb-ddl-mock",
+    "tidb-ddl-resourcegroup",
+    "tidb-ddl-testargsv1",
+    "tidb-dxf-operator",
+    "tidb-planner-coretestsdk",
+    "tidb-schemacmp",
+    "tidb-stats-handle-cache-internal-testutil",
+    "tidb-stats-handle-internal",
+    "tidb-stats-handle-util-test",
+    "tidb-timer",
+    "tidb-ttl"
+  ],
+  "rust_shared_artifacts": 1608,
+  "rust_source_files_scanned": 2310,
+  "rust_workspace_packages": 88,
+  "server_nondev_workspace_dependencies": 70,
+  "source_mentioned_go_packages": 390
+}
