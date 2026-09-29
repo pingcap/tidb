@@ -514,8 +514,11 @@ func TestBackfillTaskMetaVersion(t *testing.T) {
 	}
 	require.Equal(t, ddl.BackfillTaskMetaVersion1, meta.Version)
 
-	// Optional fields are decode-compatible without a task-meta version bump.
+	// Optional fields are decode-compatible without a task-meta version bump,
+	// and zero values are omitted when the meta is encoded.
 	require.NoError(t, json.Unmarshal([]byte(`{"summary":{"index_kv_size":0}}`), meta))
+	require.NotNil(t, meta.Summary)
+	require.Zero(t, meta.Summary.IndexKVSize)
 	metaBytes, err = json.Marshal(meta)
 	require.NoError(t, err)
 	var summaryMetaView struct {
@@ -523,7 +526,6 @@ func TestBackfillTaskMetaVersion(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(metaBytes, &summaryMetaView))
 	require.NotNil(t, summaryMetaView.Summary)
-	indexKVSize, ok := summaryMetaView.Summary["index_kv_size"]
-	require.True(t, ok)
-	require.JSONEq(t, "0", string(indexKVSize))
+	_, ok := summaryMetaView.Summary["index_kv_size"]
+	require.False(t, ok, "zero-valued summary fields are omitted from the encoded meta")
 }

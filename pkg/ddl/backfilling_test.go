@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -631,4 +632,23 @@ func TestSplitRangesByKeys(t *testing.T) {
 		result := splitRangesByKeys(tt.ranges, tt.splitKeys)
 		require.EqualValues(t, len(tt.expected), len(result), "keys mismatch", tt.name)
 	}
+}
+
+func TestMergeTempIndexResultSinkReportsWrittenBytes(t *testing.T) {
+	wctx := workerpool.NewContext(context.Background())
+	defer wctx.Cancel()
+
+	src := operator.NewSimpleDataChannel(make(chan tempIdxResult, 2))
+	src.Channel() <- tempIdxResult{addCount: 2, writtenBytes: 120}
+	src.Channel() <- tempIdxResult{addCount: 3, writtenBytes: 80}
+	close(src.Channel())
+
+	collector := &mergeTempIndexCollector{}
+	sink := newTempIndexResultSink(wctx, nil, collector)
+	sink.SetSource(src)
+	require.NoError(t, sink.Open())
+	require.NoError(t, sink.Close())
+
+	require.Equal(t, 5, collector.addCount)
+	require.Equal(t, int64(200), collector.writtenBytes)
 }

@@ -267,7 +267,38 @@ func skipMergeSort(stats []external.MultipleFilesStat, concurrency int) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*LitBackfillScheduler) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
+// For the temp-index merge step it records the committed transaction bytes of
+// the subtasks into task.Meta. The framework persists the mutated meta with the
+// success state transition, so recordDistTaskRU can convert it to RU later, even
+// after the subtasks are moved to the history tables. The recorded size is
+// best-effort, see mergeTempIndexExecutor.RunSubtask.
+func (sch *LitBackfillScheduler) OnDone(_ context.Context, h diststorage.TaskHandle, task *proto.Task) error {
+	// Only the NextGen temp-index merge is accounted, and reverted tasks are not
+	// accounted at all.
+	if !kerneltype.IsNextGen() || task.State == proto.TaskStateReverting || !sch.MergeTempIndex {
+		return nil
+	}
+	summaries, err := h.GetPreviousSubtaskSummary(task.ID, proto.BackfillStepMergeTempIndex)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	taskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	var txnKVSize uint64
+	for _, summary := range summaries {
+		txnKVSize += uint64(summary.Bytes.Load())
+	}
+	if taskMeta.Summary == nil {
+		taskMeta.Summary = &BackfillTaskSummary{}
+	}
+	taskMeta.Summary.MergeTempIndexTxnKVSize = txnKVSize
+	newMeta, err := json.Marshal(taskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.Meta = newMeta
 	return nil
 }
 

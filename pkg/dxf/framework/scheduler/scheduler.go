@@ -542,7 +542,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		if err := s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
 		}
-		if err := s.taskMgr.SucceedTask(s.ctx, task.ID); err != nil {
+		if err := s.taskMgr.SucceedTask(s.ctx, task); err != nil {
 			return errors.Trace(err)
 		}
 		task.Step = nextStep
