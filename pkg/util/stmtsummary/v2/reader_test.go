@@ -17,9 +17,11 @@ package stmtsummary
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -616,6 +618,69 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 		results = append(results, rows...)
 	}
 	return results
+}
+
+// benchmarkHistoryReaderRows measures the decode cost of a full history scan with
+// `recordCount` persisted records of which `matchPercent` percent carry the requested
+// digest. It backs the digest pre-filter trade-off: low match rates save the full
+// record unmarshal for most lines, while matching lines pay an extra partial decode.
+func benchmarkHistoryReaderRows(b *testing.B, matchPercent int, withDigestFilter bool) {
+	const recordCount = 2000
+	const target = "digest_target"
+	file, err := os.Create("tidb-statements.log")
+	require.NoError(b, err)
+	defer func() {
+		require.NoError(b, os.Remove("tidb-statements.log"))
+	}()
+	for i := 0; i < recordCount; i++ {
+		digest := fmt.Sprintf("digest_%06d", i)
+		if i%100 < matchPercent {
+			digest = target
+		}
+		record := stmtPersistedRecord{StmtRecord: StmtRecord{
+			Begin:         1672128520,
+			End:           1672128521,
+			Digest:        digest,
+			NormalizedSQL: "select ? from t where c > ?",
+			SampleSQL:     strings.Repeat("s", 1024),
+			SamplePlan:    strings.Repeat("p", 1024),
+		}}
+		line, err := json.Marshal(record)
+		require.NoError(b, err)
+		_, err = file.Write(append(line, '\n'))
+		require.NoError(b, err)
+	}
+	require.NoError(b, file.Close())
+
+	columns := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
+	}
+	var digests set.StringSet
+	if withDigestFilter {
+		digests = set.NewStringSet(target)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader, err := NewHistoryReader(context.Background(), columns, "", time.Local, nil, false, digests, nil, 2)
+		require.NoError(b, err)
+		for {
+			rows, err := reader.Rows()
+			require.NoError(b, err)
+			if rows == nil {
+				break
+			}
+		}
+		reader.Close()
+	}
+}
+
+func BenchmarkHistoryReaderDigestFilter(b *testing.B) {
+	b.Run("filter-match-0-percent", func(b *testing.B) { benchmarkHistoryReaderRows(b, 0, true) })
+	b.Run("filter-match-100-percent", func(b *testing.B) { benchmarkHistoryReaderRows(b, 100, true) })
+	b.Run("no-filter", func(b *testing.B) { benchmarkHistoryReaderRows(b, 0, false) })
 }
 
 func countOpenFileDescriptors() (int, bool) {

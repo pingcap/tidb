@@ -477,8 +477,14 @@ func (c *stmtChecker) needStop(curBegin int64) bool {
 }
 
 type stmtTinyRecord struct {
-	Begin  int64  `json:"begin"`
-	End    int64  `json:"end"`
+	Begin int64 `json:"begin"`
+	End   int64 `json:"end"`
+}
+
+// stmtDigestProbe decodes only the digest of a persisted line, for the parse worker's
+// pre-filter. It is kept separate from stmtTinyRecord so the timestamp-only paths
+// (file begin/end probing, scan stop checks) don't decode a digest they never use.
+type stmtDigestProbe struct {
 	Digest string `json:"digest"`
 }
 
@@ -843,11 +849,11 @@ func (w *stmtParseWorker) handleLines(
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
 		if w.checker.digests != nil {
-			// Cheap digest pre-filter: the tiny record decodes the digest from the same
-			// JSON line, so records that cannot match skip the full unmarshal. Persistent
+			// Cheap digest pre-filter: records whose digest cannot match skip the full
+			// unmarshal. The probe decodes the digest from the same JSON line, and persistent
 			// files already carry the digest key, so old files need no migration.
-			var tiny stmtTinyRecord
-			if err := json.Unmarshal(line, &tiny); err == nil && !w.checker.isDigestValid(tiny.Digest) {
+			var probe stmtDigestProbe
+			if err := json.Unmarshal(line, &probe); err == nil && !w.checker.isDigestValid(probe.Digest) {
 				continue
 			}
 		}
