@@ -189,7 +189,6 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestBuildAnalyzePreFlushUsesStatementContext(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -250,7 +249,8 @@ func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
 	require.NotZero(t, afterBytes.Load())
 	require.Equal(t, beforeCollectorMem.Load(), afterCollectorMem.Load())
 	require.Equal(t, beforeCollectorMem.Load(), beforeBytes.Load()-afterBytes.Load())
-=======
+}
+
 func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -330,5 +330,4 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("analyze hangs after kill during save")
 	}
->>>>>>> d2b270aa57b (executor, statistics: avoid analyze hang on save error (#66169))
 }
