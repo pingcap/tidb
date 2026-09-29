@@ -12,28 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package residual
+package orphandata
 
 import (
 	"context"
 	"errors"
-	"net/url"
 	"sync"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
 
+// ActiveTaskChecker checks whether active tasks still need cleanup.
+type ActiveTaskChecker interface {
+	HasActiveTasks(context.Context) (bool, error)
+}
+
 // Config configures a residual Monitor.
 type Config struct {
-	Enabled    bool
-	TaskCount  func(context.Context) (int, error)
-	StorageURI func(context.Context) string
-	Logger     *zap.Logger
+	Enabled           bool
+	ActiveTaskChecker ActiveTaskChecker
+	StorageURI        string
+	Logger            *zap.Logger
+}
+
+type noActiveTaskChecker struct{}
+
+func (noActiveTaskChecker) HasActiveTasks(context.Context) (bool, error) {
+	return false, nil
 }
 
 type storeFactory func(context.Context, string) (storeapi.Storage, error)
@@ -55,11 +64,8 @@ func NewMonitor(ctx context.Context, cfg Config) *Monitor {
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()
 	}
-	if cfg.TaskCount == nil {
-		cfg.TaskCount = func(context.Context) (int, error) { return 0, nil }
-	}
-	if cfg.StorageURI == nil {
-		cfg.StorageURI = func(context.Context) string { return "" }
+	if cfg.ActiveTaskChecker == nil {
+		cfg.ActiveTaskChecker = noActiveTaskChecker{}
 	}
 	return &Monitor{
 		ctx:          ctx,
@@ -113,14 +119,14 @@ func (m *Monitor) run() {
 		return
 	}
 
-	taskCount, err := m.cfg.TaskCount(m.ctx)
+	hasActiveTasks, err := m.cfg.ActiveTaskChecker.HasActiveTasks(m.ctx)
 	if err != nil {
 		if !isCancellation(err) {
-			m.cfg.Logger.Warn("global sort residual monitor failed to get all tasks", zap.Error(err))
+			m.cfg.Logger.Warn("global sort residual monitor failed to check active tasks", zap.Error(err))
 		}
 		return
 	}
-	if taskCount > 0 {
+	if hasActiveTasks {
 		metrics.GlobalSortResidualDataSize.Set(0)
 		return
 	}
@@ -128,15 +134,13 @@ func (m *Monitor) run() {
 		return
 	}
 
-	storageURI := m.cfg.StorageURI(m.ctx)
-	logStorageURI := storageLogURI(storageURI)
+	storageURI := m.cfg.StorageURI
 	var scan Stats
 	if storageURI != "" {
 		storage, err := m.storeFactory(m.ctx, storageURI)
 		if err != nil {
 			if !isCancellation(err) {
-				m.cfg.Logger.Warn("global sort residual monitor failed to create storage",
-					zap.String("storage-uri", logStorageURI))
+				m.cfg.Logger.Warn("global sort residual monitor failed to create storage")
 			}
 			return
 		}
@@ -145,8 +149,7 @@ func (m *Monitor) run() {
 		scan, err = Scan(m.ctx, storage)
 		if err != nil {
 			if !isCancellation(err) {
-				m.cfg.Logger.Warn("global sort residual monitor failed to scan storage",
-					zap.String("storage-uri", logStorageURI))
+				m.cfg.Logger.Warn("global sort residual monitor failed to scan storage")
 			}
 			return
 		}
@@ -155,18 +158,16 @@ func (m *Monitor) run() {
 		return
 	}
 
-	taskCount, err = m.cfg.TaskCount(m.ctx)
+	hasActiveTasks, err = m.cfg.ActiveTaskChecker.HasActiveTasks(m.ctx)
 	if err != nil {
 		if !isCancellation(err) {
-			m.cfg.Logger.Warn("global sort residual monitor failed to get all tasks", zap.Error(err))
+			m.cfg.Logger.Warn("global sort residual monitor failed to check active tasks", zap.Error(err))
 		}
 		return
 	}
-	if taskCount > 0 {
+	if hasActiveTasks {
 		metrics.GlobalSortResidualDataSize.Set(0)
-		m.cfg.Logger.Info("global sort residual monitor discarded scan because tasks appeared",
-			zap.String("storage-uri", logStorageURI),
-			zap.Int("task-count", taskCount))
+		m.cfg.Logger.Info("global sort residual monitor discarded scan because tasks appeared")
 		return
 	}
 	if m.ctx.Err() != nil {
@@ -181,7 +182,6 @@ func (m *Monitor) run() {
 		logFn = m.cfg.Logger.Info
 	}
 	logFn("global sort residual monitor success",
-		zap.String("storage-uri", logStorageURI),
 		zap.Int64("residual-size-bytes", scan.SizeBytes),
 		zap.Int64("residual-object-count", scan.ObjectCount),
 		zap.Strings("sample-prefixes", scan.SamplePrefixes),
@@ -190,14 +190,4 @@ func (m *Monitor) run() {
 
 func isCancellation(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-}
-
-// storageLogURI returns a loggable form of the storage URI. ast.RedactURL
-// returns malformed input unchanged, so such URIs are dropped instead of being
-// logged verbatim: they can still embed credentials.
-func storageLogURI(storageURI string) string {
-	if _, err := url.Parse(storageURI); err != nil {
-		return "<invalid>"
-	}
-	return ast.RedactURL(storageURI)
 }

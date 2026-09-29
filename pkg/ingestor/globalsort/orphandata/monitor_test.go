@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package residual
+package orphandata
 
 import (
 	"context"
@@ -73,6 +73,12 @@ type testMonitor struct {
 	logs *observer.ObservedLogs
 }
 
+type activeTaskCheckerFunc func(context.Context) (bool, error)
+
+func (f activeTaskCheckerFunc) HasActiveTasks(ctx context.Context) (bool, error) {
+	return f(ctx)
+}
+
 func newTestMonitor(ctx context.Context, t *testing.T, cfg Config) *testMonitor {
 	t.Helper()
 	if !cfg.Enabled {
@@ -99,6 +105,7 @@ func requireGauge(t *testing.T, expected float64) {
 func requireNoCredentials(t *testing.T, logs *observer.ObservedLogs, values ...string) {
 	t.Helper()
 	for _, entry := range logs.All() {
+		require.NotContains(t, entry.ContextMap(), "storage-uri")
 		logged := fmt.Sprintf("%s %v", entry.Message, entry.ContextMap())
 		for _, value := range values {
 			require.NotContains(t, logged, value)
@@ -118,14 +125,31 @@ func TestMonitor(t *testing.T) {
 		metrics.GlobalSortResidualDataSize.Set(0)
 	})
 
+	t.Run("config dependencies", func(t *testing.T) {
+		checks := 0
+		m := newTestMonitor(context.Background(), t, Config{
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) {
+				checks++
+				return false, nil
+			}),
+			StorageURI: "memstore:///residual",
+		})
+		m.storeFactory = func(_ context.Context, uri string) (storeapi.Storage, error) {
+			require.Equal(t, "memstore:///residual", uri)
+			return &monitorStorage{Storage: objstore.NewMemStorage()}, nil
+		}
+
+		m.run()
+
+		require.Equal(t, 2, checks)
+	})
+
 	t.Run("first gate has tasks", func(t *testing.T) {
 		metrics.GlobalSortResidualDataSize.Set(37)
 		factoryCalls := 0
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount: func(context.Context) (int, error) { return 1, nil },
-			StorageURI: func(context.Context) string {
-				return "s3://bucket/prefix"
-			},
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return true, nil }),
+			StorageURI:        "s3://bucket/prefix",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			factoryCalls++
@@ -143,10 +167,8 @@ func TestMonitor(t *testing.T) {
 		metrics.GlobalSortResidualDataSize.Set(37)
 		factoryCalls := 0
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount: func(context.Context) (int, error) { return 0, errors.New("first gate failed") },
-			StorageURI: func(context.Context) string {
-				return "s3://bucket/prefix"
-			},
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, errors.New("first gate failed") }),
+			StorageURI:        "s3://bucket/prefix",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			factoryCalls++
@@ -166,11 +188,11 @@ func TestMonitor(t *testing.T) {
 		factoryCalls := 0
 		calls := 0
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount: func(context.Context) (int, error) {
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) {
 				calls++
-				return 0, nil
-			},
-			StorageURI: func(context.Context) string { return "" },
+				return false, nil
+			}),
+			StorageURI: "",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			factoryCalls++
@@ -186,7 +208,7 @@ func TestMonitor(t *testing.T) {
 		successLogs := m.logs.FilterMessage("global sort residual monitor success").All()
 		require.Len(t, successLogs, 1)
 		fields := successLogs[0].ContextMap()
-		require.Equal(t, "", fields["storage-uri"])
+		require.NotContains(t, fields, "storage-uri")
 		require.EqualValues(t, 0, fields["residual-size-bytes"])
 		require.EqualValues(t, 0, fields["residual-object-count"])
 		require.Equal(t, []any{}, fields["sample-prefixes"])
@@ -197,8 +219,8 @@ func TestMonitor(t *testing.T) {
 		metrics.GlobalSortResidualDataSize.Set(37)
 		const uri = "s3:///missing-bucket?access-key=invalid-ak&secret-access-key=invalid-sk&session-token=invalid-token"
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount:  func(context.Context) (int, error) { return 0, nil },
-			StorageURI: func(context.Context) string { return uri },
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			StorageURI:        uri,
 		})
 
 		m.run()
@@ -219,8 +241,8 @@ func TestMonitor(t *testing.T) {
 			uri          = "s3://bucket/prefix?AcCeSs_KeY=" + accessKey + "&SeCrEt_AcCeSs_KeY=create%2Bsk-fragment&SeSsIoN_ToKeN=" + sessionToken
 		)
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount:  func(context.Context) (int, error) { return 0, nil },
-			StorageURI: func(context.Context) string { return uri },
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			StorageURI:        uri,
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return nil, fmt.Errorf("injected creation leaked fragments %s %s %s", accessKey, secretKey, sessionToken)
@@ -242,8 +264,8 @@ func TestMonitor(t *testing.T) {
 			uri    = "s3://bucket/%zz?secret-access-key=" + secret
 		)
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount:  func(context.Context) (int, error) { return 0, nil },
-			StorageURI: func(context.Context) string { return uri },
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			StorageURI:        uri,
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return nil, errors.New("malformed factory failure")
@@ -254,7 +276,7 @@ func TestMonitor(t *testing.T) {
 		requireGauge(t, 37)
 		warnings := m.logs.FilterLevelExact(zap.WarnLevel).All()
 		require.Len(t, warnings, 1)
-		require.Equal(t, "<invalid>", warnings[0].ContextMap()["storage-uri"])
+		require.NotContains(t, warnings[0].ContextMap(), "storage-uri")
 		require.NotContains(t, warnings[0].ContextMap(), "error")
 		requireNoCredentials(t, m.logs, uri, secret)
 	})
@@ -263,10 +285,8 @@ func TestMonitor(t *testing.T) {
 		metrics.GlobalSortResidualDataSize.Set(37)
 		store := &monitorStorage{Storage: objstore.NewMemStorage()}
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount: func(context.Context) (int, error) { return 0, nil },
-			StorageURI: func(context.Context) string {
-				return "memstore:///residual"
-			},
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			StorageURI:        "memstore:///residual",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -298,8 +318,8 @@ func TestMonitor(t *testing.T) {
 			entries: entries,
 		}
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount:  func(context.Context) (int, error) { return 0, nil },
-			StorageURI: func(context.Context) string { return uri },
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			StorageURI:        uri,
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -312,7 +332,7 @@ func TestMonitor(t *testing.T) {
 		successLogs := m.logs.FilterMessage("global sort residual monitor success").All()
 		require.Len(t, successLogs, 1)
 		fields := successLogs[0].ContextMap()
-		require.Contains(t, fields["storage-uri"], "xxxxxx")
+		require.NotContains(t, fields, "storage-uri")
 		require.EqualValues(t, 66, fields["residual-size-bytes"])
 		require.EqualValues(t, 11, fields["residual-object-count"])
 		require.Equal(t, []any{
@@ -323,7 +343,7 @@ func TestMonitor(t *testing.T) {
 		requireNoCredentials(t, m.logs, accessKey, secretKey, sessionToken, "success%2Bsk")
 	})
 
-	t.Run("configured Azure credentials are redacted", func(t *testing.T) {
+	t.Run("configured Azure URI is omitted", func(t *testing.T) {
 		const (
 			accountKey    = "azure-account"
 			sasToken      = "azure+sas"
@@ -332,8 +352,8 @@ func TestMonitor(t *testing.T) {
 		)
 		store := &monitorStorage{Storage: objstore.NewMemStorage()}
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount:  func(context.Context) (int, error) { return 0, nil },
-			StorageURI: func(context.Context) string { return uri },
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			StorageURI:        uri,
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -345,7 +365,7 @@ func TestMonitor(t *testing.T) {
 		requireGauge(t, 0)
 		successLogs := m.logs.FilterMessage("global sort residual monitor success").All()
 		require.Len(t, successLogs, 1)
-		require.Contains(t, successLogs[0].ContextMap()["storage-uri"], "xxxxxx")
+		require.NotContains(t, successLogs[0].ContextMap(), "storage-uri")
 		requireNoCredentials(t, m.logs, accountKey, sasToken, encryptionKey, "azure%2Bsas")
 	})
 
@@ -358,16 +378,14 @@ func TestMonitor(t *testing.T) {
 		}
 		calls := 0
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount: func(context.Context) (int, error) {
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				if calls == 1 {
-					return 0, nil
+					return false, nil
 				}
-				return 1, nil
-			},
-			StorageURI: func(context.Context) string {
-				return "memstore:///residual"
-			},
+				return true, nil
+			}),
+			StorageURI: "memstore:///residual",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -382,9 +400,9 @@ func TestMonitor(t *testing.T) {
 		require.Len(t, discardLogs, 1)
 		require.Len(t, m.logs.FilterLevelExact(zap.InfoLevel).All(), 1)
 		fields := discardLogs[0].ContextMap()
-		require.Equal(t, "memstore:///residual", fields["storage-uri"])
-		require.EqualValues(t, 1, fields["task-count"])
 		for _, field := range []string{
+			"storage-uri",
+			"task-count",
 			"residual-size-bytes",
 			"residual-object-count",
 			"sample-prefixes",
@@ -403,16 +421,14 @@ func TestMonitor(t *testing.T) {
 		}
 		calls := 0
 		m := newTestMonitor(context.Background(), t, Config{
-			TaskCount: func(context.Context) (int, error) {
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				if calls == 1 {
-					return 0, nil
+					return false, nil
 				}
-				return 0, errors.New("second gate failed")
-			},
-			StorageURI: func(context.Context) string {
-				return "memstore:///residual"
-			},
+				return false, errors.New("second gate failed")
+			}),
+			StorageURI: "memstore:///residual",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -458,8 +474,8 @@ func TestMonitor(t *testing.T) {
 				walkErr: testCase.walkErr,
 			}
 			m := newTestMonitor(context.Background(), t, Config{
-				TaskCount:  func(context.Context) (int, error) { return 0, nil },
-				StorageURI: func(context.Context) string { return testCase.uri },
+				ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+				StorageURI:        testCase.uri,
 			})
 			m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 				return store, nil
@@ -482,10 +498,10 @@ func TestMonitor(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		m := newTestMonitor(ctx, t, Config{
-			TaskCount: func(context.Context) (int, error) {
-				t.Fatal("unexpected task count")
-				return 0, nil
-			},
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) {
+				t.Fatal("unexpected active task check")
+				return false, nil
+			}),
 		})
 
 		m.run()
@@ -500,10 +516,8 @@ func TestMonitor(t *testing.T) {
 		t.Cleanup(cancel)
 		store := &monitorStorage{Storage: objstore.NewMemStorage()}
 		m := newTestMonitor(ctx, t, Config{
-			TaskCount: func(context.Context) (int, error) { return 0, nil },
-			StorageURI: func(context.Context) string {
-				return "memstore:///residual"
-			},
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			StorageURI:        "memstore:///residual",
 		})
 		store.walkFn = func(context.Context) error {
 			cancel()
@@ -531,17 +545,15 @@ func TestMonitor(t *testing.T) {
 		}
 		calls := 0
 		m := newTestMonitor(ctx, t, Config{
-			TaskCount: func(context.Context) (int, error) {
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				if calls == 1 {
-					return 0, nil
+					return false, nil
 				}
 				cancel()
-				return 0, context.Canceled
-			},
-			StorageURI: func(context.Context) string {
-				return "memstore:///residual"
-			},
+				return false, context.Canceled
+			}),
+			StorageURI: "memstore:///residual",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -565,17 +577,15 @@ func TestMonitor(t *testing.T) {
 		}
 		calls := 0
 		m := newTestMonitor(ctx, t, Config{
-			TaskCount: func(context.Context) (int, error) {
+			ActiveTaskChecker: activeTaskCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				if calls == 1 {
-					return 0, nil
+					return false, nil
 				}
 				cancel()
-				return 0, nil
-			},
-			StorageURI: func(context.Context) string {
-				return "memstore:///residual"
-			},
+				return false, nil
+			}),
+			StorageURI: "memstore:///residual",
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
