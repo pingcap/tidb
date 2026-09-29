@@ -292,7 +292,7 @@
                      "format": "time_series",
                      "interval": "1m",
                      "intervalFactor": 1,
-                     "legendFormat": "{{resource_group}}",
+                     "legendFormat": "{{keyspace_name}}-{{resource_group}}",
                      "refId": "A"
                   }
                ],

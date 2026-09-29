@@ -267,7 +267,7 @@ local RUMaxPanel = graphPanel.new(
   prometheus.target(
     'max_over_time(' + RUPeakRange + ')' +
     ' and (count_over_time(' + RUPeakRange + ') == $__interval_ms / 60000)',
-    legendFormat="{{resource_group}}",
+    legendFormat="{{keyspace_name}}-{{resource_group}}",
     interval="1m",
     intervalFactor=1,
   )
