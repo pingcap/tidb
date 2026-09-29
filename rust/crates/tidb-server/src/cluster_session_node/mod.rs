@@ -5333,19 +5333,8 @@ impl ClusterServerSession {
     }
 
     fn buffer_write_details(&self) -> (isize, isize) {
-        self.buffer.snapshot().iter().fold(
-            (0_isize, 0_isize),
-            |(write_size, write_keys), (key, value)| {
-                let entry_size = key
-                    .as_bytes()
-                    .len()
-                    .wrapping_add(value.as_ref().map_or(0, Vec::len));
-                (
-                    write_size.wrapping_add(entry_size as isize),
-                    write_keys.wrapping_add(1),
-                )
-            },
-        )
+        let (write_size, write_keys) = self.buffer.write_details();
+        (write_size as isize, write_keys as isize)
     }
 
     fn record_write_details(&mut self, (write_size, write_keys): (isize, isize)) {

@@ -523,6 +523,24 @@ impl MutationBuffer {
     /// Every staged entry with its presumption mark, in key order, consuming
     /// the marks as [`Self::take_presume_not_exists`] does: the COMMIT
     /// mutation set of a transaction the session keeps.
+    /// Returns logical write bytes and key counts without cloning staged values.
+    /// Go records transaction write metrics from MemDB metadata; this metrics
+    /// path must not materialize a second mutation vector.
+    #[must_use]
+    pub fn write_details(&self) -> (usize, usize) {
+        let state = self.state();
+        state.entries.iter().fold((0usize, 0usize), |(bytes, keys), (key, entry)| {
+            let Some(write) = entry.write.as_ref() else {
+                return (bytes, keys);
+            };
+            (
+                bytes.saturating_add(key.as_bytes().len())
+                    .saturating_add(write.as_ref().map_or(0, Vec::len)),
+                keys.saturating_add(1),
+            )
+        })
+    }
+
     #[must_use]
     pub fn snapshot_staged(&self) -> Vec<(Key, Option<Vec<u8>>, bool)> {
         self.state().staged_writes(false, true)
