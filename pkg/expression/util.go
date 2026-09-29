@@ -1978,6 +1978,17 @@ func (r *SQLDigestTextRetriever) unresolvedDigests() []any {
 	return digests
 }
 
+// hasUnresolvedDigests reports whether any digest still needs a SQL text, without the
+// slice allocation and sorting of unresolvedDigests.
+func (r *SQLDigestTextRetriever) hasUnresolvedDigests() bool {
+	for _, text := range r.SQLDigestsMap {
+		if len(text) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *SQLDigestTextRetriever) retrieveDigests(ctx context.Context, exec expropt.SQLExecutor, queryGlobal, history bool) error {
 	digests := r.unresolvedDigests()
 	if len(digests) == 0 {
@@ -2033,12 +2044,14 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec exprop
 	}
 
 	// Check the cluster's current summary before reading local history. This avoids a local history scan when a
-	// requested digest is currently recorded on another TiDB node.
+	// requested digest is currently recorded on another TiDB node. Accepted trade-off: for digests held only in
+	// local history this adds a remote query first, and if that query exhausts the context deadline, the following
+	// local history query sees an expired context and can no longer return the locally available result.
 	globalCurrentErr := r.retrieveDigests(ctx, exec, true, false)
 	if err := r.retrieveDigests(ctx, exec, false, true); err != nil {
 		return err
 	}
-	if len(r.unresolvedDigests()) == 0 {
+	if !r.hasUnresolvedDigests() {
 		return nil
 	}
 	if globalCurrentErr != nil {
