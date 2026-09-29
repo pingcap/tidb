@@ -25,8 +25,8 @@ Unsupported factory paths and descriptor/planner paths remain explicit.
 - [x] Introduce typed aggregate descriptors/states and integrate region execution.
 - [x] Preserve aggregate mode in generated protobuf bindings from source schema.
 - [x] Run focused tests and required lint.
-- [ ] Run locked server builds in the commit hook and immediately before push.
-- [ ] Commit and push to hparser-integration; report remaining package gaps.
+- [x] Run locked server builds in the commit hook and immediately before push.
+- [x] Commit and push 17ad39d246 to hparser-integration; report remaining package gaps.
 - [x] Incorporate remote 5c875eae66 before publication (unrelated executor table-scan change).
 
 ## Surprises & Discoveries

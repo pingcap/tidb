@@ -230,7 +230,6 @@ mod tests {
                 }],
                 ..Default::default()
             },
-            &[],
             &ctx,
         )
         .unwrap();

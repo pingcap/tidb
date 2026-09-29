@@ -33,6 +33,10 @@
 mod analyze;
 mod eval_context;
 
+#[cfg(test)]
+#[path = "cophandler/region_group_tests.rs"]
+mod region_group_tests;
+
 use eval_context::{RequestEvalContext, SharedExpression};
 use std::sync::Arc;
 
@@ -344,14 +348,12 @@ fn exec_index_scan(
     };
 
     let mut aggregator = match aggregation {
-        Some(aggregation) => match RegionAggregator::build(
-            aggregation,
-            &idx_scan.columns,
-            &context.expression_context,
-        ) {
-            Ok(aggregator) => Some(aggregator),
-            Err(message) => return other_error(&message),
-        },
+        Some(aggregation) => {
+            match RegionAggregator::build(aggregation, &context.expression_context) {
+                Ok(aggregator) => Some(aggregator),
+                Err(message) => return other_error(&message),
+            }
+        }
         None => None,
     };
     let mut rows = Vec::new();
@@ -617,14 +619,12 @@ fn exec_table_scan(
         Err(error) => return other_error(&error),
     };
     let mut aggregator = match aggregation {
-        Some(aggregation) => match RegionAggregator::build(
-            aggregation,
-            &tbl_scan.columns,
-            &context.expression_context,
-        ) {
-            Ok(aggregator) => Some(aggregator),
-            Err(message) => return other_error(&message),
-        },
+        Some(aggregation) => {
+            match RegionAggregator::build(aggregation, &context.expression_context) {
+                Ok(aggregator) => Some(aggregator),
+                Err(message) => return other_error(&message),
+            }
+        }
         None => None,
     };
     use tidb_datatype::Datum;
@@ -892,58 +892,39 @@ fn exec_table_scan(
     }
 }
 
-/// Go's hash/stream aggregation processors own groups and row storage;
-/// `expression/aggregation` owns typed argument evaluation and aggregate state.
+/// Go's live `aggExec` shares typed group evaluation and first-seen group
+/// order between TypeAggregation and TypeStreamAgg. The deprecated protobuf
+/// `Aggregation.streamed` field does not select another grouping lifecycle.
 struct RegionAggregator {
-    group_by: Vec<(SimpleExpr, tidb_datatype::Collation)>,
+    group_by: Vec<tidb_expr::expression::Expression>,
     functions: Vec<tidb_expr::aggregation::DistAggregate>,
     context: Arc<RequestEvalContext>,
     row: tidb_chunk::mutrow::MutRow,
-    streamed: bool,
-    hash: std::collections::BTreeMap<
-        Vec<u8>,
-        (
-            Vec<tidb_datatype::Datum>,
-            Vec<tidb_expr::aggregation::DistAggregateState>,
-        ),
-    >,
-    current: Option<(
-        Vec<u8>,
-        Vec<tidb_datatype::Datum>,
-        Vec<tidb_expr::aggregation::DistAggregateState>,
-    )>,
-    ordered: Vec<Vec<tidb_datatype::Datum>>,
+    group_indices: std::collections::HashMap<Vec<u8>, usize>,
+    groups: Vec<RegionAggregateGroup>,
+}
+
+struct RegionAggregateGroup {
+    keys: Vec<tidb_datatype::Datum>,
+    values: Vec<tidb_expr::aggregation::DistAggregateState>,
 }
 
 impl RegionAggregator {
     fn build(
         aggregation: &tipb::Aggregation,
-        columns: &[tipb::ColumnInfo],
         context: &Arc<RequestEvalContext>,
     ) -> Result<Self, String> {
-        let collation_of_column = |expr: &SimpleExpr| -> tidb_datatype::Collation {
-            let id = match expr {
-                SimpleExpr::Column(offset) => {
-                    columns.get(*offset).map_or(0, |column| column.collation())
-                }
-                _ => 0,
-            };
-            let restored = tidb_datatype::restore_collation_id_if_needed(id);
-            tidb_datatype::Collation::from_name(&tidb_datatype::proto_to_collation(restored))
-                .unwrap_or(tidb_datatype::Collation::Binary)
-        };
         let group_by = aggregation
             .group_by
             .iter()
             .map(|expr| {
-                let converted = convert_expr_with_context(expr, context)?;
-                if !matches!(converted, SimpleExpr::Column(_)) {
-                    return Err("a computed group-by key is a later course".to_owned());
-                }
-                let collation = collation_of_column(&converted);
-                Ok((converted, collation))
+                tidb_expr::distsql_builtin::pb_to_expr_in(
+                    expr,
+                    &context.column_types,
+                    &context.zone,
+                )
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         let functions = aggregation
             .agg_func
             .iter()
@@ -963,18 +944,9 @@ impl RegionAggregator {
             functions,
             row: tidb_chunk::mutrow::MutRow::from_types(&context.column_types),
             context: Arc::clone(context),
-            streamed: aggregation.streamed == Some(true),
-            hash: std::collections::BTreeMap::new(),
-            current: None,
-            ordered: Vec::new(),
+            group_indices: std::collections::HashMap::new(),
+            groups: Vec::new(),
         })
-    }
-
-    fn new_values(&self) -> Vec<tidb_expr::aggregation::DistAggregateState> {
-        self.functions
-            .iter()
-            .map(|func| func.create_state())
-            .collect()
     }
 
     fn update(&mut self, row: &[tidb_datatype::Datum]) -> Result<(), String> {
@@ -982,49 +954,39 @@ impl RegionAggregator {
             return Err("aggregate row does not match input schema".to_owned());
         }
         self.row.set_datums(row);
-        let mut key = Vec::new();
-        let mut groups = Vec::with_capacity(self.group_by.len());
-        for (expr, collation) in &self.group_by {
-            let value = eval_datum(expr, row)?;
-            // The fallback cursor's own key rule: collation sort key for
-            // byte values, the codec hash for everything else, one 0xff
-            // fence between parts.
-            match value.as_raw_bytes() {
-                Some(bytes) => {
-                    tidb_codec::encode_compact_bytes(&mut key, &collation.key(bytes));
-                }
-                None => key.extend_from_slice(&tidb_codec::hash_code(&value)),
-            }
-            key.push(0xff);
-            groups.push(value);
-        }
-
-        if self.streamed {
-            if self
-                .current
-                .as_ref()
-                .is_some_and(|(current_key, _, _)| current_key != &key)
-            {
-                let (_, groups, values) = self.current.take().expect("current group exists");
-                self.ordered
-                    .push(Self::finish_group(&self.functions, groups, values));
-            }
-            if self.current.is_none() {
-                let values = self.new_values();
-                self.current = Some((key, groups, values));
-            }
-            let functions = &self.functions;
-            let (_, _, values) = self.current.as_mut().expect("just ensured");
-            return Self::accumulate(functions, values, &self.context, self.row.to_row());
-        }
-
-        if !self.hash.contains_key(&key) {
-            let values = self.new_values();
-            self.hash.insert(key.clone(), (groups, values));
-        }
-        let functions = &self.functions;
-        let (_, values) = self.hash.get_mut(&key).expect("just ensured");
-        Self::accumulate(functions, values, &self.context, self.row.to_row())
+        let keys = self
+            .group_by
+            .iter()
+            .map(|expr| {
+                expr.eval(self.context.as_ref(), self.row.to_row())
+                    .map_err(|error| {
+                        tidb_expr::aggregation::DistAggregateError::from(error).to_string()
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Go aggExec.getGroupKey uses EncodeValue, including raw string bytes
+        // and the request time zone. Do not fold collation keys or normalize
+        // floats here: either changes the observable intermediate group rows.
+        let key = tidb_codec::encode_value_in_timezone(&self.context.zone, &keys)
+            .map_err(|error| format!("encode group key failed: {error:?}"))?;
+        let index = *self.group_indices.entry(key).or_insert_with(|| {
+            let index = self.groups.len();
+            self.groups.push(RegionAggregateGroup {
+                keys,
+                values: self
+                    .functions
+                    .iter()
+                    .map(|func| func.create_state())
+                    .collect(),
+            });
+            index
+        });
+        Self::accumulate(
+            &self.functions,
+            &mut self.groups[index].values,
+            &self.context,
+            self.row.to_row(),
+        )
     }
 
     fn accumulate(
@@ -1054,17 +1016,10 @@ impl RegionAggregator {
             .collect()
     }
 
-    fn finish(mut self) -> Vec<Vec<tidb_datatype::Datum>> {
-        if self.streamed {
-            if let Some((_, groups, values)) = self.current.take() {
-                self.ordered
-                    .push(Self::finish_group(&self.functions, groups, values));
-            }
-            return self.ordered;
-        }
-        self.hash
-            .into_values()
-            .map(|(groups, values)| Self::finish_group(&self.functions, groups, values))
+    fn finish(self) -> Vec<Vec<tidb_datatype::Datum>> {
+        self.groups
+            .into_iter()
+            .map(|group| Self::finish_group(&self.functions, group.keys, group.values))
             .collect()
     }
 }
@@ -5569,22 +5524,21 @@ mod tests {
         assert_eq!(shown, ["30", "2", "1", "120", "2", "2"]);
     }
 
-    /// A STREAMED partial aggregation emits each group as the ordered scan
-    /// leaves it -- scan order, not group-key order -- and `COUNT(1)`
-    /// (Go's lowering of `COUNT(*)`) counts a row whose column is NULL.
+    /// Both aggregate executor types reuse interleaved groups in first-seen
+    /// order, and COUNT(1) includes a row whose column is NULL.
     #[test]
-    fn a_streamed_partial_aggregation_emits_groups_in_scan_order() {
+    fn a_streamed_partial_aggregation_reuses_groups_in_first_seen_order() {
         use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
 
         let mut store = MvccStore::new();
         let table_id = 78_i64;
-        // Scan order (by handle): g = 5, 5, 3 -- group 5 leaves first.
+        // Scan order (by handle): g = 5, 3, 5 -- group 5 is reused.
         let rows = [
             (1_i64, Datum::Int(5), Datum::Null),
-            (2, Datum::Int(5), Datum::Int(7)),
-            (3, Datum::Int(3), Datum::Int(9)),
+            (2, Datum::Int(3), Datum::Int(7)),
+            (3, Datum::Int(5), Datum::Int(9)),
         ];
         for (handle, g, v) in rows {
             let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));

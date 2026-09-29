@@ -52,7 +52,6 @@ fn region_aggregate_matches_go_wire_fixture() {
         let f: Vec<_> = line.split('\t').collect();
         let flags = f[1].parse().unwrap();
         let pb = tidb_proto::tipb::Aggregation::decode(unhex(f[2]).as_slice()).unwrap();
-        let col = tidb_proto::tipb::ColumnInfo::decode(unhex(f[3]).as_slice()).unwrap();
         let leaves = f[4]
             .split(',')
             .map(|s| tidb_proto::tipb::Expr::decode(unhex(s).as_slice()).unwrap())
@@ -64,7 +63,7 @@ fn region_aggregate_matches_go_wire_fixture() {
         let ctx = Arc::new(ctx);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || -> Result<String, (String, String)> {
-                let mut agg = super::super::RegionAggregator::build(&pb, &[col], &ctx)
+                let mut agg = super::super::RegionAggregator::build(&pb, &ctx)
                     .map_err(|e| ("build_error".to_owned(), e))?;
                 for leaf in leaves {
                     let value = tidb_expr::distsql_builtin::pb_to_expr(&leaf, &[])

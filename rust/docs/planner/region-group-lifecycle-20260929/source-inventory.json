@@ -1,0 +1,25 @@
+{
+  "status": "seed integration repair; no package completion claim",
+  "go_master": "12b639a1161cd5a60126a47277f5ad14c320fd4a",
+  "oracle_archive": "12b639a1161cd5a60126a47277f5ad14c320fd4a",
+  "rust_baseline": "17ad39d246ace8a787e6e32ce5ab9687688a14c5",
+  "packages": {
+    "pkg/store/mockstore/unistore/cophandler": [
+      "100644 blob 05b611251acd5d8159b65a47b70c563720f4d61b\tpkg/store/mockstore/unistore/cophandler/BUILD.bazel",
+      "100644 blob 8886797ca15faf6d6d5bd0ce9106c3ec60b78a25\tpkg/store/mockstore/unistore/cophandler/analyze.go",
+      "100644 blob 829bde10d8dc263a394651742cd39978bd337ea0\tpkg/store/mockstore/unistore/cophandler/closure_exec.go",
+      "100644 blob 896d97fce3eb966ea9e09c4dc50165adfe0b142d\tpkg/store/mockstore/unistore/cophandler/cop_handler.go",
+      "100644 blob 59e5eadc70a4a48f07f31c03e57ffdfcc7482e92\tpkg/store/mockstore/unistore/cophandler/cop_handler_test.go",
+      "100644 blob fd3c1dcf82f357a363850cc008f800dbc5409b64\tpkg/store/mockstore/unistore/cophandler/main_test.go",
+      "100644 blob b94ba50e9ac38ab5005b5fb7b1951af40432ec82\tpkg/store/mockstore/unistore/cophandler/mpp.go",
+      "100644 blob 2981779b2322aaed5790810a1cd8e13d8d4d8d8f\tpkg/store/mockstore/unistore/cophandler/mpp_exec.go",
+      "100644 blob bd66101b74eb98dd41817ff5024b8ef368c2f04b\tpkg/store/mockstore/unistore/cophandler/topn.go"
+    ]
+  },
+  "prior_dependency_inventory": "../region-aggregation-context-20260929/source-inventory.json",
+  "reference_verification": {
+    "tracked_blobs_verified": 7726,
+    "method": "SHA-1 Git blob hash of every file in the refreshed reference archive equals origin/master; failpoints disabled",
+    "fixture": "refreshed master with its pinned client-go produces byte-identical 11,232-case fixture"
+  }
+}

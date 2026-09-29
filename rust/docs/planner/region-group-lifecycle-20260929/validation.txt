@@ -1,0 +1,61 @@
+Reference: origin/master 12b639a1161cd5a60126a47277f5ad14c320fd4a.
+Rust before: 17ad39d246ace8a787e6e32ce5ab9687688a14c5.
+Status: seed integration repair; whole cophandler package remains incomplete.
+
+Go capture, from /private/tmp/tidb-go-structural-20260927:
+GOTOOLCHAIN=go1.25.14 GOFLAGS='-overlay=/private/tmp/region-group-overlay.json' ./tools/check/failpoint-go-test.sh pkg/store/mockstore/unistore/cophandler -run '^TestRustRegionGroupLifecycle$' -count=1 -v
+PASS: 11,232 distinct requests; no errors or warnings. The wrapper enabled
+failpoints and disabled them afterward (final refcount 0).
+The overlay maps pkg/store/mockstore/unistore/cophandler/rust_region_group_test.go
+to /private/tmp/region-group_test.go, whose source is saved as go-oracle.txt.
+Final run used the refreshed master snapshot, including go.mod/go.sum and current
+client-go. All 7,726 tracked file blob hashes matched master after failpoint
+cleanup. Final fixture is byte-identical to the initial owning-package capture.
+
+Before/after bug reproduction, from repository root:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-unistore --lib region_group -- --test-threads=1
+BEFORE: expected exit 101, 5,824 differences out of 11,232 cases. Used unchanged
+17ad39d246 production sources, with the regression module attached. Sources
+were saved and restored in a finally block. All differences are retained in
+rust-before.json.gz.
+AFTER: PASS; 11,232 rows/errors/warnings match Go exactly.
+
+Existing aggregate-function contract:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-unistore --lib region_aggregate -- --test-threads=1
+PASS: 3,129 previously captured aggregate-function cases.
+
+Unistore integration:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-unistore --lib -- --test-threads=1 --skip tests_mockstore_part1_go_parity::closure_executor_selection_over_point_range_answers_zero_rows
+PASS: 190 passed, 13 existing ignored, one existing failure excluded.
+The excluded abc-to-number selection failure was reproduced on untouched
+b415a65bd8 in the preceding aggregation receipt. It remains unresolved.
+
+Producer integration:
+cargo test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --test all wide_scan_selection_source
+PASS: 16 tests, including TPC-H Q1/Q6 aggregation request shapes.
+
+make lint
+PASS: Rust protobuf synchronization/projection checks, revive and dashboard lint.
+
+rustfmt --edition 2021 --config skip_children=true --check rust/crates/tidb-unistore/src/cophandler.rs rust/crates/tidb-unistore/src/cophandler/eval_context.rs rust/crates/tidb-unistore/src/cophandler/region_aggregate_tests.rs rust/crates/tidb-unistore/src/cophandler/region_group_tests.rs
+PASS.
+
+git diff --check
+PASS.
+
+python3 rust/docs/planner/region-group-lifecycle-20260929/verify.py
+PASS: fixture uniqueness, baseline differences and artifact SHA-256 hashes.
+
+No Go/Bazel/dependency inputs changed in this branch diff; bazel_prepare is not
+triggered. The Go oracle remains a temporary overlay and evidence text artifact.
+
+Publication gates, executed after saving this receipt:
+TERM=xterm git -c core.hooksPath=hooks commit ...
+The hook must run cd rust && cargo build --locked -p tidb-server and abort on failure.
+Immediately before git push origin HEAD:hparser-integration:
+cd rust && cargo build --locked -p tidb-server
+The final task response records publication outcome and commit ID.
+
+Not verified: complete upstream package/variant test coverage, full Rust workspace,
+all expression diagnostic cases, live Go GetResult/declared result materialization,
+general executor tree composition, real TiKV and sysbench/TPC-C/TPC-H/YCSB throughput.

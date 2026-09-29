@@ -1,0 +1,315 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package cophandler
+
+import (
+	"encoding/hex"
+	"fmt"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tipb/go-tipb"
+	"google.golang.org/protobuf/encoding/protowire"
+	"math"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestRustRegionGroupLifecycle(t *testing.T) {
+	store, closeDB, err := newTestStore("rust-region-group-db-", "rust-region-group-log-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := closeDB(); err != nil {
+			t.Error(err)
+		}
+		os.RemoveAll(store.dbPath)
+		os.RemoveAll(store.logPath)
+	}()
+	out, err := os.Create("/private/tmp/region-group-go.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+	ft := func(tp byte) *tipb.FieldType {
+		return &tipb.FieldType{Tp: int32(tp), Flen: -1, Decimal: -1, Flag: 128, Charset: "binary", Collate: 63}
+	}
+	intTp := ft(mysql.TypeLonglong)
+	intTp.Decimal = 0
+	strTp := ft(mysql.TypeVarString)
+	strTp.Flag = 0
+	strTp.Charset = "utf8mb4"
+	strTp.Collate = 45
+	realTp := ft(mysql.TypeDouble)
+	decimalTp := ft(mysql.TypeNewDecimal)
+	decimalTp.Flen = 20
+	decimalTp.Decimal = 2
+	datetimeTp := ft(mysql.TypeDatetime)
+	datetimeTp.Decimal = 3
+	timestampTp := ft(mysql.TypeTimestamp)
+	timestampTp.Decimal = 3
+	durationTp := ft(mysql.TypeDuration)
+	durationTp.Decimal = 3
+	jsonTp := ft(mysql.TypeJSON)
+	datums := func(v ...any) [][]types.Datum {
+		r := [][]types.Datum{}
+		for _, x := range v {
+			r = append(r, types.MakeDatums(x))
+		}
+		return r
+	}
+	timeValue := func(day int, tp byte) types.Time {
+		return types.NewTime(types.FromDate(2024, 1, day, 3, 4, 5, 123000), tp, 3)
+	}
+	jsonValue := func(s string) types.BinaryJSON {
+		v, e := types.ParseBinaryJSONFromString(s)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return v
+	}
+	datasets := []struct {
+		name  string
+		types []*tipb.FieldType
+		rows  [][]types.Datum
+	}{
+		{"int", []*tipb.FieldType{intTp}, datums(5, 3, 5, nil, 3)},
+		{"string_ci", []*tipb.FieldType{strTp}, datums("A", "a", "A ", "a", "Z")},
+		{"real", []*tipb.FieldType{realTp}, datums(0.0, math.Copysign(0, -1), 2.5, math.Copysign(0, -1), nil)},
+		{"decimal", []*tipb.FieldType{decimalTp}, datums(types.NewDecFromStringForTest("2.50"), types.NewDecFromStringForTest("1.00"), types.NewDecFromStringForTest("2.5"), nil)},
+		{"datetime", []*tipb.FieldType{datetimeTp}, datums(timeValue(2, mysql.TypeDatetime), timeValue(1, mysql.TypeDatetime), timeValue(2, mysql.TypeDatetime), nil)},
+		{"timestamp", []*tipb.FieldType{timestampTp}, datums(timeValue(2, mysql.TypeTimestamp), timeValue(1, mysql.TypeTimestamp), timeValue(2, mysql.TypeTimestamp), nil)},
+		{"duration", []*tipb.FieldType{durationTp}, datums(types.Duration{Duration: 2 * time.Second, Fsp: 3}, types.Duration{Duration: time.Second, Fsp: 3}, types.Duration{Duration: 2 * time.Second, Fsp: 3}, nil)},
+		{"json", []*tipb.FieldType{jsonTp}, datums(jsonValue(`{"b":1}`), jsonValue(`{"a":1}`), jsonValue(`{"b":1}`), nil)},
+		{"compound", []*tipb.FieldType{strTp, strTp}, [][]types.Datum{types.MakeDatums("a", "bc"), types.MakeDatums("ab", "c"), types.MakeDatums("a", "bc"), types.MakeDatums(nil, ""), types.MakeDatums("", nil)}},
+	}
+	intExpr := func(n int64) *tipb.Expr {
+		return &tipb.Expr{Tp: tipb.ExprType_Int64, Val: codec.EncodeInt(nil, n), FieldType: intTp}
+	}
+	call := func(sig tipb.ScalarFuncSig, tp *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
+		return &tipb.Expr{Tp: tipb.ExprType_ScalarFunc, Sig: sig, FieldType: tp, Children: args}
+	}
+	cases := 0
+	for di, ds := range datasets {
+		for _, indexScan := range []bool{false, true} {
+			if indexScan && ds.name != "int" && ds.name != "string_ci" && ds.name != "compound" {
+				continue
+			}
+			table := int64(600 + di)
+			cols := []*tipb.ColumnInfo{}
+			keys := []string{}
+			encoded := []*encodedTestKVData{}
+			for i, tp := range ds.types {
+				cols = append(cols, &tipb.ColumnInfo{ColumnId: int64(i + 1), Tp: tp.Tp, Collation: tp.Collate, ColumnLen: tp.Flen, Decimal: tp.Decimal, Flag: int32(tp.Flag)})
+			}
+			for i, row := range ds.rows {
+				colIDs := []int64{}
+				for j := range row {
+					colIDs = append(colIDs, int64(j+1))
+				}
+				value, e := tablecodec.EncodeRow(time.UTC, row, colIDs, nil, nil, nil, &rowcodec.Encoder{Enable: true})
+				if e != nil {
+					t.Fatal(e)
+				}
+				key := tablecodec.EncodeRowKeyWithHandle(table, kv.IntHandle(i+1))
+				if indexScan {
+					indexValues, e := codec.EncodeKey(time.UTC, nil, append(append([]types.Datum{}, row...), types.NewIntDatum(int64(i+1)))...)
+					if e != nil {
+						t.Fatal(e)
+					}
+					key = tablecodec.EncodeIndexSeekKey(table, 1, indexValues)
+					value = []byte{0}
+				}
+				encoded = append(encoded, &encodedTestKVData{encodedRowKey: key, encodedRowValue: value})
+				keys = append(keys, hex.EncodeToString(key)+":"+hex.EncodeToString(value))
+			}
+			if errs := initTestData(store, encoded); len(errs) != 0 {
+				t.Fatal(errs)
+			}
+			col := func(i int) *tipb.Expr {
+				return &tipb.Expr{Tp: tipb.ExprType_ColumnRef, Val: codec.EncodeInt(nil, int64(i)), FieldType: ds.types[i]}
+			}
+			groupers := []struct {
+				name  string
+				exprs []*tipb.Expr
+			}{{"global", nil}, {"column", []*tipb.Expr{col(0)}}, {"constant", []*tipb.Expr{intExpr(7)}}}
+			if ds.name == "int" {
+				groupers = append(groupers, struct {
+					name  string
+					exprs []*tipb.Expr
+				}{"plus", []*tipb.Expr{call(tipb.ScalarFuncSig_PlusInt, intTp, col(0), intExpr(1))}})
+			}
+			if ds.name == "string_ci" {
+				groupers = append(groupers, struct {
+					name  string
+					exprs []*tipb.Expr
+				}{"lower", []*tipb.Expr{call(tipb.ScalarFuncSig_LowerUTF8, strTp, col(0))}})
+			}
+			if ds.name == "compound" {
+				groupers = append(groupers, struct {
+					name  string
+					exprs []*tipb.Expr
+				}{"compound", []*tipb.Expr{col(0), col(1)}})
+			}
+			for _, group := range groupers {
+				for _, aggregate := range []string{"count_star", "count_column", "min", "group_only"} {
+					if aggregate == "group_only" && len(group.exprs) == 0 {
+						continue
+					}
+					for _, stream := range []bool{false, true} {
+						for _, marker := range []int{-1, 0, 1} {
+							for _, empty := range []bool{false, true} {
+								for _, selection := range []int{-1, 0, 1} {
+									for _, descending := range []bool{false, true} {
+										mode := tipb.AggFunctionMode_Partial1Mode
+										agg := &tipb.Expr{Tp: tipb.ExprType_Count, Children: []*tipb.Expr{intExpr(1)}, FieldType: intTp, AggFuncMode: &mode}
+										if aggregate == "count_column" {
+											agg.Children = []*tipb.Expr{col(0)}
+										}
+										if aggregate == "min" {
+											agg.Tp = tipb.ExprType_Min
+											agg.Children = []*tipb.Expr{col(0)}
+											agg.FieldType = ds.types[0]
+										}
+										aggregation := &tipb.Aggregation{AggFunc: []*tipb.Expr{agg}, GroupBy: group.exprs}
+										if aggregate == "group_only" {
+											aggregation.AggFunc = nil
+										}
+										if marker >= 0 {
+											v := marker == 1
+											aggregation.Streamed = v
+										}
+										tp := tipb.ExecType_TypeAggregation
+										if stream {
+											tp = tipb.ExecType_TypeStreamAgg
+										}
+										scan := &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: &tipb.TableScan{TableId: table, Columns: cols, Desc: descending}}
+										if indexScan {
+											scan = &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: &tipb.IndexScan{TableId: table, IndexId: 1, Columns: cols, Desc: descending}}
+										}
+										executors := []*tipb.Executor{scan}
+										if selection >= 0 {
+											executors = append(executors, &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: &tipb.Selection{Conditions: []*tipb.Expr{intExpr(int64(selection))}}})
+										}
+										executors = append(executors, &tipb.Executor{Tp: tp, Aggregation: aggregation})
+										offsets := []uint32{}
+										for i := 0; i < len(aggregation.AggFunc)+len(group.exprs); i++ {
+											offsets = append(offsets, uint32(i))
+										}
+										dag := &tipb.DAGRequest{Executors: executors, OutputOffsets: offsets, TimeZoneOffset: 3600}
+										wire, e := dag.Marshal()
+										if e != nil {
+											t.Fatal(e)
+										}
+										if marker == -1 {
+											wire = omitRegionGroupField(t, wire, []protowire.Number{2, 5, 3})
+										}
+										start := tablecodec.EncodeRowKeyWithHandle(table, kv.IntHandle(0))
+										if empty {
+											start = tablecodec.EncodeRowKeyWithHandle(table, kv.IntHandle(20))
+										}
+										end := tablecodec.EncodeRowKeyWithHandle(table, kv.IntHandle(100))
+										if indexScan {
+											indexID := int64(1)
+											if empty {
+												indexID = 2
+											}
+											start = tablecodec.EncodeIndexSeekKey(table, indexID, nil)
+											end = tablecodec.EncodeIndexSeekKey(table, indexID, []byte{255})
+										}
+										req := &coprocessor.Request{Context: &kvrpcpb.Context{}, Tp: kv.ReqTypeDAG, Data: wire, StartTs: 100, Ranges: []*coprocessor.KeyRange{{Start: start, End: end}}}
+										requestWire, e := req.Marshal()
+										if e != nil {
+											t.Fatal(e)
+										}
+										txn := store.db.NewTransaction(false)
+										reader := dbreader.NewDBReader(nil, []byte{255}, txn)
+										response := HandleCopRequest(reader, store.locks, req)
+										reader.Close()
+										result := []byte{}
+										detail := response.OtherError
+										warn := []string{}
+										if detail == "" {
+											var selectResponse tipb.SelectResponse
+											if e = selectResponse.Unmarshal(response.Data); e != nil {
+												t.Fatal(e)
+											}
+											if selectResponse.Error != nil {
+												detail = fmt.Sprintf("[%d]%s", selectResponse.Error.Code, selectResponse.Error.Msg)
+											}
+											for _, c := range selectResponse.Chunks {
+												result = append(result, c.RowsData...)
+											}
+											for _, w := range selectResponse.Warnings {
+												warn = append(warn, hex.EncodeToString([]byte(fmt.Sprintf("[%d]%s", w.Code, w.Msg))))
+											}
+										}
+										name := fmt.Sprintf("%s/%s/%s/index%v/desc%v/stream%v/marker%d/empty%v/selection%d", ds.name, group.name, aggregate, indexScan, descending, stream, marker, empty, selection)
+										fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\n", name, hex.EncodeToString(requestWire), strings.Join(keys, ","), hex.EncodeToString(result), hex.EncodeToString([]byte(detail)), strings.Join(warn, ","))
+										cases++
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	t.Logf("captured %d requests", cases)
+}
+
+// Omit the deprecated field to distinguish absent from explicit false on the wire.
+// gogo's Aggregation.Streamed is a bool and always marshals field 3.
+func omitRegionGroupField(t *testing.T, data []byte, path []protowire.Number) []byte {
+	t.Helper()
+	var result []byte
+	for len(data) > 0 {
+		field, kind, tagSize := protowire.ConsumeTag(data)
+		if tagSize < 0 {
+			t.Fatal("invalid protobuf tag")
+		}
+		valueSize := protowire.ConsumeFieldValue(field, kind, data[tagSize:])
+		if valueSize < 0 {
+			t.Fatal("invalid protobuf value")
+		}
+		size := tagSize + valueSize
+		if field != path[0] {
+			result = append(result, data[:size]...)
+		} else if len(path) > 1 {
+			if kind != protowire.BytesType {
+				t.Fatal("non-message protobuf path")
+			}
+			child, _ := protowire.ConsumeBytes(data[tagSize:])
+			result = protowire.AppendTag(result, field, kind)
+			result = protowire.AppendBytes(result, omitRegionGroupField(t, child, path[1:]))
+		}
+		data = data[size:]
+	}
+	return result
+}
