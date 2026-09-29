@@ -2124,6 +2124,24 @@ func ifExpr(cond, trueExpr, falseExpr ast.ExprNode) *ast.FuncCallExpr {
 	}
 }
 
+func validateCompleteDiffSelectFields(mvSel *ast.SelectStmt, mv *model.TableInfo) error {
+	if mvSel.Fields == nil {
+		return errors.Errorf(
+			"materialized view %s select has no field list",
+			mv.Name.O,
+		)
+	}
+	if len(mvSel.Fields.Fields) != len(mv.Columns) {
+		return errors.Errorf(
+			"materialized view %s select output count %d does not match mv column count %d",
+			mv.Name.O,
+			len(mvSel.Fields.Fields),
+			len(mv.Columns),
+		)
+	}
+	return nil
+}
+
 // BuildCompleteDiffSource builds the diff-source SELECT statement and layout metadata for
 // COMPLETE DELTA APPLY refresh.
 //
@@ -2165,13 +2183,8 @@ func BuildCompleteDiffSource(
 	if err != nil {
 		return nil, err
 	}
-	if mvSel.Fields == nil || len(mvSel.Fields.Fields) != len(mv.Columns) {
-		return nil, errors.Errorf(
-			"materialized view %s select output count %d does not match mv column count %d",
-			mv.Name.O,
-			len(mvSel.Fields.Fields),
-			len(mv.Columns),
-		)
+	if err := validateCompleteDiffSelectFields(mvSel, mv); err != nil {
+		return nil, err
 	}
 	for i, f := range mvSel.Fields.Fields {
 		if f == nil {
