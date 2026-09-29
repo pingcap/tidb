@@ -1286,7 +1286,70 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         self,
         buffer: &MutationBuffer,
     ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
-        self.commit_with(buffer, Vec::new())
+        // Go KVTxn.Commit consumes the MemDB mutation entries while building
+        // the commit set. This transaction is consumed by this method too, so
+        // move the staged key/value ownership instead of cloning every value
+        // on the explicit COMMIT hot path.
+        let (mut mutations, _) = staged_mutations_from_entries(buffer.take_staged())
+            .map_err(coordinator_sql_error)?;
+        let schema_lease = schema_lease_for(self.schema_lease_checker.clone(), &mutations);
+        if mutations.is_empty() {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            finish_session_transaction(&mut state).map_err(storage_sql_error)?;
+            return Ok(None);
+        }
+        let state = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::mem::replace(&mut *state, SessionTransactionState::Finished)
+        };
+        let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+        let outcome = match state {
+            SessionTransactionState::Optimistic(mut transaction) => {
+                if let Some(lease) = schema_lease {
+                    transaction.set_schema_lease(lease);
+                }
+                transaction.commit(mutations, &call)
+            }
+            SessionTransactionState::PessimisticPending {
+                transaction,
+                opened_at,
+                ..
+            } => RealPessimisticTransaction::from_transaction(transaction, opened_at).and_then(
+                |mut transaction| {
+                    if let Some(lease) = schema_lease {
+                        transaction.set_schema_lease(lease);
+                    }
+                    transaction.commit(mutations, &call)
+                },
+            ),
+            SessionTransactionState::Pessimistic {
+                mut transaction,
+                opener: _opener,
+                keep_alive: _keep_alive,
+                ..
+            } => {
+                if let Some(lease) = schema_lease {
+                    transaction.set_schema_lease(lease);
+                }
+                transaction.commit(mutations, &call)
+            }
+            SessionTransactionState::Finished => {
+                return Err(engine_sql_error(
+                    "the transaction is already finished".to_owned(),
+                ));
+            }
+        }
+        .map_err(|error| engine_sql_error(error.to_string()))?;
+        let duplicate_hint = deferred_duplicate_hint(&outcome, buffer);
+        commit_outcome_to_sql_error_with_hint(&outcome, duplicate_hint.as_ref())?;
+        buffer.reset();
+        Ok(Some(outcome))
     }
 
     /// Binds the session's schema lease checker to this transaction's commit
