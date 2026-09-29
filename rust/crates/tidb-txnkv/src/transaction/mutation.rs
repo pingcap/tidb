@@ -306,10 +306,13 @@ pub(super) fn validate_and_sort(
     validate_plan(mutations.len(), checked_aggregate_bytes(&mutations))?;
     let mut sorted = mutations;
     sorted.sort_by(|left, right| left.key.cmp(&right.key));
-    let mut keys = BTreeSet::new();
-    for mutation in &sorted {
-        if !keys.insert(mutation.key.clone()) {
-            return Err(MutationSetError::DuplicateKey(mutation.key.clone()));
+    // MutationBuffer/Go memdb already keeps one entry per encoded key.
+    // Keep the coordinator's defensive duplicate check, but compare adjacent
+    // keys after sorting instead of allocating a BTreeSet and cloning every
+    // key on every transaction commit.
+    for pair in sorted.windows(2) {
+        if pair[0].key == pair[1].key {
+            return Err(MutationSetError::DuplicateKey(pair[1].key.clone()));
         }
     }
     Ok(sorted)
