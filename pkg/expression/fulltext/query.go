@@ -103,6 +103,34 @@ func (q *Query) SelectivityTerm() (string, bool) {
 	return q.selectivityTerm, true
 }
 
+// UsesPrefixPostings reports whether evaluating the query against an index
+// reads the postings of every term with some prefix, rather than the postings
+// of exact terms only. A reader that narrows exact-term postings to a range of
+// handles cannot narrow a prefix's postings the same way, so such a query
+// still needs the narrowing predicate re-checked on the rows it yields.
+func (q *Query) UsesPrefixPostings() bool {
+	if q == nil || q.matchesNothing {
+		return false
+	}
+	return queryNodeUsesPrefix(q.root)
+}
+
+func queryNodeUsesPrefix(node queryNode) bool {
+	switch n := node.(type) {
+	case prefixNode:
+		return true
+	case groupNode:
+		for _, children := range [][]queryNode{n.must, n.should, n.mustNot} {
+			for _, child := range children {
+				if queryNodeUsesPrefix(child) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func parseBooleanQuery(search string, parserType model.FullTextParserType) (*matchagainst.BooleanGroup, error) {
 	switch parserType {
 	case model.FullTextParserTypeStandardV1:

@@ -285,7 +285,8 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	if p.FullText != nil {
 		// The index is read by terms of the search string; the ranges that
 		// follow, if any, are the key-column values the search is confined
-		// to.
+		// to, followed by the clustered-handle ranges each term's postings
+		// are confined to.
 		if normalized {
 			buffer.WriteString("fulltext:?, ")
 		} else {

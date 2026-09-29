@@ -287,6 +287,27 @@ structure and is what MySQL's InnoDB FTS does too.
   covering every key column. The point's access conditions are served by the
   index and leave the table filters; `IN` lists, ranges and `OR`s over a key
   column keep the scan.
+- Every entry ends with the row's clustered handle, as in any non-unique
+  index, so a term's postings are laid out in handle order and conditions on
+  a leading prefix of the handle columns select a contiguous slice of each
+  term's postings. The columns and the cases in which the key carries them
+  are those `HandleColsToAppend` gives an ordinary index (#69745): a
+  clustered primary key that shares no column with the index, or a signed
+  integer handle. Ranger is run over the remaining conditions with those
+  columns, and its ranges become the trailing dimensions of the path's
+  ranges, after the key-column point; the term sits between them in the key
+  and is implied. The executor reads each exact term's postings within each
+  range in turn, which keeps them in handle order since the ranges are
+  sorted and disjoint. For a search of exact terms (every standard term and
+  phrase, and every NGRAM fragment at least a gram long) the conditions are
+  served by the index and leave the table filters; a prefix search reads
+  every term with the prefix, which a handle range cannot narrow, so its
+  conditions stay as table filters too. This lets `FULLTEXT(body)` on a
+  table with `PRIMARY KEY (tenant_id, id) CLUSTERED` serve both global and
+  tenant-scoped exact searches without storing the tenant twice, while
+  `FULLTEXT(tenant_id, body)` remains the choice for prefix searches within
+  a tenant, for search dimensions outside the primary key, and for
+  tenant-first locality.
 - **When such a path exists it replaces every other path**, as the columnar
   full-text path does. The alternative is tokenizing every document to
   evaluate the MATCH, which the cost model does not see (a filter costs one
@@ -299,9 +320,9 @@ structure and is what MySQL's InnoDB FTS does too.
 - The path cannot keep an order, even one on the indexed column. Plans using
   it are not cached, since the search string is baked in.
 - Explain shows `FullTextIndexScan(Build)` as a root operator with
-  `index:idx(col) fulltext:"<search>"`, followed by `range:[v,v]` for the
-  pinned key columns, under `IndexMerge`, with the table lookup as the
-  coprocessor probe.
+  `index:idx(col) fulltext:"<search>"`, followed by `range:` for the pinned
+  key columns and the handle ranges, `[7 1,7 1]` for key column 7 and handle
+  1, under `IndexMerge`, with the table lookup as the coprocessor probe.
 - Row estimate: the `MATCH`'s own selectivity (the ILIKE proxy on the
   selectivity term). Posting-length statistics are a follow-up.
 
@@ -314,7 +335,7 @@ structure and is what MySQL's InnoDB FTS does too.
 | Value layout inert to existing decoders | `TestTiKVFullTextIndexValueIsInertToOtherDecoders` (`pkg/tablecodec`) |
 | Generator and mutation-checker membership | `TestFullTextIndexKVGeneration`, `TestFullTextIndexMutationCheck` (`pkg/table/tables`) |
 | Engine equals per-document matcher over random corpora and queries | `TestOpenPostingsAgreesWithScan` and siblings (`pkg/expression/fulltext`) |
-| Index plan results equal scan results: boolean forms, NGRAM, partitions, transactions, key columns | `TestFullTextIndexMatchAgainst*` (`pkg/executor/test/indexmergereadtest`) |
+| Index plan results equal scan results: boolean forms, NGRAM, partitions, transactions, key columns, clustered-handle ranges | `TestFullTextIndexMatchAgainst*` (`pkg/executor/test/indexmergereadtest`) |
 | Planning rules, hints, invisible index, ordering, plan cache | `TestFullTextIndexPathPlanning` (`pkg/planner/core`) |
 | Schema tracker mirrors the executor | `TestFullTextIndexMirrorsExecutor` (`pkg/ddl/schematracker`) |
 | Cluster version detection | `TestDetectAndUpdateJobVersion` (`pkg/ddl`) |

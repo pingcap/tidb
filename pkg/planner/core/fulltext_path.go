@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -55,6 +56,18 @@ import (
 // ordinary index scan, and dropped from the table filters. Without such a
 // point the index cannot serve the query and the scan stays.
 //
+// Every entry of the index ends with the row's clustered handle, as the entry
+// of any non-unique index does, so a term's postings are laid out in handle
+// order and conditions on a leading prefix of the handle columns select a
+// contiguous slice of each term's postings. The same conditions turn into
+// ranges of an ordinary index scan, and here they narrow every exact term's
+// posting scan to the matching handles: a tenant equality on a table whose
+// primary key leads with the tenant confines a search on a FULLTEXT index
+// without key columns to that tenant. A prefix search, standard `foo*` or an
+// NGRAM fragment shorter than the gram size, reads every term with the prefix
+// and is not narrowed, so with such a search the conditions also stay on the
+// table side.
+//
 // When such a path exists it replaces every other path, as the columnar
 // full-text path does. The alternative is to tokenize every document of the
 // table to evaluate the MATCH, which the cost model does not see: it charges a
@@ -81,11 +94,11 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 		colInfo := ds.TableInfo.Columns[textCol.Offset]
 		config := fulltext.AnalyzerConfigFromTiKVFullTextIndex(idx.TiKVFullText)
 		for _, cond := range ds.AllConds {
-			match, search, ok := fullTextMatchOnColumn(ds, cond, colInfo, config)
+			match, search, query, ok := fullTextMatchOnColumn(ds, cond, colInfo, config)
 			if !ok {
 				continue
 			}
-			path, err := buildFullTextIndexPath(ds, idx, match, search)
+			path, err := buildFullTextIndexPath(ds, idx, match, search, query)
 			if err != nil {
 				return err
 			}
@@ -144,19 +157,20 @@ func fullTextIndexAllowedByHints(ds *logicalop.DataSource, idx *model.IndexInfo)
 
 // fullTextMatchOnColumn reports whether cond is a locally evaluated
 // MATCH(col) AGAINST('constant' IN BOOLEAN MODE) over the given column whose
-// analyzer is the index's, and returns the search string.
-func fullTextMatchOnColumn(ds *logicalop.DataSource, cond expression.Expression, colInfo *model.ColumnInfo, config fulltext.AnalyzerConfig) (*expression.ScalarFunction, string, bool) {
+// analyzer is the index's, and returns the search string with the query it
+// compiles to.
+func fullTextMatchOnColumn(ds *logicalop.DataSource, cond expression.Expression, colInfo *model.ColumnInfo, config fulltext.AnalyzerConfig) (*expression.ScalarFunction, string, *fulltext.Query, bool) {
 	sf, ok := cond.(*expression.ScalarFunction)
 	if !ok || sf.FuncName.L != ast.FTSMysqlMatchAgainst {
-		return nil, "", false
+		return nil, "", nil, false
 	}
 	args := sf.GetArgs()
 	if len(args) != 2 {
-		return nil, "", false
+		return nil, "", nil, false
 	}
 	col, ok := args[1].(*expression.Column)
 	if !ok || col.ID != colInfo.ID {
-		return nil, "", false
+		return nil, "", nil, false
 	}
 	// Local evaluation is what makes the MATCH a boolean predicate this index
 	// can serve; it also carries the analyzer the predicate compiled with,
@@ -164,27 +178,31 @@ func fullTextMatchOnColumn(ds *logicalop.DataSource, cond expression.Expression,
 	// terms stored.
 	info, ok := expression.FTSMysqlMatchAgainstLocalEvalInfo(sf)
 	if !ok || !info.AnalyzerConfig.Equal(config) {
-		return nil, "", false
+		return nil, "", nil, false
 	}
 	constant, ok := args[0].(*expression.Constant)
 	if !ok || expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), constant) {
-		return nil, "", false
+		return nil, "", nil, false
 	}
 	value, err := constant.Eval(ds.SCtx().GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err != nil || value.IsNull() || value.Kind() != types.KindString {
-		return nil, "", false
+		return nil, "", nil, false
 	}
 	search := value.GetString()
-	if _, err := fulltext.CompileBooleanQuery(search, config); err != nil {
-		return nil, "", false
+	query, err := fulltext.CompileBooleanQuery(search, config)
+	if err != nil {
+		return nil, "", nil, false
 	}
-	return sf, search, true
+	return sf, search, query, true
 }
 
 // buildFullTextIndexPath builds the IndexMerge path that answers match with
 // idx, or returns nil when the index has key columns the conditions do not
-// pin to one value.
-func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, match *expression.ScalarFunction, search string) (*util.AccessPath, error) {
+// pin to one value. The path's ranges have the key columns as their leading
+// dimensions and, when conditions on the clustered handle narrow the posting
+// scans, the handle columns as the trailing ones; the term sits between them
+// in the key and is implied.
+func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, match *expression.ScalarFunction, search string, query *fulltext.Query) (*util.AccessPath, error) {
 	partial := &util.AccessPath{
 		Index:     idx,
 		FullText:  &util.FullTextAccessInfo{Match: match, Search: search},
@@ -220,10 +238,30 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 		tableFilters = res.RemainedConds
 	}
 
-	// The MATCH's own selectivity estimate, with that of the equalities on
-	// the key columns, is the best available guess for how many rows the
-	// index will yield; the index has no statistics of its own, since its
-	// entries are terms rather than column values.
+	// Conditions on a leading prefix of the clustered handle columns, which
+	// end every entry of the index, narrow each exact term's posting scan to
+	// the handles they select. The columns and the cases in which the key
+	// carries them are those of an ordinary non-unique index. A prefix search
+	// cannot be narrowed, so its conditions remain table filters as well.
+	if handleCols, handleLens := ds.HandleColsToAppend(partial, partial.IdxCols); len(handleCols) > 0 {
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx().GetRangerCtx(), tableFilters,
+			handleCols, handleLens, ds.SCtx().GetSessionVars().RangeMaxSize)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(res.AccessConds) > 0 && len(res.Ranges) > 0 {
+			partial.Ranges = fullTextHandleRanges(partial.Ranges, res.Ranges)
+			partial.AccessConds = append(partial.AccessConds, res.AccessConds...)
+			if !query.UsesPrefixPostings() {
+				tableFilters = res.RemainedConds
+			}
+		}
+	}
+
+	// The MATCH's own selectivity estimate, with that of the conditions on
+	// the key and handle columns, is the best available guess for how many
+	// rows the index will yield; the index has no statistics of its own,
+	// since its entries are terms rather than column values.
 	accessConds := make([]expression.Expression, 0, 1+len(partial.AccessConds))
 	accessConds = append(accessConds, match)
 	accessConds = append(accessConds, partial.AccessConds...)
@@ -240,4 +278,30 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 		CountAfterAccess:  count,
 		StoreType:         kv.TiKV,
 	}, nil
+}
+
+// fullTextHandleRanges appends each range of the handle columns to the point
+// the key columns are pinned to, which is keyRanges' single range, or returns
+// the handle ranges themselves for an index without key columns. The handle
+// ranges are sorted and disjoint, as ranger builds them, so the result is too.
+func fullTextHandleRanges(keyRanges, handleRanges ranger.Ranges) ranger.Ranges {
+	if len(keyRanges) == 0 {
+		return handleRanges
+	}
+	point := keyRanges[0]
+	ranges := make(ranger.Ranges, 0, len(handleRanges))
+	for _, hr := range handleRanges {
+		ran := &ranger.Range{
+			LowVal:      make([]types.Datum, 0, len(point.LowVal)+len(hr.LowVal)),
+			HighVal:     make([]types.Datum, 0, len(point.HighVal)+len(hr.HighVal)),
+			Collators:   make([]collate.Collator, 0, len(point.Collators)+len(hr.Collators)),
+			LowExclude:  hr.LowExclude,
+			HighExclude: hr.HighExclude,
+		}
+		ran.LowVal = append(append(ran.LowVal, point.LowVal...), hr.LowVal...)
+		ran.HighVal = append(append(ran.HighVal, point.HighVal...), hr.HighVal...)
+		ran.Collators = append(append(ran.Collators, point.Collators...), hr.Collators...)
+		ranges = append(ranges, ran)
+	}
+	return ranges
 }

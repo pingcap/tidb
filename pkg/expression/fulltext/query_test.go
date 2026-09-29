@@ -192,6 +192,36 @@ func TestCompileBooleanQueryStandardPrefix(t *testing.T) {
 	require.True(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz qux"}}))
 }
 
+func TestQueryUsesPrefixPostings(t *testing.T) {
+	standard := standardConfigForTest()
+	ngram := ngramConfigForTest()
+	for _, tc := range []struct {
+		config AnalyzerConfig
+		search string
+		prefix bool
+	}{
+		{standard, "+distributed", false},
+		{standard, "+distributed -database", false},
+		{standard, `"distributed sql"`, false},
+		{standard, "distrib*", true},
+		{standard, "+distributed -datab*", true},
+		{standard, "+foo.bar*", true},
+		// An NGRAM search at least as long as a gram is a phrase of exact
+		// grams, wildcard or not; only a wildcard shorter than a gram is a
+		// prefix of one.
+		{ngram, "ab", false},
+		{ngram, "abcd", false},
+		{ngram, "abc*", false},
+		{ngram, "a*", true},
+	} {
+		query, err := CompileBooleanQuery(tc.search, tc.config)
+		require.NoError(t, err, tc.search)
+		require.Equal(t, tc.prefix, query.UsesPrefixPostings(), tc.search)
+	}
+	var none *Query
+	require.False(t, none.UsesPrefixPostings())
+}
+
 func TestCompileBooleanQueryRepeatedTokenPhraseMiss(t *testing.T) {
 	const repetitions = 2048
 	document := strings.TrimSpace(strings.Repeat("foo ", repetitions*2))

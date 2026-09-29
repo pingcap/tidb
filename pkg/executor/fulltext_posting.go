@@ -16,6 +16,7 @@ package executor
 
 import (
 	"bytes"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -44,21 +45,44 @@ type tikvPostingSource struct {
 	// every entry of the index carries ahead of its term; empty when the
 	// index has none.
 	keyPrefix []byte
+	// handleRanges confine the postings of each exact term to ranges of the
+	// clustered handle, which every entry carries after its term; empty when
+	// a term's postings are read whole. A prefix scan is never confined, see
+	// Prefix.
+	handleRanges []fullTextHandleRange
 }
 
-// Term implements fulltext.PostingSource.
+// fullTextHandleRange is a range of the clustered handle, with its bounds
+// encoded as the handle is after the term in an index key. Whether a bound
+// is inclusive is applied to the whole key of a term, of which the bound is
+// a suffix, since the next key after a suffix is not the suffix of the next
+// key.
+type fullTextHandleRange struct {
+	low, high               []byte
+	lowExclude, highExclude bool
+}
+
+// Term implements fulltext.PostingSource. With handle ranges the term's
+// postings are read within each range in turn: the ranges are sorted and
+// disjoint, and a term's entries are stored in handle order, so the result
+// is in ascending handle order like the whole posting list.
 func (s *tikvPostingSource) Term(term string) (fulltext.PostingCursor, error) {
 	start, err := s.termKey(term)
 	if err != nil {
 		return nil, err
 	}
-	return s.open(start, start.PrefixNext(), "")
+	if len(s.handleRanges) == 0 {
+		return s.open(start, start.PrefixNext(), "")
+	}
+	return &rangedPostingCursor{source: s, termKey: start}, nil
 }
 
 // Prefix implements fulltext.PostingSource. Terms are stored in byte order
 // under the key-column values, so every term with the prefix sits in one
 // contiguous range starting at the prefix itself; the cursor stops at the
 // first term outside it, and the range ends with the key-column values.
+// The handle ranges do not apply: within the range the entries are grouped
+// by term, and each term's handles would need a seek of their own.
 func (s *tikvPostingSource) Prefix(prefix string) (fulltext.PostingCursor, error) {
 	start, err := s.termKey(prefix)
 	if err != nil {
@@ -131,4 +155,61 @@ func (c *tikvPostingCursor) Next() (fulltext.Posting, bool, error) {
 func (c *tikvPostingCursor) Close() error {
 	c.iter.Close()
 	return nil
+}
+
+// rangedPostingCursor reads one term's postings within each handle range of
+// the source in turn, opening a range only when the one before it is
+// exhausted.
+type rangedPostingCursor struct {
+	source  *tikvPostingSource
+	termKey kv.Key
+	next    int
+	current fulltext.PostingCursor
+}
+
+// Next implements fulltext.PostingCursor.
+func (c *rangedPostingCursor) Next() (fulltext.Posting, bool, error) {
+	for {
+		if c.current == nil {
+			if c.next >= len(c.source.handleRanges) {
+				return fulltext.Posting{}, false, nil
+			}
+			ran := c.source.handleRanges[c.next]
+			c.next++
+			start := kv.Key(slices.Concat(c.termKey, ran.low))
+			if ran.lowExclude {
+				start = start.PrefixNext()
+			}
+			end := kv.Key(slices.Concat(c.termKey, ran.high))
+			if !ran.highExclude {
+				end = end.PrefixNext()
+			}
+			cursor, err := c.source.open(start, end, "")
+			if err != nil {
+				return fulltext.Posting{}, false, err
+			}
+			c.current = cursor
+		}
+		posting, ok, err := c.current.Next()
+		if err != nil {
+			return fulltext.Posting{}, false, err
+		}
+		if ok {
+			return posting, true, nil
+		}
+		if err := c.current.Close(); err != nil {
+			return fulltext.Posting{}, false, err
+		}
+		c.current = nil
+	}
+}
+
+// Close implements fulltext.PostingCursor.
+func (c *rangedPostingCursor) Close() error {
+	if c.current == nil {
+		return nil
+	}
+	err := c.current.Close()
+	c.current = nil
+	return err
 }

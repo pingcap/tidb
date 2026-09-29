@@ -124,6 +124,47 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	usesIndex("select id from tc use index (idx_tenant) where tenant_id = 7 and region = 'eu' and match(body) against('+hello' in boolean mode)", "idx_tenant(tenant_id, body)")
 	scans("select id from tc ignore index (idx_tenant, idx_region) where tenant_id = 7 and match(body) against('+hello' in boolean mode)")
 
+	// The clustered handle ends every entry of the index, so conditions on
+	// a leading prefix of its columns narrow each exact term's posting scan.
+	// They show as the trailing range dimensions and, for a search of exact
+	// terms, are served by the index in place of the table filter.
+	tk.MustExec("create table td (tenant_id bigint, id bigint, body text, primary key (tenant_id, id) clustered, fulltext index idx_body (body))")
+	usesIndex("select id from td where tenant_id = 42 and match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	plan = explain("select id from td where tenant_id = 42 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:[42,42]", plan)
+	require.NotContains(t, plan, "eq(test.td.tenant_id", plan)
+	plan = explain("select id from td where tenant_id in (42, 43) and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:[42,42], [43,43]", plan)
+	require.NotContains(t, plan, "in(test.td.tenant_id", plan)
+	plan = explain("select id from td where tenant_id = 42 and id > 7 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:(42 7,42 +inf]", plan)
+	require.NotContains(t, plan, "Selection", plan)
+	// A prefix search reads every term with the prefix, which a handle range
+	// cannot narrow, so the condition is also checked on the rows.
+	plan = explain("select id from td where tenant_id = 42 and match(body) against('hel*' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan", plan)
+	require.Contains(t, plan, "range:[42,42]", plan)
+	require.Contains(t, plan, "eq(test.td.tenant_id, 42)", plan)
+	// A condition on a later handle column alone selects no contiguous slice
+	// of a term's postings, and a nonclustered primary key is not in the key.
+	plan = explain("select id from td where id = 7 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan", plan)
+	require.NotContains(t, plan, "range:", plan)
+	require.Contains(t, plan, "eq(test.td.id, 7)", plan)
+	tk.MustExec("create table tnc (tenant_id bigint, id bigint, body text, primary key (tenant_id, id) nonclustered, fulltext index idx_body (body))")
+	plan = explain("select id from tnc where tenant_id = 42 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan", plan)
+	require.NotContains(t, plan, "range:", plan)
+	require.Contains(t, plan, "eq(test.tnc.tenant_id, 42)", plan)
+	// An integer handle, alone and after pinned key columns.
+	plan = explain("select id from t where id in (3, 4) and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "range:[3,3], [4,4]", plan)
+	require.NotContains(t, plan, "in(test.t.id", plan)
+	plan = explain("select id from tc where tenant_id = 7 and id = 1 and match(body) against('+hello' in boolean mode)")
+	require.Contains(t, plan, "index:idx_tenant(tenant_id, body)", plan)
+	require.Contains(t, plan, "range:[7 1,7 1]", plan)
+	require.NotContains(t, plan, "Selection", plan)
+
 	// A plan with the index is never cached: the search string is baked in.
 	tk.MustExec("prepare stmt from 'select id from t where match(body) against(''+hello'' in boolean mode)'")
 	tk.MustQuery("execute stmt")

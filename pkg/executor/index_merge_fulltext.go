@@ -25,34 +25,80 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
 // fullTextScan describes a partial plan that reads a FULLTEXT index built in
-// TiKV: the search string, and the value of each key column of the index,
-// the columns before the tokenized one, that the scan is confined to.
+// TiKV: the search string, the value of each key column of the index, the
+// columns before the tokenized one, that the scan is confined to, and the
+// ranges of the clustered handle, which ends every entry, that the postings
+// of each exact term are confined to.
 type fullTextScan struct {
 	search    string
 	keyValues []types.Datum
+	// handleRanges are over a leading prefix of the handle columns, sorted
+	// and disjoint; empty when the scan reads each term's postings whole.
+	handleRanges []*ranger.Range
 }
 
-// newFullTextScan takes the search and the key-column values from the
-// partial plan. The planner offers the plan only when its conditions pin
-// every key column to one value, which it records as a single point range.
+// newFullTextScan takes the search, the key-column values and the handle
+// ranges from the partial plan. The planner records the key columns, which
+// its conditions pin to one value, as the leading dimensions of every range
+// and the handle columns as the trailing ones, so a scan with no handle
+// ranges has a single range as wide as the key columns.
 func newFullTextScan(is *physicalop.PhysicalIndexScan) (*fullTextScan, error) {
 	scan := &fullTextScan{search: is.FullText.Search}
 	keyColumnCount := len(is.Index.Columns) - 1
-	if keyColumnCount == 0 {
+	if keyColumnCount == 0 && len(is.Ranges) == 0 {
 		return scan, nil
 	}
-	if len(is.Ranges) != 1 || len(is.Ranges[0].LowVal) != keyColumnCount {
+	if len(is.Ranges) == 0 || len(is.Ranges[0].LowVal) < keyColumnCount {
 		return nil, errors.Errorf("fulltext index %s has %d key columns but the scan pins %d ranges", is.Index.Name.O, keyColumnCount, len(is.Ranges))
 	}
-	scan.keyValues = is.Ranges[0].LowVal
+	scan.keyValues = is.Ranges[0].LowVal[:keyColumnCount]
+	if len(is.Ranges[0].LowVal) == keyColumnCount {
+		if len(is.Ranges) != 1 {
+			return nil, errors.Errorf("fulltext index %s has %d key columns but the scan pins %d ranges", is.Index.Name.O, keyColumnCount, len(is.Ranges))
+		}
+		return scan, nil
+	}
+	for _, ran := range is.Ranges {
+		if len(ran.LowVal) <= keyColumnCount || len(ran.HighVal) != len(ran.LowVal) {
+			return nil, errors.Errorf("fulltext index %s scan has a handle range of width %d past %d key columns", is.Index.Name.O, len(ran.LowVal), keyColumnCount)
+		}
+		scan.handleRanges = append(scan.handleRanges, &ranger.Range{
+			LowVal:      ran.LowVal[keyColumnCount:],
+			HighVal:     ran.HighVal[keyColumnCount:],
+			LowExclude:  ran.LowExclude,
+			HighExclude: ran.HighExclude,
+		})
+	}
 	return scan, nil
+}
+
+// encodeFullTextHandleRanges encodes the bounds of each handle range the way
+// the handle is encoded after the term in an index key. Whether a bound is
+// inclusive is applied later, against the whole key of a term, since the
+// bound is a suffix of it.
+func encodeFullTextHandleRanges(sc *stmtctx.StatementContext, ranges []*ranger.Range) ([]fullTextHandleRange, error) {
+	encoded := make([]fullTextHandleRange, 0, len(ranges))
+	for _, ran := range ranges {
+		low, err := codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal...)
+		if err = sc.HandleError(err); err != nil {
+			return nil, errors.Trace(err)
+		}
+		high, err := codec.EncodeKey(sc.TimeZone(), nil, ran.HighVal...)
+		if err = sc.HandleError(err); err != nil {
+			return nil, errors.Trace(err)
+		}
+		encoded = append(encoded, fullTextHandleRange{low: low, high: high, lowExclude: ran.LowExclude, highExclude: ran.HighExclude})
+	}
+	return encoded, nil
 }
 
 // isFullTextPartial reports whether partial plan i reads a FULLTEXT index
@@ -87,23 +133,29 @@ func (e *IndexMergeReaderExecutor) startPartialFullTextWorker(ctx context.Contex
 		return errors.Trace(err)
 	}
 	// The key-column values are encoded once, the way the index encodes them
-	// ahead of every term, and prefix every term's range.
+	// ahead of every term, and prefix every term's range; the handle ranges
+	// likewise, the way the handle follows every term.
+	sc := e.Ctx().GetSessionVars().StmtCtx
 	var keyPrefix []byte
 	if len(scan.keyValues) > 0 {
-		sc := e.Ctx().GetSessionVars().StmtCtx
 		keyPrefix, err = codec.EncodeKey(sc.TimeZone(), nil, scan.keyValues...)
 		if err = sc.HandleError(err); err != nil {
 			return errors.Trace(err)
 		}
 	}
+	handleRanges, err := encodeFullTextHandleRanges(sc, scan.handleRanges)
+	if err != nil {
+		return err
+	}
 	worker := &partialFullTextWorker{
-		indexMerge: e,
-		workID:     workID,
-		query:      query,
-		index:      idx,
-		keyPrefix:  keyPrefix,
-		batchSize:  e.MaxChunkSize(),
-		maxBatch:   e.Ctx().GetSessionVars().IndexLookupSize,
+		indexMerge:   e,
+		workID:       workID,
+		query:        query,
+		index:        idx,
+		keyPrefix:    keyPrefix,
+		handleRanges: handleRanges,
+		batchSize:    e.MaxChunkSize(),
+		maxBatch:     e.Ctx().GetSessionVars().IndexLookupSize,
 	}
 
 	go func() {
@@ -129,8 +181,11 @@ type partialFullTextWorker struct {
 	// keyPrefix is the encoded key-column values the scan is confined to,
 	// empty for an index without key columns.
 	keyPrefix []byte
-	batchSize int
-	maxBatch  int
+	// handleRanges are the encoded handle ranges each exact term's postings
+	// are confined to, empty when they are read whole.
+	handleRanges []fullTextHandleRange
+	batchSize    int
+	maxBatch     int
 }
 
 // run scans each physical table's index in turn. Handles are batched into
@@ -169,6 +224,7 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 		physicalTableID: physicalID,
 		index:           w.index,
 		keyPrefix:       w.keyPrefix,
+		handleRanges:    w.handleRanges,
 	}
 	iter, err := w.query.OpenPostings(source)
 	if err != nil {
