@@ -126,7 +126,7 @@ where
         let mut transaction = tikv_client::Transaction::new(
             Timestamp::from_version(start_ts),
             client.clone(),
-            TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn),
+            TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn),
             tikv_client::request::Keyspace::Disable,
         );
         transaction.set_lock_resolver_context(lock_resolver_context);
