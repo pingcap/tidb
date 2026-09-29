@@ -72,6 +72,21 @@ else
 fi
 echo "${reset}"
 
+echo -ne "Checking Rust tidb-server build (locked)... "
+rust_files=$(git diff --cached --name-only --diff-filter=ACMR | grep '^rust/' || true)
+if [[ -n "${rust_files}" ]]; then
+    if (cd rust && cargo build --locked -p tidb-server); then
+        echo "${green}OK"
+    else
+        echo "${red}ERROR!"
+        echo "The Rust tidb-server locked build failed; commit aborted."
+        exit_code=1
+    fi
+else
+    echo "${green}SKIP (no staged rust/ changes)"
+fi
+echo "${reset}"
+
 if [[ "${exit_code}" != 0 ]]; then
     echo "${red}Aborting commit${reset}"
 fi

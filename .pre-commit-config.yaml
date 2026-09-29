@@ -29,3 +29,10 @@ repos:
         language: system
         pass_filenames: false
         always_run: false
+      - id: rust-tidb-server-build
+        name: Build Rust tidb-server (locked)
+        entry: bash -c 'cd rust && cargo build --locked -p tidb-server'
+        files: '^rust/'
+        language: system
+        pass_filenames: false
+        always_run: false

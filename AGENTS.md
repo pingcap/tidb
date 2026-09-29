@@ -27,6 +27,13 @@ This file provides guidance to agents working in this repository.
    Partial file/function/branch/feature ports MAY remain explicit seed
    evidence, but MUST NOT be dispatched, integrated, or reported as a
    transcreated package.
+7. For any change under `rust/`, the pre-commit hook MUST run the basic Rust
+   server build and the commit MUST NOT proceed unless it passes:
+   `cd rust && cargo build --locked -p tidb-server`.
+8. Before pushing a branch that contains Rust changes, the agent MUST rerun
+   `cd rust && cargo build --locked -p tidb-server` from the repository root
+   and confirm success. A previous local build or a build without `--locked`
+   does not satisfy this gate.
 
 ## Agent Interaction Overrides (Repo-Local)
 
@@ -75,6 +82,8 @@ When writing complex features or significant refactors, use an ExecPlan from des
 3. Decide prerequisites before running tests/build (`docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`; `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`).
 4. Pick the smallest valid validation set and prepare final reporting items (`Agent Output Contract`).
 5. If `AGENTS.md` or docs under `docs/agents/` changed, follow the checklist in `docs/agents/agents-review-guide.md` before finishing.
+6. If `rust/` changed, verify that the pre-commit hook ran the locked Rust
+   server build and rerun the same command immediately before push.
 
 ## Repository Map (Entry Points)
 
