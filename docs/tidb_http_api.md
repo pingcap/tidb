@@ -2,6 +2,31 @@
 
 `TiDBIP` is the ip of the TiDB server. `10080` is the default status port, and you can edit it in tidb.toml when starting the TiDB server.
 
+## Diagnostic mode availability
+
+When the process is in diagnostic mode and `status.report-status` is enabled,
+the status listener exposes only the following GET endpoints:
+
+| Endpoint | Purpose and parameters | Example |
+| --- | --- | --- |
+| `/status` | Local readiness, connection count, version and statistics initialization status. No parameters. | `curl http://127.0.0.1:10080/status` |
+| `/metrics` | Local Prometheus metrics. No parameters. | `curl http://127.0.0.1:10080/metrics` |
+| `/debug/pprof/` | Index of available local runtime profiles. | `curl http://127.0.0.1:10080/debug/pprof/` |
+| `/debug/pprof/cmdline` | Process command line. No parameters. | `curl http://127.0.0.1:10080/debug/pprof/cmdline` |
+| `/debug/pprof/profile` | CPU profile; optional `seconds` controls collection duration. | `curl -o cpu.pprof 'http://127.0.0.1:10080/debug/pprof/profile?seconds=5'` |
+| `/debug/pprof/symbol` | Resolve program counters supplied in the query string. GET only. | `curl http://127.0.0.1:10080/debug/pprof/symbol` |
+| `/debug/pprof/trace` | Runtime trace; optional `seconds` controls collection duration. | `curl -o trace.out 'http://127.0.0.1:10080/debug/pprof/trace?seconds=1'` |
+| `/debug/pprof/{profile}` | Named runtime profile, such as `goroutine` or `heap`; optional `debug` selects text output. | `curl 'http://127.0.0.1:10080/debug/pprof/goroutine?debug=1'` |
+
+Other management endpoints described below, including `/info` and `/settings`,
+are unavailable in this mode and return HTTP 404. The diagnostic listener does
+not serve gRPC/MPP services. Requests using unsupported methods are rejected.
+Cluster TLS and certificate verification settings also apply to this listener;
+TLS advertises HTTP/1.1 only. Disabling `status.report-status` disables the
+listener entirely. Normal-mode HTTP API availability is unchanged.
+
+## HTTP endpoints
+
 1. Get the current status of TiDB, including the connections, version, and `git_hash`.
 
     ```shell
