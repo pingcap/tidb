@@ -441,13 +441,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     pub fn commit_staged(
         &mut self,
     ) -> Result<crate::transaction::OptimisticCommitOutcome, TikvTransactionError> {
-        let staged = self.staged_entries();
-        let mutation_count = staged.len();
-        let primary_key = staged
-            .into_iter()
-            .map(|(key, _)| key.as_bytes().to_vec())
-            .min()
-            .unwrap_or_default();
+        let (mutation_count, primary_key) = self.staged_stats_with_primary();
         Ok(self.finish_commit(primary_key, mutation_count))
     }
 
@@ -755,6 +749,34 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             .get_mem_buffer_readonly()
             .get_readonly(key.as_bytes())
             .ok()
+    }
+
+    /// Returns staged mutation count and encoded bytes without cloning values.
+    pub fn staged_stats(&self) -> (usize, usize) {
+        let memdb = self.transaction.inner().get_mem_buffer_readonly();
+        let mut count = 0usize;
+        let mut bytes = 0usize;
+        let mut iterator = memdb.iter(None, None);
+        while iterator.valid() {
+            count += 1;
+            bytes = bytes.saturating_add(iterator.key().len().saturating_add(iterator.value().len()));
+            if iterator.next().is_err() { break; }
+        }
+        (count, bytes)
+    }
+
+    /// Returns staged count and smallest key without cloning row values.
+    pub fn staged_stats_with_primary(&self) -> (usize, Vec<u8>) {
+        let memdb = self.transaction.inner().get_mem_buffer_readonly();
+        let mut count = 0usize;
+        let mut primary = Vec::new();
+        let mut iterator = memdb.iter(None, None);
+        while iterator.valid() {
+            if count == 0 { primary = iterator.key().to_vec(); }
+            count += 1;
+            if iterator.next().is_err() { break; }
+        }
+        (count, primary)
     }
 
     /// Every key this transaction has staged, with its value, in key order.

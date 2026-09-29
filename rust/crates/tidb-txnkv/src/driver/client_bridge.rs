@@ -39,7 +39,7 @@ pub(crate) fn runtime() -> Arc<tokio::runtime::Runtime> {
         .get_or_init(|| {
             Arc::new(
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
+                    .worker_threads(48)
                     .thread_name("tidb-kv-client")
                     .enable_all()
                     .build()
@@ -212,6 +212,39 @@ where
         call: &UnaryCallContext,
     ) -> Result<Box<dyn Any + Send>> {
         let mut client = self.storage.client().lock().map_err(failure)?.clone();
+        // Point gets dominate prepared point-update workloads. Keep the
+        // client-rust protobuf bytes intact across the transport boundary;
+        // decoding into tidb-proto and encoding again costs an allocation on
+        // every RPC.
+        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::GetRequest>() {
+            let mut context: tidb_proto::KvrpcContext = request
+                .context
+                .as_ref()
+                .map(transcode)
+                .transpose()?
+                .unwrap_or_default();
+            context.cluster_id = self.cluster_id();
+            context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
+            let published = client.publish_raw_transaction(
+                address,
+                crate::rpc::BatchCommandTag::Get,
+                request.encode_to_vec(),
+                &context,
+                call,
+            );
+            self.trace
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .observe_native_get(&context, &published);
+            let response = match published {
+                PublishedCommand::BeforePublication(error) => return Err(failure(error)),
+                PublishedCommand::AfterPublication { error, .. } => {
+                    return Err(Error::GrpcAPI(tonic::Status::unavailable(error)))
+                }
+                PublishedCommand::Response(response) => response.response,
+            };
+            return Ok(Box::new(response));
+        }
         macro_rules! command {
             ($request:ident, $response:ident, $method:ident) => {
                 if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
@@ -597,6 +630,25 @@ struct ClientTrace {
     writes: Option<crate::transaction::OptimisticTransactionReceipt>,
 }
 impl ClientTrace {
+    fn observe_native_get(
+        &mut self,
+        context: &tidb_proto::KvrpcContext,
+        published: &PublishedCommand<kvrpcpb::GetResponse>,
+    ) {
+        self.reads.rpc_count += 1;
+        if let PublishedCommand::Response(response) = published {
+            if response.response.region_error.is_none() && response.response.error.is_none() {
+                let epoch = context.region_epoch.as_ref().cloned().unwrap_or_default();
+                let region = crate::region::RegionVerId::new(
+                    context.region_id,
+                    epoch.conf_ver,
+                    epoch.version,
+                );
+                self.reads.last_get = Some((region, response.publication.clone()));
+            }
+        }
+    }
+
     fn observe<R: Any>(
         &mut self,
         request: &dyn Any,

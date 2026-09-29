@@ -126,6 +126,9 @@ where
         let mut transaction = tikv_client::Transaction::new(
             Timestamp::from_version(start_ts),
             client.clone(),
+            // Transactions start optimistic; the pessimistic wrapper promotes
+            // the same native transaction only when Go's statement mode needs
+            // row locks. Autocommit DML follows Go's optimistic path.
             TransactionOptions::new_pessimistic().drop_check(tikv_client::CheckLevel::Warn),
             tikv_client::request::Keyspace::Disable,
         );
@@ -414,19 +417,15 @@ impl<C, L, T> ClientTransaction<C, L, T> {
         call: &UnaryCallContext,
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
         self.stage_mutations(mutations)?;
-        let entries = self.engine.staged_entries();
-        if entries.len() > self.planned_mutation_count {
+        let (mutation_count, size) = self.engine.staged_stats();
+        if mutation_count > self.planned_mutation_count {
             return Err(OptimisticCoordinatorError::Mutations(
                 MutationSetError::TooManyMutations {
-                    count: entries.len(),
+                    count: mutation_count,
                     limit: self.planned_mutation_count,
                 },
             ));
         }
-        let size = entries
-            .iter()
-            .map(|(key, value)| key.as_bytes().len().saturating_add(value.len()))
-            .fold(0usize, usize::saturating_add);
         if size > self.planned_aggregate_bytes {
             return Err(OptimisticCoordinatorError::Mutations(
                 MutationSetError::TransactionTooLarge {

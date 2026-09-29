@@ -150,6 +150,19 @@ pub type TransactionBatchGetFuture =
 /// Commands use an already-selected route. Synchronous methods return their
 /// publication result; begin methods return independently driven completions.
 pub trait TransactionCommandClient {
+    /// Publishes an already encoded client-rust request. Production transport
+    /// overrides this to avoid a compatibility protobuf round trip.
+    fn publish_raw_transaction<R: Message + Default>(
+        &mut self,
+        _address: &str,
+        _tag: crate::rpc::BatchCommandTag,
+        _encoded_request: Vec<u8>,
+        _context: &KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<R> {
+        PublishedCommand::BeforePublication("raw transaction transport unavailable".to_owned())
+    }
+
     /// Publishes one transactional Get at the caller's snapshot timestamp.
     fn publish_transaction_get(
         &mut self,
@@ -355,7 +368,39 @@ pub trait TransactionCommandClient {
     ) -> PublishedCommand<KvrpcTxnHeartBeatResponse>;
 }
 
+impl TonicCoprocessorClient {
+    /// Publishes an already encoded client-rust transaction request without
+    /// the tidb-proto request round trip used by the compatibility trait.
+    pub(crate) fn publish_raw_transaction<R: Message + Default>(
+        &mut self,
+        address: &str,
+        tag: crate::rpc::BatchCommandTag,
+        encoded_request: Vec<u8>,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<R> {
+        complete_published(
+            self.begin_raw_transaction(address, tag, encoded_request, context, call)
+                .map_err(|error| error.to_string()),
+            call,
+        )
+    }
+}
+
 impl TransactionCommandClient for TonicCoprocessorClient {
+    fn publish_raw_transaction<R: Message + Default>(
+        &mut self,
+        address: &str,
+        tag: crate::rpc::BatchCommandTag,
+        encoded_request: Vec<u8>,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<R> {
+        TonicCoprocessorClient::publish_raw_transaction(
+            self, address, tag, encoded_request, context, call,
+        )
+    }
+
     fn publish_transaction_get(
         &mut self,
         address: &str,

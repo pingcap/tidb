@@ -605,6 +605,21 @@ impl MutationBuffer {
             .map(|(k, v, _)| (k, v))
             .collect()
     }
+    /// Lists staged keys without copying their values. This is used by the
+    /// native transaction commit path for schema-lease table identification.
+    pub fn staged_keys(&self) -> Vec<Key> {
+        let state = self.state();
+        let mut iter = state.memdb.iter_with_flags(None, None);
+        let mut keys = Vec::with_capacity(state.memdb.len());
+        while iter.valid() {
+            if iter.has_value() {
+                keys.push(Key::from_bytes(iter.key().to_vec()));
+            }
+            iter.next().expect("MemDB iteration is local");
+        }
+        keys
+    }
+
     /// Copies staged values, tombstones and current absence flags.
     pub fn snapshot_staged(&self) -> Vec<(Key, Option<Vec<u8>>, bool)> {
         // Client-go keeps flags on the authoritative buffer until transaction end.

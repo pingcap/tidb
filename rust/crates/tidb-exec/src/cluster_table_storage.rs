@@ -1203,15 +1203,33 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         extra: Vec<OptimisticMutation>,
     ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
         let already_staged = buffer.native_owner() == Some(self.start_ts);
-        let extra_for_commit = if already_staged {
-            extra.clone()
+        // A native owner has already received the exact MemBuffer entries.
+        // Go's autocommit path hands that same buffer to the committer; do
+        // not materialize and encode a second mutation copy only to discard
+        // it below. The native transaction reads its own buffer during
+        // commit. `extra` is used only by restricted callers that append
+        // mutations outside the bound buffer.
+        let (mut mutations, extra_for_commit) = if already_staged {
+            (Vec::new(), extra)
         } else {
-            Vec::new()
+            let (mut mutations, _) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
+            mutations.extend(extra);
+            (mutations, Vec::new())
         };
-        let (mut mutations, _) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
-        mutations.extend(extra);
-        let schema_lease = schema_lease_for(self.schema_lease_checker.clone(), &mutations);
-        if mutations.is_empty() {
+        let schema_lease = if already_staged {
+            schema_lease_for_keys(
+                self.schema_lease_checker.clone(),
+                buffer.staged_keys().iter().map(Key::as_bytes),
+            )
+        } else {
+            schema_lease_for(self.schema_lease_checker.clone(), &mutations)
+        };
+        let has_writes = if already_staged {
+            !buffer.is_empty() || !extra_for_commit.is_empty()
+        } else {
+            !mutations.is_empty()
+        };
+        if !has_writes {
             let mut state = self
                 .state
                 .lock()
@@ -1987,6 +2005,26 @@ fn schema_lease_for(
     checker.map(|checker| SchemaLease {
         checker,
         related_physical_table_ids: physical_table_ids(mutations),
+    })
+}
+
+/// Builds the same schema-lease table set from a native MemDB without
+/// cloning its row/index values.
+fn schema_lease_for_keys<'a>(
+    checker: Option<Arc<dyn SchemaLeaseChecker>>,
+    keys: impl Iterator<Item = &'a [u8]>,
+) -> Option<SchemaLease> {
+    checker.map(|checker| {
+        let mut related_physical_table_ids: Vec<i64> = keys
+            .map(tidb_codec::decode_table_id)
+            .filter(|id| *id > 0)
+            .collect();
+        related_physical_table_ids.sort_unstable();
+        related_physical_table_ids.dedup();
+        SchemaLease {
+            checker,
+            related_physical_table_ids,
+        }
     })
 }
 

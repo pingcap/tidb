@@ -354,6 +354,26 @@ impl TonicCoprocessorClient {
         Ok(pending)
     }
 
+    /// Begins a transaction command from an already encoded client-rust
+    /// protobuf request. The native transaction adapter uses this to avoid
+    /// decoding into tidb-proto and encoding the same request a second time.
+    pub(crate) fn begin_raw_transaction<R: Message + Default>(
+        &mut self,
+        physical_address: &str,
+        tag: BatchCommandTag,
+        encoded_request: Vec<u8>,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<TransactionBatchPending<R>, DirectUnaryClientError> {
+        let (entry, pending) = TransactionBatchPending::entry(
+            tag,
+            encoded_request,
+            None,
+            context,
+        );
+        self.publish_transaction_command(physical_address, entry, pending, call)
+    }
+
     /// Begins one transactional Get on an already selected TiKV route.
     pub fn begin_transaction_get(
         &mut self,
