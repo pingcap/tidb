@@ -4793,7 +4793,10 @@ func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*dom
 // WithDisableRPC is set before Init so the published server info is not an RPC target.
 func GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
 	return domap.getWithEtcdClient(store, nil, filter, domainCreateOptions{
-		serverInfoSyncerOptions: []serverinfo.SyncerOption{serverinfo.WithDisableRPC()},
+		serverInfoSyncerOptions: []serverinfo.SyncerOption{
+			serverinfo.WithoutStatusEndpointClaim(),
+			serverinfo.WithDisableRPC(),
+		},
 	})
 }
 

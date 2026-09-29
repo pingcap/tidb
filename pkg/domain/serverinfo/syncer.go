@@ -277,7 +277,7 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
 		info := s.info.Load()
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "", false)
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "", info.DisableRPC)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
