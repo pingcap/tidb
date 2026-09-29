@@ -1,0 +1,5784 @@
+[
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 1,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 129,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 130,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/0000-00-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00 00:00:00.000'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-00-02",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'2024-00-02 00:00:00.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-01-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'2024-01-00 00:00:00.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/2024-02-31",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "CastStringAsTime/invalid",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 1,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 129,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 130,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/0000-00-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0000-00-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 0,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 2,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'"
+    ]
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 8,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 10,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'"
+    ]
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 16,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 32,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 64,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 128,
+    "kinds": [
+      "result"
+    ],
+    "go": "'2024-00-02'",
+    "rust": "error",
+    "go_detail": "",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 129,
+    "kinds": [
+      "result"
+    ],
+    "go": "'2024-00-02'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 130,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'2024-00-02'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'"
+    ]
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 136,
+    "kinds": [
+      "result"
+    ],
+    "go": "'2024-00-02'",
+    "rust": "error",
+    "go_detail": "",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 256,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-00-02",
+    "flags": 258,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'"
+    ]
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 0,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 2,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'"
+    ]
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 8,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 10,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'"
+    ]
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 16,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 32,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 64,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 128,
+    "kinds": [
+      "result"
+    ],
+    "go": "'2024-01-00'",
+    "rust": "error",
+    "go_detail": "",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 129,
+    "kinds": [
+      "result"
+    ],
+    "go": "'2024-01-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 130,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'2024-01-00'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'"
+    ]
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 136,
+    "kinds": [
+      "result"
+    ],
+    "go": "'2024-01-00'",
+    "rust": "error",
+    "go_detail": "",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 256,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Date/2024-01-00",
+    "flags": 258,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/2024-02-31",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Date/invalid",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 1,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 129,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 130,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/0000-00-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'0'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'0'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'0'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'0'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'0'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'0'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-00-02",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'1'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'1'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'1'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'1'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'1'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'1'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'1'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'1'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "'1'",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-01-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'1'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/2024-02-31",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "Month/invalid",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 2,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 10,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 130,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/0000-00-00",
+    "flags": 258,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000'"
+    ],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 2,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 10,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 128,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 130,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02 00:00:00.000'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 136,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-00-02'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-00-02",
+    "flags": 258,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 2,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 10,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 128,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 130,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00 00:00:00.000'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 136,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00 00:00:00.000'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-01-00'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-01-00",
+    "flags": 258,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/2024-02-31",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: '2024-2-31'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "WeekWithoutMode/invalid",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "error",
+    "rust": "null",
+    "go_detail": "[types:1292]Incorrect datetime value: 'invalid'",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 1,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 129,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 130,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/0000-00-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-00-02",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampInt/2024-00-02",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampInt/2024-00-02",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampInt/2024-00-02",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampInt/2024-01-00",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampInt/2024-01-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampInt/2024-01-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampInt/2024-01-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/2024-02-31",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampInt/invalid",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 0,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 1,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 8,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 16,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 32,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 64,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 128,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 129,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 130,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 136,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 256,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/0000-00-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'0'",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 128,
+    "kinds": [
+      "result"
+    ],
+    "go": "'0'",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 129,
+    "kinds": [
+      "result"
+    ],
+    "go": "'0'",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 130,
+    "kinds": [
+      "result"
+    ],
+    "go": "'0'",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 136,
+    "kinds": [
+      "result"
+    ],
+    "go": "'0'",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-00-02",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-00-02'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 2,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 10,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 128,
+    "kinds": [
+      "result"
+    ],
+    "go": "'0'",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 129,
+    "kinds": [
+      "result"
+    ],
+    "go": "'0'",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 130,
+    "kinds": [
+      "result"
+    ],
+    "go": "'0'",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 136,
+    "kinds": [
+      "result"
+    ],
+    "go": "'0'",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-00",
+    "flags": 258,
+    "kinds": [
+      "result",
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "'0.000'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Incorrect datetime value: '2024-01-00'"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 0,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 8,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 16,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 32,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 64,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 128,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 136,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-02-31",
+    "flags": 256,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: '2024-2-31'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 0,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 8,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 16,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 32,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 64,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 128,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 136,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/invalid",
+    "flags": 256,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "null",
+    "rust": "null",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": [
+      "[1292]Incorrect datetime value: 'invalid'"
+    ]
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 0,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 1,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 2,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 8,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 10,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 16,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 32,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 64,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 128,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 129,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 130,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 136,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 256,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "UnixTimestampDec/2024-01-02 03:04:05.123456",
+    "flags": 258,
+    "kinds": [
+      "result"
+    ],
+    "go": "'1704164645.12'",
+    "rust": "'1704164645.123'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/-1.5",
+    "flags": 1,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[8031]Cast to unsigned converted negative integer to it's positive complement"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/-1.5",
+    "flags": 2,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Truncated incorrect INTEGER value: '-1.5'",
+      "[8031]Cast to unsigned converted negative integer to it's positive complement"
+    ],
+    "rust_warnings": [
+      "[1292]Truncated incorrect INTEGER value: '-1.5'"
+    ]
+  },
+  {
+    "name": "CastStringAsInt/unsigned/-1.5",
+    "flags": 10,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Truncated incorrect INTEGER value: '-1.5'",
+      "[8031]Cast to unsigned converted negative integer to it's positive complement"
+    ],
+    "rust_warnings": [
+      "[1292]Truncated incorrect INTEGER value: '-1.5'"
+    ]
+  },
+  {
+    "name": "CastStringAsInt/unsigned/-1.5",
+    "flags": 129,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[8031]Cast to unsigned converted negative integer to it's positive complement"
+    ],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/-1.5",
+    "flags": 130,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Truncated incorrect INTEGER value: '-1.5'",
+      "[8031]Cast to unsigned converted negative integer to it's positive complement"
+    ],
+    "rust_warnings": [
+      "[1292]Truncated incorrect INTEGER value: '-1.5'"
+    ]
+  },
+  {
+    "name": "CastStringAsInt/unsigned/-1.5",
+    "flags": 258,
+    "kinds": [
+      "warning_count",
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1292]Truncated incorrect INTEGER value: '-1.5'",
+      "[8031]Cast to unsigned converted negative integer to it's positive complement"
+    ],
+    "rust_warnings": [
+      "[1292]Truncated incorrect INTEGER value: '-1.5'"
+    ]
+  },
+  {
+    "name": "CastStringAsInt/unsigned/18446744073709551616",
+    "flags": 0,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'",
+    "rust_detail": "[1292]Truncated incorrect INTEGER value: '18446744073709551616'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/18446744073709551616",
+    "flags": 8,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'",
+    "rust_detail": "[1292]Truncated incorrect INTEGER value: '18446744073709551616'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/18446744073709551616",
+    "flags": 16,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'",
+    "rust_detail": "[1292]Truncated incorrect INTEGER value: '18446744073709551616'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/18446744073709551616",
+    "flags": 32,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'",
+    "rust_detail": "[1292]Truncated incorrect INTEGER value: '18446744073709551616'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/18446744073709551616",
+    "flags": 64,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'",
+    "rust_detail": "[1292]Truncated incorrect INTEGER value: '18446744073709551616'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/18446744073709551616",
+    "flags": 128,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'",
+    "rust_detail": "[1292]Truncated incorrect INTEGER value: '18446744073709551616'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/18446744073709551616",
+    "flags": 136,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'",
+    "rust_detail": "[1292]Truncated incorrect INTEGER value: '18446744073709551616'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastStringAsInt/unsigned/18446744073709551616",
+    "flags": 256,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]BIGINT UNSIGNED value is out of range in '18446744073709551616'",
+    "rust_detail": "[1292]Truncated incorrect INTEGER value: '18446744073709551616'",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 0,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]constant 1.8446744073709552e+19 overflows bigint",
+    "rust_detail": "[types:1690]constant 18446744073709552000 overflows bigint",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 2,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1690]constant 1.8446744073709552e+19 overflows bigint"
+    ],
+    "rust_warnings": [
+      "[1690]constant 18446744073709552000 overflows bigint"
+    ]
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 8,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]constant 1.8446744073709552e+19 overflows bigint",
+    "rust_detail": "[types:1690]constant 18446744073709552000 overflows bigint",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 10,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1690]constant 1.8446744073709552e+19 overflows bigint"
+    ],
+    "rust_warnings": [
+      "[1690]constant 18446744073709552000 overflows bigint"
+    ]
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 16,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]constant 1.8446744073709552e+19 overflows bigint",
+    "rust_detail": "[types:1690]constant 18446744073709552000 overflows bigint",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 32,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]constant 1.8446744073709552e+19 overflows bigint",
+    "rust_detail": "[types:1690]constant 18446744073709552000 overflows bigint",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 64,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]constant 1.8446744073709552e+19 overflows bigint",
+    "rust_detail": "[types:1690]constant 18446744073709552000 overflows bigint",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 128,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]constant 1.8446744073709552e+19 overflows bigint",
+    "rust_detail": "[types:1690]constant 18446744073709552000 overflows bigint",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 130,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1690]constant 1.8446744073709552e+19 overflows bigint"
+    ],
+    "rust_warnings": [
+      "[1690]constant 18446744073709552000 overflows bigint"
+    ]
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 136,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]constant 1.8446744073709552e+19 overflows bigint",
+    "rust_detail": "[types:1690]constant 18446744073709552000 overflows bigint",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 256,
+    "kinds": [
+      "typed_error"
+    ],
+    "go": "error",
+    "rust": "error",
+    "go_detail": "[types:1690]constant 1.8446744073709552e+19 overflows bigint",
+    "rust_detail": "[types:1690]constant 18446744073709552000 overflows bigint",
+    "go_warnings": [],
+    "rust_warnings": []
+  },
+  {
+    "name": "CastJsonAsInt/unsigned/18446744073709551616",
+    "flags": 258,
+    "kinds": [
+      "warning_content"
+    ],
+    "go": "'18446744073709551615'",
+    "rust": "'18446744073709551615'",
+    "go_detail": "",
+    "rust_detail": "",
+    "go_warnings": [
+      "[1690]constant 1.8446744073709552e+19 overflows bigint"
+    ],
+    "rust_warnings": [
+      "[1690]constant 18446744073709552000 overflows bigint"
+    ]
+  }
+]

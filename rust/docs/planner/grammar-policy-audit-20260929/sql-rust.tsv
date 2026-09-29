@@ -1,0 +1,4 @@
+select regexp_like('a', 'a{01}')	Rows([[Int(1)]])
+select regexp_like('a', '(?ii)a')	MysqlError { code: 1105, state: [72, 89, 48, 48, 48], message: "invalid regular expression pattern", from_evaluation: true }
+select regexp_like('a', '[')	MysqlError { code: 1105, state: [72, 89, 48, 48, 48], message: "invalid regular expression pattern", from_evaluation: true }
+select regexp_like('a', 'a', 'z')	MysqlError { code: 1105, state: [72, 89, 48, 48, 48], message: "Invalid match type", from_evaluation: true }

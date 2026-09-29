@@ -1,0 +1,14 @@
+package main
+import("fmt";"go/ast";"go/parser";"go/token";"os";"strconv";"strings";"regexp";"encoding/hex")
+func value(e ast.Expr) string { switch x:=e.(type) {case *ast.BasicLit: s,e:=strconv.Unquote(x.Value);if e!=nil {panic(e)};return s
+case *ast.BinaryExpr: if x.Op!=token.ADD {panic("operator")};return value(x.X)+value(x.Y)
+case *ast.CallExpr: s:=x.Fun.(*ast.SelectorExpr);if s.Sel.Name!="Repeat" {panic("call")};n,e:=strconv.Atoi(x.Args[1].(*ast.BasicLit).Value);if e!=nil {panic(e)};return strings.Repeat(value(x.Args[0]),n)
+};panic(fmt.Sprintf("unhandled %T",e))}
+func main(){ f,e:=parser.ParseFile(token.NewFileSet(),os.Args[1],nil,0);if e!=nil{panic(e)}
+inputs:=[]string{"","a","b","x","aa","ab","a{01}","x{1001","\n","α","ǿ","𐀀","1"," ","foo","a\nb"}
+for _,d:=range f.Decls {g,ok:=d.(*ast.GenDecl);if !ok{continue};for _,s:=range g.Specs{v,ok:=s.(*ast.ValueSpec);if !ok||len(v.Names)!=1{continue};name:=v.Names[0].Name
+switch name{case "parseTests","foldcaseTests","literalTests","matchnlTests","nomatchnlTests","invalidRegexps","onlyPerl","onlyPOSIX":default:continue}
+c:=v.Values[0].(*ast.CompositeLit);for i,e:=range c.Elts{if pair,ok:=e.(*ast.CompositeLit);ok{e=pair.Elts[0]};emit(fmt.Sprintf("%s/%d",name,i),value(e),inputs)}}}
+for i,p:=range []string{`a{01}`,`(?ii)a`,`(?i-i)a`,`(?P<x>a)(?P<x>b)`,`\p{Letter}`,`\p{Greek}`,`\777`,strings.Repeat("(",300)+"a"+strings.Repeat(")",300),`\p{XID_Start}`,`\p{gc=L}`,`[\p{Any}]`,`a{,3}`} {emit(fmt.Sprintf("focused/%d",i),p,inputs)}
+}
+func emit(id,p string,inputs []string){r,e:=regexp.Compile(p);state:="ok";err:="";matches:="";if e!=nil{state="err";err=e.Error()}else{for _,s:=range inputs{if r.MatchString(s){matches+="1"}else{matches+="0"}}};fmt.Printf("%s\t%s\t%s\t%s\t%s\n",id,hex.EncodeToString([]byte(p)),state,matches,hex.EncodeToString([]byte(err)))}

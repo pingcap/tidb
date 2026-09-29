@@ -1,0 +1,15 @@
+#[test]
+fn audit_go_grammar_tables() {
+    fn unhex(s: &str) -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i+2],16).unwrap()).collect() }
+    fn hex(s: &str) -> String { s.as_bytes().iter().map(|b| format!("{b:02x}")).collect() }
+    use std::io::Write;
+    let mut out=std::fs::File::create("/private/tmp/regexp-grammar-rust.tsv").unwrap();
+    let inputs=["","a","b","x","aa","ab","a{01}","x{1001","\n","α","ǿ","𐀀","1"," ","foo","a\nb"];
+    for line in std::fs::read_to_string("/private/tmp/regexp-grammar-go.tsv").unwrap().lines() {
+        let fields: Vec<_> =line.split('\t').collect();
+        let bytes=unhex(fields[1]);
+        let result=std::str::from_utf8(&bytes).map_err(|e|e.to_string()).and_then(|p|compile_with_flags(p,false,false,false));
+        let (state,matches,error)=match result {Ok(re)=>("ok",inputs.iter().map(|s|if re.is_match(s){'1'}else{'0'}).collect::<String>(),String::new()),Err(e)=>("err",String::new(),hex(&e))};
+        writeln!(out,"{}\t{}\t{}\t{}\t{}",fields[0],fields[1],state,matches,error).unwrap();
+    }
+}

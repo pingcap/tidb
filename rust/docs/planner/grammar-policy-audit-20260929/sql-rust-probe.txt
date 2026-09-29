@@ -1,0 +1,10 @@
+#[test]
+fn audit_regexp_sql_boundary() {
+ let mut session=Session::new();
+ let mut output=String::new();
+ for sql in ["select regexp_like('a', 'a{01}')", "select regexp_like('a', '(?ii)a')", "select regexp_like('a', '[')", "select regexp_like('a', 'a', 'z')"] {
+   let result=match session.run(sql) {Ok(value)=>format!("{value:?}"),Err(error)=>format!("{:?}",error.to_mysql_error())};
+   output.push_str(&format!("{sql}\t{result}\n"));
+ }
+ std::fs::write("/private/tmp/regexp-sql-rust.tsv",output).unwrap();
+}

@@ -1,0 +1,14 @@
+from pathlib import Path
+import subprocess
+p=Path('rust/crates/tidb-unistore/src/cophandler/eval_context.rs');original=p.read_text()
+
+try:
+ p.write_text(original.replace('mod next_boundary_audit {','mod next_boundary_audit {\n'+Path('/private/tmp/pb-policy-rust-probe.rs').read_text(),1))
+
+ for name,cmd in [('matrix',['cargo','test','--offline','--locked','--manifest-path','rust/Cargo.toml','-p','tidb-unistore','--lib','audit_policy_pb_matrix','--','--test-threads=1'])]:
+  with open('/private/tmp/pb-policy-rust-'+name+'.log','w') as log:
+   result=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT)
+  print(name,result.returncode,flush=True)
+  if result.returncode: raise SystemExit(result.returncode)
+finally:
+ p.write_text(original)

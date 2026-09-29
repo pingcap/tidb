@@ -1,0 +1,359 @@
+{
+  "pkg/expression": [
+    "100644 blob a45afdb928321cba04eb47e5bd2fd8f7c0461bab\tpkg/expression/BUILD.bazel",
+    "100644 blob 4360f466a4ea5d6106f1cbb08b39f4853b1c7a7b\tpkg/expression/OWNERS",
+    "100644 blob cab3be911cec284fc850290a647525c111ab393a\tpkg/expression/aggregation/BUILD.bazel",
+    "100644 blob 3f669724ed3e48914e5d5de1af55c3b576bdfbe1\tpkg/expression/aggregation/agg_to_pb.go",
+    "100644 blob e9b2c1e2b4864fd732b4a04efd08826237d0919b\tpkg/expression/aggregation/agg_to_pb_test.go",
+    "100644 blob 7b5eac4611a8a09e7a0d784d0d56519a2ba877c2\tpkg/expression/aggregation/aggregation.go",
+    "100644 blob a868980bf6e119968a84343dbfe74fe5ee422b3a\tpkg/expression/aggregation/aggregation_test.go",
+    "100644 blob a4752728b0e549aa7276a88350fb61335113b169\tpkg/expression/aggregation/avg.go",
+    "100644 blob 8376d8e49f7507be4122915b061e7659d98c2e71\tpkg/expression/aggregation/base_func.go",
+    "100644 blob e35e61374fcffe203f5569659d33bb9a66a11ab8\tpkg/expression/aggregation/base_func_test.go",
+    "100644 blob d7e2486cb499e9328af50541d3b3454f9ddcd6f3\tpkg/expression/aggregation/bench_test.go",
+    "100644 blob 01d0a3ef433cdadb47eccd8b0e09f02b2f3c8d20\tpkg/expression/aggregation/bit_and.go",
+    "100644 blob 2e609ef45bf3a64a59bee2c44eeaff6a162ccc06\tpkg/expression/aggregation/bit_or.go",
+    "100644 blob 6d9959163a67019776b1ea647af17e943e35d46d\tpkg/expression/aggregation/bit_xor.go",
+    "100644 blob 96c4f28f606ff6a7ade6d1359b188dcf1c0a6df4\tpkg/expression/aggregation/concat.go",
+    "100644 blob c029289547ef955c73e14e6b1c82eeb9ced9b90b\tpkg/expression/aggregation/count.go",
+    "100644 blob 34249093197793d7db398abc779de7580ec294c2\tpkg/expression/aggregation/descriptor.go",
+    "100644 blob d89fc08d88dc6f62bfd5c6d924514296efec73da\tpkg/expression/aggregation/explain.go",
+    "100644 blob fba939b315bfcbcb8f26503dacfcb861b6049df0\tpkg/expression/aggregation/first_row.go",
+    "100644 blob 0603baef7ad9d85448db7af23aa041e7ef1b6a40\tpkg/expression/aggregation/main_test.go",
+    "100644 blob 968835e811b4ce136df6594cd98d8b1556bda7af\tpkg/expression/aggregation/max_min.go",
+    "100644 blob a5f296ad2f9b443e939f7d0f0f2f5c3140c5960e\tpkg/expression/aggregation/max_min_count.go",
+    "100644 blob 74b5e8bdf72a06cea5da9272be7f9ded280c11d3\tpkg/expression/aggregation/sum.go",
+    "100644 blob 3cf8f6cc238bbdd0a3583b1803c818fb2fb70084\tpkg/expression/aggregation/sum_int.go",
+    "100644 blob fef4575d8bf46e7d6e410ad224e4d0b49f873fc9\tpkg/expression/aggregation/util.go",
+    "100644 blob 1547ed3766cdebe88680483a9687b21ddf4cee65\tpkg/expression/aggregation/util_test.go",
+    "100644 blob 211535fa7605a0afa3fc7c4df5933f6851a0585a\tpkg/expression/aggregation/window_func.go",
+    "100644 blob 4ce8d5bfa4a32a87ec4f6c0670c154347b661ceb\tpkg/expression/bench_test.go",
+    "100644 blob 9683de6ad2cd858a63ff5963066f1d75169ef6c9\tpkg/expression/builtin.go",
+    "100644 blob 6c76bf9a447609c99ab95bf50b47b90fa3bfb94b\tpkg/expression/builtin_arithmetic.go",
+    "100644 blob 338566d698d22b4c7bda2bd07bf71291a7709202\tpkg/expression/builtin_arithmetic_test.go",
+    "100644 blob b33658330fc61f40e0b9a0e12de003b47b17f4b8\tpkg/expression/builtin_arithmetic_vec.go",
+    "100644 blob bf388a7f467feb30a1f559716a92b85e3535876e\tpkg/expression/builtin_arithmetic_vec_test.go",
+    "100644 blob b2cfc5e629844d1cfabae6527dd9621b0401f8ee\tpkg/expression/builtin_cast.go",
+    "100644 blob b313732f4816332ded94b2c2da57f067a871f112\tpkg/expression/builtin_cast_bench_test.go",
+    "100644 blob e78aec00f0aed2aed531744e9bd8258cdd1e6389\tpkg/expression/builtin_cast_test.go",
+    "100644 blob bf830ec6178c6418cefdc542f9fc04e09bb2f1f7\tpkg/expression/builtin_cast_vec.go",
+    "100644 blob 202599d55cb6c73ba2d8be5e159afa17aaccfcac\tpkg/expression/builtin_cast_vec_test.go",
+    "100644 blob 7be742b274fd477144e7343cf215b0e9e2f3faf1\tpkg/expression/builtin_compare.go",
+    "100644 blob 7835f20b82098a0b3c33ab0e037c3af892d6d3d9\tpkg/expression/builtin_compare_test.go",
+    "100644 blob d2847e9d8c67920c415f07817a182df63a10af8c\tpkg/expression/builtin_compare_vec.go",
+    "100644 blob 8f53e5c27ccbe271aafd5dafd87d764bc9e1a3d1\tpkg/expression/builtin_compare_vec_generated.go",
+    "100644 blob 25763c189b6a2a4269aa08f306395cb2e98704ff\tpkg/expression/builtin_compare_vec_generated_test.go",
+    "100644 blob ce44becbe2f96981283511e59591834023c03a04\tpkg/expression/builtin_compare_vec_test.go",
+    "100644 blob 657dfc66d28aab998df0f2e674854a3f21d7ab05\tpkg/expression/builtin_control.go",
+    "100644 blob 665fc5b30c36334b8eb5cf85dcda78ae74e78811\tpkg/expression/builtin_control_test.go",
+    "100644 blob c5e0204ed9d08ecb8216fc4e9817472dc6945351\tpkg/expression/builtin_control_vec_generated.go",
+    "100644 blob a342088d5db34b7d5a7511e791dfc8c4421e1a63\tpkg/expression/builtin_control_vec_generated_test.go",
+    "100644 blob 923e309b20c72f4e5de8d3585a75793f6ca42452\tpkg/expression/builtin_convert_charset.go",
+    "100644 blob 6fc6f77c9470add95fd89ad4f89e424e1d23fdd8\tpkg/expression/builtin_encryption.go",
+    "100644 blob b6fc17de405761088d3504bbb6fef9aa868d4a79\tpkg/expression/builtin_encryption_test.go",
+    "100644 blob 284af7a0391d6d719382f3e2626f2f42db8478b8\tpkg/expression/builtin_encryption_vec.go",
+    "100644 blob f434be423a551314fb508e1d893bb303275919fd\tpkg/expression/builtin_encryption_vec_test.go",
+    "100644 blob 161e72b0c917306571148586538a7821d462b06e\tpkg/expression/builtin_fts.go",
+    "100644 blob 4157cf5fe18d554dbae71160acd5fa15422e3b82\tpkg/expression/builtin_func_param.go",
+    "100644 blob 82f37cd9639addaeefd080eca6c8ada5fffa674e\tpkg/expression/builtin_grouping.go",
+    "100644 blob 83b7001ce90a114ed56871f9ae93a8a1069f6b33\tpkg/expression/builtin_grouping_test.go",
+    "100644 blob 2293025c4a874df3a5d488d9b2fbed1925a98047\tpkg/expression/builtin_ilike.go",
+    "100644 blob 2b0ef167b04f76a80227be81d14056775fb38d90\tpkg/expression/builtin_ilike_test.go",
+    "100644 blob 4c8b58c6f6834d5818d4e64f7f5ad8e48f6d01da\tpkg/expression/builtin_ilike_vec.go",
+    "100644 blob 03882929e74eed7c2533b117b83b22cdc6414259\tpkg/expression/builtin_inference.go",
+    "100644 blob 8a71d22d3ad989a82602003efbf518f245c63a68\tpkg/expression/builtin_inference_test.go",
+    "100644 blob 88310d39c042039ded8f6733fda85fb553ca2476\tpkg/expression/builtin_info.go",
+    "100644 blob ace1f4cec3ad80854cdc8c2d922bac091ca17650\tpkg/expression/builtin_info_test.go",
+    "100644 blob 35fa9b71514c35f30dce8b79b43bff311353225e\tpkg/expression/builtin_info_vec.go",
+    "100644 blob b9beaa4a00e569569fc738b20aa1b1667334c271\tpkg/expression/builtin_info_vec_test.go",
+    "100644 blob 68f14ea923580fbd2a4f00b2530fffbd273f5053\tpkg/expression/builtin_json.go",
+    "100644 blob 79e852b030e3fa93b4528a1115c9a95309ef0084\tpkg/expression/builtin_json_test.go",
+    "100644 blob 65f09928d8812bde114b50d57257e8c4a329e856\tpkg/expression/builtin_json_vec.go",
+    "100644 blob c7150c0e2b9ac7d598305d886a804b580be0592e\tpkg/expression/builtin_json_vec_test.go",
+    "100644 blob b40d60fad1c231721f81a08c98b47e55764e1f98\tpkg/expression/builtin_like.go",
+    "100644 blob 907dae74ac8b7b579fb8d0704dc5b0f877f9af30\tpkg/expression/builtin_like_test.go",
+    "100644 blob 1dec38e4d6bcc9a86b326a550e854844d51512e9\tpkg/expression/builtin_like_vec.go",
+    "100644 blob 69bcb93735e3ee0701cce8cf0813fbdb583a0770\tpkg/expression/builtin_like_vec_test.go",
+    "100644 blob f2c62f6cd0d13dc1cb8893c076b507ee02ae06f9\tpkg/expression/builtin_math.go",
+    "100644 blob f9a94d244a6c262bab8619f4743575dbebd133dd\tpkg/expression/builtin_math_test.go",
+    "100644 blob fcacbd6f5dad2b4d87590cc7c0959ba23fa336cf\tpkg/expression/builtin_math_vec.go",
+    "100644 blob b9adfe9f5c1c7dfbda48f112395b0e1ac7db3102\tpkg/expression/builtin_math_vec_test.go",
+    "100644 blob 603a9ad08813ec5026a29ccbbe203497a138acb0\tpkg/expression/builtin_miscellaneous.go",
+    "100644 blob fbd92dfa29106d946c198798268b98736bdd7723\tpkg/expression/builtin_miscellaneous_test.go",
+    "100644 blob 7d25d4a6aec22b24570332c40ea87989fdb67268\tpkg/expression/builtin_miscellaneous_vec.go",
+    "100644 blob c0de6a3e1a792a6e13142ad9a72c3f720dfada71\tpkg/expression/builtin_miscellaneous_vec_test.go",
+    "100644 blob 8a9a6b66ec7d99fb6589be98d926de42d3d6b766\tpkg/expression/builtin_op.go",
+    "100644 blob 4efccbc0ba24cb9312f27b2c34caf41204696629\tpkg/expression/builtin_op_test.go",
+    "100644 blob 80a6dd76784be2a3758c850c7b89a75ace47e397\tpkg/expression/builtin_op_vec.go",
+    "100644 blob e728571f9af789b41582b4df42bc9cb0562a9a12\tpkg/expression/builtin_op_vec_test.go",
+    "100644 blob c988ced93ee4a457d2cc8cb30633c5247ff49969\tpkg/expression/builtin_other.go",
+    "100644 blob f8f67577e246d940985907546fe745b70c1cdd2b\tpkg/expression/builtin_other_test.go",
+    "100644 blob 0c57599274be89b5ac3fe56b8a7cad3b40f1fd43\tpkg/expression/builtin_other_vec.go",
+    "100644 blob 0294c85f3759b0ca996c452e98759ce50fddfab2\tpkg/expression/builtin_other_vec_generated.go",
+    "100644 blob 44d93cb0ba2f340f7e90e7a8cb6c0ed54fd76403\tpkg/expression/builtin_other_vec_generated_test.go",
+    "100644 blob eb7419442f5ea29e92dfba4f6f8762265d651dbc\tpkg/expression/builtin_other_vec_test.go",
+    "100644 blob 313384df5990caefa294910b3fee2458adb9f0c7\tpkg/expression/builtin_regexp.go",
+    "100644 blob cb534c333bbe6ca16fccb9369e874c3d0f8f0081\tpkg/expression/builtin_regexp_test.go",
+    "100644 blob 85bad8b59a4a635ee7c18f6e0931278a35a639ad\tpkg/expression/builtin_regexp_util.go",
+    "100644 blob 0dcdba1888b843b88f80ac8307c6566059ee5532\tpkg/expression/builtin_regexp_vec_const_test.go",
+    "100644 blob 0e89504da1d28c349d393e1ec1177bdfd265f37d\tpkg/expression/builtin_registry.go",
+    "100644 blob 573b3976592f290cc1a30ac4ebcd68980ee7acac\tpkg/expression/builtin_string.go",
+    "100644 blob 69e2f11458833c1f33ad008f217243ac8ce6d8f9\tpkg/expression/builtin_string_test.go",
+    "100644 blob 9de6e9237228833f4791450cef744b2818c97c91\tpkg/expression/builtin_string_vec.go",
+    "100644 blob ef8e29dd0af43fa436e23c30e03f70872fcdfd79\tpkg/expression/builtin_string_vec_generated.go",
+    "100644 blob cbb989d970bd313e6eeeed3f080e01880d845b60\tpkg/expression/builtin_string_vec_generated_test.go",
+    "100644 blob 48c90d8c1a03cc2b0df82f9edbb7fd5f32d6c753\tpkg/expression/builtin_string_vec_test.go",
+    "100644 blob ebd79862600bd3c48a147fd9b63022bcab847fe3\tpkg/expression/builtin_test.go",
+    "100644 blob 458f889dd075e0994486b3360ef3d1aa71760a6a\tpkg/expression/builtin_threadsafe_generated.go",
+    "100644 blob e3795d41eb2f5456586b734dc99941d6f8c8d6fc\tpkg/expression/builtin_threadunsafe_generated.go",
+    "100644 blob 60b846f97c7a87db7b9a56fb85ea8a22fbb2d696\tpkg/expression/builtin_time.go",
+    "100644 blob 4998c27393eb6a1984fd4b717a1687f0f9ab69f2\tpkg/expression/builtin_time_test.go",
+    "100644 blob 83b47321a4659ad24d9effada17daa99cc4d67ee\tpkg/expression/builtin_time_vec.go",
+    "100644 blob 6cb53c94e97c76951249423859d29923dd3e5a84\tpkg/expression/builtin_time_vec_generated.go",
+    "100644 blob 43d5ef959e1cc0b7e228f894230f6d2599535626\tpkg/expression/builtin_time_vec_generated_test.go",
+    "100644 blob a4faf1f1e3f053d83ff51c3bb73b7a7a5faa9b67\tpkg/expression/builtin_time_vec_test.go",
+    "100644 blob e1d837446182851bf98edd71c7a93146b3b1d3f2\tpkg/expression/builtin_vec.go",
+    "100644 blob dd618282d7d088300d985720f814adc46179280a\tpkg/expression/builtin_vec_vec.go",
+    "100644 blob d70599a6f1f18825c7cf0ffc62222932a4e95383\tpkg/expression/builtin_vec_vec_test.go",
+    "100644 blob 78480bbdfbab6acfe0e757e4f3d194a3905daa6b\tpkg/expression/builtin_vectorized.go",
+    "100644 blob 5dfcb7b395d985574dd6f673c8ea344d8624fca9\tpkg/expression/builtin_vectorized_test.go",
+    "100644 blob 5491fd1fd217c270e7f1e3c59916cbeb111d35b0\tpkg/expression/chunk_executor.go",
+    "100644 blob 3b3ba1747400c9d625f3f5c1124dc4c26927cbd2\tpkg/expression/collation.go",
+    "100644 blob 75d8f8c3cbada44b4b2dcbaee71ba72e016b0740\tpkg/expression/collation_test.go",
+    "100644 blob df437dda999baea97f8afca071a4718759b73eb0\tpkg/expression/column.go",
+    "100644 blob 0095b77c12588530fb074bc54cf20d4306df2313\tpkg/expression/column_test.go",
+    "100644 blob 3dc6d5325ec8d5c3ca6790378406c06ef7f4207f\tpkg/expression/constant.go",
+    "100644 blob 7569bd2e9bb0c10fb9bc0dfa2f8639f3a6aa2759\tpkg/expression/constant_fold.go",
+    "100644 blob 9b4a10322ece37027521a42387cd29d61a0108a5\tpkg/expression/constant_propagation.go",
+    "100644 blob 31d9b2b63dede8db68a8b9843faf80fd43524788\tpkg/expression/constant_test.go",
+    "100644 blob 56f37a616088cb12ce113e5ee11f60ab25c07f9d\tpkg/expression/context.go",
+    "100644 blob 45b0c03a2f840bbcceccf5840b4922356698555e\tpkg/expression/distsql_builtin.go",
+    "100644 blob ca52e767c69a47eb767595870ac84d847d7da9ba\tpkg/expression/distsql_builtin_test.go",
+    "100644 blob 55e2c6b16fd2236a7353af82dd97b7519ce623f0\tpkg/expression/errors.go",
+    "100644 blob d7f262a3fab02bc641d9e10fe4e617b88a2d05da\tpkg/expression/evaluator.go",
+    "100644 blob 001809dc166eef08d0ff2905b06ed7c6ae9a1f70\tpkg/expression/evaluator_test.go",
+    "100644 blob 4fe002db30956c1e85be084f6f9613234ed1e561\tpkg/expression/explain.go",
+    "100644 blob 0cfb1a2dc23af91b7555f33fb8eb39a0b6dec740\tpkg/expression/expr_to_pb.go",
+    "100644 blob ee8a9ee71b99eac6e3a293baaa9dfa9fa26a830d\tpkg/expression/expr_to_pb_test.go",
+    "100644 blob 29691d44bfd7c8aa8fcf46c47f9146b8ddf6b52d\tpkg/expression/exprctx/BUILD.bazel",
+    "100644 blob f97349caec41d0964f6dbd38cc783407675ec4f4\tpkg/expression/exprctx/context.go",
+    "100644 blob ab50918f203220ee2bbba347af7609fdc684a91b\tpkg/expression/exprctx/context_override_test.go",
+    "100644 blob 5b7526b468e899abadc850202deeec30a10776e4\tpkg/expression/exprctx/optional.go",
+    "100644 blob e7290325e654ad0d6a442a957da5d0d6543fc4c1\tpkg/expression/exprctx/optional_test.go",
+    "100644 blob 24e119e71e88532b9731a5c2b1b7d7db731d4f51\tpkg/expression/exprctx/param.go",
+    "100644 blob cd28fdba3e415c9c38308362e5223c05833cd3e2\tpkg/expression/expression.go",
+    "100644 blob 0f3949cc373da29aaca77bbd5bdd09ee4a3524ed\tpkg/expression/expression_test.go",
+    "100644 blob 5752c70ae82fe02a6030a615a7c3c065be70afdf\tpkg/expression/expropt/BUILD.bazel",
+    "100644 blob 55bb4585b093265a469913e84ec763867ac3d9e0\tpkg/expression/expropt/advisory_lock.go",
+    "100644 blob 7f4c684279fb8456a70811609aca13eb085194f9\tpkg/expression/expropt/current_user.go",
+    "100644 blob 05508ec30f1e963eeb9cc4da8496b17c1dbf194f\tpkg/expression/expropt/ddlowner.go",
+    "100644 blob cd103aa9912a07ccc853565f5da7f13c93693eae\tpkg/expression/expropt/infoschema.go",
+    "100644 blob 18c7d3d11d1c716ebb746a5ce66bcefc09f4005f\tpkg/expression/expropt/kvstore.go",
+    "100644 blob 9cd8ae10576073cf0845f6fa645e6586f271f47d\tpkg/expression/expropt/optional.go",
+    "100644 blob 35a69807f6de093780c5eb212759525bfe293701\tpkg/expression/expropt/optional_test.go",
+    "100644 blob 2afed7089ca157868e8ea114de032ec689d8ef3d\tpkg/expression/expropt/priv.go",
+    "100644 blob b00357bcd1b3834a8f32c7bf183600f2d81111c4\tpkg/expression/expropt/sequence.go",
+    "100644 blob 9965f54e4c67bde2c6478420d394cc6858cd24e2\tpkg/expression/expropt/sessioncontext.go",
+    "100644 blob 8c0528baf9d0678d4f6d2779e9118d24710de058\tpkg/expression/expropt/sessionvars.go",
+    "100644 blob a0bf9a43777d95522b85eb11164fe26f2804aa08\tpkg/expression/expropt/sqlexec.go",
+    "100644 blob 484660a6a4481020bff7525b5b91441bab4606a5\tpkg/expression/exprstatic/BUILD.bazel",
+    "100644 blob 5a60bb5ff9f9ab23d2cf7729e11d4ff9d5628da7\tpkg/expression/exprstatic/evalctx.go",
+    "100644 blob d2319d998666aa4e1f21b20d5a31613b6b4ccb8e\tpkg/expression/exprstatic/evalctx_test.go",
+    "100644 blob 0704d0bfe80d107eeaba11a0d6c417c25e381ec8\tpkg/expression/exprstatic/exprctx.go",
+    "100644 blob 80d33b046b72ee15e7ae243290991dfcc20188b5\tpkg/expression/exprstatic/exprctx_test.go",
+    "100644 blob eae90d695af121f79d0bc81398f07b37e0cfae13\tpkg/expression/extension.go",
+    "100644 blob 795f85cfbecaa121b8c336ae4712ef53dcc8a984\tpkg/expression/fts_helper.go",
+    "100644 blob 19e46dbbbe075c4ce9647efdc294e5229db75720\tpkg/expression/fts_to_like.go",
+    "100644 blob 4f0581698c0a797245c4ef0eb77b3b28dc4620d4\tpkg/expression/fts_to_like_test.go",
+    "100644 blob 86104fe8791466dabadc86c563a54d7ce7f02c68\tpkg/expression/function_traits.go",
+    "100644 blob 50768d6db29d8ee5cfa979c45c8c7c5770cc9b8e\tpkg/expression/function_traits_test.go",
+    "100644 blob 23041ca21bbf36b2aad8a269cd40beca564dcc2b\tpkg/expression/generator/BUILD.bazel",
+    "100644 blob d36eb952873f693914a22a5291a9f81d2b44fb64\tpkg/expression/generator/builtin_threadsafe.go",
+    "100644 blob 37496dd2e7b60cd240144db345f605dca9330606\tpkg/expression/generator/compare_vec.go",
+    "100644 blob 6916044a0cc3ceb0507839aa6506111e95549c67\tpkg/expression/generator/control_vec.go",
+    "100644 blob f8c81a9c0ca0d39dae52ba634d04ca24e789820c\tpkg/expression/generator/helper/BUILD.bazel",
+    "100644 blob d56b4c118edb42eee41cfb00865f4e1a9fa47aa8\tpkg/expression/generator/helper/helper.go",
+    "100644 blob 19f0338fa534a31a5e496c8a9158e075a0a479c8\tpkg/expression/generator/other_vec.go",
+    "100644 blob f3fafcf8a3ea2a7f1ad7fb9d4de67d9092f63564\tpkg/expression/generator/string_vec.go",
+    "100644 blob 49c5e7aefa9f1d3a59105e83f7456dcb1998c11b\tpkg/expression/generator/time_vec.go",
+    "100644 blob dcd7d4c5e99506b50a1b990ad8176e0e75b87b8b\tpkg/expression/grouping_sets.go",
+    "100644 blob 0b76990b7e91e5155db7a30506866a3cacdfa656\tpkg/expression/grouping_sets_test.go",
+    "100644 blob 2ad6659f023332728810e98e3b1892737ddb9447\tpkg/expression/helper.go",
+    "100644 blob 4b07d6ffb73d8b9acd800ece7c45763dae3236ff\tpkg/expression/helper_test.go",
+    "100644 blob ca5e14f8789123e4974b230d07ae0275b983b2aa\tpkg/expression/infer_pushdown.go",
+    "100644 blob 104bcf2460d2a8951a7aba49efbf4b4e3c27aa7b\tpkg/expression/inference_helper.go",
+    "100644 blob 90bc94edb78480619a856b33eea2b4466f438b39\tpkg/expression/inference_helper_test.go",
+    "100644 blob 531bc1f867a362513bb0ffed01466ff2ee8bcfc9\tpkg/expression/integration_test/BUILD.bazel",
+    "100644 blob 78311d5ff72921941eb8e4740e9734e10d534541\tpkg/expression/integration_test/README.md",
+    "100644 blob ba63626bd90780a4d6765e02b3279270f339c3d4\tpkg/expression/integration_test/integration_test.go",
+    "100644 blob b5bb1a3b8a5f88c9a9a441221839ccabd41fe574\tpkg/expression/integration_test/main_test.go",
+    "100644 blob e9ad3e58956049babd0e62e35c4753d4bfc2596c\tpkg/expression/main_test.go",
+    "100644 blob 1d5530934f49e7ff310b46556250f67d953455e9\tpkg/expression/scalar_function.go",
+    "100644 blob 5097a0fade40c3a2c35658b0a3fef1b04357473d\tpkg/expression/scalar_function_test.go",
+    "100644 blob e0808268ccc1f2e617393429329fd0eb1348b420\tpkg/expression/schema.go",
+    "100644 blob 44c72eff7e1a04e315e491314eeff0d88be6dcb4\tpkg/expression/schema_test.go",
+    "100644 blob e1d179ca49f3ab78f75ea35cf9afb0d59dd052b3\tpkg/expression/sessionexpr/BUILD.bazel",
+    "100644 blob ba58fb66e6db3af1b7f58c2e705fca1fd26657f1\tpkg/expression/sessionexpr/sessionctx.go",
+    "100644 blob db39bac3f5fd92dd613d8108106bf14f34d6a205\tpkg/expression/sessionexpr/sessionctx_test.go",
+    "100644 blob f99d6cb3bf0e80d6b1425b0c8c79f7845fb62741\tpkg/expression/simple_rewriter.go",
+    "100644 blob 6c15c9ea7db4e4c84b94562a79a9dfb6bbdb24c9\tpkg/expression/simple_rewriter_test.go",
+    "100644 blob 14aa4f424b52569c292582c6810777fbae1065fb\tpkg/expression/test/constantpropagation/BUILD.bazel",
+    "100644 blob 0d96361e97acc29dfc36041d66a5aa39745001e9\tpkg/expression/test/constantpropagation/constant_propagation_test.go",
+    "100644 blob 3f623f036bee2adc34b82850d1c1d94d23188b17\tpkg/expression/test/constantpropagation/main_test.go",
+    "100644 blob beb311cf6e7e01c2f4cd0d3ddc33cc51e62ff5b2\tpkg/expression/test/multivaluedindex/BUILD.bazel",
+    "100644 blob dde2ffb4d188eb1da51eafecafa5f41268b9b524\tpkg/expression/test/multivaluedindex/main_test.go",
+    "100644 blob a49d85b146270ee5c55017f79a1f51873029f9ed\tpkg/expression/test/multivaluedindex/multi_valued_index_test.go",
+    "100644 blob 9f1c8827bacd71fb2341b631d055fdbf6346b824\tpkg/expression/typeinfer_test.go",
+    "100644 blob 6948825777e2cfc4e4c5e50e25ed93a456bdf2b4\tpkg/expression/util.go",
+    "100644 blob dc8cce554a88d7a15bf411b727b00ceffb1ebd2b\tpkg/expression/util_test.go",
+    "100644 blob d069511ad91f4266934ab8044c72193e4a18591c\tpkg/expression/vectorized.go",
+    "100644 blob d5fbdb811568d97e9690ffa0eb2dd4ebcccd81f9\tpkg/expression/vs_helper.go"
+  ],
+  "pkg/sessionctx/stmtctx": [
+    "100644 blob 58c2bbd7a4110509889d5e4c2480e029cf094d8e\tpkg/sessionctx/stmtctx/BUILD.bazel",
+    "100644 blob f34da9ae0cc07f73d02b9fd6fa0a92c301eeaa64\tpkg/sessionctx/stmtctx/main_test.go",
+    "100644 blob e82b6b6e0b2b7e4252c56933b183329025248b89\tpkg/sessionctx/stmtctx/stmtctx.go",
+    "100644 blob dbfd15882db8277c696e4743a70f7a54ccc2d855\tpkg/sessionctx/stmtctx/stmtctx_test.go"
+  ],
+  "pkg/util/mock": [
+    "100644 blob 00c9a1dafb62d1ae23ac797b400dd2668be70efe\tpkg/util/mock/BUILD.bazel",
+    "100644 blob f675e96c99b51bcf6c3cbe8ec0802c951dfa3f63\tpkg/util/mock/client.go",
+    "100644 blob 8eba0ddb3ad909c79d4de8e47f36b0092bed85f2\tpkg/util/mock/context.go",
+    "100644 blob 87a301e2a6ad9bb823c902565034d0d68deeefe6\tpkg/util/mock/fortest.go",
+    "100644 blob 8807567b3ea4060c7a4224552670cdee62f7afd5\tpkg/util/mock/iter.go",
+    "100644 blob af76288ba6c6c1b3d93d52e4581e76fe70f951de\tpkg/util/mock/iter_test.go",
+    "100644 blob 28264fbe37db8c6ab68a79a68736e55fcf1c83af\tpkg/util/mock/main_test.go",
+    "100644 blob e0dcd89468682c852d7b65a58566bf74a24520d7\tpkg/util/mock/metrics.go",
+    "100644 blob 8c468a9d80721c916cbbe412db1c693cb3379a66\tpkg/util/mock/mock_test.go",
+    "100644 blob c4ba414da694a8d378be7f7f1cfd127864fccf74\tpkg/util/mock/store.go"
+  ],
+  "pkg/store/mockstore/unistore/cophandler": [
+    "100644 blob 05b611251acd5d8159b65a47b70c563720f4d61b\tpkg/store/mockstore/unistore/cophandler/BUILD.bazel",
+    "100644 blob 8886797ca15faf6d6d5bd0ce9106c3ec60b78a25\tpkg/store/mockstore/unistore/cophandler/analyze.go",
+    "100644 blob 829bde10d8dc263a394651742cd39978bd337ea0\tpkg/store/mockstore/unistore/cophandler/closure_exec.go",
+    "100644 blob 896d97fce3eb966ea9e09c4dc50165adfe0b142d\tpkg/store/mockstore/unistore/cophandler/cop_handler.go",
+    "100644 blob 59e5eadc70a4a48f07f31c03e57ffdfcc7482e92\tpkg/store/mockstore/unistore/cophandler/cop_handler_test.go",
+    "100644 blob fd3c1dcf82f357a363850cc008f800dbc5409b64\tpkg/store/mockstore/unistore/cophandler/main_test.go",
+    "100644 blob b94ba50e9ac38ab5005b5fb7b1951af40432ec82\tpkg/store/mockstore/unistore/cophandler/mpp.go",
+    "100644 blob 2981779b2322aaed5790810a1cd8e13d8d4d8d8f\tpkg/store/mockstore/unistore/cophandler/mpp_exec.go",
+    "100644 blob bd66101b74eb98dd41817ff5024b8ef368c2f04b\tpkg/store/mockstore/unistore/cophandler/topn.go"
+  ],
+  "go1.25.14/regexp (including syntax subpackage)": [
+    {
+      "path": "all_test.go",
+      "sha256": "3448ea6eadf660d367a73fb19df6ed981ff197f3253d17264aad514a24738165"
+    },
+    {
+      "path": "backtrack.go",
+      "sha256": "ac5a1e4cf49b1c7f4372c0a7c2e8d156100c17d3a114fcf9539f55d223d06092"
+    },
+    {
+      "path": "example_test.go",
+      "sha256": "e2e3dec1e5c0dde37cbefcf2e7c6171bd604bcdea3c006be235e61d1e48be048"
+    },
+    {
+      "path": "exec.go",
+      "sha256": "cc9fda63ad7056d4c4abaaa49c00470f726be35ccee53f1c3fe73259e9634dd5"
+    },
+    {
+      "path": "exec2_test.go",
+      "sha256": "6e60356cc5532dcc1265776736916d5ee927d3601bb0958ae8d1b5b7f16cc120"
+    },
+    {
+      "path": "exec_test.go",
+      "sha256": "0b10ad15dd1f878c2c1b5ef265c570c7d74421c25736a7cb880130e68e810c04"
+    },
+    {
+      "path": "find_test.go",
+      "sha256": "f4f58c3d05b047253003420894bf71a67ac9302ad81910fedcab4d86fb6f7fa8"
+    },
+    {
+      "path": "onepass.go",
+      "sha256": "fd0e29803438c6ea3021c78227d4f69de163f693e82c155dc62d721eaacbd24b"
+    },
+    {
+      "path": "onepass_test.go",
+      "sha256": "d849c5acbc51979260c9802a352302fe971d163300428bfa15cb0d1f5ef491ef"
+    },
+    {
+      "path": "regexp.go",
+      "sha256": "3c6b372bf6e658c167d100093f946741ddd4bfb2717d71455d2bf6a4c515b406"
+    },
+    {
+      "path": "syntax/compile.go",
+      "sha256": "2e1f753be77bf1fa54aed2a7f98932394324b82c91109e19d93283f482f7ee01"
+    },
+    {
+      "path": "syntax/doc.go",
+      "sha256": "d61fed6f5a70cb4a0883f2c70da086d52edc80faf79ecb33a95393f28f24711e"
+    },
+    {
+      "path": "syntax/make_perl_groups.pl",
+      "sha256": "ea058e155359d5f4a3cc983d1e200a4b3a08d4cf0e2c2e3c867027ccdf83b742"
+    },
+    {
+      "path": "syntax/op_string.go",
+      "sha256": "391e4d0f59334da7c36c0a32f0a661139f181aecb2f7c209ca63280b030dfa0a"
+    },
+    {
+      "path": "syntax/parse.go",
+      "sha256": "d0f657113901da39d6118e4172206a0358b71c96ef43051cc0a741a0a4d04820"
+    },
+    {
+      "path": "syntax/parse_test.go",
+      "sha256": "e8c636fa6f87a8767265cd00565a53db2a990a21287c04ec78406b0e6b9f6580"
+    },
+    {
+      "path": "syntax/perl_groups.go",
+      "sha256": "d060a0645b60b210eaec7c3dba6d554dc297c14fe71cdbcc9c25b4fc7562c3a4"
+    },
+    {
+      "path": "syntax/prog.go",
+      "sha256": "7a24ebd22eec504ceaeffbd33641ae330d3ca666d54f6a29ce6d96fc127e6c64"
+    },
+    {
+      "path": "syntax/prog_test.go",
+      "sha256": "1f9a15f540211053c4b5f66e07469aee37715894dff0da223334c8e3049977f8"
+    },
+    {
+      "path": "syntax/regexp.go",
+      "sha256": "bccc8fe5bf53c9e34aee2df851c05052f9b0d447310d151501dfbca7a8ee7fcb"
+    },
+    {
+      "path": "syntax/simplify.go",
+      "sha256": "d22b48ecde668bc22cd8998492c752ec088da5d027d61b7f04f7a9298796eec0"
+    },
+    {
+      "path": "syntax/simplify_test.go",
+      "sha256": "c8aba87a1d6eec462b63fea3eea13dedcfc61d7f5580842c7c10219898f37c50"
+    },
+    {
+      "path": "testdata/README",
+      "sha256": "f6dd333da27fc77a7f67a655a3c29549600424378da558993ae46689dc88ebb8"
+    },
+    {
+      "path": "testdata/basic.dat",
+      "sha256": "4fafe8de5fc2462cedbb9af53314fb4bb1d5418142970ed0ace69210b18fe4a4"
+    },
+    {
+      "path": "testdata/nullsubexpr.dat",
+      "sha256": "b3efa203749c79e51e4e9cb8cfd378bb8139bcdefc49d97f71e80218db2fc39b"
+    },
+    {
+      "path": "testdata/re2-exhaustive.txt.bz2",
+      "sha256": "f1253bff45157cd2a71d7729e11a19ad8ae15efdc0af00fe0939289e6e1a4ec8"
+    },
+    {
+      "path": "testdata/re2-search.txt",
+      "sha256": "b6876d87b65a31a3d909f58f7100d9f7b501dfd4c79c3e6a73c50868de434c9d"
+    },
+    {
+      "path": "testdata/repetition.dat",
+      "sha256": "d0cd1f1e7774d01138002ee80262f3cb5fe7ef44d1c7f5c538d3953b409a5eca"
+    },
+    {
+      "path": "testdata/testregex.c",
+      "sha256": "0460365072087dab590c01814b56e2ca64c89a576eace2e06482192f1a49dc24"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "rust": "70d6f796f75962a656055d682edcffdde5914252",
+  "go_master": "cce8ac7d6feb073325909ffaf344630bd24cca1d",
+  "go_toolchain": "go1.25.14",
+  "grammar": {
+    "rows": 248,
+    "differing_rows": 24,
+    "go_accepts_rust_rejects": 21,
+    "go_rejects_rust_accepts": 2,
+    "both_accept_match_differs": 1
+  },
+  "policy": {
+    "rows": 854,
+    "flags": [
+      0,
+      1,
+      2,
+      8,
+      10,
+      16,
+      32,
+      64,
+      128,
+      129,
+      130,
+      136,
+      256,
+      258
+    ],
+    "differing_rows": 370,
+    "panics": 0
+  },
+  "prior_matrix": {
+    "rows": 8298,
+    "differing_rows": 392,
+    "unchanged_difference_list": true
+  },
+  "registry": {
+    "rust": 234,
+    "go": 565,
+    "missing": 331
+  }
+}

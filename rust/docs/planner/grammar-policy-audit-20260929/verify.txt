@@ -1,0 +1,46 @@
+from pathlib import Path
+import collections, gzip, hashlib, json, re, shutil, sys
+root=Path(__file__).resolve().parent
+for line in (root/'SHA256SUMS').read_text().splitlines():
+    digest,name=line.split('  ',1)
+    assert hashlib.sha256((root/name).read_bytes()).hexdigest()==digest,name
+read=lambda name:[l.split('\t') for l in gzip.decompress((root/name).read_bytes()).decode().splitlines()]
+g=read('grammar-go.tsv.gz');r=read('grammar-rust.tsv.gz')
+assert len(g)==len(r)==248
+assert len({a[0] for a in g})==248
+assert [a[:2] for a in g]==[a[:2] for a in r]
+diff=[(a,b) for a,b in zip(g,r) if a[2:4]!=b[2:4]]
+assert len(diff)==24
+assert collections.Counter((a[2],b[2]) for a,b in diff)=={('ok','err'):21,('err','ok'):2,('ok','ok'):1}
+assert {a[0] for a,b in diff}=={a['id'] for a in json.loads((root/'grammar-differences.json').read_text())}
+g=read('policy-go.tsv.gz');r=read('policy-rust.tsv.gz')
+assert len(g)==len(r)==854
+assert len({tuple(a[:2]) for a in g})==854
+assert [a[:2] for a in g]==[a[:2] for a in r]
+assert all(a[3]!='panic' and b[2]!='panic' for a,b in zip(g,r))
+normalize=lambda s:re.sub(r'^\[[^]:]*:(\d+)\]',r'[\1]',s)
+unhex=lambda s:bytes.fromhex(s).decode(errors='replace')
+keys=[]
+for a,b in zip(g,r):
+    gw=[normalize(unhex(x)) for x in a[6].split(',') if x]
+    rw=[normalize(unhex(x)) for x in b[5].split(',') if x]
+    typed=a[3]==b[2]=='error' and unhex(b[3]).startswith('[') and normalize(unhex(a[4]))!=normalize(unhex(b[3]))
+    if a[3]!=b[2] or a[5]!=b[4] or gw!=rw or typed:keys.append((a[0],int(a[1])))
+assert len(keys)==370
+assert set(keys)=={(x['name'],x['flags']) for x in json.loads((root/'policy-differences.json').read_text())}
+prior=json.loads(gzip.decompress((root/'prior-differences.json.gz').read_bytes()))
+assert prior==json.loads((root.parent/'pb-expanded-audit-20260928/differences.json').read_text())
+registry=(root/'rust-registry.txt').read_text().splitlines()
+old=json.loads((root.parent/'pb-systematic-audit-20260928/pb-audit-inventory.json').read_text())
+assert len(registry)==234
+assert set(registry)==set(old['rust'])
+assert len(old['go'])==565 and len(old['missing'])==331
+print('Verified: 248 grammar rows / 24 differences; 854 policy rows / 370 differences; prior 392-row difference list unchanged; 234 Rust registrations.')
+if '--prepare' in sys.argv:
+    mapping={'grammar-go-oracle.txt':'regexp-grammar-oracle.go','grammar-rust-probe.txt':'regexp-grammar-rust.rs','run-grammar.txt':'run-regexp-grammar.py',
+    'policy-go-oracle.txt':'pb-policy_test.go','policy-go-overlay.json':'pb-policy-overlay.json','policy-rust-probe.txt':'pb-policy-rust-probe.rs','run-policy.txt':'run-pb-policy-rust.py','compare-policy.txt':'compare-pb-policy.py',
+    'sql-go-oracle.txt':'regexp-sql_test.go','sql-go-overlay.json':'regexp-sql-overlay.json','sql-rust-probe.txt':'regexp-sql-probe.rs','run-sql.txt':'run-regexp-sql.py'}
+    for source,target in mapping.items():shutil.copyfile(root/source,Path('/private/tmp')/target)
+    for source,target in [('grammar-go.tsv.gz','regexp-grammar-go.tsv'),('policy-go.tsv.gz','pb-policy-go.tsv')]:
+        (Path('/private/tmp')/target).write_bytes(gzip.decompress((root/source).read_bytes()))
+    print('Prepared temporary oracles, probes, runners and captured Go inputs.')

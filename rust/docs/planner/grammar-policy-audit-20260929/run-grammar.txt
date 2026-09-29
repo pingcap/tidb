@@ -1,0 +1,11 @@
+from pathlib import Path
+import subprocess
+p=Path('rust/crates/tidb-util/src/go_regexp.rs'); original=p.read_text()
+try:
+ p.write_text(original+'\n'+Path('/private/tmp/regexp-grammar-rust.rs').read_text())
+ with open('/private/tmp/regexp-grammar-rust.log','w') as log:
+  r=subprocess.run(['cargo','test','--offline','--locked','--manifest-path','rust/Cargo.toml','-p','tidb-util','--lib','audit_go_grammar_tables','--','--test-threads=1'],stdout=log,stderr=subprocess.STDOUT)
+ print('grammar capture:',r.returncode,flush=True)
+finally:
+ p.write_text(original)
+raise SystemExit(r.returncode)

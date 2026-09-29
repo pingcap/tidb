@@ -1,0 +1,76 @@
+package expression
+import (
+ "testing"
+ "encoding/hex"
+ "fmt"
+ "os"
+ "strings"
+ "strconv"
+ "time"
+ "math"
+ "github.com/pingcap/tidb/pkg/parser/mysql"
+
+ "github.com/pingcap/tidb/pkg/types"
+ "github.com/pingcap/tidb/pkg/util/chunk"
+ "github.com/pingcap/tidb/pkg/util/codec"
+ "github.com/pingcap/tidb/pkg/util/mock"
+ "github.com/pingcap/tipb/go-tipb"
+)
+func TestRustRegexpErrorPB(t *testing.T) {
+ out,err:=os.Create("/private/tmp/regexp-sql-go.tsv");if err!=nil {t.Fatal(err)};defer out.Close()
+ ft:=func(domain string)*tipb.FieldType{
+  code:=map[string]byte{"Int":mysql.TypeLonglong,"Real":mysql.TypeDouble,"Decimal":mysql.TypeNewDecimal,"String":mysql.TypeVarString,"Time":mysql.TypeDatetime,"Duration":mysql.TypeDuration,"Json":mysql.TypeJSON}[domain]
+  field:=&tipb.FieldType{Tp:int32(code),Flen:-1,Decimal:-1,Charset:"binary",Collate:63,Flag:128}
+  if domain=="String"||domain=="Json" {field.Charset="utf8mb4";field.Collate=46;field.Flag=0}
+  if domain=="Int" {field.Decimal=0};if domain=="Decimal" {field.Flen=10;field.Decimal=2};if domain=="Time"||domain=="Duration" {field.Decimal=3}
+  return field
+ }
+ var literal func(string,string)*tipb.Expr
+ literal=func(domain,value string)*tipb.Expr {
+  pb:=&tipb.Expr{FieldType:ft(domain)}
+  switch domain {
+  case "Null": pb.Tp=tipb.ExprType_Null
+  case "Int":n,_:=strconv.ParseInt(value,10,64);pb.Tp=tipb.ExprType_Int64;pb.Val=codec.EncodeInt(nil,n)
+  case "UInt":n,_:=strconv.ParseUint(value,10,64);pb.FieldType=ft("Int");pb.FieldType.Flag|=32;pb.Tp=tipb.ExprType_Uint64;pb.Val=codec.EncodeUint(nil,n)
+  case "Real":n,_:=strconv.ParseFloat(value,64);pb.Tp=tipb.ExprType_Float64;pb.Val=codec.EncodeFloat(nil,n)
+  case "Decimal":d:=new(types.MyDecimal);if err:=d.FromString([]byte(value));err!=nil {panic(err)};pb.Tp=tipb.ExprType_MysqlDecimal;pb.Val,err=codec.EncodeDecimal(nil,d,0,0)
+  case "String":pb.Tp=tipb.ExprType_String;pb.Val=[]byte(value)
+  case "Duration":n,_:=strconv.ParseInt(value,10,64);pb.Tp=tipb.ExprType_MysqlDuration;pb.Val=codec.EncodeInt(nil,n)
+  case "Time":pb.Tp=tipb.ExprType_MysqlTime;v:=types.NewTime(types.FromDate(2024,1,2,3,4,5,123000),mysql.TypeDatetime,3);n,_:=v.ToPackedUint();pb.Val=codec.EncodeUint(nil,n)
+  case "Json":pb.Tp=tipb.ExprType_MysqlJson;j,e:=types.ParseBinaryJSONFromString(value);if e!=nil {panic(e)};pb.Val,err=codec.EncodeValue(time.UTC,nil,types.NewJSONDatum(j))
+  }
+  return pb
+ }
+ call:=func(sig,domain string,args ...*tipb.Expr)*tipb.Expr {
+  return &tipb.Expr{Tp:tipb.ExprType_ScalarFunc,Sig:tipb.ScalarFuncSig(tipb.ScalarFuncSig_value[sig]),FieldType:ft(domain),Children:args}
+ }
+ count:=0
+ run:=func(name string,pb *tipb.Expr){
+  for _,flags:=range []uint64{0} {
+   func(){
+    ctx:=mock.NewContextDeprecated();ctx.GetSessionVars().StmtCtx.InitFromPBFlagAndTz(flags,time.UTC);ctx.GetSessionVars().TimeZone=time.UTC
+    input:=pb;row:=chunk.Row{};var columns []*types.FieldType;columnWire:=""
+    if strings.Contains(name,"/column/") {
+     leaf:=pb.Children[0];encoded,_:=leaf.Marshal();columnWire=hex.EncodeToString(encoded)
+     decoded,e:=PBToExpr(ctx,leaf,nil);if e!=nil {t.Fatal(e)};value,e:=decoded.Eval(ctx,chunk.Row{});if e!=nil {t.Fatal(e)}
+     row=chunk.MutRowFromDatums([]types.Datum{value}).ToRow();columns=[]*types.FieldType{PbTypeToFieldType(leaf.FieldType)}
+     clone:=*pb;clone.Children=[]*tipb.Expr{{Tp:tipb.ExprType_ColumnRef,Val:codec.EncodeInt(nil,0),FieldType:leaf.FieldType}};input=&clone
+    }
+    wire,e:=input.Marshal();if e!=nil {panic(e)}
+    result:="";detail:=""
+    defer func(){if r:=recover();r!=nil {result="panic";detail=fmt.Sprint(r)};warns:=[]string{};for _,w:=range ctx.GetSessionVars().StmtCtx.GetWarnings(){warns=append(warns,hex.EncodeToString([]byte(w.Err.Error())))};fmt.Fprintf(out,"%s\t%d\t%s\t%s\t%s\t%d\t%s\t%s\n",name,flags,hex.EncodeToString(wire),result,hex.EncodeToString([]byte(detail)),len(ctx.GetSessionVars().StmtCtx.GetWarnings()),strings.Join(warns,","),columnWire);count++}()
+    expr,e:=PBToExpr(ctx,input,columns);if e!=nil {result="decode_error";detail=e.Error();return}
+    value,e:=expr.Eval(ctx,row);if e!=nil {result="error";detail=e.Error();return}
+    switch value.Kind() {
+    case types.KindNull:result="null"
+    case types.KindFloat64,types.KindFloat32:result=fmt.Sprintf("real:%016x",math.Float64bits(value.GetFloat64()))
+    default: text,e:=value.ToString();if e!=nil {panic(e)};result="value:"+hex.EncodeToString([]byte(text))
+    }
+   }()
+  }
+ }
+
+
+ for i,p:=range []string{"a{01}","(?ii)a","[","a"} {flags:="";if i==3{flags="z"};run(fmt.Sprintf("regexp/%d",i),call("RegexpLikeSig","Int",literal("String","a"),literal("String",p),literal("String",flags)))}
+ t.Logf("captured %d rows",count)
+}

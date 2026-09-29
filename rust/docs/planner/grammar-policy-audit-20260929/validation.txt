@@ -1,0 +1,117 @@
+regexp-grammar-rust.log
+    |
+125 | pub static MEMORY_ARBITRATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-util` (lib test) generated 3 warnings (run `cargo fix --lib -p tidb-util --tests` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.46s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-util/6f4eb4dcd105ad82/out/tidb_util-6f4eb4dcd105ad82)
+
+running 1 test
+test go_regexp::audit_go_grammar_tables ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 575 filtered out; finished in 0.68s
+
+
+pb-policy-go.log
+[2026/09/29 06:11:32.617 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+[2026/09/29 06:11:32.617 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+[2026/09/29 06:11:32.617 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+[2026/09/29 06:11:32.617 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+    rust_policy_pb_test.go:82: captured 854 rows
+--- PASS: TestRustPolicyPB (0.02s)
+PASS
+ok  	github.com/pingcap/tidb/pkg/expression	0.107s
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+Using existing github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
+[failpoint-state] action=disable backend=go log_channel=stderr log_color=auto refcount=1
+[failpoint-state] [DECISION] >>> decision=run-disable reason=refcount-reaches-zero <<<
+[failpoint-state] new_refcount=0
+
+pb-policy-rust-matrix.log
+     |
+2026 |     RegexpLike(i32),
+     |     ^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-unistore` (lib test) generated 6 warnings (run `cargo fix --lib -p tidb-unistore --tests` to apply 5 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.00s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-unistore/a1235555bb9b6c05/out/tidb_unistore-a1235555bb9b6c05)
+
+running 1 test
+test cophandler::eval_context::next_boundary_audit::audit_policy_pb_matrix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 202 filtered out; finished in 0.02s
+
+
+regexp-sql-go.log
+[2026/09/29 06:13:02.491 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=46]
+[2026/09/29 06:13:02.491 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=46]
+[2026/09/29 06:13:02.491 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=46]
+[2026/09/29 06:13:02.491 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+    rust_regexp_error_pb_test.go:75: captured 4 rows
+--- PASS: TestRustRegexpErrorPB (0.00s)
+PASS
+ok  	github.com/pingcap/tidb/pkg/expression	0.081s
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+Using existing github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
+[failpoint-state] action=disable backend=go log_channel=stderr log_color=auto refcount=1
+[failpoint-state] [DECISION] >>> decision=run-disable reason=refcount-reaches-zero <<<
+[failpoint-state] new_refcount=0
+
+regexp-sql-rust.log
+  |
+7 | fn error(session: &mut Session, sql: &str) -> String {
+  |    ^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tidb-session` (test "all") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.60s
+     Running tests/all.rs (rust/target/debug/build/tidb-session/ed91a02ae11d4ba0/out/all-ed91a02ae11d4ba0)
+
+running 1 test
+test regexp_family_source::audit_regexp_sql_boundary ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 337 filtered out; finished in 0.03s
+
+
+pb-expanded-rust-inventory.log
+    |
+139 |     ConstantFloatCastOverflow { value: String },
+    |                                 ^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-expr` (lib test) generated 32 warnings (run `cargo fix --lib -p tidb-expr --tests` to apply 16 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.70s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-expr/860c448b13d5d896/out/tidb_expr-860c448b13d5d896)
+
+running 1 test
+test scalar_function::pb_builtin::audit_inventory::audit_pb_registry_inventory ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1336 filtered out; finished in 0.00s
+
+
+pb-expanded-rust-matrix.log
+     |
+2026 |     RegexpLike(i32),
+     |     ^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-unistore` (lib test) generated 6 warnings (run `cargo fix --lib -p tidb-unistore --tests` to apply 5 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.24s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-unistore/a1235555bb9b6c05/out/tidb_unistore-a1235555bb9b6c05)
+
+running 1 test
+test cophandler::eval_context::next_boundary_audit::audit_expanded_pb_matrix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 202 filtered out; finished in 0.12s
