@@ -168,7 +168,7 @@ func TestBoundedMinHeap_LargeDataset(t *testing.T) {
 	bmh := NewBoundedMinHeap(capacity, intComparator)
 
 	// add many items
-	for i := 0; i < dataSize; i++ {
+	for i := range dataSize {
 		bmh.Add(i)
 	}
 
@@ -177,7 +177,7 @@ func TestBoundedMinHeap_LargeDataset(t *testing.T) {
 
 	// should have the top 10 values: 999, 998, ..., 990
 	require.Equal(t, capacity, len(result))
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		expected := dataSize - 1 - i // 999, 998, 997, ...
 		require.Equal(t, expected, result[i])
 	}
