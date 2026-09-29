@@ -17,17 +17,46 @@ package core
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 var explainRUForestRowsSink [][]string
+
+func TestMViewPhysicalPlanExplainInfo(t *testing.T) {
+	deltaMerge := &MViewDeltaMerge{
+		AggInfos: []mview.AggInfo{{
+			Kind:         mview.AggMax,
+			ArgColName:   "value",
+			MVOffset:     3,
+			Dependencies: []int{2, 5},
+		}},
+		FullUpdateInnerSource: &physicalop.PhysicalTableDual{},
+	}
+	require.Equal(t, "agg_deps:[max(value)@3->[2,5]], full_update:index_lookup", deltaMerge.ExplainInfo())
+
+	completeApply := &MViewCompleteDeltaApply{
+		OpColID:                  1,
+		MarkerMVOffset:           2,
+		GroupKeyMVOffsets:        []int{0, 2},
+		CurrentHandleCols:        plannerutil.NewIntHandleCols(&expression.Column{Index: 7}),
+		CurrentRowInputColIDs:    []int{4, 6, 8},
+		RecomputedRowInputColIDs: []int{5, 9, 10},
+	}
+	require.Equal(t,
+		"op_offset:1, current_marker_offset:8, recomputed_marker_offset:10, current_group_keys_offset:[4,8], recomputed_group_keys_offset:[5,10], current_handle_offset:[7], current_row_offset:[4,6,8], recomputed_row_offset:[5,9,10]",
+		completeApply.ExplainInfo(),
+	)
+}
 
 func newExplainRUForestFixture(cteCount, scalarCount int) (*FlatPhysicalPlan, *ExplainRUResult) {
 	ctx := mock.NewContext()
