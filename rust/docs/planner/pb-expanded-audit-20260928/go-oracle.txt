@@ -1,0 +1,227 @@
+package expression
+import (
+ "testing"
+ "encoding/hex"
+ "fmt"
+ "os"
+ "strings"
+ "strconv"
+ "time"
+ "math"
+ "github.com/pingcap/tidb/pkg/parser/mysql"
+ "github.com/pingcap/tidb/pkg/errctx"
+ "github.com/pingcap/tidb/pkg/types"
+ "github.com/pingcap/tidb/pkg/util/chunk"
+ "github.com/pingcap/tidb/pkg/util/codec"
+ "github.com/pingcap/tidb/pkg/util/mock"
+ "github.com/pingcap/tipb/go-tipb"
+)
+func TestRustSystematicPB(t *testing.T) {
+ out,err:=os.Create("/private/tmp/pb-expanded-go.tsv");if err!=nil {t.Fatal(err)};defer out.Close()
+ ft:=func(domain string)*tipb.FieldType{
+  code:=map[string]byte{"Int":mysql.TypeLonglong,"Real":mysql.TypeDouble,"Decimal":mysql.TypeNewDecimal,"String":mysql.TypeVarString,"Time":mysql.TypeDatetime,"Duration":mysql.TypeDuration,"Json":mysql.TypeJSON}[domain]
+  field:=&tipb.FieldType{Tp:int32(code),Flen:-1,Decimal:-1,Charset:"binary",Collate:63,Flag:128}
+  if domain=="String"||domain=="Json" {field.Charset="utf8mb4";field.Collate=46;field.Flag=0}
+  if domain=="Int" {field.Decimal=0};if domain=="Decimal" {field.Flen=10;field.Decimal=2};if domain=="Time"||domain=="Duration" {field.Decimal=3}
+  return field
+ }
+ var literal func(string,string)*tipb.Expr
+ literal=func(domain,value string)*tipb.Expr {
+  pb:=&tipb.Expr{FieldType:ft(domain)}
+  switch domain {
+  case "Null": pb.Tp=tipb.ExprType_Null
+  case "Int":n,_:=strconv.ParseInt(value,10,64);pb.Tp=tipb.ExprType_Int64;pb.Val=codec.EncodeInt(nil,n)
+  case "UInt":n,_:=strconv.ParseUint(value,10,64);pb.FieldType=ft("Int");pb.FieldType.Flag|=32;pb.Tp=tipb.ExprType_Uint64;pb.Val=codec.EncodeUint(nil,n)
+  case "Real":n,_:=strconv.ParseFloat(value,64);pb.Tp=tipb.ExprType_Float64;pb.Val=codec.EncodeFloat(nil,n)
+  case "Decimal":d:=new(types.MyDecimal);if err:=d.FromString([]byte(value));err!=nil {panic(err)};pb.Tp=tipb.ExprType_MysqlDecimal;pb.Val,err=codec.EncodeDecimal(nil,d,0,0)
+  case "String":pb.Tp=tipb.ExprType_String;pb.Val=[]byte(value)
+  case "Duration":n,_:=strconv.ParseInt(value,10,64);pb.Tp=tipb.ExprType_MysqlDuration;pb.Val=codec.EncodeInt(nil,n)
+  case "Time":pb.Tp=tipb.ExprType_MysqlTime;v:=types.NewTime(types.FromDate(2024,1,2,3,4,5,123000),mysql.TypeDatetime,3);n,_:=v.ToPackedUint();pb.Val=codec.EncodeUint(nil,n)
+  case "Json":pb.Tp=tipb.ExprType_MysqlJson;j,e:=types.ParseBinaryJSONFromString(value);if e!=nil {panic(e)};pb.Val,err=codec.EncodeValue(time.UTC,nil,types.NewJSONDatum(j))
+  }
+  return pb
+ }
+ call:=func(sig,domain string,args ...*tipb.Expr)*tipb.Expr {
+  return &tipb.Expr{Tp:tipb.ExprType_ScalarFunc,Sig:tipb.ScalarFuncSig(tipb.ScalarFuncSig_value[sig]),FieldType:ft(domain),Children:args}
+ }
+ count:=0
+ run:=func(name string,pb *tipb.Expr){
+  for _,flags:=range []uint64{0,2,1} {
+   func(){
+    ctx:=mock.NewContext();ctx.GetSessionVars().StmtCtx.SetTypeFlags(types.DefaultStmtFlags.WithIgnoreTruncateErr(flags==1).WithTruncateAsWarning(flags==2).WithIgnoreZeroInDate(false).WithAllowNegativeToUnsigned(true));ctx.GetSessionVars().TimeZone=time.UTC;ctx.GetSessionVars().StmtCtx.SetTimeZone(time.UTC);levels:=ctx.GetSessionVars().StmtCtx.ErrLevels();levels[errctx.ErrGroupDividedByZero]=errctx.LevelError;ctx.GetSessionVars().StmtCtx.SetErrLevels(levels)
+    input:=pb;row:=chunk.Row{};var columns []*types.FieldType;columnWire:=""
+    if strings.Contains(name,"/column/") {
+     leaf:=pb.Children[0];encoded,_:=leaf.Marshal();columnWire=hex.EncodeToString(encoded)
+     decoded,e:=PBToExpr(ctx,leaf,nil);if e!=nil {t.Fatal(e)};value,e:=decoded.Eval(ctx,chunk.Row{});if e!=nil {t.Fatal(e)}
+     row=chunk.MutRowFromDatums([]types.Datum{value}).ToRow();columns=[]*types.FieldType{PbTypeToFieldType(leaf.FieldType)}
+     clone:=*pb;clone.Children=[]*tipb.Expr{{Tp:tipb.ExprType_ColumnRef,Val:codec.EncodeInt(nil,0),FieldType:leaf.FieldType}};input=&clone
+    }
+    wire,e:=input.Marshal();if e!=nil {panic(e)}
+    result:="";detail:=""
+    defer func(){if r:=recover();r!=nil {result="panic";detail=fmt.Sprint(r)};warns:=[]string{};for _,w:=range ctx.GetSessionVars().StmtCtx.GetWarnings(){warns=append(warns,hex.EncodeToString([]byte(w.Err.Error())))};fmt.Fprintf(out,"%s\t%d\t%s\t%s\t%s\t%d\t%s\t%s\n",name,flags,hex.EncodeToString(wire),result,hex.EncodeToString([]byte(detail)),len(ctx.GetSessionVars().StmtCtx.GetWarnings()),strings.Join(warns,","),columnWire);count++}()
+    expr,e:=PBToExpr(ctx,input,columns);if e!=nil {result="decode_error";detail=e.Error();return}
+    value,e:=expr.Eval(ctx,row);if e!=nil {result="error";detail=e.Error();return}
+    switch value.Kind() {
+    case types.KindNull:result="null"
+    case types.KindFloat64,types.KindFloat32:result=fmt.Sprintf("real:%016x",math.Float64bits(value.GetFloat64()))
+    default: text,e:=value.ToString();if e!=nil {panic(e)};result="value:"+hex.EncodeToString([]byte(text))
+    }
+   }()
+  }
+ }
+ samples:=map[string][]string{"Int":{"-1","0","1","9223372036854775807"},"Real":{"-1.26","0.5","1e20"},"Decimal":{"-1.26","0.5","123.456"},"String":{"1.26","invalid","2024-01-02 03:04:05","-1","1e99"},"Time":{"time"},"Duration":{"0","1500000000","-1500000000"},"Json":{"1.26","\"1.26\"","{}","true","null"}}
+ domains:=[]string{"Int","Real","Decimal","String","Time","Duration","Json"}
+ for _,source:=range domains {for _,target:=range domains {sig:="Cast"+source+"As"+target
+  for i,value:=range samples[source] {
+   args:=literal(source,value)
+   pb:=call(sig,target,args);run(fmt.Sprintf("%s/base/%d",sig,i),pb)
+   pb.FieldType.Flag|=32;run(fmt.Sprintf("%s/unsigned/%d",sig,i),pb)
+  }
+  if source=="Int" {run(sig+"/uint64max",call(sig,target,literal("UInt","18446744073709551615")))}
+  if target=="Time" {pb:=call(sig,target,literal(source,samples[source][0]));pb.FieldType.Tp=int32(mysql.TypeTimestamp);run(sig+"/timestamp",pb)}
+ }}
+ for _,domain:=range []string{"Int","Real","Decimal","String","Time"} {
+  for _,op:=range []string{"LT","LE","GT","GE","EQ","NE"} {
+   sig:=op+domain
+   run(sig+"/ordinary",call(sig,"Int",literal(domain,samples[domain][0]),literal(domain,samples[domain][len(samples[domain])-1])))
+   run(sig+"/null_bad",call(sig,"Int",literal("Null",""),literal("String","invalid")))
+  }
+ }
+ for _,sig:=range []string{"PlusInt","PlusReal","PlusDecimal","MinusInt","MinusReal","MinusDecimal","MultiplyInt","MultiplyIntUnsigned","MultiplyReal","MultiplyDecimal","DivideReal","DivideDecimal","IntDivideInt","IntDivideDecimal","ModIntSignedSigned","ModIntSignedUnsigned","ModIntUnsignedSigned","ModIntUnsignedUnsigned","ModReal","ModDecimal"} {
+  domain:="Int";if strings.HasSuffix(sig,"Real"){domain="Real"};if strings.HasSuffix(sig,"Decimal"){domain="Decimal"}
+  ret:=domain;if strings.HasPrefix(sig,"IntDivide"){ret="Int"}
+  for _,pair:=range [][2]string{{"-1","2"},{"1","0"},{"9223372036854775807","2"}} {run(sig+"/"+pair[0]+"/"+pair[1],call(sig,ret,literal(domain,pair[0]),literal(domain,pair[1])))}
+  run(sig+"/null_bad",call(sig,ret,literal("Null",""),literal("String","invalid")))
+ }
+ for _,sig:=range []string{"Acos","Asin","Atan1Arg","Cos","Cot","Sin","RoundReal"} {for _,v:=range []string{"0","0.5","1","-1","1e20"} {run(sig+"/"+v,call(sig,"Real",literal("Real",v)))}}
+ for _,sig:=range []string{"RoundInt","RoundDec"} {domain:="Int";if sig=="RoundDec"{domain="Decimal"};for i,v:=range samples[domain] {run(fmt.Sprintf("%s/%d",sig,i),call(sig,domain,literal(domain,v)))}}
+ for _,sig:=range []string{"Atan2Args","Pow"} {for _,pair:=range [][2]string{{"0.5","2"},{"1e20","2"},{"-1","0.5"}} {run(sig+"/"+pair[0]+"/"+pair[1],call(sig,"Real",literal("Real",pair[0]),literal("Real",pair[1])))}}
+ for _,sig:=range []string{"CharLength","CharLengthUTF8","Upper","UpperUTF8","Lower","LowerUTF8","Substring2Args","Substring2ArgsUTF8","Substring3Args","Substring3ArgsUTF8"} {
+  ret:="String";if strings.HasPrefix(sig,"CharLength"){ret="Int"}
+  for _,v:=range []string{"AbC","é中ß","\xff\x00a"} {args:=[]*tipb.Expr{literal("String",v)};if strings.HasPrefix(sig,"Substring"){args=append(args,literal("Int","2"))};if strings.HasPrefix(sig,"Substring3"){args=append(args,literal("Int","1"))};run(sig+"/"+hex.EncodeToString([]byte(v)),call(sig,ret,args...))}
+ }
+ for _,domain:=range domains {for _,family:=range []string{"If","IfNull","CaseWhen"} {
+  v:=literal(domain,samples[domain][0]);args:=[]*tipb.Expr{v,literal(domain,samples[domain][len(samples[domain])-1])};if family!="IfNull"{args=append([]*tipb.Expr{literal("Int","0")},args...)};run(family+domain+"/ordinary",call(family+domain,domain,args...))
+ }}
+ // Generic eager evaluation of typed signatures can suppress preceding conversions.
+ for _,sig:=range []string{"Pow","Atan2Args"} {run(sig+"/bad_then_null",call(sig,"Real",literal("String","invalid"),literal("Null","")))}
+ run("Substring3ArgsUTF8/bad_pos_then_null",call("Substring3ArgsUTF8","String",literal("String","abc"),literal("String","invalid"),literal("Null","")))
+ run("DateDiff/bad_then_null",call("DateDiff","Int",literal("String","invalid"),literal("Null","")))
+
+ for _,sig:=range []string{"IntIsNull","RealIsNull","DecimalIsNull","StringIsNull","TimeIsNull","DurationIsNull","VectorFloat32IsNull"} {
+  domain:=strings.TrimSuffix(sig,"IsNull");run(sig+"/null",call(sig,"Int",literal("Null","")));if domain!="VectorFloat32" {run(sig+"/ordinary",call(sig,"Int",literal(domain,samples[domain][0])))}
+ }
+ for _,sig:=range []string{"UnaryNotInt","IntIsTrueWithNull","RealIsTrueWithNull","DecimalIsTrueWithNull"} {
+  domain:="Int";if strings.HasPrefix(sig,"Real"){domain="Real"};if strings.HasPrefix(sig,"Decimal"){domain="Decimal"};for _,v:=range []string{"0","1","-1"} {run(sig+"/"+v,call(sig,"Int",literal(domain,v)))}
+ }
+ for _,sig:=range []string{"LogicalAnd","LogicalOr"} {for _,a:=range []string{"0","1"} {run(sig+"/"+a,call(sig,"Int",literal("Int",a),literal("Null","")))}}
+ for _,domain:=range []string{"Int","String"} {
+  run("In"+domain+"/normal",call("In"+domain,"Int",literal(domain,"1"),literal(domain,"2"),literal(domain,"1")))
+  run("In"+domain+"/match_before_bad",call("In"+domain,"Int",literal(domain,"1"),literal(domain,"1"),call("CastStringAsInt","Int",literal("String","invalid"))))
+ }
+ for _,v:=range []string{"15","invalid","-1"} {run("Conv/"+v,call("Conv","String",literal("String",v),literal("Int","10"),literal("Int","16")))}
+ run("PI/normal",call("PI","Real"))
+ run("LikeSig/normal",call("LikeSig","Int",literal("String","éa"),literal("String","_a"),literal("Int","92")))
+ for _,pattern:=range []string{"a","["} {run("RegexpLikeSig/"+pattern,call("RegexpLikeSig","Int",literal("String","abc"),literal("String",pattern),literal("String","i")))}
+ for _,sig:=range []string{"Date","Month","WeekWithoutMode","UnixTimestampInt","UnixTimestampDec"} {ret:="Int";if sig=="Date" {ret="Time"};if sig=="UnixTimestampDec"{ret="Decimal"};run(sig+"/normal",call(sig,ret,literal("Time","time")))}
+ for _,sig:=range []string{"Hour","Minute","Second","MicroSecond"} {for _,v:=range []string{"1500000000","-1500000000"} {run(sig+"/"+v,call(sig,"Int",literal("Duration",v)))}}
+ run("DateFormatSig/normal",call("DateFormatSig","String",literal("Time","time"),literal("String","%Y-%m-%d %H:%i:%s.%f")))
+ run("TimestampDiff/normal",call("TimestampDiff","Int",literal("String","DAY"),literal("Time","time"),literal("Time","time")))
+ for _,sig:=range []string{"FromUnixTime1Arg","FromUnixTime2Arg"} {for _,v:=range []string{"1.5","-1","2147483648"} {args:=[]*tipb.Expr{literal("Decimal",v)};ret:="Time";if sig=="FromUnixTime2Arg"{args=append(args,literal("String","%Y-%m-%d %H:%i:%s.%f"));ret="String"};run(sig+"/"+v,call(sig,ret,args...))}}
+ run("JsonMemberOfSig/normal",call("JsonMemberOfSig","Int",literal("Json","1"),literal("Json","[1,2]")))
+ for _,sig:=range []string{"JsonReplaceSig","JsonArrayAppendSig"} {
+  run(sig+"/normal",call(sig,"Json",literal("Json",`{"a":1}`),literal("String","$.a"),literal("Json","2")))
+  run(sig+"/null_before_bad_path",call(sig,"Json",literal("Null",""),literal("String","bad path"),call("CastStringAsInt","Int",literal("String","invalid"))))
+ }
+ run("JsonMergePatchSig/normal",call("JsonMergePatchSig","Json",literal("Json",`{"a":1}`),literal("Json",`{"a":2}`)))
+ run("AddDateDatetimeDecimal/normal",call("AddDateDatetimeDecimal","Time",literal("Time","time"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("AddDateDatetimeInt/normal",call("AddDateDatetimeInt","Time",literal("Time","time"),literal("Int","1"),literal("String","DAY")))
+ run("AddDateDatetimeReal/normal",call("AddDateDatetimeReal","Time",literal("Time","time"),literal("Real","1.5"),literal("String","DAY")))
+ run("AddDateDatetimeString/normal",call("AddDateDatetimeString","Time",literal("Time","time"),literal("String","1.5"),literal("String","DAY")))
+ run("AddDateDecimalDecimal/normal",call("AddDateDecimalDecimal","Time",literal("Decimal","20240102"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("AddDateDecimalInt/normal",call("AddDateDecimalInt","Time",literal("Decimal","20240102"),literal("Int","1"),literal("String","DAY")))
+ run("AddDateDecimalReal/normal",call("AddDateDecimalReal","Time",literal("Decimal","20240102"),literal("Real","1.5"),literal("String","DAY")))
+ run("AddDateDecimalString/normal",call("AddDateDecimalString","Time",literal("Decimal","20240102"),literal("String","1.5"),literal("String","DAY")))
+ run("AddDateDurationDecimal/normal",call("AddDateDurationDecimal","Time",literal("Duration","1500000000"),literal("Decimal","1.5"),literal("String","SECOND")))
+ run("AddDateDurationDecimalDatetime/normal",call("AddDateDurationDecimalDatetime","Time",literal("Duration","1500000000"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("AddDateDurationInt/normal",call("AddDateDurationInt","Time",literal("Duration","1500000000"),literal("Int","1"),literal("String","SECOND")))
+ run("AddDateDurationIntDatetime/normal",call("AddDateDurationIntDatetime","Time",literal("Duration","1500000000"),literal("Int","1"),literal("String","DAY")))
+ run("AddDateDurationReal/normal",call("AddDateDurationReal","Time",literal("Duration","1500000000"),literal("Real","1.5"),literal("String","SECOND")))
+ run("AddDateDurationRealDatetime/normal",call("AddDateDurationRealDatetime","Time",literal("Duration","1500000000"),literal("Real","1.5"),literal("String","DAY")))
+ run("AddDateDurationString/normal",call("AddDateDurationString","Time",literal("Duration","1500000000"),literal("String","1.5"),literal("String","SECOND")))
+ run("AddDateDurationStringDatetime/normal",call("AddDateDurationStringDatetime","Time",literal("Duration","1500000000"),literal("String","1.5"),literal("String","DAY")))
+ run("AddDateIntDecimal/normal",call("AddDateIntDecimal","Time",literal("Int","20240102"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("AddDateIntInt/normal",call("AddDateIntInt","Time",literal("Int","20240102"),literal("Int","1"),literal("String","DAY")))
+ run("AddDateIntReal/normal",call("AddDateIntReal","Time",literal("Int","20240102"),literal("Real","1.5"),literal("String","DAY")))
+ run("AddDateIntString/normal",call("AddDateIntString","Time",literal("Int","20240102"),literal("String","1.5"),literal("String","DAY")))
+ run("AddDateRealDecimal/normal",call("AddDateRealDecimal","Time",literal("Real","20240102"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("AddDateRealInt/normal",call("AddDateRealInt","Time",literal("Real","20240102"),literal("Int","1"),literal("String","DAY")))
+ run("AddDateRealReal/normal",call("AddDateRealReal","Time",literal("Real","20240102"),literal("Real","1.5"),literal("String","DAY")))
+ run("AddDateRealString/normal",call("AddDateRealString","Time",literal("Real","20240102"),literal("String","1.5"),literal("String","DAY")))
+ run("AddDateStringDecimal/normal",call("AddDateStringDecimal","Time",literal("String","2024-01-02"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("AddDateStringInt/normal",call("AddDateStringInt","Time",literal("String","2024-01-02"),literal("Int","1"),literal("String","DAY")))
+ run("AddDateStringReal/normal",call("AddDateStringReal","Time",literal("String","2024-01-02"),literal("Real","1.5"),literal("String","DAY")))
+ run("AddDateStringString/normal",call("AddDateStringString","Time",literal("String","2024-01-02"),literal("String","1.5"),literal("String","DAY")))
+ run("SubDateDatetimeDecimal/normal",call("SubDateDatetimeDecimal","Time",literal("Time","time"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("SubDateDatetimeInt/normal",call("SubDateDatetimeInt","Time",literal("Time","time"),literal("Int","1"),literal("String","DAY")))
+ run("SubDateDatetimeReal/normal",call("SubDateDatetimeReal","Time",literal("Time","time"),literal("Real","1.5"),literal("String","DAY")))
+ run("SubDateDatetimeString/normal",call("SubDateDatetimeString","Time",literal("Time","time"),literal("String","1.5"),literal("String","DAY")))
+ run("SubDateDecimalDecimal/normal",call("SubDateDecimalDecimal","Time",literal("Decimal","20240102"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("SubDateDecimalInt/normal",call("SubDateDecimalInt","Time",literal("Decimal","20240102"),literal("Int","1"),literal("String","DAY")))
+ run("SubDateDecimalReal/normal",call("SubDateDecimalReal","Time",literal("Decimal","20240102"),literal("Real","1.5"),literal("String","DAY")))
+ run("SubDateDecimalString/normal",call("SubDateDecimalString","Time",literal("Decimal","20240102"),literal("String","1.5"),literal("String","DAY")))
+ run("SubDateDurationDecimal/normal",call("SubDateDurationDecimal","Time",literal("Duration","1500000000"),literal("Decimal","1.5"),literal("String","SECOND")))
+ run("SubDateDurationDecimalDatetime/normal",call("SubDateDurationDecimalDatetime","Time",literal("Duration","1500000000"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("SubDateDurationInt/normal",call("SubDateDurationInt","Time",literal("Duration","1500000000"),literal("Int","1"),literal("String","SECOND")))
+ run("SubDateDurationIntDatetime/normal",call("SubDateDurationIntDatetime","Time",literal("Duration","1500000000"),literal("Int","1"),literal("String","DAY")))
+ run("SubDateDurationReal/normal",call("SubDateDurationReal","Time",literal("Duration","1500000000"),literal("Real","1.5"),literal("String","SECOND")))
+ run("SubDateDurationRealDatetime/normal",call("SubDateDurationRealDatetime","Time",literal("Duration","1500000000"),literal("Real","1.5"),literal("String","DAY")))
+ run("SubDateDurationString/normal",call("SubDateDurationString","Time",literal("Duration","1500000000"),literal("String","1.5"),literal("String","SECOND")))
+ run("SubDateDurationStringDatetime/normal",call("SubDateDurationStringDatetime","Time",literal("Duration","1500000000"),literal("String","1.5"),literal("String","DAY")))
+ run("SubDateIntDecimal/normal",call("SubDateIntDecimal","Time",literal("Int","20240102"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("SubDateIntInt/normal",call("SubDateIntInt","Time",literal("Int","20240102"),literal("Int","1"),literal("String","DAY")))
+ run("SubDateIntReal/normal",call("SubDateIntReal","Time",literal("Int","20240102"),literal("Real","1.5"),literal("String","DAY")))
+ run("SubDateIntString/normal",call("SubDateIntString","Time",literal("Int","20240102"),literal("String","1.5"),literal("String","DAY")))
+ run("SubDateRealDecimal/normal",call("SubDateRealDecimal","Time",literal("Real","20240102"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("SubDateRealInt/normal",call("SubDateRealInt","Time",literal("Real","20240102"),literal("Int","1"),literal("String","DAY")))
+ run("SubDateRealReal/normal",call("SubDateRealReal","Time",literal("Real","20240102"),literal("Real","1.5"),literal("String","DAY")))
+ run("SubDateRealString/normal",call("SubDateRealString","Time",literal("Real","20240102"),literal("String","1.5"),literal("String","DAY")))
+ run("SubDateStringDecimal/normal",call("SubDateStringDecimal","Time",literal("String","2024-01-02"),literal("Decimal","1.5"),literal("String","DAY")))
+ run("SubDateStringInt/normal",call("SubDateStringInt","Time",literal("String","2024-01-02"),literal("Int","1"),literal("String","DAY")))
+ run("SubDateStringReal/normal",call("SubDateStringReal","Time",literal("String","2024-01-02"),literal("Real","1.5"),literal("String","DAY")))
+ run("SubDateStringString/normal",call("SubDateStringString","Time",literal("String","2024-01-02"),literal("String","1.5"),literal("String","DAY")))
+ run("DateDiff/normal",call("DateDiff","Int",literal("Time","time"),literal("Time","time")))
+ run("VectorFloat32IsNull/ordinary",call("VectorFloat32IsNull","Int",&tipb.Expr{Tp:tipb.ExprType_TiDBVectorFloat32,Val:[]byte{2,0,0,0,0,0,128,63,0,0,0,64},FieldType:&tipb.FieldType{Tp:int32(mysql.TypeTiDBVectorFloat32)}}))
+
+ extra:=map[string][]string{
+  "Int":{"-9223372036854775808","9223372036854775807","-1","0"},
+  "Real":{"-1.5","-0.5","1.5","9.995","1e-100","1e100","-1e100","18446744073709551616"},
+  "Decimal":{"9.995","99.999","-0.001","18446744073709551615","-9223372036854775809","99999999999999999999999999999999999999999999999999999999999999999"},
+  "String":{""," ","  -1.5 ","1e309","1e-100","12junk","1.2.3","\xff","12\xff","\x0012","１２","18446744073709551616","-9223372036854775809","9.995"},
+  "Json":{"false","[]","\"invalid\"","\"12junk\"","\"1e309\"","\"-1.5\"","18446744073709551615","-1.5","1e100"},
+  "Duration":{"-1500000000","86399999500000"},
+  "Time":{"time"},
+ }
+ for _,source:=range domains {for _,target:=range []string{"Int","Real","Decimal"} {for i,v:=range extra[source] {for shape:=0;shape<6;shape++ {
+  pb:=call("Cast"+source+"As"+target,target,literal(source,v))
+  switch shape {case 0:pb.FieldType.Flen=-1;pb.FieldType.Decimal=-1;case 1:pb.FieldType.Flen=3;pb.FieldType.Decimal=2;case 2:pb.FieldType.Flen=3;pb.FieldType.Decimal=0;case 3:pb.FieldType.Flen=65;pb.FieldType.Decimal=30;case 4:pb.FieldType.Flag|=32;case 5:pb.FieldType.Flag|=32;pb.FieldType.Flen=3;pb.FieldType.Decimal=2}
+  run(fmt.Sprintf("Cast%sAs%s/extended/%d/%d",source,target,i,shape),pb)
+  run(fmt.Sprintf("Cast%sAs%s/column/%d/%d",source,target,i,shape),pb)
+ }}}}
+ for _,source:=range []string{"String","Json","Real","Decimal"} {for i,v:=range extra[source] {for _,shape:=range []struct{chs string;coll int32;code byte}{{"utf8mb4",46,mysql.TypeVarString},{"binary",63,mysql.TypeString},{"ascii",65,mysql.TypeVarString},{"latin1",47,mysql.TypeVarString}} {for _,width:=range []int32{0,1,3} {
+  pb:=call("Cast"+source+"AsString","String",literal(source,v));pb.FieldType.Flen=width;pb.FieldType.Charset=shape.chs;pb.FieldType.Collate=shape.coll;pb.FieldType.Tp=int32(shape.code)
+  run(fmt.Sprintf("Cast%sAsString/extended/%d/%s/%d",source,i,shape.chs,width),pb)
+ }}}}
+ bad:=func()*tipb.Expr{e:=call("CastStringAsJson","Json",literal("String","invalid"));e.FieldType.Flag|=uint32(mysql.ParseToJSONFlag);return e}
+ for _,sig:=range []string{"JsonReplaceSig","JsonArrayAppendSig"} {
+  run(sig+"/extended/path_before_value",call(sig,"Json",literal("Json","{}"),literal("String","invalid"),bad()))
+  run(sig+"/extended/null_path_before_value",call(sig,"Json",literal("Json","{}"),literal("Null",""),bad()))
+  run(sig+"/extended/second_path_before_first_value",call(sig,"Json",literal("Json","{}"),literal("String","$.a"),bad(),literal("String","invalid"),literal("Json","2")))
+ }
+ for _,sig:=range []string{"PlusReal","MinusReal","MultiplyReal","DivideReal","ModReal","Pow","Atan2Args"} {
+  run(sig+"/extended/bad_null",call(sig,"Real",literal("String","invalid"),literal("Null","")))
+  run(sig+"/extended/null_bad",call(sig,"Real",literal("Null",""),literal("String","invalid")))
+ }
+
+ t.Log("cases",count)
+}

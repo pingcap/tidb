@@ -1,0 +1,18 @@
+import importlib.util,pathlib,json
+root=pathlib.Path('/Users/qiliu/projects/tidb')
+spec=importlib.util.spec_from_file_location('projection',root/'rust/scripts/check-tipb-proto-projection.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+local=m.compile_descriptors([m.RUST_PROTO_DIR/n for n in ['select.proto','analyze.proto','resourcetag.proto']],[m.RUST_PROTO_DIR])
+lm,le=m.collect_symbols(local)
+result={}
+for version in ['v0.0.0-20260623093813-5f9928e91afe','v0.0.0-20260908093239-fed7bc47c39d']:
+ mod=pathlib.Path('/Users/qiliu/go/pkg/mod/github.com/pingcap/tipb@'+version);pd=mod/'proto'
+ up=m.compile_descriptors([pd/n for n in ['select.proto','expression.proto','analyze.proto','resourcetag.proto']],[pd,mod/'include']);um,ue=m.collect_symbols(up)
+ fields={}
+ for name,msg in lm.items():
+  if name not in um:continue
+  have={m.value(f,'name') for f in msg.get('field',[])}
+  missing=[{k:m.value(f,k) for k in ['name','number','type','type_name','label']} for f in um[name].get('field',[]) if m.value(f,'name') not in have]
+  if missing: fields[name]=missing
+ result[version]={'projection_errors':m.compare_projection(local,up),'missing_fields_in_present_messages':fields,'missing_messages':sorted(n for n in um if n.startswith('.tipb.') and n not in lm),'missing_enums':sorted(n for n in ue if n.startswith('.tipb.') and n not in le),'missing_scalar_signatures':{n:v for n,v in m.enum_values(ue['.tipb.ScalarFuncSig']).items() if n not in m.enum_values(le['.tipb.ScalarFuncSig'])}}
+ print(version,'omitted fields',sum(map(len,fields.values())),'in',len(fields),'messages; enum gaps',result[version]['missing_scalar_signatures'],'projection errors',len(result[version]['projection_errors']))
+pathlib.Path('/private/tmp/pb-expanded-proto-inventory.json').write_text(json.dumps(result,indent=2))

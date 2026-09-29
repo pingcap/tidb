@@ -1,0 +1,893 @@
+{
+  "v0.0.0-20260623093813-5f9928e91afe": {
+    "projection_errors": [],
+    "missing_fields_in_present_messages": {
+      ".tipb.TableScan": [
+        {
+          "name": "ranges",
+          "number": 6,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.KeyRange",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "pushed_down_filter_conditions",
+          "number": 10,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Expr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "runtime_filter_list",
+          "number": 11,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RuntimeFilter",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "deprecated_ann_query",
+          "number": 13,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ANNQueryInfo",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "used_columnar_indexes",
+          "number": 14,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ColumnarIndexInfo",
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.IndexScan": [
+        {
+          "name": "fts_query_info",
+          "number": 7,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.FTSQueryInfo",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "tici_vector_query_info",
+          "number": 8,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.TiCIVectorQueryInfo",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.Expr": [
+        {
+          "name": "rpn_args_len",
+          "number": 6,
+          "type": "TYPE_UINT32",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "order_by",
+          "number": 8,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ByItem",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "aggFuncMode",
+          "number": 9,
+          "type": "TYPE_ENUM",
+          "type_name": ".tipb.AggFunctionMode",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.Selection": [
+        {
+          "name": "rpn_conditions",
+          "number": 2,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RpnExpr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "child",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Executor",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.Aggregation": [
+        {
+          "name": "rpn_group_by",
+          "number": 4,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RpnExpr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "rpn_agg_func",
+          "number": 5,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RpnExpr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "child",
+          "number": 6,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Executor",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "pre_agg_mode",
+          "number": 7,
+          "type": "TYPE_ENUM",
+          "type_name": ".tipb.TiFlashPreAggMode",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.ByItem": [
+        {
+          "name": "rpn_expr",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RpnExpr",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.TopN": [
+        {
+          "name": "child",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Executor",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "partition_by",
+          "number": 4,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ByItem",
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.Limit": [
+        {
+          "name": "child",
+          "number": 2,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Executor",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "partition_by",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ByItem",
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.Executor": [
+        {
+          "name": "exchange_receiver",
+          "number": 8,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ExchangeReceiver",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "join",
+          "number": 9,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Join",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "kill",
+          "number": 11,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Kill",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "Projection",
+          "number": 13,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Projection",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "partition_table_scan",
+          "number": 14,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.PartitionTableScan",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "sort",
+          "number": 15,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Sort",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "window",
+          "number": 16,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Window",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "fine_grained_shuffle_stream_count",
+          "number": 17,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "fine_grained_shuffle_batch_size",
+          "number": 18,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "expand",
+          "number": 19,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Expand",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "expand2",
+          "number": 20,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Expand2",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "broadcast_query",
+          "number": 21,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.BroadcastQuery",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "cte_sink",
+          "number": 22,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.CTESink",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "cte_source",
+          "number": 23,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.CTESource",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "index_lookup",
+          "number": 24,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.IndexLookUp",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.ExchangeSender": [
+        {
+          "name": "partition_keys",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Expr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "types",
+          "number": 5,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.FieldType",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "compression",
+          "number": 7,
+          "type": "TYPE_ENUM",
+          "type_name": ".tipb.CompressionMode",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "upstream_cte_task_meta",
+          "number": 8,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.EncodedBytesSlice",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "same_zone_flag",
+          "number": 9,
+          "type": "TYPE_BOOL",
+          "type_name": null,
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.DAGRequest": [
+        {
+          "name": "start_ts_fallback",
+          "number": 1,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "collect_range_counts",
+          "number": 6,
+          "type": "TYPE_BOOL",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "max_warning_count",
+          "number": 7,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "sql_mode",
+          "number": 9,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "max_allowed_packet",
+          "number": 13,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "is_rpn_expr",
+          "number": 15,
+          "type": "TYPE_BOOL",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "user",
+          "number": 16,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.UserIdentity",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "force_encode_type",
+          "number": 18,
+          "type": "TYPE_BOOL",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "intermediate_output_channels",
+          "number": 20,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.IntermediateOutputChannel",
+          "label": "LABEL_REPEATED"
+        }
+      ]
+    },
+    "missing_messages": [
+      ".tipb.ANNQueryInfo",
+      ".tipb.BroadcastQuery",
+      ".tipb.CTESink",
+      ".tipb.CTESource",
+      ".tipb.ColumnarIndexInfo",
+      ".tipb.EncodedBytesSlice",
+      ".tipb.ExchangeReceiver",
+      ".tipb.Expand",
+      ".tipb.Expand2",
+      ".tipb.ExprSlice",
+      ".tipb.FTSBooleanNode",
+      ".tipb.FTSBooleanQuery",
+      ".tipb.FTSBooleanTerm",
+      ".tipb.FTSQueryInfo",
+      ".tipb.GroupingExpr",
+      ".tipb.GroupingSet",
+      ".tipb.IndexInfo",
+      ".tipb.IndexLookUp",
+      ".tipb.IntermediateOutputChannel",
+      ".tipb.InvertedQueryInfo",
+      ".tipb.Join",
+      ".tipb.KeyRange",
+      ".tipb.Kill",
+      ".tipb.PartitionTableScan",
+      ".tipb.Projection",
+      ".tipb.RpnExpr",
+      ".tipb.RuntimeFilter",
+      ".tipb.Sort",
+      ".tipb.TableInfo",
+      ".tipb.TiCIVectorQueryInfo",
+      ".tipb.TiFlashExecutionInfo",
+      ".tipb.UserIdentity",
+      ".tipb.Window",
+      ".tipb.WindowFrame",
+      ".tipb.WindowFrameBound"
+    ],
+    "missing_enums": [
+      ".tipb.ANNQueryType",
+      ".tipb.AggFunctionMode",
+      ".tipb.ColumnarIndexType",
+      ".tipb.CompressionMode",
+      ".tipb.FTSBooleanModifier",
+      ".tipb.FTSBooleanOccur",
+      ".tipb.FTSBooleanTermType",
+      ".tipb.FTSQueryType",
+      ".tipb.JoinExecType",
+      ".tipb.JoinType",
+      ".tipb.RangeCmpDataType",
+      ".tipb.RuntimeFilterMode",
+      ".tipb.RuntimeFilterType",
+      ".tipb.TiFlashPreAggMode",
+      ".tipb.VectorDistanceMetric",
+      ".tipb.VectorIndexKind",
+      ".tipb.WindowBoundType",
+      ".tipb.WindowFrameType"
+    ],
+    "missing_scalar_signatures": {}
+  },
+  "v0.0.0-20260908093239-fed7bc47c39d": {
+    "projection_errors": [
+      ".tipb.ExecType: enum is stale (21 local values, 22 pinned values)"
+    ],
+    "missing_fields_in_present_messages": {
+      ".tipb.TableScan": [
+        {
+          "name": "ranges",
+          "number": 6,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.KeyRange",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "pushed_down_filter_conditions",
+          "number": 10,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Expr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "runtime_filter_list",
+          "number": 11,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RuntimeFilter",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "deprecated_ann_query",
+          "number": 13,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ANNQueryInfo",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "used_columnar_indexes",
+          "number": 14,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ColumnarIndexInfo",
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.IndexScan": [
+        {
+          "name": "fts_query_info",
+          "number": 7,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.FTSQueryInfo",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "tici_vector_query_info",
+          "number": 8,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.TiCIVectorQueryInfo",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.Expr": [
+        {
+          "name": "rpn_args_len",
+          "number": 6,
+          "type": "TYPE_UINT32",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "order_by",
+          "number": 8,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ByItem",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "aggFuncMode",
+          "number": 9,
+          "type": "TYPE_ENUM",
+          "type_name": ".tipb.AggFunctionMode",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.Selection": [
+        {
+          "name": "rpn_conditions",
+          "number": 2,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RpnExpr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "child",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Executor",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.Aggregation": [
+        {
+          "name": "rpn_group_by",
+          "number": 4,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RpnExpr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "rpn_agg_func",
+          "number": 5,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RpnExpr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "child",
+          "number": 6,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Executor",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "pre_agg_mode",
+          "number": 7,
+          "type": "TYPE_ENUM",
+          "type_name": ".tipb.TiFlashPreAggMode",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.ByItem": [
+        {
+          "name": "rpn_expr",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.RpnExpr",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.TopN": [
+        {
+          "name": "child",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Executor",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "partition_by",
+          "number": 4,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ByItem",
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.Limit": [
+        {
+          "name": "child",
+          "number": 2,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Executor",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "partition_by",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ByItem",
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.Executor": [
+        {
+          "name": "exchange_receiver",
+          "number": 8,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ExchangeReceiver",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "join",
+          "number": 9,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Join",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "kill",
+          "number": 11,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Kill",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "Projection",
+          "number": 13,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Projection",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "partition_table_scan",
+          "number": 14,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.PartitionTableScan",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "sort",
+          "number": 15,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Sort",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "window",
+          "number": 16,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Window",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "fine_grained_shuffle_stream_count",
+          "number": 17,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "fine_grained_shuffle_batch_size",
+          "number": 18,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "expand",
+          "number": 19,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Expand",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "expand2",
+          "number": 20,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Expand2",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "broadcast_query",
+          "number": 21,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.BroadcastQuery",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "cte_sink",
+          "number": 22,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.CTESink",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "cte_source",
+          "number": 23,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.CTESource",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "index_lookup",
+          "number": 24,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.IndexLookUp",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "explain_for_connection",
+          "number": 26,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.ExplainForConnection",
+          "label": "LABEL_OPTIONAL"
+        }
+      ],
+      ".tipb.ExchangeSender": [
+        {
+          "name": "partition_keys",
+          "number": 3,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.Expr",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "types",
+          "number": 5,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.FieldType",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "compression",
+          "number": 7,
+          "type": "TYPE_ENUM",
+          "type_name": ".tipb.CompressionMode",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "upstream_cte_task_meta",
+          "number": 8,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.EncodedBytesSlice",
+          "label": "LABEL_REPEATED"
+        },
+        {
+          "name": "same_zone_flag",
+          "number": 9,
+          "type": "TYPE_BOOL",
+          "type_name": null,
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.DAGRequest": [
+        {
+          "name": "start_ts_fallback",
+          "number": 1,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "collect_range_counts",
+          "number": 6,
+          "type": "TYPE_BOOL",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "max_warning_count",
+          "number": 7,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "sql_mode",
+          "number": 9,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "max_allowed_packet",
+          "number": 13,
+          "type": "TYPE_UINT64",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "is_rpn_expr",
+          "number": 15,
+          "type": "TYPE_BOOL",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "user",
+          "number": 16,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.UserIdentity",
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "force_encode_type",
+          "number": 18,
+          "type": "TYPE_BOOL",
+          "type_name": null,
+          "label": "LABEL_OPTIONAL"
+        },
+        {
+          "name": "intermediate_output_channels",
+          "number": 20,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.IntermediateOutputChannel",
+          "label": "LABEL_REPEATED"
+        }
+      ],
+      ".tipb.ExecutorExecutionSummary": [
+        {
+          "name": "tiflash_hash_table_stats",
+          "number": 11,
+          "type": "TYPE_MESSAGE",
+          "type_name": ".tipb.TiFlashHashTableStats",
+          "label": "LABEL_OPTIONAL"
+        }
+      ]
+    },
+    "missing_messages": [
+      ".tipb.ANNQueryInfo",
+      ".tipb.BroadcastQuery",
+      ".tipb.CTESink",
+      ".tipb.CTESource",
+      ".tipb.ColumnarIndexInfo",
+      ".tipb.EncodedBytesSlice",
+      ".tipb.ExchangeReceiver",
+      ".tipb.Expand",
+      ".tipb.Expand2",
+      ".tipb.ExplainForConnection",
+      ".tipb.ExprSlice",
+      ".tipb.FTSBooleanNode",
+      ".tipb.FTSBooleanQuery",
+      ".tipb.FTSBooleanTerm",
+      ".tipb.FTSQueryInfo",
+      ".tipb.GroupingExpr",
+      ".tipb.GroupingSet",
+      ".tipb.IndexInfo",
+      ".tipb.IndexLookUp",
+      ".tipb.IntermediateOutputChannel",
+      ".tipb.InvertedQueryInfo",
+      ".tipb.Join",
+      ".tipb.KeyRange",
+      ".tipb.Kill",
+      ".tipb.PartitionTableScan",
+      ".tipb.Projection",
+      ".tipb.RpnExpr",
+      ".tipb.RuntimeFilter",
+      ".tipb.Sort",
+      ".tipb.TableInfo",
+      ".tipb.TiCIVectorQueryInfo",
+      ".tipb.TiFlashExecutionInfo",
+      ".tipb.TiFlashHashTableStats",
+      ".tipb.UserIdentity",
+      ".tipb.Window",
+      ".tipb.WindowFrame",
+      ".tipb.WindowFrameBound"
+    ],
+    "missing_enums": [
+      ".tipb.ANNQueryType",
+      ".tipb.AggFunctionMode",
+      ".tipb.ColumnarIndexType",
+      ".tipb.CompressionMode",
+      ".tipb.FTSBooleanModifier",
+      ".tipb.FTSBooleanOccur",
+      ".tipb.FTSBooleanTermType",
+      ".tipb.FTSQueryType",
+      ".tipb.JoinExecType",
+      ".tipb.JoinType",
+      ".tipb.RangeCmpDataType",
+      ".tipb.RuntimeFilterMode",
+      ".tipb.RuntimeFilterType",
+      ".tipb.TiFlashHashTableSizeKind",
+      ".tipb.TiFlashPreAggMode",
+      ".tipb.VectorDistanceMetric",
+      ".tipb.VectorIndexKind",
+      ".tipb.WindowBoundType",
+      ".tipb.WindowFrameType"
+    ],
+    "missing_scalar_signatures": {}
+  }
+}

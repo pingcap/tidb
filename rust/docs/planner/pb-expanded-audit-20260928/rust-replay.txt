@@ -1,0 +1,47 @@
+    #[test]
+    fn audit_expanded_pb_matrix() {
+        use prost::Message;
+        use std::fmt::Write;
+        fn unhex(s: &str) -> Vec<u8> { s.as_bytes().chunks_exact(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(),16).unwrap()).collect() }
+        fn hex(s: &[u8]) -> String { let mut out=String::new();for b in s {write!(&mut out,"{b:02x}").unwrap();}out }
+        let input=std::fs::read_to_string("/private/tmp/pb-expanded-go.tsv").unwrap();
+        let mut output=String::new();
+        for line in input.lines() {
+            let fields=line.split('\t').collect::<Vec<_>>();
+            let name=fields[0];let flags=fields[1].parse::<u64>().unwrap();
+            let context=RequestEvalContext::new(SessionTimeZone::utc(),4,flags);
+            let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let pb=tidb_proto::tipb::Expr::decode(unhex(fields[2]).as_slice()).unwrap();
+                let mut column_types=Vec::new();
+                let mut chunk=None;
+                if !fields[7].is_empty() {
+                    let leaf=tidb_proto::tipb::Expr::decode(unhex(fields[7]).as_slice()).unwrap();
+                    column_types.push(tidb_expr::distsql_builtin::pb_type_to_field_type(leaf.field_type.as_ref().unwrap()));
+                    let value=match tidb_expr::distsql_builtin::pb_to_expr(&leaf,&[]).unwrap() {
+                        tidb_expr::expression::Expression::Constant(value)=>value.value,
+                        _=>panic!("column input must be a literal"),
+                    };
+                    let mut data=tidb_chunk::chunk::Chunk::new(&column_types,1,1);
+                    data.append_datum(0,&value);chunk=Some(data);
+                }
+                let row=chunk.as_ref().map_or(tidb_chunk::row::Row::empty(), |chunk|chunk.get_row(0));
+                let expr=match tidb_expr::distsql_builtin::pb_to_expr(&pb,&column_types) {
+                    Ok(expr)=>expr,Err(error)=>return ("decode_error".to_owned(),error),
+                };
+                match expr.eval(&context,row) {
+                    Err(tidb_expr::EvalError::Conversion(error))=>("error".to_owned(),error.to_string()),
+                    Err(tidb_expr::EvalError::Json(error))=>("error".to_owned(),format!("[{}]{}",error.code(),error.message())),
+                    Err(tidb_expr::EvalError::TruncatedWrongValue(message))=>("error".to_owned(),format!("[1292]{message}")),
+                    Err(error)=>("error".to_owned(),format!("{error:?}")),
+                    Ok(Datum::Null)=>("null".to_owned(),String::new()),
+                    Ok(Datum::Real(value)|Datum::Float32(value))=>(format!("real:{:016x}",value.to_bits()),String::new()),
+                    Ok(value)=>(format!("value:{}",hex(&value.sql_bytes().unwrap())),String::new()),
+                }
+            }));
+            let (result,detail)=result.unwrap_or_else(|_|("panic".to_owned(),String::new()));
+            let warnings=context.take_warnings();
+            let warnings_text=warnings.iter().map(|(code,message)|hex(format!("[{code}]{message}").as_bytes())).collect::<Vec<_>>().join(",");
+            writeln!(&mut output,"{name}\t{flags}\t{result}\t{}\t{}\t{warnings_text}",hex(detail.as_bytes()),warnings.len()).unwrap();
+        }
+        std::fs::write("/private/tmp/pb-expanded-rust.tsv",output).unwrap();
+    }

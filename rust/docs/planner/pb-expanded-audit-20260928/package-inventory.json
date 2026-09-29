@@ -1,0 +1,1042 @@
+[
+  {
+    "path": "pkg/expression/BUILD.bazel",
+    "git_blob": "a45afdb928321cba04eb47e5bd2fd8f7c0461bab",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/OWNERS",
+    "git_blob": "4360f466a4ea5d6106f1cbb08b39f4853b1c7a7b",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/BUILD.bazel",
+    "git_blob": "cab3be911cec284fc850290a647525c111ab393a",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/aggregation/agg_to_pb.go",
+    "git_blob": "3f669724ed3e48914e5d5de1af55c3b576bdfbe1",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/agg_to_pb_test.go",
+    "git_blob": "e9b2c1e2b4864fd732b4a04efd08826237d0919b",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/aggregation.go",
+    "git_blob": "7b5eac4611a8a09e7a0d784d0d56519a2ba877c2",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/aggregation_test.go",
+    "git_blob": "a868980bf6e119968a84343dbfe74fe5ee422b3a",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/avg.go",
+    "git_blob": "a4752728b0e549aa7276a88350fb61335113b169",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/base_func.go",
+    "git_blob": "8376d8e49f7507be4122915b061e7659d98c2e71",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/base_func_test.go",
+    "git_blob": "e35e61374fcffe203f5569659d33bb9a66a11ab8",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/bench_test.go",
+    "git_blob": "d7e2486cb499e9328af50541d3b3454f9ddcd6f3",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/bit_and.go",
+    "git_blob": "01d0a3ef433cdadb47eccd8b0e09f02b2f3c8d20",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/bit_or.go",
+    "git_blob": "2e609ef45bf3a64a59bee2c44eeaff6a162ccc06",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/bit_xor.go",
+    "git_blob": "6d9959163a67019776b1ea647af17e943e35d46d",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/concat.go",
+    "git_blob": "96c4f28f606ff6a7ade6d1359b188dcf1c0a6df4",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/count.go",
+    "git_blob": "c029289547ef955c73e14e6b1c82eeb9ced9b90b",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/descriptor.go",
+    "git_blob": "34249093197793d7db398abc779de7580ec294c2",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/explain.go",
+    "git_blob": "d89fc08d88dc6f62bfd5c6d924514296efec73da",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/first_row.go",
+    "git_blob": "fba939b315bfcbcb8f26503dacfcb861b6049df0",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/main_test.go",
+    "git_blob": "0603baef7ad9d85448db7af23aa041e7ef1b6a40",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/max_min.go",
+    "git_blob": "968835e811b4ce136df6594cd98d8b1556bda7af",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/max_min_count.go",
+    "git_blob": "a5f296ad2f9b443e939f7d0f0f2f5c3140c5960e",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/sum.go",
+    "git_blob": "74b5e8bdf72a06cea5da9272be7f9ded280c11d3",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/sum_int.go",
+    "git_blob": "3cf8f6cc238bbdd0a3583b1803c818fb2fb70084",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/util.go",
+    "git_blob": "fef4575d8bf46e7d6e410ad224e4d0b49f873fc9",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/util_test.go",
+    "git_blob": "1547ed3766cdebe88680483a9687b21ddf4cee65",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/aggregation/window_func.go",
+    "git_blob": "211535fa7605a0afa3fc7c4df5933f6851a0585a",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/bench_test.go",
+    "git_blob": "4ce8d5bfa4a32a87ec4f6c0670c154347b661ceb",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin.go",
+    "git_blob": "9683de6ad2cd858a63ff5963066f1d75169ef6c9",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_arithmetic.go",
+    "git_blob": "6c76bf9a447609c99ab95bf50b47b90fa3bfb94b",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_arithmetic_test.go",
+    "git_blob": "338566d698d22b4c7bda2bd07bf71291a7709202",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_arithmetic_vec.go",
+    "git_blob": "b33658330fc61f40e0b9a0e12de003b47b17f4b8",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_arithmetic_vec_test.go",
+    "git_blob": "bf388a7f467feb30a1f559716a92b85e3535876e",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_cast.go",
+    "git_blob": "b2cfc5e629844d1cfabae6527dd9621b0401f8ee",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_cast_bench_test.go",
+    "git_blob": "b313732f4816332ded94b2c2da57f067a871f112",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_cast_test.go",
+    "git_blob": "e78aec00f0aed2aed531744e9bd8258cdd1e6389",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_cast_vec.go",
+    "git_blob": "bf830ec6178c6418cefdc542f9fc04e09bb2f1f7",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_cast_vec_test.go",
+    "git_blob": "202599d55cb6c73ba2d8be5e159afa17aaccfcac",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_compare.go",
+    "git_blob": "7be742b274fd477144e7343cf215b0e9e2f3faf1",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_compare_test.go",
+    "git_blob": "7835f20b82098a0b3c33ab0e037c3af892d6d3d9",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_compare_vec.go",
+    "git_blob": "d2847e9d8c67920c415f07817a182df63a10af8c",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_compare_vec_generated.go",
+    "git_blob": "8f53e5c27ccbe271aafd5dafd87d764bc9e1a3d1",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_compare_vec_generated_test.go",
+    "git_blob": "25763c189b6a2a4269aa08f306395cb2e98704ff",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_compare_vec_test.go",
+    "git_blob": "ce44becbe2f96981283511e59591834023c03a04",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_control.go",
+    "git_blob": "657dfc66d28aab998df0f2e674854a3f21d7ab05",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_control_test.go",
+    "git_blob": "665fc5b30c36334b8eb5cf85dcda78ae74e78811",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_control_vec_generated.go",
+    "git_blob": "c5e0204ed9d08ecb8216fc4e9817472dc6945351",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_control_vec_generated_test.go",
+    "git_blob": "a342088d5db34b7d5a7511e791dfc8c4421e1a63",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_convert_charset.go",
+    "git_blob": "923e309b20c72f4e5de8d3585a75793f6ca42452",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_encryption.go",
+    "git_blob": "6fc6f77c9470add95fd89ad4f89e424e1d23fdd8",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_encryption_test.go",
+    "git_blob": "b6fc17de405761088d3504bbb6fef9aa868d4a79",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_encryption_vec.go",
+    "git_blob": "284af7a0391d6d719382f3e2626f2f42db8478b8",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_encryption_vec_test.go",
+    "git_blob": "f434be423a551314fb508e1d893bb303275919fd",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_fts.go",
+    "git_blob": "161e72b0c917306571148586538a7821d462b06e",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_func_param.go",
+    "git_blob": "4157cf5fe18d554dbae71160acd5fa15422e3b82",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_grouping.go",
+    "git_blob": "82f37cd9639addaeefd080eca6c8ada5fffa674e",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_grouping_test.go",
+    "git_blob": "83b7001ce90a114ed56871f9ae93a8a1069f6b33",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_ilike.go",
+    "git_blob": "2293025c4a874df3a5d488d9b2fbed1925a98047",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_ilike_test.go",
+    "git_blob": "2b0ef167b04f76a80227be81d14056775fb38d90",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_ilike_vec.go",
+    "git_blob": "4c8b58c6f6834d5818d4e64f7f5ad8e48f6d01da",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_inference.go",
+    "git_blob": "03882929e74eed7c2533b117b83b22cdc6414259",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_inference_test.go",
+    "git_blob": "8a71d22d3ad989a82602003efbf518f245c63a68",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_info.go",
+    "git_blob": "88310d39c042039ded8f6733fda85fb553ca2476",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_info_test.go",
+    "git_blob": "ace1f4cec3ad80854cdc8c2d922bac091ca17650",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_info_vec.go",
+    "git_blob": "35fa9b71514c35f30dce8b79b43bff311353225e",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_info_vec_test.go",
+    "git_blob": "b9beaa4a00e569569fc738b20aa1b1667334c271",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_json.go",
+    "git_blob": "68f14ea923580fbd2a4f00b2530fffbd273f5053",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_json_test.go",
+    "git_blob": "79e852b030e3fa93b4528a1115c9a95309ef0084",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_json_vec.go",
+    "git_blob": "65f09928d8812bde114b50d57257e8c4a329e856",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_json_vec_test.go",
+    "git_blob": "c7150c0e2b9ac7d598305d886a804b580be0592e",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_like.go",
+    "git_blob": "b40d60fad1c231721f81a08c98b47e55764e1f98",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_like_test.go",
+    "git_blob": "907dae74ac8b7b579fb8d0704dc5b0f877f9af30",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_like_vec.go",
+    "git_blob": "1dec38e4d6bcc9a86b326a550e854844d51512e9",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_like_vec_test.go",
+    "git_blob": "69bcb93735e3ee0701cce8cf0813fbdb583a0770",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_math.go",
+    "git_blob": "f2c62f6cd0d13dc1cb8893c076b507ee02ae06f9",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_math_test.go",
+    "git_blob": "f9a94d244a6c262bab8619f4743575dbebd133dd",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_math_vec.go",
+    "git_blob": "fcacbd6f5dad2b4d87590cc7c0959ba23fa336cf",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_math_vec_test.go",
+    "git_blob": "b9adfe9f5c1c7dfbda48f112395b0e1ac7db3102",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_miscellaneous.go",
+    "git_blob": "603a9ad08813ec5026a29ccbbe203497a138acb0",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_miscellaneous_test.go",
+    "git_blob": "fbd92dfa29106d946c198798268b98736bdd7723",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_miscellaneous_vec.go",
+    "git_blob": "7d25d4a6aec22b24570332c40ea87989fdb67268",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_miscellaneous_vec_test.go",
+    "git_blob": "c0de6a3e1a792a6e13142ad9a72c3f720dfada71",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_op.go",
+    "git_blob": "8a9a6b66ec7d99fb6589be98d926de42d3d6b766",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_op_test.go",
+    "git_blob": "4efccbc0ba24cb9312f27b2c34caf41204696629",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_op_vec.go",
+    "git_blob": "80a6dd76784be2a3758c850c7b89a75ace47e397",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_op_vec_test.go",
+    "git_blob": "e728571f9af789b41582b4df42bc9cb0562a9a12",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_other.go",
+    "git_blob": "c988ced93ee4a457d2cc8cb30633c5247ff49969",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_other_test.go",
+    "git_blob": "f8f67577e246d940985907546fe745b70c1cdd2b",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_other_vec.go",
+    "git_blob": "0c57599274be89b5ac3fe56b8a7cad3b40f1fd43",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_other_vec_generated.go",
+    "git_blob": "0294c85f3759b0ca996c452e98759ce50fddfab2",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_other_vec_generated_test.go",
+    "git_blob": "44d93cb0ba2f340f7e90e7a8cb6c0ed54fd76403",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_other_vec_test.go",
+    "git_blob": "eb7419442f5ea29e92dfba4f6f8762265d651dbc",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_regexp.go",
+    "git_blob": "313384df5990caefa294910b3fee2458adb9f0c7",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_regexp_test.go",
+    "git_blob": "cb534c333bbe6ca16fccb9369e874c3d0f8f0081",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_regexp_util.go",
+    "git_blob": "85bad8b59a4a635ee7c18f6e0931278a35a639ad",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_regexp_vec_const_test.go",
+    "git_blob": "0dcdba1888b843b88f80ac8307c6566059ee5532",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_registry.go",
+    "git_blob": "0e89504da1d28c349d393e1ec1177bdfd265f37d",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_string.go",
+    "git_blob": "573b3976592f290cc1a30ac4ebcd68980ee7acac",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_string_test.go",
+    "git_blob": "69e2f11458833c1f33ad008f217243ac8ce6d8f9",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_string_vec.go",
+    "git_blob": "9de6e9237228833f4791450cef744b2818c97c91",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_string_vec_generated.go",
+    "git_blob": "ef8e29dd0af43fa436e23c30e03f70872fcdfd79",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_string_vec_generated_test.go",
+    "git_blob": "cbb989d970bd313e6eeeed3f080e01880d845b60",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_string_vec_test.go",
+    "git_blob": "48c90d8c1a03cc2b0df82f9edbb7fd5f32d6c753",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_test.go",
+    "git_blob": "ebd79862600bd3c48a147fd9b63022bcab847fe3",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_threadsafe_generated.go",
+    "git_blob": "458f889dd075e0994486b3360ef3d1aa71760a6a",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_threadunsafe_generated.go",
+    "git_blob": "e3795d41eb2f5456586b734dc99941d6f8c8d6fc",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_time.go",
+    "git_blob": "60b846f97c7a87db7b9a56fb85ea8a22fbb2d696",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_time_test.go",
+    "git_blob": "4998c27393eb6a1984fd4b717a1687f0f9ab69f2",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_time_vec.go",
+    "git_blob": "83b47321a4659ad24d9effada17daa99cc4d67ee",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_time_vec_generated.go",
+    "git_blob": "6cb53c94e97c76951249423859d29923dd3e5a84",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_time_vec_generated_test.go",
+    "git_blob": "43d5ef959e1cc0b7e228f894230f6d2599535626",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_time_vec_test.go",
+    "git_blob": "a4faf1f1e3f053d83ff51c3bb73b7a7a5faa9b67",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_vec.go",
+    "git_blob": "e1d837446182851bf98edd71c7a93146b3b1d3f2",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_vec_vec.go",
+    "git_blob": "dd618282d7d088300d985720f814adc46179280a",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_vec_vec_test.go",
+    "git_blob": "d70599a6f1f18825c7cf0ffc62222932a4e95383",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/builtin_vectorized.go",
+    "git_blob": "78480bbdfbab6acfe0e757e4f3d194a3905daa6b",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/builtin_vectorized_test.go",
+    "git_blob": "5dfcb7b395d985574dd6f673c8ea344d8624fca9",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/chunk_executor.go",
+    "git_blob": "5491fd1fd217c270e7f1e3c59916cbeb111d35b0",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/collation.go",
+    "git_blob": "3b3ba1747400c9d625f3f5c1124dc4c26927cbd2",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/collation_test.go",
+    "git_blob": "75d8f8c3cbada44b4b2dcbaee71ba72e016b0740",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/column.go",
+    "git_blob": "df437dda999baea97f8afca071a4718759b73eb0",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/column_test.go",
+    "git_blob": "0095b77c12588530fb074bc54cf20d4306df2313",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/constant.go",
+    "git_blob": "3dc6d5325ec8d5c3ca6790378406c06ef7f4207f",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/constant_fold.go",
+    "git_blob": "7569bd2e9bb0c10fb9bc0dfa2f8639f3a6aa2759",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/constant_propagation.go",
+    "git_blob": "9b4a10322ece37027521a42387cd29d61a0108a5",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/constant_test.go",
+    "git_blob": "31d9b2b63dede8db68a8b9843faf80fd43524788",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/context.go",
+    "git_blob": "56f37a616088cb12ce113e5ee11f60ab25c07f9d",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/distsql_builtin.go",
+    "git_blob": "45b0c03a2f840bbcceccf5840b4922356698555e",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/distsql_builtin_test.go",
+    "git_blob": "ca52e767c69a47eb767595870ac84d847d7da9ba",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/errors.go",
+    "git_blob": "55e2c6b16fd2236a7353af82dd97b7519ce623f0",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/evaluator.go",
+    "git_blob": "d7f262a3fab02bc641d9e10fe4e617b88a2d05da",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/evaluator_test.go",
+    "git_blob": "001809dc166eef08d0ff2905b06ed7c6ae9a1f70",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/explain.go",
+    "git_blob": "4fe002db30956c1e85be084f6f9613234ed1e561",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/expr_to_pb.go",
+    "git_blob": "0cfb1a2dc23af91b7555f33fb8eb39a0b6dec740",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/expr_to_pb_test.go",
+    "git_blob": "ee8a9ee71b99eac6e3a293baaa9dfa9fa26a830d",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/exprctx/BUILD.bazel",
+    "git_blob": "29691d44bfd7c8aa8fcf46c47f9146b8ddf6b52d",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/exprctx/context.go",
+    "git_blob": "f97349caec41d0964f6dbd38cc783407675ec4f4",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/exprctx/context_override_test.go",
+    "git_blob": "ab50918f203220ee2bbba347af7609fdc684a91b",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/exprctx/optional.go",
+    "git_blob": "5b7526b468e899abadc850202deeec30a10776e4",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/exprctx/optional_test.go",
+    "git_blob": "e7290325e654ad0d6a442a957da5d0d6543fc4c1",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/exprctx/param.go",
+    "git_blob": "24e119e71e88532b9731a5c2b1b7d7db731d4f51",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expression.go",
+    "git_blob": "cd28fdba3e415c9c38308362e5223c05833cd3e2",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/expression_test.go",
+    "git_blob": "0f3949cc373da29aaca77bbd5bdd09ee4a3524ed",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/expropt/BUILD.bazel",
+    "git_blob": "5752c70ae82fe02a6030a615a7c3c065be70afdf",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/expropt/advisory_lock.go",
+    "git_blob": "55bb4585b093265a469913e84ec763867ac3d9e0",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/current_user.go",
+    "git_blob": "7f4c684279fb8456a70811609aca13eb085194f9",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/ddlowner.go",
+    "git_blob": "05508ec30f1e963eeb9cc4da8496b17c1dbf194f",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/infoschema.go",
+    "git_blob": "cd103aa9912a07ccc853565f5da7f13c93693eae",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/kvstore.go",
+    "git_blob": "18c7d3d11d1c716ebb746a5ce66bcefc09f4005f",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/optional.go",
+    "git_blob": "9cd8ae10576073cf0845f6fa645e6586f271f47d",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/optional_test.go",
+    "git_blob": "35a69807f6de093780c5eb212759525bfe293701",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/priv.go",
+    "git_blob": "2afed7089ca157868e8ea114de032ec689d8ef3d",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/sequence.go",
+    "git_blob": "b00357bcd1b3834a8f32c7bf183600f2d81111c4",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/sessioncontext.go",
+    "git_blob": "9965f54e4c67bde2c6478420d394cc6858cd24e2",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/sessionvars.go",
+    "git_blob": "8c0528baf9d0678d4f6d2779e9118d24710de058",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/expropt/sqlexec.go",
+    "git_blob": "a0bf9a43777d95522b85eb11164fe26f2804aa08",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/exprstatic/BUILD.bazel",
+    "git_blob": "484660a6a4481020bff7525b5b91441bab4606a5",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/exprstatic/evalctx.go",
+    "git_blob": "5a60bb5ff9f9ab23d2cf7729e11d4ff9d5628da7",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/exprstatic/evalctx_test.go",
+    "git_blob": "d2319d998666aa4e1f21b20d5a31613b6b4ccb8e",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/exprstatic/exprctx.go",
+    "git_blob": "0704d0bfe80d107eeaba11a0d6c417c25e381ec8",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/exprstatic/exprctx_test.go",
+    "git_blob": "80d33b046b72ee15e7ae243290991dfcc20188b5",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/extension.go",
+    "git_blob": "eae90d695af121f79d0bc81398f07b37e0cfae13",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/fts_helper.go",
+    "git_blob": "795f85cfbecaa121b8c336ae4712ef53dcc8a984",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/fts_to_like.go",
+    "git_blob": "19e46dbbbe075c4ce9647efdc294e5229db75720",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/fts_to_like_test.go",
+    "git_blob": "4f0581698c0a797245c4ef0eb77b3b28dc4620d4",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/function_traits.go",
+    "git_blob": "86104fe8791466dabadc86c563a54d7ce7f02c68",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/function_traits_test.go",
+    "git_blob": "50768d6db29d8ee5cfa979c45c8c7c5770cc9b8e",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/generator/BUILD.bazel",
+    "git_blob": "23041ca21bbf36b2aad8a269cd40beca564dcc2b",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/generator/builtin_threadsafe.go",
+    "git_blob": "d36eb952873f693914a22a5291a9f81d2b44fb64",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/generator/compare_vec.go",
+    "git_blob": "37496dd2e7b60cd240144db345f605dca9330606",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/generator/control_vec.go",
+    "git_blob": "6916044a0cc3ceb0507839aa6506111e95549c67",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/generator/helper/BUILD.bazel",
+    "git_blob": "f8c81a9c0ca0d39dae52ba634d04ca24e789820c",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/generator/helper/helper.go",
+    "git_blob": "d56b4c118edb42eee41cfb00865f4e1a9fa47aa8",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/generator/other_vec.go",
+    "git_blob": "19f0338fa534a31a5e496c8a9158e075a0a479c8",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/generator/string_vec.go",
+    "git_blob": "f3fafcf8a3ea2a7f1ad7fb9d4de67d9092f63564",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/generator/time_vec.go",
+    "git_blob": "49c5e7aefa9f1d3a59105e83f7456dcb1998c11b",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/grouping_sets.go",
+    "git_blob": "dcd7d4c5e99506b50a1b990ad8176e0e75b87b8b",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/grouping_sets_test.go",
+    "git_blob": "0b76990b7e91e5155db7a30506866a3cacdfa656",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/helper.go",
+    "git_blob": "2ad6659f023332728810e98e3b1892737ddb9447",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/helper_test.go",
+    "git_blob": "4b07d6ffb73d8b9acd800ece7c45763dae3236ff",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/infer_pushdown.go",
+    "git_blob": "ca5e14f8789123e4974b230d07ae0275b983b2aa",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/inference_helper.go",
+    "git_blob": "104bcf2460d2a8951a7aba49efbf4b4e3c27aa7b",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/inference_helper_test.go",
+    "git_blob": "90bc94edb78480619a856b33eea2b4466f438b39",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/integration_test/BUILD.bazel",
+    "git_blob": "531bc1f867a362513bb0ffed01466ff2ee8bcfc9",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/integration_test/README.md",
+    "git_blob": "78311d5ff72921941eb8e4740e9734e10d534541",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/integration_test/integration_test.go",
+    "git_blob": "ba63626bd90780a4d6765e02b3279270f339c3d4",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/integration_test/main_test.go",
+    "git_blob": "b5bb1a3b8a5f88c9a9a441221839ccabd41fe574",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/main_test.go",
+    "git_blob": "e9ad3e58956049babd0e62e35c4753d4bfc2596c",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/scalar_function.go",
+    "git_blob": "1d5530934f49e7ff310b46556250f67d953455e9",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/scalar_function_test.go",
+    "git_blob": "5097a0fade40c3a2c35658b0a3fef1b04357473d",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/schema.go",
+    "git_blob": "e0808268ccc1f2e617393429329fd0eb1348b420",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/schema_test.go",
+    "git_blob": "44c72eff7e1a04e315e491314eeff0d88be6dcb4",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/sessionexpr/BUILD.bazel",
+    "git_blob": "e1d179ca49f3ab78f75ea35cf9afb0d59dd052b3",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/sessionexpr/sessionctx.go",
+    "git_blob": "ba58fb66e6db3af1b7f58c2e705fca1fd26657f1",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/sessionexpr/sessionctx_test.go",
+    "git_blob": "db39bac3f5fd92dd613d8108106bf14f34d6a205",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/simple_rewriter.go",
+    "git_blob": "f99d6cb3bf0e80d6b1425b0c8c79f7845fb62741",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/simple_rewriter_test.go",
+    "git_blob": "6c15c9ea7db4e4c84b94562a79a9dfb6bbdb24c9",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/test/constantpropagation/BUILD.bazel",
+    "git_blob": "14aa4f424b52569c292582c6810777fbae1065fb",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/test/constantpropagation/constant_propagation_test.go",
+    "git_blob": "0d96361e97acc29dfc36041d66a5aa39745001e9",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/test/constantpropagation/main_test.go",
+    "git_blob": "3f623f036bee2adc34b82850d1c1d94d23188b17",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/test/multivaluedindex/BUILD.bazel",
+    "git_blob": "beb311cf6e7e01c2f4cd0d3ddc33cc51e62ff5b2",
+    "classification": "build"
+  },
+  {
+    "path": "pkg/expression/test/multivaluedindex/main_test.go",
+    "git_blob": "dde2ffb4d188eb1da51eafecafa5f41268b9b524",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/test/multivaluedindex/multi_valued_index_test.go",
+    "git_blob": "a49d85b146270ee5c55017f79a1f51873029f9ed",
+    "classification": "support_or_subpackage"
+  },
+  {
+    "path": "pkg/expression/typeinfer_test.go",
+    "git_blob": "9f1c8827bacd71fb2341b631d055fdbf6346b824",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/util.go",
+    "git_blob": "6948825777e2cfc4e4c5e50e25ed93a456bdf2b4",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/util_test.go",
+    "git_blob": "dc8cce554a88d7a15bf411b727b00ceffb1ebd2b",
+    "classification": "test"
+  },
+  {
+    "path": "pkg/expression/vectorized.go",
+    "git_blob": "d069511ad91f4266934ab8044c72193e4a18591c",
+    "classification": "production"
+  },
+  {
+    "path": "pkg/expression/vs_helper.go",
+    "git_blob": "d5fbdb811568d97e9690ffa0eb2dd4ebcccd81f9",
+    "classification": "production"
+  }
+]

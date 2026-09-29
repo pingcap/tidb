@@ -1,0 +1,41 @@
+pb-expanded-go.log (final lines only)
+[2026/09/28 23:14:46.892 -03:00] [WARN] [collate.go:134] ["Unexpected positive collation ID for restore."] [ID=63]
+    rust_systematic_pb_test.go:226: cases 8298
+--- PASS: TestRustSystematicPB (0.17s)
+PASS
+ok  	github.com/pingcap/tidb/pkg/expression	0.265s
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+Using existing github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
+[failpoint-state] action=disable backend=go log_channel=stderr log_color=auto refcount=1
+[failpoint-state] [DECISION] >>> decision=run-disable reason=refcount-reaches-zero <<<
+[failpoint-state] new_refcount=0
+
+pb-expanded-rust-inventory.log (final lines only)
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-expr` (lib test) generated 32 warnings (run `cargo fix --lib -p tidb-expr --tests` to apply 16 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.20s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-expr/860c448b13d5d896/out/tidb_expr-860c448b13d5d896)
+
+running 1 test
+test scalar_function::pb_builtin::audit_inventory::audit_pb_registry_inventory ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1336 filtered out; finished in 0.00s
+
+
+pb-expanded-rust-matrix.log (final lines only)
+     |
+     = note: requested on the command line with `-W missing-docs`
+
+warning: `tidb-unistore` (lib test) generated 6 warnings (run `cargo fix --lib -p tidb-unistore --tests` to apply 5 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.28s
+     Running unittests src/lib.rs (rust/target/debug/build/tidb-unistore/bfa644f1da0cbc1b/out/tidb_unistore-bfa644f1da0cbc1b)
+
+running 1 test
+test cophandler::eval_context::next_boundary_audit::audit_expanded_pb_matrix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 201 filtered out; finished in 0.12s
+

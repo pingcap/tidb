@@ -1,0 +1,13 @@
+#[cfg(test)]
+mod audit_inventory {
+    #[test]
+    fn audit_pb_registry_inventory() {
+        let mut output=String::new();
+        for value in 0..10000 {
+            if let Ok(sig)=tidb_proto::tipb::ScalarFuncSig::try_from(value) {
+                if super::PbBuiltin::new(sig).is_some() { output.push_str(sig.as_str_name());output.push('\n'); }
+            }
+        }
+        std::fs::write("/private/tmp/pb-systematic-rust-registry.txt",output).unwrap();
+    }
+}

@@ -1,0 +1,31 @@
+from pathlib import Path
+import json,re,collections,struct
+rows=lambda p:{tuple(f[:2]):f for l in Path(p).read_text().splitlines() if (f:=l.split('\t'))}
+g=rows('/private/tmp/pb-expanded-go.tsv');r=rows('/private/tmp/pb-expanded-rust.tsv')
+assert g.keys()==r.keys()
+unhex=lambda x:bytes.fromhex(x).decode(errors='replace')
+def norm(s):return re.sub(r'^\[[^]:]*:(\d+)\]',r'[\1]',s)
+def human(s):
+ if s.startswith('value:'):return repr(unhex(s[6:]))
+ if s.startswith('real:'):return str(struct.unpack('>d',bytes.fromhex(s[5:]))[0])
+ return s
+diff=[]
+for key,a in g.items():
+ b=r[key]; gw=[norm(unhex(x)) for x in a[6].split(',') if x];rw=[norm(unhex(x)) for x in b[5].split(',') if x]
+ kind=[]
+ if a[3]!=b[2]:kind.append('result')
+ if a[5]!=b[4]:kind.append('warning_count')
+ if gw!=rw:kind.append('warning_content')
+ # Compare only Rust typed conversion errors whose SQL identity is preserved.
+ if a[3]==b[2]=='error' and unhex(b[3]).startswith('[') and norm(unhex(a[4]))!=norm(unhex(b[3])):kind.append('typed_error')
+ if kind:diff.append(dict(name=key[0],flags=int(key[1]),kinds=kind,go=human(a[3]),rust=human(b[2]),go_detail=unhex(a[4]),rust_detail=unhex(b[3]),go_warnings=gw,rust_warnings=rw))
+Path('/private/tmp/pb-expanded-diffs.json').write_text(json.dumps(diff,indent=2))
+print('rows',len(g),'diffs',len(diff),'kinds',dict(collections.Counter(k for x in diff for k in x['kinds'])))
+print('new rows',sum('/extended/' in k[0] for k in g),'new diffs',sum('/extended/' in x['name'] for x in diff))
+print('Go panic differing rows',sum(x['go']=='panic' for x in diff),'Rust panic rows',sum(x[2]=='panic' for x in r.values()))
+print('new diffs by signature',dict(collections.Counter(x['name'].split('/')[0] for x in diff if '/extended/' in x['name'])))
+seen=set()
+for x in diff:
+ if '/extended/' not in x['name'] or x['flags']!=0:continue
+ sig=x['name'].split('/')[0];key=(sig,tuple(x['kinds']))
+ if key not in seen: print(x);seen.add(key)
