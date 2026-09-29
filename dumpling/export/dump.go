@@ -1764,9 +1764,10 @@ func validateResolveAutoConsistency(d *Dumper) error {
 
 // tidbResolveKeyspaceMetaForGC is an initialization step of Dumper.
 //
-// For a premium (keyspace) cluster, cloud control will pass `--pd`.
+// For a premium (keyspace) cluster, cloud control may pass `--pd`.
 // Dumpling resolves the keyspace from information_schema.KEYSPACE_META and uses
-// the keyspace ID for the keyspace-level GC barrier.
+// the keyspace ID for the keyspace-level GC barrier. `--pd` is optional: when it
+// is not specified, dumpling disables the automatic GC pause and only warns.
 //
 // If KEYSPACE_META reports a classical cluster, `--pd` must not be specified.
 func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
@@ -1806,9 +1807,6 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 	}
 
 	// Premium cluster.
-	if conf.PDAddr == "" {
-		return errors.New("premium keyspace cluster requires --pd")
-	}
 	if keyspaceID == "" {
 		return errors.Errorf("empty keyspace id from KEYSPACE_META for keyspace %q", keyspaceName)
 	}
@@ -1831,7 +1829,7 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		return nil
 	}
 
-	// Premium cluster: PD endpoints are passed from cloud control.
+	// Premium cluster: PD endpoints are optionally passed from cloud control.
 	if d.tidbKeyspaceName != "" {
 		pdAddrs := strings.Split(conf.PDAddr, ",")
 		pdAddrs = slices.DeleteFunc(pdAddrs, func(s string) bool { return strings.TrimSpace(s) == "" })
@@ -1839,7 +1837,11 @@ func tidbSetPDClientForGC(d *Dumper) error {
 			pdAddrs[i] = strings.TrimSpace(pdAddrs[i])
 		}
 		if len(pdAddrs) == 0 {
-			return errors.New("invalid --pd: empty PD endpoints")
+			// --pd is optional for a premium keyspace cluster: without it we
+			// cannot reach PD, so skip the automatic GC pause and only warn.
+			tctx.L().Warn("premium keyspace cluster detected but --pd is not specified; automatic GC pause is disabled",
+				zap.String("keyspace-name", d.tidbKeyspaceName))
+			return nil
 		}
 
 		apiCtx := pd.NewAPIContextV2(d.tidbKeyspaceName)

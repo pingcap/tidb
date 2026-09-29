@@ -216,7 +216,8 @@ type Config struct {
 	// PDAddr is a comma-separated list of PD endpoints in host:port form.
 	// http:// or https:// prefixes are also accepted and normalized by the PD client.
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
-	// may not be discoverable from TiDB.
+	// may not be discoverable from TiDB. It's optional: when it isn't specified
+	// for such a cluster, dumpling disables the automatic GC pause and only warns.
 	PDAddr string
 	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
 	// to PD endpoints for GC control.
@@ -417,7 +418,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
 	flags.StringSlice(flagPartitions, nil, "The table partitions to dump. Every listed partition must exist on all selected base tables; incompatible with --sql. TiDB >= v5.0.0 only")
 
-	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
+	flags.String(flagPDAddr, "", "Optional PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized). If unset, automatic GC pause is disabled and a warning is printed")
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")

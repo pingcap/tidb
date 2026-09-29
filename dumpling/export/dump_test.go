@@ -89,10 +89,11 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			expectKSPID:   123,
 		},
 		{
-			name:         "premium_missing_pd",
-			keyspaceMeta: []string{"ks1", "123"},
-			confPD:       "",
-			expectErr:    "requires --pd",
+			name:          "premium_missing_pd_is_ok",
+			keyspaceMeta:  []string{"ks1", "123"},
+			confPD:        "",
+			expectKSPName: "ks1",
+			expectKSPID:   123,
 		},
 		{
 			name:         "classical_ok",
@@ -176,6 +177,9 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 		expectID         uint32
 		useKeyspaceGC    bool
 		expectBarrierAPI bool
+		// expectNoPDClient means the cluster is premium but --pd is absent, so
+		// tidbSetPDClientForGC must disable GC pause instead of failing.
+		expectNoPDClient bool
 	}{
 		{
 			name:             "premium_uses_keyspace_barrier_api",
@@ -203,6 +207,14 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			expectID:         0,
 			useKeyspaceGC:    false,
 			expectBarrierAPI: false,
+		},
+		{
+			name:             "premium_without_pd_disables_gc_pause",
+			keyspaceMeta:     []string{"ks1", "42"},
+			confPD:           "",
+			expectKeyspace:   "ks1",
+			expectID:         42,
+			expectNoPDClient: true,
 		},
 	}
 
@@ -239,6 +251,15 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.expectKeyspace, d.tidbKeyspaceName)
 			require.Equal(t, tc.expectID, d.tidbKeyspaceID)
+
+			if tc.expectNoPDClient {
+				// Premium cluster without --pd: no error, and GC pause is
+				// disabled because no PD client is created.
+				require.NoError(t, tidbSetPDClientForGC(d))
+				require.Nil(t, d.tidbPDClientForGC)
+				require.False(t, d.tidbUseKeyspaceGC)
+				return
+			}
 
 			// Simulate the PD client being set already (we don't test actual
 			// PD connections here, just the dispatch decision).
