@@ -249,7 +249,7 @@ func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
 			"listening_port":    4000,
 			"status_port":       10080,
 			"version":           "8.0.11-TiDB-v8.5.0",
-			"tidb_rpc_disabled": true,
+			"disable_rpc": true,
 		},
 	})
 	require.NoError(t, err)
