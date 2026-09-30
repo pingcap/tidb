@@ -32,6 +32,7 @@ import (
 	mockScheduler "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -284,6 +285,9 @@ func TestExpiredFileCleanLoopEnabled(t *testing.T) {
 	taskMgr.EXPECT().GetAllNodes(gomock.Any()).Return(nil, nil).AnyTimes()
 	taskMgr.EXPECT().GetCleanupTasks(gomock.Any()).Return(nil, nil).AnyTimes()
 	taskMgr.EXPECT().GetTopUnfinishedTasks(gomock.Any()).Return(nil, nil).AnyTimes()
+	// The NextGen cleanup loop triggers the orphan data monitor on startup.
+	// Returning a task keeps the monitor from reaching the real object store.
+	taskMgr.EXPECT().GetAllTasks(gomock.Any()).Return([]*proto.TaskBase{{ID: 1}}, nil).AnyTimes()
 
 	cleanupCalled := make(chan struct{}, 1)
 	cleaner := mock.NewMockExpiredFileCleaner(ctrl)
@@ -317,6 +321,20 @@ func TestExpiredFileCleanLoopEnabled(t *testing.T) {
 		t.Fatal("expired file cleanup loop was started in a classic build")
 	case <-time.After(100 * time.Millisecond):
 	}
+}
+
+func TestStopResetsOrphanDataGauge(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := NewManager(context.Background(), nil, mock.NewMockTaskManager(ctrl), "1", proto.NodeResourceForTest)
+	t.Cleanup(func() { metrics.GlobalSortOrphanDataSize.Set(0) })
+
+	metrics.GlobalSortOrphanDataSize.Set(42)
+	mgr.Stop()
+
+	metric := &dto.Metric{}
+	require.NoError(t, metrics.GlobalSortOrphanDataSize.Write(metric))
+	require.Zero(t, metric.GetGauge().GetValue())
 }
 
 func (s *storeWithKS) GetKeyspace() string {
@@ -564,7 +582,6 @@ func TestSchedulerCleanTask(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("cleanup task loop did not stop")
 		}
-		mgr.wg.Wait()
 		require.True(t, ctrl.Satisfied())
 	})
 }
