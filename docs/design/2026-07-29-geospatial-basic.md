@@ -150,7 +150,7 @@ and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
 | --- | --- |
 | Versioning | Numbered from 1, so a leading `0x00` is never a valid version. |
 | Lossless | Exact `f64` coordinates and full geometry structure, never truncated. |
-| SRID | Always carried by the SRID flag, even where a `SRID n` column fixes it. EWKB permits leaving it unset, and this design does not, so that a stored value is self-describing; see *Self-describing values* below. |
+| SRID | Always carried by the EWKB SRID flag, even where a `SRID n` column fixes it. The coprocessor, the index refine, TiCDC and TiFlash read stored values from the KV layer without schema ([Compatibility](#compatibility)), so the SRID has to travel in the value. |
 | Byte order | Left to EWKB, which flags it per geometry and permits both. |
 | MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. |
 | Binary boundary | Each format has a matching pair, so nothing is write-only or read-only. See *Binary in and out* below. |
@@ -212,13 +212,6 @@ Both directions of the bare path are v1 choices, not properties of the format. L
 versions can widen either end without a migration: ingest could try to recognise the format it was handed rather than
 assume MySQL's, and bare output could do something better than erroring, so long as it is
 neither silent truncation nor a format the input side will not take back.
-
-**Self-describing values.** A stored geometry carries its SRID, so a reader with no schema
-can determine it from the bytes alone. That matters because the coprocessor under pushdown,
-the index refine, TiCDC and TiFlash all read the stored value from the KV layer, where there
-is no column in sight ([Compatibility](#compatibility)). In EWKB that means the SRID flag is
-always set, even where a `SRID n` column fixes it; a later format may do it differently as
-long as the invariant holds.
 
 **Bounded parsing.** Nesting costs 9 bytes a level in WKB, so a value inside
 `max_allowed_packet` can nest millions deep. MySQL guards this pre-emptively: on 9.7.2 with
@@ -759,7 +752,7 @@ Risks:
 
   EWKB carries SRID, Z, M and XYZM in one defined format, with plain 2D WKB as its
   degenerate case. It also permits omitting the SRID where a column fixes it, which this
-  design declines for the reasons under *Self-describing values*. The cost is a codec.
+  design declines so stored values stay self-describing. The cost is a codec.
   `simplefeatures` implements the ISO type-code convention (`geomCode % 1000` for the type,
   `/ 1000` for the dimension), not EWKB's flags, so TiDB owns the EWKB header encode/decode
   and hands the body to the
