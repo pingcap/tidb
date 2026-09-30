@@ -67,6 +67,7 @@ func pdUnary(ctx context.Context, method string, req, reply any, cc *grpc.Client
 	}
 	return status.Errorf(codes.PermissionDenied, "diagnostic mode: blocked PD RPC %s", method)
 }
+
 func pdStream(ctx context.Context, d *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	switch method {
 	// TSO is required for store initialization and MVCC reads.
@@ -91,6 +92,7 @@ func WrapKV(c tikv.Client) tikv.Client {
 	}
 	return &KVClient{Client: c}
 }
+
 func (*KVClient) allowed(r *tikvrpc.Request) bool {
 	if r == nil {
 		return false
