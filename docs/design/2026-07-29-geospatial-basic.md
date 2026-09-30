@@ -707,6 +707,11 @@ Risks:
   its predicate results means building the inverse problem with azimuths and a crossing test
   over it. Mitigated by the operand restriction, which keeps v1 to the closed-form half, and
   by the regression test that pins where the 4326 edge sits.
+- **Same answer on every node:** arm64 fuses multiply-adds where amd64 does not, including
+  inside Go's `math.Sin` and `math.Atan`, so the same Andoyer code gives different last bits
+  (measured over 100,000 distances). A 4326 predicate near an edge can flip on that bit, so
+  a mixed-architecture cluster could answer one query two ways. Mitigated by fusion-free
+  trigonometry of our own, which a later TiKV evaluator ports as is.
 - **MySQL error parity:** exact codes and messages may not match initially (the PoC used
   placeholder wording); a compatibility risk, not a correctness one.
 - **Pure-Go library gaps:** `simplefeatures` covers the planar surface but neither the 4326
