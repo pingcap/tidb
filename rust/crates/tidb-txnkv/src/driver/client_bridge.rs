@@ -25,6 +25,7 @@ use crate::SharedReadRuntime;
 use async_trait::async_trait;
 use prost::Message;
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tikv_client::proto::{keyspacepb, kvrpcpb, metapb};
@@ -429,6 +430,7 @@ pub struct ClientPd {
     backend: Arc<dyn Backend>,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
     transaction_tasks: bool,
+    store_addresses: Mutex<HashMap<(u64, u64), String>>,
 }
 impl ClientPd {
     /// Adapts process-owned transport, metadata and timestamp capabilities.
@@ -449,6 +451,7 @@ impl ClientPd {
             trace,
             call: Arc::new(Mutex::new(None)),
             transaction_tasks: true,
+            store_addresses: Mutex::new(HashMap::new()),
         })
     }
     /// Adapts the existing read transport without requiring transaction commands.
@@ -472,6 +475,7 @@ impl ClientPd {
             trace,
             call: Arc::new(Mutex::new(None)),
             transaction_tasks: false,
+            store_addresses: Mutex::new(HashMap::new()),
         })
     }
 
@@ -599,14 +603,23 @@ impl KvClient for ClientKv {
             ($($request:ident),+) => { $(
                 if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
                     let request = request.clone();
+                    // Foreground transaction RPCs are already driven from the
+                    // SQL thread's blocking client runtime. Calling the
+                    // synchronous backend directly avoids an extra
+                    // spawn_blocking hop for every Get/lock/commit. Resolver
+                    // cleanup keeps the worker hop so cancellation can abort
+                    // an in-flight request safely.
+                    if background.is_none() {
+                        return backend
+                            .dispatch(&address, &request, &call)
+                            .map(|response| response as Box<dyn Any>)
+                            .map_err(failure);
+                    }
                     let pending = tokio::task::spawn_blocking(move || backend.dispatch(&address, &request, &call));
-                    let response = if let Some(owner) = &background {
-                        tokio::select! {
-                            result = pending => result.map_err(failure)??,
-                            _ = owner.cancelled() => return Err(Error::ContextCanceled),
-                        }
-                    } else {
-                        pending.await.map_err(failure)??
+                    let owner = background.as_ref().unwrap();
+                    let response = tokio::select! {
+                        result = pending => result.map_err(failure)??,
+                        _ = owner.cancelled() => return Err(Error::ContextCanceled),
                     };
                     return Ok(response);
                 }
@@ -637,22 +650,35 @@ impl KvClient for ClientKv {
 impl PdClient for ClientPd {
     type KvClient = ClientKv;
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
-        let backend = self.backend.clone();
         let id = region.region.id;
-        let location = tokio::task::spawn_blocking(move || backend.locate_id(id))
-            .await
-            .map_err(failure)??;
         let peer = region
             .leader
             .as_ref()
             .ok_or_else(|| failure("region has no leader"))?;
-        let address = location
-            .stores
-            .iter()
-            .find(|store| store.id == peer.store_id)
-            .ok_or_else(|| failure("leader store is missing"))?
-            .address
-            .clone();
+        let cache_key = (id, peer.store_id);
+        let cached_address = self
+            .store_addresses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&cache_key)
+            .cloned();
+        let address = if let Some(address) = cached_address {
+            address
+        } else {
+            let location = self.backend.locate_id(id)?;
+            let address = location
+                .stores
+                .iter()
+                .find(|store| store.id == peer.store_id)
+                .ok_or_else(|| failure("leader store is missing"))?
+                .address
+                .clone();
+            self.store_addresses
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(cache_key, address.clone());
+            address
+        };
         let client = ClientKv {
             backend: self.backend.clone(),
             address: address.clone(),
@@ -662,30 +688,19 @@ impl PdClient for ClientPd {
         Ok(RegionStore::new(region, Arc::new(client)).with_target(address))
     }
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
-        let backend = self.backend.clone();
+        // Region-cache lookup is synchronous and normally a read-only cache hit.
         let key: Vec<u8> = key.clone().into();
-        tokio::task::spawn_blocking(move || backend.locate_key(&key, false))
-            .await
-            .map_err(failure)?
+        self.backend.locate_key(&key, false)
     }
     async fn region_for_end_key(&self, key: &Key) -> Result<RegionWithLeader> {
-        let backend = self.backend.clone();
         let key: Vec<u8> = key.clone().into();
-        tokio::task::spawn_blocking(move || backend.locate_key(&key, true))
-            .await
-            .map_err(failure)?
+        self.backend.locate_key(&key, true)
     }
     async fn region_for_id(&self, id: u64) -> Result<RegionWithLeader> {
-        let backend = self.backend.clone();
-        tokio::task::spawn_blocking(move || backend.locate_id(id).map(client_region))
-            .await
-            .map_err(failure)?
+        self.backend.locate_id(id).map(client_region)
     }
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        let backend = self.backend.clone();
-        let result = tokio::task::spawn_blocking(move || backend.timestamp())
-            .await
-            .map_err(failure)?;
+        let result = self.backend.timestamp();
         if !self.transaction_tasks
             && self
                 .call
@@ -702,18 +717,34 @@ impl PdClient for ClientPd {
         self.backend.cluster_id()
     }
     async fn update_leader(&self, id: RegionVerId, peer: metapb::Peer) -> Result<()> {
+        self.store_addresses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.backend.update_leader(id, peer)
     }
     async fn update_region_cache(&self, regions: Vec<RegionWithLeader>) -> Result<()> {
+        self.store_addresses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || backend.update_regions(regions))
             .await
             .map_err(failure)?
     }
     async fn invalidate_region_cache(&self, id: RegionVerId) {
+        self.store_addresses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.backend.invalidate_region(id);
     }
     async fn invalidate_store_cache(&self, id: u64) {
+        self.store_addresses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.backend.invalidate_store(id);
     }
     async fn all_stores(&self) -> Result<Vec<Store>> {
