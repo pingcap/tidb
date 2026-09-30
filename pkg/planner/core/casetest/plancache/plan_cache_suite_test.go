@@ -2244,6 +2244,8 @@ func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
 }
 
 func TestCoalescePlanCacheUpdate(t *testing.T) {
+	t.Run("Precision", testNonPreparedCoalescePrecision)
+	t.Run("Scope", testNonPreparedCoalesceScope)
 	for _, instance := range []bool{false, true} {
 		for _, prepared := range []bool{false, true} {
 			t.Run(fmt.Sprintf("instance=%v/prepared=%v", instance, prepared), func(t *testing.T) {
@@ -2324,7 +2326,7 @@ func TestCoalescePlanCacheUpdate(t *testing.T) {
 	}
 }
 
-func TestNonPreparedCoalescePrecision(t *testing.T) {
+func testNonPreparedCoalescePrecision(t *testing.T) {
 	for _, instance := range []bool{false, true} {
 		t.Run(fmt.Sprint(instance), func(t *testing.T) {
 			store := testkit.CreateMockStore(t)
@@ -2403,12 +2405,11 @@ func TestNonPreparedCoalescePrecision(t *testing.T) {
 				require.Equal(t, fresh.MustQuery("show warnings").Rows(), gotWarnings, query)
 				tk.MustQuery("select d,v from coalesce_other_params").Check(fresh.MustQuery("select d,v from coalesce_other_params_ref").Rows())
 			}
-
 		})
 	}
 }
 
-func TestNonPreparedCoalesceScope(t *testing.T) {
+func testNonPreparedCoalesceScope(t *testing.T) {
 	t.Run("CrossColumnTypes", testNonPreparedCoalesceCrossColumnTypes)
 	t.Run("Nested", testNonPreparedCoalesceNested)
 	store := testkit.CreateMockStore(t)
