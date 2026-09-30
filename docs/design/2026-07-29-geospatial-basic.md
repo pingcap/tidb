@@ -46,6 +46,9 @@ geometry storable, readable and queryable.
 - **Types.** The `GEOMETRY` column type and its subtypes, with support for
   [`SRID`](#terminology) 0 and 4326 (to be extended later).
 - **Storage.** `<version byte = 1>` + [EWKB](#terminology).
+- **Binary in and out.** A bare `SELECT` and a bare literal both use MySQL's binary
+  format, so a `mysqldump` loads unchanged; the stored bytes have their own pair,
+  `ST_AsEWKB` and `ST_GeomFromEWKB`.
 - **Functions.** The minimal `ST_*` set, including the [DE-9IM](#terminology) predicates.
 - **Algorithms.** The same distance and relate algorithms as MySQL, so results are as
   compatible as possible.
