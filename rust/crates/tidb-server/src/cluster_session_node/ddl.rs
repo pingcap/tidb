@@ -41,13 +41,11 @@ use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs_cached,
     load_history_persisted_ddl_job, load_min_persisted_ddl_job_id_cached,
-    run_persisted_check_constraint_job_to_completion,
-    run_persisted_create_schema_job_to_completion, run_persisted_create_table_job_to_completion,
-    run_persisted_create_tables_job_to_completion, run_persisted_drop_schema_job_to_completion,
-    run_persisted_drop_table_job_to_completion, run_persisted_rename_tables_job_to_completion,
-    submit_check_constraint_job_with_retry, CheckConstraintSchemaSync, CheckConstraintValidator,
-    ClusterDdlReport, ExchangePartitionValidator, IndexBackfiller, SchemaVersionNotifier,
+    run_persisted_ddl_job_to_completion, submit_check_constraint_job_with_retry,
+    CheckConstraintValidator, ClusterDdlReport, DdlSchemaSync, ExchangePartitionValidator,
+    IndexBackfiller, SchemaVersionNotifier,
 };
+
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_exec::schema_validator::SchemaValidator;
 use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
@@ -230,159 +228,30 @@ where
                         let notifier_ref = notifier
                             .as_ref()
                             .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
-                        match job.type_ {
-                            tidb_model::ActionType::ACTION_ADD_CHECK_CONSTRAINT
-                            | tidb_model::ActionType::ACTION_DROP_CHECK_CONSTRAINT
-                            | tidb_model::ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
-                                if let Err(error) = run_persisted_check_constraint_job_to_completion(
-                                    Arc::clone(&opener),
-                                    job.id,
-                                    timeout,
-                                    notifier_ref,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    schema_sync.as_ref(),
-                                ) {
-                                    // A validation error is terminal and retained in history; every
-                                    // other error leaves the active row for the next scheduler pass.
-                                    eprintln!(
-                                            "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                            job.id,
-                                            serde_json::to_string(&error.to_string())
-                                                .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                                        );
-                                }
-                            }
-                            // Pinned Go `onCreateSchema`: BR restore submits the
-                            // CREATE DATABASE for the restored keyspace through the
-                            // persisted job queue (the submitting Go TiDB runs with
-                            // runWorker=false), so the cluster's SQL node owns the
-                            // execution.
-                            tidb_model::ActionType::ACTION_CREATE_SCHEMA => {
-                                if let Err(error) = run_persisted_create_schema_job_to_completion(
-                                    Arc::clone(&opener),
-                                    job.id,
-                                    timeout,
-                                    notifier_ref,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    schema_sync.as_ref(),
-                                ) {
-                                    eprintln!(
-                                        "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                        job.id,
-                                        serde_json::to_string(&error.to_string())
-                                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                                    );
-                                }
-                            }
-                            tidb_model::ActionType::ACTION_CREATE_TABLE => {
-                                if let Err(error) = run_persisted_create_table_job_to_completion(
-                                    Arc::clone(&opener),
-                                    job.id,
-                                    timeout,
-                                    notifier_ref,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    schema_sync.as_ref(),
-                                ) {
-                                    eprintln!(
-                                        "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                        job.id,
-                                        serde_json::to_string(&error.to_string())
-                                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                                    );
-                                }
-                            }
-                            tidb_model::ActionType::ACTION_CREATE_TABLES => {
-                                if let Err(error) = run_persisted_create_tables_job_to_completion(
-                                    Arc::clone(&opener),
-                                    job.id,
-                                    timeout,
-                                    notifier_ref,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    schema_sync.as_ref(),
-                                ) {
-                                    eprintln!(
-                                        "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                        job.id,
-                                        serde_json::to_string(&error.to_string())
-                                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                                    );
-                                }
-                            }
-                            tidb_model::ActionType::ACTION_DROP_TABLE => {
-                                if let Err(error) = run_persisted_drop_table_job_to_completion(
-                                    Arc::clone(&opener),
-                                    job.id,
-                                    timeout,
-                                    notifier_ref,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    schema_sync.as_ref(),
-                                ) {
-                                    eprintln!(
-                                        "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                        job.id,
-                                        serde_json::to_string(&error.to_string())
-                                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                                    );
-                                }
-                            }
-                            tidb_model::ActionType::ACTION_RENAME_TABLES => {
-                                if let Err(error) = run_persisted_rename_tables_job_to_completion(
-                                    Arc::clone(&opener),
-                                    job.id,
-                                    timeout,
-                                    notifier_ref,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    schema_sync.as_ref(),
-                                ) {
-                                    eprintln!(
-                                        "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                        job.id,
-                                        serde_json::to_string(&error.to_string())
-                                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                                    );
-                                }
-                            }
-                            tidb_model::ActionType::ACTION_DROP_SCHEMA => {
-                                if let Err(error) = run_persisted_drop_schema_job_to_completion(
-                                    Arc::clone(&opener),
-                                    job.id,
-                                    timeout,
-                                    notifier_ref,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    &KvTableIndexBackfiller,
-                                    schema_sync.as_ref(),
-                                ) {
-                                    eprintln!(
-                                        "{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                        job.id,
-                                        serde_json::to_string(&error.to_string())
-                                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                                    );
-                                }
-                            }
-                            _ => {
-                                eprintln!(
-                                    "{{\"level\":\"warning\",\"event\":\"ddl_scheduler_unsupported_job\",\"job_id\":{},\"job_type\":{}}}",
-                                    job.id, job.type_.0
-                                );
-                                continue;
-                            }
+                        if !tidb_exec::cluster_ddl::supports_persisted_ddl_job(job.type_) {
+                            continue;
                         }
-                        let (_, condvar) = &*wake;
-                        condvar.notify_all();
+                        let check_owner = || {
+                            if stop.load(Ordering::Acquire) || !owner.is_owner() {
+                                Err("DDL worker stopped or ownership lost".to_owned())
+                            } else {
+                                Ok(())
+                            }
+                        };
+                        if let Err(error) = run_persisted_ddl_job_to_completion(
+                            Arc::clone(&opener),
+                            job.id,
+                            timeout,
+                            notifier_ref,
+                            &KvTableIndexBackfiller,
+                            &KvTableIndexBackfiller,
+                            &KvTableIndexBackfiller,
+                            schema_sync.as_ref(),
+                            &check_owner,
+                        ) {
+                            eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
+                                job.id, serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                        }
                     }
                 }
                 Err(error) => eprintln!(
@@ -418,6 +287,7 @@ where
             }
         }
     }
+
 }
 
 impl<C, L, P> tidb_owner::Listener for PersistedDdlScheduler<C, L, P>
@@ -758,6 +628,204 @@ mod schema_sync_tests {
     use super::*;
 
     #[test]
+    fn persisted_worker_recovers_schema_barriers_before_history() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
+        use tidb_exec::real_tikv_ddl::{load_active_persisted_ddl_jobs, ClusterDdlError};
+        use tidb_model::{
+            ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
+            JobVersion, SchemaState,
+        };
+        use tidb_txnkv::transaction::OptimisticCommitOutcome;
+        struct Barrier {
+            fail: AtomicBool,
+            waits: Mutex<Vec<(i64, i64)>>,
+            cleaned: Mutex<Vec<i64>>,
+        }
+        impl DdlSchemaSync for Barrier {
+            fn owner_id(&self) -> &str {
+                "replacement-owner"
+            }
+            fn wait_version_synced(&self, id: i64, version: i64) -> Result<(), String> {
+                self.waits.lock().unwrap().push((id, version));
+                if self.fail.load(Ordering::Relaxed) {
+                    Err("schema acknowledgement unavailable".into())
+                } else {
+                    Ok(())
+                }
+            }
+            fn clean_job_versions(&self, id: i64) -> Result<(), String> {
+                self.cleaned.lock().unwrap().push(id);
+                Ok(())
+            }
+        }
+        struct FailedNotifier;
+        impl SchemaVersionNotifier for FailedNotifier {
+            fn notify(&self, _: i64) -> Result<(), String> {
+                Err("etcd unavailable".into())
+            }
+        }
+        let (_authority, _pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let opener = Arc::new(opener);
+        let timeout = Duration::from_secs(5);
+        let (outcome, _) = crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
+        let seed = |job: &mut Job| {
+            let mut tx = opener.begin().unwrap();
+            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let table = DdlJobTable::locate(&catalog).unwrap();
+            let mut mutations = Vec::new();
+            table
+                .append_insert(job, false, "501", "0", false, &mut mutations)
+                .unwrap();
+            assert!(matches!(
+                tx.commit(
+                    mutations,
+                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+                )
+                .unwrap(),
+                OptimisticCommitOutcome::Committed(_)
+            ));
+        };
+        let mut job = Job::default();
+        job.id = 500;
+        job.schema_id = 501;
+        job.schema_name = "sync_database".into();
+        job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+        job.state = JobState::QUEUEING;
+        job.version = JobVersion::V2;
+        job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+        job.fill_args(Some(GoShared::new(CreateSchemaArgs {
+            db_info: GoField::new(Some(GoShared::new(DBInfo {
+                id: 501,
+                name: tidb_ast::CiString::new("sync_database"),
+                ..Default::default()
+            }))),
+        })));
+        seed(&mut job);
+        let barrier = Barrier {
+            fail: AtomicBool::new(true),
+            waits: Mutex::new(Vec::new()),
+            cleaned: Mutex::new(Vec::new()),
+        };
+        let run = |id,
+                   notifier: Option<&dyn SchemaVersionNotifier>,
+                   check: &dyn Fn() -> Result<(), String>| {
+            run_persisted_ddl_job_to_completion(
+                opener.clone(),
+                id,
+                timeout,
+                notifier,
+                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller,
+                &barrier,
+                check,
+            )
+        };
+        let before = tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            .unwrap()
+            .schema_version;
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let lost_before_commit = || {
+            if checks.fetch_add(1, Ordering::Relaxed) == 0 {
+                Ok(())
+            } else {
+                Err("owner lost".into())
+            }
+        };
+        assert!(run(500, None, &lost_before_commit).is_err());
+        assert_eq!(
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+                .unwrap()
+                .schema_version,
+            before
+        );
+        assert_eq!(
+            load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap()[0].state,
+            JobState::QUEUEING
+        );
+        assert!(run(500, Some(&FailedNotifier), &|| Ok(())).is_err());
+        assert!(
+            barrier.waits.lock().unwrap().is_empty(),
+            "notification failure must precede acknowledgement wait"
+        );
+        assert!(matches!(
+            run(500, Some(&FailedNotifier), &|| Ok(())),
+            Err(ClusterDdlError::SchemaSync(_))
+        ));
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].state, JobState::DONE);
+        assert_eq!(active[0].last_schema_version, before + 1);
+        assert!(load_history_persisted_ddl_job(opener.clone(), 500, timeout)
+            .unwrap()
+            .is_none());
+        assert!(barrier.cleaned.lock().unwrap().is_empty());
+        barrier.fail.store(false, Ordering::Relaxed);
+        run(500, Some(&FailedNotifier), &|| Ok(())).unwrap();
+        let mut history = load_history_persisted_ddl_job(opener.clone(), 500, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::SYNCED);
+        assert_eq!(history.last_schema_version, before + 1);
+        assert_eq!(
+            tidb_model::get_create_schema_args(&mut history)
+                .unwrap()
+                .unwrap()
+                .read()
+                .db_info
+                .get()
+                .unwrap()
+                .read()
+                .id,
+            501
+        );
+        assert_eq!(
+            *barrier.waits.lock().unwrap(),
+            vec![(500, before + 1), (500, before + 1)]
+        );
+        assert_eq!(*barrier.cleaned.lock().unwrap(), vec![500]);
+        assert!(load_active_persisted_ddl_jobs(opener.clone(), timeout, 0)
+            .unwrap()
+            .is_empty());
+        // Every DROP transition must wait, not only the final one.
+        job.id = 502;
+        job.type_ = ActionType::ACTION_DROP_SCHEMA;
+        job.state = JobState::QUEUEING;
+        job.schema_state = SchemaState::PUBLIC;
+        job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
+        seed(&mut job);
+        barrier.fail.store(true, Ordering::Relaxed);
+        assert!(run(502, None, &|| Ok(())).is_err());
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].schema_state, SchemaState::WRITE_ONLY);
+        assert_eq!(active[0].state, JobState::RUNNING);
+        barrier.fail.store(false, Ordering::Relaxed);
+        run(502, None, &|| Ok(())).unwrap();
+        let waits = barrier.waits.lock().unwrap();
+        assert_eq!(
+            &waits[2..],
+            &[
+                (502, before + 2),
+                (502, before + 2),
+                (502, before + 3),
+                (502, before + 4)
+            ]
+        );
+        assert_eq!(
+            load_history_persisted_ddl_job(opener.clone(), 502, timeout)
+                .unwrap()
+                .unwrap()
+                .state,
+            JobState::SYNCED
+        );
+    }
+
+    #[test]
     fn independent_store_authorities_can_both_own_ddl() {
         use tidb_owner::Manager;
         let first = local_ddl_owner("isolated-ddl-first".to_owned(), u64::MAX - 1);
@@ -914,7 +982,7 @@ where
     }
 }
 
-impl<C, L, P> CheckConstraintSchemaSync for ClusterSchemaSync<C, L, P>
+impl<C, L, P> DdlSchemaSync for ClusterSchemaSync<C, L, P>
 where
     C: StoreWriteClient,
     L: StoreWriteLoader,

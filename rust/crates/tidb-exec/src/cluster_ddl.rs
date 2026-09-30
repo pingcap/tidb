@@ -3110,38 +3110,123 @@ fn new_check_constraint_job(
     job
 }
 
-/// Plans one CHECK worker step from `mysql.tidb_ddl_job` and current table
-/// metadata, matching pinned Go `runOneJobStep` plus the three CHECK action
-/// handlers.
-///
-/// The active row is the operation authority; no statement-local continuation
-/// is accepted. A process may therefore disappear after any committed phase
-/// and a later owner can call this function with the same job ID.
-pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
+/// A persisted job cannot advance while its previous schema publication is
+/// unacknowledged. Go's scheduler recovers this barrier before calling a worker.
+#[derive(Clone, Debug)]
+pub enum PersistedDdlJobPlan {
+    /// Resume the durable MDL barrier, including after owner replacement.
+    SchemaSync {
+        /// Version retained in mysql.tidb_mdl_info.
+        version: i64,
+        /// Persisted table scope to clean after acknowledgement.
+        mdl_info: MdlInfoUpdate,
+    },
+    /// One action or history transaction, planned from the current active row.
+    Step(PersistedDdlJobStep),
+}
+
+/// Actions currently integrated into the persisted owner worker. Seed planners
+/// outside this set are not made live by the common lifecycle.
+pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
+    matches!(
+        action,
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT
+            | ActionType::ACTION_DROP_CHECK_CONSTRAINT
+            | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
+            | ActionType::ACTION_CREATE_SCHEMA
+            | ActionType::ACTION_CREATE_TABLE
+            | ActionType::ACTION_CREATE_TABLES
+            | ActionType::ACTION_RENAME_TABLES
+            | ActionType::ACTION_DROP_SCHEMA
+            | ActionType::ACTION_DROP_TABLE
+    )
+}
+
+/// Plans Go's shared worker lifecycle: recover MDL, execute one action, then
+/// move a completed job to history only in a subsequent synchronized step.
+/// `previously_synced_version` is local to one worker run, like Go jobContext;
+/// a restarted owner must pass None and recover the durable barrier.
+pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
     start_ts: u64,
-) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    previously_synced_version: Option<i64>,
+) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
-        .load(snapshot)
+        .load_by_id(snapshot, ddl_job_id)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
         .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if !matches!(
-        active.job.type_,
-        ActionType::ACTION_ADD_CHECK_CONSTRAINT
-            | ActionType::ACTION_DROP_CHECK_CONSTRAINT
-            | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
-    ) {
+    if !supports_persisted_ddl_job(active.job.type_) {
         return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} has unsupported action {}",
+            "unsupported persisted DDL action {}",
             active.job.type_
         )));
+    }
+    let mut mdl_info = mdl_info_update(&catalog, active.job.table_id)?;
+    mdl_info.table_ids = active.table_ids.clone();
+    mdl_info.omit_owner_id =
+        tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().to_lowercase());
+    match crate::ddl_systable::SystemTableManager::new(&catalog)
+        .get_mdl_version(snapshot, ddl_job_id)
+    {
+        Ok(version) if Some(version) != previously_synced_version => {
+            return Ok(PersistedDdlJobPlan::SchemaSync { version, mdl_info });
+        }
+        Ok(_) => {}
+        Err(crate::ddl_systable::SystemTableManagerError::NotFound) => {}
+        Err(error) => return Err(DdlPlanError::Encode(error.to_string())),
+    }
+    if matches!(
+        active.job.state,
+        JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED
+    ) {
+        if active.job.state == JobState::DONE {
+            active.job.state = JobState::SYNCED;
+        }
+        if let Some(binlog) = active.job.binlog_info.as_ref() {
+            binlog.write().finished_ts = start_ts;
+        }
+        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+        // No action has run in this transaction. Preserve the persisted raw
+        // args instead of re-encoding a newly decoded, empty Args field.
+        let encoded = active
+            .job
+            .encode(false)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        let mut mutations = Vec::new();
+        crate::ddl_history_table::DdlHistoryTable::locate(&catalog)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+            .append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        mutations.push(BufferMutation::set(
+            key::ddl_job_history_kv_key(ddl_job_id),
+            encoded,
+        )?);
+        job_table
+            .append_delete(&active, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        return Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
+            write: DdlWrite {
+                ddl_job_id,
+                mutations,
+                schema_version: 0,
+                diff: SchemaDiff::default(),
+                created_id: None,
+                backfill: Vec::new(),
+                auto_pre_split: false,
+                exchange_partition_validation: None,
+                check_constraint_validation: None,
+                mdl_info_update: None,
+                exchange_partition_label_swap: None,
+                warnings: Vec::new(),
+                placement_bundles: Vec::new(),
+                placement_rollback_bundles: Vec::new(),
+            },
+            terminal: true,
+        }));
     }
     if active.job.real_start_ts == 0 {
         active.job.real_start_ts = start_ts;
@@ -3149,6 +3234,56 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
     if active.job.state != JobState::ROLLINGBACK {
         active.job.state = JobState::RUNNING;
     }
+    let action = active.job.type_;
+    let mut step = match action {
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT
+        | ActionType::ACTION_DROP_CHECK_CONSTRAINT
+        | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
+            plan_persisted_check_constraint_job_step(&catalog, &job_table, active, start_ts)
+        }
+        ActionType::ACTION_CREATE_SCHEMA => {
+            plan_persisted_create_schema_job_step(&catalog, &job_table, active)
+        }
+        ActionType::ACTION_CREATE_TABLE => {
+            plan_persisted_create_table_job_step(&catalog, &job_table, active, start_ts)
+        }
+        ActionType::ACTION_CREATE_TABLES => {
+            plan_persisted_create_tables_job_step(&catalog, &job_table, active, start_ts)
+        }
+        ActionType::ACTION_RENAME_TABLES => {
+            plan_persisted_rename_tables_job_step(&catalog, &job_table, active, start_ts)
+        }
+        ActionType::ACTION_DROP_SCHEMA => {
+            plan_persisted_drop_schema_job_step(&catalog, &job_table, active)
+        }
+        ActionType::ACTION_DROP_TABLE => {
+            plan_persisted_drop_table_job_step(&catalog, &job_table, active)
+        }
+        _ => unreachable!("supported action checked above"),
+    }?;
+    // Only a new diff publishes a schema version; cancellation is not a
+    // publication of whatever catalog version happened to be read.
+    step.write.schema_version = step.write.diff.version;
+    if step.write.schema_version != 0 {
+        step.write.mdl_info_update = Some(mdl_info);
+    }
+    Ok(PersistedDdlJobPlan::Step(step))
+}
+
+/// Plans one CHECK worker step from `mysql.tidb_ddl_job` and current table
+/// metadata, matching pinned Go `runOneJobStep` plus the three CHECK action
+/// handlers.
+///
+/// The active row is the operation authority; no statement-local continuation
+/// is accepted. A process may therefore disappear after any committed phase
+/// and a later owner can call this function with the same job ID.
+fn plan_persisted_check_constraint_job_step(
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let ddl_job_id = active.job.id;
 
     let database = catalog
         .databases
@@ -3475,34 +3610,10 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
                 Some(GoShared::new(info.clone_like_go())),
             );
         }
-        active
-            .job
-            .binlog_info
-            .as_ref()
-            .expect("CHECK jobs always carry BinlogInfo")
-            .write()
-            .finished_ts = start_ts;
-        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-        let encoded = active
-            .job
-            .encode(true)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-            let _ =
-                history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-        }
-        mutations.push(BufferMutation::set(
-            key::ddl_job_history_kv_key(active.job.id),
-            encoded,
-        )?);
-        job_table
-            .append_delete(&active, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    } else {
-        job_table
-            .append_update(&mut active, update_raw_args, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     }
+    job_table
+        .append_update(&mut active, update_raw_args, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     Ok(PersistedDdlJobStep {
         write: DdlWrite {
@@ -3515,15 +3626,13 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
             auto_pre_split: false,
             exchange_partition_validation: None,
             check_constraint_validation: validation,
-            mdl_info_update: schema_changed
-                .then(|| mdl_info_update(&catalog, info.id))
-                .transpose()?,
+            mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal,
+        terminal: false,
     })
 }
 
@@ -3535,35 +3644,14 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
 /// refuses the job when either the name or the ID is already taken (Go
 /// `checkSchemaNotExists` -- that path cancels the job), bumps the schema
 /// version with a `CREATE SCHEMA` diff, publishes the database `PUBLIC` in
-/// one meta write, and finishes the job into history. CREATE DATABASE has no
-/// reorg states and no backfill: one step is terminal.
-pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
-    ddl_job_id: i64,
-    start_ts: u64,
+/// one meta write, and persists DONE for the shared synchronization lifecycle.
+/// CREATE DATABASE has no reorg states or backfill.
+fn plan_persisted_create_schema_job_step(
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
-        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if active.job.type_ != ActionType::ACTION_CREATE_SCHEMA {
-        return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} has unsupported action {}",
-            active.job.type_
-        )));
-    }
-    if active.job.real_start_ts == 0 {
-        active.job.real_start_ts = start_ts;
-    }
-    if active.job.state != JobState::ROLLINGBACK {
-        active.job.state = JobState::RUNNING;
-    }
+    let ddl_job_id = active.job.id;
 
     let args = tidb_model::get_create_schema_args(&mut active.job)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
@@ -3579,7 +3667,7 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
     // Go `onCreateSchema`: the owner re-stamps the ID from the job.
     db_info.id = active.job.schema_id;
 
-    let name_taken = find_database(&catalog, db_info.name.original()).is_some();
+    let name_taken = find_database(catalog, db_info.name.original()).is_some();
     let id_taken = catalog
         .databases
         .iter()
@@ -3636,30 +3724,12 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
             schema_version,
             Some(GoShared::new(db_info.clone())),
         );
-        // Go's owner flips the history job from `done` to `synced` once every
-        // peer has applied the version; the submitter's wait loop only
-        // accepts `synced` (or a non-nil error on a cancelled job). One
-        // atomic transaction publishes the database and its final synced
-        // state together.
-        active.job.state = JobState::SYNCED;
     }
-    if let Some(binlog) = active.job.binlog_info.as_ref() {
-        binlog.write().finished_ts = start_ts;
+    if active.job.error.is_some() {
+        active.job.state = JobState::CANCELLED;
     }
-    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let encoded = active
-        .job
-        .encode(true)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-    }
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
     job_table
-        .append_delete(&active, &mut mutations)
+        .append_update(&mut active, true, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     Ok(PersistedDdlJobStep {
@@ -3679,7 +3749,7 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal: true,
+        terminal: false,
     })
 }
 
@@ -3690,36 +3760,15 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
 /// `job.TableID`; the owner re-stamps the ID, refuses the job when the table
 /// already exists in the target schema (Go `checkTableNotExists` cancels),
 /// publishes the table `PUBLIC` in one meta write, bumps the schema version
-/// with a `CREATE TABLE` diff, and finishes the job into history. A BR
-/// checkpoint table carries no secondary indexes to backfill: one step is
-/// terminal.
-pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
-    ddl_job_id: i64,
+/// with a `CREATE TABLE` diff, and persists DONE. Synchronization and history
+/// belong to the shared worker lifecycle.
+fn plan_persisted_create_table_job_step(
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
-        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if active.job.type_ != ActionType::ACTION_CREATE_TABLE {
-        return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} has unsupported action {}",
-            active.job.type_
-        )));
-    }
-    if active.job.real_start_ts == 0 {
-        active.job.real_start_ts = start_ts;
-    }
-    if active.job.state != JobState::ROLLINGBACK {
-        active.job.state = JobState::RUNNING;
-    }
+    let ddl_job_id = active.job.id;
 
     let args = tidb_model::get_create_table_args(&mut active.job)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
@@ -3793,10 +3842,6 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
             schema_version,
             Some(GoShared::new(table_info.clone())),
         );
-        // The submitter's wait loop only accepts a history job whose state is
-        // `synced` (or a cancelled job with a non-nil error); publish both the
-        // table and its final synced state in the one atomic transaction.
-        active.job.state = JobState::SYNCED;
     } else {
         active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
             tidb_error::terror::TerrorCode::new(1050),
@@ -3807,23 +3852,11 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
             ),
         )));
     }
-    if let Some(binlog) = active.job.binlog_info.as_ref() {
-        binlog.write().finished_ts = start_ts;
+    if active.job.error.is_some() {
+        active.job.state = JobState::CANCELLED;
     }
-    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let encoded = active
-        .job
-        .encode(true)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-    }
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
     job_table
-        .append_delete(&active, &mut mutations)
+        .append_update(&mut active, true, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     Ok(PersistedDdlJobStep {
@@ -3843,7 +3876,7 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal: true,
+        terminal: false,
     })
 }
 
@@ -3856,37 +3889,15 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
 /// owner re-checks the target schema and each table's name/ID against the
 /// catalog (any conflict cancels the whole job, Go cancels on the first
 /// failing table), publishes every table `PUBLIC` in one meta write, bumps
-/// the schema version once with a `CREATE TABLES` diff, and finishes the job
-/// into history as `synced`. No backfill: one step is terminal.
-pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
-    ddl_job_id: i64,
+/// the schema version once with a `CREATE TABLES` diff, and persists DONE for
+/// the shared synchronization and history lifecycle.
+fn plan_persisted_create_tables_job_step(
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    use serde_json::Value as Json;
-
-    let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
-        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if active.job.type_ != ActionType::ACTION_CREATE_TABLES {
-        return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} has unsupported action {}",
-            active.job.type_
-        )));
-    }
-    if active.job.real_start_ts == 0 {
-        active.job.real_start_ts = start_ts;
-    }
-    if active.job.state != JobState::ROLLINGBACK {
-        active.job.state = JobState::RUNNING;
-    }
+    let ddl_job_id = active.job.id;
 
     // Pinned Go `GetBatchCreateTableArgs`: the v2 envelope is
     // `{"tables": [{"table_info": <Go TableInfo JSON>, "fk_check": bool}]}`
@@ -3951,13 +3962,12 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
     let diff = if cancelled {
         SchemaDiff::default()
     } else {
-        for info in &table_infos {
-            let mut info = info.clone();
+        for info in &mut table_infos {
             info.state = SchemaState::PUBLIC;
             info.update_ts = start_ts;
             mutations.push(BufferMutation::set(
                 key::table_kv_key(database.info.id, info.id),
-                value::serialize_table_info(&info)
+                value::serialize_table_info(info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
         }
@@ -3998,43 +4008,28 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
     };
 
     if !cancelled {
-        if let Some(first) = table_infos.first() {
-            active.job.finish_table_job(
-                JobState::DONE,
-                SchemaState::PUBLIC,
-                schema_version,
-                Some(GoShared::new(first.clone())),
-            );
-            // Go's owner flips the history job from `done` to `synced` once
-            // every peer has applied the version; the submitter's wait loop
-            // only accepts `synced` (or a cancelled job with a non-nil
-            // error). One atomic transaction publishes every table and the
-            // final synced state together.
-            active.job.state = JobState::SYNCED;
-        }
+        active.job.state = JobState::DONE;
+        active.job.schema_state = SchemaState::PUBLIC;
+        // Go onCreateTables uses SetTableInfos, including an empty batch;
+        // selecting only the first table also leaves an empty batch RUNNING.
+        active
+            .job
+            .binlog_info
+            .as_ref()
+            .ok_or_else(|| DdlPlanError::Encode("CREATE TABLES job has nil BinlogInfo".to_owned()))?
+            .write()
+            .set_table_infos(schema_version, &GoSharedPointerSlice::from(table_infos));
     } else if let Some(reason) = &cancel_reason {
         active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
             tidb_error::terror::TerrorCode::new(1050),
             reason.clone(),
         )));
     }
-    if let Some(binlog) = active.job.binlog_info.as_ref() {
-        binlog.write().finished_ts = start_ts;
+    if active.job.error.is_some() {
+        active.job.state = JobState::CANCELLED;
     }
-    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let encoded = active
-        .job
-        .encode(true)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-    }
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
     job_table
-        .append_delete(&active, &mut mutations)
+        .append_update(&mut active, true, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     let _ = first_id;
@@ -4055,7 +4050,7 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal: true,
+        terminal: false,
     })
 }
 
@@ -4075,33 +4070,13 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
 /// with the recorded error (Go `GetTableInfoAndCancelFaultJob`); Go resolves
 /// the table by name inside the old schema, so a stale job-side ID must not
 /// fail the move.
-pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
-    ddl_job_id: i64,
+fn plan_persisted_rename_tables_job_step(
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
-        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if active.job.type_ != ActionType::ACTION_RENAME_TABLES {
-        return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} has unsupported action {}",
-            active.job.type_
-        )));
-    }
-    if active.job.real_start_ts == 0 {
-        active.job.real_start_ts = start_ts;
-    }
-    if active.job.state != JobState::ROLLINGBACK {
-        active.job.state = JobState::RUNNING;
-    }
+    let ddl_job_id = active.job.id;
 
     let args = tidb_model::get_rename_tables_args(&mut active.job)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
@@ -4295,7 +4270,6 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
         });
     }
 
-    let mut terminal = failure.is_none();
     let mut final_diff = diff;
     let mut final_version = schema_version;
     if failure.is_none() {
@@ -4347,7 +4321,6 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
             schema_version,
             &published,
         );
-        active.job.state = JobState::SYNCED;
         final_diff = diff;
         final_version = schema_version;
     } else {
@@ -4357,23 +4330,11 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
         )));
     }
 
-    if let Some(binlog) = active.job.binlog_info.as_ref() {
-        binlog.write().finished_ts = start_ts;
+    if active.job.error.is_some() {
+        active.job.state = JobState::CANCELLED;
     }
-    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let encoded = active
-        .job
-        .encode(true)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-    }
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
     job_table
-        .append_delete(&active, &mut mutations)
+        .append_update(&mut active, true, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     Ok(PersistedDdlJobStep {
@@ -4393,7 +4354,7 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal,
+        terminal: false,
     })
 }
 
@@ -4405,33 +4366,12 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
 /// database meta key (table KVs are left to the delete range) and finishes
 /// with `FinishDBJob`. A missing database cancels the job with the recorded
 /// error (Go `checkSchemaExistAndCancelNotExistJob`).
-pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
-    ddl_job_id: i64,
-    start_ts: u64,
+fn plan_persisted_drop_schema_job_step(
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
-        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if active.job.type_ != ActionType::ACTION_DROP_SCHEMA {
-        return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} has unsupported action {}",
-            active.job.type_
-        )));
-    }
-    if active.job.real_start_ts == 0 {
-        active.job.real_start_ts = start_ts;
-    }
-    if active.job.state != JobState::ROLLINGBACK {
-        active.job.state = JobState::RUNNING;
-    }
+    let ddl_job_id = active.job.id;
 
     let schema_version = catalog.schema_version;
     let mut mutations = Vec::new();
@@ -4450,14 +4390,10 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
                 active.job.schema_name.to_string()
             ),
         )));
-        terminal_drop_landing(
-            &catalog,
-            snapshot,
-            &job_table,
-            &mut active,
-            &mut mutations,
-            start_ts,
-        );
+        active.job.state = JobState::CANCELLED;
+        job_table
+            .append_update(&mut active, false, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         return Ok(PersistedDdlJobStep {
             write: DdlWrite {
                 ddl_job_id,
@@ -4475,7 +4411,7 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
             },
-            terminal: true,
+            terminal: false,
         });
     };
 
@@ -4493,7 +4429,6 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         schema_id: db_info.id,
         ..SchemaDiff::default()
     };
-    let mut terminal = false;
     if db_info.state != SchemaState::NONE {
         mutations.push(BufferMutation::set(
             key::database_kv_key(db_info.id),
@@ -4507,8 +4442,6 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         active
             .job
             .finish_db_job(JobState::DONE, SchemaState::NONE, schema_version, None);
-        active.job.state = JobState::SYNCED;
-        terminal = true;
     }
     active.job.schema_state = db_info.state;
     mutations.push(BufferMutation::set(
@@ -4522,31 +4455,9 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     )?);
     active.job.last_schema_version = schema_version;
 
-    if terminal {
-        if let Some(binlog) = active.job.binlog_info.as_ref() {
-            binlog.write().finished_ts = start_ts;
-        }
-        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-        let encoded = active
-            .job
-            .encode(true)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-            let _ =
-                history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-        }
-        mutations.push(BufferMutation::set(
-            key::ddl_job_history_kv_key(active.job.id),
-            encoded,
-        )?);
-        job_table
-            .append_delete(&active, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    } else {
-        job_table
-            .append_update(&mut active, true, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    }
+    job_table
+        .append_update(&mut active, false, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     Ok(PersistedDdlJobStep {
         write: DdlWrite {
@@ -4565,34 +4476,8 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal,
+        terminal: false,
     })
-}
-
-/// Lands a cancelled drop-schema job in history and removes it from the queue.
-fn terminal_drop_landing<S: MetaSnapshot>(
-    catalog: &ClusterCatalog,
-    snapshot: &mut S,
-    job_table: &crate::ddl_job_table::DdlJobTable,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
-    mutations: &mut Vec<BufferMutation>,
-    start_ts: u64,
-) {
-    if let Some(binlog) = active.job.binlog_info.as_ref() {
-        binlog.write().finished_ts = start_ts;
-    }
-    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let encoded = match active.job.encode(true) {
-        Ok(encoded) => encoded,
-        Err(_) => return,
-    };
-    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(catalog) {
-        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, mutations);
-    }
-    if let Ok(mutation) = BufferMutation::set(key::ddl_job_history_kv_key(active.job.id), encoded) {
-        mutations.push(mutation);
-    }
-    let _ = job_table.append_delete(active, mutations);
 }
 
 /// Plans one execution step of a persisted `ACTION_DROP_TABLE` job.
@@ -4604,33 +4489,12 @@ fn terminal_drop_landing<S: MetaSnapshot>(
 /// with the recorded error (Go `checkTableExistAndCancelNonExistJob`). Each
 /// call advances exactly one state; the runner loops until the job lands in
 /// history.
-pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
-    ddl_job_id: i64,
-    start_ts: u64,
+fn plan_persisted_drop_table_job_step(
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
-        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if active.job.type_ != ActionType::ACTION_DROP_TABLE {
-        return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} has unsupported action {}",
-            active.job.type_
-        )));
-    }
-    if active.job.real_start_ts == 0 {
-        active.job.real_start_ts = start_ts;
-    }
-    if active.job.state != JobState::ROLLINGBACK {
-        active.job.state = JobState::RUNNING;
-    }
+    let ddl_job_id = active.job.id;
 
     let schema_version = catalog.schema_version;
     let mut mutations = Vec::new();
@@ -4649,14 +4513,10 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
                 active.job.table_name.to_string()
             ),
         )));
-        terminal_drop_landing(
-            &catalog,
-            snapshot,
-            &job_table,
-            &mut active,
-            &mut mutations,
-            start_ts,
-        );
+        active.job.state = JobState::CANCELLED;
+        job_table
+            .append_update(&mut active, false, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         return Ok(PersistedDdlJobStep {
             write: DdlWrite {
                 ddl_job_id,
@@ -4674,7 +4534,7 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
             },
-            terminal: true,
+            terminal: false,
         });
     };
 
@@ -4691,14 +4551,10 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
                 active.job.table_name.to_string()
             ),
         )));
-        terminal_drop_landing(
-            &catalog,
-            snapshot,
-            &job_table,
-            &mut active,
-            &mut mutations,
-            start_ts,
-        );
+        active.job.state = JobState::CANCELLED;
+        job_table
+            .append_update(&mut active, false, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         return Ok(PersistedDdlJobStep {
             write: DdlWrite {
                 ddl_job_id,
@@ -4716,7 +4572,7 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
             },
-            terminal: true,
+            terminal: false,
         });
     };
 
@@ -4735,7 +4591,6 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
         old_table_id: table.id,
         ..SchemaDiff::default()
     };
-    let mut terminal = false;
     if table.state != SchemaState::NONE {
         mutations.push(BufferMutation::set(
             key::table_kv_key(database.info.id, table.id),
@@ -4753,8 +4608,6 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             schema_version,
             Some(GoShared::new(table.clone())),
         );
-        active.job.state = JobState::SYNCED;
-        terminal = true;
     }
     active.job.schema_state = table.state;
     mutations.push(BufferMutation::set(
@@ -4768,31 +4621,9 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
     )?);
     active.job.last_schema_version = schema_version;
 
-    if terminal {
-        if let Some(binlog) = active.job.binlog_info.as_ref() {
-            binlog.write().finished_ts = start_ts;
-        }
-        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-        let encoded = active
-            .job
-            .encode(true)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-            let _ =
-                history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-        }
-        mutations.push(BufferMutation::set(
-            key::ddl_job_history_kv_key(active.job.id),
-            encoded,
-        )?);
-        job_table
-            .append_delete(&active, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    } else {
-        job_table
-            .append_update(&mut active, true, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    }
+    job_table
+        .append_update(&mut active, false, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     Ok(PersistedDdlJobStep {
         write: DdlWrite {
@@ -4811,7 +4642,7 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal,
+        terminal: false,
     })
 }
 /// Plans pinned Go `onCreateMaterializedViewLog` (master `94a9cbedab`):
@@ -6194,7 +6025,9 @@ pub struct MdlInfoUpdate {
     /// clustered-row encoder.
     pub table: Box<TableInfo>,
     /// Tables touched by the job, stored as Go's comma-separated ID list.
-    pub table_ids: Vec<i64>,
+    pub table_ids: String,
+    /// System-table upgrades must not depend on the owner_id column.
+    pub omit_owner_id: bool,
 }
 
 impl MdlInfoUpdate {
@@ -6219,19 +6052,14 @@ impl MdlInfoUpdate {
         values.insert(column_id("version")?, Datum::Int(schema_version));
         values.insert(
             column_id("table_ids")?,
-            Datum::Bytes(
-                self.table_ids
-                    .iter()
-                    .map(i64::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-                    .into_bytes(),
-            ),
+            Datum::Bytes(self.table_ids.as_bytes().to_vec()),
         );
-        values.insert(
-            column_id("owner_id")?,
-            Datum::Bytes(owner_id.as_bytes().to_vec()),
-        );
+        if !self.omit_owner_id {
+            values.insert(
+                column_id("owner_id")?,
+                Datum::Bytes(owner_id.as_bytes().to_vec()),
+            );
+        }
         Ok(values)
     }
 
@@ -6257,18 +6085,41 @@ impl MdlInfoUpdate {
 
     /// Appends Go `cleanMDLInfo`'s clustered-row deletion after a successful
     /// schema-sync wait.
-    pub fn append_delete_mutations(
+    pub fn append_delete_mutations<S: MetaSnapshot>(
         &self,
+        snapshot: &mut S,
         ddl_job_id: i64,
-        schema_version: i64,
         owner_id: &str,
         mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlPlanError> {
-        let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
-        mutations.extend(
-            crate::system_row_write::delete_unindexed_clustered_row(&self.table, &values)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        );
+        use crate::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
+        let columns: &[&str] = if self.omit_owner_id {
+            &["job_id"]
+        } else {
+            &["job_id", "owner_id"]
+        };
+        let view = SystemTableView::project("mysql.tidb_mdl_info", &self.table, columns);
+        let pairs = scan_system_table_prefixed(snapshot, &view, &[Datum::Int(ddl_job_id)])
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        for (key, value) in pairs {
+            let row = SystemRow::parse(&view, &key, &value)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let matches_owner = self.omit_owner_id
+                || row
+                    .text("owner_id")
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                    .as_deref()
+                    == Some(owner_id);
+            if matches_owner {
+                mutations.extend(
+                    crate::system_row_write::delete_unindexed_clustered_row(
+                        &self.table,
+                        &row.into_values(),
+                    )
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -10517,7 +10368,8 @@ fn mdl_info_update(catalog: &ClusterCatalog, table_id: i64) -> Result<MdlInfoUpd
         .ok_or_else(|| DdlPlanError::Encode("mysql.tidb_mdl_info does not exist".to_owned()))?;
     Ok(MdlInfoUpdate {
         table: Box::new(table.clone_like_go()),
-        table_ids: vec![table_id],
+        table_ids: table_id.to_string(),
+        omit_owner_id: false,
     })
 }
 

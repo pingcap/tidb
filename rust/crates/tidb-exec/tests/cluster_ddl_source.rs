@@ -30,12 +30,13 @@ use tidb_exec::cluster_catalog::{
 };
 use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
-    plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
+    plan_ddl_with_collation, plan_persisted_ddl_job_step,
     plan_persisted_materialized_view_create_job_step,
     plan_persisted_materialized_view_log_job_step, prepare_check_constraint_job_submission,
     prepare_materialized_view_job_submission, AlterColumnAction, DdlPlan, DdlPlanError,
-    DdlStatement, MdlInfoUpdate,
+    DdlStatement, MdlInfoUpdate, PersistedDdlJobPlan, PersistedDdlJobStep,
 };
+
 use tidb_exec::ddl_history_table::DdlHistoryTable;
 use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_exec::ddl_job_table::DdlJobTable;
@@ -50,6 +51,30 @@ use tidb_model::{
     MaterializedViewLogInfo, SchemaState, TimeZoneLocation,
 };
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
+
+fn plan_worker_step(
+    store: &mut MetaStore,
+    job_id: i64,
+    ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    match plan_persisted_ddl_job_step(store, job_id, ts, None)? {
+        PersistedDdlJobPlan::Step(step) => Ok(step),
+        PersistedDdlJobPlan::SchemaSync { .. } => panic!("a previous MDL barrier is still pending"),
+    }
+}
+
+fn finish_worker_job(store: &mut MetaStore, job_id: i64, ts: u64) {
+    let step = plan_worker_step(store, job_id, ts).unwrap();
+    assert!(
+        step.terminal,
+        "only the post-sync history transaction removes the job"
+    );
+    assert_eq!(
+        step.write.schema_version, 0,
+        "history does not publish another schema"
+    );
+    apply(store, &step.write);
+}
 
 #[test]
 fn on_update_current_timestamp_uses_go_exact_function_and_fsp_rules() {
@@ -458,8 +483,9 @@ fn ddl_systable_manager_matches_go_queries() {
         .find_table("mysql", "tidb_mdl_info")
         .expect("the MDL table exists");
     let mdl = MdlInfoUpdate {
+        omit_owner_id: false,
         table: Box::new(mdl_table.clone_like_go()),
-        table_ids: vec![1],
+        table_ids: "1".to_owned(),
     };
     let mut mutations = Vec::new();
     mdl.append_mutations(9_999, 123, "owner", &mut mutations)
@@ -529,6 +555,269 @@ fn ddl_sql_history_uses_go_insert_ignore_semantics() {
     let stored = history.load(&mut store).expect("SQL history scans");
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].state, JobState::QUEUEING);
+}
+
+#[test]
+fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
+    use tidb_model::{
+        BatchCreateTableArgs, CreateSchemaArgs, CreateTableArgs, GoField, HistoryInfo,
+        RenameTableArgs, RenameTablesArgs, TableInfo,
+    };
+    fn execute(store: &mut MetaStore, job: &mut Job, ids: &str, expected_phases: usize) {
+        let catalog = load_cluster_catalog(store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(job, false, "112", ids, false, &mut mutations)
+            .unwrap();
+        apply_mutations(store, &mutations);
+        let mut phases = 0;
+        loop {
+            let step = plan_worker_step(store, job.id, 10_000 + phases as u64).unwrap();
+            apply(store, &step.write);
+            if step.terminal {
+                break;
+            }
+            phases += 1;
+            assert!(phases <= expected_phases, "action failed to reach DONE");
+            assert!(!store
+                .pairs
+                .contains_key(&key::ddl_job_history_kv_key(job.id)));
+            assert_eq!(
+                queue.load_by_id(store, job.id).unwrap().unwrap().table_ids,
+                ids
+            );
+            let mdl = step
+                .write
+                .mdl_info_update
+                .as_ref()
+                .expect("schema publication registers MDL");
+            assert_eq!(mdl.table_ids, ids);
+            let mut registration = Vec::new();
+            mdl.append_mutations(
+                job.id,
+                step.write.schema_version,
+                "first-owner",
+                &mut registration,
+            )
+            .unwrap();
+            apply_mutations(store, &registration);
+            match plan_persisted_ddl_job_step(store, job.id, 11_000, None).unwrap() {
+                PersistedDdlJobPlan::SchemaSync { version, .. } => {
+                    assert_eq!(version, step.write.schema_version)
+                }
+                _ => panic!("a restarted owner must recover MDL before advancing"),
+            }
+            let mut cleanup = Vec::new();
+            mdl.append_delete_mutations(store, job.id, "replacement-owner", &mut cleanup)
+                .unwrap();
+            assert!(
+                cleanup.is_empty(),
+                "an owner must not delete a different owner's MDL row"
+            );
+            mdl.append_delete_mutations(store, job.id, "first-owner", &mut cleanup)
+                .unwrap();
+            apply_mutations(store, &cleanup);
+        }
+        assert_eq!(phases, expected_phases);
+        assert!(queue.load_by_id(store, job.id).unwrap().is_none());
+        if matches!(
+            job.type_,
+            ActionType::ACTION_DROP_SCHEMA | ActionType::ACTION_DROP_TABLE
+        ) {
+            let mut completed = Job::default();
+            completed
+                .decode(
+                    store
+                        .pairs
+                        .get(&key::ddl_job_history_kv_key(job.id))
+                        .unwrap(),
+                )
+                .unwrap();
+            assert_eq!(
+                completed.raw_args, job.raw_args,
+                "lifecycle steps preserve unmodified submission args"
+            );
+        }
+
+        let history = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(store)
+            .unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .find(|entry| entry.id == job.id)
+                .unwrap()
+                .state,
+            JobState::SYNCED
+        );
+        if job.type_ == ActionType::ACTION_CREATE_TABLES {
+            let entry = history.iter().find(|entry| entry.id == job.id).unwrap();
+            let info = entry.binlog_info.as_ref().unwrap().read();
+            let tables = info
+                .multiple_table_infos
+                .iter_deref()
+                .map(|table| {
+                    let table = table.read();
+                    assert_eq!(table.state, SchemaState::PUBLIC);
+                    table.id.to_string()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                tables.join(","),
+                ids,
+                "batch history retains every published table"
+            );
+            assert!(
+                info.table_info.is_none(),
+                "Go SetTableInfos does not select a single table"
+            );
+        }
+    }
+    let mut store = bootstrapped();
+    let mut job = Job::default();
+    job.id = 200;
+    job.schema_id = 112;
+    job.schema_name = "u6".into();
+    job.version = JobVersion::V2;
+    job.state = JobState::QUEUEING;
+    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+    job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+    job.schema_id = 300;
+    job.fill_args(Some(GoShared::new(CreateSchemaArgs {
+        db_info: GoField::new(Some(GoShared::new(DBInfo {
+            id: 300,
+            name: tidb_ast::CiString::new("destination"),
+            ..Default::default()
+        }))),
+    })));
+    execute(&mut store, &mut job, "0", 1);
+
+    job.id += 1;
+    job.schema_id = 112;
+    job.table_id = 301;
+    job.type_ = ActionType::ACTION_CREATE_TABLE;
+    let table_args = |id, name: &str| CreateTableArgs {
+        table_info: GoField::new(Some(GoShared::new(TableInfo {
+            id,
+            name: tidb_ast::CiString::new(name),
+            ..Default::default()
+        }))),
+        ..Default::default()
+    };
+    job.fill_args(Some(GoShared::new(table_args(301, "first"))));
+    execute(&mut store, &mut job, "301", 1);
+
+    job.id += 1;
+    job.type_ = ActionType::ACTION_CREATE_TABLES;
+    job.fill_args(Some(GoShared::new(BatchCreateTableArgs {
+        tables: GoField::new(vec![table_args(302, "second"), table_args(303, "third")].into()),
+    })));
+    execute(&mut store, &mut job, "302,303", 1);
+    job.id += 1;
+    job.fill_args(Some(GoShared::new(BatchCreateTableArgs::default())));
+    execute(&mut store, &mut job, "", 1);
+
+    job.id += 1;
+    job.type_ = ActionType::ACTION_RENAME_TABLES;
+    job.fill_args(Some(GoShared::new(RenameTablesArgs {
+        rename_table_infos: GoField::new(
+            vec![RenameTableArgs {
+                old_schema_id: 112,
+                new_schema_id: 300,
+                table_id: 301,
+                old_schema_name: tidb_ast::CiString::new("u6"),
+                old_table_name: tidb_ast::CiString::new("first"),
+                new_table_name: tidb_ast::CiString::new("renamed"),
+                ..Default::default()
+            }]
+            .into(),
+        ),
+    })));
+    execute(&mut store, &mut job, "301", 2);
+
+    job.id += 1;
+    job.type_ = ActionType::ACTION_DROP_TABLE;
+    job.schema_id = 300;
+    job.fill_v2_arg(serde_json::from_str("{}").unwrap());
+    execute(&mut store, &mut job, "301", 3);
+
+    job.id += 1;
+    job.type_ = ActionType::ACTION_DROP_SCHEMA;
+    job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
+    execute(&mut store, &mut job, "0", 3);
+}
+
+#[test]
+fn history_failure_keeps_completed_job_recoverable() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let queue = DdlJobTable::locate(&catalog).unwrap();
+    let mut job = Job::default();
+    job.id = 900;
+    job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+    job.state = JobState::DONE;
+    let mut mutations = Vec::new();
+    queue
+        .append_insert(&mut job, false, "0", "0", false, &mut mutations)
+        .unwrap();
+    apply_mutations(&mut store, &mutations);
+    // The old action writers discarded this error and removed the queue row.
+    let (db, table) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
+    store.pairs.remove(&key::table_kv_key(db.id, table.id));
+    assert!(plan_persisted_ddl_job_step(&mut store, 900, 10_000, None).is_err());
+    assert_eq!(
+        queue
+            .load_by_id(&mut store, 900)
+            .unwrap()
+            .unwrap()
+            .job
+            .state,
+        JobState::DONE
+    );
+    assert!(!store.pairs.contains_key(&key::ddl_job_history_kv_key(900)));
+}
+
+#[test]
+fn completed_check_schema_stays_active_until_schema_sync() {
+    let mut store = bootstrapped();
+    let create = plan(&mut store, "CREATE TABLE sync_check (a INT)", 2_000);
+    apply(&mut store, &create);
+    let parsed =
+        tidb_parser::parse("ALTER TABLE sync_check ADD CONSTRAINT c CHECK (a > 0)").unwrap();
+    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let statement = lower_ddl_with_context(&parsed, "u6", &context)
+        .unwrap()
+        .unwrap();
+    let submission = plan_check_constraint_job_submission(&mut store, &statement, 2_001)
+        .unwrap()
+        .unwrap();
+    let job_id = submission.job.id;
+    apply_mutations(&mut store, &submission.mutations);
+    for start_ts in 2_002..=2_004 {
+        let step = plan_worker_step(&mut store, job_id, start_ts).unwrap();
+        assert!(
+            !step.terminal,
+            "schema publication must not delete the active job before synchronization"
+        );
+        apply(&mut store, &step.write);
+    }
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let jobs = DdlJobTable::locate(&catalog)
+        .unwrap()
+        .load(&mut store)
+        .unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].job.state, JobState::DONE);
+    assert!(!store
+        .pairs
+        .contains_key(&key::ddl_job_history_kv_key(job_id)));
+    assert!(DdlHistoryTable::locate(&catalog)
+        .unwrap()
+        .load(&mut store)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -633,7 +922,7 @@ fn check_job_submission_precedes_every_schema_transition() {
     let job_id = active[0].job.id;
     drop(active);
 
-    let write_only = plan_persisted_check_constraint_job_step(&mut store, job_id, 2_002)
+    let write_only = plan_worker_step(&mut store, job_id, 2_002)
         .expect("a fresh owner runs the first persisted step");
     assert!(!write_only.terminal);
     assert_eq!(write_only.write.schema_version, 62);
@@ -663,7 +952,7 @@ fn check_job_submission_precedes_every_schema_transition() {
         "the worker's allocated ID is durable in job_meta"
     );
 
-    let reorganization = plan_persisted_check_constraint_job_step(&mut store, job_id, 2_003)
+    let reorganization = plan_worker_step(&mut store, job_id, 2_003)
         .expect("another fresh owner runs the second persisted step");
     assert!(!reorganization.terminal);
     apply(&mut store, &reorganization.write);
@@ -685,11 +974,12 @@ fn check_job_submission_precedes_every_schema_transition() {
         SchemaState::WRITE_REORGANIZATION
     );
 
-    let public = plan_persisted_check_constraint_job_step(&mut store, job_id, 2_004)
+    let public = plan_worker_step(&mut store, job_id, 2_004)
         .expect("a final fresh owner validates and finishes the job");
-    assert!(public.terminal);
+    assert!(!public.terminal);
     assert!(public.write.check_constraint_validation.is_some());
     apply(&mut store, &public.write);
+    finish_worker_job(&mut store, job_id, 2_005);
     let table_info: tidb_model::TableInfo = serde_json::from_slice(
         store
             .pairs
@@ -717,7 +1007,7 @@ fn check_job_submission_precedes_every_schema_transition() {
     let history_jobs = history.load(&mut store).expect("SQL history scans");
     assert_eq!(history_jobs.len(), 1);
     assert_eq!(history_jobs[0].id, job_id);
-    assert_eq!(history_jobs[0].state, JobState::DONE);
+    assert_eq!(history_jobs[0].state, JobState::SYNCED);
     assert_eq!(
         history_jobs[0]
             .binlog_info
@@ -725,7 +1015,7 @@ fn check_job_submission_precedes_every_schema_transition() {
             .expect("history keeps BinlogInfo")
             .read()
             .finished_ts,
-        2_004
+        2_005
     );
     let encoded = store
         .pairs
@@ -736,7 +1026,7 @@ fn check_job_submission_precedes_every_schema_transition() {
         .decode(encoded)
         .expect("meta history job decodes");
     assert_eq!(meta_history.id, job_id);
-    assert_eq!(meta_history.state, JobState::DONE);
+    assert_eq!(meta_history.state, JobState::SYNCED);
 }
 
 #[test]
@@ -850,10 +1140,10 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
     let job_id = submission.job.id;
     apply_mutations(&mut store, &submission.mutations);
 
-    let write_only = plan_persisted_check_constraint_job_step(&mut store, job_id, 3_002)
+    let write_only = plan_worker_step(&mut store, job_id, 3_002)
         .expect("the first owner publishes WriteOnly");
     apply(&mut store, &write_only.write);
-    let reorganization = plan_persisted_check_constraint_job_step(&mut store, job_id, 3_003)
+    let reorganization = plan_worker_step(&mut store, job_id, 3_003)
         .expect("a restarted owner publishes WriteReorganization");
     apply(&mut store, &reorganization.write);
 
@@ -897,11 +1187,12 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
         validation_message
     );
 
-    let rollback = plan_persisted_check_constraint_job_step(&mut store, job_id, 3_004)
+    let rollback = plan_worker_step(&mut store, job_id, 3_004)
         .expect("another owner performs action-specific rollback");
-    assert!(rollback.terminal);
+    assert!(!rollback.terminal);
     assert!(rollback.write.check_constraint_validation.is_none());
     apply(&mut store, &rollback.write);
+    finish_worker_job(&mut store, job_id, 3_005);
 
     let table_info: tidb_model::TableInfo = serde_json::from_slice(
         store
@@ -987,7 +1278,7 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     .expect("DROP CHECK uses the job table");
     let drop_job_id = drop_submission.job.id;
     apply_mutations(&mut store, &drop_submission.mutations);
-    let drop_write_only = plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 4_002)
+    let drop_write_only = plan_worker_step(&mut store, drop_job_id, 4_002)
         .expect("the first owner publishes DROP WriteOnly");
     assert!(!drop_write_only.terminal);
     apply(&mut store, &drop_write_only.write);
@@ -1002,10 +1293,11 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
             .state,
         SchemaState::WRITE_ONLY
     );
-    let drop_done = plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 4_003)
+    let drop_done = plan_worker_step(&mut store, drop_job_id, 4_003)
         .expect("a restarted owner removes the constraint");
-    assert!(drop_done.terminal);
+    assert!(!drop_done.terminal);
     apply(&mut store, &drop_done.write);
+    finish_worker_job(&mut store, drop_job_id, 4_004);
     let table = committed_table(&store, table_id);
     assert!(table
         .constraints
@@ -1021,7 +1313,7 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     .expect("ALTER CHECK uses the job table");
     let enable_job_id = enable_submission.job.id;
     apply_mutations(&mut store, &enable_submission.mutations);
-    let reorganization = plan_persisted_check_constraint_job_step(&mut store, enable_job_id, 4_005)
+    let reorganization = plan_worker_step(&mut store, enable_job_id, 4_005)
         .expect("ENABLE publishes WriteReorganization");
     assert!(!reorganization.terminal);
     apply(&mut store, &reorganization.write);
@@ -1034,7 +1326,7 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     assert!(toggle.read().enforced);
     assert_eq!(toggle.read().state, SchemaState::WRITE_REORGANIZATION);
 
-    let write_only = plan_persisted_check_constraint_job_step(&mut store, enable_job_id, 4_006)
+    let write_only = plan_worker_step(&mut store, enable_job_id, 4_006)
         .expect("a restarted owner publishes ENABLE WriteOnly");
     assert!(!write_only.terminal);
     apply(&mut store, &write_only.write);
@@ -1049,11 +1341,12 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
         SchemaState::WRITE_ONLY
     );
 
-    let enable_done = plan_persisted_check_constraint_job_step(&mut store, enable_job_id, 4_007)
+    let enable_done = plan_worker_step(&mut store, enable_job_id, 4_007)
         .expect("a final owner validates and finishes ENABLE");
-    assert!(enable_done.terminal);
+    assert!(!enable_done.terminal);
     assert!(enable_done.write.check_constraint_validation.is_some());
     apply(&mut store, &enable_done.write);
+    finish_worker_job(&mut store, enable_job_id, 4_008);
     let table = committed_table(&store, table_id);
     let toggle = table
         .constraints
@@ -1072,11 +1365,12 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     .expect("ALTER CHECK uses the job table");
     let disable_job_id = disable_submission.job.id;
     apply_mutations(&mut store, &disable_submission.mutations);
-    let disable_done = plan_persisted_check_constraint_job_step(&mut store, disable_job_id, 4_009)
+    let disable_done = plan_worker_step(&mut store, disable_job_id, 4_009)
         .expect("DISABLE finishes in one owner step");
-    assert!(disable_done.terminal);
+    assert!(!disable_done.terminal);
     assert!(disable_done.write.check_constraint_validation.is_none());
     apply(&mut store, &disable_done.write);
+    finish_worker_job(&mut store, disable_job_id, 4_010);
     let table = committed_table(&store, table_id);
     let toggle = table
         .constraints
@@ -1116,7 +1410,7 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
             .find(|job| job.id == job_id)
             .expect("every terminal job is retained in history");
         assert_eq!(job.type_, action);
-        assert_eq!(job.state, JobState::DONE);
+        assert_eq!(job.state, JobState::SYNCED);
         assert_eq!(job.schema_state, schema_state);
     }
 }
@@ -1155,10 +1449,10 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     .expect("ALTER CHECK uses the job table");
     let job_id = submission.job.id;
     apply_mutations(&mut store, &submission.mutations);
-    let reorganization = plan_persisted_check_constraint_job_step(&mut store, job_id, 5_002)
+    let reorganization = plan_worker_step(&mut store, job_id, 5_002)
         .expect("ENABLE publishes WriteReorganization");
     apply(&mut store, &reorganization.write);
-    let write_only = plan_persisted_check_constraint_job_step(&mut store, job_id, 5_003)
+    let write_only = plan_worker_step(&mut store, job_id, 5_003)
         .expect("ENABLE publishes WriteOnly");
     apply(&mut store, &write_only.write);
 
@@ -1171,10 +1465,11 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     )
     .expect("countForError persists ALTER Rollingback");
     apply_mutations(&mut store, &rollingback);
-    let rollback = plan_persisted_check_constraint_job_step(&mut store, job_id, 5_004)
+    let rollback = plan_worker_step(&mut store, job_id, 5_004)
         .expect("a restarted owner restores the old constraint");
-    assert!(rollback.terminal);
+    assert!(!rollback.terminal);
     apply(&mut store, &rollback.write);
+    finish_worker_job(&mut store, job_id, 5_005);
 
     let table = committed_table(&store, table_id);
     let constraint = table.constraints.iter_deref().next().unwrap();
@@ -4562,14 +4857,15 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
         .expect("DROP CHECK uses the Go job table");
     let drop_job_id = submission.job.id;
     apply_mutations(&mut store, &submission.mutations);
-    let write_only = plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 1_107)
+    let write_only = plan_worker_step(&mut store, drop_job_id, 1_107)
         .expect("DROP CHECK publishes WriteOnly");
     assert!(!write_only.terminal);
     apply(&mut store, &write_only.write);
-    let removed = plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 1_108)
+    let removed = plan_worker_step(&mut store, drop_job_id, 1_108)
         .expect("DROP CHECK removes the constraint");
-    assert!(removed.terminal);
+    assert!(!removed.terminal);
     apply(&mut store, &removed.write);
+    finish_worker_job(&mut store, drop_job_id, 1_109);
 
     let drop_single = plan_ddl(
         &mut store,

@@ -44,13 +44,11 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
     lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
-    plan_persisted_check_constraint_job_step, plan_persisted_create_schema_job_step,
-    plan_persisted_create_table_job_step, plan_persisted_create_tables_job_step,
-    plan_persisted_drop_schema_job_step, plan_persisted_drop_table_job_step,
-    plan_persisted_rename_tables_job_step, prepare_check_constraint_job_submission,
+    plan_persisted_ddl_job_step, prepare_check_constraint_job_submission,
     CheckConstraintValidation, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite,
-    ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate,
+    ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate, PersistedDdlJobPlan,
 };
+
 use crate::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use crate::ddl_job_table::DdlJobTable;
@@ -650,13 +648,13 @@ pub trait CheckConstraintValidator {
     ) -> Result<(), LockSqlError>;
 }
 
-/// Owner-side synchronization between committed CHECK schema phases.
+/// Owner-side synchronization between committed DDL schema phases.
 ///
 /// The implementation reloads the owner's own catalog and then waits for the
 /// existing per-job acknowledgements from every registered TiDB node. There
 /// is intentionally no lease-delay fallback here: a phase may advance only
 /// after the nodes that can serve writes have loaded its writable metadata.
-pub trait CheckConstraintSchemaSync {
+pub trait DdlSchemaSync {
     /// Stable owner id stored in `mysql.tidb_mdl_info.owner_id`.
     fn owner_id(&self) -> &str;
 
@@ -671,24 +669,23 @@ pub trait CheckConstraintSchemaSync {
 #[derive(Clone, Copy)]
 enum DdlPhase<'statement> {
     Initial(&'statement DdlStatement),
-    PersistedCheckConstraint { ddl_job_id: i64 },
-    PersistedCreateSchema { ddl_job_id: i64 },
-    PersistedCreateTable { ddl_job_id: i64 },
-    PersistedCreateTables { ddl_job_id: i64 },
-    PersistedRenameTables { ddl_job_id: i64 },
-    PersistedDropSchema { ddl_job_id: i64 },
-    PersistedDropTable { ddl_job_id: i64 },
+    Persisted {
+        ddl_job_id: i64,
+        check_owner: &'statement dyn Fn() -> Result<(), String>,
+        previously_synced_version: Option<i64>,
+    },
 }
 
 struct CommittedDdlPhase {
     report: ClusterDdlReport,
-    ddl_job_id: i64,
-    schema_version: i64,
     persisted_job_terminal: bool,
-    mdl_info: Option<MdlInfoUpdate>,
 }
 
 enum DdlPhaseOutcome {
+    SchemaSync {
+        version: i64,
+        mdl_info: MdlInfoUpdate,
+    },
     AlreadySatisfied(ClusterDdlReport),
     Committed(CommittedDdlPhase),
 }
@@ -725,7 +722,7 @@ pub fn commit_cluster_ddl_with_backfill<
     backfiller: &dyn IndexBackfiller,
     exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn CheckConstraintSchemaSync,
+    schema_sync: &dyn DdlSchemaSync,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     if matches!(
         statement,
@@ -746,18 +743,16 @@ pub fn commit_cluster_ddl_with_backfill<
         check_constraint_validator,
         schema_sync.owner_id(),
     )? {
+        DdlPhaseOutcome::SchemaSync { .. } => unreachable!("direct DDL has no persisted job"),
         DdlPhaseOutcome::AlreadySatisfied(report) => Ok(report),
         DdlPhaseOutcome::Committed(committed) => Ok(committed.report),
     }
 }
 
-/// Runs one already-submitted persisted CHECK DDL job until it reaches history.
-///
-/// This is the worker half of Go's scheduler contract. It accepts a job ID,
-/// reloads the active row before every step, and therefore resumes jobs
-/// submitted by another server or abandoned by a former owner.
+/// Runs any integrated persisted action through one owner lifecycle. A durable
+/// MDL row always takes precedence over the next action or history transaction.
 #[allow(clippy::too_many_arguments)]
-pub fn run_persisted_check_constraint_job_to_completion<
+pub fn run_persisted_ddl_job_to_completion<
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
@@ -769,12 +764,19 @@ pub fn run_persisted_check_constraint_job_to_completion<
     backfiller: &dyn IndexBackfiller,
     exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn CheckConstraintSchemaSync,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
+    schema_sync: &dyn DdlSchemaSync,
+    check_owner: &dyn Fn() -> Result<(), String>,
+) -> Result<(), ClusterDdlError> {
+    let mut validation_failure = None;
+    let mut previously_synced_version = None;
     loop {
         let outcome = match commit_cluster_ddl_phase_with_retry(
             Arc::clone(&opener),
-            DdlPhase::PersistedCheckConstraint { ddl_job_id },
+            DdlPhase::Persisted {
+                ddl_job_id,
+                check_owner,
+                previously_synced_version,
+            },
             timeout,
             notifier,
             backfiller,
@@ -782,327 +784,58 @@ pub fn run_persisted_check_constraint_job_to_completion<
             check_constraint_validator,
             schema_sync.owner_id(),
         ) {
-            Err(ClusterDdlError::CheckConstraintValidation(validation_error))
-                if validation_error.code
-                    == tidb_error::tidb::errcode::ErrCheckConstraintViolated =>
+            Err(ClusterDdlError::CheckConstraintValidation(error))
+                if error.code == tidb_error::tidb::errcode::ErrCheckConstraintViolated =>
             {
+                check_owner().map_err(ClusterDdlError::SchemaSync)?;
                 mark_check_constraint_job_rollingback_with_retry(
                     Arc::clone(&opener),
                     ddl_job_id,
-                    &validation_error,
+                    &error,
                     timeout,
+                    check_owner,
                 )?;
-                let rollback = commit_cluster_ddl_phase_with_retry(
-                    Arc::clone(&opener),
-                    DdlPhase::PersistedCheckConstraint { ddl_job_id },
-                    timeout,
-                    notifier,
-                    backfiller,
-                    exchange_validator,
-                    check_constraint_validator,
-                    schema_sync.owner_id(),
-                )?;
-                let DdlPhaseOutcome::Committed(rollback) = rollback else {
-                    unreachable!("a persisted CHECK rollback is a worker write")
-                };
-                synchronize_committed_check_phase(
-                    Arc::clone(&opener),
-                    timeout,
-                    &rollback,
-                    schema_sync,
-                )?;
-                if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                    eprintln!(
-                        "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
-                        serde_json::to_string(&error)
-                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                    );
-                }
-                return Err(ClusterDdlError::CheckConstraintValidation(validation_error));
+                validation_failure = Some(error);
+                continue;
             }
             outcome => outcome?,
         };
-        let DdlPhaseOutcome::Committed(committed) = outcome else {
-            unreachable!("a queued CHECK action is always a worker write")
-        };
-        synchronize_committed_check_phase(Arc::clone(&opener), timeout, &committed, schema_sync)?;
-        if committed.persisted_job_terminal {
-            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                eprintln!(
-                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
-                    serde_json::to_string(&error)
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                );
-            }
-            return Ok(committed.report);
-        }
-    }
-}
-
-/// Go worker loop for one persisted `ACTION_CREATE_SCHEMA` job: phase until
-/// the job lands in history. CREATE DATABASE is a single terminal step; the
-/// inner retry loop absorbs write conflicts with concurrent schema changes.
-/// The backfill/validator traits exist only to satisfy the shared phase
-/// pipeline — a CREATE SCHEMA plan never produces backfills or validations.
-pub fn run_persisted_create_schema_job_to_completion<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    ddl_job_id: i64,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-    backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
-    check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn CheckConstraintSchemaSync,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
-    loop {
-        let outcome = commit_cluster_ddl_phase_with_retry(
-            Arc::clone(&opener),
-            DdlPhase::PersistedCreateSchema { ddl_job_id },
-            timeout,
-            notifier,
-            backfiller,
-            exchange_validator,
-            check_constraint_validator,
-            schema_sync.owner_id(),
-        )?;
-        let DdlPhaseOutcome::Committed(committed) = outcome else {
-            unreachable!("a queued CREATE SCHEMA action is always a worker write")
-        };
-        if committed.persisted_job_terminal {
-            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                eprintln!(
-                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                );
-            }
-            return Ok(committed.report);
-        }
-    }
-}
-
-/// Go worker loop for one persisted `ACTION_CREATE_TABLE` job: phase until
-/// the job lands in history. The fast-path CREATE TABLE is a single terminal
-/// step; the inner retry loop absorbs write conflicts with concurrent schema
-/// changes. The backfill/validator traits exist only to satisfy the shared
-/// phase pipeline -- a fast-path CREATE TABLE plan never produces backfills
-/// or validations.
-pub fn run_persisted_create_table_job_to_completion<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    ddl_job_id: i64,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-    backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
-    check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn CheckConstraintSchemaSync,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
-    loop {
-        let outcome = commit_cluster_ddl_phase_with_retry(
-            Arc::clone(&opener),
-            DdlPhase::PersistedCreateTable { ddl_job_id },
-            timeout,
-            notifier,
-            backfiller,
-            exchange_validator,
-            check_constraint_validator,
-            schema_sync.owner_id(),
-        )?;
-        let DdlPhaseOutcome::Committed(committed) = outcome else {
-            unreachable!("a queued CREATE TABLE action is always a worker write")
-        };
-        if committed.persisted_job_terminal {
-            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                eprintln!(
-                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
+        match outcome {
+            DdlPhaseOutcome::SchemaSync { version, mdl_info } => {
+                check_owner().map_err(ClusterDdlError::SchemaSync)?;
+                schema_sync
+                    .wait_version_synced(ddl_job_id, version)
+                    .map_err(ClusterDdlError::SchemaSync)?;
+                check_owner().map_err(ClusterDdlError::SchemaSync)?;
+                previously_synced_version = Some(version);
+                // Like Go cleanMDLInfo, cleanup is best effort after the
+                // acknowledgement succeeded. Only this owner run may reuse
+                // that success; a replacement recovers any retained MDL row.
+                if let Err(error) = clean_mdl_info_with_retry(
+                    Arc::clone(&opener),
+                    timeout,
+                    &mdl_info,
                     ddl_job_id,
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                );
+                    version,
+                    schema_sync.owner_id(),
+                ) {
+                    eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_mdl_info_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                }
             }
-            return Ok(committed.report);
-        }
-    }
-}
-
-/// Go worker loop for one persisted `ACTION_CREATE_TABLES` job (the batch
-/// form BR restore submits for every restored table set): phase until the job
-/// lands in history. All tables of the job publish in one terminal step; the
-/// inner retry loop absorbs write conflicts with concurrent schema changes.
-pub fn run_persisted_create_tables_job_to_completion<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    ddl_job_id: i64,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-    backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
-    check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn CheckConstraintSchemaSync,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
-    loop {
-        let outcome = commit_cluster_ddl_phase_with_retry(
-            Arc::clone(&opener),
-            DdlPhase::PersistedCreateTables { ddl_job_id },
-            timeout,
-            notifier,
-            backfiller,
-            exchange_validator,
-            check_constraint_validator,
-            schema_sync.owner_id(),
-        )?;
-        let DdlPhaseOutcome::Committed(committed) = outcome else {
-            unreachable!("a queued CREATE TABLES action is always a worker write")
-        };
-        if committed.persisted_job_terminal {
-            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                eprintln!(
-                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                );
+            DdlPhaseOutcome::Committed(committed) if committed.persisted_job_terminal => {
+                if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                    eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                        serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                }
+                return validation_failure.map_or(Ok(()), |error| {
+                    Err(ClusterDdlError::CheckConstraintValidation(error))
+                });
             }
-            return Ok(committed.report);
-        }
-    }
-}
-
-/// @DOC
-pub fn run_persisted_rename_tables_job_to_completion<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    ddl_job_id: i64,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-    backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
-    check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn CheckConstraintSchemaSync,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
-    loop {
-        let outcome = commit_cluster_ddl_phase_with_retry(
-            Arc::clone(&opener),
-            DdlPhase::PersistedRenameTables { ddl_job_id },
-            timeout,
-            notifier,
-            backfiller,
-            exchange_validator,
-            check_constraint_validator,
-            schema_sync.owner_id(),
-        )?;
-        let DdlPhaseOutcome::Committed(committed) = outcome else {
-            unreachable!("a queued RENAME TABLES action is always a worker write")
-        };
-        if committed.persisted_job_terminal {
-            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                eprintln!(
-                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
-                    ddl_job_id,
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                );
+            DdlPhaseOutcome::Committed(_) => {}
+            DdlPhaseOutcome::AlreadySatisfied(_) => {
+                unreachable!("persisted actions always write their state")
             }
-            return Ok(committed.report);
-        }
-    }
-}
-
-/// @DOC
-pub fn run_persisted_drop_schema_job_to_completion<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    ddl_job_id: i64,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-    backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
-    check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn CheckConstraintSchemaSync,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
-    loop {
-        let outcome = commit_cluster_ddl_phase_with_retry(
-            Arc::clone(&opener),
-            DdlPhase::PersistedDropSchema { ddl_job_id },
-            timeout,
-            notifier,
-            backfiller,
-            exchange_validator,
-            check_constraint_validator,
-            schema_sync.owner_id(),
-        )?;
-        let DdlPhaseOutcome::Committed(committed) = outcome else {
-            unreachable!("a queued DROP SCHEMA action is always a worker write")
-        };
-        if committed.persisted_job_terminal {
-            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                eprintln!(
-                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
-                    ddl_job_id,
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                );
-            }
-            return Ok(committed.report);
-        }
-    }
-}
-
-/// @DOC
-pub fn run_persisted_drop_table_job_to_completion<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    ddl_job_id: i64,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-    backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
-    check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn CheckConstraintSchemaSync,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
-    loop {
-        let outcome = commit_cluster_ddl_phase_with_retry(
-            Arc::clone(&opener),
-            DdlPhase::PersistedDropTable { ddl_job_id },
-            timeout,
-            notifier,
-            backfiller,
-            exchange_validator,
-            check_constraint_validator,
-            schema_sync.owner_id(),
-        )?;
-        let DdlPhaseOutcome::Committed(committed) = outcome else {
-            unreachable!("a queued DROP TABLE action is always a worker write")
-        };
-        if committed.persisted_job_terminal {
-            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                eprintln!(
-                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
-                    ddl_job_id,
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                );
-            }
-            return Ok(committed.report);
         }
     }
 }
@@ -1441,6 +1174,7 @@ fn mark_check_constraint_job_rollingback_with_retry<
     ddl_job_id: i64,
     validation_error: &LockSqlError,
     timeout: Duration,
+    check_owner: &dyn Fn() -> Result<(), String>,
 ) -> Result<(), ClusterDdlError> {
     let mut attempt = 0_u32;
     loop {
@@ -1469,6 +1203,10 @@ fn mark_check_constraint_job_rollingback_with_retry<
                 return Err(error.into());
             }
         };
+        if let Err(error) = check_owner() {
+            let _ = transaction.rollback();
+            return Err(ClusterDdlError::SchemaSync(error));
+        }
         let buffer = MutationBuffer::new();
         match transaction.commit_with(&buffer, mutations) {
             Ok(_) => return Ok(()),
@@ -1485,40 +1223,6 @@ fn mark_check_constraint_job_rollingback_with_retry<
             }
         }
     }
-}
-
-fn synchronize_committed_check_phase<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    timeout: Duration,
-    committed: &CommittedDdlPhase,
-    schema_sync: &dyn CheckConstraintSchemaSync,
-) -> Result<(), ClusterDdlError> {
-    let Some(mdl_info) = &committed.mdl_info else {
-        return Ok(());
-    };
-    schema_sync
-        .wait_version_synced(committed.ddl_job_id, committed.schema_version)
-        .map_err(ClusterDdlError::SchemaSync)?;
-    if let Err(error) = clean_mdl_info_with_retry(
-        opener,
-        timeout,
-        mdl_info,
-        committed.ddl_job_id,
-        committed.schema_version,
-        schema_sync.owner_id(),
-    ) {
-        eprintln!(
-            "{{\"level\":\"warning\",\"event\":\"ddl_mdl_info_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
-            committed.ddl_job_id,
-            serde_json::to_string(&error.to_string())
-                .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-        );
-    }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1573,6 +1277,9 @@ fn commit_cluster_ddl_with_backfill_once<
     check_constraint_validator: &dyn CheckConstraintValidator,
     owner_id: &str,
 ) -> Result<DdlPhaseOutcome, ClusterDdlError> {
+    if let DdlPhase::Persisted { check_owner, .. } = phase {
+        check_owner().map_err(ClusterDdlError::SchemaSync)?;
+    }
     let transaction = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
@@ -1589,33 +1296,28 @@ fn commit_cluster_ddl_with_backfill_once<
             DdlPhase::Initial(statement) => {
                 plan_ddl(&mut snapshot, statement, start_ts).map(|plan| (plan, false))
             }
-            DdlPhase::PersistedCheckConstraint { ddl_job_id } => {
-                plan_persisted_check_constraint_job_step(&mut snapshot, ddl_job_id, start_ts)
-                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
-            }
-            DdlPhase::PersistedCreateSchema { ddl_job_id } => {
-                plan_persisted_create_schema_job_step(&mut snapshot, ddl_job_id, start_ts)
-                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
-            }
-            DdlPhase::PersistedCreateTable { ddl_job_id } => {
-                plan_persisted_create_table_job_step(&mut snapshot, ddl_job_id, start_ts)
-                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
-            }
-            DdlPhase::PersistedCreateTables { ddl_job_id } => {
-                plan_persisted_create_tables_job_step(&mut snapshot, ddl_job_id, start_ts)
-                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
-            }
-            DdlPhase::PersistedRenameTables { ddl_job_id } => {
-                plan_persisted_rename_tables_job_step(&mut snapshot, ddl_job_id, start_ts)
-                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
-            }
-            DdlPhase::PersistedDropSchema { ddl_job_id } => {
-                plan_persisted_drop_schema_job_step(&mut snapshot, ddl_job_id, start_ts)
-                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
-            }
-            DdlPhase::PersistedDropTable { ddl_job_id } => {
-                plan_persisted_drop_table_job_step(&mut snapshot, ddl_job_id, start_ts)
-                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
+            DdlPhase::Persisted {
+                ddl_job_id,
+                previously_synced_version,
+                ..
+            } => {
+                match plan_persisted_ddl_job_step(
+                    &mut snapshot,
+                    ddl_job_id,
+                    start_ts,
+                    previously_synced_version,
+                ) {
+                    Ok(PersistedDdlJobPlan::SchemaSync { version, mdl_info }) => {
+                        transaction
+                            .rollback()
+                            .map_err(ClusterDdlError::NotCommitted)?;
+                        return Ok(DdlPhaseOutcome::SchemaSync { version, mdl_info });
+                    }
+                    Ok(PersistedDdlJobPlan::Step(step)) => {
+                        Ok((DdlPlan::Write(Box::new(step.write)), step.terminal))
+                    }
+                    Err(error) => Err(error),
+                }
             }
         }
     };
@@ -1720,20 +1422,36 @@ fn commit_cluster_ddl_with_backfill_once<
             return Err(error.into());
         }
     }
+    if let DdlPhase::Persisted { check_owner, .. } = phase {
+        if let Err(error) = check_owner() {
+            let _ = transaction.rollback();
+            return Err(compensate_external_delivery(
+                ClusterDdlError::SchemaSync(error),
+                placement_receipt.as_ref(),
+                label_receipt.as_ref(),
+                timeout,
+            ));
+        }
+    }
     let planned_version = write.schema_version;
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
-            notify_schema_version(notifier, planned_version);
+            if matches!(phase, DdlPhase::Initial(_)) {
+                notify_schema_version(notifier, planned_version);
+            } else if planned_version != 0 {
+                if let Some(notifier) = notifier {
+                    notifier
+                        .notify(planned_version)
+                        .map_err(ClusterDdlError::SchemaSync)?;
+                }
+            }
             Ok(DdlPhaseOutcome::Committed(CommittedDdlPhase {
                 report: ClusterDdlReport::Applied {
                     schema_version: planned_version,
                     created_id: write.created_id,
                     warnings: write.warnings.clone(),
                 },
-                ddl_job_id: write.ddl_job_id,
-                schema_version: planned_version,
                 persisted_job_terminal,
-                mdl_info: write.mdl_info_update,
             }))
         }
         Err(error) => {
@@ -1768,7 +1486,23 @@ fn clean_mdl_info_with_retry<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
             crate::session_commit_protocol::bootstrap_commit_protocol(),
         )?;
         let mut mutations = Vec::new();
-        mdl_info.append_delete_mutations(ddl_job_id, schema_version, owner_id, &mut mutations)?;
+        let cleanup = {
+            let mut snapshot = SnapshotMetaSnapshot::new(
+                transaction
+                    .snapshot()
+                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+            );
+            mdl_info.append_delete_mutations(&mut snapshot, ddl_job_id, owner_id, &mut mutations)
+        };
+        if let Err(error) = cleanup {
+            let _ = transaction.rollback();
+            return Err(error.into());
+        }
+        if mutations.is_empty() {
+            return transaction
+                .rollback()
+                .map_err(ClusterDdlError::NotCommitted);
+        }
         let buffer = MutationBuffer::new();
         match transaction.commit_with(&buffer, mutations) {
             Ok(_) => return Ok(()),

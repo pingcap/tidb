@@ -205,28 +205,47 @@ impl DdlJobTable {
             if row.i64("job_id")?.unwrap_or_default() < min_job_id {
                 continue;
             }
-            let reorg = row.i64("reorg")?.unwrap_or_default() != 0;
-            let schema_ids = row.text("schema_ids")?.unwrap_or_default();
-            let table_ids = row.text("table_ids")?.unwrap_or_default();
-            let job_meta = row
-                .bytes("job_meta")?
-                .ok_or(DdlJobTableError::MissingColumn("job_meta"))?;
-            let type_ = row.i64("type")?.unwrap_or_default();
-            let processing = row.i64("processing")?.unwrap_or_default() != 0;
-            let values = row.into_values();
-            let mut job = Job::default();
-            job.decode(&job_meta)?;
-            jobs.push(ActiveDdlJob {
-                job,
-                reorg,
-                schema_ids,
-                table_ids,
-                type_,
-                processing,
-                values,
-            });
+            jobs.push(Self::decode_row(row)?);
         }
         Ok(jobs)
+    }
+
+    fn decode_row(row: SystemRow<'_>) -> Result<ActiveDdlJob, DdlJobTableError> {
+        let reorg = row.i64("reorg")?.unwrap_or_default() != 0;
+        let schema_ids = row.text("schema_ids")?.unwrap_or_default();
+        let table_ids = row.text("table_ids")?.unwrap_or_default();
+        let job_meta = row
+            .bytes("job_meta")?
+            .ok_or(DdlJobTableError::MissingColumn("job_meta"))?;
+        let type_ = row.i64("type")?.unwrap_or_default();
+        let processing = row.i64("processing")?.unwrap_or_default() != 0;
+        let values = row.into_values();
+        let mut job = Job::default();
+        job.decode(&job_meta)?;
+        Ok(ActiveDdlJob {
+            job,
+            reorg,
+            schema_ids,
+            table_ids,
+            type_,
+            processing,
+            values,
+        })
+    }
+
+    /// Loads one active row without scanning unrelated queued job bodies.
+    pub fn load_by_id<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        job_id: i64,
+    ) -> Result<Option<ActiveDdlJob>, DdlJobTableError> {
+        for (key, value) in scan_system_table_prefixed(snapshot, &self.view, &[Datum::Int(job_id)])? {
+            let row = SystemRow::parse(&self.view, &key, &value)?;
+            if row.i64("job_id")? == Some(job_id) {
+                return Self::decode_row(row).map(Some);
+            }
+        }
+        Ok(None)
     }
 
     /// Pinned Go `systable.Manager.GetJobBytesByIDWithSe`.

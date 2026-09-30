@@ -436,3 +436,84 @@ remain. Shutdown can wait for the current poll pass; deadlines bound individual
 requests, not the entire pass. The still-open placement/partition/state-owner
 gaps above remain material correctness and compatibility risks, not accepted
 parity. Performance improvement from removing duplicate polling is not measured.
+
+
+## Shared persisted DDL lifecycle repair (2026-09-30)
+
+The next placement-owner migration is blocked on a real DDL/GC lifecycle: Rust
+has no delete-range GC worker. Source comparison against freshly fetched Go
+master e953a09d9d exposed seven copied live worker loops, six without schema
+synchronization, and action planners deleting active jobs before the wait.
+Repair the existing persisted CHECK/create schema/create table/create tables/
+rename tables/drop schema/drop table execution paths as one maintenance unit.
+Actions retain DONE/ROLLBACK_DONE/CANCELLED in the queue; a shared worker first
+recovers pending MDL synchronization, then finishes history in a separate
+transaction. Register MDL from the submitted table_ids, propagate history errors,
+and remove the copied loops and server dispatch branches. Add failing queue/
+history regressions first, then recovery and cancellation coverage. Validate
+the source-backed planner tests, embedded worker tests, affected all-target
+builds, make lint, the commit-hook locked server build, and a fresh pre-push
+locked server build.
+
+This is maintenance of existing live paths, not acceptance of pkg/ddl. Direct
+non-CHECK SQL DDL, undispatched materialized-view seed planners, delete-range
+GC, complete package inventory/gates, and TiFlash rule ownership remain open.
+
+Implementation and self-review: removed the seven execution loops and per-action
+history writers for these existing live paths. The shared planner reloads only
+the requested queue row, retains completed jobs until schema acknowledgement,
+and writes history/deletes the active row in a later transaction. MDL table IDs
+are copied verbatim from the queue. Recovery waits without re-announcing old
+versions; newly committed versions propagate notifier failure. Metadata-lock
+cleanup follows Go's owner predicate (omitted for system schemas), and cleanup
+errors remain best effort after acknowledgement. Only the same worker run may
+reuse a successful wait; a replacement recovers the durable row. Ownership is
+checked before action/history commits and validation-error state commits. DROP
+steps preserve raw args they did not decode or change. Batch completion now uses
+HistoryInfo.SetTableInfos for all published tables, including an empty batch,
+instead of a single-table finish that could leave an empty batch RUNNING.
+
+Three behavioral failures were reproduced before their fixes: premature CHECK
+history publication, cleanup deleting another owner's MDL row, and batch
+history losing its table list. Evidence is in
+/private/tmp/tidb-ddl-lifecycle-{red,owner-red,batch-red}.log. Existing CHECK
+fixtures now explicitly exercise the separate history transaction. The six
+other integrated action paths are covered through all their phases, including
+retained MDL barriers after restart and exact submitted table-ID scopes. An
+embedded storage regression verifies pre-commit owner loss, notification failure,
+failed/retried synchronization, preserved args and no duplicate schema version.
+
+Files changed: tidb-exec/src/{cluster_ddl,ddl_job_table,real_tikv_ddl}.rs,
+tidb-exec/tests/cluster_ddl_source.rs, tidb-server/src/cluster_session_node/ddl.rs,
+this ExecPlan and parity/current-audit/README.md. No Go/Bazel inputs, generated
+artifacts, dependencies or native client-rust files changed. bazel_prepare and
+Go failpoint enablement are not applicable.
+
+Validation (run from rust/ unless indicated):
+
+    cargo test --locked -p tidb-exec --test all cluster_ddl_source
+    cargo test --locked -p tidb-exec --lib real_tikv_ddl::tests
+    cargo test --locked -p tidb-server --lib cluster_session_node::ddl::schema_sync_tests
+    cargo check --locked -p tidb-exec -p tidb-server --all-targets
+
+The 92 planner, 7 commit-classification and 4 embedded DDL tests pass. Embedded
+tests need host access for their existing system-memory/storage setup. Affected
+all-target checks pass with existing warnings. From the repository root:
+
+    make lint
+    git diff --check
+
+Both pass. The commit uses the repository hook via core.hooksPath=hooks, which
+must build the locked Rust server. A fresh `cd rust && cargo build --locked -p tidb-server` is also required
+after commit and immediately before push.
+
+Correctness/compatibility impact: persisted DDL completion is now delayed until
+the required acknowledgement; errors keep the queue recoverable. No SQL feature
+was added. A point lookup replaces repeated full active-queue decoding, but no
+benchmark speedup is claimed. Real multi-node TiDB/TiKV/TiFlash interoperability,
+full upstream package validation, and sysbench/TPC-C/TPC-H/YCSB were not run. The
+previous ten embedded baseline failures remain unverified. Direct SQL DDL
+admission, delete-range GC/DropTableArgs, undispatched materialized-view seed
+lifecycles, pause/cancel/reorg scheduling, MDL-disabled operation and TiFlash
+placement ownership remain open in the audit. No complete package or repository
+parity is claimed.

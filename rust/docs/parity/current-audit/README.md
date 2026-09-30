@@ -267,3 +267,26 @@ native response generator now respects all four upstream SharedBytes fields.
 | `.mpp.DispatchTaskRequest.table_shard_infos` | missing field | Fixed through native package ownership |
 | `.mpp.TaskMeta.keyspace_id` | field contract differs | Fixed through native package ownership |
 | `.mpp.TaskMeta.api_version` | field contract differs | Fixed through native package ownership |
+
+
+## Persisted DDL lifecycle follow-up (2026-09-30)
+
+Compared worker/scheduler sources at Go master e953a09d9d; the intervening
+master change affects numeric COALESCE planning, not these sources or module
+pins. Existing persisted CHECK/create schema/create table/create tables/rename
+tables/drop schema/drop table paths now share one lifecycle. Removed seven
+worker loops, action-owned history writes, premature SYNCED assignments, and
+repeated full queue scans for one job. DONE remains active; durable MDL recovery
+precedes any next phase or the separate history transaction. Full submitted
+table-ID scopes, system-schema owner-column omission, notification failure,
+history failure, owner-conditioned MDL cleanup, and pre-commit ownership checks
+use shared handling. Batch completion uses Go SetTableInfos rather than a
+single-table finish, preserving the full history list and completing empty batches.
+
+Still open: non-CHECK SQL admission usually bypasses persisted jobs; DROP lacks
+Go finishDDLJob's delete-range registration/GC owner and typed DropTableArgs;
+materialized-view seed planners still have independent history code and are not
+dispatched; general pause/cancel/reorg scheduling and MDL-disabled operation
+are not complete. TiFlash placement creation/deletion, partition handling and
+progress/backoff remain open as described above. These are source-backed
+maintenance changes, not a complete pkg/ddl or pkg/meta/model acceptance claim.
