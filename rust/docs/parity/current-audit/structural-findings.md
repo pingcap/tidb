@@ -1,6 +1,6 @@
 # Remaining structural mismatches, 2026-09-30
 
-Compared integration `9f0a41b5db1c3ceaa9b7f2babe5ddf195a93e363` with freshly fetched
+Latest follow-up compared integration `960fa95b48e5b374648881404cac242551786de2` with freshly fetched
 TiDB master `e953a09d9d5e29e60c62f42d3aacebb819af49a5`. The integration pull was
 already current. Go means this master, including its selected external modules:
 client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto
@@ -23,6 +23,12 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
+The register now contains **41 known open findings**. The latest 12 additions
+are D11, C01–C02, E01–E04, S01–S02 and I01–I03. Five of these groups have SQL
+reproductions in [the session/executor review](session-ownership-review.md):
+D11, C01, E01, E02 and I01. The other seven are source-confirmed design or
+integration differences with unmeasured runtime consequences.
+
 ## DDL: migrate responsibility before deleting implementations
 
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
@@ -37,10 +43,42 @@ are inferences; no live distributed failure or benchmark is claimed.
 | D08 | DROP completion does not register all of Go's typed delete-range work with its durable GC owner. The direct index/partition path can perform immediate local key deletion instead. | `rust/crates/tidb-exec/src/cluster_ddl.rs:4429`, `:9349`, `rust/crates/tidb-executor/src/kv_table/partition_maintenance.rs:20` | `pkg/ddl/delete_range.go`, `pkg/ddl/job_worker.go::finishDDLJob`, typed job arguments and `pkg/store/gcworker`. Registration and the worker in O03 are separate required responsibilities. |
 | D09 | Materialized-view build evaluates a snapshot copied into memory and emits the built rows in the completion transaction; Go has distinct build/reorg sessions and transactions. **Seed only; live dispatch remains disabled.** | `rust/crates/tidb-exec/src/mview_build_engine.rs`, `rust/crates/tidb-exec/src/cluster_ddl.rs::plan_create_materialized_view_job_step` | `pkg/ddl/mview_worker.go` build/reorg lifecycle. Remove the seed evaluator as a live integration candidate until the owner is complete. |
 | D10 | MV/MV-log actions maintain some base backreferences inline but lack the complete shared base-and-log dependent-ID lifecycle, affected-table publication and rollback fallback. **Seed only.** | `rust/crates/tidb-exec/src/cluster_ddl.rs:5011`, `:5712` | `pkg/ddl/mview_worker.go::updateMaterializedViewBaseInfoOnCreate`, `updateMaterializedViewBaseInfoOnDrop`: migrate create/drop/rollback together, including MLogTableIDs and DependentMViewIDs. |
+| D11 | The in-process ALTER dispatcher stages only selected multi-action statements containing foreign keys. **Reproduced:** `ADD COLUMN added INT, ADD COLUMN id INT` errors on existing `id` but leaves `added` installed. | `rust/crates/tidb-executor/src/ddl/alter_table.rs:58`; ordinary Session::run probe | `pkg/ddl/executor.go::alterTable` collects all subjobs before submission; `multi_schema_change.go::onMultiSchemaChange` owns combined transitions and rollback. Atomicity must cover every action list. The reproduction is in-process, not proof of a partial cluster metadata commit. |
 
 The seven worker loops, action-owned history writers and 17 action-stage queue
 writers removed in the previous commits are **not** open findings. Their
-removal does not resolve D01–D10 or accept the whole Go DDL package.
+removal does not resolve D01–D11 or accept the whole Go DDL package.
+
+## Session plan-cache ownership
+
+| ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
+| --- | --- | --- | --- |
+| C01 | Prepared SELECT/DML definitions each own a vector of physical plans; the available LRU implementation is not their owner. Non-prepared SELECT/DML also have separate statement LRUs. Shared entry budget, recency/pressure eviction and flush are absent. **Reproduced:** capacity 1 retains both prepared plans (`0,0,1` hits), and `ADMIN FLUSH SESSION PLAN_CACHE` is refused. | `rust/crates/tidb-executor/src/driver/access.rs:390`, `:741`, `:811`; `driver/dml.rs:2376`, `:2540`; `rust/crates/tidb-session/src/non_prepared_plan_cache.rs:85`, `:123` | `pkg/session/session.go::GetSessionPlanCache`, `pkg/planner/core/plan_cache.go`, `plan_cache_lru.go`, `pkg/executor/simple.go::executeAdminFlushPlanCache`: one session cache owns all physical entries, memory accounting and invalidation. Move prepared/non-prepared SELECT/DML consumers together before deleting the per-statement stores. |
+| C02 | Instance-plan-cache variables are registered, but no domain-scoped shared cache or instance hit/clone/eviction path is composed into production. Enabling the flag cannot select Go's instance owner. | `rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs:256`; C01's owners; production reference audit in the review receipt | `pkg/planner/core/plan_cache.go::lookupPlanCache`/`clonePlanForInstancePlanCache`, `plan_cache_instance.go`, Domain: shared ownership plus per-execution cloning. Reuse admission/key/rebuild contracts; another ad hoc global map is insufficient. |
+
+## DML and executor handoff
+
+| ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
+| --- | --- | --- | --- |
+| E01 | Multi-update writes each alias's full row from the original join output, lacking shared merge state for aliases of one physical row. **Reproduced:** `a.x=11,b.y=21` through two aliases of `(1,10,20)` succeeds but leaves `(1,10,21)`. | `rust/crates/tidb-executor/src/driver/multi_dml.rs:897`, `:918`, `:1066` | `pkg/executor/update.go::mergeNonGenerated`, `mergeGenerated`, `updateRows`: merge by table ID/handle while retaining per-target-position changed-row rules. Changing only the deduplication key would lose legitimate assignments. |
+| E02 | Multi-update branches before the single-table FK checks/cascades and directly writes KvTable; its root also receives empty FK metadata. **Reproduced:** single-table `pid=999` raises an FK error, while joined UPDATE stores the orphan. | `rust/crates/tidb-executor/src/driver/dml.rs:2954`; `driver/multi_dml.rs:828`, `:1066`, `:1337`; contrast `driver/dml.rs:3434` | Go `buildUpdate` and `pkg/executor/update.go::exec` pass per-table FK plans into shared `updateRecord`. Move the complete UPDATE policy into that shared owner. Multi-DELETE already enforces referred checks/cascades; its control probe fails correctly. |
+| E03 | The DML-source helper drains the entire physical read into datum vectors before writes; multi-DML then reconstructs target layouts/handles from catalog metadata. Multi-DML charges joined rows after collection; the collection vector is not charged during growth. Matrix sources retain a separate join/filter interpreter. | `rust/crates/tidb-executor/src/driver/physical_builder.rs:5514`, `rust/crates/tidb-executor/src/driver.rs:960`, `driver/multi_dml.rs:814`, `:1265`, `:1351` | Go's planner retains finalized TblColPosInfos/handle columns; `updateRows` consumes and charges chunks. Multi-DELETE also buffers, but deduplicates into tblRowMap as chunks arrive. Migrate the complete handoff. A USING-layout corruption is not established: that probe passes. |
+| E04 | Physical Apply retains concurrency/keep-order metadata, but its builder always constructs serial NestedLoopApplyExec. The parallel-apply variable has no production execution consumer. | `rust/crates/tidb-planner/src/physical/mod.rs:1986`, `rust/crates/tidb-executor/src/driver/physical_builder.rs:3356`, `:3432`; optimizer sysvar catalog | `pkg/executor/builder.go::buildApply` clones eligible inner plans for ParallelNestedLoopApplyExec; `parallel_apply.go` owns ordered workers, cache, errors and cleanup. Rust needs worker-safe contexts and Go's serial fallback. Serial result tests do not validate this path; performance is unmeasured. |
+
+## Additional configured-server pipeline
+
+| ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
+| --- | --- | --- | --- |
+| S01 | Optional non-cluster-session mode selects a separate session/optimizer by configured table count. ASTs lower to ReadOnlyScanPlan/ConfiguredOrderedJoinPlan and a separate write planner, bypassing ordinary physical planning. It imposes one/two-table admission and refuses autocommit locking reads. | `rust/crates/tidb-server/src/lib.rs:291`, `:338`; `real_tikv_multi_node.rs:308`, `:575`; `rust/crates/tidb-exec/src/real_tikv_dml.rs:1940` | Go session ExecuteStmt, planner Optimize, executor compiler and TxnManager are shared across stores. Move these selectable entrypoints and consumers to regular session/storage adapters before deleting their configured planner/dispatcher family. This does not describe the default cluster-session path. |
+| S02 | With two loaded tables in that mode, startup discards the catalog snapshot and retains static descriptors; only the one-table branch installs schema/stats reloaders. Peer DDL can leave the two-table route stale. | `rust/crates/tidb-server/src/real_tikv_node/mod.rs:1940`, `:1966`; RealTiKvMultiSessionFactory | Go Domain/InfoSchema synchronization and ordinary session schema/transaction lifecycle. Fold consumers into that owner with S01; adding another table-count-specific reloader preserves duplication. Peer-DDL reproduction not run. |
+
+## Runtime information-schema providers
+
+| ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
+| --- | --- | --- | --- |
+| I01 | Dynamic virtual tables use captured fixtures, constant empty/default rows or unconditional captured errors. **Reproduced:** an existing sequence is absent from SEQUENCES; CLUSTER_CONFIG reports `127.0.0.1:15100` and a synthetic store1 warning without discovery; CLUSTER_LOG reports missing start time even with start/end/pattern predicates. Other affected providers are enumerated in the review receipt. | `rust/crates/tidb-session/src/dispatch.rs:604`, `:706`; `infoschema.rs:335`, `:2893`, `:2925`; `cluster_config_rows.rs:1` | Go typed config/log, sequence/resource/watch, inspection and TiFlash system-table retrievers own runtime rows, predicate extraction, privileges, errors and lifetime. Replace the fixture providers. Static column definitions/charset/metrics descriptions are not inherently wrong. |
+| I02 | CLUSTER_INFO reads only TiDB records, turns discovery errors into empty results and unconditionally appends mock `tikv/store1` after a successful syncer read. It lacks the other real service/store retrievers. | `rust/crates/tidb-session/src/lib.rs:1425`, `:1483` | `pkg/infoschema/tables.go::GetClusterServerInfo` composes seven retrievers and propagates errors; `dataForTiDBClusterInfo` renders output. Keep mock facts in the mock provider. Discovery/fabricated rows differ from O01's numeric server-ID leasing. |
+| I03 | CLUSTER_PROCESSLIST decorates only this process's rows with its address. Other listed cluster tables lack remote retrieval; table-name presence does not provide fanout. | `rust/crates/tidb-session/src/dispatch.rs:670`, `infoschema.rs:1034`; existing CLUSTER_STATEMENTS_SUMMARY_HISTORY test expects refusal | `pkg/infoschema/cluster.go`, `pkg/executor/table_reader.go`, `pkg/store/copr/coprocessor.go::buildTiDBMemCopTasks`: discover and dispatch to peers or DDL owner, with cancellation and memory tracking. Multi-node fanout not exercised. |
 
 ## Transaction and routing ownership
 
@@ -114,15 +152,21 @@ Complete before-images and input hashes are in `protocol-projections.json`.
 
 | Candidate | Why it needs review before removal |
 | --- | --- |
-| Alternate lightweight storage-session dispatcher | Its SET parser is already shared. Complete transaction/autocommit lifecycle parity with the ordinary session owner is not yet established. Locate every configured/test caller before removal. |
-| Multi-table DML's matrix interpreter and target identity | `tidb-executor/src/driver/multi_dml.rs:1262` retains a matrix-backed path, `:1337` passes FkPlanSpec::default(), and `:1351` reconstructs target widths/handles from catalog metadata. These differ from Go's plan-owned table/handle positions. Per-row FK enforcement exists; default plan metadata alone does not prove missing enforcement. |
-| Multi-action in-memory ALTER atomicity | `tidb-executor/src/ddl/alter_table.rs:58` stages a catalog clone only for selected FK-containing action lists. Trace outer rollback owners and compare Go's complete multi-schema lifecycle before claiming a partial-commit defect or deleting the interpreter. |
+| Remaining configured-session transaction cases | S01/S02 establish the alternate owners and missing two-table refresh. Full transaction/autocommit semantics and all configured/test callers still need review before deletion. |
+| DML identity edge cases | E01/E02 establish alias merging and multi-update FK failures; E03 records the materialized handoff. The USING probe passes. Derived/outer joins, pruning and partitioned handles still need a complete plan-schema comparison; do not infer failure from a different data representation alone. |
+| Cluster multi-action ALTER failure paths | D11 reproduces leakage in the in-process dispatcher. Cluster persisted metadata/data rollback is a separate path requiring failure injection before any partial-commit claim. |
 | Error identity and required system-table errors | Fresh cancellation codes/history propagation were repaired. `record_ddl_plan_error` still maps other errors to 1105; Go error classes/identity and each required table failure need original-test comparison. A textual difference alone is insufficient. |
 | Partition/catalog/statistics integration | Existing failures may share a catalog/publication cause. The newly rerun system-table test fails because p1 is missing after ADD PARTITION, not because a system event was emitted. Current source already filters system-schema events. Do not implement another notifier exclusion to hide this failure. |
 | Remaining parser/planner/expression/executor behavior | Current candidate inventory and historical package receipts require source/test reconciliation. An unsupported branch or a different Rust representation is not automatically a mismatch. |
 | Remaining client-go, PD, etcd, BR and other external packages | Inventoried module artifacts do not imply complete original-test/variant/integration review. PD/etcd now have complete module artifact inventories, but original-test/variant integration remains unreviewed. Dependencies beyond the recorded modules also remain acceptance work. |
 
-## Validation and residual scope
+## Prior protocol/inventory checkpoint and residual scope
+
+The commands below describe the earlier integration `9f0a41b5db` checkpoint.
+The latest SQL probes and reviewed call paths are in
+[session-ownership-review.md](session-ownership-review.md). Source inventories
+and protocol receipts retain their own revisions; this follow-up does not
+silently refresh or accept them.
 
 No production SQL/storage behavior was edited. The audit script and generated
 inventory are review artifacts. Source-reviewed ownership findings do not

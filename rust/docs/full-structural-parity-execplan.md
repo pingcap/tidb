@@ -20,6 +20,7 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 - [x] Remove five materialized-view seed history writers; preserve durable errors and reuse the shared barrier/finalizer without enabling seed dispatch. Published as 6ed271503c after targeted tests, lint and both locked build gates.
 - [x] Remove all 17 action-stage queue writers; share fresh cancellation/error handling and preserve historical retry diagnostics. Published as 9f0a41b5db after targeted tests, compilation, lint and both locked server build gates.
 - [x] (2026-09-30) Expand the current-source register to 29 known structural findings; compare all five remaining local protobuf projections; reproduce PD keyspace-zero presence loss; inventory PD-client and etcd-API packages. This is an audit checkpoint, not exhaustive semantic or package acceptance.
+- [x] (2026-09-30, follow-up) Trace session/planner/executor and runtime-provider owners beyond the initial register: 12 additional findings, five groups reproduced through SQL, 41 known findings total. Retain passing controls and source-only limits; no partial package accepted.
 - [ ] Reconcile generic insertion policy with the ordinary table owner.
 - [ ] Reconcile remaining native routing/RPC and operation-lifetime owners.
 - [ ] Resolve each confirmed baseline SQL/DDL/statistics failure at its owning package.
@@ -43,6 +44,15 @@ Run regressions before production fixes and afterward. Protocol validation uses 
 ## Surprises & Discoveries
 
 
+The session follow-up reproduces lost writes across aliases of one row and
+multi-update FK bypass, although ordinary single-table FK and multi-DELETE
+checks work. A failed in-process multi-action ALTER leaks its first column
+addition. Cache size 1 leaves two prepared plans available because ownership
+is per statement. Dynamic information-schema readers still use captured
+oracle rows/errors; a working sequence is invisible in SEQUENCES. These are
+current SQL observations, not conclusions from old gap comments. The USING
+join control passes and is not promoted to an identity-corruption claim.
+
 The expanded audit found a PD oneof projected as a plain scalar: explicit
 keyspace zero encodes as empty locally versus 08 00 upstream. Matching fields
 by wire tag avoids falsely counting the 70 renamed opaque command fields as
@@ -59,6 +69,13 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+Keep this follow-up an audit with executable diagnostic evidence. Preserve
+the complete probe source/output under current-audit and run it as a temporary
+example using the existing locked session crate, then remove that temporary
+example. Do not assert current incorrect outputs as passing regression tests
+or claim whole-package acceptance. Production root fixes must migrate the
+shared DML/cache/runtime-provider owners and add fail-before/pass-after tests.
 
 For the expanded audit, preserve production behavior and consolidate current
 source evidence, prior open findings and reproduced failures in a stable-ID
@@ -84,6 +101,11 @@ Inventory coverage explicitly and implement package-sized owner corrections. Do 
 
 ## Outcomes & Retrospective
 
+
+The session/executor follow-up extends the register from 29 to 41 findings.
+Five added ownership groups have in-process SQL reproductions; seven are
+source-confirmed design/integration gaps. No production behavior changed.
+Current-master package acceptance and workload parity remain open.
 
 The expanded review records 29 known structural findings across DDL,
 transactions, domain services, TiFlash/MPP, protocols and PD discovery. The
@@ -791,3 +813,72 @@ response records whether these publication gates succeeded.
 No real TiKV/TiFlash, concurrent
 DDL/owner-loss, upgrade/GC/TTL deployment, cluster TLS or sysbench/TPCC/TPCH/YCSB
 benchmark was run. No package or repository-wide completion is claimed.
+
+
+## Session/executor/runtime-provider audit receipt (2026-09-30)
+
+Pulled integration 960fa95b48 and refreshed Go master e953a09d9d; both were
+already current. Reviewed the shared physical builder, DML source/write
+handoff, per-statement SELECT/DML cache stores and session cache admission,
+Apply construction, optional configured-server startup and metadata refresh,
+and live information-schema row providers. The register adds D11, C01–C02,
+E01–E04, S01–S02 and I01–I03: 12 additions, 41 known open findings in total.
+No keyword hit was promoted merely because a gap comment existed.
+
+The retained session-ownership-probe.rs runs 46 SQL commands through Session.
+It reproduces five ownership groups: lost alias updates, multi-update FK
+bypass, partial in-process ALTER publication after error, per-statement cache
+capacity/flush gaps, and fixture/constant dynamic virtual-table results.
+JOIN USING and referred-FK multi-DELETE controls behave correctly. Go expected
+contracts come from pinned master source; no new Go-server execution occurred.
+The diagnostic intentionally prints SQL errors instead of returning a failed
+process status, so its successful exit must not be called a passing parity
+suite. Full SQL stdout is committed in session-ownership-probe.txt.
+
+Files changed: this ExecPlan, current-audit/README.md, structural-findings.md,
+session-ownership-review.md, session-ownership-probe.rs and its .txt output.
+The example was temporarily copied into the existing session crate for the
+locked run and removed after verifying byte identity. No production crate,
+Go/Bazel input, dependency pin, generated source or native client file changed.
+No bazel_prepare or Go failpoint setup is triggered. No complete package was
+implemented, integrated or accepted by this audit.
+
+Exact validation commands from the repository root:
+
+    git pull --ff-only origin hparser-integration
+    git fetch origin master
+    mkdir -p rust/crates/tidb-session/examples
+    cp rust/docs/parity/current-audit/session-ownership-probe.rs rust/crates/tidb-session/examples/audit_session_ownership.rs
+    (cd rust && cargo run --locked -p tidb-session --example audit_session_ownership)
+    rustfmt --check --edition 2024 rust/docs/parity/current-audit/session-ownership-probe.rs
+    make lint
+    git diff --check
+
+The cargo command alone is scoped to rust/; the others are root commands.
+Probe, formatting, root lint and whitespace checks completed successfully;
+the probe's observed SQL failures remain unresolved by design. An inline
+Python check verified 41 unique IDs, 12 additions, all 46 SQL/result pairs,
+local Markdown links and removal of the temporary example. Source files were
+read from origin/master using git show/git grep. Existing source/descriptor
+inventory receipts were not regenerated because their inputs did not change.
+Logs: /private/tmp/tidb-session-ownership-{probe,lint}.log.
+
+Publication commands, with the final result reported in the response:
+
+    TERM=xterm git -c core.hooksPath=hooks commit -m "audit: trace session executor and runtime provider mismatches"
+    (cd rust && cargo build --locked -p tidb-server)
+    git push origin HEAD:hparser-integration
+
+The pre-commit hook must itself pass the locked server build, and the separate
+locked build must pass immediately before push. Publication logs use
+/private/tmp/tidb-session-ownership-{commit,prepush-build}.log.
+
+Correctness risks discovered include lost writes, orphan FK values and local
+schema changes surviving statement errors. Compatibility/performance findings
+include incomplete cache eviction/sharing, whole-read materialization,
+serial-only Apply, stale optional-server descriptors and missing real cluster
+providers. This audit introduces no runtime behavior changes. Full upstream
+package variants/original tests, distributed failure injection, the ten prior
+embedded baseline failures, multi-node/TLS interoperability and
+sysbench/TPC-C/TPC-H/YCSB remain unverified. The exhaustive audit is unfinished;
+41 records are all currently established findings, not a proof of no others.

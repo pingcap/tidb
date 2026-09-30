@@ -20,11 +20,19 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 29 open ownership/contract findings, review candidates and the
+consolidates 41 open ownership/contract findings, review candidates and the
 limits of the review. The [complete remaining protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
 Neither document claims that every repository semantic mismatch is known.
+
+The [session/executor follow-up](session-ownership-review.md) adds 12 findings
+against integration `960fa95b48` and the same Go master. Its retained SQL probe
+reproduces lost self-join updates, bypassed multi-update foreign keys,
+non-atomic in-process ALTER, missing shared cache eviction/flush, and dynamic
+virtual tables served from fixtures or constants. Seven further owner gaps
+are source-confirmed with explicit runtime limits. No production fix or new
+package acceptance is included in this follow-up.
 
 | Finding | Evidence and Go ownership | Status |
 | --- | --- | --- |
