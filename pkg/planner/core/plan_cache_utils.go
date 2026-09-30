@@ -72,13 +72,14 @@ var (
 )
 
 type paramMarkerExtractor struct {
-	markers     []ast.ParamMarkerExpr
-	hasCoalesce bool
+	markers         []ast.ParamMarkerExpr
+	coalesceMarkers []ast.ParamMarkerExpr
+	coalesceDepth   int
 }
 
 func (e *paramMarkerExtractor) Enter(node ast.Node) bool {
 	if fn, ok := node.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce {
-		e.hasCoalesce = true
+		e.coalesceDepth++
 	}
 	return false
 }
@@ -86,6 +87,12 @@ func (e *paramMarkerExtractor) Enter(node ast.Node) bool {
 func (e *paramMarkerExtractor) Leave(in ast.Node) bool {
 	if x, ok := in.(*driver.ParamMarkerExpr); ok {
 		e.markers = append(e.markers, x)
+		if e.coalesceDepth > 0 {
+			e.coalesceMarkers = append(e.coalesceMarkers, x)
+		}
+	}
+	if fn, ok := in.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce {
+		e.coalesceDepth--
 	}
 	return true
 }
@@ -242,13 +249,17 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		Params:              extractor.markers,
 	}
 
-	// The non-prepared caller has already passed NonPreparedPlanCacheableWithCtx,
-	// which currently permits COALESCE only in supported UPDATE assignments.
-	// Thus hasCoalesce identifies that exception here, not general COALESCE support.
-	// This conservatively guards all DECIMAL parameters in the statement, including
-	// other SET expressions and WHERE predicates, not just COALESCE arguments.
-	// Revisit this policy if the eligibility checker admits other COALESCE contexts.
-	preparedObj.requireExactDecimalParamTypes = !isPrepStmt && extractor.hasCoalesce
+	// The non-prepared caller has passed NonPreparedPlanCacheableWithCtx,
+	// which only admits COALESCE in supported UPDATE assignments. Record the
+	// affected markers after sorting: their indexes must match Params/ParamTypes.
+	// Parameters outside COALESCE retain the existing compatibility rules.
+	if !isPrepStmt {
+		for i, marker := range extractor.markers {
+			if slices.Contains(extractor.coalesceMarkers, marker) {
+				preparedObj.exactDecimalParamOffsets = append(preparedObj.exactDecimalParamOffsets, i)
+			}
+		}
+	}
 
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
 	ast.Walk(paramStmt, stmtProcessor)
@@ -565,9 +576,9 @@ type PlanCacheValue struct {
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 
-	// Require exact precision and scale for every DECIMAL parameter in this plan,
-	// including parameters outside COALESCE. Immutable once the plan is cached.
-	requireExactDecimalParamTypes bool
+	// Parameter indexes requiring exact DECIMAL precision and scale.
+	// Only COALESCE arguments are included; immutable once the plan is cached.
+	exactDecimalParamOffsets []int
 
 	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
 	executions         int64 // the execution times.
@@ -626,6 +637,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
+	sum += size.SizeOfSlice + int64(cap(v.exactDecimalParamOffsets))*size.SizeOfInt
 	if v.ParamTypes != nil {
 		sum += int64(cap(v.ParamTypes)) * size.SizeOfPointer
 		for _, ft := range v.ParamTypes {
@@ -703,12 +715,12 @@ func NewPlanCacheValue(
 		PlanDigest:       stmt.PlanDigest.String(),
 		BinaryPlan:       binaryPlan,
 
-		LoadTime:                      time.Now(),
-		Plan:                          plan,
-		OutputColumns:                 names,
-		ParamTypes:                    userParamTypes,
-		StmtHints:                     stmtHints.Clone(),
-		requireExactDecimalParamTypes: stmt.requireExactDecimalParamTypes,
+		LoadTime:                 time.Now(),
+		Plan:                     plan,
+		OutputColumns:            names,
+		ParamTypes:               userParamTypes,
+		StmtHints:                stmtHints.Clone(),
+		exactDecimalParamOffsets: slices.Clone(stmt.exactDecimalParamOffsets),
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv
@@ -765,11 +777,10 @@ type PlanCacheStmt struct {
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr
 
-	// requireExactDecimalParamTypes requires exact precision and scale for all
-	// DECIMAL parameters in the statement. Currently enabled for non-prepared
-	// UPDATEs whose COALESCE assignments pass NonPreparedPlanCacheableWithCtx;
-	// parameters in other SET expressions and WHERE predicates are also checked.
-	requireExactDecimalParamTypes bool
+	// exactDecimalParamOffsets indexes Params for arguments of COALESCE in
+	// eligible non-prepared UPDATE assignments. Other parameters keep the
+	// existing type compatibility rules, including relaxed DECIMAL precision.
+	exactDecimalParamOffsets []int
 
 	PointGet PointGetExecutorCache
 
@@ -883,10 +894,11 @@ func (v *PlanCacheValue) matchesParamTypes(actual any) bool {
 	if !checkTypesCompatibility4PC(v.ParamTypes, actual) {
 		return false
 	}
-	if !v.requireExactDecimalParamTypes || actual == nil {
+	if len(v.exactDecimalParamOffsets) == 0 || actual == nil {
 		return true
 	}
-	for i, tp := range actual.([]*types.FieldType) {
+	for _, i := range v.exactDecimalParamOffsets {
+		tp := actual.([]*types.FieldType)[i]
 		expected := v.ParamTypes[i]
 		if expected.GetType() == mysql.TypeNewDecimal &&
 			(expected.GetFlen() != tp.GetFlen() || expected.GetDecimal() != tp.GetDecimal()) {
