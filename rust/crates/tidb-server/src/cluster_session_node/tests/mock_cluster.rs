@@ -61,8 +61,8 @@ pub(super) struct MockCluster {
     /// tests use it after catalog publication to model a restricted-session
     /// statistics failure.
     pub(super) fail_next_begin: AtomicBool,
-    /// Makes the next pessimistic statement lock report a newer read timestamp.
-    pub(super) retry_next_pessimistic_lock: AtomicBool,
+    /// Makes this many pessimistic lock attempts report a newer read timestamp.
+    pub(super) retry_pessimistic_locks: AtomicUsize,
     /// Read handles still bound. A statement that leaks one leaves this
     /// above zero, which is the lock-left-behind failure in miniature.
     pub(super) live: AtomicUsize,
@@ -599,8 +599,11 @@ impl OpenClusterTransaction for MockSessionTransaction {
         }
         if self
             .cluster
-            .retry_next_pessimistic_lock
-            .swap(false, Ordering::AcqRel)
+            .retry_pessimistic_locks
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
         {
             return Ok(LockKeysOutcome::RetryStatement {
                 for_update_ts: self.cluster.timestamp(),

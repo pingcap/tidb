@@ -144,6 +144,67 @@ mod transaction_buffer_tests {
     use tidb_txnkv::{transaction::BufferMutation, AssertionOp, Key, UnaryCallContext};
 
     #[test]
+    fn lightweight_pessimistic_statement_retries_obey_config() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        use tidb_config::config_tree::config::update_global;
+        use tidb_exec::multi_statement_transaction::MultiStatementTransaction;
+        use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadLockWait};
+        use tidb_planner::txn_mode::SessionTxnMode;
+
+        let (_authority, _pd, opener) = in_process_write_stack().unwrap();
+        let table = ConfiguredTable::new(
+            "test",
+            "t",
+            42,
+            [ConfiguredColumn::clustered_primary_key("id", 1)],
+        );
+        for limit in [0, 1] {
+            update_global(|config| config.pessimistic_txn.max_retry_count = limit);
+            let mut transaction = MultiStatementTransaction::begin(
+                &opener,
+                SessionTxnMode::Pessimistic,
+                false,
+                tidb_exec::session_commit_protocol::session_commit_protocol(),
+                table.clone(),
+                IN_PROCESS_TIMEOUT,
+                IN_PROCESS_TIMEOUT,
+            )
+            .unwrap();
+            // Publish after the locking reader's for_update_ts. The real
+            // embedded TiKV must report a write conflict on its first lock.
+            let mut writer = opener.begin().unwrap();
+            writer
+                .commit(
+                    vec![BufferMutation::set(
+                        tidb_tablecodec::table_key::encode_row_key_with_handle(
+                            42,
+                            &tidb_tablecodec::table_key::RecordHandle::Int(1),
+                        ),
+                        b"row",
+                    )
+                    .unwrap()],
+                    &UnaryCallContext::with_timeout(IN_PROCESS_TIMEOUT),
+                )
+                .unwrap();
+            let result = transaction.lock_handles(&[1], ReadLockWait::Blocking);
+            if limit == 0 {
+                let error = result.expect_err("the first conflict exhausts a zero budget");
+                assert_eq!(error.sql_error().code, 1105);
+                assert_eq!(
+                    error.sql_error().message,
+                    "pessimistic lock retry limit reached"
+                );
+                assert!(error.keeps_transaction_open());
+            } else {
+                result.unwrap();
+            }
+            transaction.rollback().unwrap();
+        }
+    }
+
+    #[test]
     fn unbound_session_commit_preserves_deleted_insert_constraint() {
         let (_authority, _pd, opener) = in_process_write_stack().unwrap();
         let call = UnaryCallContext::with_timeout(IN_PROCESS_TIMEOUT);

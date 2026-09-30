@@ -20,6 +20,141 @@ use tidb_txnkv::transaction::{
 };
 
 #[test]
+fn pessimistic_statement_retries_obey_config_and_preserve_prior_writes() {
+    if crate::isolate_process_globals() {
+        return;
+    }
+    use tidb_config::config_tree::config::update_global;
+
+    // Point writes conflict before execution; range writes conflict after
+    // staging their changes. Both must consume the same statement budget.
+    for sql in [
+        "UPDATE t SET v = v + 1 WHERE id = 1",
+        "UPDATE t SET v = v + 1",
+    ] {
+        for limit in [0, 2] {
+            let (mut session, cluster) = open_session();
+            session
+                .execute_write("INSERT INTO t VALUES (1, 10)")
+                .unwrap();
+            session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+            session
+                .execute_write("INSERT INTO t VALUES (2, 20)")
+                .unwrap();
+            update_global(|config| config.pessimistic_txn.max_retry_count = limit);
+            cluster.lock_waits.lock().unwrap().clear();
+            cluster
+                .retry_pessimistic_locks
+                .store(limit + 1, Ordering::Release);
+
+            let error = session
+                .execute_write(sql)
+                .expect_err("configured budget is exhausted");
+            assert_query_error_packet(&error, 1105, "pessimistic lock retry limit reached");
+            assert_eq!(cluster.lock_waits.lock().unwrap().len(), limit + 1);
+            assert!(session.session.in_transaction());
+            assert_eq!(
+                rows(&mut session, "SELECT id, v FROM t ORDER BY id"),
+                vec![
+                    vec![Datum::Int(1), Datum::Int(10)],
+                    vec![Datum::Int(2), Datum::Int(20)]
+                ]
+            );
+
+            // Exactly the configured number of retries is allowed. Successful
+            // replay applies the write once and retains the earlier INSERT.
+            cluster.lock_waits.lock().unwrap().clear();
+            cluster
+                .retry_pessimistic_locks
+                .store(limit, Ordering::Release);
+            session.execute_write(sql).unwrap();
+            session.control_transaction("COMMIT").unwrap();
+            let second_value = if sql.contains("WHERE") { 20 } else { 21 };
+            assert_eq!(
+                rows(&mut session, "SELECT id, v FROM t ORDER BY id"),
+                vec![
+                    vec![Datum::Int(1), Datum::Int(11)],
+                    vec![Datum::Int(2), Datum::Int(second_value)]
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn restricted_pessimistic_statement_retries_obey_live_config() {
+    if crate::isolate_process_globals() {
+        return;
+    }
+    use tidb_config::config_tree::config::update_global;
+    use tidb_exec::cluster_table_storage::lock_pessimistic_statement_with;
+    use tidb_txnkv::transaction::BufferMutation;
+
+    let (session, _) = open_session();
+    for (limit, conflicts, lower_during_retry) in [
+        (0, 1, false),
+        (2, 3, false),
+        (2, 2, false),
+        (300, 257, false),
+        (2, 2, true),
+    ] {
+        update_global(|config| config.pessimistic_txn.max_retry_count = limit);
+        let mut calls = 0;
+        let mut read_timestamps = Vec::new();
+        let result = lock_pessimistic_statement_with(
+            1,
+            |read_ts| {
+                read_timestamps.push(read_ts);
+                session.transactions.open_snapshot("")
+            },
+            |keys, _, _| {
+                calls += 1;
+                if lower_during_retry && calls == 2 {
+                    update_global(|config| config.pessimistic_txn.max_retry_count = 0);
+                }
+                if calls <= conflicts {
+                    Ok(LockKeysOutcome::RetryStatement {
+                        for_update_ts: calls as u64 + 10,
+                        newly_locked: keys,
+                    })
+                } else {
+                    Ok(LockKeysOutcome::Locked {
+                        for_update_ts: calls as u64 + 10,
+                        newly_locked: keys,
+                    })
+                }
+            },
+            |_, _| {
+                Ok((
+                    (),
+                    vec![BufferMutation::lock_only(b"key".to_vec()).unwrap()],
+                ))
+            },
+        );
+        let exhausted = conflicts > limit || lower_during_retry;
+        if exhausted {
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "pessimistic lock retry limit reached"
+            );
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+        }
+        let expected = if lower_during_retry {
+            2
+        } else {
+            conflicts.min(limit) + 1
+        };
+        assert_eq!(calls, expected);
+        assert_eq!(read_timestamps.len(), expected);
+        assert_eq!(read_timestamps[0], None);
+        for (attempt, read_ts) in read_timestamps.iter().enumerate().skip(1) {
+            assert_eq!(*read_ts, Some(attempt as u64 + 10));
+        }
+    }
+}
+
+#[test]
 fn changing_session_lock_wait_reaches_an_open_transaction() {
     let (mut session, cluster) = open_session();
     session

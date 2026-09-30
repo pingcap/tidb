@@ -77,6 +77,37 @@ impl LockSqlError {
     }
 }
 
+/// Go `ExecStmt.retryCount` and `handlePessimisticLockError`'s retry gate.
+/// Each statement owns its counter; each retry reads the current process
+/// configuration, independently of the KV client's RPC backoff budget.
+#[derive(Debug, Default)]
+pub struct PessimisticStatementRetry {
+    count: usize,
+}
+
+impl PessimisticStatementRetry {
+    /// Charges one statement replay, or returns Go's unregistered limit error.
+    pub fn retry(&mut self) -> Result<(), LockSqlError> {
+        if self.count
+            >= tidb_config::config_tree::config::get_global_config()
+                .pessimistic_txn
+                .max_retry_count
+        {
+            return Err(LockSqlError {
+                code: tidb_error::mysql::errcode::ErrUnknown,
+                state: DEFAULT_SQL_STATE,
+                message: "pessimistic lock retry limit reached".to_owned(),
+            });
+        }
+        self.count += 1;
+        Ok(())
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.count
+    }
+}
+
 /// Maps a lock failure to the error TiDB reports for it.
 ///
 /// [`PessimisticLockFailure::Transaction`] is not statement-scoped: it ends

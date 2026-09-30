@@ -84,7 +84,7 @@ use tidb_txnkv::PdRegionLoader;
 use crate::pessimistic_lock_error::{
     commit_outcome_to_sql_error_with_hint, duplicate_cause, duplicate_key_sql_error,
     is_retryable_statement_failure, lock_failure_to_sql_error, transaction_cause_to_sql_error,
-    LockSqlError,
+    LockSqlError, PessimisticStatementRetry,
 };
 
 /// What one statement's lock acquisition came to -- the session layer's
@@ -1368,7 +1368,7 @@ pub struct PessimisticLockObservation {
     /// Go `LockKeysDetail.LockKeys`.
     pub lock_keys: u64,
     /// Go `a.retryCount`.
-    pub retries: u32,
+    pub retries: usize,
     /// Go `LockKeysDetail.TotalTime`.
     pub lock_elapsed: std::time::Duration,
 }
@@ -1405,7 +1405,7 @@ fn accumulate_lock_observation(keys: u64, elapsed: std::time::Duration) {
     });
 }
 
-fn record_lock_retries(retries: u32) {
+fn record_lock_retries(retries: usize) {
     LAST_LOCK_OBSERVATION.with(|slot| {
         let mut observation = slot.get();
         observation.retries = retries;
@@ -1423,10 +1423,8 @@ pub fn lock_pessimistic_statement_with<T>(
     ) -> Result<LockKeysOutcome, String>,
     mut build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<BufferMutation>), String>,
 ) -> Result<(T, Vec<BufferMutation>), PessimisticStatementTransactionError> {
-    const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
-
     let mut retry_read_ts = None;
-    let mut retries = 0;
+    let mut retries = PessimisticStatementRetry::default();
     loop {
         let snapshot =
             snapshot(retry_read_ts).map_err(PessimisticStatementTransactionError::Build)?;
@@ -1474,16 +1472,13 @@ pub fn lock_pessimistic_statement_with<T>(
             .map_err(PessimisticStatementTransactionError::Build)?
         {
             LockKeysOutcome::Locked { .. } => {
-                record_lock_retries(retries);
+                record_lock_retries(retries.count());
                 return Ok((value, mutations));
             }
             LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
-                if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
-                    return Err(PessimisticStatementTransactionError::Build(
-                        "pessimistic lock retry limit reached".to_owned(),
-                    ));
-                }
-                retries += 1;
+                retries
+                    .retry()
+                    .map_err(PessimisticStatementTransactionError::Transaction)?;
                 retry_read_ts = Some(for_update_ts);
             }
             LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {

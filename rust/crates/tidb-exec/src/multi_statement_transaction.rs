@@ -73,7 +73,7 @@ use tidb_txnkv::PdRegionLoader;
 
 use crate::pessimistic_lock_error::{
     commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
-    locked_with_conflict_error, LockSqlError,
+    LockSqlError, PessimisticStatementRetry,
 };
 use crate::real_tikv_dml::{
     plan_configured_write, ConfiguredWriteError, ConfiguredWritePlan, ConfiguredWriteReport,
@@ -85,14 +85,6 @@ use crate::real_tikv_dml::{
 /// `None` is a row the transaction deleted; `Some(row)` is its value in the
 /// read's own projection. A reader applies these over the snapshot's rows.
 pub type StagedRowOverlay = Vec<(i64, Option<Vec<Datum>>)>;
-
-/// How many times one locking statement re-acquires under a fresh
-/// `for_update_ts` after a write conflict.
-///
-/// Go retries a pessimistic statement until `pessimistic-txn.max-retry-count`;
-/// this bounded node keeps a small fixed budget so a statement that keeps losing
-/// reports 9007 to the client instead of spinning against PD forever.
-const MAX_LOCK_RETRIES: usize = 8;
 
 /// The failure of one statement inside an open transaction.
 ///
@@ -619,6 +611,9 @@ where
         write: &ConfiguredPreparedWrite,
         session_tz: &SessionTimeZone,
     ) -> Result<ConfiguredWritePlan, TransactionStatementError> {
+        // Replanning can discover another unique-key conflict. All lock
+        // batches still belong to one ExecStmt and share its retry counter.
+        let mut retries = PessimisticStatementRetry::default();
         loop {
             let plan = plan_configured_write(self, write, &self.statement_call(), session_tz)
                 .map_err(|error| TransactionStatementError::write(&error))?;
@@ -638,7 +633,7 @@ where
             if missing.is_empty() {
                 return Ok(plan);
             }
-            self.lock_keys(&missing, ReadLockWait::Blocking)?;
+            self.lock_keys_with_values(&missing, ReadLockWait::Blocking, false, &mut retries)?;
         }
     }
 
@@ -696,7 +691,12 @@ where
                 encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(*handle))
             })
             .collect::<Vec<_>>();
-        self.lock_keys_with_values(&keys, wait, return_values)
+        self.lock_keys_with_values(
+            &keys,
+            wait,
+            return_values,
+            &mut PessimisticStatementRetry::default(),
+        )
     }
 
     /// Acquires exclusive pessimistic locks on already-encoded DML keys.
@@ -704,19 +704,12 @@ where
     /// Point `UPDATE`/`DELETE` use [`Self::lock_handles`], while REPLACE must
     /// also protect unique-index and displaced-row keys discovered from its
     /// own tentative mutation set.
-    fn lock_keys(
-        &mut self,
-        keys: &[Vec<u8>],
-        wait: ReadLockWait,
-    ) -> Result<(), TransactionStatementError> {
-        self.lock_keys_with_values(keys, wait, false)
-    }
-
     fn lock_keys_with_values(
         &mut self,
         keys: &[Vec<u8>],
         wait: ReadLockWait,
         return_values: bool,
+        retries: &mut PessimisticStatementRetry,
     ) -> Result<(), TransactionStatementError> {
         let wait = match wait {
             // Go maps a plain `FOR UPDATE` to `@@innodb_lock_wait_timeout`,
@@ -746,7 +739,6 @@ where
         if missing.is_empty() {
             return Ok(());
         }
-        let mut attempt = 0;
         loop {
             // This shared lock path deliberately carries no absence
             // presumption. Locking reads target existing rows, while REPLACE
@@ -758,7 +750,7 @@ where
             // IN the PessimisticLock response — Go's `KeyReturningValue`
             // request flag, set from `InitReturnValues` when an executor needs
             // the row it is about to modify (`pkg/executor/point_get.go:614`).
-            let retry_reason = match if return_values {
+            match if return_values {
                 transaction.acquire_locks_returning_values(&missing, &BTreeSet::new(), wait, &call)
             } else {
                 transaction.acquire_locks(&missing, &BTreeSet::new(), wait, &call)
@@ -783,12 +775,6 @@ where
                     // committed version. The locks stay — that is the whole point,
                     // the retry needs no second PessimisticLock — but the statement
                     // must be recomputed at a timestamp that can see that version.
-                    let (key, conflict_commit_ts) = acquired
-                        .locked_with_conflict
-                        .iter()
-                        .max_by_key(|(_, conflict_ts)| *conflict_ts)
-                        .expect("the non-empty branch above admits at least one conflict");
-                    locked_with_conflict_error(transaction.start_ts(), *conflict_commit_ts, key)
                 }
                 Err(failure) => {
                     // Go's lock-context callback records a deadlock as soon as
@@ -810,14 +796,13 @@ where
                     ) {
                         std::thread::sleep(Duration::from_millis(5));
                     }
-                    lock_failure_to_sql_error(&failure)
                 }
-            };
-            if attempt >= MAX_LOCK_RETRIES {
+            }
+            if let Err(error) = retries.retry() {
                 transaction
                     .finish_statement(false)
                     .map_err(|error| TransactionStatementError::from_lock_failure(&error))?;
-                return Err(TransactionStatementError::Statement(retry_reason));
+                return Err(TransactionStatementError::Statement(error));
             }
             // A newer statement timestamp is what makes the retry see the
             // committed version that beat this one. Go takes it from PD rather
@@ -829,7 +814,6 @@ where
                     .map_err(|cleanup| TransactionStatementError::from_lock_failure(&cleanup))?;
                 return Err(TransactionStatementError::from_lock_failure(&error));
             }
-            attempt += 1;
         }
         transaction
             .finish_statement(true)

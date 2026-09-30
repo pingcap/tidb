@@ -4615,7 +4615,7 @@ impl ClusterServerSession {
             if observation.retries > 0 {
                 tidb_session::metrics::STATEMENT_PESSIMISTIC_RETRY_COUNT
                     .with_label_values(&[] as &[&str])
-                    .observe(f64::from(observation.retries));
+                    .observe(observation.retries as f64);
             }
         }
         outcome
@@ -4688,10 +4688,7 @@ impl ClusterServerSession {
         // it reading at the advanced `for_update_ts`. `None` is the first
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
-        // Go `PessimisticTxn.MaxRetryCount` (`pkg/config/config.go`, default
-        // 256): the safety valve on the statement retry, with Go's own error.
-        let mut retries: u32 = 0;
-        const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
+        let mut retries = tidb_exec::pessimistic_lock_error::PessimisticStatementRetry::default();
         let result = loop {
             // Selected rows belong to this execution attempt, not an earlier
             // plan or a partially executed failed read.
@@ -4730,12 +4727,9 @@ impl ClusterServerSession {
                     Some(Ok(LockKeysOutcome::RetryStatement { for_update_ts, .. })) => {
                         // Fair locking's retained locks stay owned by this
                         // statement until it ends, whichever way it ends.
-                        if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
-                            break Err(SqlQueryError::unknown(
-                                "pessimistic lock retry limit reached",
-                            ));
+                        if let Err(error) = retries.retry() {
+                            break Err(transactions::sql_error(error));
                         }
-                        retries += 1;
                         // Nothing is staged yet -- this round never ran -- so
                         // only the read timestamp moves; the next round's lock
                         // attempt re-runs at it.
@@ -4845,17 +4839,10 @@ impl ClusterServerSession {
                             }
                         }
                         Ok(PessimisticStep::Retry { for_update_ts }) => {
-                            if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
-                                // Go `handlePessimisticLockError`
-                                // (`pkg/executor/adapter.go`): the retry
-                                // budget is the transaction config's, and the
-                                // message is Go's own.
+                            if let Err(error) = retries.retry() {
                                 self.buffer.restore(savepoint.clone());
-                                break Err(SqlQueryError::unknown(
-                                    "pessimistic lock retry limit reached",
-                                ));
+                                break Err(transactions::sql_error(error));
                             }
-                            retries += 1;
                             // The statement's writes go back; its locks STAY
                             // (fair locking's whole point), and the replay
                             // reads at the timestamp that sees the version
