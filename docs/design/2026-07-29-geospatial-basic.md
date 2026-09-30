@@ -561,12 +561,8 @@ Out of scope here, each with a home:
 - The **spatial index** and its pushdown:
   [`docs/design/2026-06-25-spatial-index.md`](2026-06-25-spatial-index.md)
   ([#69473](https://github.com/pingcap/tidb/pull/69473)), for which this layer is the prerequisite.
-- The **geometry-processing function tail**, typed I/O aliases, `MBR*` family, geohash and
-  niche accessors: a later, parallel expression-layer milestone.
-- **`ST_Area`**, deferred whole rather than split by SRID. Matching MySQL's ellipsoidal
-  4326 answer is not the obstacle; shipping only the SRID 0 half would be, since it would
-  put a function in v1 whose support depends on the SRID, which nothing else does. It lands
-  with the tail.
+- The **geometry-processing function tail**, `ST_Area`, typed I/O aliases, `MBR*` family,
+  geohash and niche accessors: a later, parallel expression-layer milestone.
 - **SRIDs beyond 0 and 4326**, the full SRS catalog and `ST_Transform`:
   [Future extensions](#future-extensions). `ST_Transform` is MySQL functionality, but it
   has nothing to do until more SRSs exist, so it is out of scope for v1.
