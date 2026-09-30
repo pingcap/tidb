@@ -1473,16 +1473,21 @@ fn lower_alter_table_catalog(
             )
         }) {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
-            let warning = alter
-                .actions
-                .iter()
-                .any(|action| matches!(action, tidb_ast::AlterTableAction::WithValidation))
-                .then(|| {
-                    (
-                        8200_u16,
-                        "ALTER TABLE WITH VALIDATION is currently unsupported".to_owned(),
-                    )
-                });
+            // go raises 8200 for BOTH validation forms, each naming its own
+            // spelling (oracle g-alter: `ALTER TABLE ab3 WITHOUT VALIDATION`
+            // answers `ALTER TABLE WITHOUT VALIDATION is currently
+            // unsupported`, and the WITH form names WITH).
+            let warning = alter.actions.iter().find_map(|action| match action {
+                tidb_ast::AlterTableAction::WithValidation => Some((
+                    8200_u16,
+                    "ALTER TABLE WITH VALIDATION is currently unsupported".to_owned(),
+                )),
+                tidb_ast::AlterTableAction::WithoutValidation => Some((
+                    8200_u16,
+                    "ALTER TABLE WITHOUT VALIDATION is currently unsupported".to_owned(),
+                )),
+                _ => None,
+            });
             return Ok(Some(DdlStatement::AcceptedNoOp {
                 schema,
                 table,
@@ -2094,9 +2099,14 @@ fn lower_alter_add_index(
         | IndexConstraintKind::UniqueIndex => tidb_ast::IndexKind::Unique,
         IndexConstraintKind::PrimaryKey => tidb_ast::IndexKind::Unique,
         IndexConstraintKind::Fulltext => {
-            return Err(DdlAdmissionError::unsupported(
+            // go's message carries its own wording; `unsupported` would
+            // prefix `Unsupported ` onto a sentence that already reads as a
+            // refusal (oracle g-alter: `8200 FULLTEXT index is only
+            // supported in starter deployment mode`).
+            return Err(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
                 "FULLTEXT index is only supported in starter deployment mode",
-            ))
+            ));
         }
         IndexConstraintKind::Vector => {
             return Err(DdlAdmissionError::unsupported(
@@ -8431,7 +8441,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 *if_not_exists,
                 &context.0,
             )? {
-                AlterColumnOutcome::AlreadySatisfied(detail) => return Ok(already(detail)),
+                AlterColumnOutcome::AlreadySatisfied(detail) => {
+                    // go's add-column IF NOT EXISTS no-op carries the 1060
+                    // note (oracle g-alter: `Note:1060:Duplicate column
+                    // name 'd'`).
+                    return Ok(already_with_warnings(
+                        detail,
+                        vec![(
+                            crate::real_tikv_ddl::DdlWarningLevel::Note,
+                            1060,
+                            format!("Duplicate column name '{}'", column.name),
+                        )],
+                    ));
+                }
                 AlterColumnOutcome::Applied => {}
             }
             info.update_ts = start_ts;
@@ -8470,7 +8492,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             let mut info = stored.clone_like_go();
             match apply_drop_column(&mut info, schema, table, column, *if_exists)? {
-                AlterColumnOutcome::AlreadySatisfied(detail) => return Ok(already(detail)),
+                AlterColumnOutcome::AlreadySatisfied(detail) => {
+                    // go's drop-column IF EXISTS no-op carries the 1091 note
+                    // (oracle g-alter: `Note:1091:Can't DROP 'no_such';
+                    // check that column/key exists`).
+                    return Ok(already_with_warnings(
+                        detail,
+                        vec![(
+                            crate::real_tikv_ddl::DdlWarningLevel::Note,
+                            1091,
+                            format!("Can't DROP '{column}'; check that column/key exists"),
+                        )],
+                    ));
+                }
                 AlterColumnOutcome::Applied => {}
             }
             info.update_ts = start_ts;
@@ -9254,6 +9288,18 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         } => {
             auto_pre_split = *requested_auto_pre_split;
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // go's ADD PRIMARY KEY refuses a SECOND primary as 1068 BEFORE
+            // the name-duplicate check -- the existing `PRIMARY` index makes
+            // the name check answer 1061 instead (oracle g-alter: a second
+            // ADD PRIMARY KEY answers `Multiple primary key defined`).
+            if index.primary && find_index(stored, "PRIMARY").is_some() {
+                return Err(DdlPlanError::Admission(
+                    crate::table_info_build::DdlAdmissionError::with_code(
+                        1068,
+                        "Multiple primary key defined",
+                    ),
+                ));
+            }
             if let Some(existing) = find_index(stored, index.name.original()) {
                 let existing = existing.read();
                 if *if_not_exists {
@@ -9627,6 +9673,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 &from_charset,
                 &from_collate,
                 false,
+                "",
             )?;
 
             let mut info = stored.clone_like_go();
@@ -9649,6 +9696,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         &column_charset,
                         column.field_type.collation().name(),
                         is_column_with_index(&name, stored),
+                        &name,
                     )?;
                 }
             }
@@ -10086,6 +10134,7 @@ fn check_modify_charset_and_collation(
     from_charset: &str,
     from_collate: &str,
     rewrites_collation_data: bool,
+    column_name: &str,
 ) -> Result<(), DdlPlanError> {
     let valid = tidb_datatype::get_collation_by_name(to_collate)
         .is_ok_and(|info| info.charset_name.eq_ignore_ascii_case(to_charset));
@@ -10101,7 +10150,12 @@ fn check_modify_charset_and_collation(
     {
         return Err(unsupported_charset_change(
             8200,
-            format!("Unsupported modifying collation of column '{from_collate}' from '{from_collate}' to '{to_collate}'"),
+            // go `errors.Trace(ErrUnsupportedModifyCollation.GenWithStackByArgs(
+            // column, fromCollate, toCollate))`: the message names the
+            // COLUMN, then from/to, and the index qualifier.
+            format!(
+                "Unsupported converting collation of column '{column_name}' from '{from_collate}' to '{to_collate}' when index is defined on it."
+            ),
         ));
     }
     if matches!(
