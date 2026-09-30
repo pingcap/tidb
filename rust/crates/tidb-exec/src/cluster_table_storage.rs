@@ -1106,8 +1106,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     /// change's meta keys say the index exists and its data keys are what it
     /// contains, and a reader that saw the first without the second would get
     /// the wrong rows with no error. Ordering between the sets is not the
-    /// caller's business — the coordinator sorts and validates the whole
-    /// mutation set before prewrite.
+    /// caller's business: the native client derives the complete mutation set
+    /// from its MemDB before prewrite.
     ///
     /// # Errors
     ///
@@ -1117,35 +1117,19 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         buffer: &MutationBuffer,
         extra: Vec<BufferMutation>,
     ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
-        let already_staged = buffer.native_owner() == Some(self.start_ts);
-        // A native owner has already received the exact MemBuffer entries.
-        // Go's autocommit path hands that same buffer to the committer; do
-        // not materialize and encode a second mutation copy only to discard
-        // it below. The native transaction reads its own buffer during
-        // commit. `extra` is used only by restricted callers that append
-        // mutations outside the bound buffer.
-        let (mut mutations, extra_for_commit) = if already_staged {
-            (Vec::new(), extra)
-        } else {
-            let mut mutations = staged_mutations_from_entries(buffer.take_staged())
-                .map_err(coordinator_sql_error)?;
-            mutations.extend(extra);
-            (mutations, Vec::new())
-        };
-        let schema_lease = if already_staged {
-            schema_lease_for_keys(
-                self.schema_lease_checker.clone(),
-                buffer.staged_keys().iter().map(Key::as_bytes),
-            )
-        } else {
-            schema_lease_for(self.schema_lease_checker.clone(), &mutations)
-        };
-        let has_writes = if already_staged {
-            !buffer.is_empty() || !extra_for_commit.is_empty()
-        } else {
-            !mutations.is_empty()
-        };
-        if !has_writes {
+        // Go commits the same MemDB used by SQL. Transfer an unbound buffer
+        // intact, including tombstone flags and assertions; an empty SQL handle
+        // attaches to existing native lock metadata without replacing it.
+        self.bind_mutation_buffer(buffer);
+        let staged_keys = buffer.staged_keys();
+        let schema_lease = schema_lease_for_keys(
+            self.schema_lease_checker.clone(),
+            staged_keys
+                .iter()
+                .map(Key::as_bytes)
+                .chain(extra.iter().map(BufferMutation::key)),
+        );
+        if buffer.is_empty() && extra.is_empty() {
             let mut state = self
                 .state
                 .lock()
@@ -1153,9 +1137,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             finish_session_transaction(&mut state).map_err(storage_sql_error)?;
             return Ok(None);
         }
-        if already_staged {
-            mutations = extra_for_commit;
-        }
+        let mutations = extra;
         let state = {
             let mut state = self
                 .state
@@ -1782,33 +1764,6 @@ pub fn statement_storage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
     Ok((ClusterTableStorage::new(buffer, handle), snapshot))
 }
 
-/// Builds mutations from entries already detached from the session buffer.
-/// The autocommit path uses this ownership-preserving form so row and index
-/// bytes are handed to TiKV without a second clone; explicit transactions keep
-/// [`staged_mutations`] because their buffer remains live after each statement.
-fn staged_mutations_from_entries(
-    staged: Vec<(Key, Option<Vec<u8>>, bool)>,
-) -> Result<Vec<BufferMutation>, OptimisticCoordinatorError> {
-    let mut mutations = Vec::with_capacity(staged.len());
-    // Keys an INSERT staged presumed absent (`kv.SetPresumeKeyNotExists`)
-    // prewrite as Go's own lazy inserts do: `Op_Insert`, which TiKV rejects
-    // when a committed version of the key turns out to exist. This is the
-    // deferred duplicate check landing -- Go `DupKeyCheckLazy` under a
-    // pessimistic transaction reports 1062 from exactly this mechanism
-    // (`twoPhaseCommitter.initKeysAndMutations` typing presume keys as
-    // insert).
-    for (key, value, presumed_absent) in staged {
-        let mutation = match value {
-            Some(value) if presumed_absent => BufferMutation::insert(key.into_bytes(), value),
-            Some(value) => BufferMutation::set(key.into_bytes(), value),
-            None => BufferMutation::delete(key.into_bytes()),
-        }
-        .map_err(OptimisticCoordinatorError::Mutations)?;
-        mutations.push(mutation);
-    }
-    Ok(mutations)
-}
-
 /// Finds the table/index text that Go retained when a deferred insert marked a
 /// record key presumed absent. Both an `AlreadyExists` verdict and a
 /// `NotExist`-direction assertion the store refuted consume it: go reports
@@ -1911,16 +1866,6 @@ pub fn physical_table_ids(mutations: &[BufferMutation]) -> Vec<i64> {
     ids.sort_unstable();
     ids.dedup();
     ids
-}
-
-fn schema_lease_for(
-    checker: Option<Arc<dyn SchemaLeaseChecker>>,
-    mutations: &[BufferMutation],
-) -> Option<SchemaLease> {
-    checker.map(|checker| SchemaLease {
-        checker,
-        related_physical_table_ids: physical_table_ids(mutations),
-    })
 }
 
 /// Builds the same schema-lease table set from a native MemDB without

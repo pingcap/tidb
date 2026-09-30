@@ -136,6 +136,128 @@ pub type UnistoreSessionFactory = RealTiKvSessionFactory<
 type InProcessOpener =
     RealOptimisticTransactionOpener<InProcessClient, InProcessRegionLoader, InProcessPd>;
 
+#[cfg(test)]
+mod transaction_buffer_tests {
+    use super::*;
+    use tidb_exec::cluster_table_storage::SessionTransaction;
+    use tidb_executor::cluster_storage::MutationBuffer;
+    use tidb_txnkv::{transaction::BufferMutation, AssertionOp, Key, UnaryCallContext};
+
+    #[test]
+    fn unbound_session_commit_preserves_deleted_insert_constraint() {
+        let (_authority, _pd, opener) = in_process_write_stack().unwrap();
+        let call = UnaryCallContext::with_timeout(IN_PROCESS_TIMEOUT);
+        let key = Key::from_bytes(b"existing".to_vec());
+        let mut seed = opener.begin().unwrap();
+        seed.commit(
+            vec![BufferMutation::set(key.as_bytes(), b"original").unwrap()],
+            &call,
+        )
+        .unwrap();
+
+        let transaction = SessionTransaction::begin(
+            Arc::new(opener.clone()),
+            IN_PROCESS_TIMEOUT,
+            tidb_exec::session_commit_protocol::session_commit_protocol(),
+        )
+        .unwrap();
+        let buffer = MutationBuffer::new();
+        buffer
+            .stage_owned_batch([
+                (
+                    key.clone(),
+                    Some(b"replacement".to_vec()),
+                    true,
+                    AssertionOp::AssertUnknown,
+                ),
+                (key.clone(), None, false, AssertionOp::AssertNone),
+            ])
+            .unwrap();
+        buffer.mark_presume_key_not_exists_with_hint(&key, "existing", "PRIMARY");
+        let error = transaction
+            .commit(&buffer)
+            .expect_err("deleting a lazy insert must retain its native CheckNotExists mutation");
+        assert_eq!(error.code, 1062, "{error:?}");
+        let mut reader = opener.begin().unwrap();
+        assert_eq!(
+            reader.snapshot_get(key.as_bytes(), &call).unwrap().value,
+            Some(b"original".to_vec())
+        );
+        reader.finish_without_writes().unwrap();
+    }
+
+    #[test]
+    fn bound_session_commit_checks_tables_from_appended_mutations() {
+        use tidb_txnkv::transaction::{SchemaLeaseChecker, SchemaLeaseError};
+        #[derive(Default)]
+        struct CheckedTables(std::sync::Mutex<Vec<Vec<i64>>>);
+        impl SchemaLeaseChecker for CheckedTables {
+            fn check_by_schema_ver(&self, _: u64, tables: &[i64]) -> Result<(), SchemaLeaseError> {
+                self.0.lock().unwrap().push(tables.to_vec());
+                Ok(())
+            }
+        }
+        let (_authority, _pd, opener) = in_process_write_stack().unwrap();
+        let mut transaction = SessionTransaction::begin(
+            Arc::new(opener),
+            IN_PROCESS_TIMEOUT,
+            tidb_exec::session_commit_protocol::session_commit_protocol(),
+        )
+        .unwrap();
+        let checked = Arc::new(CheckedTables::default());
+        transaction.set_schema_lease_checker(checked.clone());
+        let buffer = MutationBuffer::new();
+        transaction.bind_mutation_buffer(&buffer);
+        let table_key = |id| {
+            tidb_tablecodec::table_key::encode_row_key_with_handle(
+                id,
+                &tidb_tablecodec::table_key::RecordHandle::Int(1),
+            )
+        };
+        buffer
+            .set(Key::from_bytes(table_key(10)), b"row".to_vec())
+            .unwrap();
+        transaction
+            .commit_with(
+                &buffer,
+                vec![BufferMutation::set(table_key(20), b"row").unwrap()],
+            )
+            .unwrap();
+        let tables = checked.0.lock().unwrap();
+        assert!(!tables.is_empty(), "commit must check the schema lease");
+        assert!(tables.iter().all(|ids| ids == &[10, 20]), "{tables:?}");
+    }
+
+    #[test]
+    fn restricted_session_commit_keeps_locks_when_attaching_an_empty_sql_handle() {
+        let (_authority, _pd, opener) = in_process_write_stack().unwrap();
+        let transaction = SessionTransaction::begin_pessimistic(
+            Arc::new(opener.clone()),
+            IN_PROCESS_TIMEOUT,
+            tidb_exec::session_commit_protocol::session_commit_protocol(),
+        )
+        .unwrap();
+        let key = b"locked".to_vec();
+        assert!(matches!(
+            transaction.lock_keys(vec![key.clone()]).unwrap(),
+            tidb_exec::cluster_table_storage::LockKeysOutcome::Locked { .. }
+        ));
+        transaction
+            .commit_with(
+                &MutationBuffer::new(),
+                vec![BufferMutation::set(key.clone(), b"value").unwrap()],
+            )
+            .unwrap();
+        let mut reader = opener.begin().unwrap();
+        let call = UnaryCallContext::with_timeout(IN_PROCESS_TIMEOUT);
+        assert_eq!(
+            reader.snapshot_get(&key, &call).unwrap().value,
+            Some(b"value".to_vec())
+        );
+        reader.finish_without_writes().unwrap();
+    }
+}
+
 fn in_process_write_stack() -> Result<
     (
         SharedReadAuthority<InProcessClient, InProcessRegionLoader>,

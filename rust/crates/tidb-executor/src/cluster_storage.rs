@@ -518,8 +518,9 @@ pub struct DuplicateKeyHint {
     pub key: String,
 }
 impl MutationBuffer {
-    /// Attach the SQL handle before the transaction starts locking. Pending
-    /// statement writes move into the same buffer the client will commit.
+    /// Attach SQL staging to the native transaction. Pending statement writes
+    /// must be attached before acquiring locks; an empty handle can also attach
+    /// to a transaction that already owns locks without replacing its MemDB.
     pub fn bind_native(&self, owner: u64, access: NativeMemBufferAccess) {
         let mut state = self.state();
         if state
@@ -536,11 +537,15 @@ impl MutationBuffer {
         ));
         assert!(
             access(&mut |buffer| {
-                assert!(
-                    buffer.is_empty(),
-                    "bind the SQL buffer before acquiring locks"
-                );
-                *buffer = local.take().unwrap();
+                if buffer.is_empty() {
+                    *buffer = local.take().unwrap();
+                } else {
+                    let local = local.as_ref().unwrap();
+                    assert!(
+                        local.is_empty() && local.stages().is_empty(),
+                        "bind pending SQL writes before acquiring locks"
+                    );
+                }
             }),
             "cannot bind a finished transaction"
         );
@@ -728,26 +733,6 @@ impl MutationBuffer {
             .read(|buffer| (buffer.size(), buffer.len()))
     }
 
-    /// Copies staged values, tombstones and current absence flags.
-    pub fn snapshot_staged(&self) -> Vec<(Key, Option<Vec<u8>>, bool)> {
-        // Client-go keeps flags on the authoritative buffer until transaction end.
-        self.state().entries(None, None)
-    }
-    /// Consumes staged values and tombstones.
-    pub fn take_snapshot(&self) -> Vec<(Key, Option<Vec<u8>>)> {
-        self.take_staged()
-            .into_iter()
-            .map(|(k, v, _)| (k, v))
-            .collect()
-    }
-    /// Consumes staged values with their absence flags.
-    pub fn take_staged(&self) -> Vec<(Key, Option<Vec<u8>>, bool)> {
-        let mut state = self.state();
-        let entries = state.entries(None, None);
-        state.memdb.reset();
-        state.changes.clear();
-        entries
-    }
     /// Go LazyTxn.KeysNeedToLock reads the native statement stage, including flags.
     pub fn pessimistic_keys_since(&self, checkpoint: BufferCheckpoint) -> Vec<Vec<u8>> {
         if checkpoint.native == 0 {
@@ -1577,6 +1562,32 @@ mod tests {
     }
 
     #[test]
+    fn binding_an_empty_sql_handle_preserves_native_lock_metadata() {
+        use tikv_client::kv::FlagsOp;
+        let buffer = MutationBuffer::new();
+        let native = Arc::new(Mutex::new(
+            tikv_client::transaction::unionstore::MemDb::default(),
+        ));
+        native.lock().unwrap().update_flags(
+            b"locked",
+            &[FlagsOp::SetKeyLocked, FlagsOp::SetAssertUnknown],
+        );
+        buffer.bind_native(42, {
+            let native = native.clone();
+            Arc::new(move |visit| {
+                visit(&mut native.lock().unwrap());
+                true
+            })
+        });
+        buffer.set(key(b"locked"), b"value".to_vec()).unwrap();
+        let native = native.lock().unwrap();
+        let flags = native.get_flags_readonly(b"locked").unwrap();
+        assert!(flags.has_locked());
+        assert!(flags.has_assert_unknown());
+        assert_eq!(native.get_readonly(b"locked").unwrap(), b"value");
+    }
+
+    #[test]
     fn completed_statement_scopes_release_without_losing_outer_savepoints() {
         let buffer = MutationBuffer::new();
         let key = Key::from_bytes(b"key".to_vec());
@@ -1850,26 +1861,27 @@ mod tests {
         assert_eq!(store.get(&key(b"b")), Err(StorageError::NotFound));
     }
 
-    /// Go's autocommit commit path consumes its MemBuffer entries. The Rust
-    /// hand-off must preserve both key order and tombstones while leaving all
-    /// cloned table handles empty, so publication does not clone each row a
-    /// second time.
     #[test]
-    fn taking_the_buffer_snapshot_moves_entries_without_changing_shape() {
+    fn transferring_the_native_buffer_keeps_tombstones_and_assertions() {
         let buffer = MutationBuffer::new();
         buffer.set(key(b"b"), b"value".to_vec()).unwrap();
-        buffer.delete(key(b"a")).unwrap();
-        let entries = buffer.take_snapshot();
-        assert_eq!(
-            entries
-                .into_iter()
-                .map(|(key, value)| (key.as_bytes().to_vec(), value))
-                .collect::<Vec<_>>(),
-            vec![
-                (b"a".to_vec(), None),
-                (b"b".to_vec(), Some(b"value".to_vec())),
-            ]
-        );
+        buffer
+            .stage_owned_batch([
+                (
+                    key(b"a"),
+                    Some(b"insert".to_vec()),
+                    true,
+                    tidb_txnkv::AssertionOp::AssertUnknown,
+                ),
+                (key(b"a"), None, false, tidb_txnkv::AssertionOp::AssertNone),
+            ])
+            .unwrap();
+        let native = buffer.take_native_buffer();
+        assert_eq!(native.get_readonly(b"b").unwrap(), b"value");
+        assert!(native.get_readonly(b"a").unwrap().is_empty());
+        let flags = native.get_flags_readonly(b"a").unwrap();
+        assert!(flags.has_presume_key_not_exists());
+        assert!(flags.has_assert_unknown());
         assert!(buffer.is_empty());
     }
 
