@@ -241,6 +241,7 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 
 	maxNumParam := getMaxParamLimit(sctx)
 	var tableNames []*ast.TableName
+	var updateAssignments []*ast.Assignment
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, x)
@@ -257,6 +258,9 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 		tableNames, ok, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
 		if !ok {
 			return ok, reason
+		}
+		if len(tableNames) == 1 {
+			updateAssignments = x.List
 		}
 	case *ast.InsertStmt:
 		if len(x.TableHints) > 0 {
@@ -307,11 +311,9 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
 	checker.reset(sctx, is, tableNames, maxNumParam)
-	if update, ok := node.(*ast.UpdateStmt); ok && len(tableNames) == 1 {
-		for _, assignment := range update.List {
-			if checker.isSupportedCoalesceAssignment(assignment) {
-				checker.coalesceAssignments = append(checker.coalesceAssignments, assignment.Expr.(*ast.FuncCallExpr))
-			}
+	for _, assignment := range updateAssignments {
+		if checker.isSupportedCoalesceAssignment(assignment) {
+			checker.coalesceAssignments = append(checker.coalesceAssignments, assignment.Expr.(*ast.FuncCallExpr))
 		}
 	}
 
