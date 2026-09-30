@@ -605,7 +605,8 @@ Out of scope here, each with a home:
 | BR | None. Backs up and restores bytes and metadata without interpreting column values. |
 | Dumpling, Lightning | Geometry dumps as MySQL's binary format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged. A column holding Z/M values cannot be dumped that way, since MySQL has no form for them and a bare `SELECT` errors; those need `ST_AsEWKB` and an `ST_GeomFromEWKB(0x...)` literal, which is Dumpling work and TiDB-only output. An SRID outside 0 and 4326 needs none of that, since it round-trips on the bare path unchanged. |
 | DM | Replicating MySQL into TiDB carries geometry in MySQL's binary format, since the binlog row image is the same bytes MySQL stores and returns, and that is exactly what the bare ingest path takes. DM itself needs no change; the conversion is TiDB-side and rewrites only the header. This is the migration case the bare path is chosen for. |
-| TiFlash, TiCDC | Not pass-through, and for a different reason than the tools above: both read the stored value from the KV layer rather than through the SQL layer, so they see the format-version byte and EWKB, not MySQL's format. TiCDC into a MySQL sink therefore has to convert before it emits, and TiFlash has to learn the type before it can replicate at all. Both are separate work; until then a table with a geometry column should not be assumed replicable to TiFlash. |
+| TiCDC | Not pass-through: it reads the stored value from the KV layer, so it sees the format-version byte and EWKB. It converts to MySQL's binary format before it emits, as the bare path does; a Z/M value has no MySQL form and fails the changefeed. |
+| TiFlash | Not supported in v1. Setting a TiFlash replica on a table with a geometry column is rejected, and so is adding a geometry column to a table that has one, as TiDB already does for a `gbk` column. |
 | Upgrade | Additive: the type does not exist in earlier releases, so no existing schema or query changes behavior. |
 | Downgrade | A release without the type cannot read a table that has a geometry column, so those columns must be dropped first, an ordinary `DROP COLUMN`. |
 
@@ -671,9 +672,9 @@ decision were quietly undone.
 - Dumpling/Lightning round-trip of a table with geometry columns, and BR pass-through, both
   over the bare path. TiCDC is not pass-through and gets its own test: a changefeed into a
   MySQL sink must convert the stored value to MySQL's binary format, so the sink is
-  byte-compared against the source. TiFlash is a separate gating test: replicating a table
-  with a geometry column is rejected rather than silently wrong, and behavior is unaffected
-  when TiFlash is absent.
+  byte-compared against the source. TiFlash is a separate gating test: a replica on a table
+  with a geometry column and a geometry column added to a table with a replica are both
+  rejected, and behavior is unaffected when TiFlash is absent.
 - Parser, DDL, planner and executor as listed in Compatibility.
 - Upgrade and downgrade paths.
 
