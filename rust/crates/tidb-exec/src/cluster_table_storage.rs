@@ -193,28 +193,25 @@ pub fn mutation_buffer_from_mutations(mutations: Vec<OptimisticMutation>) -> Mut
 pub fn stage_mutations(buffer: &MutationBuffer, mutations: Vec<OptimisticMutation>) {
     use tidb_txnkv::transaction::OptimisticMutationKind;
 
-    for mutation in mutations {
-        let key = Key::from_bytes(mutation.key().to_vec());
-        match mutation.kind() {
+    buffer.stage_owned_batch(mutations.into_iter().filter_map(|mutation| {
+        let (kind, raw_key, value) = mutation.into_parts();
+        let key = Key::from_bytes(raw_key);
+        match kind {
             OptimisticMutationKind::Delete
             | OptimisticMutationKind::IndexDelete
             | OptimisticMutationKind::MetaDelete
-            | OptimisticMutationKind::SystemRowDelete => buffer.delete(key),
+            | OptimisticMutationKind::SystemRowDelete => Some((key, None, false)),
             OptimisticMutationKind::Insert | OptimisticMutationKind::UniqueIndexInsert => {
-                buffer.set(key.clone(), mutation.value().to_vec());
-                buffer.mark_presume_key_not_exists(&key);
+                Some((key, Some(value), true))
             }
             OptimisticMutationKind::PutExisting
             | OptimisticMutationKind::IndexPut
             | OptimisticMutationKind::MetaPut
-            | OptimisticMutationKind::SystemRowPut => {
-                buffer.set(key, mutation.value().to_vec());
-            }
-            OptimisticMutationKind::LockOnly => {}
+            | OptimisticMutationKind::SystemRowPut => Some((key, Some(value), false)),
+            OptimisticMutationKind::LockOnly => None,
         }
-    }
+    }));
 }
-
 /// Go `KeyNeedToLock` (`pkg/session/txn.go`), reduced as
 /// [`pessimistic_lock_delta`]'s doc describes, over the same ported
 /// classifiers Go reads (`tablecodec.IsRecordKey` / `IsIndexKey` /
@@ -1290,8 +1287,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         // the commit set. This transaction is consumed by this method too, so
         // move the staged key/value ownership instead of cloning every value
         // on the explicit COMMIT hot path.
-        let (mut mutations, _) = staged_mutations_from_entries(buffer.take_staged())
-            .map_err(coordinator_sql_error)?;
+        let (mut mutations, _) =
+            staged_mutations_from_entries(buffer.take_staged()).map_err(coordinator_sql_error)?;
         let schema_lease = schema_lease_for(self.schema_lease_checker.clone(), &mutations);
         if mutations.is_empty() {
             let mut state = self

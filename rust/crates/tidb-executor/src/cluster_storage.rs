@@ -386,6 +386,22 @@ impl MutationBuffer {
         self.state().stage(key, Some(value));
     }
 
+    /// Stages a batch of owned entries while holding the buffer lock once.
+    /// Statement execution owns this batch already; keeping one critical
+    /// section matches Go's single-threaded MemBuffer staging path.
+    pub fn stage_owned_batch<I>(&self, writes: I)
+    where
+        I: IntoIterator<Item = (Key, Option<Vec<u8>>, bool)>,
+    {
+        let mut state = self.state();
+        for (key, write, presume_not_exists) in writes {
+            state.stage(key.clone(), write);
+            if presume_not_exists {
+                state.mark_presume(&key);
+            }
+        }
+    }
+
     /// Stages a delete as a tombstone, so the read path stops seeing the
     /// snapshot's value for the key.
     pub fn delete(&self, key: Key) {
@@ -529,16 +545,20 @@ impl MutationBuffer {
     #[must_use]
     pub fn write_details(&self) -> (usize, usize) {
         let state = self.state();
-        state.entries.iter().fold((0usize, 0usize), |(bytes, keys), (key, entry)| {
-            let Some(write) = entry.write.as_ref() else {
-                return (bytes, keys);
-            };
-            (
-                bytes.saturating_add(key.as_bytes().len())
-                    .saturating_add(write.as_ref().map_or(0, Vec::len)),
-                keys.saturating_add(1),
-            )
-        })
+        state
+            .entries
+            .iter()
+            .fold((0usize, 0usize), |(bytes, keys), (key, entry)| {
+                let Some(write) = entry.write.as_ref() else {
+                    return (bytes, keys);
+                };
+                (
+                    bytes
+                        .saturating_add(key.as_bytes().len())
+                        .saturating_add(write.as_ref().map_or(0, Vec::len)),
+                    keys.saturating_add(1),
+                )
+            })
     }
 
     #[must_use]

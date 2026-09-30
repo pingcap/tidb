@@ -199,6 +199,14 @@ impl OptimisticMutation {
         &self.value
     }
 
+    /// Consumes the mutation and returns its operation and owned payload.
+    /// Session staging uses this to hand mutation ownership to the Go-shaped
+    /// MemBuffer without cloning every key and value.
+    #[must_use]
+    pub fn into_parts(self) -> (OptimisticMutationKind, Vec<u8>, Vec<u8>) {
+        (self.kind, self.key, self.value)
+    }
+
     pub(super) fn to_proto(&self) -> KvrpcMutation {
         let (op, assertion) = match self.kind {
             OptimisticMutationKind::Insert => (KvrpcOp::Insert, KvrpcAssertion::NotExist),
