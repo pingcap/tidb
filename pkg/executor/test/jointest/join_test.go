@@ -17,6 +17,7 @@ package jointest
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1513,6 +1514,10 @@ ORDER BY IF(ISNULL(col_14),0,1),col_14;`).Sort().Check(testkit.Rows("1984-06-10 
 }
 
 func TestIssue49033(t *testing.T) {
+	val := runtime.GOMAXPROCS(1)
+	defer func() {
+		runtime.GOMAXPROCS(val)
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
