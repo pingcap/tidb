@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
 	clientutil "github.com/tikv/client-go/v2/util"
@@ -643,6 +645,94 @@ func TestStmtSummaryHistoryOpenEndedTimeRange(t *testing.T) {
 		"history_early 2022-12-27 10:00:00",
 		"history_middle 2022-12-27 14:00:00",
 	))
+}
+
+// TestStmtSummaryHistoryPreparedTimeRange exercises Dashboard's real prepared
+// query through the persistent reader, including the binary parameter API.
+func TestStmtSummaryHistoryPreparedTimeRange(t *testing.T) {
+	defer config.RestoreFunc()()
+	dir := t.TempDir()
+	filename := filepath.Join(dir, "tidb-statements.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filename
+		conf.Instance.StmtSummaryEnablePersistent = true
+	})
+	require.NoError(t, stmtsummaryv2.Setup(&stmtsummaryv2.Config{Filename: filename}))
+	defer stmtsummaryv2.Close()
+
+	const begin = int64(1672106400) // 2022-12-27 02:00:00 UTC
+	for i := range 3 {
+		start := begin + int64(i)*3600
+		end := start + 600
+		name := time.Unix(end, 0).In(time.Local).Format("2006-01-02T15-04-05.000")
+		path := filepath.Join(dir, "tidb-statements-"+name+".log")
+		content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"window%d\",\"exec_count\":1}\n", start, end, i)
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	const query = "select digest, sum(exec_count) from information_schema.statements_summary_history where summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?) group by digest order by digest"
+	tk.MustExec("prepare stmt from '" + query + "'")
+	var scans, parses atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/stmtsummary/v2/stmtSummaryHistoryScanFile", func(string) {
+		scans.Add(1)
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/stmtsummary/v2/stmtSummaryHistoryParseRecord", func() {
+		parses.Add(1)
+	})
+
+	for _, cache := range []int{1, 0} {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %d", cache))
+		for _, tz := range []string{"+00:00", "+09:00"} {
+			tk.MustExec("set time_zone = '" + tz + "'")
+			for _, i := range []int{1, 0, 2, 1} {
+				start := begin + int64(i)*3600
+				// The exact boundary overlaps the persisted window at its end.
+				for _, bounds := range [][2]int64{{start + 600, start}, {start + 600, start + 600}} {
+					end, start := bounds[0], bounds[1]
+					tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", end, start))
+					scans.Store(0)
+					parses.Store(0)
+					prepared := tk.MustQuery("execute stmt using @end, @begin").Rows()
+					require.Equal(t, int64(1), scans.Load(), "cache=%d tz=%s window=%d", cache, tz, i)
+					require.Equal(t, int64(1), parses.Load())
+					require.Equal(t, testkit.Rows(fmt.Sprintf("window%d 1", i)), prepared)
+					scans.Store(0)
+					parses.Store(0)
+					tk.MustQuery(query, end, start).Check(prepared)
+					require.Equal(t, int64(1), scans.Load(), "binary prepared execution")
+					// Disable predicate extraction to compare with a genuine full scan.
+					testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+					scans.Store(0)
+					parses.Store(0)
+					tk.MustQuery("execute stmt using @end, @begin").Check(prepared)
+					require.Equal(t, int64(3), scans.Load(), "unpruned baseline")
+					require.Equal(t, int64(3), parses.Load())
+					testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+				}
+			}
+			tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", begin-1, begin-600))
+			scans.Store(0)
+			parses.Store(0)
+			tk.MustQuery("execute stmt using @end, @begin").Check(testkit.Rows())
+			require.Zero(t, scans.Load(), "nonoverlapping time range")
+			require.Zero(t, parses.Load())
+			tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", begin, begin+7200))
+			tk.MustQuery("execute stmt using @end, @begin").Check(testkit.Rows())
+			tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", begin+600, begin))
+			tk.MustQuery("execute stmt using @end, @begin").Check(testkit.Rows("window0 1"))
+			tk.MustQuery(query, fmt.Sprint(begin+600), fmt.Sprint(begin)).Check(testkit.Rows("window0 1"))
+			tk.MustExec("set @end = null, @begin = null")
+			tk.MustQuery("execute stmt using @end, @begin").Check(testkit.Rows())
+			// Missing time predicates still scan all retained files.
+			scans.Store(0)
+			parses.Store(0)
+			tk.MustQuery("select distinct digest from information_schema.statements_summary_history where digest like 'window%' order by digest").Check(testkit.Rows("window0", "window1", "window2"))
+			require.Equal(t, int64(3), scans.Load())
+		}
+	}
+	t.Log("Prepared range: 1 file scanned / 1 record parsed; unpruned baseline: 3 files / 3 records; no match: 0 / 0. File-header reads are not counted.")
 }
 
 func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
