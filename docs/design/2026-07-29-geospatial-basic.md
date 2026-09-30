@@ -7,8 +7,8 @@
 ## Table of Contents
 
 * [Introduction](#introduction)
-* [Terminology](#terminology)
 * [Motivation or Background](#motivation-or-background)
+* [Terminology](#terminology)
 * [Detailed Design](#detailed-design)
     * [Types and storage](#types-and-storage)
     * [SRID model](#srid-model)
@@ -40,12 +40,15 @@
 
 ## Introduction
 
-This document proposes **basic geospatial support** for TiDB: a MySQL-compatible
-`GEOMETRY` type family, per-column [`SRID`](#terminology), versioned
-[EWKB](#terminology) storage, and the minimal `ST_*` function set, including the
-[DE-9IM](#terminology) predicates, that makes geometry storable, readable and queryable.
-It covers **SRID 0** (Cartesian plane) and **SRID 4326**
-([WGS 84](#terminology) geographic).
+This document proposes **basic geospatial support** for TiDB, MySQL-compatible, making
+geometry storable, readable and queryable.
+
+- **Types.** The `GEOMETRY` column type and its subtypes, with support for
+  [`SRID`](#terminology) 0 and 4326 (to be extended later).
+- **Storage.** `<version byte = 1>` + [EWKB](#terminology).
+- **Functions.** The minimal `ST_*` set, including the [DE-9IM](#terminology) predicates.
+- **Algorithms.** The same distance and relate algorithms as MySQL, so results are as
+  compatible as possible.
 
 This basic design does not cover **indexing** on `GEOMETRY` types, which is designed in
 [PR #69473](https://github.com/pingcap/tidb/pull/69473) and which builds on this layer.
@@ -60,6 +63,28 @@ later, both towards better MySQL compatibility and beyond MySQL.
 
 MySQL behaviors and measurements below were verified against running 8.4.6 and 9.7.2, and
 against the proof of concept, [PR #69475](https://github.com/pingcap/tidb/pull/69475).
+
+## Motivation or Background
+
+TiDB is often used as unified storage because of the scalable storage,
+vector search, HTAP and FTS capabilities.
+
+Geospatial support would be a good addition to this, making this an even stronger option
+for unified storage.
+
+TiDB is used in companies that do package delivery, ride services, etc.
+where geospatial data is used in various places.
+
+Geospatial support is one of the most requested TiDB features: [tracking issue #6347](https://github.com/pingcap/tidb/issues/6347)
+carries `feature/accepted` and ranks among the top open issues by reactions. The dominant workload
+is storing a location per row and answering "what is near me", "which region contains this
+point", or "what overlaps this box". Bike-share, ride-hailing, parcel delivery and asset
+tracking all reduce to points plus proximity and geofence queries.
+
+TiDB has none of it today: only the `mysql.TypeGeometry` constant exists
+(`pkg/parser/mysql/type.go`), with no value representation and no `ST_*` functions, so
+users encode geometry into scalar columns by hand and compute distances in the
+application. This design covers the basic layer only.
 
 ## Terminology
 
@@ -83,28 +108,6 @@ against the proof of concept, [PR #69475](https://github.com/pingcap/tidb/pull/6
 | [S2](http://s2geometry.io/) | Google's spherical-geometry library. Its shapes live on a sphere, so its edges are great circles, not ellipsoidal geodesics; used here for the 4326 point-in-polygon refine. |
 | [PROJ](https://proj.org/) | The reprojection library that arbitrary-SRS transforms would need; out of scope. |
 | [PostGIS](https://postgis.net/) | The PostgreSQL spatial extension. Not a compatibility target; the delta is in [the appendix](#appendix-postgis-delta-for-the-type-layer). |
-
-## Motivation or Background
-
-TiDB is often used as unified storage because of the scalable storage,
-vector search, HTAP and FTS capabilities.
-
-Geospatial support would be a good addition to this, making this an even stronger option
-for unified storage.
-
-TiDB is used in companies that do package delivery, ride services, etc.
-where geospatial data is used in various places.
-
-Geospatial support is one of the most requested TiDB features: [tracking issue #6347](https://github.com/pingcap/tidb/issues/6347)
-carries `feature/accepted` and ranks among the top open issues by reactions. The dominant workload
-is storing a location per row and answering "what is near me", "which region contains this
-point", or "what overlaps this box". Bike-share, ride-hailing, parcel delivery and asset
-tracking all reduce to points plus proximity and geofence queries.
-
-TiDB has none of it today: only the `mysql.TypeGeometry` constant exists
-(`pkg/parser/mysql/type.go`), with no value representation and no `ST_*` functions, so
-users encode geometry into scalar columns by hand and compute distances in the
-application. This design covers the basic layer only.
 
 ## Detailed Design
 
