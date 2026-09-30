@@ -34,10 +34,10 @@ type ActiveProducerChecker interface {
 // Config configures an orphan data Monitor.
 type Config struct {
 	ActiveProducerChecker ActiveProducerChecker
-	// StorageURI returns the cloud storage URI to scan. It is a function so the
-	// monitor reads the latest value, which may change with the system variable.
-	StorageURI func() string
-	Logger     *zap.Logger
+	// GetStorageURI returns the cloud storage URI to scan. The monitor calls it
+	// on every run, so it reads the latest value of the system variable.
+	GetStorageURI func() string
+	Logger        *zap.Logger
 }
 
 type noActiveProducerChecker struct{}
@@ -64,8 +64,8 @@ func NewMonitor(cfg Config) *Monitor {
 	if cfg.ActiveProducerChecker == nil {
 		cfg.ActiveProducerChecker = noActiveProducerChecker{}
 	}
-	if cfg.StorageURI == nil {
-		cfg.StorageURI = func() string { return "" }
+	if cfg.GetStorageURI == nil {
+		cfg.GetStorageURI = func() string { return "" }
 	}
 	return &Monitor{
 		cfg:          cfg,
@@ -85,7 +85,7 @@ func newStore(ctx context.Context, uri string) (storeapi.Storage, error) {
 // synchronously and is not safe for concurrent use: the scheduler cleanup loop
 // calls it serially from its own goroutine, which also owns cancellation.
 func (m *Monitor) Trigger(ctx context.Context) {
-	storageURI := m.cfg.StorageURI()
+	storageURI := m.cfg.GetStorageURI()
 	if storageURI == "" {
 		return
 	}

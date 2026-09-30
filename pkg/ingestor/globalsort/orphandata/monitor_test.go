@@ -133,7 +133,7 @@ func TestMonitor(t *testing.T) {
 				checks++
 				return false, nil
 			}),
-			StorageURI: staticURI("memstore:///orphandata"),
+			GetStorageURI: staticURI("memstore:///orphandata"),
 		})
 		m.storeFactory = func(_ context.Context, uri string) (storeapi.Storage, error) {
 			require.Equal(t, "memstore:///orphandata", uri)
@@ -150,7 +150,7 @@ func TestMonitor(t *testing.T) {
 		index := 0
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-			StorageURI: func() string {
+			GetStorageURI: func() string {
 				return uris[index]
 			},
 		})
@@ -172,7 +172,7 @@ func TestMonitor(t *testing.T) {
 		factoryCalls := 0
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return true, nil }),
-			StorageURI:            staticURI("s3://bucket/prefix"),
+			GetStorageURI:         staticURI("s3://bucket/prefix"),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			factoryCalls++
@@ -192,7 +192,7 @@ func TestMonitor(t *testing.T) {
 		factoryCalls := 0
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, errors.New("first gate failed") }),
-			StorageURI:            staticURI("s3://bucket/prefix"),
+			GetStorageURI:         staticURI("s3://bucket/prefix"),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			factoryCalls++
@@ -216,7 +216,7 @@ func TestMonitor(t *testing.T) {
 				calls++
 				return false, nil
 			}),
-			StorageURI: staticURI(""),
+			GetStorageURI: staticURI(""),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			factoryCalls++
@@ -236,7 +236,7 @@ func TestMonitor(t *testing.T) {
 		const uri = "s3:///missing-bucket?access-key=invalid-ak&secret-access-key=invalid-sk&session-token=invalid-token"
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-			StorageURI:            staticURI(uri),
+			GetStorageURI:         staticURI(uri),
 		})
 
 		m.Trigger(context.Background())
@@ -258,7 +258,7 @@ func TestMonitor(t *testing.T) {
 		)
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-			StorageURI:            staticURI(uri),
+			GetStorageURI:         staticURI(uri),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return nil, fmt.Errorf("injected creation leaked fragments %s %s %s", accessKey, secretKey, sessionToken)
@@ -281,7 +281,7 @@ func TestMonitor(t *testing.T) {
 		)
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-			StorageURI:            staticURI(uri),
+			GetStorageURI:         staticURI(uri),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return nil, errors.New("malformed factory failure")
@@ -302,7 +302,7 @@ func TestMonitor(t *testing.T) {
 		store := &monitorStorage{Storage: objstore.NewMemStorage()}
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-			StorageURI:            staticURI("memstore:///orphandata"),
+			GetStorageURI:         staticURI("memstore:///orphandata"),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -335,7 +335,7 @@ func TestMonitor(t *testing.T) {
 		}
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-			StorageURI:            staticURI(uri),
+			GetStorageURI:         staticURI(uri),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -369,7 +369,7 @@ func TestMonitor(t *testing.T) {
 		store := &monitorStorage{Storage: objstore.NewMemStorage()}
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-			StorageURI:            staticURI(uri),
+			GetStorageURI:         staticURI(uri),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -401,7 +401,7 @@ func TestMonitor(t *testing.T) {
 				}
 				return true, nil
 			}),
-			StorageURI: staticURI("memstore:///orphandata"),
+			GetStorageURI: staticURI("memstore:///orphandata"),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -445,7 +445,7 @@ func TestMonitor(t *testing.T) {
 				}
 				return false, errors.New("second gate failed")
 			}),
-			StorageURI: staticURI("memstore:///orphandata"),
+			GetStorageURI: staticURI("memstore:///orphandata"),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -492,7 +492,7 @@ func TestMonitor(t *testing.T) {
 			}
 			m := newTestMonitor(t, Config{
 				ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-				StorageURI:            staticURI(testCase.uri),
+				GetStorageURI:         staticURI(testCase.uri),
 			})
 			m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 				return store, nil
@@ -520,7 +520,7 @@ func TestMonitor(t *testing.T) {
 				checks++
 				return false, c.Err()
 			}),
-			StorageURI: staticURI("memstore:///orphandata"),
+			GetStorageURI: staticURI("memstore:///orphandata"),
 		})
 
 		m.Trigger(ctx)
@@ -537,7 +537,7 @@ func TestMonitor(t *testing.T) {
 		store := &monitorStorage{Storage: objstore.NewMemStorage()}
 		m := newTestMonitor(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
-			StorageURI:            staticURI("memstore:///orphandata"),
+			GetStorageURI:         staticURI("memstore:///orphandata"),
 		})
 		store.walkFn = func(context.Context) error {
 			cancel()
@@ -573,7 +573,7 @@ func TestMonitor(t *testing.T) {
 				cancel()
 				return false, context.Canceled
 			}),
-			StorageURI: staticURI("memstore:///orphandata"),
+			GetStorageURI: staticURI("memstore:///orphandata"),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
@@ -605,7 +605,7 @@ func TestMonitor(t *testing.T) {
 				cancel()
 				return false, nil
 			}),
-			StorageURI: staticURI("memstore:///orphandata"),
+			GetStorageURI: staticURI("memstore:///orphandata"),
 		})
 		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
 			return store, nil
