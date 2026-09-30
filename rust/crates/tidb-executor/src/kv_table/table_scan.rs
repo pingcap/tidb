@@ -1178,8 +1178,8 @@ impl KvTable {
     fn table_reader_handle_ranges(
         handles: &[TableHandle],
     ) -> Result<(Vec<IndexRange>, Vec<usize>), KvTableError> {
-        let mut sorted = handles.to_vec();
-        sorted.sort();
+        let mut sorted: Vec<&TableHandle> = handles.iter().collect();
+        sorted.sort_unstable();
         let mut ranges: Vec<IndexRange> = Vec::with_capacity(sorted.len());
         let mut hints = Vec::with_capacity(sorted.len());
         for handle in sorted {
@@ -1192,13 +1192,13 @@ impl KvTable {
                 (Some(range), Some(previous))
                     if range.high.first() == Some(&Datum::Int(previous)) =>
                 {
-                    range.high = vec![Datum::Int(value)];
+                    range.high = vec![Datum::Int(*value)];
                     *hints.last_mut().expect("every range has a hint") += 1;
                 }
                 _ => {
                     ranges.push(IndexRange {
-                        low: vec![Datum::Int(value)],
-                        high: vec![Datum::Int(value)],
+                        low: vec![Datum::Int(*value)],
+                        high: vec![Datum::Int(*value)],
                         low_exclusive: false,
                         high_exclusive: false,
                     });
