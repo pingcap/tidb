@@ -47,11 +47,11 @@ use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
     aggregate_result_columns, aggregate_result_field_types, complete_real_tikv_query,
     configured_catalog, default_cursor_memory, emit_connections_startup_failure,
-    execute_cluster_ddl, lightweight_ddl_statement_context, parse_set_time_zone,
+    execute_cluster_ddl, execute_storage_session_set, lightweight_ddl_statement_context,
     point_read_result_field_types, prepared_bind_sql_error, read_error_sql_error,
     refusal_aware_error, refusal_aware_prepared_plan_error, run_with_process_shutdown,
-    served_table_descriptor, shape_prepared_point_read_result, time_zone_sql_error,
-    RealTiKvSessionTimeZone, RunConfiguredNodeError, CURSOR_INIT_CHUNK_SIZE, CURSOR_MAX_CHUNK_SIZE,
+    served_table_descriptor, shape_prepared_point_read_result, RealTiKvSessionTimeZone,
+    RunConfiguredNodeError, CURSOR_INIT_CHUNK_SIZE, CURSOR_MAX_CHUNK_SIZE,
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
@@ -234,6 +234,7 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             context,
             max_topn_rows: self.max_topn_rows,
             time_zone: RealTiKvSessionTimeZone::default(),
+            variables: tidb_session::Session::new(),
             cursor_memory,
             statement_warnings: Vec::new(),
             statement_message: None,
@@ -263,6 +264,7 @@ pub struct RealTiKvMultiServerSession {
     /// and into `TIMESTAMP` write literals, mirroring the single-table
     /// session's own `time_zone` field (`RealTiKvServerSession`).
     time_zone: RealTiKvSessionTimeZone,
+    variables: tidb_session::Session,
     cursor_memory: tidb_executor::SessionMemory,
     statement_warnings: Vec<ConfiguredWriteWarning>,
     /// The OK-packet info text the most recently completed write composed
@@ -500,15 +502,20 @@ impl QuerySession for RealTiKvMultiServerSession {
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
         self.last_affected_rows = 0;
         let _process_statement = self._process.statement_started(sql, "", "autocommit");
-        // `SET time_zone` updates this session's own zone rather than reaching
-        // storage: every subsequent read from either relation and every
-        // `TIMESTAMP` write literal consult it from here on, mirroring
-        // `RealTiKvServerSession::execute_write`.
-        if let Some(value) = parse_set_time_zone(sql) {
-            let parsed =
-                RealTiKvSessionTimeZone::parse(value.trim()).map_err(time_zone_sql_error)?;
-            self.reader.set_time_zone(&parsed.zone());
-            self.time_zone = parsed;
+        if execute_storage_session_set(&mut self.variables, sql)? {
+            self.statement_message = None;
+            self.statement_warnings = self
+                .variables
+                .warnings()
+                .iter()
+                .map(|warning| ConfiguredWriteWarning {
+                    code: warning.code,
+                    message: warning.message.clone(),
+                })
+                .collect();
+            let zone = self.variables.vars().session_time_zone();
+            self.reader.set_time_zone(&zone);
+            self.time_zone = RealTiKvSessionTimeZone::from_zone(zone);
             return Ok(Some(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,

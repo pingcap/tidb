@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use tidb_datatype::{Datum, Time};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::ClusterCatalog;
 use crate::cluster_catalog::MetaSnapshot;
@@ -85,7 +85,7 @@ impl From<RowEncodeError> for SysvarWriteError {
 #[derive(Debug, Default)]
 pub struct SysvarWritePlan {
     /// The mutations, in no particular order (they touch distinct keys).
-    pub mutations: Vec<OptimisticMutation>,
+    pub mutations: Vec<BufferMutation>,
     /// The variable names this plan actually changed (a stored value that
     /// already equals what `desired` wants is not listed).
     pub changed: Vec<String>,
@@ -268,10 +268,10 @@ fn publish_row_id_watermark(
     catalog: &ClusterCatalog,
     table: &TableInfo,
     last_used: i64,
-    mutations: &mut Vec<OptimisticMutation>,
+    mutations: &mut Vec<BufferMutation>,
 ) -> Result<(), SysvarWriteError> {
     mutations.push(
-        OptimisticMutation::meta_put(
+        BufferMutation::set(
             key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
             value::encode_int_value(last_used),
         )
@@ -285,8 +285,8 @@ fn publish_row_id_watermark(
 /// `Mutator.SetMetadataLock`): `"1"` or `"0"` at the `metadataLock` key, so a
 /// restarting peer re-initialises the flag from the value the cluster last
 /// set rather than a stale one.
-pub fn metadata_lock_mutation(enable: bool) -> Result<OptimisticMutation, SysvarWriteError> {
-    OptimisticMutation::meta_put(
+pub fn metadata_lock_mutation(enable: bool) -> Result<BufferMutation, SysvarWriteError> {
+    BufferMutation::set(
         key::metadata_lock_kv_key(),
         if enable { b"1".to_vec() } else { b"0".to_vec() },
     )

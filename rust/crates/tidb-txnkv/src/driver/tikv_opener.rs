@@ -26,8 +26,8 @@
 
 use std::sync::Arc;
 
-use tikv_client::pd::PdClient;
 use tikv_client::transaction::Transaction;
+use tikv_client::PdClient;
 use tikv_client::{Timestamp, TimestampExt, TransactionOptions};
 
 use crate::driver::tikv_transaction::{TikvTransactionDriver, TikvTransactionError};
@@ -248,7 +248,7 @@ impl TikvClusterSource {
 }
 
 impl TikvTransactionSource for TikvClusterSource {
-    type PdC = tikv_client::pd::PdRpcClient;
+    type PdC = tikv_client::PdRpcClient;
 
     fn current_timestamp(&self) -> Result<Timestamp, TikvTransactionError> {
         Ok(self.runtime.block_on(self.client.current_timestamp())?)

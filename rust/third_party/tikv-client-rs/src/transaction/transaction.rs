@@ -95,6 +95,19 @@ const CLEANUP_MAX_BACKOFF: u64 = 20_000;
 pub const PESSIMISTIC_LOCK_MAX_BACKOFF: u64 = 20_000;
 const MAX_COMMIT_TS_EXPIRED_GAP: u64 = 3_600_000 << 18;
 
+// Like client-go's newCleanupBackoffer, compensating cleanup ignores query kill
+// signals but retains its cancellation scope, retry budget and other variables.
+fn new_cleanup_backoffer(
+    cancellation: crate::async_util::Cancellation,
+    max_sleep_ms: u64,
+    variables: &Variables,
+) -> RetryBackoffer {
+    let mut variables = variables.clone();
+    variables.killed = Arc::new(atomic::AtomicU32::new(0));
+    variables.kill_signal_handler = None;
+    RetryBackoffer::with_variables(cancellation, max_sleep_ms, Arc::new(variables))
+}
+
 fn commit_ts_expired_gap_is_too_large(expired: &kvrpcpb::CommitTsExpired) -> bool {
     // Go's uint64 subtraction wraps. Preserve that behavior for malformed as
     // well as valid TiKV responses instead of silently accepting a response
@@ -254,6 +267,31 @@ struct PessimisticLockDispatchTiming {
 }
 
 impl PessimisticLockDispatchTiming {
+    /// Go handlePessimisticLockResponse checks the statement budget only when
+    /// the resolver reports a live owner. TiKV owns the actual lock wait.
+    fn check_wait(&self) -> Result<()> {
+        let wait_time = self.wait_time.unwrap_or(LOCK_ALWAYS_WAIT);
+        let now = SystemTime::now();
+        calculate_pessimistic_lock_wait_time(
+            self.killed.as_ref(),
+            wait_time,
+            self.wait_start_time,
+            self.max_execution_deadline,
+            now,
+        )?;
+        if wait_time == LOCK_NO_WAIT {
+            return Err(crate::error::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.into());
+        }
+        if wait_time != LOCK_ALWAYS_WAIT
+            && self
+                .wait_start_time
+                .is_some_and(|started| go_system_time_sub_millis(now, started) >= wait_time)
+        {
+            return Err(crate::error::ERR_LOCK_WAIT_TIMEOUT.into());
+        }
+        Ok(())
+    }
+
     fn prepare(&self, request: &mut kvrpcpb::PessimisticLockRequest) -> Result<()> {
         request.lock_ttl = self.start_instant.elapsed().as_millis() as u64 + managed_lock_ttl();
         if let Some(wait_time) = self.wait_time {
@@ -397,7 +435,7 @@ fn shared_lock_abort_from_error(error: &Error) -> Option<SharedLockAbort> {
 fn is_transaction_transport_error(error: &Error) -> bool {
     match error {
         Error::Grpc(_) | Error::GrpcAPI(_) | Error::Channel(_) => true,
-        Error::StringError(message) if message == "context canceled" => true,
+        Error::ContextCanceled => true,
         Error::Connection { source, .. } | Error::UndeterminedError(source) => {
             is_transaction_transport_error(source)
         }
@@ -414,6 +452,7 @@ fn is_txn_file_retryable_transport_error(error: &Error) -> bool {
         // client-go's RegionRequestSender returns a cancelled request context
         // directly. Retrying it loses the original cause and can duplicate a
         // transaction-file request that the caller has already abandoned.
+        Error::ContextCanceled => false,
         Error::GrpcAPI(status) if status.code() == tonic::Code::Cancelled => false,
         Error::Connection { source, .. } | Error::UndeterminedError(source) => {
             is_txn_file_retryable_transport_error(source)
@@ -815,7 +854,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .may_backoff_region_error(Some(error))
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 if error.epoch_not_match.is_some()
                     && !crate::retry::is_fake_region_error(Some(error))
@@ -839,7 +878,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff(BO_REGION_MISS, reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 let delay = backoff.next_delay_duration().ok_or_else(|| {
                     Error::StringError("txn file: region retry exhausted".to_owned())
@@ -858,7 +897,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff(BO_TIKV_RPC, reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(backoff) => {
                 let delay = backoff.next_delay_duration().ok_or_else(|| {
                     Error::StringError("txn file: RPC retry exhausted".to_owned())
@@ -877,7 +916,7 @@ impl TxnFileRetryBackoff {
                 .await
                 .backoff_with_config_and_max_sleep(BO_TXN_LOCK, Some(max_sleep_ms), reason)
                 .await
-                .map_err(|error| Error::StringError(error.to_string())),
+                .map_err(Error::from),
             Self::Legacy(_) => {
                 tokio::time::sleep(Duration::from_millis(max_sleep_ms)).await;
                 Ok(())
@@ -1360,7 +1399,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.replica_read_config = config;
     }
 
-    pub(crate) fn set_enable_async_batch_get(&mut self, enabled: bool) {
+    /// Select client-go's asynchronous BatchGet response handling for future reads.
+    /// Embedded store owners may refresh this from their published configuration.
+    pub fn set_enable_async_batch_get(&mut self, enabled: bool) {
         self.enable_async_batch_get = enabled;
     }
 
@@ -1372,7 +1413,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         });
     }
 
-    pub(crate) fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
+    /// Share the store-owned final-status cache, cleanup pool and resolving-lock
+    /// observations, as client-go KVTxn shares its store's LockResolver.
+    pub fn set_lock_resolver_context(&mut self, context: ResolveLocksContext) {
         self.lock_resolver_context = context;
     }
 
@@ -4140,6 +4183,21 @@ impl<PdC: PdClient> Transaction<PdC> {
         if self.is_pipelined() {
             panic!("can not set a txn with pipelined memdb to pessimistic mode");
         }
+        // The source has one retry policy for KVTxn. Preserve an explicit
+        // override, but switching transaction kind must keep the native
+        // defaults eligible for the source retry owner.
+        let previous_defaults = if self.options.is_pessimistic() {
+            RetryOptions::default_pessimistic()
+        } else {
+            RetryOptions::default_optimistic()
+        };
+        if self.options.retry_options == previous_defaults {
+            self.options.retry_options = if pessimistic {
+                RetryOptions::default_pessimistic()
+            } else {
+                RetryOptions::default_optimistic()
+            };
+        }
         self.buffer.set_pessimistic(pessimistic);
         self.options.kind = if pessimistic {
             TransactionKind::Pessimistic(Timestamp::from_version(0))
@@ -4244,6 +4302,11 @@ impl<PdC: PdClient> Transaction<PdC> {
 
     pub fn memory_hook_set(&self) -> bool {
         self.buffer.memdb_memory_hook_is_set()
+    }
+
+    /// Borrows the same authoritative MemDB without requiring a mutable txn.
+    pub fn get_mem_buffer_readonly(&self) -> &super::unionstore::MemDb {
+        self.buffer.mem_buffer_readonly()
     }
 
     /// Returns the exact staged MemDB used by transaction reads and commit.
@@ -4681,7 +4744,8 @@ impl<PdC: PdClient> Transaction<PdC> {
             .scan_and_fetch(
                 range,
                 limit,
-                !key_only && !self.options.read_only,
+                // Go Scanner never populates the snapshot's point-read cache.
+                false,
                 reverse,
                 move |new_range, new_limit| async move {
                     let mut range = new_range;
@@ -5016,6 +5080,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         >::new()));
         loop {
             let timing_for_dispatch = timing.clone();
+            let timing_for_wait = timing.clone();
             let resource_group_tag = resource_group_tag.clone();
             let resource_group_tagger = resource_group_tagger.clone();
             let decorated_requests = Arc::clone(&decorated_requests);
@@ -5061,6 +5126,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                     self.options.retry_options.lock_backoff.clone(),
                     self.keyspace,
                     self.lock_resolver_context.clone(),
+                    source_retry_owner.as_ref().map(|_| {
+                        Arc::new(move || timing_for_wait.check_wait())
+                            as Arc<dyn Fn() -> Result<()> + Send + Sync>
+                    }),
                 )
                 .preserve_shard();
             let result = if let Some(owner) = source_retry_owner.as_ref() {
@@ -5092,17 +5161,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         &self,
         max_sleep_ms: u64,
     ) -> Option<Arc<tokio::sync::Mutex<RetryBackoffer>>> {
-        let defaults = if self.options.is_pessimistic() {
-            RetryOptions::default_pessimistic()
-        } else {
-            RetryOptions::default_optimistic()
-        };
-        (self.options.retry_options == defaults).then(|| {
-            Arc::new(tokio::sync::Mutex::new(RetryBackoffer::with_variables(
+        self.options.source_retry_owner(|| {
+            RetryBackoffer::with_variables(
                 crate::async_util::Cancellation::default(),
                 max_sleep_ms,
                 self.commit_settings.variables.clone(),
-            )))
+            )
         })
     }
 
@@ -5618,7 +5682,13 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         self.commit_settings
             .apply_pessimistic_rollback_request(&mut req, MAX_WRITE_EXECUTION_TIME);
-        let source_retry_owner = self.source_retry_owner(PESSIMISTIC_LOCK_MAX_BACKOFF);
+        let source_retry_owner = self.options.source_retry_owner(|| {
+            new_cleanup_backoffer(
+                crate::async_util::Cancellation::default(),
+                PESSIMISTIC_LOCK_MAX_BACKOFF,
+                &self.commit_settings.variables,
+            )
+        });
         let plan = plan_with_keyspace_name(
             self.rpc.clone(),
             self.keyspace,
@@ -5762,97 +5832,101 @@ impl<PdC: PdClient> Transaction<PdC> {
                 "starting auto-heartbeat, start_ts: {}, interval: {:?}",
                 start_ts_for_log, heartbeat_interval,
             );
-            tokio::spawn(async move {
-                if let Some(pre) = lifecycle_hooks.pre {
-                    pre();
-                }
-                let mut consecutive_failures = 0_u32;
-                loop {
-                    tokio::time::sleep(heartbeat_interval).await;
-                    if current_generation.load(atomic::Ordering::Acquire) != generation {
-                        break;
+            tokio::spawn(crate::async_util::with_background_rpc_context(
+                crate::async_util::Cancellation::default(),
+                async move {
+                    if let Some(pre) = lifecycle_hooks.pre {
+                        pre();
                     }
-                    let transaction_status: TransactionStatus =
-                        status.load(atomic::Ordering::Acquire).into();
-                    if matches!(
-                        transaction_status,
-                        TransactionStatus::Rolledback
-                            | TransactionStatus::Committed
-                            | TransactionStatus::Dropped
-                    ) {
-                        break;
-                    }
-                    if killed
-                        .as_ref()
-                        .is_some_and(|killed| killed.load(atomic::Ordering::Acquire) != 0)
-                    {
-                        break;
-                    }
-                    let now = match rpc.clone().get_timestamp().await {
-                        Ok(now) => now,
-                        Err(error) => {
-                            warn!(
-                                "auto-heartbeat get timestamp failed, start_ts: {}: {}",
-                                start_ts_for_log, error
-                            );
+                    let mut consecutive_failures = 0_u32;
+                    loop {
+                        tokio::time::sleep(heartbeat_interval).await;
+                        if current_generation.load(atomic::Ordering::Acquire) != generation {
                             break;
                         }
-                    };
-                    let uptime = crate::oracle::extract_physical(now.version())
-                        .saturating_sub(crate::oracle::extract_physical(start_ts.version()))
-                        .max(0) as u64;
-                    if uptime > crate::config::get_global_config().max_txn_ttl {
-                        if let Some(lock_expired) = &lock_expired {
-                            lock_expired.store(1, atomic::Ordering::Release);
+                        let transaction_status: TransactionStatus =
+                            status.load(atomic::Ordering::Acquire).into();
+                        if matches!(
+                            transaction_status,
+                            TransactionStatus::Rolledback
+                                | TransactionStatus::Committed
+                                | TransactionStatus::Dropped
+                        ) {
+                            break;
                         }
-                        break;
-                    }
-                    let mut request = new_heart_beat_request(
-                        start_ts.clone(),
-                        primary_key.clone(),
-                        uptime.saturating_add(managed_lock_ttl()),
-                    );
-                    request.min_commit_ts = min_commit_ts.get();
-                    request.is_txn_file = is_txn_file;
-                    commit_settings.apply_heartbeat_request(&mut request, MAX_WRITE_EXECUTION_TIME);
-                    let result = plan_with_keyspace_name(
-                        rpc.clone(),
-                        keyspace,
-                        keyspace_name.as_deref(),
-                        rpc_interceptor.clone(),
-                        None,
-                        None,
-                        ru_details.clone(),
-                        ReplicaReadConfig::default(),
-                        request,
-                    )
-                    .retry_multi_region(region_backoff.clone())
-                    .extract_error()
-                    .merge(CollectSingle)
-                    .post_process_default()
-                    .plan()
-                    .execute()
-                    .await;
-                    match result {
-                        Ok(_) => consecutive_failures = 0,
-                        Err(error) => {
-                            consecutive_failures = consecutive_failures.saturating_add(1);
-                            if heartbeat_error_stops_immediately(&error)
-                                || consecutive_failures > 10
-                            {
+                        if killed
+                            .as_ref()
+                            .is_some_and(|killed| killed.load(atomic::Ordering::Acquire) != 0)
+                        {
+                            break;
+                        }
+                        let now = match rpc.clone().get_timestamp().await {
+                            Ok(now) => now,
+                            Err(error) => {
                                 warn!(
-                                    "auto-heartbeat stopped, start_ts: {}, consecutive failures: {}: {}",
-                                    start_ts_for_log, consecutive_failures, error
+                                    "auto-heartbeat get timestamp failed, start_ts: {}: {}",
+                                    start_ts_for_log, error
                                 );
                                 break;
                             }
+                        };
+                        let uptime = crate::oracle::extract_physical(now.version())
+                            .saturating_sub(crate::oracle::extract_physical(start_ts.version()))
+                            .max(0) as u64;
+                        if uptime > crate::config::get_global_config().max_txn_ttl {
+                            if let Some(lock_expired) = &lock_expired {
+                                lock_expired.store(1, atomic::Ordering::Release);
+                            }
+                            break;
+                        }
+                        let mut request = new_heart_beat_request(
+                            start_ts.clone(),
+                            primary_key.clone(),
+                            uptime.saturating_add(managed_lock_ttl()),
+                        );
+                        request.min_commit_ts = min_commit_ts.get();
+                        request.is_txn_file = is_txn_file;
+                        commit_settings
+                            .apply_heartbeat_request(&mut request, MAX_WRITE_EXECUTION_TIME);
+                        let result = plan_with_keyspace_name(
+                            rpc.clone(),
+                            keyspace,
+                            keyspace_name.as_deref(),
+                            rpc_interceptor.clone(),
+                            None,
+                            None,
+                            ru_details.clone(),
+                            ReplicaReadConfig::default(),
+                            request,
+                        )
+                        .retry_multi_region(region_backoff.clone())
+                        .extract_error()
+                        .merge(CollectSingle)
+                        .post_process_default()
+                        .plan()
+                        .execute()
+                        .await;
+                        match result {
+                            Ok(_) => consecutive_failures = 0,
+                            Err(error) => {
+                                consecutive_failures = consecutive_failures.saturating_add(1);
+                                if heartbeat_error_stops_immediately(&error)
+                                    || consecutive_failures > 10
+                                {
+                                    warn!(
+                                    "auto-heartbeat stopped, start_ts: {}, consecutive failures: {}: {}",
+                                    start_ts_for_log, consecutive_failures, error
+                                );
+                                    break;
+                                }
+                            }
                         }
                     }
-                }
-                if let Some(post) = lifecycle_hooks.post {
-                    post();
-                }
-            });
+                    if let Some(post) = lifecycle_hooks.post {
+                        post();
+                    }
+                },
+            ));
         }))
     }
 
@@ -6012,7 +6086,7 @@ async fn scatter_split_regions<PdC: PdClient>(
                         format!("scatter split region {region_id} failed: {error}"),
                     )
                     .await
-                    .map_err(|error| Error::StringError(error.to_string()))?,
+                    .map_err(Error::from)?,
             }
         }
     }
@@ -6049,7 +6123,7 @@ async fn wait_scatter_region_finish<PdC: PdClient>(rpc: Arc<PdC>, region_id: u64
         retry
             .backoff(BO_REGION_MISS, reason)
             .await
-            .map_err(|error| Error::StringError(error.to_string()))?;
+            .map_err(Error::from)?;
     }
 }
 
@@ -6188,6 +6262,20 @@ impl Default for TransactionOptions {
 }
 
 impl TransactionOptions {
+    // Explicit Rust retry policies keep their own limits instead of acquiring
+    // the default cumulative backoff budget, including during cleanup.
+    fn source_retry_owner(
+        &self,
+        new_backoffer: impl FnOnce() -> RetryBackoffer,
+    ) -> Option<Arc<tokio::sync::Mutex<RetryBackoffer>>> {
+        let defaults = if self.is_pessimistic() {
+            RetryOptions::default_pessimistic()
+        } else {
+            RetryOptions::default_optimistic()
+        };
+        (self.retry_options == defaults).then(|| Arc::new(tokio::sync::Mutex::new(new_backoffer())))
+    }
+
     pub(crate) fn with_config_commit_defaults(
         mut self,
         enable_async_commit: bool,
@@ -6518,17 +6606,12 @@ impl<PdC: PdClient> Committer<PdC> {
         &self,
         max_sleep_ms: u64,
     ) -> Option<Arc<tokio::sync::Mutex<RetryBackoffer>>> {
-        let defaults = if self.options.is_pessimistic() {
-            RetryOptions::default_pessimistic()
-        } else {
-            RetryOptions::default_optimistic()
-        };
-        (self.options.retry_options == defaults).then(|| {
-            Arc::new(tokio::sync::Mutex::new(RetryBackoffer::with_variables(
+        self.options.source_retry_owner(|| {
+            RetryBackoffer::with_variables(
                 crate::async_util::Cancellation::default(),
                 max_sleep_ms,
                 self.settings.variables.clone(),
-            )))
+            )
         })
     }
 
@@ -8828,6 +8911,7 @@ impl<PdC: PdClient> Committer<PdC> {
             self.options.retry_options.lock_backoff.clone(),
             self.keyspace,
             self.lock_resolver_context.clone(),
+            None,
         )
         .prewrite_lock_conflict(
             self.start_version.version(),
@@ -8871,7 +8955,7 @@ impl<PdC: PdClient> Committer<PdC> {
                                 format!("standard 2PC prewrite result undetermined: {error}"),
                             )
                             .await
-                            .map_err(|error| Error::StringError(error.to_string()))?;
+                            .map_err(Error::from)?;
                         return Box::pin(self.prewrite_with_retry_owner(Some(owner))).await;
                     }
                 }
@@ -9188,6 +9272,19 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn commit_secondary(self, commit_version: Timestamp) -> Result<()> {
+        // client-go uses store.Ctx() for secondary commits, including async commit.
+        let cancellation = self.lock_resolver_context.background_cancellation();
+        crate::async_util::with_background_rpc_context(cancellation.clone(), async move {
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => Err(Error::ContextCanceled),
+                result = self.commit_secondary_in_background(commit_version) => result,
+            }
+        })
+        .await
+    }
+
+    async fn commit_secondary_in_background(self, commit_version: Timestamp) -> Result<()> {
         debug!(
             "committing secondary keys, start_ts: {}, mutations: {}",
             self.start_version.version(),
@@ -9373,9 +9470,21 @@ impl<PdC: PdClient> Committer<PdC> {
     /// been prewritten (locks still pessimistic) uses the narrower
     /// `PessimisticRollback`.
     async fn rollback(self, prewritten: bool) -> Result<()> {
-        let source_retry_owner = self.source_retry_owner(CLEANUP_MAX_BACKOFF);
-        self.rollback_with_retry_owner(prewritten, source_retry_owner)
-            .await
+        // Go transaction rollback uses a background context. Statement lock
+        // rollback calls pessimistic_lock_rollback and retains its caller.
+        let cancellation = crate::async_util::Cancellation::default();
+        let source_retry_owner = self.options.source_retry_owner(|| {
+            new_cleanup_backoffer(
+                cancellation.clone(),
+                CLEANUP_MAX_BACKOFF,
+                &self.settings.variables,
+            )
+        });
+        crate::async_util::with_background_rpc_context(
+            cancellation,
+            self.rollback_with_retry_owner(prewritten, source_retry_owner),
+        )
+        .await
     }
 
     async fn rollback_with_retry_owner(
@@ -9612,6 +9721,69 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
     use fail::FailScenario;
+
+    #[tokio::test]
+    async fn source_transaction_file_retry_preserves_terminal_error_identity() {
+        for kind in 0..4 {
+            let mut backoff = super::TxnFileRetryBackoff::Source(Arc::new(
+                tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                    crate::async_util::Cancellation::default(),
+                    1,
+                )),
+            ));
+            let expected = match kind {
+                1 => crate::error::ERR_TIKV_SERVER_TIMEOUT,
+                2 => crate::error::ERR_RESOLVE_LOCK_TIMEOUT,
+                _ => crate::error::ERR_REGION_UNAVAILABLE,
+            };
+            let mut terminal = None;
+            for _ in 0..8 {
+                let result = match kind {
+                    0 => backoff.backoff_region_miss("missing region").await,
+                    1 => backoff.backoff_rpc("RPC failed").await,
+                    2 => backoff.backoff_lock(1, "live lock").await,
+                    _ => {
+                        backoff
+                            .backoff_region_error(&crate::proto::errorpb::Error {
+                                region_not_found: Some(
+                                    crate::proto::errorpb::RegionNotFound::default(),
+                                ),
+                                ..Default::default()
+                            })
+                            .await
+                    }
+                };
+                if let Err(error) = result {
+                    terminal = Some(error);
+                    break;
+                }
+            }
+            assert!(
+                matches!(terminal, Some(Error::Static(error)) if error == expected),
+                "kind={kind}: {terminal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn source_cancellation_uses_identity_not_error_text() {
+        let text = crate::Error::StringError("context canceled".to_owned());
+        assert!(!super::is_transaction_transport_error(&text));
+        assert!(!super::is_txn_file_retryable_transport_error(&text));
+        assert!(super::is_transaction_transport_error(
+            &crate::Error::ContextCanceled
+        ));
+        assert!(!super::is_txn_file_retryable_transport_error(
+            &crate::Error::ContextCanceled
+        ));
+        let wrapped = crate::Error::Connection {
+            source: Box::new(crate::Error::ContextCanceled),
+            address: "store".to_owned(),
+            version: 1,
+        };
+        assert!(super::is_transaction_transport_error(&wrapped));
+        assert!(!super::is_txn_file_retryable_transport_error(&wrapped));
+    }
 
     #[test]
     fn source_uncovered_effective_wait_preserves_future_start_time() {
@@ -10657,6 +10829,212 @@ mod tests {
         );
     }
 
+    struct RejectCleanupKillHandler(Arc<AtomicUsize>);
+
+    impl crate::kv::KillSignalHandler for RejectCleanupKillHandler {
+        fn handle_signal(&self) -> crate::Result<()> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(crate::error::ERR_QUERY_INTERRUPTED.into())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum CleanupKind {
+        Prewrite,
+        TransactionLocks,
+        StatementLocks,
+    }
+
+    async fn check_cleanup_retries_ignore_query_kill(kind: CleanupKind, retry_limit: Option<u32>) {
+        for signal in [0, 7] {
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let captured = Arc::clone(&attempts);
+            let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    assert_eq!(
+                        crate::async_util::background_rpc_cancellation().is_some(),
+                        !matches!(kind, CleanupKind::StatementLocks),
+                        "the operation owner, not the RPC type, selects its lifetime"
+                    );
+                    let attempt = captured.fetch_add(1, Ordering::SeqCst);
+                    let region_error = (retry_limit.is_some() || attempt == 0).then(|| {
+                        crate::proto::errorpb::Error {
+                            not_leader: Some(crate::proto::errorpb::NotLeader {
+                                region_id: 2,
+                                leader: None,
+                            }),
+                            ..Default::default()
+                        }
+                    });
+                    if matches!(kind, CleanupKind::Prewrite) {
+                        assert!(request.is::<kvrpcpb::BatchRollbackRequest>());
+                        Ok(Box::new(kvrpcpb::BatchRollbackResponse {
+                            region_error,
+                            ..Default::default()
+                        }) as Box<dyn Any>)
+                    } else {
+                        assert!(request.is::<kvrpcpb::PessimisticRollbackRequest>());
+                        Ok(Box::new(kvrpcpb::PessimisticRollbackResponse {
+                            region_error,
+                            ..Default::default()
+                        }) as Box<dyn Any>)
+                    }
+                },
+            )));
+            let killed = Arc::new(std::sync::atomic::AtomicU32::new(signal));
+            let handler_calls = Arc::new(AtomicUsize::new(0));
+            let mut variables = crate::Variables::new(Arc::clone(&killed));
+            variables.kill_signal_handler = Some(Arc::new(RejectCleanupKillHandler(Arc::clone(
+                &handler_calls,
+            ))));
+            variables.backoff_weight = 3;
+            variables.backoff_lock_fast = 5;
+            let variables = Arc::new(variables);
+            let mut options = if matches!(kind, CleanupKind::Prewrite) {
+                TransactionOptions::new_optimistic()
+            } else {
+                TransactionOptions::new_pessimistic()
+            }
+            .drop_check(CheckLevel::None);
+            if let Some(limit) = retry_limit {
+                options = options.retry_options(if limit == 0 {
+                    RetryOptions::none()
+                } else {
+                    RetryOptions {
+                        region_backoff: Backoff::no_jitter_backoff(1, 1, limit),
+                        lock_backoff: Backoff::no_backoff(),
+                    }
+                });
+            }
+            let result = if matches!(kind, CleanupKind::StatementLocks) {
+                let mut transaction =
+                    Transaction::new(Timestamp::from_version(1), rpc, options, Keyspace::Disable);
+                transaction.set_variables(Arc::clone(&variables));
+                transaction
+                    .pessimistic_lock_rollback(
+                        std::iter::once(Key::from(b"k".to_vec())),
+                        Timestamp::from_version(1),
+                        Timestamp::from_version(2),
+                    )
+                    .await
+            } else {
+                let committer = source_test_committer(
+                    rpc,
+                    Some(Key::from(b"k".to_vec())),
+                    vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+                    options,
+                    CommitSettings {
+                        variables: Arc::clone(&variables),
+                        ..Default::default()
+                    },
+                )
+                .with_pessimistic_lock_keys(BTreeSet::from([b"k".to_vec()]));
+                committer
+                    .rollback(matches!(kind, CleanupKind::Prewrite))
+                    .await
+            };
+            if let Some(limit) = retry_limit {
+                assert!(
+                    result.is_err(),
+                    "cleanup must respect an explicit retry limit"
+                );
+                assert_eq!(attempts.load(Ordering::SeqCst), limit as usize + 1);
+            } else {
+                result.expect(
+                    "Go cleanup retries must survive the statement kill signal and handler",
+                );
+                assert_eq!(attempts.load(Ordering::SeqCst), 2);
+            }
+            assert_eq!(handler_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                killed.load(Ordering::SeqCst),
+                signal,
+                "cleanup must not clear the shared query kill signal"
+            );
+            assert!(variables.kill_signal_handler.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_retries_ignore_query_kill_for_prewrite_rollback() {
+        check_cleanup_retries_ignore_query_kill(CleanupKind::Prewrite, None).await;
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_retries_ignore_query_kill_for_transaction_lock_rollback() {
+        check_cleanup_retries_ignore_query_kill(CleanupKind::TransactionLocks, None).await;
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_retries_ignore_query_kill_for_statement_lock_rollback() {
+        check_cleanup_retries_ignore_query_kill(CleanupKind::StatementLocks, None).await;
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_preserves_explicit_retry_limits() {
+        for kind in [
+            CleanupKind::Prewrite,
+            CleanupKind::TransactionLocks,
+            CleanupKind::StatementLocks,
+        ] {
+            for limit in [0, 1] {
+                check_cleanup_retries_ignore_query_kill(kind, Some(limit)).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_preserves_variables_and_cancellation() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut variables = crate::Variables::default();
+        variables.killed.store(7, Ordering::SeqCst);
+        variables.kill_signal_handler =
+            Some(Arc::new(RejectCleanupKillHandler(Arc::clone(&calls))));
+        variables.backoff_weight = 3;
+        variables.backoff_lock_fast = 5;
+        variables.disable_txn_file = true;
+        variables.txn_file_min_mutation_size = 123;
+        let cancellation = crate::async_util::Cancellation::default();
+        let mut cleanup = super::new_cleanup_backoffer(cancellation.clone(), 17, &variables);
+        assert_eq!(cleanup.max_sleep_ms(), 51);
+        assert_eq!(cleanup.variables().backoff_lock_fast, 5);
+        assert!(cleanup.variables().disable_txn_file);
+        assert_eq!(cleanup.variables().txn_file_min_mutation_size, 123);
+        assert!(!Arc::ptr_eq(&cleanup.variables().killed, &variables.killed));
+        assert_eq!(cleanup.variables().killed.load(Ordering::SeqCst), 0);
+        assert!(cleanup.variables().kill_signal_handler.is_none());
+        cancellation.cancel();
+        assert!(matches!(
+            cleanup
+                .backoff(crate::retry::BO_REGION_MISS, "cleanup canceled")
+                .await,
+            Err(crate::retry::RetryError::Cancelled { .. })
+        ));
+        assert_eq!(cleanup.total_backoff_times(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(variables.killed.load(Ordering::SeqCst), 7);
+        assert!(variables.kill_signal_handler.is_some());
+
+        // Ordinary foreground/secondary/pipelined owners retain the query signal.
+        let committer = source_test_committer(
+            Arc::new(MockPdClient::default()),
+            Some(Key::from(b"k".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            CommitSettings {
+                variables: Arc::new(variables),
+                ..Default::default()
+            },
+        );
+        let ordinary = committer.source_retry_owner(17).unwrap();
+        let ordinary = ordinary.lock().await;
+        assert!(ordinary.check_killed().is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        ordinary.variables().killed.store(0, Ordering::SeqCst);
+        assert!(ordinary.check_killed().is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn source_cleanup_actions_use_one_cumulative_retry_owner() {
         let observed = Arc::new(Mutex::new(Vec::new()));
@@ -10780,6 +11158,11 @@ mod tests {
                             request.context.as_ref().unwrap().resource_group_tag.clone(),
                         )
                     };
+                assert_eq!(
+                    crate::async_util::background_rpc_cancellation().is_some(),
+                    action != "prewrite",
+                    "foreground prewrite and background completion have distinct owners"
+                );
                 captured_requests
                     .lock()
                     .unwrap()
@@ -16918,6 +17301,10 @@ mod tests {
                             .max_execution_duration_ms,
                         20_000
                     );
+                    assert!(
+                        crate::async_util::background_rpc_cancellation().is_some(),
+                        "TTL manager owns its background RPC lifetime"
+                    );
                     *captured.lock().unwrap() = Some((request.min_commit_ts, request.is_txn_file));
                     sent_by_hook.notify_one();
                     return Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>);
@@ -21952,4 +22339,168 @@ mod tests {
     include!("integration_source_tests.rs");
     include!("integration_lock_source_tests.rs");
     include!("integration_2pc_source_tests.rs");
+}
+
+#[cfg(test)]
+mod ownership_regressions {
+    use super::*;
+    use crate::mock::{MockKvClient, MockPdClient};
+    use std::any::Any;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn explicit_no_retry_does_not_reissue_a_pessimistic_lock() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let seen = attempts.clone();
+        let lock = kvrpcpb::LockInfo {
+            key: vec![1],
+            primary_lock: vec![1],
+            lock_version: 1,
+            lock_ttl: 100_000,
+            lock_type: kvrpcpb::Op::PessimisticLock as i32,
+            ..Default::default()
+        };
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request| {
+                if request.is::<kvrpcpb::PessimisticLockRequest>() {
+                    let response = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                        kvrpcpb::PessimisticLockResponse {
+                            errors: vec![kvrpcpb::KeyError {
+                                locked: Some(lock.clone()),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }
+                    } else {
+                        kvrpcpb::PessimisticLockResponse::default()
+                    };
+                    return Ok(Box::new(response) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                        lock_ttl: 100_000,
+                        lock_info: Some(lock.clone()),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                    return Ok(
+                        Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>
+                    );
+                }
+                if request.is::<kvrpcpb::TxnHeartBeatRequest>() {
+                    return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse {
+                        lock_ttl: 100_000,
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request");
+            },
+        )));
+        pd.set_timestamp(Timestamp::from_version(20));
+        let mut txn = Transaction::new(
+            Timestamp::from_version(10),
+            pd,
+            TransactionOptions::new_pessimistic()
+                .retry_options(RetryOptions::none())
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let result = txn.get_for_update(vec![1]).await;
+        assert!(
+            result.is_err(),
+            "disabled lock retries returned {result:?} after {} lock RPCs",
+            attempts.load(Ordering::SeqCst)
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn explicit_finite_retries_cover_live_and_recently_updated_locks() {
+        for recently_updated in [false, true] {
+            for allowed_retries in [0, 2] {
+                for release_after in [None, Some(1)] {
+                    let attempts = Arc::new(AtomicUsize::new(0));
+                    let seen = attempts.clone();
+                    let lock = kvrpcpb::LockInfo {
+                        key: vec![1],
+                        primary_lock: vec![1],
+                        lock_version: 1,
+                        lock_ttl: 100_000,
+                        lock_type: kvrpcpb::Op::PessimisticLock as i32,
+                        duration_to_last_update_ms: u64::from(recently_updated),
+                        ..Default::default()
+                    };
+                    let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                        move |request| {
+                            if request.is::<kvrpcpb::PessimisticLockRequest>() {
+                                let attempt = seen.fetch_add(1, Ordering::SeqCst);
+                                let errors = if release_after.is_some_and(|after| attempt >= after)
+                                {
+                                    Vec::new()
+                                } else {
+                                    vec![kvrpcpb::KeyError {
+                                        locked: Some(lock.clone()),
+                                        ..Default::default()
+                                    }]
+                                };
+                                return Ok(Box::new(kvrpcpb::PessimisticLockResponse {
+                                    errors,
+                                    ..Default::default()
+                                }) as Box<dyn Any>);
+                            }
+                            if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                                assert!(!recently_updated, "recent locks must not be resolved");
+                                return Ok(Box::new(kvrpcpb::CheckTxnStatusResponse {
+                                    lock_ttl: 100_000,
+                                    lock_info: Some(lock.clone()),
+                                    ..Default::default()
+                                }) as Box<dyn Any>);
+                            }
+                            if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                                return Ok(Box::<kvrpcpb::PessimisticRollbackResponse>::default()
+                                    as Box<dyn Any>);
+                            }
+                            if request.is::<kvrpcpb::TxnHeartBeatRequest>() {
+                                return Ok(Box::new(kvrpcpb::TxnHeartBeatResponse {
+                                    lock_ttl: 100_000,
+                                    ..Default::default()
+                                }) as Box<dyn Any>);
+                            }
+                            panic!("unexpected request");
+                        },
+                    )));
+                    pd.set_timestamp(Timestamp::from_version(20));
+                    let mut txn = Transaction::new(
+                        Timestamp::from_version(10),
+                        pd,
+                        TransactionOptions::new_pessimistic()
+                            .retry_options(RetryOptions::new(
+                                Backoff::no_backoff(),
+                                Backoff::no_jitter_backoff(0, 0, allowed_retries),
+                            ))
+                            .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                            .drop_check(CheckLevel::None),
+                        Keyspace::Disable,
+                    );
+                    let result = txn.get_for_update(vec![1]).await;
+                    let should_succeed =
+                        release_after.is_some_and(|after| after <= allowed_retries as usize);
+                    assert_eq!(
+                        result.is_ok(),
+                        should_succeed,
+                        "recent={recently_updated}, retries={allowed_retries}: {result:?}"
+                    );
+                    let expected = release_after
+                        .filter(|_| should_succeed)
+                        .unwrap_or(allowed_retries as usize)
+                        + 1;
+                    assert_eq!(
+                        attempts.load(Ordering::SeqCst),
+                        expected,
+                        "recent={recently_updated}, retries={allowed_retries}"
+                    );
+                }
+            }
+        }
+    }
 }

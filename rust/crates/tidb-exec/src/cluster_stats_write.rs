@@ -63,7 +63,7 @@ use tidb_model::table_info::TableInfo;
 use tidb_model::TableItemID;
 use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
 use tidb_stats::{JsonPredicateColumn, JsonTable};
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 use tidb_util::sqlescape::{must_escape_sql, SqlArg};
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
@@ -150,7 +150,7 @@ impl From<RowEncodeError> for StatsWriteError {
 #[derive(Debug, Default)]
 pub struct StatsWritePlan {
     /// Every mutation, to be committed on the snapshot's own transaction.
-    pub mutations: Vec<OptimisticMutation>,
+    pub mutations: Vec<BufferMutation>,
     /// How many histograms the plan stores, for the statement's log line.
     pub histogram_count: usize,
     /// How many buckets, across every histogram.
@@ -339,7 +339,7 @@ pub fn plan_insert_analyze_job<S: MetaSnapshot>(
     let mut plan = StatsWritePlan::default();
     rows.store(snapshot, catalog, &values, &mut plan)?;
     plan.mutations.push(
-        OptimisticMutation::meta_put(
+        BufferMutation::set(
             key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
             value::encode_int_value(job_id as i64),
         )
@@ -1638,7 +1638,7 @@ pub fn plan_stats_delta_statement<S: MetaSnapshot>(
                 let rows = StatsRows::open(snapshot, table, &["table_id"], *table_id)?;
                 for (key, _) in rows.existing.into_values() {
                     plan.mutations
-                        .push(OptimisticMutation::lock_only(key).map_err(|error| {
+                        .push(BufferMutation::lock_only(key).map_err(|error| {
                             StatsWriteError::Encode(RowEncodeError(error.to_string()))
                         })?);
                 }
@@ -1843,7 +1843,7 @@ pub fn plan_historical_stats_meta_lock<S: MetaSnapshot>(
         .ok_or_else(|| StatsWriteError::HistoricalMeta("invalid stats_meta.count".to_owned()))?;
     let mut plan = StatsWritePlan::default();
     plan.mutations.push(
-        OptimisticMutation::lock_only(key.clone())
+        BufferMutation::lock_only(key.clone())
             .map_err(|error| StatsWriteError::HistoricalMeta(error.to_string()))?,
     );
     Ok(((modify_count, count), plan))
@@ -3325,7 +3325,7 @@ impl<'table> StatsRows<'table> {
             return Ok(());
         };
         plan.mutations.push(
-            OptimisticMutation::meta_put(
+            BufferMutation::set(
                 key::auto_table_id_kv_key(system_db_id(catalog)?, self.table.id),
                 value::encode_int_value(next - 1),
             )

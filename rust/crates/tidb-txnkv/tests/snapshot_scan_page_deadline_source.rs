@@ -141,28 +141,30 @@ struct Recorded {
 
 /// A store whose scan range holds [`FULL_PAGES`] full pages followed by a
 /// drained page, served at the mock seam with no transport at all.
+#[derive(Clone)]
 struct PagingScanClient {
-    remaining_full_pages: usize,
-    next_key: u64,
-    request_ids: u64,
+    remaining_full_pages: Arc<Mutex<usize>>,
+    next_key: Arc<Mutex<u64>>,
+    request_ids: Arc<Mutex<u64>>,
     recorded: Arc<Mutex<Recorded>>,
 }
 
 impl PagingScanClient {
     fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
         Self {
-            remaining_full_pages: FULL_PAGES,
-            next_key: 0,
-            request_ids: 0,
+            remaining_full_pages: Arc::new(Mutex::new(FULL_PAGES)),
+            next_key: Arc::new(Mutex::new(0)),
+            request_ids: Arc::new(Mutex::new(0)),
             recorded,
         }
     }
 
     fn respond<R>(&mut self, tag: BatchCommandTag, response: R) -> PublishedCommand<R> {
-        self.request_ids += 1;
+        let mut request_id = self.request_ids.lock().unwrap();
+        *request_id += 1;
         PublishedCommand::Response(TransactionBatchResponse {
             response,
-            publication: TransactionBatchPublication::in_process(tag, ADDRESS, self.request_ids),
+            publication: TransactionBatchPublication::in_process(tag, ADDRESS, *request_id),
         })
     }
 }
@@ -211,13 +213,14 @@ impl TransactionCommandClient for PagingScanClient {
             .unwrap()
             .page_budgets_ms
             .push(u64::try_from(call.timeout().as_millis()).unwrap_or(u64::MAX));
-        let pairs = if self.remaining_full_pages > 0 {
-            self.remaining_full_pages -= 1;
+        let pairs = if *self.remaining_full_pages.lock().unwrap() > 0 {
+            *self.remaining_full_pages.lock().unwrap() -= 1;
             (0..request.limit)
                 .map(|_| {
-                    self.next_key += 1;
+                    let mut next_key = self.next_key.lock().unwrap();
+                    *next_key += 1;
                     KvrpcKvPair {
-                        key: format!("k-{:06}", self.next_key).into_bytes(),
+                        key: format!("k-{:06}", *next_key).into_bytes(),
                         value: b"page-value".to_vec(),
                         ..KvrpcKvPair::default()
                     }
@@ -359,8 +362,6 @@ fn a_multi_page_scan_bounds_each_page_not_the_whole_range() {
         CALLER_BUDGET,
         START_TS,
         Instant::now(),
-        1,
-        1024,
     )
     .unwrap();
     let call = UnaryCallContext::with_timeout(CALLER_BUDGET);
@@ -405,8 +406,6 @@ fn region_scan_groups_all_pages_into_one_coprocessor_shaped_fragment() {
         CALLER_BUDGET,
         START_TS,
         Instant::now(),
-        1,
-        1024,
     )
     .unwrap();
     let call = UnaryCallContext::with_timeout(CALLER_BUDGET);
@@ -423,4 +422,46 @@ fn region_scan_groups_all_pages_into_one_coprocessor_shaped_fragment() {
         recorded.lock().unwrap().page_budgets_ms.len(),
         FULL_PAGES + 1
     );
+}
+
+impl tidb_txnkv::region::RegionQueryLoader for OneRegion {
+    fn query_region(
+        &mut self,
+        query: tidb_txnkv::region::RegionQuery<'_>,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        match query {
+            tidb_txnkv::region::RegionQuery::Id(id) => {
+                let key = Vec::new();
+                let location = self.load_region(&key)?;
+                if location.region.id == id {
+                    Ok(location)
+                } else {
+                    Err(RegionLoadError::new(
+                        "unknown-region",
+                        "unknown fixture region",
+                    ))
+                }
+            }
+            tidb_txnkv::region::RegionQuery::Key(key) => self.load_region(key),
+            tidb_txnkv::region::RegionQuery::EndKey(key) => self.load_region_by_end_key(key),
+        }
+    }
+    fn scan_regions_once(
+        &mut self,
+        range: &tidb_txnkv::region::KeyRange,
+        _limit: usize,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        self.load_region(&range.start).map(|r| vec![r])
+    }
+    fn load_store(
+        &mut self,
+        _id: u64,
+    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-store-query",
+            "fixture expects cached store metadata",
+        ))
+    }
 }

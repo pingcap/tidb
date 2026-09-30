@@ -5,8 +5,8 @@ mod client;
 mod command;
 mod endpoint;
 mod errors;
-#[cfg(any(test, feature = "mock"))]
-pub mod mockserver;
+#[cfg(test)]
+mod mockserver;
 mod priority_queue;
 mod request;
 

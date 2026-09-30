@@ -28,7 +28,7 @@ use tidb_proto::{
 use tidb_txnkv::region::RegionCache;
 use tidb_txnkv::rpc::{TonicCoprocessorClient, TransactionBatchPublication, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticMutation, OptimisticTransactionState,
+    BufferMutation, OptimisticCommitOutcome, OptimisticTransactionState,
     RealOptimisticTransactionOpener, TransactionAttemptPhase, TransactionAttemptResult,
     TransactionCause,
 };
@@ -217,7 +217,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     // Locate before the external split. The later commit therefore proves a
     // stale epoch response invalidates and regroups the original two-key batch.
     let mut transaction = opener
-        .begin(3, 192)
+        .begin()
         .expect("allocate real start timestamp before split");
     assert_eq!(
         transaction.authority_id(),
@@ -249,9 +249,9 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     wait_for_phase(&phase_dir, "split-complete");
 
     let mutations = vec![
-        OptimisticMutation::insert(LOW_KEY.to_vec(), b"low-v1".to_vec()).unwrap(),
-        OptimisticMutation::insert(LOW_SIBLING_KEY.to_vec(), b"low-sibling-v1".to_vec()).unwrap(),
-        OptimisticMutation::insert(HIGH_KEY.to_vec(), b"high-v1".to_vec()).unwrap(),
+        BufferMutation::insert(LOW_KEY.to_vec(), b"low-v1".to_vec()).unwrap(),
+        BufferMutation::insert(LOW_SIBLING_KEY.to_vec(), b"low-sibling-v1".to_vec()).unwrap(),
+        BufferMutation::insert(HIGH_KEY.to_vec(), b"high-v1".to_vec()).unwrap(),
     ];
     let detached_completions = transaction.observe_detached_commits();
     let committed = transaction
@@ -383,7 +383,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         );
     }
 
-    let mut readback = opener.begin(1, 128).expect("allocate readback snapshot");
+    let mut readback = opener.begin().expect("allocate readback snapshot");
     let low = readback
         .snapshot_get(LOW_KEY, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("read committed low key");
@@ -417,12 +417,12 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     } else {
         (HIGH_ROLLBACK_KEY, LOW_KEY)
     };
-    let conflict = opener.begin(2, 128).expect("allocate conflict transaction");
+    let conflict = opener.begin().expect("allocate conflict transaction");
     let outcome = conflict
         .commit(
             vec![
-                OptimisticMutation::insert(rollback_key.to_vec(), b"rollback".to_vec()).unwrap(),
-                OptimisticMutation::insert(duplicate_key.to_vec(), b"duplicate".to_vec()).unwrap(),
+                BufferMutation::insert(rollback_key.to_vec(), b"rollback".to_vec()).unwrap(),
+                BufferMutation::insert(duplicate_key.to_vec(), b"duplicate".to_vec()).unwrap(),
             ],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
@@ -442,7 +442,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         print_publication("rollback", publication, rolled_back.receipt.start_ts, 0);
     }
 
-    let mut after_rollback = opener.begin(1, 128).expect("allocate cleanup snapshot");
+    let mut after_rollback = opener.begin().expect("allocate cleanup snapshot");
     assert!(after_rollback
         .snapshot_get(rollback_key, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("read exact rolled-back key")
@@ -452,13 +452,10 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         .finish_without_writes()
         .expect("finish cleanup read without writes");
 
-    let post_cleanup = opener.begin(1, 128).expect("allocate post-cleanup write");
+    let post_cleanup = opener.begin().expect("allocate post-cleanup write");
     let post_cleanup = post_cleanup
         .commit(
-            vec![
-                OptimisticMutation::insert(rollback_key.to_vec(), b"post-cleanup".to_vec())
-                    .unwrap(),
-            ],
+            vec![BufferMutation::insert(rollback_key.to_vec(), b"post-cleanup".to_vec()).unwrap()],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
         .expect("write rolled-back key immediately");
@@ -468,12 +465,10 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     ));
 
     let missing_update_key = b"c28-stage-b-missing".to_vec();
-    let missing_update = opener
-        .begin(1, 128)
-        .expect("allocate missing UPDATE transaction");
+    let missing_update = opener.begin().expect("allocate missing UPDATE transaction");
     let missing_update = missing_update
         .commit(
-            vec![OptimisticMutation::put_existing(
+            vec![BufferMutation::put_existing(
                 missing_update_key.clone(),
                 b"must-not-appear".to_vec(),
             )
@@ -493,7 +488,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     assert!(missing_update.receipt.primary_publications.is_empty());
 
     // A strict PutExisting uses one snapshot and one normal transaction.
-    let mut update = opener.begin(1, 128).expect("allocate update snapshot");
+    let mut update = opener.begin().expect("allocate update snapshot");
     assert_eq!(
         update
             .snapshot_get(LOW_KEY, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
@@ -504,13 +499,13 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     );
     let update = update
         .commit(
-            vec![OptimisticMutation::put_existing(LOW_KEY.to_vec(), b"low-v2".to_vec()).unwrap()],
+            vec![BufferMutation::put_existing(LOW_KEY.to_vec(), b"low-v2".to_vec()).unwrap()],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
         .expect("commit strict existing-key update");
     assert!(matches!(update, OptimisticCommitOutcome::Committed(_)));
 
-    let mut final_read = opener.begin(1, 128).expect("allocate final snapshot");
+    let mut final_read = opener.begin().expect("allocate final snapshot");
     assert_eq!(
         final_read
             .snapshot_get(LOW_KEY, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
@@ -539,14 +534,14 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         500,
     );
     let older_lock_writer = opener
-        .begin(1, 128)
+        .begin()
         .expect("allocate transaction newer than the real expired lock");
     assert!(older_lock_writer.start_ts() > older_lock_start_ts);
     let older_lock_wait_started = Instant::now();
     let older_lock_outcome = older_lock_writer
         .commit(
             vec![
-                OptimisticMutation::insert(OLDER_LOCK_KEY.to_vec(), b"resolved-writer".to_vec())
+                BufferMutation::insert(OLDER_LOCK_KEY.to_vec(), b"resolved-writer".to_vec())
                     .unwrap(),
             ],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
@@ -575,7 +570,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     // conflict without asking the resolver to roll it back. Committing the
     // fixture afterward proves that the coordinator left that newer lock live.
     let newer_conflict = opener
-        .begin(1, 128)
+        .begin()
         .expect("allocate transaction before the newer lock fixture");
     let newer_lock_start_ts = pd_owner
         .get_timestamp()
@@ -591,8 +586,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let newer_conflict_outcome = newer_conflict
         .commit(
             vec![
-                OptimisticMutation::insert(NEWER_LOCK_KEY.to_vec(), b"must-not-win".to_vec())
-                    .unwrap(),
+                BufferMutation::insert(NEWER_LOCK_KEY.to_vec(), b"must-not-win".to_vec()).unwrap(),
             ],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
@@ -614,7 +608,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         newer_lock_start_ts,
         newer_lock_commit_ts,
     );
-    let mut lock_readback = opener.begin(1, 128).expect("allocate lock readback");
+    let mut lock_readback = opener.begin().expect("allocate lock readback");
     assert_eq!(
         lock_readback
             .snapshot_get(NEWER_LOCK_KEY, &UnaryCallContext::with_timeout(RPC_TIMEOUT))

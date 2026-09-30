@@ -31,8 +31,7 @@ use tidb_proto::{
 use tidb_txnkv::region::RegionCache;
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticMutation, RealOptimisticTransactionOpener,
-    TransactionCause,
+    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener, TransactionCause,
 };
 use tidb_txnkv::{PdRegionLoader, SharedReadAuthority, SharedReadRuntime};
 
@@ -66,7 +65,10 @@ type RealRuntime = SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>;
 /// `Closed` on its first RPC. Only a real cluster shows this: a scripted store
 /// has no worker to lose.
 struct Cluster {
-    #[expect(dead_code, reason = "held to keep the sole TiKV transport worker alive")]
+    #[expect(
+        dead_code,
+        reason = "held to keep the sole TiKV transport worker alive"
+    )]
     authority: SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>,
     pd: PdClient,
     opener: RealOptimisticTransactionOpener,
@@ -91,11 +93,11 @@ fn connect() -> Cluster {
         .expect("start sole real PD authority");
     assert_ne!(pd.cluster_id(), 0);
     let transport = TonicCoprocessorClient::new().expect("start sole real BatchCommands authority");
-    let shared =
-        SharedReadAuthority::start_with_store_liveness(transport, RegionCache::new(
-            PdRegionLoader::from_client(pd.clone()),
-        ))
-        .expect("start sole real RegionCache authority");
+    let shared = SharedReadAuthority::start_with_store_liveness(
+        transport,
+        RegionCache::new(PdRegionLoader::from_client(pd.clone())),
+    )
+    .expect("start sole real RegionCache authority");
     assert_eq!(shared.cluster_id(), pd.cluster_id());
     let read_opener = shared.opener();
     let opener = RealOptimisticTransactionOpener::from_process_capabilities(
@@ -109,8 +111,11 @@ fn connect() -> Cluster {
         .expect("open the fixture session from the same authority");
     // A fresh PD timestamp isolates repeated runs without deleting earlier
     // fixtures or requiring a new cluster for each invocation.
-    let key_prefix = format!("recovery-test-{}-", pd.get_timestamp().expect("fixture namespace"))
-        .into_bytes();
+    let key_prefix = format!(
+        "recovery-test-{}-",
+        pd.get_timestamp().expect("fixture namespace")
+    )
+    .into_bytes();
     Cluster {
         authority: shared,
         pd,
@@ -274,7 +279,7 @@ fn commit_real_pessimistic_txn(
 /// Reads a key back through a transaction newer than every commit so far, so
 /// the value observed is what TiKV durably holds.
 fn read_back(opener: &RealOptimisticTransactionOpener, key: &[u8]) -> Option<Vec<u8>> {
-    let mut transaction = opener.begin(1, 128).expect("allocate a readback snapshot");
+    let mut transaction = opener.begin().expect("allocate a readback snapshot");
     let observed = transaction
         .snapshot_get(key, &call())
         .expect("read the key back through real BatchCommands")
@@ -296,12 +301,7 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
         .pd
         .get_timestamp()
         .expect("allocate the abandoned lock's start timestamp");
-    hold_real_pessimistic_lock(
-        &cluster.fixture,
-        &key,
-        lock_start_ts,
-        EXPIRING_LOCK_TTL_MS,
-    );
+    hold_real_pessimistic_lock(&cluster.fixture, &key, lock_start_ts, EXPIRING_LOCK_TTL_MS);
     println!(
         "pessimistic_prewrite_recovery phase=locked key=expired lock_start_ts={lock_start_ts}"
     );
@@ -312,23 +312,18 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
 
     let writer = cluster
         .opener
-        .begin(1, 128)
+        .begin()
         .expect("allocate a writer newer than the abandoned lock");
     assert!(writer.start_ts() > lock_start_ts);
     let writer_start_ts = writer.start_ts();
     let outcome = writer
         .commit(
-            vec![
-                OptimisticMutation::insert(key.clone(), b"resolved-writer".to_vec())
-                    .unwrap(),
-            ],
+            vec![BufferMutation::insert(key.clone(), b"resolved-writer".to_vec()).unwrap()],
             &call(),
         )
         .expect("the Prewrite must reach a verdict, not a transport failure");
     let OptimisticCommitOutcome::Committed(committed) = outcome else {
-        panic!(
-            "an expired pessimistic lock must not stop an optimistic writer: {outcome:?}"
-        );
+        panic!("an expired pessimistic lock must not stop an optimistic writer: {outcome:?}");
     };
     assert_eq!(
         read_back(&cluster.opener, &key).as_deref(),
@@ -361,17 +356,12 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
         .pd
         .get_timestamp()
         .expect("allocate the live lock's start timestamp");
-    hold_real_pessimistic_lock(
-        &cluster.fixture,
-        &key,
-        lock_start_ts,
-        LIVE_LOCK_TTL_MS,
-    );
+    hold_real_pessimistic_lock(&cluster.fixture, &key, lock_start_ts, LIVE_LOCK_TTL_MS);
     println!("pessimistic_prewrite_recovery phase=locked key=live lock_start_ts={lock_start_ts}");
 
     let writer = cluster
         .opener
-        .begin(1, 128)
+        .begin()
         .expect("allocate a writer newer than the live lock");
     assert!(writer.start_ts() > lock_start_ts);
     let writer_start_ts = writer.start_ts();
@@ -379,10 +369,7 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
     let writer_call = UnaryCallContext::with_timeout(Duration::from_secs(5));
     let outcome = writer
         .commit(
-            vec![
-                OptimisticMutation::insert(key.clone(), b"must-not-win".to_vec())
-                    .unwrap(),
-            ],
+            vec![BufferMutation::insert(key.clone(), b"must-not-win".to_vec()).unwrap()],
             &writer_call,
         )
         .expect("the Prewrite must reach a verdict, not a transport failure");
@@ -397,9 +384,11 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
         "the writer must lose to the live lock, not to something else: {:?}",
         refused.cause
     );
-    assert!(wait_started.elapsed() >= Duration::from_millis(4_500),
+    assert!(
+        wait_started.elapsed() >= Duration::from_millis(4_500),
         "a live lock waits for the deadline, not a fixed number of attempts: {:?}",
-        wait_started.elapsed());
+        wait_started.elapsed()
+    );
     println!(
         "pessimistic_prewrite_recovery phase=refused key=live writer_start_ts={writer_start_ts}"
     );
@@ -438,7 +427,13 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
 /// This is what a coordinator that died between its secondary and primary
 /// batches leaves behind, and it is the exact state that makes TiKV answer
 /// CheckTxnStatus on the primary with `TxnNotFound`.
-fn hold_orphan_secondary_lock(runtime: &RealRuntime, primary: &[u8], secondary: &[u8], start_ts: u64, ttl_ms: u64) {
+fn hold_orphan_secondary_lock(
+    runtime: &RealRuntime,
+    primary: &[u8],
+    secondary: &[u8],
+    start_ts: u64,
+    ttl_ms: u64,
+) {
     let (address, context) = route(runtime, secondary);
     let request = KvrpcPrewriteRequest {
         mutations: vec![KvrpcMutation {
@@ -499,7 +494,13 @@ fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
         .pd
         .get_timestamp()
         .expect("allocate the orphaned transaction's start timestamp");
-    hold_orphan_secondary_lock(&cluster.fixture, &primary, &secondary, orphan_start_ts, EXPIRING_LOCK_TTL_MS);
+    hold_orphan_secondary_lock(
+        &cluster.fixture,
+        &primary,
+        &secondary,
+        orphan_start_ts,
+        EXPIRING_LOCK_TTL_MS,
+    );
     println!(
         "pessimistic_prewrite_recovery phase=orphaned key=orphan-secondary \
          orphan_start_ts={orphan_start_ts}"
@@ -521,16 +522,15 @@ fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
     // holds if the lock is really gone rather than merely stepped over.
     let writer = cluster
         .opener
-        .begin(1, 128)
+        .begin()
         .expect("allocate a writer newer than the orphaned lock");
     assert!(writer.start_ts() > orphan_start_ts);
     let outcome = writer
         .commit(
-            vec![OptimisticMutation::insert(
-                secondary.clone(),
-                b"after-orphan-recovery".to_vec(),
-            )
-            .unwrap()],
+            vec![
+                BufferMutation::insert(secondary.clone(), b"after-orphan-recovery".to_vec())
+                    .unwrap(),
+            ],
             &call(),
         )
         .expect("the writer reaches a terminal outcome");

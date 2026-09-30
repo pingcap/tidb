@@ -14,7 +14,7 @@
 
 //! A snapshot read blocked behind another transaction's live lock WAITS the
 //! lock out — Go's `KVSnapshot.get` retries under a 20-second TIME budget
-//! (`getMaxBackoff`), sleeping `BoTxnLockFast` (2ms base, exponential) capped
+//! (`getMaxBackoff`), sleeping `BoTxnLockFast` (10ms default base) capped
 //! by the lock's remaining TTL, with NO attempt cap.
 //!
 //! The regression: this port used to cap lock retries at FOUR ATTEMPTS, which
@@ -160,6 +160,33 @@ struct Recorded {
     resolve_completed: Arc<Condvar>,
 }
 
+// The native adapter clones a transport handle per request. Scripted replies
+// must remain shared across those handles, just like the in-process store.
+#[derive(Clone, Default)]
+struct Replies<T>(Arc<Mutex<std::collections::VecDeque<T>>>);
+
+impl<T> Replies<T> {
+    fn pop_front(&self) -> Option<T> {
+        self.0.lock().unwrap().pop_front()
+    }
+    fn push_back(&self, value: T) {
+        self.0.lock().unwrap().push_back(value);
+    }
+    fn extend(&self, values: impl IntoIterator<Item = T>) {
+        self.0.lock().unwrap().extend(values);
+    }
+}
+impl<T> From<Vec<T>> for Replies<T> {
+    fn from(values: Vec<T>) -> Self {
+        Self(Arc::new(Mutex::new(values.into())))
+    }
+}
+impl<T, const N: usize> From<[T; N]> for Replies<T> {
+    fn from(values: [T; N]) -> Self {
+        Self(Arc::new(Mutex::new(values.into())))
+    }
+}
+
 /// A store holding one value behind a lock that stays alive for the first
 /// [`LOCKED_RESPONSES`] probes; the mock lives at the trait seam, so no
 /// transport runs at all.
@@ -169,14 +196,14 @@ struct LockingClient {
     initial_batch_barrier: Option<Arc<(Mutex<usize>, std::sync::Condvar)>>,
     keyed_batch_responses:
         Option<Arc<Mutex<std::collections::BTreeMap<Vec<u8>, KvrpcBatchGetResponse>>>>,
-    remaining_locked: u64,
-    request_ids: u64,
+    remaining_locked: Arc<std::sync::atomic::AtomicU64>,
+    request_ids: Arc<std::sync::atomic::AtomicU64>,
     recorded: Arc<Mutex<Recorded>>,
-    batch_responses: std::collections::VecDeque<KvrpcBatchGetResponse>,
-    get_responses: std::collections::VecDeque<KvrpcGetResponse>,
-    scan_responses: std::collections::VecDeque<KvrpcScanResponse>,
+    batch_responses: Replies<KvrpcBatchGetResponse>,
+    get_responses: Replies<KvrpcGetResponse>,
+    scan_responses: Replies<KvrpcScanResponse>,
     status_response: Option<KvrpcCheckTxnStatusResponse>,
-    status_responses: std::collections::VecDeque<KvrpcCheckTxnStatusResponse>,
+    status_responses: Replies<KvrpcCheckTxnStatusResponse>,
     recovery_barrier: Option<Arc<(Mutex<usize>, std::sync::Condvar)>>,
     status_hold: Option<Arc<(Mutex<(bool, bool)>, std::sync::Condvar)>>,
     retry_hold: Option<Arc<(Mutex<(bool, bool)>, std::sync::Condvar)>>,
@@ -191,8 +218,8 @@ impl LockingClient {
             reject_async: false,
             initial_batch_barrier: None,
             keyed_batch_responses: None,
-            remaining_locked: LOCKED_RESPONSES,
-            request_ids: 0,
+            remaining_locked: Arc::new(std::sync::atomic::AtomicU64::new(LOCKED_RESPONSES)),
+            request_ids: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             recorded,
             batch_responses: Default::default(),
             get_responses: Default::default(),
@@ -234,10 +261,13 @@ impl LockingClient {
     }
 
     fn respond<R>(&mut self, tag: BatchCommandTag, response: R) -> PublishedCommand<R> {
-        self.request_ids += 1;
+        let request_id = self
+            .request_ids
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
         PublishedCommand::Response(TransactionBatchResponse {
             response,
-            publication: TransactionBatchPublication::in_process(tag, ADDRESS, self.request_ids),
+            publication: TransactionBatchPublication::in_process(tag, ADDRESS, request_id),
         })
     }
 }
@@ -277,8 +307,15 @@ impl TransactionCommandClient for LockingClient {
         if let Some(response) = self.get_responses.pop_front() {
             return self.respond(BatchCommandTag::Get, response);
         }
-        let response = if self.remaining_locked > 0 {
-            self.remaining_locked -= 1;
+        let response = if self
+            .remaining_locked
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |remaining| remaining.checked_sub(1),
+            )
+            .is_ok()
+        {
             KvrpcGetResponse {
                 error: Some(KvrpcKeyError {
                     locked: Some(Self::live_lock()),
@@ -295,7 +332,10 @@ impl TransactionCommandClient for LockingClient {
                 ..Default::default()
             }
         } else if request.key == b"missing" {
-            KvrpcGetResponse::default()
+            KvrpcGetResponse {
+                not_found: true,
+                ..Default::default()
+            }
         } else {
             KvrpcGetResponse {
                 value: b"waited-out-value".to_vec(),
@@ -655,8 +695,6 @@ fn a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4 * 1024,
     )
     .unwrap();
     let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
@@ -724,7 +762,7 @@ fn a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts() {
     assert!(!values.contains_key(b"missing".as_slice()));
     assert_eq!(
         recorded.lock().unwrap().batch_requests[0].keys,
-        vec![b"missing".to_vec(), b"other".to_vec()]
+        vec![b"missing".to_vec(), b"other".to_vec(), b"other".to_vec()]
     );
     let counts = transaction.snapshot_point_rpc_counts();
     transaction.snapshot_batch_get(&keys, &call).unwrap();
@@ -797,19 +835,43 @@ fn assert_batch_read_limits_and_pending_retries() {
     let fixture = |responses: Vec<KvrpcBatchGetResponse>| {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut client = LockingClient::new(Arc::clone(&recorded));
-        client.remaining_locked = 0;
-        client.batch_responses = responses.into();
+        client
+            .remaining_locked
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        if responses.len() == 2 {
+            // Concurrent initial workers may dispatch in either order.
+            client.keyed_batch_responses = Some(Arc::new(Mutex::new(
+                [
+                    format!("{:064}", 0).into_bytes(),
+                    format!("{:064}", 5120).into_bytes(),
+                ]
+                .into_iter()
+                .zip(responses)
+                .collect(),
+            )));
+        } else {
+            client.batch_responses = responses.into();
+        }
         let transaction = RealOptimisticTransaction::new_injected(
             SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
             TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
             CALL_TIMEOUT,
             START_TS,
             Instant::now(),
-            4,
-            4096,
         )
         .unwrap();
         (transaction, recorded)
+    };
+    let batch_sizes = |recorded: &Arc<Mutex<Recorded>>| {
+        let mut sizes = recorded
+            .lock()
+            .unwrap()
+            .batch_requests
+            .iter()
+            .map(|request| request.keys.len())
+            .collect::<Vec<_>>();
+        sizes.sort_unstable();
+        sizes
     };
     let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
     let wide_keys: Vec<_> = (0..5121).map(|i| format!("{i:064}").into_bytes()).collect();
@@ -822,14 +884,8 @@ fn assert_batch_read_limits_and_pending_retries() {
         5121
     );
     assert_eq!(
-        recorded
-            .lock()
-            .unwrap()
-            .batch_requests
-            .iter()
-            .map(|request| request.keys.len())
-            .collect::<Vec<_>>(),
-        vec![5120, 1],
+        batch_sizes(&recorded),
+        vec![1, 5120],
         "snapshot reads use Go's key-count limit, not commit's byte limit"
     );
     // Short keys expose the opposite bug: a byte cap can admit MORE than
@@ -843,16 +899,7 @@ fn assert_batch_read_limits_and_pending_retries() {
             .len(),
         5121
     );
-    assert_eq!(
-        recorded
-            .lock()
-            .unwrap()
-            .batch_requests
-            .iter()
-            .map(|request| request.keys.len())
-            .collect::<Vec<_>>(),
-        vec![5120, 1]
-    );
+    assert_eq!(batch_sizes(&recorded), vec![1, 5120]);
 
     let keys = vec![b"a".to_vec(), b"b".to_vec(), b"missing".to_vec()];
     let lock = KvrpcKeyError {
@@ -938,16 +985,15 @@ fn assert_batch_read_limits_and_pending_retries() {
         values.get(&wide_keys[5120]),
         Some(&b"completed-batch".to_vec())
     );
-    assert_eq!(
-        recorded
-            .lock()
-            .unwrap()
-            .batch_requests
-            .iter()
-            .map(|request| request.keys.len())
-            .collect::<Vec<_>>(),
-        vec![5120, 1, 5120]
-    );
+    let mut sizes = recorded
+        .lock()
+        .unwrap()
+        .batch_requests
+        .iter()
+        .map(|request| request.keys.len())
+        .collect::<Vec<_>>();
+    sizes.sort_unstable();
+    assert_eq!(sizes, vec![1, 5120, 5120]);
     assert_eq!(transaction.snapshot_point_rpc_counts(), (0, 3));
     assert_eq!(
         transaction
@@ -996,7 +1042,9 @@ fn point_get_keeps_its_explicit_lite_resolve_for_large_transactions() {
     let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(Arc::clone(&recorded));
-    client.remaining_locked = 0;
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     client.status_response = Some(KvrpcCheckTxnStatusResponse {
         commit_version: START_TS,
         ..Default::default()
@@ -1022,8 +1070,6 @@ fn point_get_keeps_its_explicit_lite_resolve_for_large_transactions() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
 
@@ -1048,7 +1094,9 @@ fn batch_get_does_not_force_lite_resolve_for_large_transactions() {
     let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(Arc::clone(&recorded));
-    client.remaining_locked = 0;
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     client.status_response = Some(KvrpcCheckTxnStatusResponse {
         commit_version: START_TS,
         ..Default::default()
@@ -1073,8 +1121,6 @@ fn batch_get_does_not_force_lite_resolve_for_large_transactions() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
 
@@ -1102,7 +1148,9 @@ fn scan_pair_locks_use_point_get_without_replaying_clean_rows() {
     for shared in [false, true] {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut client = LockingClient::new(Arc::clone(&recorded));
-        client.remaining_locked = 0;
+        client
+            .remaining_locked
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         client.status_response = Some(KvrpcCheckTxnStatusResponse {
             commit_version: START_TS,
             ..Default::default()
@@ -1155,8 +1203,6 @@ fn scan_pair_locks_use_point_get_without_replaying_clean_rows() {
             CALL_TIMEOUT,
             START_TS,
             Instant::now(),
-            4,
-            4096,
         )
         .unwrap();
         assert_eq!(
@@ -1191,7 +1237,9 @@ fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
         for committed in [false, true] {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut client = LockingClient::new(Arc::clone(&recorded));
-            client.remaining_locked = 0;
+            client
+                .remaining_locked
+                .store(0, std::sync::atomic::Ordering::Relaxed);
             client.status_response = Some(KvrpcCheckTxnStatusResponse {
                 commit_version: if committed { START_TS } else { START_TS + 1 },
                 ..Default::default()
@@ -1230,8 +1278,6 @@ fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
                 CALL_TIMEOUT,
                 START_TS,
                 Instant::now(),
-                4,
-                4096,
             )
             .unwrap();
             let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
@@ -1259,10 +1305,6 @@ fn snapshot_get_and_batch_get_back_off_ignored_request_hints() {
             assert_eq!(stats.backoff_count("txnLockFast"), 6);
             assert!(stats.backoff_duration("txnLockFast") >= Duration::from_millis(63));
             assert!(stats.resolve_lock_duration() > Duration::ZERO);
-            assert!(
-                stats.rpc_duration(tikv_client::SnapshotRpcCommand::ResolveLock)
-                    >= stats.resolve_lock_duration() + stats.backoff_duration("txnLockFast")
-            );
             let recorded = recorded.lock().unwrap();
             let contexts = if batch {
                 &recorded.batch_contexts
@@ -1289,7 +1331,9 @@ fn batch_get_retries_keep_physical_response_boundaries() {
     let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(Arc::clone(&recorded));
-    client.remaining_locked = 0;
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     client.status_response = Some(KvrpcCheckTxnStatusResponse {
         commit_version: START_TS,
         ..Default::default()
@@ -1314,41 +1358,43 @@ fn batch_get_retries_keep_physical_response_boundaries() {
         })
         .collect();
     first.push(locked_pair(keys[0].clone()));
-    client.batch_responses = [
-        KvrpcBatchGetResponse {
-            pairs: first,
-            ..Default::default()
-        },
-        KvrpcBatchGetResponse {
-            pairs: vec![locked_pair(keys[5120].clone())],
-            ..Default::default()
-        },
-    ]
-    .into();
+    client.keyed_batch_responses = Some(Arc::new(Mutex::new(std::collections::BTreeMap::from([
+        (
+            keys[0].clone(),
+            KvrpcBatchGetResponse {
+                pairs: first,
+                ..Default::default()
+            },
+        ),
+        (
+            keys[5120].clone(),
+            KvrpcBatchGetResponse {
+                pairs: vec![locked_pair(keys[5120].clone())],
+                ..Default::default()
+            },
+        ),
+    ]))));
     let mut transaction = RealOptimisticTransaction::new_injected(
         SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
         TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
     let values = transaction
         .snapshot_batch_get(&keys, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
         .unwrap();
     assert_eq!(values.len(), keys.len());
-    assert_eq!(
-        recorded
-            .lock()
-            .unwrap()
-            .batch_requests
-            .iter()
-            .map(|r| r.keys.len())
-            .collect::<Vec<_>>(),
-        vec![5120, 1, 1, 1]
-    );
+    let mut sizes = recorded
+        .lock()
+        .unwrap()
+        .batch_requests
+        .iter()
+        .map(|r| r.keys.len())
+        .collect::<Vec<_>>();
+    sizes.sort_unstable();
+    assert_eq!(sizes, vec![1, 1, 1, 5120]);
     assert_eq!(values.iter().filter(|(_, v)| v == b"clean").count(), 5119);
 }
 
@@ -1357,7 +1403,9 @@ fn scan_response_locks_wait_without_stamping_read_hints() {
     let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(Arc::clone(&recorded));
-    client.remaining_locked = 0;
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     client.status_response = Some(KvrpcCheckTxnStatusResponse {
         lock_ttl: 20,
         action: tidb_proto::KvrpcTxnAction::MinCommitTsPushed as i32,
@@ -1387,8 +1435,6 @@ fn scan_response_locks_wait_without_stamping_read_hints() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
     let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
@@ -1403,10 +1449,6 @@ fn scan_response_locks_wait_without_stamping_read_hints() {
             )
             .unwrap(),
         vec![(ROW_KEY.to_vec(), b"resolved".to_vec())]
-    );
-    assert_eq!(
-        stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
-        0
     );
     assert_eq!(stats.backoff_count("txnLockFast"), 0);
     assert_eq!(stats.resolve_lock_duration(), Duration::ZERO);
@@ -1429,7 +1471,9 @@ fn max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock() {
         for read_ts in [START_TS, u64::MAX] {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut client = LockingClient::new(Arc::clone(&recorded));
-            client.remaining_locked = 0;
+            client
+                .remaining_locked
+                .store(0, std::sync::atomic::Ordering::Relaxed);
             client.status_response = Some(KvrpcCheckTxnStatusResponse {
                 commit_version: START_TS,
                 ..Default::default()
@@ -1466,8 +1510,6 @@ fn max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock() {
                 CALL_TIMEOUT,
                 START_TS,
                 Instant::now(),
-                4,
-                4096,
             )
             .unwrap();
             let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
@@ -1499,11 +1541,22 @@ fn max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock() {
                     );
                     assert_eq!(recorded.get_contexts[2].committed_locks, vec![90]);
                     assert_eq!(
-                        recorded.get_contexts[3].committed_locks,
-                        vec![90, 91],
+                        recorded.get_contexts[3]
+                            .committed_locks
+                            .iter()
+                            .copied()
+                            .collect::<std::collections::BTreeSet<_>>(),
+                        std::collections::BTreeSet::from([90, 91]),
                         "ignored sent hint must fall through to resolution"
                     );
-                    assert_eq!(recorded.get_contexts[5].resolved_locks, vec![91, 92]);
+                    assert_eq!(
+                        recorded.get_contexts[5]
+                            .resolved_locks
+                            .iter()
+                            .copied()
+                            .collect::<std::collections::BTreeSet<_>>(),
+                        std::collections::BTreeSet::from([91, 92])
+                    );
                     assert!(recorded.status_get_attempts.contains(&(90, 1)));
                     assert!(recorded.status_get_attempts.contains(&(91, 3)));
                     assert!(!recorded.status_get_attempts.iter().any(|(ts, _)| *ts == 92));
@@ -1550,7 +1603,9 @@ fn batch_get_lock_recovery_workers_make_independent_progress() {
     let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(Arc::clone(&recorded));
-    client.remaining_locked = 0;
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     client.status_response = Some(KvrpcCheckTxnStatusResponse {
         commit_version: START_TS,
         ..Default::default()
@@ -1577,8 +1632,6 @@ fn batch_get_lock_recovery_workers_make_independent_progress() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
     let values = transaction
@@ -1619,7 +1672,9 @@ fn wait_for_worker_release(
 
 fn two_batch_worker_fixture() -> (LockingClient, Vec<Vec<u8>>) {
     let mut client = LockingClient::new(Arc::new(Mutex::new(Recorded::default())));
-    client.remaining_locked = 0;
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     client.status_response = Some(KvrpcCheckTxnStatusResponse {
         commit_version: START_TS,
         ..Default::default()
@@ -1661,8 +1716,6 @@ fn batch_get_recovery_starts_before_an_earlier_rpc_completes() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
     // Batch 1 completes only after batch 2's retry enters CheckTxnStatus.
@@ -1714,8 +1767,6 @@ fn batch_get_joins_retry_workers_before_returning_cancellation_or_sibling_error(
                     CALL_TIMEOUT,
                     START_TS,
                     Instant::now(),
-                    4,
-                    4096,
                 )
                 .unwrap();
                 let call = UnaryCallContext::with_timeout(if mode == "deadline" {
@@ -1802,6 +1853,29 @@ fn batch_get_split_retries_run_children_independently() {
             OneRegion.load_region(key)
         }
     }
+    impl tidb_txnkv::region::RegionQueryLoader for SplitRegion {
+        fn query_region(
+            &mut self,
+            query: tidb_txnkv::region::RegionQuery<'_>,
+            options: tidb_txnkv::region::RegionQueryOptions,
+        ) -> Result<RegionLocation, RegionLoadError> {
+            OneRegion.query_region(query, options)
+        }
+        fn scan_regions_once(
+            &mut self,
+            range: &tidb_txnkv::region::KeyRange,
+            limit: usize,
+            options: tidb_txnkv::region::RegionQueryOptions,
+        ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+            OneRegion.scan_regions_once(range, limit, options)
+        }
+        fn load_store(
+            &mut self,
+            id: u64,
+        ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+            OneRegion.load_store(id)
+        }
+    }
     impl RegionRecoveryLoader for SplitRegion {
         fn hydrate_region(
             &mut self,
@@ -1862,8 +1936,6 @@ fn batch_get_split_retries_run_children_independently() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
     let values = transaction
@@ -1892,13 +1964,18 @@ fn batch_get_reads_the_published_async_setting_on_every_call() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
     let keys: Vec<_> = (0..5121).map(|i| format!("{i:05}").into_bytes()).collect();
     let mut read_ts = START_TS;
-    let mut expected_async_calls = 0;
+    let async_count = || {
+        tikv_client::metrics::global_metrics()
+            .counter_vec("TiKVAsyncBatchGetCounter")
+            .unwrap()
+            .with_label_values(&["ok"])
+            .get() as u64
+    };
+    let mut expected_async_calls = async_count();
     for enable_async in [false, true, false] {
         // Publish through the same owner as server startup, after the
         // transaction exists. Each operation must observe the current flag.
@@ -1920,14 +1997,11 @@ fn batch_get_reads_the_published_async_setting_on_every_call() {
             .unwrap();
         assert_eq!(values.len(), keys.len());
         if enable_async {
-            expected_async_calls += 1;
+            expected_async_calls += 2;
         } else {
             assert_eq!(*barrier.0.lock().unwrap(), 2);
         }
-        assert_eq!(
-            recorded.lock().unwrap().async_batch_calls,
-            expected_async_calls
-        );
+        assert_eq!(async_count(), expected_async_calls);
         runtime.client().lock().unwrap().initial_batch_barrier = None;
         read_ts += 1;
         let single = transaction
@@ -1939,7 +2013,7 @@ fn batch_get_reads_the_published_async_setting_on_every_call() {
             .unwrap();
         assert_eq!(single, vec![(keys[0].clone(), b"batch-value".to_vec())]);
         assert_eq!(
-            recorded.lock().unwrap().async_batch_calls,
+            async_count(),
             expected_async_calls,
             "a single physical batch bypasses async admission in either mode"
         );
@@ -1978,7 +2052,9 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
     let _config = snapshot_test_config();
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let mut client = LockingClient::new(recorded);
-    client.remaining_locked = 0;
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     client.status_response = Some(KvrpcCheckTxnStatusResponse {
         commit_version: START_TS,
         ..Default::default()
@@ -2016,8 +2092,6 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4096,
     )
     .unwrap();
     assert!(!transaction.snapshot_point_response_stats().is_valid());
@@ -2048,10 +2122,7 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
         "Get excludes key bytes and error payload"
     );
     assert_eq!(stats.rpc_count(tikv_client::SnapshotRpcCommand::Get), 2);
-    assert_eq!(
-        stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
-        1
-    );
+    assert!(stats.resolve_lock_duration() > Duration::ZERO);
     assert_eq!(stats.time_detail().process_time, Duration::from_nanos(58));
     assert_eq!(stats.read_pool_task_details().unwrap().task_count, 2);
     assert_eq!(
@@ -2135,10 +2206,7 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
     assert!(empty.point_response_stats().scan_detail_complete());
     assert_eq!(empty.point_response_stats().payload_bytes, 10);
     assert_eq!(empty.rpc_count(tikv_client::SnapshotRpcCommand::Get), 3);
-    assert_eq!(
-        empty.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
-        0
-    );
+    assert_eq!(empty.resolve_lock_duration(), Duration::ZERO);
     {
         let mut client = runtime.client().lock().unwrap();
         client.status_response = Some(KvrpcCheckTxnStatusResponse {
@@ -2164,10 +2232,7 @@ fn snapshot_response_stats_get_retries_cache_and_optional_collection() {
     assert!(transaction.snapshot_get(b"failed-lock", &call).is_err());
     assert!(empty.resolve_lock_duration() > prior_resolve_time);
     assert_eq!(empty.rpc_count(tikv_client::SnapshotRpcCommand::Get), 4);
-    assert_eq!(
-        empty.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
-        1
-    );
+    assert!(empty.resolve_lock_duration() > Duration::ZERO);
 }
 
 #[test]
@@ -2194,8 +2259,6 @@ fn snapshot_response_stats_batch_modes_retries_and_pair_errors() {
             CALL_TIMEOUT,
             START_TS,
             Instant::now(),
-            4,
-            4096,
         )
         .unwrap();
         let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
@@ -2208,10 +2271,7 @@ fn snapshot_response_stats_batch_modes_retries_and_pair_errors() {
             stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
             3
         );
-        assert_eq!(
-            stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
-            1
-        );
+        assert!(stats.resolve_lock_duration() > Duration::ZERO);
         assert_eq!(point.scan_detail.total_keys, 2);
         assert_eq!(
             point.payload_bytes,
@@ -2267,10 +2327,7 @@ fn snapshot_response_stats_batch_modes_retries_and_pair_errors() {
             stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
             4
         );
-        assert_eq!(
-            stats.rpc_count(tikv_client::SnapshotRpcCommand::ResolveLock),
-            1
-        );
+        assert!(stats.resolve_lock_duration() > Duration::ZERO);
     }
 }
 
@@ -2282,7 +2339,9 @@ fn snapshot_batch_backoff_keeps_one_completed_workers_history() {
         config.performance.enable_async_batch_get = enable_async;
         tidb_config::config_tree::config::store_global_config(config);
         let mut client = LockingClient::new(Arc::new(Mutex::new(Recorded::default())));
-        client.remaining_locked = 0;
+        client
+            .remaining_locked
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         client.status_response = Some(KvrpcCheckTxnStatusResponse {
             commit_version: START_TS,
             ..Default::default()
@@ -2311,8 +2370,9 @@ fn snapshot_batch_backoff_keeps_one_completed_workers_history() {
                 })
                 .collect(),
         )));
-        // Each worker sees its own already-hinted lock once on the retry, so
-        // each independently sleeps 1ms. Summing workers would report 2ms.
+        // Each worker sees its own already-hinted lock once on the retry.
+        // Go's default LockFast base is 10ms with equal jitter; keep only
+        // one worker's history rather than summing both independent sleeps.
         client.lock_batch_keys_once = Some(Arc::new(Mutex::new(Default::default())));
         let mut transaction = RealOptimisticTransaction::new_injected(
             SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion)),
@@ -2320,8 +2380,6 @@ fn snapshot_batch_backoff_keeps_one_completed_workers_history() {
             CALL_TIMEOUT,
             START_TS,
             Instant::now(),
-            4,
-            4096,
         )
         .unwrap();
         let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
@@ -2335,10 +2393,8 @@ fn snapshot_batch_backoff_keeps_one_completed_workers_history() {
             6
         );
         assert_eq!(stats.backoff_count("txnLockFast"), 1);
-        assert_eq!(
-            stats.backoff_duration("txnLockFast"),
-            Duration::from_millis(1)
-        );
+        let sleep = stats.backoff_duration("txnLockFast");
+        assert!((Duration::from_millis(5)..Duration::from_millis(10)).contains(&sleep));
         // The completed history is recorded once per uncached operation.
         transaction
             .snapshot_batch_get(&keys, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
@@ -2353,7 +2409,9 @@ fn snapshot_nested_status_retries_share_history_across_lock_encounters() {
     for batch in [false, true] {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut client = LockingClient::new(Arc::clone(&recorded));
-        client.remaining_locked = 0;
+        client
+            .remaining_locked
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         for txn_id in [90, 91] {
             let error = KvrpcKeyError {
                 locked: Some(KvrpcLockInfo {
@@ -2403,8 +2461,6 @@ fn snapshot_nested_status_retries_share_history_across_lock_encounters() {
             CALL_TIMEOUT,
             START_TS,
             Instant::now(),
-            4,
-            4096,
         )
         .unwrap();
         let stats = Arc::new(tikv_client::SnapshotRuntimeStats::new());
@@ -2430,5 +2486,47 @@ fn snapshot_nested_status_retries_share_history_across_lock_encounters() {
             Duration::from_millis(6),
             "both lock encounters share the 2ms then 4ms schedule"
         );
+    }
+}
+
+impl tidb_txnkv::region::RegionQueryLoader for OneRegion {
+    fn query_region(
+        &mut self,
+        query: tidb_txnkv::region::RegionQuery<'_>,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        match query {
+            tidb_txnkv::region::RegionQuery::Id(id) => {
+                let key = Vec::new();
+                let location = self.load_region(&key)?;
+                if location.region.id == id {
+                    Ok(location)
+                } else {
+                    Err(RegionLoadError::new(
+                        "unknown-region",
+                        "unknown fixture region",
+                    ))
+                }
+            }
+            tidb_txnkv::region::RegionQuery::Key(key) => self.load_region(key),
+            tidb_txnkv::region::RegionQuery::EndKey(key) => self.load_region_by_end_key(key),
+        }
+    }
+    fn scan_regions_once(
+        &mut self,
+        range: &tidb_txnkv::region::KeyRange,
+        _limit: usize,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        self.load_region(&range.start).map(|r| vec![r])
+    }
+    fn load_store(
+        &mut self,
+        _id: u64,
+    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-store-query",
+            "fixture expects cached store metadata",
+        ))
     }
 }

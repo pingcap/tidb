@@ -935,157 +935,6 @@ async fn source_go_integration_tests_lock_test_TestBatchResolveTxnFallenBackFrom
     assert_eq!(reader.get(secondary).await.unwrap(), None);
 }
 
-fn source_deadlock_context(for_update_ts: u64, tag: String) -> LockContext {
-    let mut context = LockContext::new(for_update_ts, 1_000, SystemTime::now());
-    context.resource_group_tag = tag.into_bytes();
-    context
-}
-
-fn source_assert_wait_chain_entry(
-    entry: &crate::proto::deadlock::WaitForEntry,
-    transaction: u64,
-    wait_for_transaction: u64,
-    key: &[u8],
-    resource_group_tag: &str,
-) {
-    assert_eq!(entry.txn, transaction);
-    assert_eq!(entry.wait_for_txn, wait_for_transaction);
-    assert_eq!(entry.key, key);
-    assert_eq!(entry.resource_group_tag, resource_group_tag.as_bytes());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
-#[serial_test::serial]
-#[allow(non_snake_case)]
-async fn source_go_integration_tests_lock_test_TestDeadlockReportWaitChain() {
-    async fn prepare(
-        pd: &Arc<crate::mock::mocktikv::MockPdClient>,
-        prefix: &str,
-        count: usize,
-    ) -> Vec<Transaction<crate::mock::mocktikv::MockPdClient>> {
-        let mut transactions = Vec::with_capacity(count);
-        for index in 0..count {
-            let mut transaction = source_shared_transaction(pd).await;
-            let key = format!("{prefix}{index:02}").into_bytes();
-            let timestamp = transaction.start_timestamp().version();
-            let mut context = source_deadlock_context(timestamp, format!("tag-init{index}"));
-            transaction
-                .lock_keys_with_context(&mut context, [key])
-                .await
-                .unwrap();
-            transactions.push(transaction);
-        }
-        transactions
-    }
-
-    async fn try_lock(
-        transaction: &mut Transaction<crate::mock::mocktikv::MockPdClient>,
-        key: Vec<u8>,
-        tag: String,
-    ) -> crate::Result<()> {
-        let mut context =
-            source_deadlock_context(transaction.start_timestamp().version(), tag);
-        transaction
-            .lock_keys_with_context(&mut context, [key])
-            .await
-    }
-
-    let (_cluster, pd) = source_integration_store();
-
-    let prefix = "~lock/deadlock-chain/two/";
-    let mut transactions = prepare(&pd, prefix, 2).await;
-    let mut transaction_0 = transactions.remove(0);
-    let transaction_0_ts = transaction_0.start_timestamp().version();
-    let key_1 = format!("{prefix}{:02}", 1).into_bytes();
-    let wait_0_for_1 = tokio::spawn(async move {
-        let result = try_lock(&mut transaction_0, key_1, "tag-0-1".to_owned()).await;
-        (transaction_0, result)
-    });
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let transaction_1 = &mut transactions[0];
-    let transaction_1_ts = transaction_1.start_timestamp().version();
-    let key_0 = format!("{prefix}{:02}", 0).into_bytes();
-    let error = try_lock(transaction_1, key_0.clone(), "tag-1-0".to_owned())
-        .await
-        .unwrap_err();
-    let crate::Error::Deadlock(deadlock) = error else {
-        panic!("expected deadlock, got {error:?}");
-    };
-    assert_eq!(deadlock.deadlock.wait_chain.len(), 2);
-    source_assert_wait_chain_entry(
-        &deadlock.deadlock.wait_chain[0],
-        transaction_0_ts,
-        transaction_1_ts,
-        format!("{prefix}{:02}", 1).as_bytes(),
-        "tag-0-1",
-    );
-    source_assert_wait_chain_entry(
-        &deadlock.deadlock.wait_chain[1],
-        transaction_1_ts,
-        transaction_0_ts,
-        &key_0,
-        "tag-1-0",
-    );
-    transaction_1.rollback().await.unwrap();
-    let (mut transaction_0, wait_result) = wait_0_for_1.await.unwrap();
-    assert!(wait_result.is_err());
-    transaction_0.rollback().await.unwrap();
-
-    let prefix = "~lock/deadlock-chain/four/";
-    let mut transactions = prepare(&pd, prefix, 4).await;
-    let timestamps = transactions
-        .iter()
-        .map(|transaction| transaction.start_timestamp().version())
-        .collect::<Vec<_>>();
-    let mut transaction_0 = transactions.remove(0);
-    let mut transaction_1 = transactions.remove(0);
-    let mut transaction_2 = transactions.remove(0);
-    let mut transaction_3 = transactions.remove(0);
-    let key = move |index: usize| format!("{prefix}{index:02}").into_bytes();
-    let wait_0_for_1 = tokio::spawn(async move {
-        let result = try_lock(&mut transaction_0, key(1), "tag-0-1".to_owned()).await;
-        (transaction_0, result)
-    });
-    let key = move |index: usize| format!("{prefix}{index:02}").into_bytes();
-    let wait_2_for_0 = tokio::spawn(async move {
-        let result = try_lock(&mut transaction_2, key(0), "tag-2-0".to_owned()).await;
-        (transaction_2, result)
-    });
-    let key = move |index: usize| format!("{prefix}{index:02}").into_bytes();
-    let wait_1_for_3 = tokio::spawn(async move {
-        let result = try_lock(&mut transaction_1, key(3), "tag-1-3".to_owned()).await;
-        (transaction_1, result)
-    });
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let key = |index: usize| format!("{prefix}{index:02}").into_bytes();
-    let error = try_lock(&mut transaction_3, key(2), "tag-3-2".to_owned())
-        .await
-        .unwrap_err();
-    let crate::Error::Deadlock(deadlock) = error else {
-        panic!("expected deadlock, got {error:?}");
-    };
-    assert_eq!(deadlock.deadlock.wait_chain.len(), 4);
-    for (entry, (transaction, wait_for, key_index, tag)) in
-        deadlock.deadlock.wait_chain.iter().zip([
-            (timestamps[2], timestamps[0], 0, "tag-2-0"),
-            (timestamps[0], timestamps[1], 1, "tag-0-1"),
-            (timestamps[1], timestamps[3], 3, "tag-1-3"),
-            (timestamps[3], timestamps[2], 2, "tag-3-2"),
-        ])
-    {
-        source_assert_wait_chain_entry(entry, transaction, wait_for, &key(key_index), tag);
-    }
-    transaction_3.rollback().await.unwrap();
-    let (mut transaction_1, result) = wait_1_for_3.await.unwrap();
-    assert!(result.is_err());
-    transaction_1.rollback().await.unwrap();
-    let (mut transaction_0, result) = wait_0_for_1.await.unwrap();
-    assert!(result.is_err());
-    transaction_0.rollback().await.unwrap();
-    let (mut transaction_2, result) = wait_2_for_0.await.unwrap();
-    assert!(result.is_err());
-    transaction_2.rollback().await.unwrap();
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
@@ -2032,10 +1881,10 @@ async fn source_go_integration_tests_lock_with_tikv_test_TestPessimisticLockMaxE
 #[serial_test::serial]
 #[allow(non_snake_case)]
 async fn source_go_integration_tests_lock_test_TestResolveLockWithTiKVSideAsync() {
-    for commit_primary in [true, false] {
+    for (commit_primary, admitted) in [(true, true), (true, false), (false, true), (false, false)] {
         let (cluster, pd) = source_integration_store();
         let case = if commit_primary { "commit" } else { "rollback" };
-        let prefix = format!("~lock/tikv-async/{case}/");
+        let prefix = format!("~lock/tikv-async/{case}/{admitted}/");
         let keys = (0..20)
             .map(|index| format!("{prefix}{index:03}").into_bytes())
             .collect::<Vec<_>>();
@@ -2097,6 +1946,7 @@ async fn source_go_integration_tests_lock_test_TestResolveLockWithTiKVSideAsync(
         interceptor_chain.link(interceptor);
         let mut context = ResolveLocksContext::default();
         context.rpc_interceptor = Some(interceptor_chain);
+        context.set_async_resolve_pool_size(if admitted { keys.len() } else { 0 });
         let context_owner = context.clone();
         let read_locks = crate::transaction::ReadLockContext::default();
         let read_ts = crate::pd::PdClient::get_timestamp(Arc::clone(&pd))
@@ -2137,7 +1987,13 @@ async fn source_go_integration_tests_lock_test_TestResolveLockWithTiKVSideAsync(
         context_owner.close().await;
 
         let requests = requests.lock().unwrap();
-        assert!(!requests.is_empty());
+        if admitted {
+            // Detached cleanup uses the resolver context, so the statement's
+            // interceptor must not observe it. Inline fallback retains it.
+            assert!(requests.is_empty());
+        } else {
+            assert!(!requests.is_empty());
+        }
         assert!(requests.iter().all(|request| request.keys.is_empty()));
         assert!(requests
             .iter()

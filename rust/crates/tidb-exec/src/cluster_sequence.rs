@@ -48,7 +48,7 @@ use tidb_txnkv::pd_capability::CapabilityTimestampSource;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticMutation, RealOptimisticTransaction,
+    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransaction,
     RealOptimisticTransactionOpener,
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
@@ -146,18 +146,15 @@ where
         round: i64,
         round_changed: bool,
     ) -> Result<(), CommitFailure> {
-        let mut mutations = vec![OptimisticMutation::meta_put(
-            self.value_key.clone(),
-            value::encode_int_value(new_end),
-        )
-        .map_err(|error| CommitFailure::Failed(error.to_string()))?];
+        let mut mutations =
+            vec![
+                BufferMutation::set(self.value_key.clone(), value::encode_int_value(new_end))
+                    .map_err(|error| CommitFailure::Failed(error.to_string()))?,
+            ];
         if round_changed {
             mutations.push(
-                OptimisticMutation::meta_put(
-                    self.cycle_key.clone(),
-                    value::encode_int_value(round),
-                )
-                .map_err(|error| CommitFailure::Failed(error.to_string()))?,
+                BufferMutation::set(self.cycle_key.clone(), value::encode_int_value(round))
+                    .map_err(|error| CommitFailure::Failed(error.to_string()))?,
             );
         }
         match transaction
@@ -200,7 +197,7 @@ where
             // round bump commit together.
             let mut transaction = self
                 .opener
-                .begin(2, 64)
+                .begin()
                 .map_err(|error| SequenceError::Store(error.to_string()))?;
             let (mut base, mut round) =
                 self.read(&mut transaction).map_err(SequenceError::Store)?;
@@ -289,7 +286,7 @@ where
             let call = UnaryCallContext::with_timeout(self.timeout);
             let mut transaction = self
                 .opener
-                .begin(1, 64)
+                .begin()
                 .map_err(|error| SequenceError::Store(error.to_string()))?;
             let (stored, _) = self.read(&mut transaction).map_err(SequenceError::Store)?;
             // Go `rebase4Sequence`: already at or past `required` means no
@@ -305,11 +302,9 @@ where
                     .map_err(|error| SequenceError::Store(error.to_string()))?;
                 return Ok((0, true));
             }
-            let mutation = OptimisticMutation::meta_put(
-                self.value_key.clone(),
-                value::encode_int_value(required),
-            )
-            .map_err(|error| SequenceError::Store(error.to_string()))?;
+            let mutation =
+                BufferMutation::set(self.value_key.clone(), value::encode_int_value(required))
+                    .map_err(|error| SequenceError::Store(error.to_string()))?;
             match transaction
                 .commit(vec![mutation], &call)
                 .map_err(|error| SequenceError::Store(error.to_string()))?
@@ -333,12 +328,9 @@ where
         // not serve `ALTER SEQUENCE`; the arm exists so the trait contract
         // holds should that change.
         let call = UnaryCallContext::with_timeout(self.timeout);
-        match self.opener.begin(1, 64) {
+        match self.opener.begin() {
             Ok(transaction) => {
-                match OptimisticMutation::meta_put(
-                    self.value_key.clone(),
-                    value::encode_int_value(stored),
-                ) {
+                match BufferMutation::set(self.value_key.clone(), value::encode_int_value(stored)) {
                     Ok(mutation) => {
                         if let Err(error) = transaction.commit(vec![mutation], &call) {
                             eprintln!(

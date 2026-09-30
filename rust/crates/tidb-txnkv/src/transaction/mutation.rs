@@ -12,542 +12,148 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeSet;
+use crate::AssertionOp;
 
-use tidb_proto::{KvrpcAssertion, KvrpcMutation, KvrpcOp};
-
-/// One normal optimistic mutation admitted by the concrete TiKV coordinator.
+/// The operation a statement applies to the transaction's MemDB.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OptimisticMutationKind {
-    /// Create a value and fail if the key already exists at `start_ts`.
-    Insert,
-    /// Replace a value and fail if the key does not exist at `start_ts`.
-    PutExisting,
-    /// Delete a value and assert the key exists at `start_ts`, matching Go
-    /// `TableCommon.removeRecord`, which sets `kv.AssertExist` before
-    /// `txn.Delete(key)`.
+pub enum BufferMutationOp {
+    /// Store a value, with flags and assertions carried independently.
+    Set,
+    /// Store a deletion tombstone.
     Delete,
-    /// Write a non-unique secondary index entry. Go `tables.index.create` does a
-    /// plain `MemBuffer.Set` (`Op_Put`) — not the row key's `Op_Insert` — and,
-    /// on the default optimistic lazy-check path, leaves the assertion
-    /// unresolved (`kv.AssertUnknown` -> proto `None`): the index key already
-    /// carries the row handle, so a new row's entry cannot collide.
-    IndexPut,
-    /// Create a unique secondary index entry and assert its key did not exist.
-    /// The index key omits the row handle, so a plain put would permit a
-    /// concurrent duplicate to overwrite the original entry.
-    UniqueIndexInsert,
-    /// Delete a non-unique secondary index entry. Go `tables.index.Delete` does a
-    /// plain `MemBuffer.Delete` (`Op_Del`) with an unresolved assertion
-    /// (`None`), unlike the row delete's `Exist`.
-    IndexDelete,
-    /// Write one catalog meta key in the `m` namespace. Go's whole meta layer
-    /// (`structure.Set`, `structure.HSet`, `kv.IncInt64`) reaches storage as a
-    /// plain `txn.Set` with no assertion: a meta key may or may not already
-    /// exist (`SchemaVersionKey` on a fresh cluster, every `Diff:<ver>`), and
-    /// the DDL's own snapshot reads have already established what is there.
-    MetaPut,
-    /// Delete one catalog meta key. Go `structure.HDel` performs a plain
-    /// `txn.Delete` with no assertion, and only for a field it just observed.
-    MetaDelete,
-    /// Replace an unindexed clustered system-table row with no existence
-    /// assertion. Go SQL `REPLACE` uses a plain mem-buffer `Set`: the row may
-    /// be absent on the first phase or present when a preceding best-effort
-    /// cleanup failed.
-    SystemRowPut,
-    /// Delete an unindexed clustered system-table row with no existence
-    /// assertion. SQL `DELETE` succeeds when the row is already absent.
-    SystemRowDelete,
-    /// Prewrite a key this transaction locked but never wrote (`Op_Lock`).
-    ///
-    /// Go `twoPhaseCommitter.initKeysAndMutations` (`2pc.go`) emits exactly
-    /// this for every membuffer entry carrying `HasLocked()` and no value
-    /// change. It is what guarantees the pinned pessimistic primary is always
-    /// among the prewritten mutations, so the primary lock — the transaction's
-    /// only recovery entry point — actually exists after prewrite.
-    LockOnly,
+    /// Keep a locked key without changing its value.
+    Lock,
 }
 
-/// One immutable encoded-key mutation.
+/// An owned statement write. Commit derives TiKV mutations from MemDB flags.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OptimisticMutation {
-    kind: OptimisticMutationKind,
+pub struct BufferMutation {
+    op: BufferMutationOp,
     key: Vec<u8>,
     value: Vec<u8>,
+    presume_not_exists: bool,
+    assertion: AssertionOp,
 }
 
-impl OptimisticMutation {
-    /// Creates an optimistic Insert with TiKV's not-exists assertion.
+impl BufferMutation {
+    /// Sets an encoded value without an existence assertion.
+    pub fn set(
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+    ) -> Result<Self, MutationSetError> {
+        Self::new(BufferMutationOp::Set, key.into(), value.into())
+    }
+    /// Sets a value with a lazy absence check and a not-exists assertion.
     pub fn insert(
         key: impl Into<Vec<u8>>,
         value: impl Into<Vec<u8>>,
     ) -> Result<Self, MutationSetError> {
-        Self::new(OptimisticMutationKind::Insert, key.into(), value.into())
+        let mut mutation = Self::set(key, value)?;
+        mutation.presume_not_exists = true;
+        mutation.assertion = AssertionOp::AssertNotExist;
+        Ok(mutation)
     }
-
-    /// Creates an optimistic UPDATE Put with TiKV's exists assertion.
+    /// Sets a value with the table layer's exists assertion.
     pub fn put_existing(
         key: impl Into<Vec<u8>>,
         value: impl Into<Vec<u8>>,
     ) -> Result<Self, MutationSetError> {
-        Self::new(
-            OptimisticMutationKind::PutExisting,
-            key.into(),
-            value.into(),
-        )
+        let mut mutation = Self::set(key, value)?;
+        mutation.assertion = AssertionOp::AssertExist;
+        Ok(mutation)
     }
-
-    /// Creates an optimistic DELETE with TiKV's exists assertion. A delete
-    /// carries no value.
+    /// Deletes a key without an existence assertion.
     pub fn delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
-        Self::new(OptimisticMutationKind::Delete, key.into(), Vec::new())
+        Self::new(BufferMutationOp::Delete, key.into(), Vec::new())
     }
-
-    /// Creates a non-unique secondary index entry write (`Op_Put`, no assertion).
-    pub fn index_put(
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-    ) -> Result<Self, MutationSetError> {
-        Self::new(OptimisticMutationKind::IndexPut, key.into(), value.into())
+    /// Deletes a key with the table layer's exists assertion.
+    pub fn delete_existing(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
+        let mut mutation = Self::delete(key)?;
+        mutation.assertion = AssertionOp::AssertExist;
+        Ok(mutation)
     }
-
-    /// Creates a unique secondary index entry (`Op_Insert`, `NotExist`).
-    pub fn unique_index_insert(
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-    ) -> Result<Self, MutationSetError> {
-        Self::new(
-            OptimisticMutationKind::UniqueIndexInsert,
-            key.into(),
-            value.into(),
-        )
-    }
-
-    /// Creates a non-unique secondary index entry delete (`Op_Del`, no
-    /// assertion). A delete carries no value.
-    pub fn index_delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
-        Self::new(OptimisticMutationKind::IndexDelete, key.into(), Vec::new())
-    }
-
-    /// Creates a catalog meta-key write (`Op_Put`, no assertion).
-    pub fn meta_put(
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-    ) -> Result<Self, MutationSetError> {
-        Self::new(OptimisticMutationKind::MetaPut, key.into(), value.into())
-    }
-
-    /// Creates a catalog meta-key delete (`Op_Del`, no assertion).
-    pub fn meta_delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
-        Self::new(OptimisticMutationKind::MetaDelete, key.into(), Vec::new())
-    }
-
-    /// Creates a system-row `Op_Put` with no existence assertion.
-    pub fn system_row_put(
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-    ) -> Result<Self, MutationSetError> {
-        Self::new(
-            OptimisticMutationKind::SystemRowPut,
-            key.into(),
-            value.into(),
-        )
-    }
-
-    /// Creates a system-row `Op_Del` with no existence assertion.
-    pub fn system_row_delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
-        Self::new(
-            OptimisticMutationKind::SystemRowDelete,
-            key.into(),
-            Vec::new(),
-        )
-    }
-
-    /// Creates an `Op_Lock` mutation for a locked-but-unwritten key.
-    ///
-    /// Go `2pc.go` `initKeysAndMutations`: `} else if it.Flags().HasLocked() {
-    /// op = kvrpcpb.Op_Lock }`. Carries no value and no assertion — it exists
-    /// so that prewrite writes a lock on the key, nothing more.
+    /// Keeps a locked key whose value is unchanged.
     pub fn lock_only(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
-        Self::new(OptimisticMutationKind::LockOnly, key.into(), Vec::new())
+        Self::new(BufferMutationOp::Lock, key.into(), Vec::new())
     }
-
-    fn new(
-        kind: OptimisticMutationKind,
-        key: Vec<u8>,
-        value: Vec<u8>,
-    ) -> Result<Self, MutationSetError> {
-        validate_key_value(&key, &value)?;
-        Ok(Self { kind, key, value })
+    fn new(op: BufferMutationOp, key: Vec<u8>, value: Vec<u8>) -> Result<Self, MutationSetError> {
+        if key.is_empty() {
+            return Err(MutationSetError::EmptyKey);
+        }
+        Ok(Self {
+            op,
+            key,
+            value,
+            presume_not_exists: false,
+            assertion: AssertionOp::AssertNone,
+        })
     }
-
-    /// Mutation operation.
-    #[must_use]
-    pub const fn kind(&self) -> OptimisticMutationKind {
-        self.kind
+    /// MemDB operation, independent of SQL table or index categories.
+    pub const fn kind(&self) -> BufferMutationOp {
+        self.op
     }
-
+    /// Lazy absence-check flag requested by this write.
+    pub const fn presume_not_exists(&self) -> bool {
+        self.presume_not_exists
+    }
+    /// Existence assertion requested by this write.
+    pub const fn assertion(&self) -> AssertionOp {
+        self.assertion
+    }
     /// Encoded TiKV key.
-    #[must_use]
     pub fn key(&self) -> &[u8] {
         &self.key
     }
-
-    /// Encoded TiKV value.
-    #[must_use]
+    /// Encoded value; empty for tombstones and locks.
     pub fn value(&self) -> &[u8] {
         &self.value
     }
-
-    /// Consumes the mutation and returns its operation and owned payload.
-    /// Session staging uses this to hand mutation ownership to the Go-shaped
-    /// MemBuffer without cloning every key and value.
-    #[must_use]
-    pub fn into_parts(self) -> (OptimisticMutationKind, Vec<u8>, Vec<u8>) {
-        (self.kind, self.key, self.value)
-    }
-
-    pub(super) fn to_proto(&self) -> KvrpcMutation {
-        let (op, assertion) = match self.kind {
-            OptimisticMutationKind::Insert => (KvrpcOp::Insert, KvrpcAssertion::NotExist),
-            OptimisticMutationKind::PutExisting => (KvrpcOp::Put, KvrpcAssertion::Exist),
-            OptimisticMutationKind::Delete => (KvrpcOp::Del, KvrpcAssertion::Exist),
-            OptimisticMutationKind::IndexPut => (KvrpcOp::Put, KvrpcAssertion::None),
-            OptimisticMutationKind::UniqueIndexInsert => {
-                (KvrpcOp::Insert, KvrpcAssertion::NotExist)
-            }
-            OptimisticMutationKind::IndexDelete => (KvrpcOp::Del, KvrpcAssertion::None),
-            OptimisticMutationKind::MetaPut => (KvrpcOp::Put, KvrpcAssertion::None),
-            OptimisticMutationKind::MetaDelete => (KvrpcOp::Del, KvrpcAssertion::None),
-            OptimisticMutationKind::SystemRowPut => (KvrpcOp::Put, KvrpcAssertion::None),
-            OptimisticMutationKind::SystemRowDelete => (KvrpcOp::Del, KvrpcAssertion::None),
-            OptimisticMutationKind::LockOnly => (KvrpcOp::Lock, KvrpcAssertion::None),
-        };
-        KvrpcMutation {
-            op: op as i32,
-            key: self.key.clone(),
-            value: self.value.clone(),
-            assertion: assertion as i32,
-        }
+    /// Moves the write and its independent metadata into the authoritative buffer.
+    pub fn into_parts(self) -> (BufferMutationOp, Vec<u8>, Vec<u8>, bool, AssertionOp) {
+        (
+            self.op,
+            self.key,
+            self.value,
+            self.presume_not_exists,
+            self.assertion,
+        )
     }
 }
 
-/// Input errors rejected before allocating a transaction timestamp.
+/// Invalid statement mutation input.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MutationSetError {
-    /// Normal 2PC cannot commit an empty transaction.
+    /// The statement requires a mutation plan.
     Empty,
     /// TiKV user keys must not be empty.
     EmptyKey,
-    /// One encoded key exceeds the checked transaction bound.
-    KeyTooLarge {
-        /// Observed encoded key bytes.
-        size: usize,
-        /// Maximum admitted encoded key bytes.
-        limit: usize,
-    },
-    /// One encoded value exceeds the checked transaction bound.
-    ValueTooLarge {
-        /// Observed encoded value bytes.
-        size: usize,
-        /// Maximum admitted encoded value bytes.
-        limit: usize,
-    },
-    /// The planned or actual mutation count exceeds the checked bound.
-    TooManyMutations {
-        /// Observed mutation count.
-        count: usize,
-        /// Maximum admitted mutation count.
-        limit: usize,
-    },
-    /// The planned or actual aggregate encoded bytes exceed the checked bound.
-    TransactionTooLarge {
-        /// Observed aggregate encoded bytes.
-        size: usize,
-        /// Maximum admitted aggregate encoded bytes.
-        limit: usize,
-    },
-    /// A transaction has exactly one immutable mutation per encoded key.
-    DuplicateKey(Vec<u8>),
 }
-
 impl std::fmt::Display for MutationSetError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Empty => formatter.write_str("optimistic transaction requires mutations"),
-            Self::EmptyKey => formatter.write_str("optimistic mutation key is empty"),
-            Self::KeyTooLarge { size, limit } => {
-                write!(
-                    formatter,
-                    "optimistic mutation key size {size} exceeds {limit}"
-                )
-            }
-            Self::ValueTooLarge { size, limit } => {
-                write!(
-                    formatter,
-                    "optimistic mutation value size {size} exceeds {limit}"
-                )
-            }
-            Self::TooManyMutations { count, limit } => write!(
-                formatter,
-                "optimistic transaction mutation count {count} exceeds {limit}"
-            ),
-            Self::TransactionTooLarge { size, limit } => write!(
-                formatter,
-                "optimistic transaction encoded size {size} exceeds {limit}"
-            ),
-            Self::DuplicateKey(_) => {
-                formatter.write_str("optimistic transaction contains a duplicate encoded key")
-            }
+            Self::Empty => f.write_str("statement requires mutations"),
+            Self::EmptyKey => f.write_str("mutation key is empty"),
         }
     }
 }
-
 impl std::error::Error for MutationSetError {}
-
-pub(super) fn validate_and_sort(
-    mutations: Vec<OptimisticMutation>,
-) -> Result<Vec<OptimisticMutation>, MutationSetError> {
-    if mutations.is_empty() {
-        return Err(MutationSetError::Empty);
-    }
-    validate_plan(mutations.len(), checked_aggregate_bytes(&mutations))?;
-    let mut sorted = mutations;
-    sorted.sort_by(|left, right| left.key.cmp(&right.key));
-    // MutationBuffer/Go memdb already keeps one entry per encoded key.
-    // Keep the coordinator's defensive duplicate check, but compare adjacent
-    // keys after sorting instead of allocating a BTreeSet and cloning every
-    // key on every transaction commit.
-    for pair in sorted.windows(2) {
-        if pair[0].key == pair[1].key {
-            return Err(MutationSetError::DuplicateKey(pair[1].key.clone()));
-        }
-    }
-    Ok(sorted)
-}
-
-fn checked_aggregate_bytes(mutations: &[OptimisticMutation]) -> usize {
-    checked_aggregate_sizes(
-        mutations
-            .iter()
-            .map(|mutation| (mutation.key.len(), mutation.value.len())),
-    )
-}
-
-fn checked_aggregate_sizes(sizes: impl IntoIterator<Item = (usize, usize)>) -> usize {
-    sizes
-        .into_iter()
-        .try_fold(0usize, |size, (key, value)| {
-            size.checked_add(key)?.checked_add(value)
-        })
-        .unwrap_or(usize::MAX)
-}
-
-/// The mutation-count budget the ordinary bounded normal-2PC callers declare.
-///
-/// This is a *caller's declared plan*, enforced per transaction by
-/// [`crate::transaction::ProductionOptimisticTransaction::commit`] against the
-/// budget that transaction was opened with -- not a global ceiling. A path
-/// whose legitimate plan is larger declares its own; see
-/// `tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS`, which is what one
-/// `ANALYZE TABLE` of a real table needs and what Go's own analyze save
-/// (`pkg/statistics/handle/storage/save.go`, one transaction per table)
-/// places no count limit on at all.
-///
-/// Go and client-go enforce no such per-transaction mutation *count*: the real
-/// limits are byte-based (`txn-entry-size-limit`, default 6MiB per entry;
-/// `txn-total-size-limit`, default 100MiB per transaction — mirrored here by
-/// [`MAX_OPTIMISTIC_VALUE_BYTES`] and [`MAX_OPTIMISTIC_TRANSACTION_BYTES`]).
-/// This count is this path's own sanity ceiling, not a port of anything Go
-/// does. It was raised from an initial 256 because a single-owner bootstrap
-/// transaction plans one mutation per `mysql.global_variables` row (plus its
-/// index entry) for every global-scope system variable — echoing Go's own
-/// `doDMLWorks`, all ~720 rows land in the one transaction it seeds the
-/// cluster with — and 256 rejected that legitimate plan before the byte
-/// budget ever saw it. [`crate::transaction::region_batches`] already groups
-/// an arbitrary mutation count into per-region, byte-bounded RPC batches, so
-/// this ceiling is not load-bearing for that path either; it stays as a cheap
-/// guard against a plan large enough to be a bug rather than a scaling limit.
-pub const MAX_OPTIMISTIC_MUTATIONS: usize = 4096;
-/// Maximum encoded TiKV key size admitted by this path.
-pub const MAX_OPTIMISTIC_KEY_BYTES: usize = 4 * 1024;
-/// Maximum encoded TiKV value size admitted by this path.
-pub const MAX_OPTIMISTIC_VALUE_BYTES: usize = 6 * 1024 * 1024;
-/// Maximum aggregate encoded key/value bytes admitted by one transaction.
-pub const MAX_OPTIMISTIC_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
-
-pub(super) fn validate_plan(count: usize, aggregate_bytes: usize) -> Result<(), MutationSetError> {
-    if count == 0 {
-        return Err(MutationSetError::Empty);
-    }
-    // No count ceiling here on purpose. Go and client-go enforce none either
-    // (`txn-entry-size-limit` / `txn-total-size-limit` are byte-based), and a
-    // ceiling applied to *every* mutation set would override the budget a
-    // caller declared for its own transaction -- which is what made a
-    // real-sized `ANALYZE TABLE` uncommittable while a toy one worked. The
-    // bound each transaction is actually held to is the plan it was opened
-    // with, checked in `commit`.
-    if aggregate_bytes > MAX_OPTIMISTIC_TRANSACTION_BYTES {
-        return Err(MutationSetError::TransactionTooLarge {
-            size: aggregate_bytes,
-            limit: MAX_OPTIMISTIC_TRANSACTION_BYTES,
-        });
-    }
-    Ok(())
-}
-
-fn validate_key_value(key: &[u8], value: &[u8]) -> Result<(), MutationSetError> {
-    if key.is_empty() {
-        return Err(MutationSetError::EmptyKey);
-    }
-    if key.len() > MAX_OPTIMISTIC_KEY_BYTES {
-        return Err(MutationSetError::KeyTooLarge {
-            size: key.len(),
-            limit: MAX_OPTIMISTIC_KEY_BYTES,
-        });
-    }
-    if value.len() > MAX_OPTIMISTIC_VALUE_BYTES {
-        return Err(MutationSetError::ValueTooLarge {
-            size: value.len(),
-            limit: MAX_OPTIMISTIC_VALUE_BYTES,
-        });
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn deterministic_primary_is_the_smallest_unique_nonempty_key() {
-        let sorted = validate_and_sort(vec![
-            OptimisticMutation::put_existing(b"z".to_vec(), b"3".to_vec()).unwrap(),
-            OptimisticMutation::insert(b"a".to_vec(), b"1".to_vec()).unwrap(),
-            OptimisticMutation::put_existing(b"m".to_vec(), b"2".to_vec()).unwrap(),
-        ])
-        .unwrap();
-        assert_eq!(sorted[0].key(), b"a");
-        assert_eq!(sorted[1].key(), b"m");
-        assert_eq!(sorted[2].key(), b"z");
-        assert_eq!(sorted[0].to_proto().op, KvrpcOp::Insert as i32);
-        assert_eq!(
-            sorted[0].to_proto().assertion,
-            KvrpcAssertion::NotExist as i32
-        );
+    fn planning_does_not_impose_storage_size_limits() {
+        // Only the configured MemDB owns entry-size validation.
+        assert!(BufferMutation::insert(vec![1; 4097], vec![2]).is_ok());
+        assert!(BufferMutation::insert(vec![1], vec![2; 6 * 1024 * 1024 + 1]).is_ok());
     }
 
     #[test]
-    fn system_row_replace_and_delete_have_no_existence_assertion() {
-        let replace = OptimisticMutation::system_row_put(b"row".to_vec(), b"value".to_vec())
-            .expect("system row replacement is valid")
-            .to_proto();
-        assert_eq!(replace.op, KvrpcOp::Put as i32);
-        assert_eq!(replace.assertion, KvrpcAssertion::None as i32);
-
-        let delete = OptimisticMutation::system_row_delete(b"row".to_vec())
-            .expect("system row deletion is valid")
-            .to_proto();
-        assert_eq!(delete.op, KvrpcOp::Del as i32);
-        assert_eq!(delete.assertion, KvrpcAssertion::None as i32);
-    }
-
-    #[test]
-    fn duplicate_or_empty_keys_fail_before_storage() {
-        assert_eq!(validate_and_sort(Vec::new()), Err(MutationSetError::Empty));
+    fn empty_keys_fail_before_storage() {
         assert_eq!(
-            OptimisticMutation::insert(Vec::new(), b"v".to_vec()),
+            BufferMutation::insert(Vec::new(), b"v".to_vec()),
             Err(MutationSetError::EmptyKey)
         );
-        assert_eq!(
-            validate_and_sort(vec![
-                OptimisticMutation::insert(b"k".to_vec(), b"1".to_vec()).unwrap(),
-                OptimisticMutation::put_existing(b"k".to_vec(), b"2".to_vec()).unwrap(),
-            ]),
-            Err(MutationSetError::DuplicateKey(b"k".to_vec()))
-        );
-    }
-
-    #[test]
-    fn mutation_and_transaction_bounds_are_exact() {
-        assert!(OptimisticMutation::insert(
-            vec![1; MAX_OPTIMISTIC_KEY_BYTES],
-            vec![2; MAX_OPTIMISTIC_VALUE_BYTES]
-        )
-        .is_ok());
-        assert!(matches!(
-            OptimisticMutation::insert(vec![1; MAX_OPTIMISTIC_KEY_BYTES + 1], Vec::new()),
-            Err(MutationSetError::KeyTooLarge { .. })
-        ));
-        assert!(matches!(
-            OptimisticMutation::insert(b"k".to_vec(), vec![2; MAX_OPTIMISTIC_VALUE_BYTES + 1]),
-            Err(MutationSetError::ValueTooLarge { .. })
-        ));
-        assert!(validate_plan(MAX_OPTIMISTIC_MUTATIONS, 1).is_ok());
-        // A count past the ordinary callers' budget is not rejected here: the
-        // budget belongs to the transaction that declared it, and `commit`
-        // holds the mutation set to that one.
-        assert!(validate_plan(MAX_OPTIMISTIC_MUTATIONS + 1, 1).is_ok());
-        assert!(validate_plan(1, MAX_OPTIMISTIC_TRANSACTION_BYTES).is_ok());
-        assert!(matches!(
-            validate_plan(1, MAX_OPTIMISTIC_TRANSACTION_BYTES + 1),
-            Err(MutationSetError::TransactionTooLarge { .. })
-        ));
-
-        assert_eq!(
-            checked_aggregate_sizes([(usize::MAX, 0), (1, 0)]),
-            usize::MAX
-        );
-    }
-
-    #[test]
-    fn put_existing_is_not_an_unasserted_put() {
-        let mutation = OptimisticMutation::put_existing(b"k".to_vec(), b"v".to_vec())
-            .unwrap()
-            .to_proto();
-        assert_eq!(mutation.op, KvrpcOp::Put as i32);
-        assert_eq!(mutation.assertion, KvrpcAssertion::Exist as i32);
-    }
-
-    #[test]
-    fn delete_is_an_exists_asserted_del_with_no_value() {
-        // Go `TableCommon.removeRecord`: `setAssertion(key, kv.AssertExist)`
-        // then `txn.Delete(key)`.
-        let mutation = OptimisticMutation::delete(b"k".to_vec()).unwrap();
-        assert!(mutation.value().is_empty());
-        let proto = mutation.to_proto();
-        assert_eq!(proto.op, KvrpcOp::Del as i32);
-        assert_eq!(proto.assertion, KvrpcAssertion::Exist as i32);
-        assert!(proto.value.is_empty());
-    }
-
-    #[test]
-    fn index_entries_are_unasserted_puts_and_deletes() {
-        // Go `tables.index.create` uses `MemBuffer.Set` (Op_Put) and
-        // `tables.index.Delete` uses `MemBuffer.Delete` (Op_Del), both leaving
-        // the assertion unresolved on the optimistic lazy path -> proto `None`,
-        // unlike the row key's `Op_Insert`/`Exist`.
-        let put = OptimisticMutation::index_put(b"idx".to_vec(), b"0".to_vec())
-            .unwrap()
-            .to_proto();
-        assert_eq!(put.op, KvrpcOp::Put as i32);
-        assert_eq!(put.assertion, KvrpcAssertion::None as i32);
-        assert_eq!(put.value, b"0");
-
-        let delete = OptimisticMutation::index_delete(b"idx".to_vec()).unwrap();
-        assert!(delete.value().is_empty());
-        let delete = delete.to_proto();
-        assert_eq!(delete.op, KvrpcOp::Del as i32);
-        assert_eq!(delete.assertion, KvrpcAssertion::None as i32);
-    }
-
-    #[test]
-    fn unique_index_entry_is_an_absence_asserted_insert() {
-        let mutation = OptimisticMutation::unique_index_insert(b"idx".to_vec(), b"h".to_vec())
-            .unwrap()
-            .to_proto();
-        assert_eq!(mutation.op, KvrpcOp::Insert as i32);
-        assert_eq!(mutation.assertion, KvrpcAssertion::NotExist as i32);
-        assert_eq!(mutation.value, b"h");
     }
 }

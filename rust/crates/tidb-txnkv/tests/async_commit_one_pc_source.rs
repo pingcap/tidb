@@ -46,7 +46,7 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    CommitProtocol, CommittedProtocol, OptimisticCommitOutcome, OptimisticMutation,
+    BufferMutation, CommitProtocol, CommittedProtocol, OptimisticCommitOutcome,
     OptimisticTransactionState, RealOptimisticTransaction, TransactionAttemptPhase,
 };
 use tidb_txnkv::{set_txn_resource_group, SharedReadRuntime};
@@ -74,6 +74,20 @@ struct SplitTopology {
     address: String,
 }
 
+fn encode_boundary(key: &[u8]) -> Vec<u8> {
+    if key.is_empty() {
+        return Vec::new();
+    }
+    let mut encoded = Vec::new();
+    tidb_codec::encode_bytes(&mut encoded, key);
+    encoded
+}
+fn decode_boundary(key: &[u8]) -> Vec<u8> {
+    if key.is_empty() {
+        return Vec::new();
+    }
+    tidb_codec::decode_bytes(key).unwrap().1
+}
 impl RegionLoader for SplitTopology {
     fn cluster_id(&self) -> u64 {
         7
@@ -125,10 +139,10 @@ impl RegionRecoveryLoader for SplitTopology {
             Option<tidb_txnkv::region::StoreMetadata>,
         >,
     ) -> Result<RegionLocation, RegionLoadError> {
-        let mut location = self.load_region(&metadata.encoded_start_key)?;
+        let mut location = self.load_region(&decode_boundary(&metadata.encoded_start_key))?;
         location.region = metadata.region;
-        location.start_key.clone_from(&metadata.encoded_start_key);
-        location.end_key.clone_from(&metadata.encoded_end_key);
+        location.start_key = decode_boundary(&metadata.encoded_start_key);
+        location.end_key = decode_boundary(&metadata.encoded_end_key);
         location.peers = metadata
             .peers
             .iter()
@@ -138,6 +152,15 @@ impl RegionRecoveryLoader for SplitTopology {
                 role: peer.role,
                 is_witness: peer.is_witness,
                 store_epoch: 1,
+            })
+            .collect();
+        location.stores = location
+            .peers
+            .iter()
+            .map(|peer| Store {
+                id: peer.store_id,
+                address: self.address.clone(),
+                epoch: 1,
             })
             .collect();
         location.leader_peer_id = location.peers.first().map(|peer| peer.id);
@@ -151,8 +174,7 @@ impl RegionRecoveryLoader for SplitTopology {
 
 /// A PD stand-in that counts allocations.
 ///
-/// The whole point of async commit and 1PC is that no timestamp is taken after
-/// `start_ts`, so "was this called" is the load-bearing observation.
+/// Counts the prewrite consistency check separately from a fallback commit TSO.
 #[derive(Debug)]
 struct CountingTimestampSource {
     next: Cell<u64>,
@@ -298,7 +320,11 @@ impl Tikv for ScriptedTikv {
                                 if KvrpcCommitRequest::decode(body.as_ref())
                                     .unwrap()
                                     .start_version
-                                    == *start_ts =>
+                                    == *start_ts
+                                    && KvrpcCommitRequest::decode(body.as_ref())
+                                        .unwrap()
+                                        .commit_role
+                                        == KvrpcCommitRole::Secondary as i32 =>
                             {
                                 Some(release.clone())
                             }
@@ -370,8 +396,8 @@ impl ScriptedTikv {
                     .into_iter()
                     .map(|(id, start_key, end_key)| tidb_proto::metapb::Region {
                         id,
-                        start_key,
-                        end_key,
+                        start_key: encode_boundary(&start_key),
+                        end_key: encode_boundary(&end_key),
                         region_epoch: Some(tidb_proto::metapb::RegionEpoch {
                             conf_ver: 1,
                             version: 2,
@@ -421,114 +447,50 @@ impl ScriptedTikv {
 // while beforeCommitSecondaries or a slow response holds the first task.
 #[test]
 fn detached_secondary_flushes_progress_independently() {
-    use tidb_txnkv::transaction::{OwnedTransactionCommitRequest, TransactionCommandClient};
     let (release, held) = tokio::sync::watch::channel(false);
-    let mut service = ScriptedTikv::new(vec![]);
+    let mut service = ScriptedTikv::new(vec![ok(0), ok(0), ok(0), ok(0)]);
     service.hold_commit = Some((10, held));
-    let recorded = Arc::clone(&service.recorded);
     let server = TestServer::start(service);
-    let first = Arc::new(Mutex::new(TonicCoprocessorClient::new().unwrap()));
-    let second = Arc::new(Mutex::new(TonicCoprocessorClient::new().unwrap()));
-    let (first_completion, first_observed) = mpsc::channel();
-    let (second_completion, second_observed) = mpsc::channel();
-    let request = |start_version| OwnedTransactionCommitRequest {
-        attempt: tidb_txnkv::region::RegionAttempt {
-            region: RegionVerId {
-                id: HIGH_REGION,
-                epoch: RegionEpoch {
-                    conf_ver: 1,
-                    version: 1,
-                },
-            },
-            peer_id: HIGH_REGION * 10,
-            store_id: HIGH_REGION * 100,
-            address: server.address.clone(),
-            store_epoch: 1,
-        },
-        completion: Some(if start_version == 10 {
-            first_completion.clone()
-        } else {
-            second_completion.clone()
-        }),
-        address: server.address.clone(),
-        request: KvrpcCommitRequest {
-            start_version,
-            commit_version: start_version + 1,
-            keys: vec![SECONDARY_KEY.to_vec()],
-            commit_role: KvrpcCommitRole::Secondary as i32,
-            ..KvrpcCommitRequest::default()
-        },
-        context: Default::default(),
-    };
-    let first_runtime = SharedReadRuntime::new_injected(
-        first.lock().unwrap().clone(),
-        RegionCache::new(SplitTopology {
-            address: server.address.clone(),
-        }),
-    );
-    let second_runtime = SharedReadRuntime::new_injected(
-        second.lock().unwrap().clone(),
-        RegionCache::new(SplitTopology {
-            address: server.address.clone(),
-        }),
-    );
-    assert!(first
-        .lock()
-        .unwrap()
-        .publish_commits_detached(vec![request(10)], first_runtime));
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while recorded.lock().unwrap().commits.is_empty() {
-        assert!(Instant::now() < deadline, "first flush never reached TiKV");
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    let first_authority_available = first.try_lock().is_ok();
-    let admission_has_no_response =
-        matches!(first_observed.try_recv(), Err(mpsc::TryRecvError::Empty));
-    let started = Instant::now();
-    assert!(second
-        .lock()
-        .unwrap()
-        .publish_commits_detached(vec![request(20)], second_runtime));
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while recorded.lock().unwrap().commits.len() < 2 && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    let independent = recorded.lock().unwrap().commits.len() == 2;
-    let elapsed = started.elapsed();
+    let (mut first, _) = transaction_at(server.store_address(), CommitProtocol::default(), 10);
+    let first_observed = first.observe_detached_commits();
+    assert!(matches!(
+        first
+            .commit(
+                two_region_mutations(),
+                &UnaryCallContext::with_timeout(CALL_TIMEOUT)
+            )
+            .unwrap(),
+        OptimisticCommitOutcome::Committed(_)
+    ));
+    let (mut second, _) = transaction_at(server.store_address(), CommitProtocol::default(), 20);
+    let second_observed = second.observe_detached_commits();
+    assert!(matches!(
+        second
+            .commit(
+                two_region_mutations(),
+                &UnaryCallContext::with_timeout(CALL_TIMEOUT)
+            )
+            .unwrap(),
+        OptimisticCommitOutcome::Committed(_)
+    ));
     let second_response = second_observed.recv_timeout(Duration::from_secs(2));
-    let held_has_no_response = matches!(first_observed.try_recv(), Err(mpsc::TryRecvError::Empty));
-    // Release held I/O even on the old implementation, before asserting.
+    let first_is_held = matches!(first_observed.try_recv(), Err(mpsc::TryRecvError::Empty));
     release.send(true).unwrap();
-    let second_response = second_response.unwrap().unwrap();
-    assert!(second_response.response.error.is_none());
-    assert!(second_response.response.region_error.is_none());
-    let first_response = first_observed
+    let response = second_response
+        .expect("another transaction's secondary must progress")
+        .unwrap();
+    assert!(response.response.error.is_none());
+    assert!(
+        first_is_held,
+        "the first secondary is still waiting for its response"
+    );
+    assert!(first_observed
         .recv_timeout(Duration::from_secs(2))
         .unwrap()
-        .unwrap();
-    assert!(first_response.response.error.is_none());
-    assert!(first_response.response.region_error.is_none());
-    assert!(
-        admission_has_no_response && held_has_no_response,
-        "only the released transaction may report a completed response"
-    );
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while recorded.lock().unwrap().commits.len() < 2 {
-        assert!(
-            Instant::now() < deadline,
-            "flush did not drain after release"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    eprintln!("detached independent={independent} authority_available={first_authority_available} second_admission_us={}", elapsed.as_micros());
-    assert!(
-        independent,
-        "a stalled transaction must not serialize another transaction's flush"
-    );
-    assert!(
-        first_authority_available,
-        "secondary response wait must not hold the client authority"
-    );
+        .unwrap()
+        .response
+        .error
+        .is_none());
 }
 
 /// Go commit.go relocates and regroups the detached secondary batch after a
@@ -550,13 +512,21 @@ fn detached_secondary_commit_regroups_after_split() {
         set_txn_resource_group(&mut transaction, "split-recovery");
         let observed = transaction.observe_detached_commits();
         let mut mutations = two_region_mutations();
-        mutations.push(OptimisticMutation::insert(b"z".to_vec(), b"tail".to_vec()).unwrap());
+        mutations.push(BufferMutation::insert(b"z".to_vec(), b"tail".to_vec()).unwrap());
         let outcome = transaction
             .commit(mutations, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
             .unwrap();
         assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
         for _ in 0..if async_commit { 3 } else { 2 } {
-            let response = observed.recv_timeout(CALL_TIMEOUT).unwrap().unwrap();
+            let response = observed
+                .recv_timeout(CALL_TIMEOUT)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "async={async_commit} observer={e:?} commits={:?}",
+                        recorded.lock().unwrap().commits
+                    )
+                })
+                .unwrap();
             assert!(
                 response.response.region_error.is_none(),
                 "a split must regroup, not end the detached commit"
@@ -668,11 +638,22 @@ impl Drop for TestServer {
 
 /// The commit timestamp PD would hand out, well past every scripted
 /// `min_commit_ts`, so a normal-2PC fallback is unmistakable in the receipt.
-const PD_COMMIT_TS: u64 = 9_000 << 18;
+const PD_COMMIT_TS: u64 = START_TS + (10 << 18);
 
 fn transaction(
     address: String,
     protocol: CommitProtocol,
+) -> (
+    RealOptimisticTransaction<TonicCoprocessorClient, SplitTopology, CountingTimestampSource>,
+    Arc<AtomicU64>,
+) {
+    transaction_at(address, protocol, START_TS)
+}
+
+fn transaction_at(
+    address: String,
+    protocol: CommitProtocol,
+    start_ts: u64,
 ) -> (
     RealOptimisticTransaction<TonicCoprocessorClient, SplitTopology, CountingTimestampSource>,
     Arc<AtomicU64>,
@@ -690,31 +671,30 @@ fn transaction(
         runtime,
         timestamps,
         CALL_TIMEOUT,
-        START_TS,
+        start_ts,
         Instant::now(),
-        8,
-        64 * 1024,
     )
-    .unwrap();
+    .unwrap()
+    .with_attempt_history_for_test();
     transaction.set_commit_protocol(protocol);
     (transaction, calls)
 }
 
-fn single_region_mutation() -> Vec<OptimisticMutation> {
-    vec![OptimisticMutation::insert(PRIMARY_KEY.to_vec(), b"primary-value".to_vec()).unwrap()]
+fn single_region_mutation() -> Vec<BufferMutation> {
+    vec![BufferMutation::insert(PRIMARY_KEY.to_vec(), b"primary-value".to_vec()).unwrap()]
 }
 
-fn two_region_mutations() -> Vec<OptimisticMutation> {
+fn two_region_mutations() -> Vec<BufferMutation> {
     vec![
-        OptimisticMutation::insert(PRIMARY_KEY.to_vec(), b"primary-value".to_vec()).unwrap(),
-        OptimisticMutation::insert(SECONDARY_KEY.to_vec(), b"secondary-value".to_vec()).unwrap(),
+        BufferMutation::insert(PRIMARY_KEY.to_vec(), b"primary-value".to_vec()).unwrap(),
+        BufferMutation::insert(SECONDARY_KEY.to_vec(), b"secondary-value".to_vec()).unwrap(),
     ]
 }
 
 fn commit(
     address: String,
     protocol: CommitProtocol,
-    mutations: Vec<OptimisticMutation>,
+    mutations: Vec<BufferMutation>,
 ) -> (OptimisticCommitOutcome, u64) {
     let (transaction, calls) = transaction(address, protocol);
     let outcome = transaction
@@ -764,7 +744,7 @@ fn one_pc(commit_ts: u64) -> PrewriteAnswer {
 /// prewrite, `c.commitTS = c.onePCCommitTS` and execute returns — there is no
 /// `GetTimestampForCommit` and no `commitMutations`.
 #[test]
-fn a_granted_one_pc_commits_in_the_prewrite_with_no_commit_rpc_and_no_second_tso() {
+fn one_pc_has_no_commit_rpc_or_post_prewrite_tso() {
     let one_pc_commit_ts = 1_500 << 18;
     let service = ScriptedTikv::new(vec![one_pc(one_pc_commit_ts)]);
     let recorded = Arc::clone(&service.recorded);
@@ -787,8 +767,8 @@ fn a_granted_one_pc_commits_in_the_prewrite_with_no_commit_rpc_and_no_second_tso
         "the commit timestamp is TiKV's, not PD's"
     );
     assert_eq!(
-        timestamp_calls, 0,
-        "1PC must not allocate a commit timestamp"
+        timestamp_calls, 1,
+        "Go checks external consistency once before fast prewrite, with no post-prewrite TSO"
     );
     assert!(receipt
         .attempt_history
@@ -831,10 +811,10 @@ fn a_multi_region_transaction_never_asks_for_one_pc() {
         outcome.receipt().commit_protocol,
         CommittedProtocol::TwoPhase
     );
-    assert_eq!(outcome.receipt().commit_ts, PD_COMMIT_TS);
+    assert_eq!(outcome.receipt().commit_ts, PD_COMMIT_TS + (1 << 18));
     assert_eq!(
-        timestamp_calls, 1,
-        "normal 2PC takes exactly one commit TSO"
+        timestamp_calls, 2,
+        "fallback takes a commit TSO after the fast-protocol consistency check"
     );
 
     {
@@ -923,8 +903,8 @@ fn a_refused_one_pc_falls_back_to_normal_two_phase_commit() {
     assert_eq!(outcome.state(), OptimisticTransactionState::Committed);
     let receipt = outcome.receipt();
     assert_eq!(receipt.commit_protocol, CommittedProtocol::TwoPhase);
-    assert_eq!(receipt.commit_ts, PD_COMMIT_TS);
-    assert_eq!(timestamp_calls, 1);
+    assert_eq!(receipt.commit_ts, PD_COMMIT_TS + (1 << 18));
+    assert_eq!(timestamp_calls, 2);
 
     let recorded = recorded.lock().unwrap();
     assert!(recorded.prewrites[0].try_one_pc);
@@ -959,7 +939,10 @@ fn a_one_pc_fallback_that_still_reports_a_min_commit_ts_is_rejected() {
     assert_eq!(outcome.state(), OptimisticTransactionState::RolledBack);
     let recorded = recorded.lock().unwrap();
     assert!(recorded.commits.is_empty());
-    assert_eq!(recorded.rollbacks.len(), 1);
+    assert!(
+        recorded.rollbacks.is_empty(),
+        "Go skips optimistic cleanup while 1PC is still enabled"
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -996,8 +979,8 @@ fn an_async_commit_uses_the_largest_min_commit_ts_and_takes_no_second_tso() {
         "the commit timestamp is max(min_commit_ts), not the first or the last"
     );
     assert_eq!(
-        timestamp_calls, 0,
-        "async commit must not allocate a commit timestamp"
+        timestamp_calls, 1,
+        "Go checks external consistency before prewrite, then uses the maximum min_commit_ts"
     );
 
     // Go answers the session at the prewrite and flushes the follow-up
@@ -1033,10 +1016,9 @@ fn an_async_commit_uses_the_largest_min_commit_ts_and_takes_no_second_tso() {
         .expect("the secondary batch was published");
     assert!(secondary_prewrite.secondaries.is_empty());
     // Every prewrite bounds the commit timestamp it is willing to be granted.
-    assert!(recorded
-        .prewrites
-        .iter()
-        .all(|request| request.max_commit_ts > START_TS && request.min_commit_ts == START_TS + 1));
+    assert!(recorded.prewrites.iter().all(
+        |request| request.max_commit_ts > START_TS && request.min_commit_ts == PD_COMMIT_TS + 1
+    ));
 
     // The commits only publish the decision; they carry the async-commit flag
     // and the primary's batch keeps the primary role.
@@ -1046,11 +1028,21 @@ fn an_async_commit_uses_the_largest_min_commit_ts_and_takes_no_second_tso() {
         .iter()
         .all(|request| request.use_async_commit && request.commit_version == 1_700 << 18));
     assert_eq!(
-        recorded.commits[0].commit_role,
+        recorded
+            .commits
+            .iter()
+            .find(|request| request.keys.contains(&PRIMARY_KEY.to_vec()))
+            .unwrap()
+            .commit_role,
         KvrpcCommitRole::Primary as i32
     );
     assert_eq!(
-        recorded.commits[1].commit_role,
+        recorded
+            .commits
+            .iter()
+            .find(|request| request.keys.contains(&SECONDARY_KEY.to_vec()))
+            .unwrap()
+            .commit_role,
         KvrpcCommitRole::Secondary as i32
     );
 }
@@ -1078,8 +1070,8 @@ fn a_zero_min_commit_ts_from_any_batch_falls_back_to_normal_two_phase_commit() {
     assert_eq!(outcome.state(), OptimisticTransactionState::Committed);
     let receipt = outcome.receipt();
     assert_eq!(receipt.commit_protocol, CommittedProtocol::TwoPhase);
-    assert_eq!(receipt.commit_ts, PD_COMMIT_TS);
-    assert_eq!(timestamp_calls, 1);
+    assert_eq!(receipt.commit_ts, PD_COMMIT_TS + (1 << 18));
+    assert_eq!(timestamp_calls, 2);
 
     wait_for_commits(&recorded, 2);
     let recorded = recorded.lock().unwrap();
@@ -1108,8 +1100,8 @@ fn a_transaction_over_the_key_size_limit_never_asks_for_async_commit() {
     let mut secondary = SECONDARY_KEY.to_vec();
     secondary.resize(2_100, b'z');
     let mutations = vec![
-        OptimisticMutation::insert(primary, b"value".to_vec()).unwrap(),
-        OptimisticMutation::insert(secondary, b"value".to_vec()).unwrap(),
+        BufferMutation::insert(primary, b"value".to_vec()).unwrap(),
+        BufferMutation::insert(secondary, b"value".to_vec()).unwrap(),
     ];
 
     let (transaction, timestamp_calls) = transaction(
@@ -1172,4 +1164,50 @@ fn a_transaction_permitted_neither_protocol_still_commits_in_two_phases() {
     wait_for_commits(&recorded, 2);
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.commits.len(), 2);
+}
+
+impl tidb_txnkv::region::RegionQueryLoader for SplitTopology {
+    fn query_region(
+        &mut self,
+        query: tidb_txnkv::region::RegionQuery<'_>,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        match query {
+            tidb_txnkv::region::RegionQuery::Id(id) => {
+                let key = if id == HIGH_REGION {
+                    SPLIT_KEY.to_vec()
+                } else {
+                    Vec::new()
+                };
+                let location = self.load_region(&key)?;
+                if location.region.id == id {
+                    Ok(location)
+                } else {
+                    Err(RegionLoadError::new(
+                        "unknown-region",
+                        "unknown fixture region",
+                    ))
+                }
+            }
+            tidb_txnkv::region::RegionQuery::Key(key) => self.load_region(key),
+            tidb_txnkv::region::RegionQuery::EndKey(key) => self.load_region_by_end_key(key),
+        }
+    }
+    fn scan_regions_once(
+        &mut self,
+        range: &tidb_txnkv::region::KeyRange,
+        _limit: usize,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        self.load_region(&range.start).map(|r| vec![r])
+    }
+    fn load_store(
+        &mut self,
+        _id: u64,
+    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-store-query",
+            "fixture expects cached store metadata",
+        ))
+    }
 }

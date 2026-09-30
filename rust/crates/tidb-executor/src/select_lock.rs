@@ -42,7 +42,7 @@ struct SelectedLocks {
 
 impl Default for SelectedLockKeys {
     fn default() -> Self {
-        Self::new(LockWaitTime::session_lock_wait_timeout(), false)
+        Self::new(LockWaitTime::default(), false)
     }
 }
 

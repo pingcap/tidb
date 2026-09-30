@@ -483,7 +483,7 @@ mod tests {
     fn the_generic_opener_commits_through_the_in_process_store() {
         use tidb_txnkv::gc_state::TxnSafePointRefresher;
         use tidb_txnkv::region::RegionCache;
-        use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticMutation};
+        use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
 
         let client = InProcessClient::new();
         let cache = RegionCache::new(crate::region_loader::InProcessRegionLoader);
@@ -501,7 +501,7 @@ mod tests {
         .expect("the opener derives from in-process capabilities");
 
         let transaction = opener
-            .begin(16, 4096)
+            .begin()
             .expect("a timestamp comes from the embedded TSO");
         let start_ts = transaction.start_ts();
         assert!(start_ts > 0, "the TSO issued a real timestamp");
@@ -515,8 +515,7 @@ mod tests {
                 // `AssertionLevel_Strict`, so the first write must be an
                 // Insert (`Assertion_NotExist`) — a `put_existing` here would
                 // be refused as an assertion failure, exactly as in Go.
-                vec![OptimisticMutation::insert(key.clone(), value.clone())
-                    .expect("a valid mutation")],
+                vec![BufferMutation::insert(key.clone(), value.clone()).expect("a valid mutation")],
                 &call,
             )
             .expect("the two-phase commit completes in-process");

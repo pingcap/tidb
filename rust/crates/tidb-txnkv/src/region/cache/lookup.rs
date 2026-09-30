@@ -26,9 +26,9 @@ use super::super::{
     RegionStoreTopology, RegionVerId, Store, StoreLiveness, StoreResolveState, StoreState,
 };
 use super::{
-    RegionCache, RegionLoader, RegionLookupApplication, RegionLookupPlan, RegionLookupResult,
-    RegionLookupSelection, RegionQuery, RegionQueryLoader, RegionQueryOptions, StoreLabels,
-    cache_now_seconds,
+    cache_now_seconds, RegionCache, RegionLoader, RegionLookupApplication, RegionLookupPlan,
+    RegionLookupResult, RegionLookupSelection, RegionQuery, RegionQueryLoader, RegionQueryOptions,
+    StoreLabels,
 };
 
 impl<L> RegionCache<L>
@@ -84,7 +84,14 @@ where
             })
             .map_err(RegionRouteError::Loader)?;
         ensure_region_id(region_id, &loaded)?;
+        let loaded_region = loaded.region;
         let index = self.insert_loaded_at(loaded, now_seconds)?;
+        if self.regions[index].region.id != region_id {
+            return Err(RegionRouteError::StaleRegionEpoch {
+                loaded: loaded_region,
+                cached: self.regions[index].region,
+            });
+        }
         Ok(self.regions[index].clone())
     }
 }
@@ -233,7 +240,16 @@ impl<L> RegionCache<L> {
                 region: loaded.region,
             });
         }
+        let loaded_region = loaded.region;
         let index = self.insert_loaded_at(loaded, now_seconds)?;
+        // A newer overlapping region is reusable only if it answers this query.
+        // A stale merge parent can overlap a child that does not contain the key.
+        if !self.regions[index].contains_end_key(key) {
+            return Err(RegionRouteError::StaleRegionEpoch {
+                loaded: loaded_region,
+                cached: self.regions[index].region,
+            });
+        }
         Ok(&self.regions[index])
     }
 
@@ -289,7 +305,16 @@ impl<L> RegionCache<L> {
                 region: loaded.region,
             });
         }
+        let loaded_region = loaded.region;
         let index = self.insert_loaded_at(loaded, now_seconds)?;
+        // A newer overlapping region is reusable only if it answers this query.
+        // A stale merge parent can overlap a child that does not contain the key.
+        if !self.regions[index].contains_key(key) {
+            return Err(RegionRouteError::StaleRegionEpoch {
+                loaded: loaded_region,
+                cached: self.regions[index].region,
+            });
+        }
         Ok(&self.regions[index])
     }
 

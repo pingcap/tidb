@@ -33,7 +33,6 @@ use tidb_model::table_info::TableInfo;
 use tidb_stats_handle_cache::{StatsMetaRow, StatsRefreshSource, UpdateError};
 use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-    MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
@@ -799,12 +798,10 @@ pub fn record_historical_stats_meta<
     source: &str,
     timeout: Duration,
 ) -> Result<(), PessimisticStatementTransactionError> {
-    let transaction = SessionTransaction::begin_pessimistic_with_budget(
+    let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
         timeout,
         opener.commit_protocol(),
-        usize::MAX,
-        MAX_OPTIMISTIC_TRANSACTION_BYTES,
     )
     .map_err(|error| PessimisticStatementTransactionError::Build(error.to_string()))?;
     let staged = MutationBuffer::new();

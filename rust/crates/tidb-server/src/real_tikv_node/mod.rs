@@ -106,9 +106,7 @@ pub(crate) use schema_following::{
     connect_schema_notifier, note_reload, spawn_catalog_reloader, spawn_node_stats,
     spawn_privilege_watch, spawn_schema_version_watch, spawn_sysvar_watch,
 };
-pub(crate) use session_time_zone::{
-    parse_set_time_zone, time_zone_sql_error, RealTiKvSessionTimeZone,
-};
+pub(crate) use session_time_zone::{execute_storage_session_set, RealTiKvSessionTimeZone};
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 // Go `vardef.DefInitChunkSize` / `DefMaxChunkSize`. The bounded real-TiKV
@@ -573,6 +571,7 @@ where
             context,
             transaction: SessionTransaction::new(),
             time_zone: RealTiKvSessionTimeZone::default(),
+            variables: tidb_session::Session::new(),
             cursor_memory,
             statement_warnings: Vec::new(),
             statement_message: None,
@@ -618,6 +617,7 @@ pub struct RealTiKvServerSession<
     /// a fresh session starts at the cluster's `SYSTEM` location, matching
     /// Go's `time_zone=SYSTEM` connection default.
     time_zone: RealTiKvSessionTimeZone,
+    variables: tidb_session::Session,
     /// Persistent connection-level quota roots retained by open cursors.
     cursor_memory: tidb_executor::SessionMemory,
     /// The warning records the most recently completed statement exposes in
@@ -652,6 +652,7 @@ where
         // mutably borrowed.
         let opener = self.transaction_opener.clone();
         let table = self.inner.configured_table().clone();
+        let lock_wait_timeout = self.variables.lock_wait_timeout();
         // Go `session.checkTxnAborted`, which runs before EVERY statement of
         // an open transaction: once the keep-alive has given up on the
         // lifetime bound, only `COMMIT` and `ROLLBACK` may still run -- and
@@ -676,7 +677,14 @@ where
                     tidb_exec::session_commit_protocol::session_commit_protocol(),
                     table,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                    lock_wait_timeout,
                 )
+            })
+            .map(|opened| {
+                opened.map(|transaction| {
+                    transaction.set_lock_wait_timeout(lock_wait_timeout);
+                    transaction
+                })
             })
             .map_err(|error| SqlQueryError::unknown(error.to_string()))
     }
@@ -832,6 +840,7 @@ where
                     tidb_exec::session_commit_protocol::session_commit_protocol(),
                     table,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                    self.variables.lock_wait_timeout(),
                 )
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 // A failed statement ends its own autocommit transaction, so
@@ -1281,14 +1290,20 @@ where
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
         self.last_affected_rows = 0;
         let _process_statement = self._process.statement_started(sql, "", "autocommit");
-        // `SET time_zone` updates this session's own zone rather than reaching
-        // storage at all: every read's DAG request and every write's
-        // `TIMESTAMP` literal conversion consult it from here on.
-        if let Some(value) = parse_set_time_zone(sql) {
-            let parsed =
-                RealTiKvSessionTimeZone::parse(value.trim()).map_err(time_zone_sql_error)?;
-            self.inner.set_time_zone(&parsed.zone());
-            self.time_zone = parsed;
+        if execute_storage_session_set(&mut self.variables, sql)? {
+            self.statement_message = None;
+            self.statement_warnings = self
+                .variables
+                .warnings()
+                .iter()
+                .map(|warning| ConfiguredWriteWarning {
+                    code: warning.code,
+                    message: warning.message.clone(),
+                })
+                .collect();
+            let zone = self.variables.vars().session_time_zone();
+            self.inner.set_time_zone(&zone);
+            self.time_zone = RealTiKvSessionTimeZone::from_zone(zone);
             return Ok(Some(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,

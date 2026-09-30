@@ -35,7 +35,7 @@ use tidb_exec::mysql_bootstrap::{
 };
 use tidb_meta::key;
 use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
-use tidb_txnkv::transaction::OptimisticMutationKind;
+use tidb_txnkv::transaction::BufferMutationOp;
 
 /// One fixed environment, so every plan here is byte-for-byte reproducible.
 fn environment() -> BootstrapEnvironment {
@@ -83,9 +83,7 @@ impl MetaSnapshot for MetaStore {
 fn apply(store: &mut MetaStore, write: &BootstrapWrite) {
     for mutation in &write.mutations {
         match mutation.kind() {
-            OptimisticMutationKind::MetaDelete
-            | OptimisticMutationKind::Delete
-            | OptimisticMutationKind::IndexDelete => {
+            BufferMutationOp::Delete => {
                 store.pairs.remove(mutation.key());
             }
             _ => {
@@ -118,7 +116,12 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
         .iter()
         .flat_map(|version| version.tables)
         .chain(BOOTSTRAP_TABLES);
-    assert_eq!(database.tables.len(), all_tables.clone().count());
+    // Go bootstrap also creates the MDL view, represented by the catalog owner.
+    assert!(database
+        .tables
+        .iter()
+        .any(|table| table.name.lowercase() == "tidb_mdl_view" && table.view.is_some()));
+    assert_eq!(database.tables.len(), all_tables.clone().count() + 1);
     for table in all_tables {
         assert!(
             database
@@ -277,12 +280,12 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
     let index_entries = write
         .mutations
         .iter()
-        .filter(|mutation| mutation.kind() == OptimisticMutationKind::IndexPut)
+        .filter(|mutation| tidb_tablecodec::is_index_key(mutation.key()))
         .count();
     let records = write
         .mutations
         .iter()
-        .filter(|mutation| mutation.kind() == OptimisticMutationKind::Insert)
+        .filter(|mutation| tidb_tablecodec::is_record_key(mutation.key()))
         .count();
     // One `mysql.user` row (PRIMARY + i_user), six `mysql.tidb` rows (PRIMARY
     // each), and one `mysql.global_variables` row (PRIMARY each) per

@@ -29,7 +29,6 @@ use std::time::Duration;
 use tidb_executor::load_stats::JsonTable;
 use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-    MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
 use crate::cluster_catalog::load_cluster_catalog;
@@ -255,12 +254,10 @@ fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     item: &ClusterStatsItem,
     timeout: Duration,
 ) -> Result<u64, ClusterLoadStatsCommitError> {
-    let transaction = SessionTransaction::begin_pessimistic_with_budget(
+    let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
         timeout,
         opener.commit_protocol(),
-        usize::MAX,
-        MAX_OPTIMISTIC_TRANSACTION_BYTES,
     )
     .map_err(other)?;
     let version = transaction.start_ts();
@@ -296,12 +293,10 @@ fn commit_usage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     table: &LoadedStatsTable,
     timeout: Duration,
 ) -> Result<(), ClusterLoadStatsCommitError> {
-    let transaction = SessionTransaction::begin_pessimistic_with_budget(
+    let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
         timeout,
         opener.commit_protocol(),
-        usize::MAX,
-        MAX_OPTIMISTIC_TRANSACTION_BYTES,
     )
     .map_err(other)?;
     let staged = MutationBuffer::new();

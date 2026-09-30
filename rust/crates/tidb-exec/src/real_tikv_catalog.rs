@@ -143,14 +143,14 @@ where
 /// transaction; this adapts [`tidb_txnkv::TikvTransactionDriver`], so the
 /// catalog loader is written once and serves either engine while the
 /// migration runs.
-pub struct TikvMetaSnapshot<'transaction, PdC: tikv_client::pd::PdClient> {
+pub struct TikvMetaSnapshot<'transaction, PdC: tikv_client::PdClient> {
     transaction: &'transaction mut tidb_txnkv::TikvTransactionDriver<PdC>,
     /// Per-request deadline template, stamped fresh per read for the same
     /// reason [`TransactionMetaSnapshot`] does it.
     timeout: Duration,
 }
 
-impl<'transaction, PdC: tikv_client::pd::PdClient> TikvMetaSnapshot<'transaction, PdC> {
+impl<'transaction, PdC: tikv_client::PdClient> TikvMetaSnapshot<'transaction, PdC> {
     /// Binds one transaction and the per-request deadline every read stamps.
     pub fn new(
         transaction: &'transaction mut tidb_txnkv::TikvTransactionDriver<PdC>,
@@ -163,7 +163,7 @@ impl<'transaction, PdC: tikv_client::pd::PdClient> TikvMetaSnapshot<'transaction
     }
 }
 
-impl<PdC: tikv_client::pd::PdClient> MetaSnapshot for TikvMetaSnapshot<'_, PdC> {
+impl<PdC: tikv_client::PdClient> MetaSnapshot for TikvMetaSnapshot<'_, PdC> {
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
         let _ = self.timeout;
         self.transaction

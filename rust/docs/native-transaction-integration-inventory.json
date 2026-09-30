@@ -1,0 +1,308 @@
+{
+  "integration_baseline": "f143926e3ee5b253f1cf0ae9beca5f423cff54d0",
+  "go_master": "51a1a4abfc192a91f98fe968ad87eced9221f663",
+  "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "client_rust": "884589f0365053c0f5bd300209751187a4811782",
+  "claim": "integration maintenance using existing native package owners; no newly completed transcreation package or full behavioral parity claim",
+  "packages": {
+    "txnkv/transaction": [
+      {
+        "path": "txnkv/transaction/2pc.go",
+        "sha256": "b70d8b868981d1bbf19c2a15f037ae844238ead347100230d49367ffe9bb6d02"
+      },
+      {
+        "path": "txnkv/transaction/2pc_test.go",
+        "sha256": "8c22fd6db03bfd66332510413d5752dac141e09bcc6c32c4b26367de29f10a8a"
+      },
+      {
+        "path": "txnkv/transaction/batch_getter.go",
+        "sha256": "725b5da6c76b464c4f8e3298e48f29ebe4a4683fb8c4ee97c2e339e482b5331d"
+      },
+      {
+        "path": "txnkv/transaction/batch_getter_test.go",
+        "sha256": "fe819e1638869b0250c7dae7907421a3063116b61d8fb75c9014511a5054bbae"
+      },
+      {
+        "path": "txnkv/transaction/binlog.go",
+        "sha256": "15a85c13386e9b44ce8c0a98b77a980bc65f05fc2d783e9720919322f6c5d244"
+      },
+      {
+        "path": "txnkv/transaction/cleanup.go",
+        "sha256": "0f57850bec99a537057bcbda9d17f099ea898e87d16040a95c443289e9087886"
+      },
+      {
+        "path": "txnkv/transaction/commit.go",
+        "sha256": "823ffa5ac80c109223df63e318244c5d79d9958027ab13a6b1d7ce82b167bfa6"
+      },
+      {
+        "path": "txnkv/transaction/pessimistic.go",
+        "sha256": "566b3c5c6d1871422e07ecf94e82c0fff40e530da1251d43bc1b896e8a7f1f67"
+      },
+      {
+        "path": "txnkv/transaction/pipelined_flush.go",
+        "sha256": "1877c4732c9ed55d4ef90d8202e790447b56a1e9a2e823bb0fcc8bc97e2c55c4"
+      },
+      {
+        "path": "txnkv/transaction/prewrite.go",
+        "sha256": "1ec3a50072992129a42039f4f37881250311f6e537faebf280a936ce294dff9c"
+      },
+      {
+        "path": "txnkv/transaction/test_probe.go",
+        "sha256": "4d2e9c7c7aca9845080a2ee1394f6620196fa7e7950dd6671fea6136ade31730"
+      },
+      {
+        "path": "txnkv/transaction/test_util.go",
+        "sha256": "0450b9604a0a5c1bcf91aa6f6fcc7e3dd7af6a1605e332f505c04c6000bf188b"
+      },
+      {
+        "path": "txnkv/transaction/txn.go",
+        "sha256": "b1de4ae24c0ec8a17715541af2b61b4ecf65d478f4cae7f24ccc3719fdfc3211"
+      },
+      {
+        "path": "txnkv/transaction/txn_file.go",
+        "sha256": "4ed8e292e2ce21ee26d1b6234dfed3be3df47c5e29ad5d06ce3566063e763d5f"
+      },
+      {
+        "path": "txnkv/transaction/txn_file_test.go",
+        "sha256": "a55a6dbc713ccb18feb7ef261a204b35c50345b964ad2fb523224d40cbc1c20d"
+      },
+      {
+        "path": "txnkv/transaction/txn_test.go",
+        "sha256": "f75b6b70ed384efb218b8b39a857eccad39bd0496b0ec65a71503174ce243b86"
+      }
+    ],
+    "txnkv/txnlock": [
+      {
+        "path": "txnkv/txnlock/lock.go",
+        "sha256": "4157ffa6a50f11540424c847e57f2922a4b112829e493a71f769f55697734694"
+      },
+      {
+        "path": "txnkv/txnlock/lock_resolver.go",
+        "sha256": "d7018971ec92613445bbdb5a7ebad3214bcb63f6a52e7becf9a83952eea2da91"
+      },
+      {
+        "path": "txnkv/txnlock/lock_resolver_test.go",
+        "sha256": "db4a4a1786abacef8cc3965b587bd628103e3bd541e2c55e33fa634a3c054ddc"
+      },
+      {
+        "path": "txnkv/txnlock/lock_test.go",
+        "sha256": "7061b234c5feab7f1bba1b2479ff36517702a1c7a3e65e32261bc85dc6c40bf1"
+      },
+      {
+        "path": "txnkv/txnlock/main_test.go",
+        "sha256": "5c53aa90d1afd98d5dd5ad42eee7897264c8b9abffda6a3a6632473748d39cfd"
+      },
+      {
+        "path": "txnkv/txnlock/test_probe.go",
+        "sha256": "380a38d0f35589f567edd2a052d702aa7d9b3b498618f919cc8f8e46844c354d"
+      }
+    ],
+    "txnkv/txnsnapshot": [
+      {
+        "path": "txnkv/txnsnapshot/client_helper.go",
+        "sha256": "1c8fe55bca147827b9f1f0ae9c2f07480029657cfcb2a3350c925b288c4b04e6"
+      },
+      {
+        "path": "txnkv/txnsnapshot/scan.go",
+        "sha256": "624db2aaeff610817fcea812a2bb9a9f35b0fa383d93dea4702210f783bbb698"
+      },
+      {
+        "path": "txnkv/txnsnapshot/snapshot.go",
+        "sha256": "d33e17bbe75e3c288b94859b445cf60d10ed7d34ca65a2d334955967fe9d52c5"
+      },
+      {
+        "path": "txnkv/txnsnapshot/snapshot_async.go",
+        "sha256": "bc29fa3f439714bcc4f73316787ff37dc761514df7fa869607fe52135abec022"
+      },
+      {
+        "path": "txnkv/txnsnapshot/snapshot_async_test.go",
+        "sha256": "58761e072d346c24d79e439aa7976a6fb61100278aec49c3f502122ef9835b58"
+      },
+      {
+        "path": "txnkv/txnsnapshot/snapshot_test.go",
+        "sha256": "a6aafc42264f1f6dcb421c00bf40465994b761035aa2f18b2645ceb81bad6d93"
+      },
+      {
+        "path": "txnkv/txnsnapshot/test_probe.go",
+        "sha256": "d130a33d8d18dc3cf4d2b7e85f5578dc67df787ce0a4aa4d48935f379d01fc17"
+      }
+    ],
+    "internal/unionstore": [
+      {
+        "path": "internal/unionstore/OWNERS",
+        "sha256": "0f9e3c1ecb1ff9ddf3fe73ad5510d6c7dd276424686a50c256d68b4b2d07f485"
+      },
+      {
+        "path": "internal/unionstore/arena/arena.go",
+        "sha256": "767d066be0a17e7e238777b5e6d275b0758f7df599d9cb7c622881854d91a758"
+      },
+      {
+        "path": "internal/unionstore/arena/arena_test.go",
+        "sha256": "9d5916cb04113153cd43bfb760a8572b142a0017d55e4d132745c8d1e9110687"
+      },
+      {
+        "path": "internal/unionstore/art/art.go",
+        "sha256": "3004135e1c764b31aefdf14456ecab3cb44d7b775acd807ccd53f36943480e5b"
+      },
+      {
+        "path": "internal/unionstore/art/art_arena.go",
+        "sha256": "f2f202f0173c4b912d2dccbfa1b8f9b0f30609eff3c27936ca29127747deaca1"
+      },
+      {
+        "path": "internal/unionstore/art/art_iterator.go",
+        "sha256": "173400d971c4c983ae50eb85adedc64513ad1f44368a5a7d3c86f2465acbebc6"
+      },
+      {
+        "path": "internal/unionstore/art/art_iterator_test.go",
+        "sha256": "3312c3d52515b962b2512e5c70ae8f264d8525408c7c1d6e3a42102ae05aedbf"
+      },
+      {
+        "path": "internal/unionstore/art/art_node.go",
+        "sha256": "1d9627305528360b3cc9a01adb92f74e182c8eb846896145b90f530366e3cdea"
+      },
+      {
+        "path": "internal/unionstore/art/art_node_test.go",
+        "sha256": "ed5cbef62f46004ae9f85dfe0371e0b9498cad881e3b514d5f9fe0057f4872b0"
+      },
+      {
+        "path": "internal/unionstore/art/art_snapshot.go",
+        "sha256": "efbf90f02ddf1170041f9554bbb4493e0a7ab3f1a57f22d04793ba5bd9c39dc3"
+      },
+      {
+        "path": "internal/unionstore/art/art_snapshot_test.go",
+        "sha256": "bd25dc29914ee2fc85e7ae7245a9c7c262489fef50b2c489e49485796b3834e3"
+      },
+      {
+        "path": "internal/unionstore/art/art_test.go",
+        "sha256": "85021217f4be6acbc9e8e76a2c5492c90be9fd604a873d35b34d732c8fc497bb"
+      },
+      {
+        "path": "internal/unionstore/main_test.go",
+        "sha256": "22b9694e14ee0791d07a5064d6af485b1204c7df72a339a8fb36eb954266723e"
+      },
+      {
+        "path": "internal/unionstore/membuffer_snapshot.go",
+        "sha256": "95c98eb15fdd645366ae0d28f6376a47979ff154918937008dcfc420e3033102"
+      },
+      {
+        "path": "internal/unionstore/memdb.go",
+        "sha256": "e04e69fb1557387ab1159e836da5304e039f004efb5e11cf7a6751d67d27cf19"
+      },
+      {
+        "path": "internal/unionstore/memdb_art.go",
+        "sha256": "5261236251f69f39bc7baddc1223c507e39087b66969d294ffd7f1bcb7fbe7c8"
+      },
+      {
+        "path": "internal/unionstore/memdb_bench_test.go",
+        "sha256": "f62175aea1cafac2eae97a74377695ac0aeb7134865939ffbfa6ee8366b7a64d"
+      },
+      {
+        "path": "internal/unionstore/memdb_norace_test.go",
+        "sha256": "a2ff5529bf7abf24dd8698b7263036e3f1da842355097d122211a0ae9dd90d77"
+      },
+      {
+        "path": "internal/unionstore/memdb_rbt.go",
+        "sha256": "020f17545162050b50f4f1875d17b6c49f1e71791e198de92cd035610c66ea3e"
+      },
+      {
+        "path": "internal/unionstore/memdb_test.go",
+        "sha256": "808fe52793e9dd794fc09d9a7851d35c68b141571b046c64aeae76505980171e"
+      },
+      {
+        "path": "internal/unionstore/mock.go",
+        "sha256": "844c977c4565060488d807c3ed1635b3c5a3fe6b493e6759c0a0c4701e5354c3"
+      },
+      {
+        "path": "internal/unionstore/pipelined_memdb.go",
+        "sha256": "40d904f96787afd52637b8db958496ed5ac0ba189ff436f828073e7a6740a11d"
+      },
+      {
+        "path": "internal/unionstore/pipelined_memdb_test.go",
+        "sha256": "b6e6d884929112246020527f8fa0d9f9592315b3f17d22c01c1dd4d031605f0d"
+      },
+      {
+        "path": "internal/unionstore/rbt/rbt.go",
+        "sha256": "6eb048260e540347926c01a99c53e21b7d013d6d4f03f40699148c3bf35cfdbe"
+      },
+      {
+        "path": "internal/unionstore/rbt/rbt_arena.go",
+        "sha256": "2886b19757ea14a61d6c7e761d699a717c939ce74a1fa5039d43d7621deecc10"
+      },
+      {
+        "path": "internal/unionstore/rbt/rbt_iterator.go",
+        "sha256": "4097f6f64c765d997a56c2aebff0db8ccde1f3322800fc1690baceebfdfe2268"
+      },
+      {
+        "path": "internal/unionstore/rbt/rbt_snapshot.go",
+        "sha256": "b4adcccd48c9cfe78b7ce13c5c17f4c35bea18cde09f8a94cc67c6a440924f79"
+      },
+      {
+        "path": "internal/unionstore/rbt/rbt_test.go",
+        "sha256": "919992613ce39a13c934efeb08f8b0488dc4d5b4b83c641eefe3e631d20c633d"
+      },
+      {
+        "path": "internal/unionstore/union_iter.go",
+        "sha256": "0273d20eac1ad3c685228e9ddc4a6e9f7e463019e8d088976594689660e3ede3"
+      },
+      {
+        "path": "internal/unionstore/union_store.go",
+        "sha256": "bfb19c10cd8e78bfa69c884383c016d6c89ef2ba1f5ae05e10c24ea9b6387d19"
+      },
+      {
+        "path": "internal/unionstore/union_store_test.go",
+        "sha256": "916dca448712313b2dceb8b5218476ed6d1bcac5850c29ebf43fb3cf7e6d8f47"
+      }
+    ],
+    "pkg/store/driver/txn": [
+      {
+        "path": "pkg/store/driver/txn/BUILD.bazel",
+        "sha256": "b0104fb53f89096a6ccf80b632535a2c2453df20879530d5af74b7a7b29215cf"
+      },
+      {
+        "path": "pkg/store/driver/txn/batch_getter.go",
+        "sha256": "3c254181ed81716cf80f7536c3898a458fc80696d93e91aa49d28e7bb98269ce"
+      },
+      {
+        "path": "pkg/store/driver/txn/batch_getter_test.go",
+        "sha256": "cba30357e7785fdb5549ebe86325ca9aae1c012ab2fb95f7a2a3ad4a7a8a51af"
+      },
+      {
+        "path": "pkg/store/driver/txn/driver_test.go",
+        "sha256": "1de1a494e45bb94deeae7fa814d5585ec63ae35eeb2975054b6581522c50e2ba"
+      },
+      {
+        "path": "pkg/store/driver/txn/error.go",
+        "sha256": "bb11734d546c532d298717a02f99bb6fab593342f2c43966803db0c706f1b5b6"
+      },
+      {
+        "path": "pkg/store/driver/txn/main_test.go",
+        "sha256": "dbc93f6057827dac1e95ecfd729c7fee231a8be114ca4f5f7b96dc59fbcd4cb5"
+      },
+      {
+        "path": "pkg/store/driver/txn/scanner.go",
+        "sha256": "975c36cb0eeb9b8b50ce1c157d3735994349b2b9198380751927c414f2fa5e9a"
+      },
+      {
+        "path": "pkg/store/driver/txn/snapshot.go",
+        "sha256": "85ee5bca1c22a917bf94248f167252797cebbbe15305da7e37341b5cd539834a"
+      },
+      {
+        "path": "pkg/store/driver/txn/txn_driver.go",
+        "sha256": "8096c2cc21d26e6f62ba90f0a6ee9582e3a205bea7bef1e9b434dd937335f710"
+      },
+      {
+        "path": "pkg/store/driver/txn/union_iter.go",
+        "sha256": "0c02547c33a32111a62ce837224a0425c8eb9aa5b94fb81c230e790c044aed77"
+      },
+      {
+        "path": "pkg/store/driver/txn/union_iter_test.go",
+        "sha256": "2fd1ade476ac349117c32b945612f14dc749bd9a094fbd20ab2afaace485b802"
+      },
+      {
+        "path": "pkg/store/driver/txn/unionstore_driver.go",
+        "sha256": "013c28c40597077b0e5cfd69071c2b734771a8ca1a9c3d4575ce528dab26f517"
+      }
+    ]
+  },
+  "delivery_base": "2471be70e9030f36284506f1b87baadebaf3e32d"
+}

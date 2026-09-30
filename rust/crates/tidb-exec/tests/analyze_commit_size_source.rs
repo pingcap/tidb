@@ -36,47 +36,40 @@ use tidb_exec::cluster_predicate_column::ColumnStatsTimeInfo;
 use tidb_exec::cluster_predicate_column::{
     load_column_stats_usage, load_column_stats_usage_for_table,
 };
+use tidb_exec::cluster_stats_dump::{
+    load_table_stats_payload, table_historical_stats_to_json, table_stats_to_json_from_loaded,
+};
 use tidb_exec::cluster_stats_load::{
     ClusterStatsItem, ClusterStatsLoader, ClusterTableStats, ColumnLength, TableRowCount,
     TableSizeStats,
 };
-use tidb_exec::cluster_stats_dump::{
-    load_table_stats_payload, table_historical_stats_to_json,
-    table_stats_to_json_from_loaded,
-};
 use tidb_exec::cluster_stats_write::{
-    count_outdated_historical_stats, load_analyze_options, load_stats_gc_candidates,
-    load_stats_gc_timestamp, plan_analyze_options_write, plan_column_stats_usage_dump,
-    plan_column_stats_usage_write, plan_delete_table_stats, plan_get_predicate_columns,
-    historical_stats_data_blocks, plan_historical_stats_data_block,
-    plan_historical_stats_data_delete_for_table,
+    count_outdated_historical_stats, historical_stats_data_blocks, insert_table_stats_statements,
+    load_analyze_options, load_stats_gc_candidates, load_stats_gc_timestamp,
+    load_stats_locked_table_ids, loaded_stats_item_statements, plan_analyze_options_write,
+    plan_analyze_stats_write, plan_change_global_stats_id, plan_column_stats_usage_dump,
+    plan_column_stats_usage_write, plan_delete_analyze_jobs, plan_delete_table_stats,
+    plan_exchange_partition_stats_update, plan_finish_analyze_job, plan_get_predicate_columns,
+    plan_historical_stats_data_block, plan_historical_stats_data_delete_for_table,
     plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_lock,
-    plan_historical_stats_meta_replace, loaded_stats_item_statements,
-    plan_independent_index_stats_write,
-    plan_loaded_stats_item_statement, plan_loaded_stats_meta_write,
-    plan_loaded_stats_usage_write,
+    plan_historical_stats_meta_replace, plan_independent_index_stats_write,
+    plan_insert_analyze_job, plan_insert_column_default_bucket, plan_insert_column_stats,
+    plan_insert_table_stats_statement, plan_loaded_stats_item_statement,
+    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
     plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
-    plan_partial_stats_write, plan_partition_stats_write,
-    insert_table_stats_statements, plan_insert_column_default_bucket,
-    plan_insert_analyze_job, plan_insert_column_stats, plan_insert_table_stats_statement,
-    plan_start_analyze_job, plan_finish_analyze_job, plan_delete_analyze_jobs,
-    plan_update_analyze_job_progress,
-    plan_exchange_partition_stats_update, plan_stats_delta_statement,
-    plan_stats_gc_timestamp_write, plan_stats_item_delete,
-    plan_analyze_stats_write, plan_change_global_stats_id, plan_stats_meta_version_refresh,
-    plan_stats_write, plan_update_stats_version,
-    load_stats_locked_table_ids, stats_delta_statements, InsertTableStatsStatement, LoadedStatsItemStatement,
-    AnalyzeStatsMeta, AnalyzeStatsWriteScope, StatsDeltaStatement, StatsWriteError,
+    plan_partial_stats_write, plan_partition_stats_write, plan_start_analyze_job,
+    plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
+    plan_stats_meta_version_refresh, plan_stats_write, plan_update_analyze_job_progress,
+    plan_update_stats_version, stats_delta_statements, AnalyzeStatsMeta, AnalyzeStatsWriteScope,
+    InsertTableStatsStatement, LoadedStatsItemStatement, StatsDeltaStatement, StatsWriteError,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_exec::mysql_system_tables::{
     scan_system_table, SystemRow, SystemTableError, SystemTableView,
 };
-use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
-use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
 use tidb_exec::real_tikv_stats::{
-    load_initial_stats_snapshot, load_initial_stats_snapshot_with_memory_limits,
-    InitialStatsLoad, StatsTarget,
+    load_initial_stats_snapshot, load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad,
+    StatsTarget,
 };
 use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_model::column::ColumnInfo;
@@ -86,10 +79,9 @@ use tidb_model::SchemaState;
 use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{FmSketch, JsonPredicateColumn, JsonTable, MAX_SKETCH_SIZE};
+use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 use tidb_stats_handle_usage::{DeltaUpdate, TableDelta};
-use tidb_txnkv::transaction::{
-    OptimisticMutationKind, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
-};
+use tidb_txnkv::transaction::BufferMutationOp;
 
 #[derive(Default)]
 struct MetaStore {
@@ -119,16 +111,11 @@ impl MetaSnapshot for MetaStore {
     }
 }
 
-fn apply_mutations(
-    store: &mut MetaStore,
-    mutations: &[tidb_txnkv::transaction::OptimisticMutation],
-) {
+fn apply_mutations(store: &mut MetaStore, mutations: &[tidb_txnkv::transaction::BufferMutation]) {
     for mutation in mutations {
         match mutation.kind() {
-            OptimisticMutationKind::LockOnly => {}
-            OptimisticMutationKind::MetaDelete
-            | OptimisticMutationKind::Delete
-            | OptimisticMutationKind::IndexDelete => {
+            BufferMutationOp::Lock => {}
+            BufferMutationOp::Delete => {
                 store.pairs.remove(mutation.key());
             }
             _ => {
@@ -225,9 +212,7 @@ fn apply_loaded_stats_item(
 fn apply(store: &mut MetaStore, write: &BootstrapWrite) {
     for mutation in &write.mutations {
         match mutation.kind() {
-            OptimisticMutationKind::MetaDelete
-            | OptimisticMutationKind::Delete
-            | OptimisticMutationKind::IndexDelete => {
+            BufferMutationOp::Delete => {
                 store.pairs.remove(mutation.key());
             }
             _ => {
@@ -322,18 +307,8 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     .expect("pending job plans");
     assert_eq!(job_id, 1);
     apply_mutations(&mut store, &insert.mutations);
-    let running_at = Time::from_date_checked(
-        2026,
-        7,
-        29,
-        6,
-        13,
-        0,
-        0,
-        TimeType::Timestamp,
-        0,
-    )
-    .unwrap();
+    let running_at =
+        Time::from_date_checked(2026, 7, 29, 6, 13, 0, 0, TimeType::Timestamp, 0).unwrap();
     let catalog = load_cluster_catalog(&mut store).unwrap();
     let start = plan_start_analyze_job(&mut store, &catalog, job_id, running_at).unwrap();
     apply_mutations(&mut store, &start.mutations);
@@ -341,18 +316,8 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     let progress =
         plan_update_analyze_job_progress(&mut store, &catalog, job_id, 8, running_at).unwrap();
     apply_mutations(&mut store, &progress.mutations);
-    let finished_at = Time::from_date_checked(
-        2026,
-        7,
-        29,
-        6,
-        13,
-        5,
-        0,
-        TimeType::Timestamp,
-        0,
-    )
-    .unwrap();
+    let finished_at =
+        Time::from_date_checked(2026, 7, 29, 6, 13, 5, 0, TimeType::Timestamp, 0).unwrap();
     let catalog = load_cluster_catalog(&mut store).unwrap();
     let finish =
         plan_finish_analyze_job(&mut store, &catalog, job_id, 12, None, finished_at).unwrap();
@@ -372,18 +337,7 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     let catalog = load_cluster_catalog(&mut store).unwrap();
     let keep = plan_delete_analyze_jobs(&mut store, &catalog, &finished_at).unwrap();
     assert!(keep.is_empty(), "equal update_time is retained");
-    let after = Time::from_date_checked(
-        2026,
-        7,
-        29,
-        6,
-        13,
-        6,
-        0,
-        TimeType::Timestamp,
-        0,
-    )
-    .unwrap();
+    let after = Time::from_date_checked(2026, 7, 29, 6, 13, 6, 0, TimeType::Timestamp, 0).unwrap();
     let delete = plan_delete_analyze_jobs(&mut store, &catalog, &after).unwrap();
     apply_mutations(&mut store, &delete.mutations);
     assert!(analyze_job_rows(&mut store).is_empty());
@@ -518,34 +472,14 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     let plan = plan_stats_write(&mut store, &catalog, &stats, now())
         .expect("a full-sized analyze result plans");
     let planned = plan.mutations.len();
-    // The shape that made this a defect rather than a hypothetical: six
-    // histograms of the default size are already past the bounded path's
-    // generic ceiling, so an ANALYZE that declared that ceiling as its budget
-    // worked on toy tables and hard-failed on real ones.
-    assert!(
-        planned > MAX_OPTIMISTIC_MUTATIONS,
-        "the test's own premise is gone: {planned} mutations no longer exceed \
-         the generic ceiling {MAX_OPTIMISTIC_MUTATIONS}"
-    );
-    // ... so an ANALYZE must not declare that ceiling as its own budget. It
-    // declares Go's, which is no count bound at all.
-    assert_ne!(
-        ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_MUTATIONS,
-        "an ANALYZE that declares the generic budget refuses its own \
-         {planned}-mutation plan"
-    );
-    assert_eq!(ANALYZE_MAX_MUTATIONS, usize::MAX);
-    // What the plan is actually held to now, and what Go is held to as well.
+    // Real analyze output exceeds the deleted facade's count ceiling.
+    assert!(planned > 4096);
     let bytes: usize = plan
         .mutations
         .iter()
         .map(|mutation| mutation.key().len() + mutation.value().len())
         .sum();
-    assert!(
-        bytes <= MAX_OPTIMISTIC_TRANSACTION_BYTES,
-        "an ANALYZE of a real table plans {bytes} bytes, over the transaction \
-         byte budget {MAX_OPTIMISTIC_TRANSACTION_BYTES}"
-    );
+    assert!(bytes as u64 <= tidb_txnkv::txn_total_size_limit());
 }
 
 /// The analyze snapshot and `last_stats_histograms_version` columns round-trip:
@@ -607,8 +541,8 @@ fn table_size_stats_source_reads_requested_storage_rows() {
             columns: vec![full_histogram(column_id, false)],
             indexes: vec![full_histogram(21, true)],
         };
-        let plan = plan_stats_write(&mut store, &catalog, &stats, now())
-            .expect("statistics rows plan");
+        let plan =
+            plan_stats_write(&mut store, &catalog, &stats, now()).expect("statistics rows plan");
         apply_mutations(&mut store, &plan.mutations);
     }
 
@@ -766,8 +700,8 @@ impl StatsTableRowSizeSource for LoaderSizeSource<'_> {
             .load_column_lengths(&mut **self.store.borrow_mut(), ids)?
             .into_iter()
             .map(|row| {
-                let total_size = u64::try_from(row.total_size.max(0))
-                    .expect("nonnegative i64 fits in u64");
+                let total_size =
+                    u64::try_from(row.total_size.max(0)).expect("nonnegative i64 fits in u64");
                 ((row.table_id, row.histogram_id), total_size)
             })
             .collect())
@@ -785,9 +719,7 @@ fn table_size_stats_are_statement_local_and_clamp_negative_sizes() {
             ColumnInfo {
                 id: 1,
                 offset: 0,
-                field_type: tidb_datatype::FieldType::new(
-                    tidb_datatype::FieldTypeCode::LongLong,
-                ),
+                field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 state: SchemaState::PUBLIC,
                 ..ColumnInfo::default()
             },
@@ -1184,8 +1116,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     }
 
     let target = |table_id| {
-        let field_type =
-            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         StatsTarget {
             physical_id: table_id,
             table: TableInfo {
@@ -1235,19 +1166,17 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     .expect("an already loaded ID may be requested again");
     assert_eq!(repeated.keys().copied().collect::<Vec<_>>(), [4242, 4243]);
 
-    let lite = load_initial_stats_snapshot(
-        &mut store,
-        &loader,
-        &targets,
-        &[],
-        InitialStatsLoad::Lite,
-    )
-    .expect("all current physical tables load");
+    let lite =
+        load_initial_stats_snapshot(&mut store, &loader, &targets, &[], InitialStatsLoad::Lite)
+            .expect("all current physical tables load");
     assert_eq!(lite.keys().copied().collect::<Vec<_>>(), current_ids);
     assert!(!lite.contains_key(&dropped_id));
     for state in lite.values() {
         let table = state.loaded().expect("analyzed table is loaded");
-        let column = table.hist_coll.get_column(1).expect("column metadata exists");
+        let column = table
+            .hist_coll
+            .get_column(1)
+            .expect("column metadata exists");
         assert!(column.read().unwrap().is_all_evicted());
         let index = table.hist_coll.get_index(2).expect("index metadata exists");
         assert!(index.read().unwrap().is_all_evicted());
@@ -1266,7 +1195,10 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     assert_eq!(non_lite.keys().next_back().copied(), Some(4251));
     for state in non_lite.values() {
         let table = state.loaded().expect("analyzed table is loaded");
-        let column = table.hist_coll.get_column(1).expect("column metadata exists");
+        let column = table
+            .hist_coll
+            .get_column(1)
+            .expect("column metadata exists");
         assert!(column.read().unwrap().is_all_evicted());
         let index = table.hist_coll.get_index(2).expect("index exists");
         assert!(index.read().unwrap().is_full_load());
@@ -1282,11 +1214,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
         .expect("stats_meta exists")
         .to_statistics_table(&targets[0].table);
     let topn_stage = loader
-        .load_table_for_init_stats_topn(
-            &mut store,
-            targets[0].table.id,
-            &targets[0].column_types,
-        )
+        .load_table_for_init_stats_topn(&mut store, targets[0].table.id, &targets[0].column_types)
         .expect("TopN stage loads")
         .expect("stats_meta exists")
         .to_statistics_table(&targets[0].table);
@@ -1309,12 +1237,10 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
         .expect("analyzed table is loaded");
     let index = table.hist_coll.get_index(2).expect("index exists");
     let index = index.read().unwrap();
-    assert!(
-        index
-            .top_n
-            .as_ref()
-            .is_some_and(|topn| topn.total_count() > 0)
-    );
+    assert!(index
+        .top_n
+        .as_ref()
+        .is_some_and(|topn| topn.total_count() > 0));
     assert!(index.histogram.buckets.is_empty());
     assert!(!index.is_full_load());
 }
@@ -1325,16 +1251,8 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let empty_id = 4260;
     let topn_only_id = 4261;
-    let initial = plan_loaded_stats_meta_write(
-        &mut store,
-        &catalog,
-        empty_id,
-        6,
-        6,
-        100,
-        now(),
-    )
-    .expect("metadata-only table plans");
+    let initial = plan_loaded_stats_meta_write(&mut store, &catalog, empty_id, 6, 6, 100, now())
+        .expect("metadata-only table plans");
     apply_mutations(&mut store, &initial.mutations);
 
     let mut topn_only = full_histogram(2, true);
@@ -1360,9 +1278,7 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
             columns: vec![ColumnInfo {
                 id: 1,
                 name: CiString::new("a"),
-                field_type: tidb_datatype::FieldType::new(
-                    tidb_datatype::FieldTypeCode::LongLong,
-                ),
+                field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 state: SchemaState::PUBLIC,
                 ..ColumnInfo::default()
             }]
@@ -1645,9 +1561,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
             id: 1,
             name: CiString::new("b"),
             offset: 0,
-            field_type: tidb_datatype::FieldType::new(
-                tidb_datatype::FieldTypeCode::LongLong,
-            ),
+            field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             state: SchemaState::PUBLIC,
             ..ColumnInfo::default()
         }]
@@ -1680,27 +1594,20 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
     store.scans.clear();
     store.fail_scan_prefix = Some(topn_prefix.clone());
     let error = loader
-        .load_column_distribution_stats(
-            &mut store,
-            stats.table_id,
-            1,
-            &table,
-            &column_type,
-        )
+        .load_column_distribution_stats(&mut store, stats.table_id, 1, &table, &column_type)
         .expect_err("a TopN read failure aborts the whole column");
-    assert!(error.to_string().contains("injected statistics scan failure"));
-    assert_eq!(store.scans, vec![histogram_prefix.clone(), topn_prefix.clone()]);
+    assert!(error
+        .to_string()
+        .contains("injected statistics scan failure"));
+    assert_eq!(
+        store.scans,
+        vec![histogram_prefix.clone(), topn_prefix.clone()]
+    );
 
     store.scans.clear();
     store.fail_scan_prefix = None;
     let loaded = loader
-        .load_column_distribution_stats(
-            &mut store,
-            stats.table_id,
-            1,
-            &table,
-            &column_type,
-        )
+        .load_column_distribution_stats(&mut store, stats.table_id, 1, &table, &column_type)
         .expect("the complete distribution loads")
         .expect("the histogram row exists");
     assert_eq!(loaded.top_n.as_ref().map(TopN::num), Some(100));
@@ -1718,13 +1625,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
     apply_mutations(&mut store, &plan.mutations);
     store.scans.clear();
     let loaded = loader
-        .load_column_distribution_stats(
-            &mut store,
-            stats.table_id,
-            1,
-            &table,
-            &column_type,
-        )
+        .load_column_distribution_stats(&mut store, stats.table_id, 1, &table, &column_type)
         .expect("Analyze V1 metadata loads")
         .expect("the histogram row exists");
     assert!(loaded.top_n.is_none());
@@ -1739,13 +1640,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
     apply_mutations(&mut store, &plan.mutations);
     store.scans.clear();
     let error = loader
-        .load_column_distribution_stats(
-            &mut store,
-            stats.table_id,
-            1,
-            &table,
-            &column_type,
-        )
+        .load_column_distribution_stats(&mut store, stats.table_id, 1, &table, &column_type)
         .expect_err("negative null_count is rejected");
     assert!(error.to_string().contains("negative null count -1"));
     assert_eq!(store.scans, vec![histogram_prefix]);
@@ -1785,14 +1680,7 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     let mut cms = CmsSketch::new(2, 16);
     cms.insert_bytes_by_count(b"replacement", 9);
     loaded.cms = Some(cms);
-    apply_loaded_stats_item(
-        &mut store,
-        &catalog,
-        table_id,
-        55,
-        &loaded,
-        version,
-    );
+    apply_loaded_stats_item(&mut store, &catalog, table_id, 55, &loaded, version);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     let column_types = BTreeMap::from([
@@ -1927,7 +1815,9 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
         .expect("soft-deleted statistics reload")
         .expect("stats_meta remains");
     assert_eq!(soft.version, soft_version);
-    let histogram = soft.column(1).expect("soft delete retains histogram metadata");
+    let histogram = soft
+        .column(1)
+        .expect("soft delete retains histogram metadata");
     assert_eq!(histogram.histogram.ndv, 0);
     assert!(histogram.histogram.buckets.is_empty());
     assert!(histogram.topn.is_none());
@@ -1948,11 +1838,9 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
         now(),
     )
     .expect("table lock row plans");
-    assert!(
-        load_stats_locked_table_ids(&mut store, &catalog)
-            .expect("locked table IDs load")
-            .contains(&table_id)
-    );
+    assert!(load_stats_locked_table_ids(&mut store, &catalog)
+        .expect("locked table IDs load")
+        .contains(&table_id));
 
     let hard_version = soft_version + 10;
     let plan = plan_delete_table_stats(&mut store, &catalog, &[table_id], false, hard_version)
@@ -1995,8 +1883,7 @@ fn stats_gc_window_and_timestamp_are_half_open_and_persistent() {
     }
 
     assert_eq!(
-        load_stats_gc_candidates(&mut store, &catalog, 100, 200)
-            .expect("GC window loads"),
+        load_stats_gc_candidates(&mut store, &catalog, 100, 200).expect("GC window loads"),
         vec![4250]
     );
     assert_eq!(
@@ -2296,14 +2183,7 @@ fn loaded_stats_negative_count_preserves_existing_meta_values() {
 
     let version = initial.version + 1;
     let item = full_histogram(1, false);
-    apply_loaded_stats_item(
-        &mut store,
-        &catalog,
-        table_id,
-        -1,
-        &item,
-        version,
-    );
+    apply_loaded_stats_item(&mut store, &catalog, table_id, -1, &item, version);
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
@@ -2590,14 +2470,9 @@ fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
 
     let version = 440_000_000_000_000_001;
     for statement in &statements {
-        let plan = plan_insert_table_stats_statement(
-            &mut store,
-            &catalog,
-            statement,
-            version,
-            now(),
-        )
-        .expect("InsertTableStats2KV statement plans");
+        let plan =
+            plan_insert_table_stats_statement(&mut store, &catalog, statement, version, now())
+                .expect("InsertTableStats2KV statement plans");
         apply_mutations(&mut store, &plan.mutations);
     }
     let loader = ClusterStatsLoader::locate(&catalog).expect("stats tables locate");
@@ -2608,23 +2483,26 @@ fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
     assert_eq!(loaded.version, version);
     assert_eq!(loaded.last_stats_hist_version, version);
     assert_eq!(
-        loaded.columns.iter().map(|item| item.id).collect::<Vec<_>>(),
+        loaded
+            .columns
+            .iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>(),
         vec![11, 12]
     );
     assert_eq!(
-        loaded.indexes.iter().map(|item| item.id).collect::<Vec<_>>(),
+        loaded
+            .indexes
+            .iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>(),
         vec![21]
     );
 
     for statement in &statements {
-        let ignored = plan_insert_table_stats_statement(
-            &mut store,
-            &catalog,
-            statement,
-            version + 1,
-            now(),
-        )
-        .expect("existing InsertTableStats2KV rows are ignored");
+        let ignored =
+            plan_insert_table_stats_statement(&mut store, &catalog, statement, version + 1, now())
+                .expect("existing InsertTableStats2KV rows are ignored");
         assert!(ignored.mutations.is_empty());
     }
 }
@@ -2649,11 +2527,7 @@ fn insert_column_stats_uses_go_origin_default_branches() {
     let plan = plan_stats_write(&mut store, &catalog, &initial, now()).expect("meta plans");
     apply_mutations(&mut store, &plan.mutations);
 
-    let defaults = [
-        None,
-        Some(Datum::Null),
-        Some(Datum::Bytes(b"xy".to_vec())),
-    ];
+    let defaults = [None, Some(Datum::Null), Some(Datum::Bytes(b"xy".to_vec()))];
     for (offset, origin_default) in defaults.iter().enumerate() {
         let column_id = 11 + offset as i64;
         let (inserted, plan) = plan_insert_column_stats(
@@ -2746,8 +2620,14 @@ fn insert_column_stats_uses_go_origin_default_branches() {
     assert_eq!(bucket.i64("hist_id").unwrap(), Some(13));
     assert_eq!(bucket.i64("repeats").unwrap(), Some(3));
     assert_eq!(bucket.i64("count").unwrap(), Some(3));
-    assert_eq!(bucket.bytes("lower_bound").unwrap().as_deref(), Some(&b"xy"[..]));
-    assert_eq!(bucket.bytes("upper_bound").unwrap().as_deref(), Some(&b"xy"[..]));
+    assert_eq!(
+        bucket.bytes("lower_bound").unwrap().as_deref(),
+        Some(&b"xy"[..])
+    );
+    assert_eq!(
+        bucket.bytes("upper_bound").unwrap().as_deref(),
+        Some(&b"xy"[..])
+    );
 
     let (inserted, ignored) = plan_insert_column_stats(
         &mut store,
@@ -2827,7 +2707,7 @@ fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
     )
     .expect("locking SELECT plans");
     assert_eq!(plan.mutations.len(), 1);
-    assert_eq!(plan.mutations[0].kind(), OptimisticMutationKind::LockOnly);
+    assert_eq!(plan.mutations[0].kind(), BufferMutationOp::Lock);
 }
 
 #[test]
@@ -2835,16 +2715,8 @@ fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
     let mut store = bootstrapped();
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
-    let initial = plan_loaded_stats_meta_write(
-        &mut store,
-        &catalog,
-        table_id,
-        8,
-        5,
-        100,
-        now(),
-    )
-    .expect("initial meta plans");
+    let initial = plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 8, 5, 100, now())
+        .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
     let update = plan_exchange_partition_stats_update(
         &mut store,
@@ -3403,7 +3275,11 @@ fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
                 && row.i64("column_id").unwrap() == Some(item.id)
         })
         .expect("usage row exists");
-    assert!(stored.stored_datum("last_used_at").unwrap().unwrap().is_null());
+    assert!(stored
+        .stored_datum("last_used_at")
+        .unwrap()
+        .unwrap()
+        .is_null());
     assert!(stored
         .stored_datum("last_analyzed_at")
         .unwrap()
@@ -3437,15 +3313,13 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
         .expect("LOAD STATS final meta plans");
     apply_mutations(&mut store, &meta.mutations);
 
-    assert!(
-        plan_historical_stats_meta_lock(&mut store, &catalog, table_id, version - 1).is_err()
-    );
+    assert!(plan_historical_stats_meta_lock(&mut store, &catalog, table_id, version - 1).is_err());
     let ((modify_count, count), lock) =
         plan_historical_stats_meta_lock(&mut store, &catalog, table_id, version)
             .expect("the exact version plans the locking select");
     assert_eq!(
         lock.mutations.first().map(|mutation| mutation.kind()),
-        Some(OptimisticMutationKind::LockOnly)
+        Some(BufferMutationOp::Lock)
     );
     apply_mutations(&mut store, &lock.mutations);
     let replace = plan_historical_stats_meta_replace(
@@ -3512,14 +3386,9 @@ fn historical_stats_data_round_trips_through_stats_history() {
         version: 440_000_000_000_000_000,
         ..JsonTable::default()
     };
-    let version = apply_historical_stats_data_statements(
-        &mut store,
-        &catalog,
-        table_id,
-        &json,
-        now(),
-    )
-    .expect("historical statistics data statements plan");
+    let version =
+        apply_historical_stats_data_statements(&mut store, &catalog, table_id, &json, now())
+            .expect("historical statistics data statements plan");
     assert_eq!(version, json.version);
 
     let table = catalog
@@ -3559,7 +3428,10 @@ fn historical_stats_data_round_trips_through_stats_history() {
         .collect::<Vec<_>>();
     blocks.sort_by_key(|(sequence, _)| *sequence);
     let restored = tidb_executor::load_stats::blocks_to_json_table(
-        &blocks.into_iter().map(|(_, block)| block).collect::<Vec<_>>(),
+        &blocks
+            .into_iter()
+            .map(|(_, block)| block)
+            .collect::<Vec<_>>(),
     )
     .expect("historical statistics JSON restores");
     assert_eq!(restored, json);
@@ -3581,8 +3453,8 @@ fn historical_stats_data_plans_one_statement_per_block() {
         version: 440_000_000_000_000_001,
         ..JsonTable::default()
     };
-    let blocks = tidb_executor::load_stats::json_table_to_blocks(&json, 30)
-        .expect("small blocks compress");
+    let blocks =
+        tidb_executor::load_stats::json_table_to_blocks(&json, 30).expect("small blocks compress");
     assert!(blocks.len() > 1);
 
     let history = catalog
@@ -3670,16 +3542,9 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
         .expect("initial data history statements plan");
 
     let meta_version = data_version + 10;
-    let meta = plan_loaded_stats_meta_write(
-        &mut store,
-        &catalog,
-        table_id,
-        17,
-        7,
-        meta_version,
-        now(),
-    )
-    .expect("newer metadata plans");
+    let meta =
+        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 17, 7, meta_version, now())
+            .expect("newer metadata plans");
     apply_mutations(&mut store, &meta.mutations);
     apply_historical_stats_meta_statements(
         &mut store,
@@ -3691,26 +3556,16 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
     )
     .expect("newer metadata history statements plan");
 
-    let restored = table_historical_stats_to_json(
-        &mut store,
-        &catalog,
-        table_id,
-        meta_version,
-    )
-    .expect("historical statistics read succeeds")
-    .expect("historical statistics exist");
+    let restored = table_historical_stats_to_json(&mut store, &catalog, table_id, meta_version)
+        .expect("historical statistics read succeeds")
+        .expect("historical statistics exist");
     assert_eq!(restored.version, data_version);
     assert_eq!(restored.count, 17);
     assert_eq!(restored.modify_count, 7);
     assert!(restored.is_historical_stats);
     assert_eq!(
-        table_historical_stats_to_json(
-            &mut store,
-            &catalog,
-            table_id,
-            data_version - 1,
-        )
-        .expect("an older snapshot is valid"),
+        table_historical_stats_to_json(&mut store, &catalog, table_id, data_version - 1,)
+            .expect("an older snapshot is valid"),
         None
     );
 }
@@ -3754,14 +3609,8 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
             count: version,
             ..JsonTable::default()
         };
-        apply_historical_stats_data_statements(
-            &mut store,
-            &catalog,
-            table_id,
-            &json,
-            create_time,
-        )
-        .expect("data history statements plan");
+        apply_historical_stats_data_statements(&mut store, &catalog, table_id, &json, create_time)
+            .expect("data history statements plan");
     }
 
     assert_eq!(
@@ -3828,9 +3677,7 @@ fn live_stats_dump_refreshes_meta_after_loading_payload() {
         columns: vec![ColumnInfo {
             id: 1,
             name: CiString::new("a"),
-            field_type: tidb_datatype::FieldType::new(
-                tidb_datatype::FieldTypeCode::LongLong,
-            ),
+            field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             state: SchemaState::PUBLIC,
             ..ColumnInfo::default()
         }]

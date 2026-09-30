@@ -67,7 +67,7 @@ use tidb_pd_client::PdClient;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticMutation, RealOptimisticTransactionOpener,
+    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener,
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::PdRegionLoader;
@@ -679,16 +679,12 @@ where
     /// nothing, which is Go's "required base satisfied, we don't need to
     /// update KV".
     fn transact<T>(&self, decide: impl Fn(u64) -> (Option<u64>, T)) -> Result<T, AutoIdStoreError> {
-        // The admission bound includes the full encoded meta key and the
-        // longest signed decimal value (unsigned counters use its bit pattern).
-        // Metadata key length depends on the encoded database and table IDs.
-        let max_bytes = self.counter_key.len() + value::encode_int_value(i64::MIN).len();
         let mut conflicts = 0usize;
         loop {
             let call = UnaryCallContext::with_timeout(self.timeout);
             let mut transaction = self
                 .opener
-                .begin(1, max_bytes)
+                .begin()
                 .map_err(|error| store_error("open", &error))?;
             let stored = {
                 let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
@@ -711,7 +707,7 @@ where
                     .map_err(|error| store_error("finish", &error))?;
                 return Ok(outcome);
             };
-            let mutation = OptimisticMutation::meta_put(
+            let mutation = BufferMutation::set(
                 self.counter_key.clone(),
                 value::encode_int_value(new_value as i64),
             )

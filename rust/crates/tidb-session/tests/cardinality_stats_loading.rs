@@ -218,14 +218,12 @@ impl tidb_exec::cluster_catalog::MetaSnapshot for StatsStorage {
 }
 
 impl StatsStorage {
-    fn apply(&mut self, mutations: &[tidb_txnkv::transaction::OptimisticMutation]) {
-        use tidb_txnkv::transaction::OptimisticMutationKind;
+    fn apply(&mut self, mutations: &[tidb_txnkv::transaction::BufferMutation]) {
+        use tidb_txnkv::transaction::BufferMutationOp;
         for mutation in mutations {
             match mutation.kind() {
-                OptimisticMutationKind::LockOnly => {}
-                OptimisticMutationKind::MetaDelete
-                | OptimisticMutationKind::Delete
-                | OptimisticMutationKind::IndexDelete => {
+                BufferMutationOp::Lock => {}
+                BufferMutationOp::Delete => {
                     self.0.remove(mutation.key());
                 }
                 _ => {
@@ -258,7 +256,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
         plan_stats_delta_statement, stats_delta_statements,
     };
     use tidb_exec::real_tikv_stats::{
-        InitialStatsLoad, StatsTarget, load_initial_stats_snapshot_with_memory_limits,
+        load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad, StatsTarget,
     };
 
     let mut session = Session::new();
@@ -351,13 +349,11 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     ] {
         let snapshot = if let Some(mode) = mode {
             cache.store(Default::default());
-            assert!(
-                shared_catalog
-                    .lock()
-                    .unwrap()
-                    .table_statistics(table_id)
-                    .is_none()
-            );
+            assert!(shared_catalog
+                .lock()
+                .unwrap()
+                .table_statistics(table_id)
+                .is_none());
             load_initial_stats_snapshot_with_memory_limits(
                 &mut storage,
                 &loader,
@@ -477,13 +473,11 @@ fn datetime_range_overflow_survives_async_statistics_load() {
     {
         let catalog = shared.lock().unwrap();
         catalog.load_needed_histograms("default").unwrap();
-        assert!(
-            catalog
-                .table_statistics(table_id)
-                .unwrap()
-                .column_load_status[&column_id]
-                .is_full_load()
-        );
+        assert!(catalog
+            .table_statistics(table_id)
+            .unwrap()
+            .column_load_status[&column_id]
+            .is_full_load());
     }
     assert!(!queued());
     assert_eq!(loader.requests.lock().unwrap().len(), 1);

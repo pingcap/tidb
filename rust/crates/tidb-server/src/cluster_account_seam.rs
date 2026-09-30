@@ -72,10 +72,7 @@ use tidb_executor::kv_table::AutoIdStore;
 use tidb_pd_client::EtcdClient;
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    RealOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
-    MAX_OPTIMISTIC_TRANSACTION_BYTES,
-};
+use tidb_txnkv::transaction::{RealOptimisticTransaction, RealOptimisticTransactionOpener};
 
 use crate::cluster_privileges::{cluster_image_from_registry, registry_from_cluster};
 use crate::sql_node::{cluster_commit_error, SqlQueryError};
@@ -192,10 +189,7 @@ where
     P: StorePdCapability,
 {
     fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {
-        let mut transaction = self
-            .opener
-            .begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-            .map_err(|error| error.to_string())?;
+        let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
         let (catalog, scratch) = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
@@ -361,7 +355,7 @@ where
     P: StorePdCapability,
 {
     let mut transaction = opener
-        .begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .begin()
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     // `cluster_image_from_registry` reads through `export`, so the live table
     // is not disturbed by being written out.

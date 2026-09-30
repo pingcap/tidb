@@ -34,6 +34,9 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
 
+[dev-dependencies]
+tonic-prost.workspace = true
+
 [[test]]
 name = "all"
 path = "tests/all.rs"
@@ -61,3 +64,7 @@ path = "tests/resource_group_tag_source.rs"
 [[bench]]
 name = "kv"
 harness = false
+
+[[test]]
+name = "transaction_size_limits_source"
+path = "tests/transaction_size_limits_source.rs"

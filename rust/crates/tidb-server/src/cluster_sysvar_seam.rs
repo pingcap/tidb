@@ -57,10 +57,7 @@ use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_pd_client::EtcdClient;
 use tidb_session::vars::GlobalSysvars;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    RealOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
-    MAX_OPTIMISTIC_TRANSACTION_BYTES,
-};
+use tidb_txnkv::transaction::{RealOptimisticTransaction, RealOptimisticTransactionOpener};
 
 use crate::sql_node::{cluster_commit_error, SqlQueryError};
 
@@ -371,10 +368,7 @@ where
     P: StorePdCapability,
 {
     fn begin(&self) -> Result<Box<dyn PendingSysvarChange>, String> {
-        let mut transaction = self
-            .opener
-            .begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-            .map_err(|error| error.to_string())?;
+        let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
         let (catalog, scratch) = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;

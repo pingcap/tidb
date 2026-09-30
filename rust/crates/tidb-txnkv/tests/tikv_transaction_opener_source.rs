@@ -42,7 +42,7 @@ impl TikvTransactionSource for MockSource {
         let pd = self.pd.clone();
         Ok(self
             .runtime
-            .block_on(tikv_client::pd::PdClient::get_timestamp(pd))?)
+            .block_on(tikv_client::PdClient::get_timestamp(pd))?)
     }
 
     fn cluster_id(&self) -> Result<u64, TikvTransactionError> {
@@ -189,7 +189,10 @@ fn the_pessimistic_surface_locks_reads_and_reports_locked_keys() {
     let mut txn = opener.begin_pessimistic().unwrap();
 
     // A locking read returns the committed value and records the lock.
-    assert_eq!(txn.get_for_update(&k("row-a")).unwrap(), Some(b"1".to_vec()));
+    assert_eq!(
+        txn.get_for_update(&k("row-a")).unwrap(),
+        Some(b"1".to_vec())
+    );
     let locked = txn.locked_keys();
     assert!(
         locked.contains(&k("row-a")),
@@ -250,7 +253,8 @@ fn statement_lock_scopes_retry_and_cancel_without_ending_the_transaction() {
     assert!(!txn.is_statement_locking());
 
     txn.set(k("stmt-row"), b"v2".to_vec()).unwrap();
-    txn.commit().expect("the transaction commits after all that");
+    txn.commit()
+        .expect("the transaction commits after all that");
 
     let mut reader = opener.begin_read_only().unwrap();
     assert_eq!(reader.get(&k("stmt-row")).unwrap(), Some(b"v2".to_vec()));

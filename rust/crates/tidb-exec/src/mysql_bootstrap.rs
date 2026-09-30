@@ -56,7 +56,7 @@ use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{generate_index_key, TableInfo as CodecTableInfo};
-use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
+use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 
 use crate::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
 use crate::mysql_system_tables::SYSTEM_DB;
@@ -197,7 +197,7 @@ impl From<MutationSetError> for BootstrapError {
 #[derive(Clone, Debug)]
 pub struct BootstrapWrite {
     /// Every meta-key and row mutation.
-    pub mutations: Vec<OptimisticMutation>,
+    pub mutations: Vec<BufferMutation>,
     /// The schema version this bootstrap produces.
     pub schema_version: i64,
     /// The diff stored under `Diff:<schema_version>`.
@@ -228,7 +228,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         state: SchemaState::PUBLIC,
         ..DBInfo::default()
     };
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::database_kv_key(SYSTEM_DATABASE_ID),
         value::serialize_db_info(&database).map_err(encode_error)?,
     )?);
@@ -248,7 +248,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
     let mut affected = Vec::with_capacity(table_count);
     for table in tables {
         let info = build_bootstrap_table(table, start_ts)?;
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::table_kv_key(SYSTEM_DATABASE_ID, info.id),
             value::serialize_table_info(&info).map_err(encode_error)?,
         )?);
@@ -266,7 +266,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
             environment.ddl_table_version.max(version.version)
         });
     if ddl_table_version > environment.ddl_table_version {
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::ddl_table_version_kv_key(),
             value::encode_int_value(ddl_table_version),
         )?);
@@ -290,7 +290,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
             None => 0,
         };
         let allocated = current + 1;
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::next_global_id_kv_key(),
             value::encode_int_value(allocated),
         )?);
@@ -304,7 +304,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         state: SchemaState::PUBLIC,
         ..DBInfo::default()
     };
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::database_kv_key(test_db_id),
         value::serialize_db_info(&test_database).map_err(encode_error)?,
     )?);
@@ -314,7 +314,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
     if read_schema_cache_size(snapshot)?.is_none() {
         let schema_cache_size = u64::try_from(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE)
             .expect("the source schema-cache default is non-negative");
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             schema_cache_size_kv_key(),
             schema_cache_size.to_string().as_bytes(),
         )?);
@@ -323,7 +323,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
     // The version bump comes last, so the write set ends with the two keys that
     // make the whole schema observable at once.
     let schema_version = read_schema_version(snapshot)? + 1;
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_version_kv_key(),
         value::encode_int_value(schema_version),
     )?);
@@ -334,7 +334,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         affected_options: affected.into(),
         ..SchemaDiff::default()
     };
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_diff_kv_key(schema_version),
         value::serialize_schema_diff(&diff).map_err(encode_error)?,
     )?);

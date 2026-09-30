@@ -31,7 +31,7 @@ use std::fmt;
 
 use tidb_datatype::Datum;
 use tidb_model::TableInfo;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
@@ -164,7 +164,7 @@ impl MlogPurgeInfoTable {
         mlog_id: i64,
         derived: MlogPurgeDerived,
         existing: Option<&MlogPurgeInfoRow>,
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), MlogPurgeInfoTableError> {
         if !derived.should_update {
             // Go `INSERT IGNORE INTO .. (MLOG_ID) VALUES (..)`: an existing
@@ -205,7 +205,7 @@ impl MlogPurgeInfoTable {
     pub fn append_delete(
         &self,
         row: &MlogPurgeInfoRow,
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), MlogPurgeInfoTableError> {
         mutations.extend(delete_clustered_row(&self.table, &row.values)?);
         Ok(())

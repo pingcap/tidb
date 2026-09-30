@@ -55,6 +55,8 @@ pub(super) struct MockCluster {
     pub(super) begun: AtomicUsize,
     /// Explicit transactions opened specifically in pessimistic mode.
     pub(super) pessimistic_begun: AtomicUsize,
+    /// Session wait settings observed at the lock boundary.
+    pub(super) lock_waits: Mutex<Vec<tidb_txnkv::transaction::LockWaitTime>>,
     /// One-shot failure for the next explicit transaction open. DDL subscriber
     /// tests use it after catalog publication to model a restricted-session
     /// statistics failure.
@@ -564,16 +566,15 @@ impl OpenClusterTransaction for MockSessionTransaction {
         self.pessimistic
     }
 
-    fn lock_staged_keys_with_values(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
+    fn lock_staged_keys_with_values(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
         // This fixture serves rows from its in-memory snapshot, but must
         // still exercise the same lock/retry outcome as its ordinary lock
         // entry point when a point write asks for lock return values.
-        self.lock_staged_keys_with_assertions(
-            keys,
-            Default::default(),
-            Default::default(),
-            tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
-        )
+        self.lock_staged_keys_with_assertions(keys, Default::default(), Default::default(), wait)
     }
 
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
@@ -590,8 +591,9 @@ impl OpenClusterTransaction for MockSessionTransaction {
         keys: Vec<Vec<u8>>,
         _presume_not_exists: std::collections::BTreeSet<Vec<u8>>,
         _duplicate_hints: std::collections::BTreeMap<Vec<u8>, DuplicateKeyHint>,
-        _wait: tidb_txnkv::transaction::LockWaitTime,
+        wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<LockKeysOutcome, String> {
+        self.cluster.lock_waits.lock().unwrap().push(wait);
         if !self.pessimistic {
             return Err("only a pessimistic transaction locks statement keys".to_owned());
         }

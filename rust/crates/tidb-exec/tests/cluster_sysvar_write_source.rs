@@ -25,7 +25,7 @@ use tidb_exec::cluster_catalog::{
 use tidb_exec::cluster_sysvar_load::load_cluster_sysvars;
 use tidb_exec::cluster_sysvar_write::plan_sysvar_write;
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment};
-use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
+use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 
 fn timestamp() -> Time {
     Time::from_date_checked(2026, 7, 29, 6, 12, 55, 0, TimeType::Timestamp, 0)
@@ -63,39 +63,27 @@ impl MetaSnapshot for MetaStore {
 }
 
 impl MetaStore {
-    fn apply(&mut self, mutations: &[OptimisticMutation]) {
+    fn apply(&mut self, mutations: &[BufferMutation]) {
         for mutation in mutations {
             let present = self.pairs.contains_key(mutation.key());
+            match mutation.assertion() {
+                tidb_txnkv::AssertionOp::AssertNotExist => {
+                    assert!(!present, "insert would overwrite an existing row")
+                }
+                tidb_txnkv::AssertionOp::AssertExist => {
+                    assert!(present, "write names a missing row")
+                }
+                _ => {}
+            }
             match mutation.kind() {
-                OptimisticMutationKind::Insert => {
-                    assert!(!present, "an Insert would have overwritten a stored row");
+                BufferMutationOp::Set => {
                     self.pairs
                         .insert(mutation.key().to_vec(), mutation.value().to_vec());
                 }
-                OptimisticMutationKind::PutExisting => {
-                    assert!(present, "a PutExisting named a row that is not stored");
-                    self.pairs
-                        .insert(mutation.key().to_vec(), mutation.value().to_vec());
-                }
-                OptimisticMutationKind::Delete => {
-                    assert!(present, "a Delete named a row that is not stored");
+                BufferMutationOp::Delete => {
                     self.pairs.remove(mutation.key());
                 }
-                OptimisticMutationKind::IndexDelete
-                | OptimisticMutationKind::MetaDelete
-                | OptimisticMutationKind::SystemRowDelete => {
-                    self.pairs.remove(mutation.key());
-                }
-                OptimisticMutationKind::IndexPut
-                | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::MetaPut
-                | OptimisticMutationKind::SystemRowPut => {
-                    self.pairs
-                        .insert(mutation.key().to_vec(), mutation.value().to_vec());
-                }
-                // TiKV's `Op_Lock` writes a lock and no value, so the
-                // committed store is unchanged by one.
-                OptimisticMutationKind::LockOnly => {}
+                BufferMutationOp::Lock => {}
             }
         }
     }
@@ -115,7 +103,10 @@ impl MetaStore {
     /// does with a real [`tidb_session::vars::GlobalSysvars`] scratch copy),
     /// plans and applies the resulting diff, and answers what the loader
     /// reads back afterwards.
-    fn write(&mut self, mutate: impl FnOnce(&mut BTreeMap<String, String>)) -> Vec<(String, String)> {
+    fn write(
+        &mut self,
+        mutate: impl FnOnce(&mut BTreeMap<String, String>),
+    ) -> Vec<(String, String)> {
         let catalog = self.catalog();
         let mut desired: BTreeMap<String, String> = self.sysvars().into_iter().collect();
         mutate(&mut desired);

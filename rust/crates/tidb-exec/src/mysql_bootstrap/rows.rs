@@ -30,7 +30,7 @@ use tidb_datatype::{Datum, Time, TimeType};
 use tidb_meta::{key, value};
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
 use tidb_model::table_info::TableInfo;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::system_row_write::{defaults_row, insert_row, RowEncodeError, NO, YES};
 
@@ -100,7 +100,7 @@ pub struct BootstrapEnvironment {
 pub fn seed(
     tables: &[TableInfo],
     environment: &BootstrapEnvironment,
-    mutations: &mut Vec<OptimisticMutation>,
+    mutations: &mut Vec<BufferMutation>,
 ) -> Result<(), BootstrapError> {
     let rows = seed_rows(environment)?;
     for row in &rows {
@@ -122,7 +122,7 @@ pub fn seed(
         if used == 0 {
             continue;
         }
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::auto_table_id_kv_key(SYSTEM_DATABASE_ID, table.id),
             value::encode_int_value(i64::try_from(used).expect("a seed row count fits in i64")),
         )?);
@@ -367,7 +367,7 @@ fn write_row(
     table: &TableInfo,
     row: &SeedRow,
     current_timestamp: Time,
-    mutations: &mut Vec<OptimisticMutation>,
+    mutations: &mut Vec<BufferMutation>,
 ) -> Result<(), BootstrapError> {
     // Each seeded table's rows are numbered from 1 in the order they appear.
     let row_id = i64::try_from(

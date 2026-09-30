@@ -25,10 +25,10 @@ use std::time::Duration;
 
 use tidb_pd_client::PdClient;
 use tidb_txnkv::region::RegionCache;
-use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    CommitProtocol, CommittedProtocol, OptimisticCommitOutcome, OptimisticMutation,
+    BufferMutation, CommitProtocol, CommittedProtocol, OptimisticCommitOutcome,
     RealOptimisticTransactionOpener, TransactionAttemptPhase,
 };
 use tidb_txnkv::{PdRegionLoader, SharedReadAuthority};
@@ -42,8 +42,8 @@ const ASYNC_SECONDARY_KEY: &[u8] = b"async-commit-proof-b";
 const ONE_PC_KEY: &[u8] = b"one-pc-proof-a";
 
 fn opener(protocol: CommitProtocol) -> (RealOptimisticTransactionOpener, u64) {
-    let pd_address = std::env::var("ASYNC_COMMIT_PD_ADDR")
-        .expect("runner must provide ASYNC_COMMIT_PD_ADDR");
+    let pd_address =
+        std::env::var("ASYNC_COMMIT_PD_ADDR").expect("runner must provide ASYNC_COMMIT_PD_ADDR");
     let pd_owner = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
         .expect("start sole real PD authority");
     let cluster_id = pd_owner.cluster_id();
@@ -83,18 +83,14 @@ fn a_real_async_commit_transaction_commits_at_its_prewrite_timestamps() {
         async_commit: true,
         one_pc: false,
     });
-    let transaction = opener
-        .begin(2, 4 * 1024)
-        .expect("allocate one real start timestamp");
+    let transaction = opener.begin().expect("allocate one real start timestamp");
     let start_ts = transaction.start_ts();
 
     let outcome = transaction
         .commit(
             vec![
-                OptimisticMutation::insert(ASYNC_PRIMARY_KEY.to_vec(), b"async-v1".to_vec())
-                    .unwrap(),
-                OptimisticMutation::insert(ASYNC_SECONDARY_KEY.to_vec(), b"async-v2".to_vec())
-                    .unwrap(),
+                BufferMutation::insert(ASYNC_PRIMARY_KEY.to_vec(), b"async-v1".to_vec()).unwrap(),
+                BufferMutation::insert(ASYNC_SECONDARY_KEY.to_vec(), b"async-v2".to_vec()).unwrap(),
             ],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
@@ -128,7 +124,9 @@ fn a_real_async_commit_transaction_commits_at_its_prewrite_timestamps() {
 
     // The transaction is readable at the timestamp the prewrites derived, which
     // is the observable proof that the derivation was the real commit point.
-    let mut reader = opener.begin_read_only().expect("open a reader after commit");
+    let mut reader = opener
+        .begin_read_only()
+        .expect("open a reader after commit");
     let call = UnaryCallContext::with_timeout(RPC_TIMEOUT);
     // `>=`, not `>`: TiKV answers with `start_ts + 1`, and PD's very next
     // allocation can be exactly that value. A snapshot at `commit_ts` still
@@ -165,14 +163,12 @@ fn a_real_one_pc_transaction_publishes_no_commit_command() {
         async_commit: true,
         one_pc: true,
     });
-    let transaction = opener
-        .begin(1, 4 * 1024)
-        .expect("allocate one real start timestamp");
+    let transaction = opener.begin().expect("allocate one real start timestamp");
     let start_ts = transaction.start_ts();
 
     let outcome = transaction
         .commit(
-            vec![OptimisticMutation::insert(ONE_PC_KEY.to_vec(), b"one-pc-v1".to_vec()).unwrap()],
+            vec![BufferMutation::insert(ONE_PC_KEY.to_vec(), b"one-pc-v1".to_vec()).unwrap()],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
         .expect("run a real 1PC transaction");
@@ -214,7 +210,9 @@ fn a_real_one_pc_transaction_publishes_no_commit_command() {
         receipt.primary_publications.len(),
     );
 
-    let mut reader = opener.begin_read_only().expect("open a reader after commit");
+    let mut reader = opener
+        .begin_read_only()
+        .expect("open a reader after commit");
     let read = reader
         .snapshot_get(ONE_PC_KEY, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("read back the 1PC-committed key");

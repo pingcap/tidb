@@ -49,7 +49,7 @@ use std::collections::BTreeMap;
 
 use tidb_datatype::{Datum, SessionTimeZone, Time};
 use tidb_model::table_info::TableInfo;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_privilege_load::{
@@ -110,7 +110,7 @@ impl From<crate::cluster_catalog::ClusterCatalogError> for AccountWriteError {
 #[derive(Debug, Default)]
 pub struct AccountWritePlan {
     /// The mutations, in no particular order (they touch distinct keys).
-    pub mutations: Vec<OptimisticMutation>,
+    pub mutations: Vec<BufferMutation>,
     /// The `'user'@'host'` identities whose rows this plan touches, which is
     /// what the etcd notification names so peers can reload just them.
     pub changed_users: Vec<String>,

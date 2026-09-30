@@ -53,6 +53,34 @@ impl RegionLoader for ReaderLoader {
     }
 }
 
+impl tidb_txnkv::region::RegionQueryLoader for ReaderLoader {
+    fn query_region(
+        &mut self,
+        _: tidb_txnkv::region::RegionQuery<'_>,
+        _: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        Ok(self.region.clone())
+    }
+    fn scan_regions_once(
+        &mut self,
+        _: &tidb_txnkv::region::KeyRange,
+        limit: usize,
+        _: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        Ok(if limit == 0 {
+            Vec::new()
+        } else {
+            vec![self.region.clone()]
+        })
+    }
+    fn load_store(
+        &mut self,
+        _: u64,
+    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+        Ok(None)
+    }
+}
+
 impl RegionRecoveryLoader for ReaderLoader {
     fn hydrate_region(
         &mut self,

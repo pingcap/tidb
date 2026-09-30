@@ -27,7 +27,6 @@ use tidb_session::binding_cache::{BindingCache, SharedBindingCache};
 use tidb_session::vars::GlobalSysvars;
 use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-    MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
@@ -97,10 +96,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterBind
         let mut end = start.clone();
         // Record prefixes end in '_r'; its successor bounds precisely this table.
         *end.last_mut().expect("record prefix") += 1;
-        let mut transaction = self
-            .opener
-            .begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-            .map_err(|error| error.to_string())?;
+        let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
         let rows = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             scan_system_table(&mut snapshot, &view)

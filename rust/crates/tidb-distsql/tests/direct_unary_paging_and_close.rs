@@ -41,8 +41,11 @@ mod concurrent {
     impl Clone for Client {
         fn clone(&self) -> Self {
             self.clones.fetch_add(1, Ordering::SeqCst);
-            Self { started: self.started.clone(), cancelled: Arc::clone(&self.cancelled),
-                clones: Arc::clone(&self.clones) }
+            Self {
+                started: self.started.clone(),
+                cancelled: Arc::clone(&self.cancelled),
+                clones: Arc::clone(&self.clones),
+            }
         }
     }
 
@@ -105,8 +108,11 @@ mod concurrent {
             &self,
             _: &tidb_txnkv::SharedReadRuntime<Client, Loader>,
             _: tidb_distsql::LockedResponseObservation<'_>,
-        ) -> Result<tidb_distsql::LockedResponseAction, String> {
-            Err("unexpected lock in cop progress fixture".to_owned())
+        ) -> Result<tidb_distsql::LockedResponseAction, tidb_txnkv::lock::LockRecoveryError>
+        {
+            Err(tidb_txnkv::lock::LockRecoveryError::Rpc(
+                "unexpected lock in cop progress fixture".to_owned(),
+            ))
         }
     }
 
@@ -259,28 +265,43 @@ mod concurrent {
     fn unopened_region_tasks_do_not_fork_clients() {
         let clones = Arc::new(AtomicUsize::new(0));
         let keys: Vec<_> = (0..=64).map(|index| format!("k{index:03}")).collect();
-        let (mut runtime, incoming, _) = runtime_with_clones((0..64).map(|index| {
-            location(index as u64 + 1, &keys[index], &keys[index + 1], "tikv-1:20160")
-        }), Arc::clone(&clones));
+        let (mut runtime, incoming, _) = runtime_with_clones(
+            (0..64).map(|index| {
+                location(
+                    index as u64 + 1,
+                    &keys[index],
+                    &keys[index + 1],
+                    "tikv-1:20160",
+                )
+            }),
+            Arc::clone(&clones),
+        );
         let baseline = clones.load(Ordering::SeqCst);
         let mut result = select(&mut runtime, metadata(&keys[0], &keys[64]), Arc::default());
         let first = started(&incoming);
         let second = started(&incoming);
-        assert_eq!(clones.load(Ordering::SeqCst) - baseline, 2,
-            "only the two active workers need independent clients, not all 64 regions");
+        assert_eq!(
+            clones.load(Ordering::SeqCst) - baseline,
+            2,
+            "only the two active workers need independent clients, not all 64 regions"
+        );
         result.close();
         drop((first, second));
-        assert_eq!(clones.load(Ordering::SeqCst) - baseline, 2,
-            "closing must not initialize unsent tasks");
+        assert_eq!(
+            clones.load(Ordering::SeqCst) - baseline,
+            2,
+            "closing must not initialize unsent tasks"
+        );
     }
 
     #[test]
     fn one_cop_worker_reuses_its_client_across_regions() {
         let clones = Arc::new(AtomicUsize::new(0));
         let keys: Vec<_> = (0..=64).map(|i| format!("k{i:03}")).collect();
-        let (mut runtime, incoming, _) = runtime_with_clones((0..64).map(|i| {
-            location(i as u64 + 1, &keys[i], &keys[i + 1], "tikv-1:20160")
-        }), Arc::clone(&clones));
+        let (mut runtime, incoming, _) = runtime_with_clones(
+            (0..64).map(|i| location(i as u64 + 1, &keys[i], &keys[i + 1], "tikv-1:20160")),
+            Arc::clone(&clones),
+        );
         let baseline = clones.load(Ordering::SeqCst);
         let mut request = metadata(&keys[0], &keys[64]);
         request.keep_order = false;
@@ -298,8 +319,11 @@ mod concurrent {
         }
         replies.join().unwrap();
         assert_eq!(actual, (1..=64).collect::<Vec<_>>());
-        assert_eq!(clones.load(Ordering::SeqCst) - baseline, 1,
-            "Go's one cop worker owns one client policy state across region tasks");
+        assert_eq!(
+            clones.load(Ordering::SeqCst) - baseline,
+            1,
+            "Go's one cop worker owns one client policy state across region tasks"
+        );
     }
 
     /// Go TestQueryWithConcurrentSmallCop: opening a second single-task
@@ -761,7 +785,7 @@ mod concurrent {
 
 #[test]
 fn only_successful_paging_creates_a_continuation_attempt() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let first = CoprocessorResponse {
         data: b"page-one".to_vec().into(),
         range: Some(CoprocessorKeyRange {
@@ -776,16 +800,16 @@ fn only_successful_paging_creates_a_continuation_attempt() {
     metadata.paging.min_size = 2;
     metadata.paging.max_size = 8;
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [Ok(first), Ok(response(b"page-two"))],
         [location(1, "a", "z", "tikv-1:20160")],
     ));
     let mut result = select_result(&mut runtime, &transport_request(metadata));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"page-one".to_vec()));
-    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(calls.read().unwrap().len(), 1);
     assert_eq!(result.next_raw().unwrap(), Some(b"page-two".to_vec()));
-    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.read().unwrap().len(), 2);
     assert_eq!(result.next_raw().unwrap(), None);
 }
 
@@ -800,7 +824,7 @@ fn unordered_paging_with_synchronous_continuation_delivers_each_page_once() {
 }
 
 fn unordered_paging_with_completion_modes(completion_modes: Option<[bool; 2]>) {
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let first = CoprocessorResponse {
         data: b"page-one".to_vec().into(),
         range: Some(CoprocessorKeyRange {
@@ -819,8 +843,8 @@ fn unordered_paging_with_completion_modes(completion_modes: Option<[bool; 2]>) {
     let responses = [Ok(first), Ok(response(b"page-two"))];
     let regions = [location(1, "a", "z", "tikv-1:20160")];
     let source = match completion_modes {
-        Some(modes) => batch_first_transport(Rc::clone(&calls), responses, regions, modes),
-        None => transport(Rc::clone(&calls), responses, regions),
+        Some(modes) => batch_first_transport(Arc::clone(&calls), responses, regions, modes),
+        None => transport(Arc::clone(&calls), responses, regions),
     };
     let mut runtime = InjectedQueryRuntime::new(source);
     let mut result = select_result(&mut runtime, &transport_request(metadata));
@@ -828,12 +852,12 @@ fn unordered_paging_with_completion_modes(completion_modes: Option<[bool; 2]>) {
     assert_eq!(result.next_raw().unwrap(), Some(b"page-one".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"page-two".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
-    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.read().unwrap().len(), 2);
 }
 
 #[test]
 fn synchronous_unordered_paging_keeps_one_ready_token_per_task() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let first = CoprocessorResponse {
         data: b"page-one".to_vec().into(),
         range: Some(CoprocessorKeyRange {
@@ -850,7 +874,7 @@ fn synchronous_unordered_paging_keeps_one_ready_token_per_task() {
     metadata.paging.min_size = 2;
     metadata.paging.max_size = 8;
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [Ok(first), Ok(response(b"page-two"))],
         [location(1, "a", "z", "tikv-1:20160")],
     ));
@@ -859,15 +883,15 @@ fn synchronous_unordered_paging_keeps_one_ready_token_per_task() {
     assert_eq!(result.next_raw().unwrap(), Some(b"page-one".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"page-two".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
-    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.read().unwrap().len(), 2);
 }
 
 #[test]
 fn close_before_pull_stops_every_unsent_attempt() {
     let cancel = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [Ok(response(b"never"))],
         [location(1, "a", "z", "tikv-1:20160")],
     ));
@@ -880,16 +904,16 @@ fn close_before_pull_stops_every_unsent_attempt() {
         "closing one response must not cancel the outer execution"
     );
     assert_eq!(result.next_raw().unwrap(), None);
-    assert!(calls.borrow().is_empty());
+    assert!(calls.read().unwrap().is_empty());
 }
 
 #[test]
 fn remote_canceled_closes_exact_generation_before_resending_the_same_task() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let events = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let events = Arc::new(RwLock::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [
             Err(connection_failure(
                 "tikv-1:20160",
@@ -900,7 +924,7 @@ fn remote_canceled_closes_exact_generation_before_resending_the_same_task() {
             Ok(response(b"retried")),
         ],
         [Ok(StoreLiveness::Unreachable)],
-        Rc::clone(&events),
+        Arc::clone(&events),
         [location_with_second_peer(
             1,
             "a",
@@ -917,11 +941,14 @@ fn remote_canceled_closes_exact_generation_before_resending_the_same_task() {
 
     assert_eq!(result.next_raw().unwrap(), Some(b"retried".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
-    assert_eq!(calls.borrow().len(), 2);
-    assert_eq!(calls.borrow()[0].region_id, calls.borrow()[1].region_id);
-    assert_eq!(calls.borrow()[0].data, calls.borrow()[1].data);
+    assert_eq!(calls.read().unwrap().len(), 2);
     assert_eq!(
-        events.borrow().as_slice(),
+        calls.read().unwrap()[0].region_id,
+        calls.read().unwrap()[1].region_id
+    );
+    assert_eq!(calls.read().unwrap()[0].data, calls.read().unwrap()[1].data);
+    assert_eq!(
+        events.read().unwrap().as_slice(),
         [
             ClientEvent::Send("tikv-1:20160".to_owned()),
             ClientEvent::CloseGeneration {

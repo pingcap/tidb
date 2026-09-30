@@ -711,14 +711,6 @@ impl MockEngine {
         (errors, results)
     }
 
-    pub fn transaction_was_deadlocked(&self, start_ts: u64) -> bool {
-        self.state
-            .read()
-            .expect("mock engine lock poisoned")
-            .deadlock_detector
-            .was_deadlocked(start_ts)
-    }
-
     pub fn pessimistic_rollback(
         &self,
         start: &[u8],

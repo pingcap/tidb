@@ -63,7 +63,7 @@ use tidb_tablecodec::{
     IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn,
     TableInfo as CodecTableInfo,
 };
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 use tidb_txnkv::{CommonHandle, Handle, IntHandle};
 
 use crate::mysql_system_tables::HandleLayout;
@@ -125,7 +125,7 @@ pub fn insert_row(
     table: &TableInfo,
     row_id: i64,
     values: &RowValues,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     insert_row_with_collation(table, row_id, values, new_collation_enabled())
 }
 
@@ -140,9 +140,9 @@ pub fn insert_row_with_collation(
     row_id: i64,
     values: &RowValues,
     use_new_collation: bool,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(row_id));
-    let mut mutations = vec![OptimisticMutation::insert(key, encode_row(table, values)?)
+    let mut mutations = vec![BufferMutation::insert(key, encode_row(table, values)?)
         .map_err(|error| encode_error(error.to_string()))?];
     mutations.extend(index_entries(
         table,
@@ -164,8 +164,8 @@ pub fn update_row(
     table: &TableInfo,
     key: &[u8],
     values: &RowValues,
-) -> Result<OptimisticMutation, RowEncodeError> {
-    OptimisticMutation::put_existing(key.to_vec(), encode_row(table, values)?)
+) -> Result<BufferMutation, RowEncodeError> {
+    BufferMutation::put_existing(key.to_vec(), encode_row(table, values)?)
         .map_err(|error| encode_error(error.to_string()))
 }
 
@@ -174,7 +174,7 @@ pub fn delete_row(
     table: &TableInfo,
     key: &[u8],
     values: &RowValues,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     delete_row_with_collation(table, key, values, new_collation_enabled())
 }
 
@@ -183,9 +183,9 @@ fn delete_row_with_collation(
     key: &[u8],
     values: &RowValues,
     use_new_collation: bool,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     let row_id = row_id_of(key)?;
-    let mut mutations = vec![OptimisticMutation::delete(key.to_vec())
+    let mut mutations = vec![BufferMutation::delete_existing(key.to_vec())
         .map_err(|error| encode_error(error.to_string()))?];
     mutations.extend(index_entries(
         table,
@@ -293,7 +293,7 @@ pub fn store_clustered_row(
     table: &TableInfo,
     existing: Option<&RowValues>,
     values: &RowValues,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     store_clustered_row_with_collation(table, existing, values, new_collation_enabled())
 }
 
@@ -302,12 +302,12 @@ fn store_clustered_row_with_collation(
     existing: Option<&RowValues>,
     values: &RowValues,
     use_new_collation: bool,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     let (key, handle) = clustered_record_key_with_collation(table, values, use_new_collation)?;
     match existing {
         Some(existing) => rewrite_row(table, &key, &handle, existing, values, use_new_collation),
         None => {
-            let mut mutations = vec![OptimisticMutation::insert(key, encode_row(table, values)?)
+            let mut mutations = vec![BufferMutation::insert(key, encode_row(table, values)?)
                 .map_err(|error| encode_error(error.to_string()))?];
             mutations.extend(index_entries(
                 table,
@@ -335,7 +335,7 @@ pub fn rewrite_rowid_row(
     key: &[u8],
     existing: &RowValues,
     values: &RowValues,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     rewrite_rowid_row_with_collation(table, key, existing, values, new_collation_enabled())
 }
 
@@ -345,7 +345,7 @@ fn rewrite_rowid_row_with_collation(
     existing: &RowValues,
     values: &RowValues,
     use_new_collation: bool,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     let handle = Handle::Int(IntHandle::new(row_id_of(key)?));
     rewrite_row(table, key, &handle, existing, values, use_new_collation)
 }
@@ -359,10 +359,10 @@ fn rewrite_row(
     existing: &RowValues,
     values: &RowValues,
     use_new_collation: bool,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     let mut mutations =
         vec![
-            OptimisticMutation::put_existing(key.to_vec(), encode_row(table, values)?)
+            BufferMutation::put_existing(key.to_vec(), encode_row(table, values)?)
                 .map_err(|error| encode_error(error.to_string()))?,
         ];
     // Retracting the old entry and writing the new one matters only when the
@@ -386,7 +386,7 @@ fn rewrite_row(
 pub fn delete_clustered_row(
     table: &TableInfo,
     values: &RowValues,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     delete_clustered_row_with_collation(table, values, new_collation_enabled())
 }
 
@@ -399,7 +399,7 @@ pub fn delete_clustered_row(
 pub fn replace_unindexed_clustered_row(
     table: &TableInfo,
     values: &RowValues,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     if !table.indices.is_empty() {
         return Err(encode_error(format!(
             "{} is indexed and cannot be replaced without its previous row",
@@ -407,11 +407,8 @@ pub fn replace_unindexed_clustered_row(
         )));
     }
     let (key, _) = clustered_record_key(table, values)?;
-    Ok(vec![OptimisticMutation::system_row_put(
-        key,
-        encode_row(table, values)?,
-    )
-    .map_err(|error| encode_error(error.to_string()))?])
+    Ok(vec![BufferMutation::set(key, encode_row(table, values)?)
+        .map_err(|error| encode_error(error.to_string()))?])
 }
 
 /// Go SQL `DELETE` for an unindexed clustered system-table row.
@@ -421,7 +418,7 @@ pub fn replace_unindexed_clustered_row(
 pub fn delete_unindexed_clustered_row(
     table: &TableInfo,
     values: &RowValues,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     if !table.indices.is_empty() {
         return Err(encode_error(format!(
             "{} is indexed and cannot be deleted without its previous row",
@@ -429,18 +426,20 @@ pub fn delete_unindexed_clustered_row(
         )));
     }
     let (key, _) = clustered_record_key(table, values)?;
-    Ok(vec![OptimisticMutation::system_row_delete(key)
-        .map_err(|error| encode_error(error.to_string()))?])
+    Ok(vec![
+        BufferMutation::delete(key).map_err(|error| encode_error(error.to_string()))?
+    ])
 }
 
 fn delete_clustered_row_with_collation(
     table: &TableInfo,
     values: &RowValues,
     use_new_collation: bool,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     let (key, handle) = clustered_record_key_with_collation(table, values, use_new_collation)?;
     let mut mutations =
-        vec![OptimisticMutation::delete(key).map_err(|error| encode_error(error.to_string()))?];
+        vec![BufferMutation::delete_existing(key)
+            .map_err(|error| encode_error(error.to_string()))?];
     mutations.extend(index_entries(
         table,
         &handle,
@@ -528,7 +527,7 @@ fn index_entries(
     values: &RowValues,
     op: IndexOp,
     use_new_collation: bool,
-) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
     let handle = handle.clone();
     let codec_table = codec_table_info(table);
     let mut mutations = Vec::new();
@@ -576,7 +575,7 @@ fn index_entries(
         )
         .map_err(|error| encode_error(error.to_string()))?;
         let mutation = match op {
-            IndexOp::Delete => OptimisticMutation::index_delete(index_key),
+            IndexOp::Delete => BufferMutation::delete(index_key),
             IndexOp::Put => {
                 let index_value = generate_index_value(
                     use_new_collation,
@@ -604,7 +603,7 @@ fn index_entries(
                     )?,
                 )
                 .map_err(|error| encode_error(error.to_string()))?;
-                OptimisticMutation::index_put(index_key, index_value)
+                BufferMutation::set(index_key, index_value)
             }
         };
         mutations.push(mutation.map_err(|error| encode_error(error.to_string()))?);

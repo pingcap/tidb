@@ -84,9 +84,7 @@ fn configured_catalog() -> ConfiguredCatalog {
 /// any prior commit, so the value it observes is what TiKV durably stored.
 fn read_balance(opener: &RealOptimisticTransactionOpener, handle: i64) -> Option<i64> {
     let row_key = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(handle));
-    let mut transaction = opener
-        .begin(1, 128)
-        .expect("allocate a real readback snapshot");
+    let mut transaction = opener.begin().expect("allocate a real readback snapshot");
     let observed = transaction
         .snapshot_get(&row_key, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("real BatchCommands Get must succeed");
@@ -118,8 +116,8 @@ fn arithmetic_update_sql() -> &'static str {
 #[test]
 #[ignore = "requires run-realtikv-prepared-write.sh"]
 fn prepared_insert_and_update_persist_through_one_shared_authority() {
-    let pd_address =
-        std::env::var("PREPARED_WRITE_PD_ADDR").expect("runner must provide PREPARED_WRITE_PD_ADDR");
+    let pd_address = std::env::var("PREPARED_WRITE_PD_ADDR")
+        .expect("runner must provide PREPARED_WRITE_PD_ADDR");
     let catalog = configured_catalog();
 
     // (1) One authority. Reads and writes must share it.
@@ -145,13 +143,9 @@ fn prepared_insert_and_update_persist_through_one_shared_authority() {
         .expect("INSERT lowers")
         .bind(&int_binds([HANDLE, INSERTED_BALANCE]))
         .expect("INSERT binds");
-    let insert_report = commit_configured_write(
-        &write_opener,
-        &insert,
-        RPC_TIMEOUT,
-        &SessionTimeZone::utc(),
-    )
-    .expect("INSERT commits");
+    let insert_report =
+        commit_configured_write(&write_opener, &insert, RPC_TIMEOUT, &SessionTimeZone::utc())
+            .expect("INSERT commits");
     assert_eq!(insert_report.affected_rows, 1);
     assert_eq!(insert_report.no_write, None);
     assert_eq!(
@@ -165,13 +159,9 @@ fn prepared_insert_and_update_persist_through_one_shared_authority() {
         .expect("UPDATE lowers")
         .bind(&int_binds([ADDEND, HANDLE]))
         .expect("UPDATE binds");
-    let update_report = commit_configured_write(
-        &write_opener,
-        &update,
-        RPC_TIMEOUT,
-        &SessionTimeZone::utc(),
-    )
-    .expect("UPDATE commits");
+    let update_report =
+        commit_configured_write(&write_opener, &update, RPC_TIMEOUT, &SessionTimeZone::utc())
+            .expect("UPDATE commits");
     assert_eq!(update_report.affected_rows, 1);
     let expected_balance = INSERTED_BALANCE + ADDEND;
     assert_eq!(read_balance(&write_opener, HANDLE), Some(expected_balance));

@@ -18,6 +18,9 @@ impl Default for RealTiKvSessionTimeZone {
 }
 
 impl RealTiKvSessionTimeZone {
+    pub(crate) fn from_zone(zone: tidb_datatype::SessionTimeZone) -> Self {
+        Self { zone }
+    }
     fn from_timeutil(zone: tidb_util::timeutil::TimeZone) -> Self {
         let zone = match zone {
             tidb_util::timeutil::TimeZone::Local => tidb_datatype::SessionTimeZone::Local,
@@ -44,6 +47,7 @@ impl RealTiKvSessionTimeZone {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn time_zone_sql_error(
     error: tidb_error::terror::TerrorError,
 ) -> crate::sql_node::SqlQueryError {
@@ -59,39 +63,31 @@ pub(crate) fn time_zone_sql_error(
     )
 }
 
-/// Recognizes `SET [SESSION] time_zone = <value>` / `SET @@time_zone = <value>`
-/// (case-insensitively; `GLOBAL` is left unmatched, so it falls through to this
-/// node's ordinary unsupported-statement handling rather than silently
-/// changing session state) and returns the unquoted, un-lowercased value text.
-pub(crate) fn parse_set_time_zone(sql: &str) -> Option<&str> {
-    let trimmed = sql.trim().trim_end_matches(';').trim_end();
-    let lower = trimmed.to_ascii_lowercase();
-    let mut rest = lower.strip_prefix("set")?.trim_start();
-    rest = rest.strip_prefix("session").map_or(rest, str::trim_start);
-    rest = rest
-        .strip_prefix("@@session.")
-        .or_else(|| rest.strip_prefix("@@"))
-        .map_or(rest, str::trim_start);
-    let rest = rest.strip_prefix("time_zone")?.trim_start();
-    let rest = rest.strip_prefix('=')?;
-    let value_lower = rest.trim();
-    if value_lower.is_empty() {
-        return None;
-    }
-    // `lower` is ASCII-only wherever it overlaps `trimmed`'s SQL keywords, so
-    // the byte offset of the value's start is identical in both strings;
-    // slicing `trimmed` at that offset recovers the value's original case.
-    let start = trimmed.len() - value_lower.len();
-    let value = trimmed[start..].trim();
-    let unquoted = if value.len() >= 2
-        && ((value.starts_with('\'') && value.ends_with('\''))
-            || (value.starts_with('"') && value.ends_with('"')))
-    {
-        &value[1..value.len() - 1]
-    } else {
-        value
+/// Routes supported variable assignments through the normal SQL parser and SET owner.
+/// The lightweight table reader has no lifecycle for other session commands.
+pub(crate) fn execute_storage_session_set(
+    session: &mut tidb_session::Session,
+    sql: &str,
+) -> Result<bool, crate::sql_node::SqlQueryError> {
+    let Ok(tidb_ast::Stmt::Session(statement)) = tidb_parser::parse(sql) else {
+        return Ok(false);
     };
-    Some(unquoted)
+    let tidb_ast::SessionStmt::Set(set) = statement.as_ref() else {
+        return Ok(false);
+    };
+    if !set.assignments.iter().all(|assignment| {
+        assignment.name.eq_ignore_ascii_case("time_zone")
+            || assignment
+                .name
+                .eq_ignore_ascii_case("innodb_lock_wait_timeout")
+    }) {
+        return Ok(false);
+    }
+    session.execute_statement(sql).map_err(|error| {
+        let error = error.to_mysql_error();
+        crate::sql_node::SqlQueryError::new(error.code, error.state, error.message)
+    })?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -99,32 +95,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_set_time_zone_recognizes_the_source_observable_forms() {
+    fn malformed_set_prefix_is_not_a_statement() {
+        let mut session = tidb_session::Session::new();
+        assert!(!execute_storage_session_set(&mut session, "SETtime_zone='UTC'").unwrap());
+        assert!(!execute_storage_session_set(&mut session, "SET SESSIONtime_zone='UTC'").unwrap());
+    }
+
+    #[test]
+    fn storage_settings_use_normal_set_validation_and_expressions() {
+        let mut session = tidb_session::Session::new();
+        assert!(execute_storage_session_set(&mut session,
+            "SET /* comment */ LOCAL time_zone = CONCAT('+', '05:00'), innodb_lock_wait_timeout = 7"
+        ).unwrap());
         assert_eq!(
-            parse_set_time_zone("SET time_zone='+05:00'"),
-            Some("+05:00")
+            session.vars().session_time_zone().dag_zone(),
+            (String::new(), 18_000)
         );
         assert_eq!(
-            parse_set_time_zone("set time_zone = '-08:00';"),
-            Some("-08:00")
+            session
+                .vars()
+                .get_system("innodb_lock_wait_timeout")
+                .unwrap(),
+            "7"
         );
-        assert_eq!(
-            parse_set_time_zone("SET SESSION time_zone = 'UTC'"),
-            Some("UTC")
-        );
-        assert_eq!(
-            parse_set_time_zone("SET @@time_zone = 'SYSTEM'"),
-            Some("SYSTEM")
-        );
-        assert_eq!(
-            parse_set_time_zone("SET @@session.time_zone = '+00:00'"),
-            Some("+00:00")
-        );
-        // Unquoted and case-preserved inside the value.
-        assert_eq!(parse_set_time_zone("SET time_zone=SYSTEM"), Some("SYSTEM"));
-        // Not a `time_zone` assignment at all.
-        assert_eq!(parse_set_time_zone("SET autocommit = 0"), None);
-        assert_eq!(parse_set_time_zone("SELECT 1"), None);
+        let error =
+            execute_storage_session_set(&mut session, "SET time_zone='not-a-zone'").unwrap_err();
+        assert_eq!(error.code, 1298);
+        assert_eq!(session.vars().session_time_zone().dag_zone().1, 18_000);
     }
 
     /// Go `ConstructDAGReq` stamps `timeutil.Zone(SessionVars.Location())`,

@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::{Datum, Time};
 use tidb_model::table_info::TableInfo;
 use tidb_stats::{StatsLockTable, StatsLockTransaction};
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
@@ -298,7 +298,7 @@ pub(crate) fn plan_cluster_insert_lock<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     table_id: i64,
     now: Time,
-) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
+) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, LOCK_TABLE)?;
     let rows = read_rows(snapshot, table)?;
     if let Some(row) = rows.get(&table_id) {
@@ -317,7 +317,7 @@ pub(crate) fn plan_cluster_update_meta_version<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     table_id: i64,
     start_ts: u64,
-) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
+) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, META_TABLE)?;
     let rows = read_rows(snapshot, table)?;
     let Some(initial) = rows.get(&table_id) else {
@@ -353,7 +353,7 @@ pub(crate) fn plan_cluster_update_meta_delta<S: MetaSnapshot>(
     count_delta: i64,
     modify_count_delta: i64,
     start_ts: u64,
-) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
+) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, META_TABLE)?;
     let rows = read_rows(snapshot, table)?;
     let Some(initial) = rows.get(&table_id) else {
@@ -384,7 +384,7 @@ pub(crate) fn plan_cluster_delete_lock<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     table_id: i64,
-) -> Result<Vec<OptimisticMutation>, ClusterStatsLockError> {
+) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, LOCK_TABLE)?;
     let rows = read_rows(snapshot, table)?;
     rows.get(&table_id)
@@ -504,7 +504,7 @@ mod statement_tests {
     use crate::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment};
     use std::collections::BTreeMap;
     use tidb_datatype::TimeType;
-    use tidb_txnkv::transaction::OptimisticMutationKind;
+    use tidb_txnkv::transaction::BufferMutationOp;
 
     #[derive(Default)]
     struct MetaStore {
@@ -527,30 +527,23 @@ mod statement_tests {
     }
 
     impl MetaStore {
-        fn apply(&mut self, mutations: &[OptimisticMutation]) {
+        fn apply(&mut self, mutations: &[BufferMutation]) {
             for mutation in mutations {
                 match mutation.kind() {
-                    OptimisticMutationKind::Insert => {
+                    BufferMutationOp::Set => {
                         assert!(self
                             .pairs
                             .insert(mutation.key().to_vec(), mutation.value().to_vec())
                             .is_none());
                     }
-                    OptimisticMutationKind::PutExisting
-                    | OptimisticMutationKind::IndexPut
-                    | OptimisticMutationKind::UniqueIndexInsert
-                    | OptimisticMutationKind::MetaPut
-                    | OptimisticMutationKind::SystemRowPut => {
+                    BufferMutationOp::Set => {
                         self.pairs
                             .insert(mutation.key().to_vec(), mutation.value().to_vec());
                     }
-                    OptimisticMutationKind::Delete
-                    | OptimisticMutationKind::IndexDelete
-                    | OptimisticMutationKind::MetaDelete
-                    | OptimisticMutationKind::SystemRowDelete => {
+                    BufferMutationOp::Delete => {
                         self.pairs.remove(mutation.key());
                     }
-                    OptimisticMutationKind::LockOnly => {}
+                    BufferMutationOp::Lock => {}
                 }
             }
         }

@@ -39,7 +39,7 @@ use tidb_executor::storage::{MemTableStorage, TableStorage};
 use tidb_executor::{Catalog, KvColumn, KvTable, StmtContext};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::MetaSnapshot;
 use crate::cluster_ddl::{DdlAdmissionError, DdlPlanError};
@@ -66,7 +66,7 @@ pub struct MviewBuildPlan {
     pub row_count: u64,
     /// The view's record + index mutations and, for a row-id view, the
     /// allocator watermark. Merged into the phase's transaction.
-    pub mutations: Vec<OptimisticMutation>,
+    pub mutations: Vec<BufferMutation>,
 }
 
 /// Executes Go's initial build (`buildCreateMaterializedViewData`) against
@@ -226,7 +226,7 @@ pub fn derive_materialized_view_build<S: MetaSnapshot>(
     // handed out (Go's transaction `Alloc` publishes the same end value).
     if let HandleLayout::RowId = HandleLayout::of(view) {
         if let Some(last_used) = row_ids.last_used {
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::auto_table_id_kv_key(schema_id, view.id),
                 value::encode_int_value(last_used),
             )?);

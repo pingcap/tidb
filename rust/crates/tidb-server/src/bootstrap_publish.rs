@@ -39,18 +39,12 @@ use tidb_util::timeutil::infer_system_tz;
 
 /// Plans and commits the bootstrap on one transaction.
 ///
-/// A first read-only pass exists only to size the write budget the coordinator
-/// insists on knowing before it spends a timestamp; the plan that is published
-/// is re-made on the writing transaction itself, so the freshness check and the
-/// commit share one `start_ts`.
+/// Bootstrap reads and writes share one transaction timestamp.
 pub fn publish_bootstrap<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
 ) -> Result<(OptimisticCommitOutcome, i64), String> {
     let call = UnaryCallContext::with_timeout(timeout);
-    let mut sizing = opener
-        .begin_read_only()
-        .map_err(|error| error.to_string())?;
     let mut environment = BootstrapEnvironment {
         system_tz: infer_system_tz(),
         // Go's `new_collations_enabled_on_first_bootstrap` default, which this
@@ -60,32 +54,12 @@ pub fn publish_bootstrap<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
         current_timestamp: utc_now_timestamp(),
         ddl_table_version: 0,
     };
-    let planned = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut sizing, timeout);
-        environment.ddl_table_version =
-            read_ddl_table_version(&mut snapshot).map_err(|error| error.to_string())?;
-        // `u64::MAX` is not a placeholder timestamp: the plan's size depends on
-        // how wide `update_ts` prints in each table's JSON, so sizing at the
-        // widest possible timestamp is what makes this budget a ceiling for
-        // whatever timestamp PD hands the writing transaction.
-        bootstrap_mysql_schema(&mut snapshot, u64::MAX, &environment)
-            .map_err(|error| error.to_string())?
-    };
-    sizing
-        .finish_without_writes()
-        .map_err(|error| error.to_string())?;
-    let bytes: usize = planned
-        .mutations
-        .iter()
-        .map(|mutation| mutation.key().len() + mutation.value().len())
-        .sum();
-
-    let mut transaction = opener
-        .begin(planned.mutations.len(), bytes)
-        .map_err(|error| error.to_string())?;
+    let mut transaction = opener.begin().map_err(|error| error.to_string())?;
     let start_ts = transaction.start_ts();
     let write = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        environment.ddl_table_version =
+            read_ddl_table_version(&mut snapshot).map_err(|error| error.to_string())?;
         bootstrap_mysql_schema(&mut snapshot, start_ts, &environment)
             .map_err(|error| error.to_string())?
     };
@@ -105,15 +79,11 @@ pub fn publish_bootstrap<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
 ///
 /// The engine-backed counterpart of [`publish_bootstrap`], carried beside it
 /// while store construction sites migrate. The shape is identical: a
-/// read-only sizing pass, then the plan re-made on the writing transaction so
-/// the freshness check and the commit share one `start_ts`.
+/// bootstrap reads and writes share one `start_ts`.
 pub fn publish_bootstrap_over_tikv<S: tidb_txnkv::TikvTransactionSource>(
     opener: &tidb_txnkv::TikvTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<(OptimisticCommitOutcome, i64), String> {
-    let mut sizing = opener
-        .begin_read_only()
-        .map_err(|error| error.to_string())?;
     let mut environment = BootstrapEnvironment {
         system_tz: infer_system_tz(),
         new_collation_enabled: true,
@@ -121,32 +91,12 @@ pub fn publish_bootstrap_over_tikv<S: tidb_txnkv::TikvTransactionSource>(
         current_timestamp: utc_now_timestamp(),
         ddl_table_version: 0,
     };
-    let planned = {
-        let mut snapshot = TikvMetaSnapshot::new(&mut sizing, timeout);
-        environment.ddl_table_version =
-            read_ddl_table_version(&mut snapshot).map_err(|error| error.to_string())?;
-        // Sizing at the widest possible timestamp keeps this budget a ceiling
-        // for whatever timestamp PD hands the writing transaction.
-        bootstrap_mysql_schema(&mut snapshot, u64::MAX, &environment)
-            .map_err(|error| error.to_string())?
-    };
-    sizing
-        .finish_without_writes()
-        .map_err(|error| error.to_string())?;
-    let bytes: u64 = planned
-        .mutations
-        .iter()
-        .map(|mutation| (mutation.key().len() + mutation.value().len()) as u64)
-        .sum();
-
-    // The previous facade took the plan's size as a begin() parameter; here it
-    // bounds the engine's own staged buffer, which is where the source
-    // enforces it.
     let mut transaction = opener.begin().map_err(|error| error.to_string())?;
-    transaction.set_size_limits(bytes.max(1), bytes.max(1));
     let start_ts = transaction.start_ts();
     let write = {
         let mut snapshot = TikvMetaSnapshot::new(&mut transaction, timeout);
+        environment.ddl_table_version =
+            read_ddl_table_version(&mut snapshot).map_err(|error| error.to_string())?;
         bootstrap_mysql_schema(&mut snapshot, start_ts, &environment)
             .map_err(|error| error.to_string())?
     };

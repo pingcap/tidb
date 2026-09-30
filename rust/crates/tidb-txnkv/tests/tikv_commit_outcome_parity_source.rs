@@ -26,7 +26,7 @@ use tikv_client::testutils::{bootstrap_with_single_store, new_mock_tikv};
 use tikv_client::{Timestamp, TransactionOptions};
 
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticMutation, OptimisticTransactionState,
+    BufferMutation, OptimisticCommitOutcome, OptimisticTransactionState,
 };
 use tidb_txnkv::{TikvTransactionError, TikvTransactionOpener, TikvTransactionSource};
 
@@ -42,7 +42,7 @@ impl TikvTransactionSource for MockSource {
         let pd = self.pd.clone();
         Ok(self
             .runtime
-            .block_on(tikv_client::pd::PdClient::get_timestamp(pd))?)
+            .block_on(tikv_client::PdClient::get_timestamp(pd))?)
     }
 
     fn cluster_id(&self) -> Result<u64, TikvTransactionError> {
@@ -89,8 +89,8 @@ fn a_successful_write_set_reports_committed_with_its_commit_timestamp() {
 
     let outcome = txn
         .commit_mutations(vec![
-            OptimisticMutation::insert(b"row-1".to_vec(), b"v1".to_vec()).unwrap(),
-            OptimisticMutation::insert(b"row-2".to_vec(), b"v2".to_vec()).unwrap(),
+            BufferMutation::insert(b"row-1".to_vec(), b"v1".to_vec()).unwrap(),
+            BufferMutation::insert(b"row-2".to_vec(), b"v2".to_vec()).unwrap(),
         ])
         .expect("the mutation set stages and commits");
 
@@ -121,19 +121,19 @@ fn a_violated_insert_assertion_reports_rolled_back_and_leaves_nothing_behind() {
     let opener = opener();
 
     let mut seed = opener.begin().unwrap();
-    seed.commit_mutations(vec![OptimisticMutation::insert(
+    seed.commit_mutations(vec![BufferMutation::insert(
         b"taken".to_vec(),
         b"first".to_vec(),
     )
     .unwrap()])
-    .unwrap();
+        .unwrap();
 
     // Inserting over an existing key is a definitive failure: the engine rolls
     // its own prewrites back before returning, which is exactly the facade's
     // RolledBack state.
     let mut conflicting = opener.begin().unwrap();
     let outcome = conflicting
-        .commit_mutations(vec![OptimisticMutation::insert(
+        .commit_mutations(vec![BufferMutation::insert(
             b"taken".to_vec(),
             b"second".to_vec(),
         )
@@ -162,12 +162,12 @@ fn a_write_conflict_reports_rolled_back() {
     let opener = opener();
 
     let mut seed = opener.begin().unwrap();
-    seed.commit_mutations(vec![OptimisticMutation::insert(
+    seed.commit_mutations(vec![BufferMutation::insert(
         b"contended".to_vec(),
         b"base".to_vec(),
     )
     .unwrap()])
-    .unwrap();
+        .unwrap();
 
     // Two overlapping optimistic transactions write the same key; the second
     // committer must observe a definitive non-commit.
@@ -175,7 +175,7 @@ fn a_write_conflict_reports_rolled_back() {
     let mut loser = opener.begin().unwrap();
 
     winner
-        .commit_mutations(vec![OptimisticMutation::put_existing(
+        .commit_mutations(vec![BufferMutation::put_existing(
             b"contended".to_vec(),
             b"winner".to_vec(),
         )
@@ -183,7 +183,7 @@ fn a_write_conflict_reports_rolled_back() {
         .unwrap();
 
     let outcome = loser
-        .commit_mutations(vec![OptimisticMutation::put_existing(
+        .commit_mutations(vec![BufferMutation::put_existing(
             b"contended".to_vec(),
             b"loser".to_vec(),
         )
@@ -212,8 +212,8 @@ fn every_mutation_kind_stages_with_its_source_op_and_assertion() {
     // Seed rows the existence-asserting kinds need.
     let mut seed = opener.begin().unwrap();
     seed.commit_mutations(vec![
-        OptimisticMutation::insert(b"existing-row".to_vec(), b"v".to_vec()).unwrap(),
-        OptimisticMutation::insert(b"doomed-row".to_vec(), b"v".to_vec()).unwrap(),
+        BufferMutation::insert(b"existing-row".to_vec(), b"v".to_vec()).unwrap(),
+        BufferMutation::insert(b"doomed-row".to_vec(), b"v".to_vec()).unwrap(),
     ])
     .unwrap();
 
@@ -221,10 +221,10 @@ fn every_mutation_kind_stages_with_its_source_op_and_assertion() {
     let mut txn = opener.begin().unwrap();
     let outcome = txn
         .commit_mutations(vec![
-            OptimisticMutation::put_existing(b"existing-row".to_vec(), b"v2".to_vec()).unwrap(),
-            OptimisticMutation::delete(b"doomed-row".to_vec()).unwrap(),
-            OptimisticMutation::index_put(b"idx-1".to_vec(), b"h".to_vec()).unwrap(),
-            OptimisticMutation::meta_put(b"m-1".to_vec(), b"meta".to_vec()).unwrap(),
+            BufferMutation::put_existing(b"existing-row".to_vec(), b"v2".to_vec()).unwrap(),
+            BufferMutation::delete_existing(b"doomed-row".to_vec()).unwrap(),
+            BufferMutation::set(b"idx-1".to_vec(), b"h".to_vec()).unwrap(),
+            BufferMutation::set(b"m-1".to_vec(), b"meta".to_vec()).unwrap(),
         ])
         .expect("the mixed mutation set commits");
     assert_eq!(outcome.state(), OptimisticTransactionState::Committed);
@@ -243,7 +243,9 @@ fn every_mutation_kind_stages_with_its_source_op_and_assertion() {
         None
     );
     assert_eq!(
-        reader.get(&tidb_txnkv::Key::from(b"idx-1".to_vec())).unwrap(),
+        reader
+            .get(&tidb_txnkv::Key::from(b"idx-1".to_vec()))
+            .unwrap(),
         Some(b"h".to_vec())
     );
     assert_eq!(

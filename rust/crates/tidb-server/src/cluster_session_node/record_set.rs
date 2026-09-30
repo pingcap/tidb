@@ -85,6 +85,10 @@ impl ClusterServerSession {
                 .map_err(SqlQueryError::unknown)?;
         }
         let autocommit = self.explicit.is_none();
+        if autocommit {
+            // Go PrepareTxnCtx creates a fresh TxnCtx before the next statement.
+            self.session.current_tso().clear();
+        }
         let statement = ReadStatement {
             _pin: self
                 .schema_pins
@@ -129,10 +133,10 @@ impl ClusterServerSession {
             self.buffer.restore(statement.savepoint);
             finished
         };
+        self.buffer.release(statement.savepoint);
         self.session.end_external_executor_breakpoint_scope();
-        // go's `TxnCtx.StartTS` PERSISTS after an autocommit statement ends:
-        // `SHOW MASTER STATUS` reports it (oracle m22: a nonzero position
-        // after reads), so publish the read timestamp instead of clearing.
+        // Keep this statement's timestamp until the next statement prepares
+        // its transaction context, matching Go PrepareTxnCtx.
         if let Some(read_ts) = statement.read_ts.get() {
             self.session.current_tso().publish(read_ts);
         }

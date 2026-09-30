@@ -40,9 +40,7 @@ use tidb_stats::{
     PartitionStatsItem, StatsLoadedStatus, TopN,
 };
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_TRANSACTION_BYTES,
-};
+use tidb_txnkv::transaction::{OptimisticCommitOutcome, RealOptimisticTransactionOpener};
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_util::sqlkiller::SqlKiller;
 
@@ -216,30 +214,6 @@ fn fail_analyze_jobs(jobs: &dyn AnalyzeJobLifecycle, pending: &[AnalyzeJobHandle
         job.finish(jobs, Some(failure), AnalyzeJobKind::Table);
     }
 }
-
-/// The mutation-count budget one `ANALYZE TABLE` declares.
-///
-/// Go saves one table's whole analyze result in ONE transaction --
-/// `pkg/statistics/handle/storage/stats_read_writer.go:141` wraps
-/// `SaveAnalyzeResultToStorage` in `util.FlagWrapTxn`, which is a single
-/// `BEGIN PESSIMISTIC` ... `COMMIT` around every `stats_meta`,
-/// `stats_histograms`, `stats_buckets` and `stats_top_n` write for the table
-/// -- and places no bound on how many rows that is. Its batching
-/// (`save.go:42`'s `batchInsertSize = 10`) groups rows into *statements*
-/// inside that one transaction, not into separate transactions.
-///
-/// So this path keeps its single transaction, and states the count budget
-/// Go's has: none. The bound that remains is the byte one
-/// ([`MAX_OPTIMISTIC_TRANSACTION_BYTES`], this path's stand-in for Go's
-/// `txn-total-size-limit`), which is the bound Go is actually held to.
-///
-/// The generic [`tidb_txnkv::transaction::MAX_OPTIMISTIC_MUTATIONS`] is the
-/// wrong budget here and was
-/// the defect: the default `ANALYZE` builds 256 buckets and 100 TopN entries
-/// per histogram, so a table with four columns and two indexes plans ~4300
-/// mutations -- over that budget. It worked on toy tables and hard-failed on
-/// real ones.
-pub const ANALYZE_MAX_MUTATIONS: usize = usize::MAX;
 
 /// Parses and admits one text-protocol statement as an `ANALYZE TABLE`.
 ///
@@ -694,11 +668,7 @@ fn automatic_sample_rate(
         partition,
     );
     let rate = adjusted_sample_rate(realtime_count, has_pd.then_some(approximate_count));
-    let reason = sample_rate_reason(
-        realtime_count,
-        has_pd.then_some(approximate_count),
-        rate,
-    );
+    let reason = sample_rate_reason(realtime_count, has_pd.then_some(approximate_count), rate);
     (rate, reason)
 }
 
@@ -942,7 +912,7 @@ pub fn save_cluster_analyze_options<
     let mut transaction = opener
         // Go emits one REPLACE containing every logical/partition option row
         // and applies no row-count bound to that restricted transaction.
-        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .begin()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let plan = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
@@ -989,9 +959,7 @@ fn find_statement_table<'catalog>(
                 .find(|stored| stored.name.lowercase() == statement.table.go_to_lower().as_str())
         })
         .ok_or_else(|| {
-            ClusterAnalyzeError::MissingTable(
-                format!("{}.{}", statement.schema, statement.table),
-            )
+            ClusterAnalyzeError::MissingTable(format!("{}.{}", statement.schema, statement.table))
         })
 }
 
@@ -1588,12 +1556,10 @@ fn record_analyze_history<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCa
     timeout: Duration,
 ) {
     let result = (|| -> Result<(), ClusterAnalyzeError> {
-        let transaction = SessionTransaction::begin_pessimistic_with_budget(
+        let transaction = SessionTransaction::begin_pessimistic(
             Arc::new(opener.clone()),
             timeout,
             opener.commit_protocol(),
-            ANALYZE_MAX_MUTATIONS,
-            MAX_OPTIMISTIC_TRANSACTION_BYTES,
         )
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let staged = MutationBuffer::new();
@@ -2146,7 +2112,7 @@ fn commit_global_stats_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
 ) -> Result<(u64, usize, usize, usize), ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
-        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .begin()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let mut version = transaction.start_ts();
     let write = {
@@ -2251,7 +2217,7 @@ fn commit_cluster_analyze_target<
     sample_rate_notes: &[(u16, String)],
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut sample_transaction = opener
-        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .begin()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let sample_ts = sample_transaction.start_ts();
     let sampled = {
@@ -2327,7 +2293,7 @@ fn commit_cluster_analyze_target<
     // against BaseCount/BaseModifyCnt instead of silently resetting them.
     let save_started = Instant::now();
     let mut save_transaction = opener
-        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .begin()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let save_version = save_transaction.start_ts();
     report.stats.version = save_version;
@@ -2455,7 +2421,7 @@ fn commit_cluster_independent_index<
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
-        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .begin()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let start_ts = transaction.start_ts();
     let (report, write, inserted_meta) = {
@@ -2788,7 +2754,7 @@ mod tests {
             call: std::sync::Mutex::new(None),
         };
         assert_eq!(
-            automatic_sample_rate(Some(10_000), &provider, "oltp", 42, "test", "orders", "p0",),
+            automatic_sample_rate(Some(10_000), &provider, "oltp", 42, "test", "orders", "p0",).0,
             0.15
         );
         assert_eq!(

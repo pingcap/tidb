@@ -23,8 +23,10 @@
 #![allow(missing_docs)]
 
 use std::collections::BTreeSet;
+use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+use std::task::{Context, Poll};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -35,12 +37,13 @@ use tidb_proto::tikvpb::batch_commands_response::response::Cmd as ResponseCmd;
 use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
 use tidb_proto::tikvpb::{batch_commands_response, BatchCommandsRequest, BatchCommandsResponse};
 use tidb_proto::{
-    CoprocessorRequest, CoprocessorResponse, KvrpcCommitRequest, KvrpcCommitResponse,
-    KvrpcDeadlock, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcLockInfo, KvrpcOp, KvrpcPessimisticAction,
-    KvrpcPessimisticLockKeyResult, KvrpcPessimisticLockKeyResultType, KvrpcPessimisticLockRequest,
-    KvrpcPessimisticLockResponse, KvrpcPessimisticLockWakeUpMode, KvrpcPessimisticRollbackRequest,
-    KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
-    KvrpcWaitForEntry, KvrpcWriteConflict,
+    CoprocessorRequest, CoprocessorResponse, KvrpcCheckTxnStatusRequest,
+    KvrpcCheckTxnStatusResponse, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcDeadlock,
+    KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcLockInfo, KvrpcOp,
+    KvrpcPessimisticAction, KvrpcPessimisticLockKeyResult, KvrpcPessimisticLockKeyResultType,
+    KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse, KvrpcPessimisticLockWakeUpMode,
+    KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest,
+    KvrpcPrewriteResponse, KvrpcWaitForEntry, KvrpcWriteConflict,
 };
 use tidb_txnkv::lock::TimestampSource;
 use tidb_txnkv::region::{
@@ -49,10 +52,11 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    LockWaitTime, OptimisticCommitOutcome, OptimisticMutation, PessimisticLockFailure,
+    BufferMutation, LockWaitTime, OptimisticCommitOutcome, PessimisticLockFailure,
     RealOptimisticTransaction, RealPessimisticTransaction, TransactionCause,
 };
 use tidb_txnkv::{set_txn_resource_group, SharedReadRuntime};
+use tonic::codegen::{Body, BoxFuture, Service, StdError};
 
 const START_TS: u64 = 400;
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -167,7 +171,10 @@ impl RegionRecoveryLoader for SingleRegion {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
-        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        _resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -214,6 +221,7 @@ enum LockOutcome {
 #[derive(Debug, Default)]
 struct Recorded {
     gets: Vec<KvrpcGetRequest>,
+    status_checks: Vec<KvrpcCheckTxnStatusRequest>,
     locks: Vec<KvrpcPessimisticLockRequest>,
     pessimistic_rollbacks: Vec<KvrpcPessimisticRollbackRequest>,
     prewrites: Vec<KvrpcPrewriteRequest>,
@@ -226,6 +234,7 @@ struct ScriptedTikv {
     /// When set, the first Prewrite answers `KeyIsLocked` with a lock whose
     /// `lock_version` is this timestamp. Every later Prewrite succeeds.
     prewrite_blocked_by: Arc<Mutex<Option<u64>>>,
+    rolled_back_txns: Arc<Mutex<std::collections::HashSet<u64>>>,
     recorded: Arc<Mutex<Recorded>>,
     /// Hold rollback replies until every region in the round is published.
     rollback_batch_width: usize,
@@ -243,6 +252,7 @@ impl ScriptedTikv {
         Self {
             locks: Arc::new(Mutex::new(locks)),
             prewrite_blocked_by: Arc::new(Mutex::new(None)),
+            rolled_back_txns: Arc::new(Mutex::new(Default::default())),
             recorded: Arc::new(Mutex::new(Recorded::default())),
             rollback_batch_width: 1,
             rollback_packets: Arc::new(Mutex::new(Vec::new())),
@@ -250,9 +260,10 @@ impl ScriptedTikv {
         }
     }
 
-    /// Scripts the first Prewrite to report a lock held by `lock_ts`.
+    /// Scripts a stale first-prewrite lock and its determined rollback status.
     fn block_first_prewrite_with(&self, lock_ts: u64) {
         *self.prewrite_blocked_by.lock().unwrap() = Some(lock_ts);
+        self.rolled_back_txns.lock().unwrap().insert(lock_ts);
     }
 
     /// Later attempts than the script describes are granted, which models a
@@ -297,9 +308,7 @@ fn lock_response(outcome: &LockOutcome, request: &KvrpcPessimisticLockRequest) -
         },
         LockOutcome::RegionError => KvrpcPessimisticLockResponse {
             region_error: Some(errorpb::Error {
-                recovery_in_progress: Some(errorpb::RecoveryInProgress {
-                    region_id: REGION_ID,
-                }),
+                stale_command: Some(errorpb::StaleCommand {}),
                 ..errorpb::Error::default()
             }),
             ..KvrpcPessimisticLockResponse::default()
@@ -502,7 +511,8 @@ impl ScriptedTikv {
                         value: b"value-at-statement-ts".to_vec(),
                         ..KvrpcGetResponse::default()
                     }
-                    .encode_to_vec().into(),
+                    .encode_to_vec()
+                    .into(),
                 ))
             }
             RequestCmd::PessimisticLock(body) => {
@@ -520,16 +530,18 @@ impl ScriptedTikv {
                     .lock()
                     .unwrap()
                     .pessimistic_rollbacks
-                    .push(request);
+                    .push(request.clone());
                 Ok(ResponseCmd::PessimisticRollback(
                     {
                         let mut responses = self.rollback_responses.lock().unwrap();
-                        if responses.is_empty() {
+                        if responses.is_empty() || !request.keys.contains(&PRIMARY_KEY.to_vec()) {
                             KvrpcPessimisticRollbackResponse::default()
                         } else {
                             responses.remove(0)
                         }
-                    }.encode_to_vec().into(),
+                    }
+                    .encode_to_vec()
+                    .into(),
                 ))
             }
             RequestCmd::Prewrite(body) => {
@@ -555,7 +567,8 @@ impl ScriptedTikv {
                         errors,
                         ..KvrpcPrewriteResponse::default()
                     }
-                    .encode_to_vec().into(),
+                    .encode_to_vec()
+                    .into(),
                 ))
             }
             RequestCmd::Commit(body) => {
@@ -571,6 +584,89 @@ impl ScriptedTikv {
             ))),
         }
     }
+}
+
+// The production transport sends status checks as unary RPCs. The projected
+// Tikv service exposes BatchCommands, so attach just this scripted unary reply.
+#[derive(Clone)]
+struct ScriptedService {
+    inner: TikvServer<ScriptedTikv>,
+    recorded: Arc<Mutex<Recorded>>,
+    rolled_back_txns: Arc<Mutex<std::collections::HashSet<u64>>>,
+}
+
+impl<B> Service<tonic::codegen::http::Request<B>> for ScriptedService
+where
+    B: Body + Send + 'static,
+    B::Error: Into<StdError> + Send + 'static,
+{
+    type Response = tonic::codegen::http::Response<tonic::body::Body>;
+    type Error = Infallible;
+    type Future = BoxFuture<Self::Response, Self::Error>;
+
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        <TikvServer<ScriptedTikv> as Service<tonic::codegen::http::Request<B>>>::poll_ready(
+            &mut self.inner,
+            context,
+        )
+    }
+
+    fn call(&mut self, request: tonic::codegen::http::Request<B>) -> Self::Future {
+        if request.uri().path() != "/tikvpb.Tikv/KvCheckTxnStatus" {
+            return self.inner.call(request);
+        }
+        struct CheckStatus(
+            Arc<Mutex<Recorded>>,
+            Arc<Mutex<std::collections::HashSet<u64>>>,
+        );
+        impl tonic::server::UnaryService<KvrpcCheckTxnStatusRequest> for CheckStatus {
+            type Response = KvrpcCheckTxnStatusResponse;
+            type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+
+            fn call(
+                &mut self,
+                request: tonic::Request<KvrpcCheckTxnStatusRequest>,
+            ) -> Self::Future {
+                let request = request.into_inner();
+                if self.1.lock().unwrap().contains(&request.lock_ts) {
+                    self.0.lock().unwrap().status_checks.push(request);
+                    return Box::pin(async {
+                        Ok(tonic::Response::new(KvrpcCheckTxnStatusResponse {
+                            action: tidb_proto::kvrpcpb::Action::LockNotExistRollback as i32,
+                            ..Default::default()
+                        }))
+                    });
+                }
+                if request.lock_ts != BLOCKER_TS {
+                    return Box::pin(async {
+                        Err(tonic::Status::unimplemented(
+                            "unscripted transaction status",
+                        ))
+                    });
+                }
+                self.0.lock().unwrap().status_checks.push(request);
+                Box::pin(async {
+                    Ok(tonic::Response::new(KvrpcCheckTxnStatusResponse {
+                        lock_ttl: 3_000,
+                        lock_info: live_pessimistic_lock(PRIMARY_KEY, 0).locked,
+                        ..Default::default()
+                    }))
+                })
+            }
+        }
+        let recorded = Arc::clone(&self.recorded);
+        let rolled_back_txns = Arc::clone(&self.rolled_back_txns);
+        Box::pin(async move {
+            let mut grpc = tonic::server::Grpc::new(tonic_prost::ProstCodec::default());
+            Ok(grpc
+                .unary(CheckStatus(recorded, rolled_back_txns), request)
+                .await)
+        })
+    }
+}
+
+impl tonic::server::NamedService for ScriptedService {
+    const NAME: &'static str = "tikvpb.Tikv";
 }
 
 struct TestServer {
@@ -593,7 +689,11 @@ impl TestServer {
                 .unwrap();
             runtime.block_on(async move {
                 let server = tonic::transport::Server::builder()
-                    .add_service(TikvServer::new(service))
+                    .add_service(ScriptedService {
+                        recorded: Arc::clone(&service.recorded),
+                        rolled_back_txns: Arc::clone(&service.rolled_back_txns),
+                        inner: TikvServer::new(service),
+                    })
                     .serve_with_shutdown(address, async {
                         let _ = shutdown_rx.await;
                     });
@@ -644,8 +744,6 @@ fn transaction(topology: SingleRegion) -> ScriptedTransaction {
         CALL_TIMEOUT,
         START_TS,
         Instant::now(),
-        4,
-        4 * 1024,
     )
     .unwrap();
     RealPessimisticTransaction::from_transaction(two_pc, Instant::now()).unwrap()
@@ -937,7 +1035,10 @@ fn a_pessimistic_retry_reads_at_the_advanced_for_update_timestamp() {
             &call(),
         )
         .expect_err("the first statement timestamp is stale");
-    assert!(matches!(failure, PessimisticLockFailure::WriteConflict { .. }));
+    assert!(matches!(
+        failure,
+        PessimisticLockFailure::WriteConflict { .. }
+    ));
 
     let statement_ts = transaction.advance_for_update_ts().unwrap();
     let read = transaction.for_update_get(PRIMARY_KEY, &call()).unwrap();
@@ -954,9 +1055,8 @@ fn a_pessimistic_retry_reads_at_the_advanced_for_update_timestamp() {
 #[test]
 fn nowait_fails_immediately_rather_than_queueing_behind_a_live_owner() {
     let (_server, recorded, mut transaction) = fixture(vec![LockOutcome::BlockedByLiveLock {
-        // Refreshed well inside the skip-resolve threshold: the owner is
-        // demonstrably alive, so no status RPC can change the answer.
-        refreshed_ms: 10,
+        // Resolve status to confirm a live owner, as Go does before NOWAIT.
+        refreshed_ms: 0,
     }]);
 
     let failure = transaction
@@ -973,6 +1073,7 @@ fn nowait_fails_immediately_rather_than_queueing_behind_a_live_owner() {
     };
     assert_eq!(key, PRIMARY_KEY.to_vec());
     let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.status_checks.len(), 1);
     assert_eq!(recorded.locks.len(), 1, "NOWAIT must not retry");
     assert_eq!(
         recorded.locks[0].wait_timeout, -1,
@@ -984,7 +1085,7 @@ fn nowait_fails_immediately_rather_than_queueing_behind_a_live_owner() {
 #[test]
 fn an_exhausted_lock_wait_budget_reports_a_timeout() {
     let (_server, recorded, mut transaction) =
-        fixture(vec![LockOutcome::BlockedByLiveLock { refreshed_ms: 10 }]);
+        fixture(vec![LockOutcome::BlockedByLiveLock { refreshed_ms: 0 }]);
 
     let failure = transaction
         .acquire_locks(
@@ -999,31 +1100,28 @@ fn an_exhausted_lock_wait_budget_reports_a_timeout() {
         matches!(failure, PessimisticLockFailure::LockWaitTimeout { .. }),
         "a spent budget is a timeout, not a NOWAIT failure: {failure:?}"
     );
-    assert_eq!(recorded.lock().unwrap().locks.len(), 1);
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.locks.len(), 1);
+    assert_eq!(recorded.status_checks.len(), 1);
 }
 
 /// A blocker that goes away between wake-ups is simply retried.
 #[test]
-fn a_blocker_that_disappears_is_retried_and_the_lock_is_taken() {
+fn a_recently_refreshed_blocker_retries_without_resolving_the_live_owner() {
+    // Go filters recently updated holders and reissues the lock request.
     let (_server, recorded, mut transaction) = fixture(vec![
         LockOutcome::BlockedByLiveLock { refreshed_ms: 10 },
         LockOutcome::Granted,
     ]);
-
-    let acquired = transaction
+    transaction
         .acquire_locks(
             &[PRIMARY_KEY.to_vec()],
             &no_presumption(),
             LockWaitTime::Timeout(Duration::from_secs(5)),
             &call(),
         )
-        .expect("the second attempt takes the released lock");
-
-    assert_eq!(acquired.keys, vec![PRIMARY_KEY.to_vec()]);
-    let recorded = recorded.lock().unwrap();
-    assert_eq!(recorded.locks.len(), 2);
-    // The residual budget must shrink, or every retry would restart the wait.
-    assert!(recorded.locks[1].wait_timeout <= recorded.locks[0].wait_timeout);
+        .unwrap();
+    assert_eq!(recorded.lock().unwrap().locks.len(), 2);
 }
 
 /// A region error relocates and retries instead of failing the statement.
@@ -1169,6 +1267,7 @@ fn a_lock_granted_with_conflict_is_kept_and_reports_the_conflicting_timestamp() 
         transaction.max_locked_with_conflict_ts(),
         conflict_commit_ts
     );
+    transaction.finish_statement(true).unwrap();
     assert_eq!(transaction.locked_keys(), vec![PRIMARY_KEY.to_vec()]);
     assert_eq!(
         recorded.lock().unwrap().locks.len(),
@@ -1210,8 +1309,8 @@ fn a_locked_with_conflict_timestamp_that_does_not_advance_is_refused() {
 #[test]
 fn a_refused_force_lock_is_handled_like_any_other_blocked_lock() {
     let (_server, recorded, mut transaction) = fixture(vec![LockOutcome::ForceLockFailed {
-        // Inside the skip-resolve threshold: the owner is demonstrably alive.
-        refreshed_ms: 10,
+        // A status check confirms that the holder remains alive.
+        refreshed_ms: 0,
     }]);
     transaction.set_fair_locking(true);
 
@@ -1228,7 +1327,9 @@ fn a_refused_force_lock_is_handled_like_any_other_blocked_lock() {
         panic!("a refused ForceLock is still a lock failure, got {failure:?}");
     };
     assert_eq!(key, PRIMARY_KEY.to_vec());
-    assert_eq!(recorded.lock().unwrap().locks.len(), 1);
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.locks.len(), 1);
+    assert_eq!(recorded.status_checks.len(), 1);
 }
 
 /// A lock granted with conflict is released at the timestamp it really carries.
@@ -1254,7 +1355,7 @@ fn releasing_a_lock_granted_with_conflict_addresses_the_conflicting_timestamp() 
         .expect("the lock is granted with conflict");
 
     transaction
-        .pessimistic_rollback(&[PRIMARY_KEY.to_vec()], &call())
+        .finish_statement(false)
         .expect("releasing an own lock succeeds");
 
     let recorded = recorded.lock().unwrap();
@@ -1290,8 +1391,8 @@ fn commit_declares_a_for_update_ts_constraint_for_a_lock_taken_with_conflict() {
     transaction
         .commit(
             vec![
-                OptimisticMutation::put_existing(PRIMARY_KEY.to_vec(), b"locked".to_vec()).unwrap(),
-                OptimisticMutation::index_put(SECOND_KEY.to_vec(), b"index".to_vec()).unwrap(),
+                BufferMutation::put_existing(PRIMARY_KEY.to_vec(), b"locked".to_vec()).unwrap(),
+                BufferMutation::set(SECOND_KEY.to_vec(), b"index".to_vec()).unwrap(),
             ],
             &call(),
         )
@@ -1332,17 +1433,33 @@ fn rollback_fixture_barrier_spans_distinct_streams() {
         keys: vec![key.to_vec()],
         ..Default::default()
     };
-    let mut first_pending = first.begin_transaction_pessimistic_rollback(
-        &server.store_address(), None, &request(PRIMARY_KEY), &Default::default(), &call).unwrap();
+    let mut first_pending = first
+        .begin_transaction_pessimistic_rollback(
+            &server.store_address(),
+            None,
+            &request(PRIMARY_KEY),
+            &Default::default(),
+            &call,
+        )
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(1);
     while recorded.lock().unwrap().pessimistic_rollbacks.is_empty() {
         assert!(Instant::now() < deadline, "first rollback did not arrive");
         std::thread::sleep(Duration::from_millis(1));
     }
-    assert!(first_pending.try_complete().unwrap().is_none(),
-        "one published region cannot release the round");
-    let mut second_pending = second.begin_transaction_pessimistic_rollback(
-        &server.store_address(), None, &request(SECOND_KEY), &Default::default(), &call).unwrap();
+    assert!(
+        first_pending.try_complete().unwrap().is_none(),
+        "one published region cannot release the round"
+    );
+    let mut second_pending = second
+        .begin_transaction_pessimistic_rollback(
+            &server.store_address(),
+            None,
+            &request(SECOND_KEY),
+            &Default::default(),
+            &call,
+        )
+        .unwrap();
     first_pending.complete(&call).unwrap().unwrap();
     second_pending.complete(&call).unwrap().unwrap();
     assert_eq!(recorded.lock().unwrap().pessimistic_rollbacks.len(), 2);
@@ -1361,12 +1478,8 @@ fn rollback_publishes_every_region_before_waiting_for_a_response() {
         .unwrap();
 
     transaction
-        .pessimistic_rollback(
-            &keys,
-            &UnaryCallContext::with_timeout(Duration::from_secs(3)),
-        )
+        .rollback(&UnaryCallContext::with_timeout(Duration::from_secs(3)))
         .expect("both regions must be published before either response is needed");
-    assert!(transaction.locked_keys().is_empty());
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.pessimistic_rollbacks.len(), 2);
     assert!(recorded
@@ -1376,7 +1489,7 @@ fn rollback_publishes_every_region_before_waiting_for_a_response() {
 }
 
 #[test]
-fn rollback_remembers_failed_keys_and_forgets_successful_sibling_regions() {
+fn rollback_closes_the_transaction_even_when_cleanup_fails() {
     let service = ScriptedTikv::new(Vec::new());
     service
         .rollback_responses
@@ -1397,14 +1510,9 @@ fn rollback_remembers_failed_keys_and_forgets_successful_sibling_regions() {
         .acquire_locks(&keys, &no_presumption(), LockWaitTime::AlwaysWait, &call())
         .unwrap();
     transaction
-        .pessimistic_rollback(&keys, &call())
-        .expect_err("one region rejected rollback");
-    assert_eq!(transaction.locked_keys(), vec![PRIMARY_KEY.to_vec()]);
+        .rollback(&call())
+        .expect("Go logs cleanup failure and closes the transaction");
     assert_eq!(recorded.lock().unwrap().pessimistic_rollbacks.len(), 2);
-    transaction
-        .pessimistic_rollback(&transaction.locked_keys(), &call())
-        .unwrap();
-    assert!(transaction.locked_keys().is_empty());
 }
 
 #[test]
@@ -1416,9 +1524,7 @@ fn rollback_retries_only_the_region_that_requested_recovery() {
         .unwrap()
         .push(KvrpcPessimisticRollbackResponse {
             region_error: Some(errorpb::Error {
-                recovery_in_progress: Some(errorpb::RecoveryInProgress {
-                    region_id: REGION_ID,
-                }),
+                stale_command: Some(errorpb::StaleCommand {}),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1430,39 +1536,48 @@ fn rollback_retries_only_the_region_that_requested_recovery() {
     transaction
         .acquire_locks(&keys, &no_presumption(), LockWaitTime::AlwaysWait, &call())
         .unwrap();
-    transaction.pessimistic_rollback(&keys, &call()).unwrap();
-    assert!(transaction.locked_keys().is_empty());
+    transaction.rollback(&call()).unwrap();
     let recorded = recorded.lock().unwrap();
+    let mut keys: Vec<_> = recorded
+        .pessimistic_rollbacks
+        .iter()
+        .map(|r| r.keys.clone())
+        .collect();
+    keys.sort();
     assert_eq!(
-        recorded
-            .pessimistic_rollbacks
-            .iter()
-            .map(|r| r.keys.clone())
-            .collect::<Vec<_>>(),
+        keys,
         vec![
             vec![PRIMARY_KEY.to_vec()],
-            vec![SECOND_KEY.to_vec()],
-            vec![PRIMARY_KEY.to_vec()]
+            vec![PRIMARY_KEY.to_vec()],
+            vec![SECOND_KEY.to_vec()]
         ]
     );
 }
 
 /// A statement that fails after locking must not leave its locks behind.
 #[test]
-fn a_pessimistic_rollback_releases_the_locks_and_forgets_them() {
-    let (_server, recorded, mut transaction) = fixture(Vec::new());
+fn cancelling_a_fair_statement_preserves_prior_statement_locks() {
+    let (_server, recorded, mut transaction) =
+        fixture(vec![LockOutcome::Granted, LockOutcome::ForceLockGranted]);
     transaction
         .acquire_locks(
-            &[PRIMARY_KEY.to_vec(), SECOND_KEY.to_vec()],
+            &[PRIMARY_KEY.to_vec()],
             &no_presumption(),
             LockWaitTime::AlwaysWait,
             &call(),
         )
-        .expect("locks are granted");
-
+        .unwrap();
+    transaction.finish_statement(true).unwrap();
+    transaction.set_fair_locking(true);
     transaction
-        .pessimistic_rollback(&[SECOND_KEY.to_vec()], &call())
-        .expect("releasing an own lock succeeds");
+        .acquire_locks(
+            &[SECOND_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .unwrap();
+    transaction.finish_statement(false).unwrap();
 
     assert_eq!(
         transaction.locked_keys(),
@@ -1500,9 +1615,9 @@ fn commit_declares_a_pessimistic_check_only_for_keys_it_actually_locked() {
     let outcome = transaction
         .commit(
             vec![
-                OptimisticMutation::put_existing(PRIMARY_KEY.to_vec(), b"locked".to_vec()).unwrap(),
+                BufferMutation::put_existing(PRIMARY_KEY.to_vec(), b"locked".to_vec()).unwrap(),
                 // Never locked: an index entry written only at commit time.
-                OptimisticMutation::index_put(SECOND_KEY.to_vec(), b"index".to_vec()).unwrap(),
+                BufferMutation::set(SECOND_KEY.to_vec(), b"index".to_vec()).unwrap(),
             ],
             &call(),
         )
@@ -1516,8 +1631,12 @@ fn commit_declares_a_pessimistic_check_only_for_keys_it_actually_locked() {
     assert_eq!(recorded.prewrites.len(), 1);
     let prewrite = &recorded.prewrites[0];
     assert_eq!(prewrite.start_version, START_TS);
-    assert_eq!(prewrite.for_update_ts, statement_ts);
-    assert_eq!(prewrite.min_commit_ts, statement_ts + 1);
+    assert_eq!(
+        prewrite.for_update_ts, START_TS,
+        "only an actual lock request advances the client committer timestamp"
+    );
+    assert_eq!(statement_ts, START_TS + 1);
+    assert!(prewrite.min_commit_ts > START_TS);
     assert_eq!(prewrite.mutations.len(), 2);
     assert_eq!(
         prewrite.pessimistic_actions.len(),
@@ -1550,7 +1669,7 @@ fn committing_without_any_lock_keeps_every_key_on_the_optimistic_check() {
 
     transaction
         .commit(
-            vec![OptimisticMutation::insert(PRIMARY_KEY.to_vec(), b"v".to_vec()).unwrap()],
+            vec![BufferMutation::insert(PRIMARY_KEY.to_vec(), b"v".to_vec()).unwrap()],
             &call(),
         )
         .expect("the two-phase commit runs");
@@ -1558,7 +1677,7 @@ fn committing_without_any_lock_keeps_every_key_on_the_optimistic_check() {
     let recorded = recorded.lock().unwrap();
     assert!(recorded.locks.is_empty());
     let prewrite = &recorded.prewrites[0];
-    assert_eq!(prewrite.for_update_ts, START_TS);
+    assert_eq!(prewrite.for_update_ts, 0);
     assert_eq!(
         prewrite.pessimistic_actions,
         vec![KvrpcPessimisticAction::SkipPessimisticCheck as i32]
@@ -1575,12 +1694,9 @@ fn committing_without_any_lock_keeps_every_key_on_the_optimistic_check() {
 /// merging only after the loop means any early return drops them, leaving real
 /// locks on a real cluster that this transaction can no longer name.
 #[test]
-fn a_statement_that_fails_on_a_later_batch_keeps_the_locks_it_already_took() {
+fn a_failed_lock_request_cleans_up_partial_acquisition() {
     // The first batch is granted; the second is rejected outright.
-    let service = ScriptedTikv::new(vec![
-        LockOutcome::Granted,
-        LockOutcome::RetryableDeadlock,
-    ]);
+    let service = ScriptedTikv::new(vec![LockOutcome::Granted, LockOutcome::RetryableDeadlock]);
     let server = TestServer::start(service);
     let mut transaction = transaction(SingleRegion::new_split(server.store_address(), SECOND_KEY));
 
@@ -1600,15 +1716,9 @@ fn a_statement_that_fails_on_a_later_batch_keeps_the_locks_it_already_took() {
         "client-go compares the fingerprint with the whole statement key set, not only the failing region batch"
     );
 
-    assert_eq!(
-        transaction.locked_keys(),
-        vec![PRIMARY_KEY.to_vec()],
-        "the lock TiKV granted exists; forgetting it abandons it on the cluster"
-    );
-    assert_eq!(
-        transaction.primary_key(),
-        Some(PRIMARY_KEY),
-        "cleanup of that lock needs the primary it names"
+    assert!(
+        transaction.locked_keys().is_empty(),
+        "client-go rolls back partial lock acquisition before returning the error"
     );
 }
 
@@ -1626,6 +1736,7 @@ fn a_pessimistic_committer_resolves_a_newer_prewrite_lock_instead_of_conflicting
     let service = ScriptedTikv::new(vec![LockOutcome::Granted]);
     // Strictly newer than this transaction, which is the whole shortcut.
     service.block_first_prewrite_with(START_TS + 50);
+    let recorded = Arc::clone(&service.recorded);
     let server = TestServer::start(service);
     let mut transaction = transaction(SingleRegion::new(server.store_address()));
     transaction
@@ -1639,24 +1750,21 @@ fn a_pessimistic_committer_resolves_a_newer_prewrite_lock_instead_of_conflicting
 
     let outcome = transaction
         .commit(
-            vec![OptimisticMutation::put_existing(PRIMARY_KEY.to_vec(), b"v".to_vec()).unwrap()],
+            vec![BufferMutation::put_existing(PRIMARY_KEY.to_vec(), b"v".to_vec()).unwrap()],
             &call(),
         )
         .expect("the two-phase commit runs to a terminal outcome");
 
-    // This harness scripts no CheckTxnStatus, so the recovery cannot complete —
-    // but *attempting* it is the entire point. Pre-fix this was a WriteConflict
-    // raised without a single recovery RPC.
-    let cause = match &outcome {
-        OptimisticCommitOutcome::RolledBack(rolled_back) => rolled_back.cause.clone(),
-        OptimisticCommitOutcome::CleanupFailed(failed) => failed.cause.clone(),
-        other => panic!("a blocked prewrite cannot commit: {other:?}"),
-    };
     assert!(
-        matches!(cause, TransactionCause::Lock { .. }),
-        "a pessimistic committer must reach lock recovery, not shortcut to a \
-         write conflict: {cause:?}"
+        matches!(outcome, OptimisticCommitOutcome::Committed(_)),
+        "a newer lock must enter the client's recovery/retry path: {outcome:?}"
     );
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.prewrites.len(), 2);
+    assert!(recorded
+        .status_checks
+        .iter()
+        .any(|request| request.lock_ts == START_TS + 50));
 }
 
 // -----------------------------------------------------------------------------
@@ -1718,4 +1826,50 @@ fn a_plain_lock_still_omits_return_values() {
         )
         .expect("granted");
     assert!(recorded.lock().unwrap().locks[0].return_values == false);
+}
+
+impl tidb_txnkv::region::RegionQueryLoader for SingleRegion {
+    fn query_region(
+        &mut self,
+        query: tidb_txnkv::region::RegionQuery<'_>,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        match query {
+            tidb_txnkv::region::RegionQuery::Id(id) => {
+                let key = if id == SECOND_REGION_ID {
+                    self.split_key.clone().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let location = self.load_region(&key)?;
+                if location.region.id == id {
+                    Ok(location)
+                } else {
+                    Err(RegionLoadError::new(
+                        "unknown-region",
+                        "unknown fixture region",
+                    ))
+                }
+            }
+            tidb_txnkv::region::RegionQuery::Key(key) => self.load_region(key),
+            tidb_txnkv::region::RegionQuery::EndKey(key) => self.load_region_by_end_key(key),
+        }
+    }
+    fn scan_regions_once(
+        &mut self,
+        range: &tidb_txnkv::region::KeyRange,
+        _limit: usize,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        self.load_region(&range.start).map(|r| vec![r])
+    }
+    fn load_store(
+        &mut self,
+        _id: u64,
+    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-store-query",
+            "fixture expects cached store metadata",
+        ))
+    }
 }

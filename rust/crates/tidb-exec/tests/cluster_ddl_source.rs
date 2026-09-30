@@ -29,19 +29,19 @@ use tidb_exec::cluster_catalog::{
     load_cluster_catalog, prefix_scan_end, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_exec::cluster_ddl::{
-    lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback,
-    plan_ddl, plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
+    lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
+    plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
     plan_persisted_materialized_view_create_job_step,
-    plan_persisted_materialized_view_log_job_step,
-    prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
-    AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate,
+    plan_persisted_materialized_view_log_job_step, prepare_check_constraint_job_submission,
+    prepare_materialized_view_job_submission, AlterColumnAction, DdlPlan, DdlPlanError,
+    DdlStatement, MdlInfoUpdate,
 };
+use tidb_exec::ddl_history_table::DdlHistoryTable;
 use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
-use tidb_exec::real_tikv_ddl::{prepare_cluster_ddl_with_context, DdlWarningLevel};
 use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::ddl_systable::{SystemTableManager, SystemTableManagerError};
-use tidb_exec::ddl_history_table::DdlHistoryTable;
 use tidb_exec::mysql_system_tables::{SystemRow, SystemTableView};
+use tidb_exec::real_tikv_ddl::{prepare_cluster_ddl_with_context, DdlWarningLevel};
 use tidb_exec::system_row_write::store_clustered_row;
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_meta::{key, value};
@@ -49,12 +49,15 @@ use tidb_model::{
     ActionType, DBInfo, GoAnyView, GoShared, Job, JobArgsValue, JobState, JobVersion,
     MaterializedViewLogInfo, SchemaState, TimeZoneLocation,
 };
-use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
+use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 
 #[test]
 fn on_update_current_timestamp_uses_go_exact_function_and_fsp_rules() {
     let cases = [
-        ("CREATE TABLE t (a TIMESTAMP ON UPDATE CURRENT_TIMESTAMP())", true),
+        (
+            "CREATE TABLE t (a TIMESTAMP ON UPDATE CURRENT_TIMESTAMP())",
+            true,
+        ),
         (
             "CREATE TABLE t (a TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))",
             true,
@@ -134,11 +137,7 @@ impl MetaSnapshot for MetaStore {
             .collect())
     }
 
-    fn scan_range(
-        &mut self,
-        start: &[u8],
-        end: &[u8],
-    ) -> Result<MetaPairs, ClusterCatalogError> {
+    fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
         self.last_range = Some((start.to_vec(), end.to_vec()));
         Ok(self
             .pairs
@@ -203,8 +202,9 @@ pub(crate) fn bootstrapped() -> MetaStore {
         info.id = system_table.id;
         store.put(
             key::table_kv_key(mysql_id, system_table.id),
-            value::serialize_table_info(&info)
-                .unwrap_or_else(|error| panic!("the {system_table_name} TableInfo encodes: {error}")),
+            value::serialize_table_info(&info).unwrap_or_else(|error| {
+                panic!("the {system_table_name} TableInfo encodes: {error}")
+            }),
         );
     }
     store
@@ -212,7 +212,7 @@ pub(crate) fn bootstrapped() -> MetaStore {
 
 struct PlannedCheckSubmission {
     job: Job,
-    mutations: Vec<OptimisticMutation>,
+    mutations: Vec<BufferMutation>,
 }
 
 fn plan_check_constraint_job_submission(
@@ -297,7 +297,7 @@ fn active_ddl_jobs_use_the_go_job_table_lifecycle() {
         .append_insert(&mut job, false, "112", "116", false, &mut insert)
         .expect("Go job submission row encodes");
     assert_eq!(insert.len(), 1);
-    assert_eq!(insert[0].kind(), OptimisticMutationKind::Insert);
+    assert_eq!(insert[0].kind(), BufferMutationOp::Set);
     apply_mutations(&mut store, &insert);
 
     let mut active = table.load(&mut store).expect("the owner scans jobs");
@@ -318,10 +318,12 @@ fn active_ddl_jobs_use_the_go_job_table_lifecycle() {
         .append_update(&mut active[0], false, &mut update)
         .expect("Go worker job update encodes");
     assert_eq!(update.len(), 1);
-    assert_eq!(update[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(update[0].kind(), BufferMutationOp::Set);
     apply_mutations(&mut store, &update);
 
-    let active = table.load(&mut store).expect("the new owner resumes the job");
+    let active = table
+        .load(&mut store)
+        .expect("the new owner resumes the job");
     assert_eq!(active[0].job.state, JobState::RUNNING);
     assert_eq!(active[0].job.schema_state, SchemaState::WRITE_ONLY);
     assert_eq!(active[0].job.last_schema_version, 61);
@@ -332,7 +334,7 @@ fn active_ddl_jobs_use_the_go_job_table_lifecycle() {
         .append_delete(&active[0], &mut delete)
         .expect("Go terminal deletion encodes");
     assert_eq!(delete.len(), 1);
-    assert_eq!(delete[0].kind(), OptimisticMutationKind::Delete);
+    assert_eq!(delete[0].kind(), BufferMutationOp::Delete);
     apply_mutations(&mut store, &delete);
     assert!(table.load(&mut store).unwrap().is_empty());
 }
@@ -382,7 +384,10 @@ fn flashback_admission_reads_only_the_go_query_columns() {
         .expect("the malformed fixture row encodes");
     apply_mutations(&mut store, &rewrite);
 
-    assert!(table.load(&mut store).is_err(), "the full scheduler load decodes job_meta");
+    assert!(
+        table.load(&mut store).is_err(),
+        "the full scheduler load decodes job_meta"
+    );
     assert!(
         !table
             .has_flashback_cluster_job(&mut store, 0)
@@ -427,9 +432,7 @@ fn ddl_systable_manager_matches_go_queries() {
         Err(SystemTableManagerError::NotFound)
     ));
     assert_eq!(manager.get_min_job_id(&mut store, 0).unwrap(), 0);
-    assert!(!manager
-        .has_flashback_cluster_job(&mut store, 0)
-        .unwrap());
+    assert!(!manager.has_flashback_cluster_job(&mut store, 0).unwrap());
 
     let table = DdlJobTable::locate(&catalog).expect("the active-job table exists");
     let mut job = Job::default();
@@ -472,9 +475,7 @@ fn ddl_systable_manager_matches_go_queries() {
     assert_eq!(manager.get_min_job_id(&mut store, 0).unwrap(), 9_999);
     assert_eq!(manager.get_min_job_id(&mut store, 9_999).unwrap(), 9_999);
     assert_eq!(manager.get_min_job_id(&mut store, 10_000).unwrap(), 0);
-    assert!(!manager
-        .has_flashback_cluster_job(&mut store, 0)
-        .unwrap());
+    assert!(!manager.has_flashback_cluster_job(&mut store, 0).unwrap());
 
     let mut flashback = Job::default();
     flashback.id = 10_000;
@@ -512,7 +513,7 @@ fn ddl_sql_history_uses_go_insert_ignore_semantics() {
         .append_insert_ignore(&mut store, &job, &first, &mut insert)
         .expect("the first INSERT IGNORE plans");
     assert_eq!(insert.len(), 1);
-    assert_eq!(insert[0].kind(), OptimisticMutationKind::Insert);
+    assert_eq!(insert[0].kind(), BufferMutationOp::Set);
     apply_mutations(&mut store, &insert);
 
     job.state = JobState::DONE;
@@ -521,7 +522,10 @@ fn ddl_sql_history_uses_go_insert_ignore_semantics() {
     history
         .append_insert_ignore(&mut store, &job, &second, &mut duplicate)
         .expect("a duplicate INSERT IGNORE succeeds");
-    assert!(duplicate.is_empty(), "the existing SQL history row is preserved");
+    assert!(
+        duplicate.is_empty(),
+        "the existing SQL history row is preserved"
+    );
     let stored = history.load(&mut store).expect("SQL history scans");
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].state, JobState::QUEUEING);
@@ -530,11 +534,7 @@ fn ddl_sql_history_uses_go_insert_ignore_semantics() {
 #[test]
 fn check_job_submission_precedes_every_schema_transition() {
     let mut store = bootstrapped();
-    let create = plan(
-        &mut store,
-        "CREATE TABLE queued_check (a INT)",
-        2_000,
-    );
+    let create = plan(&mut store, "CREATE TABLE queued_check (a INT)", 2_000);
     let table_id = create.created_id.expect("CREATE allocated the table ID");
     apply(&mut store, &create);
     let schema_version_before = store
@@ -554,13 +554,10 @@ fn check_job_submission_precedes_every_schema_transition() {
         .with_ddl_sql_mode(sql_mode)
         .with_connection_id(Some(77))
         .with_ddl_job_context(9, 2, "ddl-alias", vec![1, 2, 3])
-        .with_ddl_query(
-            "ALTER TABLE queued_check ADD CONSTRAINT c_positive CHECK (a > 0)",
-        );
-    let parsed = tidb_parser::parse(
-        "ALTER TABLE queued_check ADD CONSTRAINT c_positive CHECK (a > 0)",
-    )
-    .expect("CHECK DDL parses");
+        .with_ddl_query("ALTER TABLE queued_check ADD CONSTRAINT c_positive CHECK (a > 0)");
+    let parsed =
+        tidb_parser::parse("ALTER TABLE queued_check ADD CONSTRAINT c_positive CHECK (a > 0)")
+            .expect("CHECK DDL parses");
     let statement = lower_ddl_with_context(&parsed, "u6", &context)
         .expect("CHECK DDL is admitted")
         .expect("CHECK DDL owns a catalog route");
@@ -569,9 +566,9 @@ fn check_job_submission_precedes_every_schema_transition() {
         .expect("ADD CHECK uses the job table");
 
     assert_eq!(submission.mutations.len(), 2);
-    assert_eq!(submission.mutations[0].kind(), OptimisticMutationKind::MetaPut);
+    assert_eq!(submission.mutations[0].kind(), BufferMutationOp::Set);
     assert_eq!(submission.mutations[0].key(), key::next_global_id_kv_key());
-    assert_eq!(submission.mutations[1].kind(), OptimisticMutationKind::Insert);
+    assert_eq!(submission.mutations[1].kind(), BufferMutationOp::Set);
     assert!(submission
         .mutations
         .iter()
@@ -582,7 +579,10 @@ fn check_job_submission_precedes_every_schema_transition() {
         .all(|mutation| mutation.key() != key::table_kv_key(112, table_id)));
     assert_eq!(submission.job.state, JobState::QUEUEING);
     assert_eq!(submission.job.schema_state, SchemaState::NONE);
-    assert_eq!(submission.job.type_, ActionType::ACTION_ADD_CHECK_CONSTRAINT);
+    assert_eq!(
+        submission.job.type_,
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT
+    );
     assert_eq!(submission.job.sql_mode, sql_mode);
     assert_eq!(submission.job.cdc_write_source, 9);
     assert_eq!(submission.job.priority, 2);
@@ -675,7 +675,13 @@ fn check_job_submission_precedes_every_schema_transition() {
     )
     .expect("WriteReorganization table decodes");
     assert_eq!(
-        table_info.constraints.iter_deref().last().unwrap().read().state,
+        table_info
+            .constraints
+            .iter_deref()
+            .last()
+            .unwrap()
+            .read()
+            .state,
         SchemaState::WRITE_REORGANIZATION
     );
 
@@ -692,7 +698,13 @@ fn check_job_submission_precedes_every_schema_transition() {
     )
     .expect("Public table decodes");
     assert_eq!(
-        table_info.constraints.iter_deref().last().unwrap().read().state,
+        table_info
+            .constraints
+            .iter_deref()
+            .last()
+            .unwrap()
+            .read()
+            .state,
         SchemaState::PUBLIC
     );
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads after finish");
@@ -720,7 +732,9 @@ fn check_job_submission_precedes_every_schema_transition() {
         .get(&key::ddl_job_history_kv_key(job_id))
         .expect("the meta DDLJobHistory hash is written atomically");
     let mut meta_history = Job::default();
-    meta_history.decode(encoded).expect("meta history job decodes");
+    meta_history
+        .decode(encoded)
+        .expect("meta history job decodes");
     assert_eq!(meta_history.id, job_id);
     assert_eq!(meta_history.state, JobState::DONE);
 }
@@ -733,10 +747,9 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     let mut store = bootstrapped();
     let create = plan(&mut store, "CREATE TABLE retry_cleanup (a INT)", 2_100);
     apply(&mut store, &create);
-    let parsed = tidb_parser::parse(
-        "ALTER TABLE retry_cleanup ADD CONSTRAINT c_positive CHECK (a > 0)",
-    )
-    .expect("CHECK DDL parses");
+    let parsed =
+        tidb_parser::parse("ALTER TABLE retry_cleanup ADD CONSTRAINT c_positive CHECK (a > 0)")
+            .expect("CHECK DDL parses");
     let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
     let statement = lower_ddl_with_context(&parsed, "u6", &context)
         .expect("CHECK DDL is admitted")
@@ -794,10 +807,9 @@ fn check_job_submission_observes_the_global_upgrading_state() {
     let mut store = bootstrapped();
     let create = plan(&mut store, "CREATE TABLE upgrading_submit (a INT)", 2_200);
     apply(&mut store, &create);
-    let parsed = tidb_parser::parse(
-        "ALTER TABLE upgrading_submit ADD CONSTRAINT c_positive CHECK (a > 0)",
-    )
-    .expect("CHECK DDL parses");
+    let parsed =
+        tidb_parser::parse("ALTER TABLE upgrading_submit ADD CONSTRAINT c_positive CHECK (a > 0)")
+            .expect("CHECK DDL parses");
     let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
     let statement = lower_ddl_with_context(&parsed, "u6", &context)
         .expect("CHECK DDL is admitted")
@@ -975,9 +987,8 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     .expect("DROP CHECK uses the job table");
     let drop_job_id = drop_submission.job.id;
     apply_mutations(&mut store, &drop_submission.mutations);
-    let drop_write_only =
-        plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 4_002)
-            .expect("the first owner publishes DROP WriteOnly");
+    let drop_write_only = plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 4_002)
+        .expect("the first owner publishes DROP WriteOnly");
     assert!(!drop_write_only.terminal);
     apply(&mut store, &drop_write_only.write);
     let table = committed_table(&store, table_id);
@@ -1010,9 +1021,8 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     .expect("ALTER CHECK uses the job table");
     let enable_job_id = enable_submission.job.id;
     apply_mutations(&mut store, &enable_submission.mutations);
-    let reorganization =
-        plan_persisted_check_constraint_job_step(&mut store, enable_job_id, 4_005)
-            .expect("ENABLE publishes WriteReorganization");
+    let reorganization = plan_persisted_check_constraint_job_step(&mut store, enable_job_id, 4_005)
+        .expect("ENABLE publishes WriteReorganization");
     assert!(!reorganization.terminal);
     apply(&mut store, &reorganization.write);
     let table = committed_table(&store, table_id);
@@ -1039,9 +1049,8 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
         SchemaState::WRITE_ONLY
     );
 
-    let enable_done =
-        plan_persisted_check_constraint_job_step(&mut store, enable_job_id, 4_007)
-            .expect("a final owner validates and finishes ENABLE");
+    let enable_done = plan_persisted_check_constraint_job_step(&mut store, enable_job_id, 4_007)
+        .expect("a final owner validates and finishes ENABLE");
     assert!(enable_done.terminal);
     assert!(enable_done.write.check_constraint_validation.is_some());
     apply(&mut store, &enable_done.write);
@@ -1063,9 +1072,8 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     .expect("ALTER CHECK uses the job table");
     let disable_job_id = disable_submission.job.id;
     apply_mutations(&mut store, &disable_submission.mutations);
-    let disable_done =
-        plan_persisted_check_constraint_job_step(&mut store, disable_job_id, 4_009)
-            .expect("DISABLE finishes in one owner step");
+    let disable_done = plan_persisted_check_constraint_job_step(&mut store, disable_job_id, 4_009)
+        .expect("DISABLE finishes in one owner step");
     assert!(disable_done.terminal);
     assert!(disable_done.write.check_constraint_validation.is_none());
     apply(&mut store, &disable_done.write);
@@ -1080,7 +1088,10 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
 
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads after jobs finish");
     let active = DdlJobTable::locate(&catalog).expect("active-job table exists");
-    assert!(active.load(&mut store).expect("active jobs scan").is_empty());
+    assert!(active
+        .load(&mut store)
+        .expect("active jobs scan")
+        .is_empty());
     let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
     let jobs = history.load(&mut store).expect("history scans");
     for (job_id, action, schema_state) in [
@@ -1212,26 +1223,18 @@ pub(crate) fn plan(
 }
 
 /// Applies a planned write set, modelling its transaction having committed.
-fn apply_mutations(store: &mut MetaStore, mutations: &[OptimisticMutation]) {
+fn apply_mutations(store: &mut MetaStore, mutations: &[BufferMutation]) {
     for mutation in mutations {
         match mutation.kind() {
-            OptimisticMutationKind::MetaPut
-            | OptimisticMutationKind::Insert
-            | OptimisticMutationKind::PutExisting
-            | OptimisticMutationKind::IndexPut
-            | OptimisticMutationKind::UniqueIndexInsert
-            | OptimisticMutationKind::SystemRowPut => {
+            BufferMutationOp::Set => {
                 store
                     .pairs
                     .insert(mutation.key().to_vec(), mutation.value().to_vec());
             }
-            OptimisticMutationKind::MetaDelete
-            | OptimisticMutationKind::Delete
-            | OptimisticMutationKind::IndexDelete
-            | OptimisticMutationKind::SystemRowDelete => {
+            BufferMutationOp::Delete => {
                 store.pairs.remove(mutation.key());
             }
-            OptimisticMutationKind::LockOnly => {}
+            BufferMutationOp::Lock => {}
         }
     }
 }
@@ -1501,15 +1504,17 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
     );
     let catalog = load_cluster_catalog(&mut store).expect("the fixture catalog loads");
     let (_, notifier) = catalog
-        .find_table("mysql", tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME)
+        .find_table(
+            "mysql",
+            tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME,
+        )
         .expect("the notifier table is bootstrapped");
     let record_prefix = tidb_codec::gen_table_record_prefix(notifier.id);
     let record = write
         .mutations
         .iter()
         .find(|mutation| {
-            mutation.kind() == OptimisticMutationKind::Insert
-                && mutation.key().starts_with(&record_prefix)
+            mutation.presume_not_exists() && mutation.key().starts_with(&record_prefix)
         })
         .expect("the DDL transaction inserts one notifier record");
     let field_types = notifier
@@ -1546,10 +1551,7 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
     assert_eq!(event.create_table_info().name.original(), "notified");
     assert!(write.mutations.iter().any(|mutation| {
         mutation.key()
-            == key::auto_table_id_kv_key(
-                tidb_metadef::system::SYSTEM_DATABASE_ID,
-                notifier.id,
-            )
+            == key::auto_table_id_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, notifier.id)
     }));
 }
 
@@ -1586,12 +1588,10 @@ fn clustered_notifier_events_use_the_composite_primary_key() {
     assert_eq!(record.key(), expected);
     let allocator =
         key::auto_table_id_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, notifier.id);
-    assert!(
-        write
-            .mutations
-            .iter()
-            .all(|mutation| mutation.key() != allocator)
-    );
+    assert!(write
+        .mutations
+        .iter()
+        .all(|mutation| mutation.key() != allocator));
 }
 
 #[test]
@@ -1602,19 +1602,24 @@ fn system_database_ddl_stages_no_notifier_event() {
         "CREATE TABLE mysql.not_notified (id BIGINT PRIMARY KEY)",
         7,
     );
-    let notifier_prefix = tidb_codec::table_key::gen_table_prefix(
-        tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID,
-    );
+    let notifier_prefix =
+        tidb_codec::table_key::gen_table_prefix(tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID);
     assert!(write
         .mutations
         .iter()
         .all(|mutation| !mutation.key().starts_with(&notifier_prefix)));
 }
 
-fn notifier_events(store: &mut MetaStore, write: &tidb_exec::cluster_ddl::DdlWrite) -> Vec<(i64, SchemaChangeEvent)> {
+fn notifier_events(
+    store: &mut MetaStore,
+    write: &tidb_exec::cluster_ddl::DdlWrite,
+) -> Vec<(i64, SchemaChangeEvent)> {
     let catalog = load_cluster_catalog(store).expect("the fixture catalog loads");
     let (_, notifier) = catalog
-        .find_table("mysql", tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME)
+        .find_table(
+            "mysql",
+            tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME,
+        )
         .expect("the notifier table is bootstrapped");
     let record_prefix = tidb_codec::gen_table_record_prefix(notifier.id);
     let field_types: BTreeMap<_, _> = notifier
@@ -1640,20 +1645,16 @@ fn notifier_events(store: &mut MetaStore, write: &tidb_exec::cluster_ddl::DdlWri
         .mutations
         .iter()
         .filter(|mutation| {
-            mutation.kind() == OptimisticMutationKind::Insert
-                && mutation.key().starts_with(&record_prefix)
+            mutation.presume_not_exists() && mutation.key().starts_with(&record_prefix)
         })
         .collect();
     records.sort_by_key(|mutation| mutation.key());
     records
         .into_iter()
         .map(|record| {
-            let values = tidb_tablecodec::decode_table_row_to_map(
-                record.value(),
-                &field_types,
-                None,
-            )
-            .expect("the ordinary TiDB row decoder reads the notifier record");
+            let values =
+                tidb_tablecodec::decode_table_row_to_map(record.value(), &field_types, None)
+                    .expect("the ordinary TiDB row decoder reads the notifier record");
             let Datum::Int(sub_job_id) = values[&sub_job_id] else {
                 panic!("sub_job_id is an integer")
             };
@@ -1694,7 +1695,7 @@ fn a_created_table_is_loadable_and_droppable_by_this_node() {
     let deleted: Vec<_> = dropped
         .mutations
         .iter()
-        .filter(|mutation| mutation.kind() == OptimisticMutationKind::MetaDelete)
+        .filter(|mutation| mutation.kind() == BufferMutationOp::Delete)
         .map(|mutation| mutation.key().to_vec())
         .collect();
     assert_eq!(deleted, vec![key::table_kv_key(112, 117)]);
@@ -1722,7 +1723,7 @@ fn dropping_a_database_removes_every_field_of_its_hash() {
     let mut deleted: Vec<_> = dropped
         .mutations
         .iter()
-        .filter(|mutation| mutation.kind() == OptimisticMutationKind::MetaDelete)
+        .filter(|mutation| mutation.kind() == BufferMutationOp::Delete)
         .map(|mutation| mutation.key().to_vec())
         .collect();
     deleted.sort();
@@ -2268,8 +2269,8 @@ fn exchange_partition_swaps_ids_auto_ids_and_notifier_payload() {
         470_100_010,
     );
     let partitioned_id = partitioned.created_id.expect("partitioned table id");
-    let old_partition_id = stored_table(&partitioned, partitioned_id)["partition"]
-        ["definitions"][0]["id"]
+    let old_partition_id = stored_table(&partitioned, partitioned_id)["partition"]["definitions"]
+        [0]["id"]
         .as_i64()
         .expect("partition id");
     apply(&mut store, &partitioned);
@@ -2329,12 +2330,18 @@ fn exchange_partition_swaps_ids_auto_ids_and_notifier_payload() {
     assert_eq!(new_standalone["name"]["L"], "nt");
     assert_eq!(new_standalone["id"], old_partition_id);
     assert!(exchanged.mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::MetaDelete
+        mutation.kind() == BufferMutationOp::Delete
             && mutation.key() == key::table_kv_key(112, old_standalone_id)
     }));
     for (key, expected) in [
-        (key::auto_table_id_kv_key(112, partitioned_id), b"22".as_slice()),
-        (key::auto_table_id_kv_key(112, old_partition_id), b"22".as_slice()),
+        (
+            key::auto_table_id_kv_key(112, partitioned_id),
+            b"22".as_slice(),
+        ),
+        (
+            key::auto_table_id_kv_key(112, old_partition_id),
+            b"22".as_slice(),
+        ),
         (
             key::auto_increment_id_kv_key(112, partitioned_id),
             b"44".as_slice(),
@@ -2358,8 +2365,7 @@ fn exchange_partition_swaps_ids_auto_ids_and_notifier_payload() {
     let events = notifier_events(&mut store, &exchanged);
     assert_eq!(events.len(), 1);
     let (_, event) = &events[0];
-    let (event_table, event_partition, event_standalone) =
-        event.exchange_partition_info();
+    let (event_table, event_partition, event_standalone) = event.exchange_partition_info();
     assert_eq!(event_table.id, partitioned_id);
     assert_eq!(event_partition.definitions.get(0).id, old_partition_id);
     assert_eq!(event_standalone.id, old_standalone_id);
@@ -2416,8 +2422,11 @@ fn exchange_partition_validation_default_and_admission_errors_match_go() {
     );
     assert_eq!(
         validated.warnings,
-        vec![(DdlWarningLevel::Warning, 1105,
-            "after the exchange, please analyze related table of the exchange to update statistics".to_owned()
+        vec![(
+            DdlWarningLevel::Warning,
+            1105,
+            "after the exchange, please analyze related table of the exchange to update statistics"
+                .to_owned()
         )]
     );
 
@@ -2478,8 +2487,12 @@ fn exchange_partition_validation_default_and_admission_errors_match_go() {
     assert_eq!(code, 1736);
     assert_eq!(message, "Tables have different definitions");
 
-    let view = match plan_ddl(&mut store, &view_statement("u6", "exchange_view", false), 470_100_030)
-        .expect("the view plans")
+    let view = match plan_ddl(
+        &mut store,
+        &view_statement("u6", "exchange_view", false),
+        470_100_030,
+    )
+    .expect("the view plans")
     {
         DdlPlan::Write(write) => *write,
         DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write: {detail}"),
@@ -2488,9 +2501,7 @@ fn exchange_partition_validation_default_and_admission_errors_match_go() {
     let (code, message) = admission(
         plan_ddl(
             &mut store,
-            &statement(
-                "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.exchange_view",
-            ),
+            &statement("ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.exchange_view"),
             470_100_031,
         )
         .expect_err("a view is Go ErrCheckNoSuchTable"),
@@ -2550,7 +2561,10 @@ fn exchange_partition_builds_gos_four_way_label_rule_patch() {
 
     let only_partition = swap.patch(&codec, &[make_rule(&partition_id)]);
     assert_eq!(only_partition.set_rules.get(0).id, standalone_id);
-    assert_eq!(only_partition.delete_rules.snapshot(), [partition_id.clone()]);
+    assert_eq!(
+        only_partition.delete_rules.snapshot(),
+        [partition_id.clone()]
+    );
 
     let only_standalone = swap.patch(&codec, &[make_rule(&standalone_id)]);
     assert_eq!(only_standalone.set_rules.get(0).id, partition_id);
@@ -2693,9 +2707,11 @@ fn alter_table_rename_moves_catalog_metadata_without_reissuing_ids() {
     );
     assert_eq!(renamed.diff.action_type.0, 14, "ActionRenameTable");
     assert_eq!(renamed.diff.old_schema_id, 112);
-    assert!(renamed.mutations.iter().any(|mutation| mutation.kind()
-        == OptimisticMutationKind::MetaDelete
-        && mutation.key() == key::table_kv_key(112, table_id)));
+    assert!(renamed
+        .mutations
+        .iter()
+        .any(|mutation| mutation.kind() == BufferMutationOp::Delete
+            && mutation.key() == key::table_kv_key(112, table_id)));
     apply(&mut store, &renamed);
     let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
         .expect("the renamed catalog loads");
@@ -2740,9 +2756,15 @@ fn alter_table_rename_moves_catalog_metadata_without_reissuing_ids() {
         let lowered = lower_ddl(&statement, "u6").unwrap().unwrap();
         let error = plan_ddl(&mut store, &lowered, 470_000_104).unwrap_err();
         if existing {
-            assert!(matches!(error, DdlPlanError::TableExists { .. }), "{error:?}");
+            assert!(
+                matches!(error, DdlPlanError::TableExists { .. }),
+                "{error:?}"
+            );
         } else {
-            assert!(matches!(error, DdlPlanError::TableNotExists { .. }), "{error:?}");
+            assert!(
+                matches!(error, DdlPlanError::TableNotExists { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -3070,7 +3092,7 @@ fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
         b"101"
     );
     assert!(converted.mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::MetaDelete
+        mutation.kind() == BufferMutationOp::Delete
             && mutation.key() == key::auto_table_id_kv_key(112, ai_table_id)
     }));
 
@@ -3123,7 +3145,7 @@ fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
         b"40"
     );
     assert!(separate.mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::MetaDelete
+        mutation.kind() == BufferMutationOp::Delete
             && mutation.key() == key::auto_table_id_kv_key(112, separate_table_id)
     }));
 }
@@ -3246,7 +3268,10 @@ fn create_index_auto_pre_split_marker_reaches_catalog_write() {
     );
     assert!(auto.auto_pre_split);
     assert_eq!(auto.backfill.first().unwrap().index.read().id, 1);
-    assert_eq!(stored_table(&auto, table_id)["index_info"][0]["idx_name"]["O"], "vi");
+    assert_eq!(
+        stored_table(&auto, table_id)["index_info"][0]["idx_name"]["O"],
+        "vi"
+    );
 
     let manual = plan(
         &mut store,
@@ -3589,13 +3614,13 @@ fn truncate_reallocates_the_table_id_and_restarts_the_allocators() {
     assert!(
         write.mutations.iter().any(|mutation| mutation.key()
             == key::table_kv_key(112, old_id).as_slice()
-            && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
+            && matches!(mutation.kind(), BufferMutationOp::Delete)),
         "the old table key is deleted"
     );
     assert!(
         write.mutations.iter().any(|mutation| mutation.key()
             == key::auto_table_id_kv_key(112, old_id).as_slice()
-            && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
+            && matches!(mutation.kind(), BufferMutationOp::Delete)),
         "the observed allocator is deleted with the old id"
     );
 }
@@ -3937,22 +3962,45 @@ fn a_modify_column_reorganizes_exactly_where_go_says_it_must() {
 fn prefix_index_spellings_preserve_key_part_lengths() {
     let mut store = bootstrapped();
     for (name, sql, unique) in [
-        ("pfx", "CREATE TABLE pfx(id BIGINT PRIMARY KEY,c VARCHAR(20),INDEX px(c(5)))", false),
-        ("pfx_unique", "CREATE TABLE pfx_unique(id BIGINT PRIMARY KEY,c VARCHAR(20),UNIQUE KEY px(c(5)))", true),
+        (
+            "pfx",
+            "CREATE TABLE pfx(id BIGINT PRIMARY KEY,c VARCHAR(20),INDEX px(c(5)))",
+            false,
+        ),
+        (
+            "pfx_unique",
+            "CREATE TABLE pfx_unique(id BIGINT PRIMARY KEY,c VARCHAR(20),UNIQUE KEY px(c(5)))",
+            true,
+        ),
     ] {
         let write = plan(&mut store, sql, 300);
         let stored = stored_table(&write, write.created_id.unwrap());
-        assert_eq!(stored["index_info"][0]["idx_cols"][0]["length"], 5, "{name}: {stored}");
+        assert_eq!(
+            stored["index_info"][0]["idx_cols"][0]["length"], 5,
+            "{name}: {stored}"
+        );
         assert_eq!(stored["index_info"][0]["is_unique"], unique);
         apply(&mut store, &write);
     }
-    let create = plan(&mut store, "CREATE TABLE pfx2(id BIGINT PRIMARY KEY,c VARCHAR(20))", 301);
+    let create = plan(
+        &mut store,
+        "CREATE TABLE pfx2(id BIGINT PRIMARY KEY,c VARCHAR(20))",
+        301,
+    );
     let id = create.created_id.unwrap();
     apply(&mut store, &create);
-    for (sql, name) in [("CREATE INDEX px ON pfx2(c(5))", "px"), ("ALTER TABLE pfx2 ADD INDEX ax(c(5))", "ax")] {
+    for (sql, name) in [
+        ("CREATE INDEX px ON pfx2(c(5))", "px"),
+        ("ALTER TABLE pfx2 ADD INDEX ax(c(5))", "ax"),
+    ] {
         let write = plan(&mut store, sql, 302);
         let stored = stored_table(&write, id);
-        let index = stored["index_info"].as_array().unwrap().iter().find(|index| index["idx_name"]["O"] == name).unwrap();
+        let index = stored["index_info"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|index| index["idx_name"]["O"] == name)
+            .unwrap();
         assert_eq!(index["idx_cols"][0]["length"], 5);
         apply(&mut store, &write);
     }
@@ -4013,7 +4061,7 @@ fn a_create_view_publishes_a_view_table_info() {
     let put = write
         .mutations
         .iter()
-        .find(|m| m.kind() == OptimisticMutationKind::MetaPut && m.value().starts_with(b"{"))
+        .find(|m| m.kind() == BufferMutationOp::Set && m.value().starts_with(b"{"))
         .expect("the view's TableInfo is written");
     let info: tidb_model::TableInfo =
         serde_json::from_slice(put.value()).expect("the published value is a TableInfo");
@@ -4044,7 +4092,7 @@ fn a_create_view_publishes_a_view_table_info() {
         replace
             .mutations
             .iter()
-            .any(|m| m.kind() == OptimisticMutationKind::MetaDelete),
+            .any(|m| m.kind() == BufferMutationOp::Delete),
         "the old view's key is deleted"
     );
     apply(&mut store, &replace);
@@ -4128,8 +4176,7 @@ fn a_check_constraint_is_ignored_with_gos_warning() {
 
 #[test]
 fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
-    let context =
-        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
     let parsed = tidb_parser::parse(
         "CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100) NOT ENFORCED)",
     )
@@ -4168,9 +4215,8 @@ fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
         lower_ddl_with_context(&parsed, "u6", &context)
             .expect_err("enabled Go CHECK validation rejects the fixture")
     };
-    let duplicate = refusal(
-        "CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v > 0), CONSTRAINT c CHECK(v < 2))",
-    );
+    let duplicate =
+        refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(v > 0), CONSTRAINT c CHECK(v < 2))");
     assert_eq!(duplicate.code, 3822);
     assert_eq!(duplicate.reason, "Duplicate check constraint name 'c'.");
     let missing = refusal("CREATE TABLE ck (v INT, CONSTRAINT c CHECK(absent > 0))");
@@ -4214,8 +4260,7 @@ fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
 
 #[test]
 fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
-    let context =
-        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str| {
         let parsed = tidb_parser::parse(sql).expect("CHECK DDL parses");
         lower_ddl_with_context(&parsed, "u6", &context)
@@ -4312,32 +4357,31 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
         ),
         "{missing_source:?}"
     );
-    let expect_temporary_like_refusal =
-        |store: &mut MetaStore,
-         source: &tidb_model::TableInfo,
-         target: &str,
-         start_ts: u64,
-         code: u16,
-         reason: &str| {
-            store.put(
-                source_key.clone(),
-                value::serialize_table_info(source).expect("the test source encodes"),
-            );
-            let error = plan_ddl(
-                store,
-                &lower(&format!(
-                    "CREATE GLOBAL TEMPORARY TABLE {target} LIKE ck_dep \
+    let expect_temporary_like_refusal = |store: &mut MetaStore,
+                                         source: &tidb_model::TableInfo,
+                                         target: &str,
+                                         start_ts: u64,
+                                         code: u16,
+                                         reason: &str| {
+        store.put(
+            source_key.clone(),
+            value::serialize_table_info(source).expect("the test source encodes"),
+        );
+        let error = plan_ddl(
+            store,
+            &lower(&format!(
+                "CREATE GLOBAL TEMPORARY TABLE {target} LIKE ck_dep \
                      ON COMMIT DELETE ROWS"
-                )),
-                start_ts,
-            )
-            .expect_err("Go refuses this inherited temporary-table setting");
-            let DdlPlanError::Admission(error) = error else {
-                panic!("expected a coded DDL refusal, got {error:?}")
-            };
-            assert_eq!(error.code, code, "{target}");
-            assert_eq!(error.reason, reason, "{target}");
+            )),
+            start_ts,
+        )
+        .expect_err("Go refuses this inherited temporary-table setting");
+        let DdlPlanError::Admission(error) = error else {
+            panic!("expected a coded DDL refusal, got {error:?}")
         };
+        assert_eq!(error.code, code, "{target}");
+        assert_eq!(error.reason, reason, "{target}");
+    };
 
     let mut invalid_source = clean_source.clone_like_go();
     invalid_source.temp_table_type = tidb_model::TempTableType::GLOBAL;
@@ -4419,12 +4463,12 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
     let DdlPlan::Write(create_like) = create_like else {
         panic!("CREATE LIKE writes metadata")
     };
-    let copy_id = create_like.created_id.expect("CREATE LIKE allocates a table id");
-    let copied: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &create_like,
-        &key::table_kv_key(112, copy_id),
-    ))
-    .expect("copied table decodes");
+    let copy_id = create_like
+        .created_id
+        .expect("CREATE LIKE allocates a table id");
+    let copied: tidb_model::TableInfo =
+        serde_json::from_slice(stored_value(&create_like, &key::table_kv_key(112, copy_id)))
+            .expect("copied table decodes");
     let replica = copied
         .tiflash_replica
         .as_ref()
@@ -4472,9 +4516,7 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
 
     let temporary_like = plan_ddl(
         &mut store,
-        &lower(
-            "CREATE GLOBAL TEMPORARY TABLE ck_temp LIKE ck_dep ON COMMIT DELETE ROWS",
-        ),
+        &lower("CREATE GLOBAL TEMPORARY TABLE ck_temp LIKE ck_dep ON COMMIT DELETE ROWS"),
         1_104,
     )
     .expect("temporary CREATE LIKE plans");
@@ -4520,9 +4562,8 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
         .expect("DROP CHECK uses the Go job table");
     let drop_job_id = submission.job.id;
     apply_mutations(&mut store, &submission.mutations);
-    let write_only =
-        plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 1_107)
-            .expect("DROP CHECK publishes WriteOnly");
+    let write_only = plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 1_107)
+        .expect("DROP CHECK publishes WriteOnly");
     assert!(!write_only.terminal);
     apply(&mut store, &write_only.write);
     let removed = plan_persisted_check_constraint_job_step(&mut store, drop_job_id, 1_108)
@@ -4554,8 +4595,7 @@ fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
 #[test]
 fn inline_add_column_check_matches_gos_discard_and_off_warning() {
     let mut store = bootstrapped();
-    let enabled =
-        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let enabled = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
     let create = tidb_parser::parse("CREATE TABLE ck_inline (a INT)").expect("CREATE parses");
     let create = lower_ddl_with_context(&create, "u6", &enabled)
         .expect("CREATE is admitted")
@@ -4578,20 +4618,17 @@ fn inline_add_column_check_matches_gos_discard_and_off_warning() {
     let DdlPlan::Write(add) = add else {
         panic!("ADD COLUMN writes metadata")
     };
-    let added: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &add,
-        &key::table_kv_key(112, table_id),
-    ))
-    .expect("post-ADD table decodes");
+    let added: tidb_model::TableInfo =
+        serde_json::from_slice(stored_value(&add, &key::table_kv_key(112, table_id)))
+            .expect("post-ADD table decodes");
     assert_eq!(added.columns.len(), 2);
     assert!(added.constraints.is_empty());
     assert_eq!(enabled.warning_count(), 0);
 
     let off = tidb_executor::StmtContext::for_query();
-    let add_off = tidb_parser::parse(
-        "ALTER TABLE ck_inline ADD COLUMN c INT CONSTRAINT c_off CHECK (c > 0)",
-    )
-    .expect("second ADD COLUMN parses");
+    let add_off =
+        tidb_parser::parse("ALTER TABLE ck_inline ADD COLUMN c INT CONSTRAINT c_off CHECK (c > 0)")
+            .expect("second ADD COLUMN parses");
     let add_off = lower_ddl_with_context(&add_off, "u6", &off)
         .expect("Go admits the OFF form")
         .expect("ADD COLUMN owns a catalog route");
@@ -4606,8 +4643,7 @@ fn inline_add_column_check_matches_gos_discard_and_off_warning() {
 #[test]
 fn grouped_add_columns_splits_table_check_into_one_multi_schema_change() {
     let mut store = bootstrapped();
-    let context =
-        tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str, context: &tidb_executor::StmtContext| {
         let parsed = tidb_parser::parse(sql).expect("grouped ADD parses");
         lower_ddl_with_context(&parsed, "u6", context)
@@ -4645,11 +4681,9 @@ fn grouped_add_columns_splits_table_check_into_one_multi_schema_change() {
         .as_ref()
         .expect("an enforced grouped CHECK validates existing rows");
     assert_eq!(validation.constraint_name, "c_grouped");
-    let changed: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &grouped,
-        &key::table_kv_key(112, table_id),
-    ))
-    .expect("grouped candidate decodes");
+    let changed: tidb_model::TableInfo =
+        serde_json::from_slice(stored_value(&grouped, &key::table_kv_key(112, table_id)))
+            .expect("grouped candidate decodes");
     assert_eq!(changed.columns.len(), 2);
     assert_eq!(changed.constraints.len(), 1);
     assert_eq!(
@@ -5065,11 +5099,7 @@ fn cluster_truncate_partition_reassigns_only_selected_physical_ids() {
     apply(&mut store, &created);
     let before = partition_ids(&mut store, "pt");
 
-    let truncated = plan(
-        &mut store,
-        "ALTER TABLE u6.pt TRUNCATE PARTITION p0, p2",
-        8,
-    );
+    let truncated = plan(&mut store, "ALTER TABLE u6.pt TRUNCATE PARTITION p0, p2", 8);
     assert_eq!(
         truncated.diff.action_type,
         tidb_model::ActionType::ACTION_TRUNCATE_TABLE_PARTITION
@@ -5158,7 +5188,10 @@ fn create_table_like_clears_materialized_view_metadata() {
             .expect("the copy exists"),
     )
     .expect("the copy decodes");
-    assert!(copy.materialized_view_log.is_none(), "Go clears the log metadata");
+    assert!(
+        copy.materialized_view_log.is_none(),
+        "Go clears the log metadata"
+    );
     assert!(copy.materialized_view.is_none());
     assert!(copy.materialized_view_base.is_none());
 
@@ -5191,7 +5224,10 @@ fn materialized_view_lowering_follows_go_admission_order() {
     let mut enabled = StmtContext::for_query().with_enable_mview(true);
     enabled.set_session_vars_image(
         [
-            ("tidb_mview_maintain_import_threads".to_owned(), "7".to_owned()),
+            (
+                "tidb_mview_maintain_import_threads".to_owned(),
+                "7".to_owned(),
+            ),
             ("tidb_max_tiflash_threads".to_owned(), "16".to_owned()),
         ]
         .into_iter()
@@ -5260,8 +5296,11 @@ fn materialized_view_lowering_follows_go_admission_order() {
     let base_id = create.created_id.expect("base table id");
 
     // Go: the schema must exist at planning.
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW nowhere.mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)")
-        .expect_err("unknown schema refuses");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW nowhere.mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)",
+    )
+    .expect_err("unknown schema refuses");
     assert!(matches!(error, DdlPlanError::UnknownDatabase(ref db) if db == "nowhere"));
 
     // Go `validateCommentLength`: the 1024-byte comment cap.
@@ -5280,8 +5319,11 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go: only a plain SELECT is accepted.
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (c) AS (SELECT 1 UNION SELECT 2)")
-        .expect_err("set operations refuse");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW mv (c) AS (SELECT 1 UNION SELECT 2)",
+    )
+    .expect_err("set operations refuse");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5292,8 +5334,11 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go `extractSingleTableNameFromSelect`: comma joins refuse.
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (a) AS (SELECT * FROM a, b GROUP BY a)")
-        .expect_err("multi-table refuses");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW mv (a) AS (SELECT * FROM a, b GROUP BY a)",
+    )
+    .expect_err("multi-table refuses");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5304,8 +5349,11 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go: the base table must live in the same schema.
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM other.mv_base GROUP BY id)")
-        .expect_err("cross-schema base refuses");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM other.mv_base GROUP BY id)",
+    )
+    .expect_err("cross-schema base refuses");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5316,16 +5364,22 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go: the base table must exist.
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM no_base GROUP BY id)")
-        .expect_err("missing base refuses");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM no_base GROUP BY id)",
+    )
+    .expect_err("missing base refuses");
     assert!(matches!(
         error,
         DdlPlanError::TableNotExists { ref table, .. } if table == "no_base"
     ));
 
     // Go: the `$mlog$` physical table must exist for the base.
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)")
-        .expect_err("missing mlog refuses");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)",
+    )
+    .expect_err("missing mlog refuses");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5348,8 +5402,11 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go `validateCreateMaterializedViewQuery`: GROUP BY is required.
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base)")
-        .expect_err("GROUP BY is required");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base)",
+    )
+    .expect_err("GROUP BY is required");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5384,8 +5441,11 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // A declared column list that disagrees with the query output refuses.
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (a, b, c) AS (SELECT id, COUNT(1) FROM mv_base GROUP BY id)")
-        .expect_err("the column count is checked against the query output");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW mv (a, b, c) AS (SELECT id, COUNT(1) FROM mv_base GROUP BY id)",
+    )
+    .expect_err("the column count is checked against the query output");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5409,7 +5469,10 @@ fn materialized_view_lowering_follows_go_admission_order() {
     assert_eq!(spec.job.state, JobState::QUEUEING);
     assert_eq!(spec.job.table_name.to_utf8_lossy_go(), "mv");
     assert_eq!(spec.job.involving_schema_info.len(), 3);
-    assert!(!spec.id_allocated, "the view table ID is assigned at insert");
+    assert!(
+        !spec.id_allocated,
+        "the view table ID is assigned at insert"
+    );
     assert!(spec.job.may_need_reorg(), "the initial build is reorg DDL");
     // Go `initMaterializedViewReorgMetaFromVariables` + the twelve
     // MV-execution session vars: the reorg metadata and the maintenance
@@ -5468,7 +5531,9 @@ fn materialized_view_lowering_follows_go_admission_order() {
         Some("16".into())
     );
     assert_eq!(
-        job_vars.get("tidb_scatter_region").map(|v| v.to_utf8_lossy_go()),
+        job_vars
+            .get("tidb_scatter_region")
+            .map(|v| v.to_utf8_lossy_go()),
         Some(String::new())
     );
 
@@ -5479,45 +5544,49 @@ fn materialized_view_lowering_follows_go_admission_order() {
     // The RwLock guards must drop before the insertion attempt, whose GID
     // assignment writes the same shared TableInfo.
     {
-    let view = table_shared.read();
-    assert_eq!(view.name.original(), "mv");
-    assert_eq!(
-        view.materialized_view
-            .as_ref()
-            .expect("the view metadata is set")
-            .read()
-            .base_table_ids
-            .iter()
-            .copied()
-            .collect::<Vec<_>>(),
-        vec![base_id]
-    );
-    assert_eq!(
-        view.materialized_view.as_ref().unwrap().read().refresh_method,
-        "FAST"
-    );
-    let handles: Vec<_> = view.columns.iter_handles().into_iter().flatten().collect();
-    let columns: Vec<_> = handles.iter().map(|column| column.read()).collect();
-    assert_eq!(columns.len(), 2);
-    assert_eq!(columns[0].name.original(), "id");
-    assert_eq!(columns[0].field_type.code(), tidb_datatype::FieldTypeCode::Long);
-    assert_eq!(
-        columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY,
-        0,
-        "Go deletes the key flags on the derived column"
-    );
-    assert_eq!(columns[1].name.original(), "c");
-    assert_eq!(
-        columns[1].field_type.code(),
-        tidb_datatype::FieldTypeCode::LongLong,
-        "COUNT derives the Go bigint output type"
-    );
-    // One-row-per-group constraint: the only group key `id` is NOT NULL, so
-    // Go builds a PRIMARY KEY over the declared column.
-    assert!(view
-        .indices
-        .iter_deref()
-        .any(|index| index.read().primary));
+        let view = table_shared.read();
+        assert_eq!(view.name.original(), "mv");
+        assert_eq!(
+            view.materialized_view
+                .as_ref()
+                .expect("the view metadata is set")
+                .read()
+                .base_table_ids
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![base_id]
+        );
+        assert_eq!(
+            view.materialized_view
+                .as_ref()
+                .unwrap()
+                .read()
+                .refresh_method,
+            "FAST"
+        );
+        let handles: Vec<_> = view.columns.iter_handles().into_iter().flatten().collect();
+        let columns: Vec<_> = handles.iter().map(|column| column.read()).collect();
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].name.original(), "id");
+        assert_eq!(
+            columns[0].field_type.code(),
+            tidb_datatype::FieldTypeCode::Long
+        );
+        assert_eq!(
+            columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY,
+            0,
+            "Go deletes the key flags on the derived column"
+        );
+        assert_eq!(columns[1].name.original(), "c");
+        assert_eq!(
+            columns[1].field_type.code(),
+            tidb_datatype::FieldTypeCode::LongLong,
+            "COUNT derives the Go bigint output type"
+        );
+        // One-row-per-group constraint: the only group key `id` is NOT NULL, so
+        // Go builds a PRIMARY KEY over the declared column.
+        assert!(view.indices.iter_deref().any(|index| index.read().primary));
     }
 
     // The view's own worker (the initial-build reorg phase) is not wired yet;
@@ -5672,8 +5741,11 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
         panic!("CREATE writes metadata")
     };
     apply(&mut store, &json_create);
-    let error = submit(&mut store, "CREATE MATERIALIZED VIEW LOG ON json_base (id, j)")
-        .expect_err("JSON columns refuse");
+    let error = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW LOG ON json_base (id, j)",
+    )
+    .expect_err("JSON columns refuse");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5693,7 +5765,10 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
     )
     .expect("Go submission preflight succeeds")
     .expect("the log create owns a job spec");
-    assert_eq!(spec.job.type_, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG);
+    assert_eq!(
+        spec.job.type_,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG
+    );
     assert_eq!(spec.job.state, JobState::QUEUEING);
     assert_eq!(spec.job.schema_name.to_utf8_lossy_go(), "u6");
     assert_eq!(spec.job.table_name.to_utf8_lossy_go(), "$mlog$mv_base");
@@ -5714,61 +5789,73 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
     // must drop before the insertion attempt, whose GID assignment writes the
     // same shared TableInfo.
     {
-    let table = table_shared.read();
-    assert_eq!(table.name.original(), "$mlog$mv_base");
-    assert_eq!(table.id, 0, "the build leaves the ID to the submission");
-    {
-        let log = table
-            .materialized_view_log
-            .as_ref()
-            .expect("the log metadata is set")
-            .read();
-        assert_eq!(log.base_table_id, base_id);
-        assert_eq!(log.purge_method, "DEFERRED");
-        assert!(
-            log.purge_next.contains("2027-01-01"),
-            "the NEXT clause restores canonically: {}",
-            log.purge_next
-        );
-        assert_eq!(log.log_accumulation_alert_rows, Some(1000));
+        let table = table_shared.read();
+        assert_eq!(table.name.original(), "$mlog$mv_base");
+        assert_eq!(table.id, 0, "the build leaves the ID to the submission");
+        {
+            let log = table
+                .materialized_view_log
+                .as_ref()
+                .expect("the log metadata is set")
+                .read();
+            assert_eq!(log.base_table_id, base_id);
+            assert_eq!(log.purge_method, "DEFERRED");
+            assert!(
+                log.purge_next.contains("2027-01-01"),
+                "the NEXT clause restores canonically: {}",
+                log.purge_next
+            );
+            assert_eq!(log.log_accumulation_alert_rows, Some(1000));
+            assert_eq!(
+                log.columns
+                    .iter()
+                    .map(|c| c.original().to_owned())
+                    .collect::<Vec<_>>(),
+                vec!["id".to_owned(), "k".to_owned()],
+            );
+        }
+        let handles: Vec<_> = table.columns.iter_handles().into_iter().flatten().collect();
+        let columns: Vec<_> = handles.iter().map(|column| column.read()).collect();
+        assert_eq!(columns.len(), 4);
+        assert_eq!(columns[0].name.original(), "id");
         assert_eq!(
-            log.columns.iter().map(|c| c.original().to_owned()).collect::<Vec<_>>(),
-            vec!["id".to_owned(), "k".to_owned()],
+            columns[0].field_type.code(),
+            tidb_datatype::FieldTypeCode::Long
         );
-    }
-    let handles: Vec<_> = table.columns.iter_handles().into_iter().flatten().collect();
-    let columns: Vec<_> = handles.iter().map(|column| column.read()).collect();
-    assert_eq!(columns.len(), 4);
-    assert_eq!(columns[0].name.original(), "id");
-    assert_eq!(columns[0].field_type.code(), tidb_datatype::FieldTypeCode::Long);
-    assert_eq!(
-        columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY,
-        0,
-        "Go deletes the key flags on the log copy"
-    );
-    assert_eq!(
-        columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::AUTO_INCREMENT,
-        0,
-        "Go deletes the auto-increment flag on the log copy"
-    );
-    assert_ne!(
-        columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL,
-        0,
-        "NOT NULL travels with the copy"
-    );
-    assert_eq!(columns[1].name.original(), "k");
-    assert_eq!(columns[2].name.original(), "_MLOG$_DML_TYPE");
-    assert_eq!(columns[2].field_type.code(), tidb_datatype::FieldTypeCode::Varchar);
-    assert_eq!(columns[2].field_type.flen(), 1);
-    assert_eq!(columns[2].field_type.charset_name(), "utf8mb4");
-    assert_ne!(
-        columns[2].field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL,
-        0,
-        "Go sets NOT NULL on the DML-type column"
-    );
-    assert_eq!(columns[3].name.original(), "_MLOG$_OLD_NEW");
-    assert_eq!(columns[3].field_type.code(), tidb_datatype::FieldTypeCode::Tiny);
-    assert_eq!(columns[3].field_type.flen(), 4);
+        assert_eq!(
+            columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY,
+            0,
+            "Go deletes the key flags on the log copy"
+        );
+        assert_eq!(
+            columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::AUTO_INCREMENT,
+            0,
+            "Go deletes the auto-increment flag on the log copy"
+        );
+        assert_ne!(
+            columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL,
+            0,
+            "NOT NULL travels with the copy"
+        );
+        assert_eq!(columns[1].name.original(), "k");
+        assert_eq!(columns[2].name.original(), "_MLOG$_DML_TYPE");
+        assert_eq!(
+            columns[2].field_type.code(),
+            tidb_datatype::FieldTypeCode::Varchar
+        );
+        assert_eq!(columns[2].field_type.flen(), 1);
+        assert_eq!(columns[2].field_type.charset_name(), "utf8mb4");
+        assert_ne!(
+            columns[2].field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL,
+            0,
+            "Go sets NOT NULL on the DML-type column"
+        );
+        assert_eq!(columns[3].name.original(), "_MLOG$_OLD_NEW");
+        assert_eq!(
+            columns[3].field_type.code(),
+            tidb_datatype::FieldTypeCode::Tiny
+        );
+        assert_eq!(columns[3].field_type.flen(), 4);
     }
 
     // The insertion attempt assigns the global IDs (job + table) and lands
@@ -5787,7 +5874,10 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
 
     assert_ne!(spec.job.id, 0, "the job ID is assigned");
     let assigned_table_id = table_shared.read().id;
-    assert_eq!(spec.job.table_id, assigned_table_id, "Job.TableID follows the args");
+    assert_eq!(
+        spec.job.table_id, assigned_table_id,
+        "Job.TableID follows the args"
+    );
     assert_ne!(assigned_table_id, 0, "the args' TableInfo carries its ID");
     let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
     let active = job_table
@@ -5796,9 +5886,11 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
         .into_iter()
         .find(|active| active.job.id == spec.job.id)
         .expect("the submitted job row is active");
-    assert_eq!(active.job.type_, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG);
+    assert_eq!(
+        active.job.type_,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG
+    );
 }
-
 
 /// Go `onCreateMaterializedViewLog` (master `94a9cbedab`): one owner step
 /// turns the submitted job into the created `$mlog$` table, the base's
@@ -6008,12 +6100,8 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
         .expect("the queued row updates");
     apply_mutations(&mut store, &rewrite);
 
-    let step = plan_persisted_materialized_view_log_job_step(
-        &mut store,
-        rollback_job_id,
-        1_505,
-    )
-    .expect("the rollback step plans");
+    let step = plan_persisted_materialized_view_log_job_step(&mut store, rollback_job_id, 1_505)
+        .expect("the rollback step plans");
     assert!(step.terminal);
     apply_mutations(&mut store, &step.write.mutations);
 
@@ -6039,7 +6127,6 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
         .expect("the rolled-back job is in history");
     assert_eq!(finished.state, JobState::ROLLBACK_DONE);
 }
-
 
 /// Go `onCreateMaterializedView` (master `94a9cbedab`), phase 1: the owner
 /// step checks every base, lands the view table PUBLIC, records the view in
@@ -6098,7 +6185,10 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     let log_step = plan_persisted_materialized_view_log_job_step(&mut store, log_job_id, 1_602)
         .expect("the log worker step plans");
     apply_mutations(&mut store, &log_step.write.mutations);
-    let mlog_id = log_step.write.created_id.expect("the log worker created the mlog");
+    let mlog_id = log_step
+        .write
+        .created_id
+        .expect("the log worker created the mlog");
 
     // Submit the view create (batch 16 machinery).
     let mut spec = prepare_materialized_view_job_submission(
@@ -6180,8 +6270,9 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     drop(base_meta);
 
     // The refresh-info prewrite row records the phase's read TSO.
-    let refresh_table = tidb_exec::mview_refresh_info_table::MviewRefreshInfoTable::locate(&catalog)
-        .expect("the refresh table exists");
+    let refresh_table =
+        tidb_exec::mview_refresh_info_table::MviewRefreshInfoTable::locate(&catalog)
+            .expect("the refresh table exists");
     let row = refresh_table
         .find(&mut store, view_id)
         .expect("the refresh table scans")
@@ -6221,8 +6312,8 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         let mut values = tidb_exec::system_row_write::RowValues::new();
         values.insert(view_info_columns(&base_info, 0), Datum::Int(id));
         values.insert(view_info_columns(&base_info, 1), Datum::Int(k));
-        let mutations = store_clustered_row(&base_info, None, &values)
-            .expect("the base row encodes");
+        let mutations =
+            store_clustered_row(&base_info, None, &values).expect("the base row encodes");
         apply_mutations(&mut store, &mutations);
     }
 
@@ -6255,7 +6346,11 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     };
     assert_eq!(
         read_view_rows(&mut store, &view_info),
-        vec![vec![Datum::Int(1), Datum::Int(1)], vec![Datum::Int(2), Datum::Int(1)], vec![Datum::Int(3), Datum::Int(1)]],
+        vec![
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(2), Datum::Int(1)],
+            vec![Datum::Int(3), Datum::Int(1)]
+        ],
     );
 
     // The completed job is DONE in history with every affected table.
@@ -6279,10 +6374,7 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         .flatten()
         .map(|table| table.read().name.original().to_owned())
         .collect();
-    assert_eq!(
-        finished_tables,
-        vec!["mv_base".to_owned(), "mv".to_owned()]
-    );
+    assert_eq!(finished_tables, vec!["mv_base".to_owned(), "mv".to_owned()]);
 
     // Rollback: a second view on another base with its own log, whose build
     // never ran -- persist Go's Rollingback transition after phase 1, then
@@ -6320,12 +6412,9 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     .expect("the log insertion plans");
     apply_mutations(&mut store, &mutations);
     drop(cleanup);
-    let log_step = plan_persisted_materialized_view_log_job_step(
-        &mut store,
-        log_spec.job.id,
-        1_609,
-    )
-    .expect("the second log worker step plans");
+    let log_step =
+        plan_persisted_materialized_view_log_job_step(&mut store, log_spec.job.id, 1_609)
+            .expect("the second log worker step plans");
     apply_mutations(&mut store, &log_step.write.mutations);
 
     let mut view_spec = prepare_materialized_view_job_submission(
@@ -6355,13 +6444,9 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     };
 
     // Phase 1 only.
-    let step = plan_persisted_materialized_view_create_job_step(
-        &mut store,
-        view_job_id,
-        1_611,
-        None,
-    )
-    .expect("phase 1 plans");
+    let step =
+        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_611, None)
+            .expect("phase 1 plans");
     assert!(!step.terminal);
     apply_mutations(&mut store, &step.write.mutations);
 
@@ -6381,13 +6466,9 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         .expect("the queued row updates");
     apply_mutations(&mut store, &rewrite);
 
-    let step = plan_persisted_materialized_view_create_job_step(
-        &mut store,
-        view_job_id,
-        1_613,
-        None,
-    )
-    .expect("the rollback step plans");
+    let step =
+        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_613, None)
+            .expect("the rollback step plans");
     assert!(step.terminal);
     apply_mutations(&mut store, &step.write.mutations);
 
@@ -6418,8 +6499,9 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         base_meta.mview_ids.is_empty(),
         "the rollback removes the view from the base"
     );
-    let refresh_table = tidb_exec::mview_refresh_info_table::MviewRefreshInfoTable::locate(&catalog)
-        .expect("the refresh table exists");
+    let refresh_table =
+        tidb_exec::mview_refresh_info_table::MviewRefreshInfoTable::locate(&catalog)
+            .expect("the refresh table exists");
     assert!(
         refresh_table
             .find(&mut store, view_job_id)
@@ -6487,8 +6569,9 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
         apply_mutations(&mut store, &mutations);
         drop(cleanup);
     }
-    let log_step = plan_persisted_materialized_view_log_job_step(&mut store, log_spec.job.id, 1_702)
-        .expect("the log worker step plans");
+    let log_step =
+        plan_persisted_materialized_view_log_job_step(&mut store, log_spec.job.id, 1_702)
+            .expect("the log worker step plans");
     apply_mutations(&mut store, &log_step.write.mutations);
 
     let mut spec = prepare_materialized_view_job_submission(
@@ -6523,7 +6606,10 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
 
     // Rows a crashed prior attempt left behind: the view's record range is
     // not empty when the build phase next ticks.
-    let view_id = phase_one.write.created_id.expect("phase 1 created the view");
+    let view_id = phase_one
+        .write
+        .created_id
+        .expect("phase 1 created the view");
     let residual_view = {
         let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
         let database = catalog
@@ -6541,8 +6627,8 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
     let mut values = tidb_exec::system_row_write::RowValues::new();
     values.insert(view_info_columns(&residual_view, 0), Datum::Int(7));
     values.insert(view_info_columns(&residual_view, 1), Datum::Int(1));
-    let mutations = store_clustered_row(&residual_view, None, &values)
-        .expect("the residual row encodes");
+    let mutations =
+        store_clustered_row(&residual_view, None, &values).expect("the residual row encodes");
     apply_mutations(&mut store, &mutations);
 
     // The build tick refuses, moves the job to Rollingback, and stays
@@ -6603,13 +6689,10 @@ fn alter_materialized_view_succeeds_as_a_no_op_like_go() {
         "DROP MATERIALIZED VIEW LOG ON u6.mv_base",
         "DROP MATERIALIZED VIEW LOG IF EXISTS ON u6.mv_base",
     ] {
-        let statement = prepare_cluster_ddl_with_context(
-            sql,
-            "u6",
-            &tidb_executor::StmtContext::for_query(),
-        )
-        .expect("the statement lowers")
-        .unwrap_or_else(|| panic!("the no-op route owns {sql}"));
+        let statement =
+            prepare_cluster_ddl_with_context(sql, "u6", &tidb_executor::StmtContext::for_query())
+                .expect("the statement lowers")
+                .unwrap_or_else(|| panic!("the no-op route owns {sql}"));
         let plan = plan_ddl(&mut store, &statement, 1_801).expect("the no-op plans");
         let DdlPlan::AlreadySatisfied { warnings, .. } = plan else {
             panic!("{sql} plans as a zero-write success")
@@ -6698,9 +6781,8 @@ fn read_view_rows(
         .expect("the view registers");
     let context = tidb_executor::StmtContext::for_query();
     let sql = format!("SELECT * FROM {} ORDER BY 1", view.name.original());
-    let (_, rows) =
-        tidb_executor::run_select_meta_in(&sql, &catalog, "u6", &context)
-            .expect("the view rows read");
+    let (_, rows) = tidb_executor::run_select_meta_in(&sql, &catalog, "u6", &context)
+        .expect("the view rows read");
     rows
 }
 
@@ -6738,7 +6820,10 @@ fn materialized_view_log_preserves_text_column_types() {
 
     let mut spec = prepare_materialized_view_job_submission(
         &mut store,
-        &lower("CREATE MATERIALIZED VIEW LOG ON text_base (id, txt, vc)", "u6"),
+        &lower(
+            "CREATE MATERIALIZED VIEW LOG ON text_base (id, txt, vc)",
+            "u6",
+        ),
         1_701,
         false,
         0,

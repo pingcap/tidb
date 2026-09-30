@@ -171,7 +171,7 @@ pub enum TransactionAttemptPhase {
     PrimaryCommit,
     /// Synchronous commit of a non-primary batch.
     SecondaryCommit,
-    /// Synchronous cleanup of possibly-prewritten keys.
+    /// Cleanup of possibly-prewritten keys.
     BatchRollback,
 }
 
@@ -318,7 +318,7 @@ pub struct CommittedTransaction {
     pub secondary_failures: Vec<SecondaryCommitFailure>,
 }
 
-/// A definitive non-commit whose exact keys were all confirmed rolled back.
+/// A definitive non-commit. The client owns detached cleanup of prewrites.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RolledBackTransaction {
     /// Complete physical receipt.
@@ -352,7 +352,7 @@ pub struct UndeterminedTransaction {
 pub enum OptimisticCommitOutcome {
     /// Primary confirmed committed; secondary failures cannot change that fact.
     Committed(CommittedTransaction),
-    /// No primary attempt may have committed and cleanup confirmed rollback.
+    /// No primary attempt may have committed. Client cleanup runs independently.
     RolledBack(RolledBackTransaction),
     /// Every published primary attempt was definitively rejected, but cleanup was incomplete.
     CleanupFailed(CleanupFailedTransaction),
@@ -393,75 +393,6 @@ pub struct ReadOnlyTransaction {
     pub start_ts: u64,
     /// No Prewrite, Commit, or BatchRollback was published.
     pub state: OptimisticTransactionState,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum CoordinatorState {
-    New,
-    Reading,
-    Prewriting,
-    Prewritten,
-    PrimaryCommitting,
-    PrimaryCommitted,
-    /// TiKV committed the whole single-region transaction inside its prewrite.
-    OnePcCommitted,
-    /// The completed async-commit prewrite is itself the commit point.
-    AsyncCommitted,
-    SecondariesCommitting,
-    Committed,
-    RollingBack,
-    RolledBack,
-    CleanupFailed,
-    Undetermined,
-    ReadOnly,
-}
-
-impl CoordinatorState {
-    pub(super) fn transition(&mut self, next: Self) -> Result<(), TransactionCause> {
-        let valid = matches!(
-            (*self, next),
-            (Self::New, Self::Reading)
-                | (Self::Reading, Self::Reading)
-                | (Self::New | Self::Reading, Self::Prewriting)
-                | (Self::Prewriting, Self::Prewritten)
-                | (Self::Prewritten, Self::PrimaryCommitting)
-                // 1PC and async commit reach their commit point at the
-                // prewrite boundary, so neither passes through a primary
-                // Commit that could still fail the transaction.
-                | (Self::Prewritten, Self::OnePcCommitted | Self::AsyncCommitted)
-                | (Self::OnePcCommitted, Self::Committed)
-                | (
-                    Self::AsyncCommitted,
-                    Self::SecondariesCommitting | Self::Committed
-                )
-                | (
-                    Self::PrimaryCommitting,
-                    Self::PrimaryCommitted | Self::RollingBack | Self::Undetermined
-                )
-                // Under async commit or 1PC a published prewrite may already
-                // BE the commit point, so a prewrite that loses its answer
-                // leaves the transaction's outcome unknown rather than failed.
-                // Go `prewrite.go:352-361` sets the undetermined flag for
-                // exactly those protocols, and `2pc.go:1717-1737` then skips
-                // cleanup.
-                | (Self::Prewriting, Self::Undetermined)
-                | (Self::Prewriting | Self::Prewritten, Self::RollingBack)
-                | (Self::RollingBack, Self::RolledBack | Self::CleanupFailed)
-                | (
-                    Self::PrimaryCommitted,
-                    Self::SecondariesCommitting | Self::Committed
-                )
-                | (Self::SecondariesCommitting, Self::Committed)
-                | (Self::New | Self::Reading, Self::ReadOnly)
-        );
-        if !valid {
-            return Err(TransactionCause::InvalidResponse {
-                detail: format!("invalid optimistic 2PC state transition {self:?} -> {next:?}"),
-            });
-        }
-        *self = next;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -507,78 +438,5 @@ mod tests {
             undetermined.state(),
             OptimisticTransactionState::Undetermined
         );
-    }
-
-    /// The lifecycle a multi-statement transaction needs: read, read again, and
-    /// only then prewrite -- all on one transaction, so the prewrite carries
-    /// the timestamp the first read used. Re-entering `Reading` is what makes
-    /// a session hold one `start_ts` across its statements, and it must not
-    /// become a way around the publication boundaries.
-    #[test]
-    fn a_read_phase_may_be_re_entered_and_still_reach_the_write_phase() {
-        let mut state = CoordinatorState::New;
-        for _ in 0..4 {
-            state
-                .transition(CoordinatorState::Reading)
-                .expect("a further statement of the same transaction reads again");
-        }
-        state
-            .transition(CoordinatorState::Prewriting)
-            .expect("COMMIT prewrites the transaction the statements read on");
-        state.transition(CoordinatorState::Prewritten).unwrap();
-        state
-            .transition(CoordinatorState::PrimaryCommitting)
-            .unwrap();
-        state
-            .transition(CoordinatorState::PrimaryCommitted)
-            .unwrap();
-        state.transition(CoordinatorState::Committed).unwrap();
-    }
-
-    /// Re-entry ends where the transaction does: once a terminal state is
-    /// reached, no further read or write may reuse this `start_ts`.
-    #[test]
-    fn a_finished_transaction_can_never_re_enter_the_read_phase() {
-        for terminal in [
-            CoordinatorState::ReadOnly,
-            CoordinatorState::Committed,
-            CoordinatorState::RolledBack,
-            CoordinatorState::CleanupFailed,
-            CoordinatorState::Undetermined,
-        ] {
-            for next in [
-                CoordinatorState::Reading,
-                CoordinatorState::Prewriting,
-                CoordinatorState::PrimaryCommitting,
-            ] {
-                let mut state = terminal;
-                assert!(
-                    state.transition(next).is_err(),
-                    "{terminal:?} -> {next:?} must be refused"
-                );
-                assert_eq!(state, terminal, "a refused transition changes nothing");
-            }
-        }
-    }
-
-    #[test]
-    fn coordinator_state_machine_rejects_skipped_publication_boundaries() {
-        let mut state = CoordinatorState::New;
-        state.transition(CoordinatorState::Reading).unwrap();
-        state.transition(CoordinatorState::Prewriting).unwrap();
-        assert!(state
-            .transition(CoordinatorState::PrimaryCommitted)
-            .is_err());
-        state.transition(CoordinatorState::Prewritten).unwrap();
-        state
-            .transition(CoordinatorState::PrimaryCommitting)
-            .unwrap();
-        state
-            .transition(CoordinatorState::PrimaryCommitted)
-            .unwrap();
-        state
-            .transition(CoordinatorState::SecondariesCommitting)
-            .unwrap();
-        state.transition(CoordinatorState::Committed).unwrap();
     }
 }

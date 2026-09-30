@@ -30,11 +30,11 @@ use tidb_exec::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_exec::cluster_privilege_load::{
-    load_cluster_privileges, ClusterPrivileges, LoadedDbGrant, LoadedDefaultRole,
-    LoadedColumnGrant, LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant, LoadedUser,
+    load_cluster_privileges, ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant,
+    LoadedDefaultRole, LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant, LoadedUser,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment};
-use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
+use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 
 fn timestamp() -> Time {
     Time::from_date_checked(2026, 7, 29, 6, 12, 55, 0, TimeType::Timestamp, 0)
@@ -64,13 +64,21 @@ fn plan_account_write(
 ) -> Result<AccountWritePlan, AccountWriteError> {
     let mut snapshot = store.clone();
     tidb_exec::cluster_account_write::plan_account_write(
-        &mut snapshot, catalog, desired, now,
+        &mut snapshot,
+        catalog,
+        desired,
+        now,
         &mut |db, table, minimum, count| {
             let key = tidb_meta::key::auto_table_id_kv_key(db, table.id);
-            let current = store.pairs.get(&key)
-                .map(|bytes| tidb_meta::value::parse_int_value(bytes).unwrap()).unwrap_or(0);
+            let current = store
+                .pairs
+                .get(&key)
+                .map(|bytes| tidb_meta::value::parse_int_value(bytes).unwrap())
+                .unwrap_or(0);
             let base = current.max(minimum);
-            store.pairs.insert(key, tidb_meta::value::encode_int_value(base + count as i64));
+            store
+                .pairs
+                .insert(key, tidb_meta::value::encode_int_value(base + count as i64));
             Ok(base + 1)
         },
     )
@@ -98,39 +106,27 @@ impl MetaStore {
     /// assertion failure, and a `Delete`/`PutExisting` of a key that does not
     /// is the mirror of it. Both are the writer's own bugs, so this stand-in
     /// for the 2PC checks them rather than quietly doing the write.
-    fn apply(&mut self, mutations: &[OptimisticMutation]) {
+    fn apply(&mut self, mutations: &[BufferMutation]) {
         for mutation in mutations {
             let present = self.pairs.contains_key(mutation.key());
+            match mutation.assertion() {
+                tidb_txnkv::AssertionOp::AssertNotExist => {
+                    assert!(!present, "insert would overwrite an existing row")
+                }
+                tidb_txnkv::AssertionOp::AssertExist => {
+                    assert!(present, "write names a missing row")
+                }
+                _ => {}
+            }
             match mutation.kind() {
-                OptimisticMutationKind::Insert => {
-                    assert!(!present, "an Insert would have overwritten a stored row");
+                BufferMutationOp::Set => {
                     self.pairs
                         .insert(mutation.key().to_vec(), mutation.value().to_vec());
                 }
-                OptimisticMutationKind::PutExisting => {
-                    assert!(present, "a PutExisting named a row that is not stored");
-                    self.pairs
-                        .insert(mutation.key().to_vec(), mutation.value().to_vec());
-                }
-                OptimisticMutationKind::Delete => {
-                    assert!(present, "a Delete named a row that is not stored");
+                BufferMutationOp::Delete => {
                     self.pairs.remove(mutation.key());
                 }
-                OptimisticMutationKind::IndexDelete
-                | OptimisticMutationKind::MetaDelete
-                | OptimisticMutationKind::SystemRowDelete => {
-                    self.pairs.remove(mutation.key());
-                }
-                OptimisticMutationKind::IndexPut
-                | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::MetaPut
-                | OptimisticMutationKind::SystemRowPut => {
-                    self.pairs
-                        .insert(mutation.key().to_vec(), mutation.value().to_vec());
-                }
-                // TiKV's `Op_Lock` writes a lock and no value, so the
-                // committed store is unchanged by one.
-                OptimisticMutationKind::LockOnly => {}
+                BufferMutationOp::Lock => {}
             }
         }
     }
@@ -329,9 +325,13 @@ fn account_rows_do_not_commit_allocator_metadata() {
     desired.users.push(user("allocator_probe", "%", &[]));
     let catalog = store.catalog();
     let plan = plan_account_write(&mut store, &catalog, &desired, timestamp()).unwrap();
-    assert!(!plan.mutations.iter().any(|mutation|
-        matches!(mutation.kind(), OptimisticMutationKind::MetaPut)),
-        "Go reserves row IDs in an independent retryable transaction");
+    assert!(
+        !plan
+            .mutations
+            .iter()
+            .any(|mutation| mutation.key().starts_with(b"m")),
+        "Go reserves row IDs in an independent retryable transaction"
+    );
 }
 
 #[test]
@@ -344,9 +344,12 @@ fn aborted_account_plan_burns_ids_and_cannot_overwrite_peer_reservations() {
     let reserved = store.pairs.clone();
     drop(first); // Aborting the account transaction must not undo its reservation.
     let second = plan_account_write(&mut store, &catalog, &desired, timestamp()).unwrap();
-    let counter_keys: Vec<_> = store.pairs.iter()
+    let counter_keys: Vec<_> = store
+        .pairs
+        .iter()
         .filter(|(key, value)| reserved.get(*key) != Some(*value))
-        .map(|(key, _)| key.clone()).collect();
+        .map(|(key, _)| key.clone())
+        .collect();
     assert_eq!(counter_keys.len(), 1);
     let key = &counter_keys[0];
     let before = tidb_meta::value::parse_int_value(&reserved[key]).unwrap();
@@ -354,10 +357,20 @@ fn aborted_account_plan_burns_ids_and_cannot_overwrite_peer_reservations() {
     assert_eq!(after, before + 1);
     // A peer reserves again after the account snapshot. Committing the rows
     // must neither conflict on nor reset the peer's allocator watermark.
-    store.pairs.insert(key.clone(), tidb_meta::value::encode_int_value(after + 5000));
+    store.pairs.insert(
+        key.clone(),
+        tidb_meta::value::encode_int_value(after + 5000),
+    );
     store.apply(&second.mutations);
-    assert_eq!(tidb_meta::value::parse_int_value(&store.pairs[key]).unwrap(), after + 5000);
-    assert!(store.accounts().users.iter().any(|u| u.user == "allocator_probe"));
+    assert_eq!(
+        tidb_meta::value::parse_int_value(&store.pairs[key]).unwrap(),
+        after + 5000
+    );
+    assert!(store
+        .accounts()
+        .users
+        .iter()
+        .any(|u| u.user == "allocator_probe"));
 }
 
 #[test]

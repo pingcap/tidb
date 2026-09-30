@@ -26,6 +26,10 @@ pub use crate::proto::kvrpcpb::KeyError as ProtoKeyError;
 #[derive(Debug, Error)]
 #[allow(clippy::large_enum_variant)]
 pub enum Error {
+    /// The operation's cancellation scope was canceled, like Go's context.Canceled.
+    /// The variant, rather than its display text, identifies cancellation.
+    #[error("context canceled")]
+    ContextCanceled,
     /// A source-compatible singleton error category.
     #[error(transparent)]
     Static(#[from] crate::error::StaticError),
@@ -233,6 +237,28 @@ impl Error {
                 address, version, ..
             } => Some((address, *version)),
             _ => None,
+        }
+    }
+}
+
+// Preserve client-go's terminal error identity across the native retry boundary.
+// TiDB dispatches SQL error codes by type, never by the displayed message.
+impl From<crate::retry::RetryError> for Error {
+    fn from(error: crate::retry::RetryError) -> Self {
+        use crate::retry::{RetryError, RetryTerminal};
+        match error {
+            RetryError::Exhausted {
+                terminal: Some(RetryTerminal::Static(error)),
+                ..
+            } => Error::Static(error),
+            RetryError::Exhausted {
+                terminal: Some(RetryTerminal::PdServerTimeout),
+                reason,
+                ..
+            } => Error::PdServerTimeout(crate::error::new_pd_server_timeout(reason)),
+            RetryError::Interrupted(error) => Error::QueryInterruptedWithSignal(error),
+            RetryError::KillHandler(error) => error,
+            other => Error::StringError(other.to_string()),
         }
     }
 }

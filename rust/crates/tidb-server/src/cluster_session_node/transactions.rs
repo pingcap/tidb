@@ -75,9 +75,7 @@ use tidb_executor::cluster_storage::{
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::SchemaLeaseChecker;
-use tidb_txnkv::transaction::{
-    LockKeepAlive, LockWaitTime, PessimisticLockFailure, RealPessimisticTransaction,
-};
+use tidb_txnkv::transaction::{LockWaitTime, PessimisticLockFailure, RealPessimisticTransaction};
 use tidb_txnkv::Key;
 
 use crate::sql_node::SqlQueryError;
@@ -193,11 +191,14 @@ pub trait ClusterTransactions: Send + Sync {
     /// that produced it.
     fn commit_optimistic_mutations(
         &self,
-        mutations: Vec<tidb_txnkv::transaction::OptimisticMutation>,
+        mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
         read_ts: u64,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
-        let buffer = mutation_buffer_from_mutations(mutations);
+        let buffer = mutation_buffer_from_mutations(mutations).map_err(|error| match error {
+            StorageError::Sql(error) => SqlQueryError::new(error.code, error.state, error.message),
+            error => SqlQueryError::unknown(error.to_string()),
+        })?;
         self.commit(&buffer, Some(read_ts), resource_group)
     }
 
@@ -277,6 +278,9 @@ pub trait PendingClusterTransaction: Send {
 /// same timestamp -- which is what makes a racing writer a write conflict
 /// instead of a silent overwrite.
 pub trait OpenClusterTransaction: Send {
+    /// Production stores expose the client MemDB to executor staging.
+    fn bind_mutation_buffer(&self, _buffer: &MutationBuffer) {}
+
     /// The transaction timestamp shared by every statement until it ends.
     fn start_ts(&self) -> u64;
 
@@ -377,7 +381,11 @@ pub trait OpenClusterTransaction: Send {
     /// key's row WITH the lock and serving later reads of those keys from the
     /// answers — Go's point-write fold (`InitReturnValues` /
     /// `TxnCtx.SetPessimisticLockCache`, `pkg/executor/point_get.go:612-624`).
-    fn lock_staged_keys_with_values(&self, _keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
+    fn lock_staged_keys_with_values(
+        &self,
+        _keys: Vec<Vec<u8>>,
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
         Err("only a pessimistic transaction locks statement keys".to_owned())
     }
 
@@ -385,7 +393,7 @@ pub trait OpenClusterTransaction: Send {
     /// rounds -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
     /// `CancelFairLocking`. The optimistic default holds no locks and
     /// releases nothing.
-    fn release_statement_locks(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> {
+    fn finish_pessimistic_statement(&self, _successful: bool) -> Result<(), String> {
         Ok(())
     }
 }
@@ -395,12 +403,14 @@ pub trait OpenClusterTransaction: Send {
 pub(crate) fn stage_pessimistic_statement<T>(
     transaction: &dyn OpenClusterTransaction,
     staged: &MutationBuffer,
+    lock_wait_timeout: Duration,
     build: impl FnMut(
         Box<dyn ClusterSnapshot>,
         u64,
-    ) -> Result<(T, Vec<tidb_txnkv::transaction::OptimisticMutation>), String>,
+    ) -> Result<(T, Vec<tidb_txnkv::transaction::BufferMutation>), String>,
 ) -> Result<T, String> {
-    let (value, mutations) = lock_pessimistic_statement_with(
+    transaction.bind_mutation_buffer(staged);
+    let result = lock_pessimistic_statement_with(
         transaction.start_ts(),
         |retry_ts| {
             let snapshot = match retry_ts {
@@ -414,13 +424,15 @@ pub(crate) fn stage_pessimistic_statement<T>(
                 keys,
                 presume_not_exists,
                 duplicate_hints,
-                tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
+                tidb_txnkv::transaction::LockWaitTime::Timeout(lock_wait_timeout),
             )
         },
         build,
     )
-    .map_err(|error| error.to_string())?;
-    stage_mutations(staged, mutations);
+    .map_err(|error| error.to_string());
+    transaction.finish_pessimistic_statement(result.is_ok())?;
+    let (value, mutations) = result?;
+    stage_mutations(staged, mutations).map_err(|error| error.to_string())?;
     Ok(value)
 }
 
@@ -493,10 +505,12 @@ struct DeferredSnapshot {
     /// statement snapshot is dropped.  The slot is shared because the storage
     /// seam intentionally exposes only `ClusterSnapshot` to the executor.
     write_handoff: Option<WriteTransactionSlot>,
+    mutation_buffer: Option<MutationBuffer>,
     /// Record keys a point DML locks before its first source read. Autocommit
     /// writes use the same pessimistic lock+return-value fold as an explicit
     /// transaction, so the source can consume the row returned by TiKV.
     prelock_keys: Vec<Vec<u8>>,
+    prelock_wait: tidb_txnkv::transaction::LockWaitTime,
     /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
     /// with the timestamp of the same transaction the reads use -- and because
     /// the declaration below must be settled against the open atomically.
@@ -552,7 +566,9 @@ impl DeferredSnapshot {
             resource_group,
             read_ts,
             write_handoff: None,
+            mutation_buffer: None,
             prelock_keys: Vec::new(),
+            prelock_wait: tidb_txnkv::transaction::LockWaitTime::default(),
             state: Mutex::new(DeferredState::default()),
         }
     }
@@ -561,7 +577,9 @@ impl DeferredSnapshot {
         transactions: Arc<dyn ClusterTransactions>,
         read_ts: StatementReadTs,
         write_handoff: WriteTransactionSlot,
+        mutation_buffer: MutationBuffer,
         prelock_keys: Vec<Vec<u8>>,
+        prelock_wait: tidb_txnkv::transaction::LockWaitTime,
         resource_group: Arc<str>,
         pessimistic: bool,
         fair_locking: bool,
@@ -577,7 +595,9 @@ impl DeferredSnapshot {
             resource_group,
             read_ts,
             write_handoff: Some(write_handoff),
+            mutation_buffer: Some(mutation_buffer),
             prelock_keys,
+            prelock_wait,
             state: Mutex::new(DeferredState {
                 prefetched_write,
                 ..DeferredState::default()
@@ -623,13 +643,16 @@ impl DeferredSnapshot {
                 let transaction = prefetched_write
                     .and_then(PendingClusterTransaction::wait)
                     .map_err(StorageError::Backend)?;
+                if let Some(buffer) = &self.mutation_buffer {
+                    transaction.bind_mutation_buffer(buffer);
+                }
                 // Go enables point-write locking only for pessimistic
                 // transactions; a bound point key alone does not imply it.
                 let snapshot = if self.prelock_keys.is_empty() || !transaction.is_pessimistic() {
                     transaction.snapshot()
                 } else {
                     let outcome = transaction
-                        .lock_staged_keys_with_values(self.prelock_keys.clone())
+                        .lock_staged_keys_with_values(self.prelock_keys.clone(), self.prelock_wait)
                         .map_err(StorageError::Backend)?;
                     match outcome {
                         LockKeysOutcome::Locked { .. } => transaction.snapshot_for(true),
@@ -771,7 +794,9 @@ pub(crate) fn prefetched_write_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
     write_handoff: WriteTransactionSlot,
+    mutation_buffer: MutationBuffer,
     prelock_keys: Vec<Vec<u8>>,
+    prelock_wait: tidb_txnkv::transaction::LockWaitTime,
     resource_group: Arc<str>,
     pessimistic: bool,
     fair_locking: bool,
@@ -780,7 +805,9 @@ pub(crate) fn prefetched_write_snapshot(
         transactions,
         read_ts,
         write_handoff,
+        mutation_buffer,
         prelock_keys,
+        prelock_wait,
         resource_group,
         pessimistic,
         fair_locking,
@@ -887,7 +914,7 @@ where
         };
         let call = UnaryCallContext::with_timeout(timeout.saturating_add(self.timeout));
         let presume_not_exists = BTreeSet::from([key.clone()]);
-        let acquired = match transaction.acquire_locks(
+        match transaction.acquire_locks(
             std::slice::from_ref(&key),
             &presume_not_exists,
             wait,
@@ -895,23 +922,12 @@ where
         ) {
             Ok(acquired) => acquired,
             Err(failure) => {
-                finish_advisory_transaction(transaction, &[key], self.timeout);
+                finish_advisory_transaction(transaction, self.timeout);
                 return Err(map_advisory_lock_failure(failure));
-            }
-        };
-        let keep_alive = match self
-            .opener
-            .start_lock_keep_alive(acquired.primary_key, transaction.start_ts())
-        {
-            Ok(keep_alive) => keep_alive,
-            Err(error) => {
-                finish_advisory_transaction(transaction, &acquired.keys, self.timeout);
-                return Err(AdvisoryLockError::Internal(error));
             }
         };
         Ok(RealAdvisoryLockLease {
             transaction: Some(transaction),
-            keep_alive: Some(keep_alive),
             end_timeout: self.timeout,
         })
     }
@@ -926,7 +942,6 @@ where
     transaction: Option<
         RealPessimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>,
     >,
-    keep_alive: Option<LockKeepAlive>,
     end_timeout: Duration,
 }
 
@@ -937,29 +952,23 @@ where
     P: StorePdCapability,
 {
     fn finish(&mut self) {
-        if let Some(keep_alive) = self.keep_alive.take() {
-            keep_alive.close();
-        }
         let Some(transaction) = self.transaction.take() else {
             return;
         };
-        let held = transaction.locked_keys();
-        finish_advisory_transaction(transaction, &held, self.end_timeout);
+        finish_advisory_transaction(transaction, self.end_timeout);
     }
 }
 
 fn finish_advisory_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    mut transaction: RealPessimisticTransaction<
+    transaction: RealPessimisticTransaction<
         C,
         L,
         tidb_txnkv::pd_capability::CapabilityTimestampSource<P>,
     >,
-    keys: &[Vec<u8>],
     timeout: Duration,
 ) {
     let call = UnaryCallContext::with_timeout(timeout);
-    let _ = transaction.pessimistic_rollback(keys, &call);
-    let _ = transaction.into_two_pc().finish_without_writes();
+    let _ = transaction.rollback(&call);
 }
 
 impl<C, L, P> Drop for RealAdvisoryLockLease<C, L, P>
@@ -1202,21 +1211,16 @@ where
 
     fn commit_optimistic_mutations(
         &self,
-        mutations: Vec<tidb_txnkv::transaction::OptimisticMutation>,
+        mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
         read_ts: u64,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
         if mutations.is_empty() {
             return Ok(());
         }
-        let planned_bytes = mutations.iter().fold(0_usize, |total, mutation| {
-            total
-                .saturating_add(mutation.key().len())
-                .saturating_add(mutation.value().len())
-        });
         let transaction = self
             .opener_for_resource_group(resource_group)
-            .begin_at(read_ts, mutations.len(), planned_bytes)
+            .begin_at(read_ts)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let outcome = transaction
             .commit(mutations, &UnaryCallContext::with_timeout(self.timeout))
@@ -1286,6 +1290,10 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn bind_mutation_buffer(&self, buffer: &MutationBuffer) {
+        SessionTransaction::bind_mutation_buffer(self, buffer);
+    }
+
     fn start_ts(&self) -> u64 {
         SessionTransaction::start_ts(self)
     }
@@ -1373,13 +1381,17 @@ where
         .map_err(|error| error.to_string())
     }
 
-    fn lock_staged_keys_with_values(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
-        SessionTransaction::lock_keys_with_values(self, keys, true)
+    fn lock_staged_keys_with_values(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
+        SessionTransaction::lock_keys_with_values(self, keys, true, wait)
             .map_err(|error| error.to_string())
     }
 
-    fn release_statement_locks(&self, keys: Vec<Vec<u8>>) -> Result<(), String> {
-        SessionTransaction::release_keys(self, keys).map_err(|error| error.to_string())
+    fn finish_pessimistic_statement(&self, successful: bool) -> Result<(), String> {
+        SessionTransaction::finish_statement(self, successful).map_err(|error| error.to_string())
     }
 }
 

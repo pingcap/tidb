@@ -31,7 +31,7 @@ use std::fmt;
 
 use tidb_datatype::Datum;
 use tidb_model::Job;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
@@ -299,7 +299,7 @@ impl DdlJobTable {
         schema_ids: &str,
         table_ids: &str,
         processing: bool,
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlJobTableError> {
         let encoded = job.encode(true)?;
         let mut values = RowValues::new();
@@ -328,7 +328,7 @@ impl DdlJobTable {
         &self,
         active: &mut ActiveDdlJob,
         update_raw_args: bool,
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlJobTableError> {
         let encoded = active.job.encode(update_raw_args)?;
         let mut values = active.values.clone();
@@ -347,7 +347,7 @@ impl DdlJobTable {
     pub fn append_delete(
         &self,
         active: &ActiveDdlJob,
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlJobTableError> {
         mutations.extend(delete_clustered_row(&self.table, &active.values)?);
         Ok(())

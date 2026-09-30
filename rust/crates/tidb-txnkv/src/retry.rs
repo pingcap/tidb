@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed retry backoff arithmetic from `pkg/kv/txn.go`.
+//! TiDB transaction retry arithmetic and a synchronous adapter to client-rust.
 //!
-//! TiDB's `BackOff` adds process-global randomness and sleeps. This crate owns
-//! source-valid delay arithmetic and an injectable jitter seam, while actual
-//! sleeping and cancellation remain with the response owner.
+//! `pkg/kv/txn.go` owns transaction retry counts and its small jitter bound.
+//! Client-go owns storage retry schedules, budgets and history; region callers
+//! below share that native owner while driving their own synchronous waits.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
+use tikv_client::retry::{self, BackoffWait, RetryBackoffer, RetryConfig};
+use tokio::sync::Mutex;
 
 /// Initial exponential-backoff bound, in the effective sleep unit used by
 /// `pkg/kv/txn.go` (`time.Millisecond`).
@@ -88,117 +90,91 @@ impl RegionBackoffKind {
 
     /// Pinned client-go Config.name used in snapshot runtime statistics.
     pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::TikvRpc => "tikvRPC",
-            Self::RegionMiss => "regionMiss",
-            Self::RegionScheduling => "regionScheduling",
-            Self::TikvServerBusy => "tikvServerBusy",
-            Self::TikvDiskFull => "tikvDiskFull",
-            Self::RegionRecoveryInProgress => "regionRecoveryInProgress",
-            Self::StaleCommand => "staleCommand",
-            Self::MaxTimestampNotSynced => "maxTsNotSynced",
-            Self::RegionNotInitialized => "regionNotInitialized",
-            Self::IsWitness => "isWitness",
-            Self::TxnLock => "txnLock",
-            Self::TxnLockFast => "txnLockFast",
-            Self::TxnNotFound => "txnNotFound",
-            Self::PdRpc => "pdRPC",
-        }
+        self.config().name
     }
 
-    const fn is_sleep_excluded(self) -> bool {
-        matches!(self, Self::TikvServerBusy)
-    }
-
-    const fn config(self) -> (u64, u64, bool) {
+    const fn config(self) -> RetryConfig {
         match self {
-            Self::TikvRpc => (100, 2_000, true),
-            Self::RegionMiss | Self::RegionScheduling => (2, 500, false),
-            Self::TikvServerBusy => (2_000, 10_000, true),
-            Self::TikvDiskFull => (500, 5_000, false),
-            Self::RegionRecoveryInProgress => (100, 10_000, true),
-            Self::StaleCommand => (2, 1_000, false),
-            Self::MaxTimestampNotSynced => (2, 500, false),
-            Self::RegionNotInitialized => (2, 1_000, false),
-            Self::IsWitness => (1_000, 10_000, true),
-            Self::TxnLock => (100, 3_000, true),
-            Self::TxnLockFast => (2, 3_000, true),
-            Self::TxnNotFound => (2, 500, false),
-            // client-go `config/retry.BoPDRPC`: NewBackoffFnCfg(500, 3000, EqualJitter).
-            Self::PdRpc => (500, 3_000, true),
+            Self::TikvRpc => retry::BO_TIKV_RPC,
+            Self::RegionMiss => retry::BO_REGION_MISS,
+            Self::RegionScheduling => retry::BO_REGION_SCHEDULING,
+            Self::TikvServerBusy => retry::BO_TIKV_SERVER_BUSY,
+            Self::TikvDiskFull => retry::BO_TIKV_DISK_FULL,
+            Self::RegionRecoveryInProgress => retry::BO_REGION_RECOVERY_IN_PROGRESS,
+            Self::StaleCommand => retry::BO_STALE_CMD,
+            Self::MaxTimestampNotSynced => retry::BO_MAX_TS_NOT_SYNCED,
+            Self::RegionNotInitialized => retry::BO_MAX_REGION_NOT_INITIALIZED,
+            Self::IsWitness => retry::BO_IS_WITNESS,
+            Self::TxnLock => retry::BO_TXN_LOCK,
+            Self::TxnLockFast => retry::BO_TXN_LOCK_FAST,
+            Self::TxnNotFound => retry::BO_TXN_NOT_FOUND,
+            Self::PdRpc => retry::BO_PD_RPC,
         }
     }
 }
 
-/// Source-shaped backoff budget arithmetic without sleeping.
-///
-/// Equal-jitter categories use a tiny injected-seed generator so tests can be
-/// deterministic while every result remains in client-go's `[v/2, v)` range.
-/// `TikvServerBusy` sleep is excluded from the effective 20-second budget up
-/// to client-go's pinned 10-minute exclusion limit.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Synchronous wait adapter over the native client-go retry owner.
+/// All limits, delay schedules, fork history and diagnostics live in client-rust.
 pub struct RegionBackoffBudget {
-    max_sleep_ms: u64,
-    total_sleep_ms: u64,
-    excluded_sleep_ms: u64,
-    attempts: [u32; RegionBackoffKind::COUNT],
-    sleep_ms_by_kind: [u64; RegionBackoffKind::COUNT],
-    // Like Go's lazy backoffTimes map, clean reads need no counter storage.
-    counts_by_kind: Option<Box<[u64; RegionBackoffKind::COUNT]>>,
-    pending_delay: Option<(RegionBackoffKind, u64)>,
-    jitter_state: u64,
+    owner: Arc<Mutex<RetryBackoffer>>,
+    pending: Option<(RegionBackoffKind, BackoffWait)>,
+}
+
+impl std::fmt::Debug for RegionBackoffBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegionBackoffBudget")
+            .field("total_sleep", &self.total_sleep())
+            .field("remaining", &self.remaining())
+            .finish_non_exhaustive()
+    }
 }
 
 impl RegionBackoffBudget {
-    /// Creates one per-region budget with a varying source-valid jitter stream.
+    /// Creates an effective sleep budget; the caller has already selected its limit.
     #[must_use]
     pub fn new(max_sleep: Duration) -> Self {
+        let variables = tikv_client::kv::Variables {
+            backoff_weight: 1,
+            ..Default::default()
+        };
         Self {
-            max_sleep_ms: duration_ms(max_sleep),
-            total_sleep_ms: 0,
-            excluded_sleep_ms: 0,
-            attempts: [0; RegionBackoffKind::COUNT],
-            sleep_ms_by_kind: [0; RegionBackoffKind::COUNT],
-            counts_by_kind: None,
-            pending_delay: None,
-            jitter_state: entropy_seed(),
+            owner: Arc::new(Mutex::new(RetryBackoffer::with_variables(
+                Default::default(),
+                duration_ms(max_sleep),
+                Arc::new(variables),
+            ))),
+            pending: None,
         }
     }
 
-    /// Creates Campaign 11's 20-second effective budget for one failed region.
+    /// Creates the default effective per-region recovery budget.
     #[must_use]
     pub fn campaign_default() -> Self {
         Self::new(REGION_RETRY_MAX_SLEEP)
     }
 
-    /// Creates a deterministic test budget with an injected jitter seed.
+    /// A resolver borrows this exact owner, including earlier waits and schedules.
+    pub(crate) fn native_owner(&mut self) -> Arc<Mutex<RetryBackoffer>> {
+        self.finish_wait(true);
+        Arc::clone(&self.owner)
+    }
+
+    /// Fork the source owner instead of copying a second accounting structure.
     #[must_use]
-    pub const fn with_jitter_seed(max_sleep: Duration, seed: u64) -> Self {
+    pub fn fork(&mut self) -> Self {
+        self.finish_wait(true);
+        let (fork, _) = self
+            .owner
+            .try_lock()
+            .expect("retry owner is exclusively borrowed")
+            .fork();
         Self {
-            max_sleep_ms: duration_ms(max_sleep),
-            total_sleep_ms: 0,
-            excluded_sleep_ms: 0,
-            attempts: [0; RegionBackoffKind::COUNT],
-            sleep_ms_by_kind: [0; RegionBackoffKind::COUNT],
-            counts_by_kind: None,
-            pending_delay: None,
-            jitter_state: seed,
+            owner: Arc::new(Mutex::new(fork)),
+            pending: None,
         }
     }
 
-    /// Forks a worker's budget like client-go Backoffer.Clone/Fork: preserve
-    /// charged sleep and its error category while restarting delay schedules.
-    #[must_use]
-    pub fn fork(&self) -> Self {
-        Self {
-            attempts: [0; RegionBackoffKind::COUNT],
-            pending_delay: None,
-            jitter_state: entropy_seed(),
-            ..self.clone()
-        }
-    }
-
-    /// Reserves the next source-shaped delay without sleeping.
+    /// Selects a wait from the native schedule; finish it after waiting.
     pub fn next_delay(
         &mut self,
         kind: RegionBackoffKind,
@@ -206,144 +182,130 @@ impl RegionBackoffBudget {
         self.next_delay_capped(kind, Duration::MAX)
     }
 
-    /// [`Self::next_delay`] with client-go's `BackoffWithCfgAndMaxSleep`
-    /// clamp: the delay actually RESERVED — charged against the budget and
-    /// meant to be slept verbatim — is `min(computed, max_sleep)`.
-    ///
-    /// The clamp is applied BEFORE the budget accounting, because in
-    /// client-go `realSleep` (the clamped value) is what `totalSleep`
-    /// accumulates; charging the unclamped exponential while sleeping the
-    /// clamp would exhaust a 20-second budget after well under a second of
-    /// real waiting against short-TTL locks. The attempt counter still
-    /// advances on the UNclamped schedule, exactly as client-go's per-config
-    /// backoff state grows independently of the clamp.
+    /// Caps this wait by the observed lock TTL without resetting its schedule.
     pub fn next_delay_capped(
         &mut self,
         kind: RegionBackoffKind,
         max_sleep: Duration,
     ) -> Result<Duration, RegionBackoffExhausted> {
-        let effective_exhausted = self.effective_sleep_ms() >= self.max_sleep_ms;
-        let excluded_exhausted = kind.is_sleep_excluded()
-            && self.excluded_sleep_ms >= 600_000
-            && self.excluded_sleep_ms >= self.max_sleep_ms;
-        if self.max_sleep_ms > 0 && (effective_exhausted || excluded_exhausted) {
-            // client-go calls longestSleepCfg for both caps. Busy is excluded
-            // from that search, so a mixed budget returns the prior effective
-            // kind; a pure-Busy budget falls back to the current ordinary
-            // error.
-            return Err(RegionBackoffExhausted {
-                kind: self.longest_effective_kind().unwrap_or(kind),
-                max_sleep: Duration::from_millis(self.max_sleep_ms),
-            });
-        }
-
-        let index = kind as usize;
-        let attempt = self.attempts[index];
-        let (base, cap, equal_jitter) = kind.config();
-        let multiplier = 1_u64.checked_shl(attempt).unwrap_or(u64::MAX);
-        let exponential = base.saturating_mul(multiplier).min(cap);
-        let computed = if equal_jitter {
-            let half = exponential / 2;
-            half + self.next_jitter(exponential.saturating_sub(half))
-        } else {
-            exponential
-        };
-        let delay_ms = computed.min(duration_ms(max_sleep));
-
-        self.attempts[index] = attempt.saturating_add(1);
-        let counts = self
-            .counts_by_kind
-            .get_or_insert_with(|| Box::new([0; RegionBackoffKind::COUNT]));
-        counts[index] = counts[index].wrapping_add(1);
-        self.pending_delay = Some((kind, delay_ms));
-        self.total_sleep_ms = self.total_sleep_ms.saturating_add(delay_ms);
-        self.sleep_ms_by_kind[index] = self.sleep_ms_by_kind[index].saturating_add(delay_ms);
-        if kind.is_sleep_excluded() {
-            self.excluded_sleep_ms = self.excluded_sleep_ms.saturating_add(delay_ms);
-        }
-        Ok(Duration::from_millis(delay_ms))
+        self.finish_wait(true);
+        let mut owner = self
+            .owner
+            .try_lock()
+            .expect("retry owner is exclusively borrowed");
+        let wait = owner
+            .prepare_backoff(kind.config(), Some(duration_ms(max_sleep)), kind.name())
+            .map_err(|_| Self::exhausted(&owner, kind))?;
+        let duration = wait.duration();
+        self.pending = Some((kind, wait));
+        Ok(duration)
     }
 
-    /// Reconcile a reserved wait at its caller-owned completion boundary.
-    /// Go counts an interrupted wait but charges zero sleep and does not advance
-    /// its exponential schedule. Cancellation before reservation counts nothing.
-    pub(crate) fn finish_wait(&mut self, completed: bool) {
-        if let Some((kind, delay_ms)) = self.pending_delay.take() {
-            if !completed {
-                let index = kind as usize;
-                self.total_sleep_ms -= delay_ms;
-                self.sleep_ms_by_kind[index] -= delay_ms;
-                self.attempts[index] = self.attempts[index].saturating_sub(1);
-                if kind.is_sleep_excluded() {
-                    self.excluded_sleep_ms -= delay_ms;
-                }
-            }
+    /// Complete an externally driven wait; interruption counts once and charges zero sleep.
+    pub fn finish_wait(&mut self, completed: bool) {
+        if let Some((_, wait)) = self.pending.take() {
+            // This synchronous adapter has no kill handler. Call cancellation
+            // is handled by the response owner before and during its wait.
+            let _ = self
+                .owner
+                .try_lock()
+                .expect("retry owner is exclusively borrowed")
+                .finish_backoff(wait, completed);
         }
     }
 
-    /// The caller selects one completed descendant, as UpdateUsingForked does.
-    /// Retain the parent's delay schedules; replace only inherited history.
-    pub(crate) fn update_from_forked(&mut self, forked: &Self) {
-        self.total_sleep_ms = forked.total_sleep_ms;
-        self.excluded_sleep_ms = forked.excluded_sleep_ms;
-        self.sleep_ms_by_kind = forked.sleep_ms_by_kind;
-        self.counts_by_kind.clone_from(&forked.counts_by_kind);
-        self.pending_delay = None;
-    }
-
-    pub(crate) fn runtime_stats(&self) -> impl Iterator<Item = (&'static str, u64, Duration)> + '_ {
-        RegionBackoffKind::ALL.into_iter().filter_map(|kind| {
-            let count = self
-                .counts_by_kind
-                .as_ref()
-                .map_or(0, |counts| counts[kind as usize]);
-            (count != 0).then(|| {
-                (
-                    kind.name(),
-                    count,
-                    Duration::from_millis(self.sleep_ms_by_kind[kind as usize]),
-                )
+    pub(crate) fn exhausted(
+        owner: &RetryBackoffer,
+        fallback: RegionBackoffKind,
+    ) -> RegionBackoffExhausted {
+        let kind = owner
+            .longest_sleep_config()
+            .and_then(|config| {
+                RegionBackoffKind::ALL
+                    .into_iter()
+                    .find(|kind| kind.name() == config.name)
             })
-        })
-    }
-
-    /// Returns all reserved sleep, including client-go-excluded busy sleep.
-    #[must_use]
-    pub const fn total_sleep(&self) -> Duration {
-        Duration::from_millis(self.total_sleep_ms)
-    }
-
-    /// Returns the unspent effective budget.
-    #[must_use]
-    pub const fn remaining(&self) -> Duration {
-        Duration::from_millis(self.max_sleep_ms.saturating_sub(self.effective_sleep_ms()))
-    }
-
-    const fn effective_sleep_ms(&self) -> u64 {
-        self.total_sleep_ms.saturating_sub(self.excluded_sleep_ms)
-    }
-
-    fn next_jitter(&mut self, width: u64) -> u64 {
-        if width == 0 {
-            return 0;
+            .unwrap_or(fallback);
+        RegionBackoffExhausted {
+            kind,
+            max_sleep: Duration::from_millis(owner.max_sleep_ms()),
         }
-        let mut state = self.jitter_state;
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        self.jitter_state = state;
-        state % width
     }
 
-    fn longest_effective_kind(&self) -> Option<RegionBackoffKind> {
+    #[cfg(test)]
+    pub(crate) fn update_from_forked(&mut self, forked: &Self) {
+        self.finish_wait(true);
+        self.owner
+            .try_lock()
+            .expect("retry owner is exclusively borrowed")
+            .update_using_forked(
+                &forked
+                    .owner
+                    .try_lock()
+                    .expect("retry owner is exclusively borrowed"),
+            );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn runtime_stats(&self) -> impl Iterator<Item = (&'static str, u64, Duration)> {
+        let owner = self
+            .owner
+            .try_lock()
+            .expect("retry owner is exclusively borrowed");
         RegionBackoffKind::ALL
             .into_iter()
-            .filter(|kind| !kind.is_sleep_excluded())
-            .max_by_key(|kind| self.sleep_ms_by_kind[*kind as usize])
-            .filter(|kind| self.sleep_ms_by_kind[*kind as usize] > 0)
+            .filter_map(|kind| {
+                let pending = self
+                    .pending
+                    .as_ref()
+                    .filter(|(pending, _)| *pending == kind);
+                let count = owner.times_by_type().get(kind.name()).copied().unwrap_or(0)
+                    + u64::from(pending.is_some());
+                let sleep = Duration::from_millis(
+                    owner.sleep_by_type().get(kind.name()).copied().unwrap_or(0),
+                ) + pending.map_or(Duration::ZERO, |(_, wait)| wait.duration());
+                (count != 0).then_some((kind.name(), count, sleep))
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// Completed and currently reserved sleep, including excluded categories.
+    #[must_use]
+    pub fn total_sleep(&self) -> Duration {
+        Duration::from_millis(
+            self.owner
+                .try_lock()
+                .expect("retry owner is exclusively borrowed")
+                .total_sleep_ms(),
+        ) + self
+            .pending
+            .as_ref()
+            .map_or(Duration::ZERO, |(_, wait)| wait.duration())
+    }
+
+    /// Remaining ordinary budget, excluding independently limited categories.
+    #[must_use]
+    pub fn remaining(&self) -> Duration {
+        let owner = self
+            .owner
+            .try_lock()
+            .expect("retry owner is exclusively borrowed");
+        let pending = self
+            .pending
+            .as_ref()
+            .filter(|(kind, _)| kind.config().excluded_budget_limit_ms.is_none())
+            .map_or(0, |(_, wait)| duration_ms(wait.duration()));
+        Duration::from_millis(
+            owner.max_sleep_ms().saturating_sub(
+                owner
+                    .total_sleep_ms()
+                    .saturating_sub(owner.excluded_sleep_ms())
+                    .saturating_add(pending),
+            ),
+        )
     }
 }
-
 /// Exhaustion result returned before reserving a new sleep.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegionBackoffExhausted {
@@ -359,22 +321,6 @@ const fn duration_ms(duration: Duration) -> u64 {
         u64::MAX
     } else {
         millis as u64
-    }
-}
-
-fn entropy_seed() -> u64 {
-    static SEQUENCE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
-    let sequence = SEQUENCE.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed);
-    let time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| {
-            duration.as_secs() ^ u64::from(duration.subsec_nanos())
-        });
-    let seed = sequence ^ time.rotate_left(17);
-    if seed == 0 {
-        0xa076_1d64_78bd_642f
-    } else {
-        seed
     }
 }
 
@@ -415,7 +361,7 @@ mod tests {
 
     #[test]
     fn completed_and_interrupted_waits_keep_separate_counts_and_sleep() {
-        let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
         assert_eq!(
             budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
             Duration::from_millis(2)
@@ -453,7 +399,7 @@ mod tests {
 
     #[test]
     fn forked_history_replaces_the_parent_without_replacing_its_schedule() {
-        let mut parent = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        let mut parent = RegionBackoffBudget::new(Duration::from_secs(20));
         parent.next_delay(RegionBackoffKind::RegionMiss).unwrap();
         parent.finish_wait(true);
         let mut first = parent.fork();

@@ -25,10 +25,10 @@
 use std::sync::Arc;
 
 use tikv_client::mock::mocktikv::MockPdClient;
-use tikv_client::pd::PdClient;
 use tikv_client::request::Keyspace;
 use tikv_client::testutils::{bootstrap_with_single_store, new_mock_tikv};
 use tikv_client::transaction::Transaction;
+use tikv_client::PdClient;
 use tikv_client::TransactionOptions;
 
 use tidb_txnkv::{FlagsOp, Key, TikvTransactionDriver};
@@ -51,7 +51,10 @@ fn mock_store() -> Arc<MockPdClient> {
 /// Begins one optimistic transaction. The engine's `begin` is asynchronous,
 /// so it runs on the runtime; every later driver call is blocking, exactly
 /// how TiDB's synchronous transaction consumers use it.
-fn begin(pd: &Arc<MockPdClient>, runtime: &Arc<tokio::runtime::Runtime>) -> Transaction<MockPdClient> {
+fn begin(
+    pd: &Arc<MockPdClient>,
+    runtime: &Arc<tokio::runtime::Runtime>,
+) -> Transaction<MockPdClient> {
     runtime.block_on(async {
         let timestamp = pd
             .clone()
@@ -118,7 +121,6 @@ fn staged_statements_commit_through_client_go_two_phase_commit() {
     assert_eq!(reader.get(&k("victim")).unwrap(), None);
     reader.rollback().unwrap();
 }
-
 
 #[test]
 fn union_reads_overlay_the_buffer_on_the_transaction_snapshot() {
@@ -206,8 +208,7 @@ fn the_staged_buffer_is_the_buffer_commit_reads() {
     assert!(txn.size() > 0);
 
     // Flags applied through the typed view survive on the same buffer.
-    txn
-        .set_with_flags(k("c"), b"3".to_vec(), &[FlagsOp::SetNeedLocked])
+    txn.set_with_flags(k("c"), b"3".to_vec(), &[FlagsOp::SetNeedLocked])
         .unwrap();
     assert!(txn.get_flags(&k("c")).unwrap().has_need_locked());
     assert_eq!(txn.len(), 3);
@@ -246,4 +247,132 @@ fn pessimistic_locks_are_acquired_at_statement_time() {
     let mut reader = driver(&pd, &runtime);
     assert_eq!(reader.get(&k("row")).unwrap(), Some(b"v2".to_vec()));
     reader.rollback().unwrap();
+}
+
+// The live facade must use the same engine as these driver tests.
+#[test]
+fn live_transaction_has_one_protocol_owner() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/transaction");
+    let mut pending = vec![root];
+    while let Some(path) = pending.pop() {
+        if path.is_dir() {
+            pending.extend(
+                std::fs::read_dir(path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            let source = std::fs::read_to_string(&path).unwrap();
+            for retired_algorithm in [
+                "fn commit_inner(",
+                "fn build_prewrite_request(",
+                "struct PessimisticPrewritePlan",
+                "struct TransactionMutationBuffer",
+            ] {
+                assert!(!source.contains(retired_algorithm),
+                    "{} still owns {retired_algorithm}; transaction protocols belong to client-rust",
+                    path.display());
+            }
+        }
+    }
+}
+
+/// Source SQL operations set flags on MemDB; the client alone lowers wire mutations.
+#[test]
+fn sql_mutation_assertions_reach_the_authoritative_memdb() {
+    use tidb_txnkv::transaction::BufferMutation as Mutation;
+    use tidb_txnkv::AssertionState;
+    let runtime = runtime();
+    let pd = mock_store();
+    let mut txn = driver(&pd, &runtime);
+    let cases = [
+        (
+            Mutation::insert(b"insert".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::NotExists,
+            true,
+        ),
+        (
+            Mutation::put_existing(b"put".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::Exists,
+            false,
+        ),
+        (
+            Mutation::delete_existing(b"delete".to_vec()).unwrap(),
+            AssertionState::Exists,
+            false,
+        ),
+        (
+            Mutation::insert(b"unique".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::NotExists,
+            true,
+        ),
+        (
+            Mutation::set(b"index".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::Unset,
+            false,
+        ),
+        (
+            Mutation::delete(b"index_delete".to_vec()).unwrap(),
+            AssertionState::Unset,
+            false,
+        ),
+        (
+            Mutation::set(b"system".to_vec(), b"v".to_vec()).unwrap(),
+            AssertionState::Unset,
+            false,
+        ),
+        (
+            Mutation::delete(b"system_delete".to_vec()).unwrap(),
+            AssertionState::Unset,
+            false,
+        ),
+    ];
+    for (mutation, assertion, presumed) in cases {
+        txn.stage_mutation(&mutation).unwrap();
+        let key = Key::from(mutation.key().to_vec());
+        let flags = txn.get_flags(&key).unwrap();
+        assert_eq!(flags.assertion(), assertion, "{mutation:?}");
+        assert_eq!(flags.has_presume_key_not_exists(), presumed, "{mutation:?}");
+        assert_eq!(txn.staged_value(&key).as_deref(), Some(mutation.value()));
+    }
+    txn.stage_mutation(&Mutation::put_existing(b"insert".to_vec(), b"updated".to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(
+        txn.get_flags(&k("insert")).unwrap().assertion(),
+        AssertionState::NotExists,
+        "first assertion wins across statements"
+    );
+    txn.rollback().unwrap();
+}
+
+#[test]
+fn deleting_a_lazy_insert_preserves_its_constraint_check() {
+    use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome, TransactionCause};
+    let runtime = runtime();
+    let pd = mock_store();
+    let mut seed = driver(&pd, &runtime);
+    seed.set(k("existing"), b"original".to_vec()).unwrap();
+    seed.commit().unwrap();
+    let mut txn = driver(&pd, &runtime);
+    txn.stage_mutation(
+        &BufferMutation::insert(b"existing".to_vec(), b"replacement".to_vec()).unwrap(),
+    )
+    .unwrap();
+    txn.stage_mutation(&BufferMutation::delete_existing(b"existing".to_vec()).unwrap())
+        .unwrap();
+    assert!(txn
+        .get_flags(&k("existing"))
+        .unwrap()
+        .has_presume_key_not_exists());
+    let outcome = txn.commit_staged().unwrap();
+    assert!(
+        matches!(outcome, OptimisticCommitOutcome::RolledBack(ref result)
+        if matches!(result.cause, TransactionCause::AlreadyExists { .. }))
+    );
+    let mut read = driver(&pd, &runtime);
+    assert_eq!(
+        read.get(&k("existing")).unwrap(),
+        Some(b"original".to_vec())
+    );
+    read.rollback().unwrap();
 }

@@ -37,7 +37,7 @@ use tidb_model::Job;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticCoordinatorError, RealOptimisticTransactionOpener,
-    TransactionCause, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    TransactionCause,
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
@@ -477,8 +477,7 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     // transaction opens at this path's own ceiling and the commit checks the
     // real mutation set against it. A database with more tables than that fits
     // is refused at commit, loudly, rather than dropped in pieces.
-    let mut transaction =
-        opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)?;
+    let mut transaction = opener.begin()?;
     let start_ts = transaction.start_ts();
     let plan = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);

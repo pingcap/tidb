@@ -23,8 +23,8 @@ use tidb_datatype::Time;
 use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_stats::StatsLockTransaction;
 use tidb_txnkv::transaction::{
-    OptimisticMutation, RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient,
-    StoreWriteLoader, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    BufferMutation, RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient,
+    StoreWriteLoader,
 };
 
 use crate::cluster_catalog::load_cluster_catalog;
@@ -84,12 +84,10 @@ pub fn commit_cluster_stats_lock<C: StoreWriteClient, L: StoreWriteLoader, P: St
     statement: &ClusterStatsLockStatement,
     timeout: Duration,
 ) -> Result<ClusterStatsLockReport, ClusterStatsLockCommitError> {
-    let transaction = SessionTransaction::begin_pessimistic_with_budget(
+    let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
         timeout,
         opener.commit_protocol(),
-        usize::MAX,
-        MAX_OPTIMISTIC_TRANSACTION_BYTES,
     )
     .map_err(|error| ClusterStatsLockCommitError::Other(error.to_string()))?;
     let staged = MutationBuffer::new();
@@ -159,7 +157,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
         mut build: impl FnMut(
             &mut SnapshotMetaSnapshot,
             u64,
-        ) -> Result<(T, Vec<OptimisticMutation>), ClusterStatsLockError>,
+        ) -> Result<(T, Vec<BufferMutation>), ClusterStatsLockError>,
     ) -> Result<T, ClusterStatsLockCommitError> {
         lock_pessimistic_statement(self.transaction, self.staged, |snapshot, start_ts| {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);

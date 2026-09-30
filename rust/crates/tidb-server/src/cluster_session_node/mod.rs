@@ -1664,6 +1664,7 @@ impl ClusterSessionFactory {
             let transaction = transactions.begin(true, false, resource_group)?;
             let read_ts = transaction.start_ts();
             let staged = MutationBuffer::new();
+            transaction.bind_mutation_buffer(&staged);
             let prepared = (|| {
                 let locked = {
                     let snapshot = transaction.snapshot_for(false)?;
@@ -1697,7 +1698,9 @@ impl ClusterSessionFactory {
                                     keys,
                                     presume_not_exists,
                                     duplicate_hints,
-                                    tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
+                                    tidb_txnkv::transaction::LockWaitTime::Timeout(
+                                        global_lock_wait_timeout(global_vars),
+                                    ),
                                 )
                             },
                             |snapshot, _start_ts| {
@@ -1715,7 +1718,8 @@ impl ClusterSessionFactory {
                             },
                         )
                         .map_err(|error| error.to_string())?;
-                    tidb_exec::cluster_table_storage::stage_mutations(&staged, mutations);
+                    tidb_exec::cluster_table_storage::stage_mutations(&staged, mutations)
+                        .map_err(|error| error.to_string())?;
                 }
                 Ok::<_, String>(updates)
             })();
@@ -1749,6 +1753,7 @@ impl ClusterSessionFactory {
                         // Internal statement: no fair locking (Go `InRestrictedSQL`).
                         let transaction = transactions.begin(true, false, resource_group)?;
                         let staged = MutationBuffer::new();
+                        transaction.bind_mutation_buffer(&staged);
                         let ((modify_count, count), lock_mutations) =
                             tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
@@ -1761,7 +1766,7 @@ impl ClusterSessionFactory {
                                         keys,
                                         presume_not_exists,
                                         duplicate_hints,
-                                        tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
+                                        tidb_txnkv::transaction::LockWaitTime::Timeout(global_lock_wait_timeout(global_vars)),
                                     )
                                 },
                                 |snapshot, _start_ts| {
@@ -1777,7 +1782,8 @@ impl ClusterSessionFactory {
                                 },
                             )
                             .map_err(|error| error.to_string())?;
-                        tidb_exec::cluster_table_storage::stage_mutations(&staged, lock_mutations);
+                        tidb_exec::cluster_table_storage::stage_mutations(&staged, lock_mutations)
+                            .map_err(|error| error.to_string())?;
                         let ((), replace_mutations) =
                             tidb_exec::cluster_table_storage::lock_pessimistic_statement_with(
                                 transaction.start_ts(),
@@ -1790,7 +1796,7 @@ impl ClusterSessionFactory {
                                         keys,
                                         presume_not_exists,
                                         duplicate_hints,
-                                        tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
+                                        tidb_txnkv::transaction::LockWaitTime::Timeout(global_lock_wait_timeout(global_vars)),
                                     )
                                 },
                                 |snapshot, _start_ts| {
@@ -1813,7 +1819,8 @@ impl ClusterSessionFactory {
                         tidb_exec::cluster_table_storage::stage_mutations(
                             &staged,
                             replace_mutations,
-                        );
+                        )
+                        .map_err(|error| error.to_string())?;
                         transaction.commit(&staged).map_err(|error| error.message)
                     })();
                     if let Err(error) = result {
@@ -2825,6 +2832,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         // Internal statement: no fair locking (Go `InRestrictedSQL`).
         let transaction = self.transactions.begin(true, false, "default")?;
         let staged = MutationBuffer::new();
+        transaction.bind_mutation_buffer(&staged);
         let (version, blocks) = tidb_exec::cluster_stats_write::historical_stats_data_blocks(&json)
             .map_err(|error| error.to_string())?;
         let create_time = tidb_exec::mysql_bootstrap::local_now_datetime6();
@@ -2841,7 +2849,9 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                             keys,
                             presume_not_exists,
                             duplicate_hints,
-                            tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
+                            tidb_txnkv::transaction::LockWaitTime::Timeout(
+                                global_lock_wait_timeout(&self.global_vars),
+                            ),
                         )
                     },
                     |snapshot, _start_ts| {
@@ -2861,7 +2871,8 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                     },
                 )
                 .map_err(|error| error.to_string())?;
-            tidb_exec::cluster_table_storage::stage_mutations(&staged, mutations);
+            tidb_exec::cluster_table_storage::stage_mutations(&staged, mutations)
+                .map_err(|error| error.to_string())?;
         }
         transaction.commit(&staged).map_err(|error| error.message)?;
         Ok(version)
@@ -4576,6 +4587,7 @@ impl ClusterServerSession {
                 }
             }
         };
+        self.buffer.release(savepoint);
         self.session.set_selected_lock_keys(None);
         // Go's `cleanRetryInfo` (`pkg/session/session.go:329-336`, deferred
         // from `doCommitWithRetry`): the ids belong to the statement that is
@@ -4676,19 +4688,6 @@ impl ClusterServerSession {
         // it reading at the advanced `for_update_ts`. `None` is the first
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
-        // The keys THIS statement's rounds fair-locked and retained; released
-        // if the statement ultimately fails (Go `OnPessimisticStmtEnd`).
-        let mut statement_locked = std::collections::BTreeSet::new();
-        // The keys the CURRENT round asked to lock, whether or not an earlier
-        // round already held them. On success, what earlier rounds locked
-        // beyond this set is Go `DoneFairLocking`'s "unnecessary" locks.
-        let mut round_wanted: std::collections::BTreeSet<Vec<u8>> =
-            std::collections::BTreeSet::new();
-        // Go `OnPessimisticStmtStart` (`isolation/base.go:711`) starts fair
-        // locking for the statement when the session variable is ON, and
-        // `OnPessimisticStmtEnd` releases stale locks only in that mode
-        // (`IsInFairLockingMode`, `base.go:728`).
-        let fair_locking = self.session.vars().pessimistic_transaction_fair_locking();
         // Go `PessimisticTxn.MaxRetryCount` (`pkg/config/config.go`, default
         // 256): the safety valve on the statement retry, with Go's own error.
         let mut retries: u32 = 0;
@@ -4697,7 +4696,6 @@ impl ClusterServerSession {
             // Selected rows belong to this execution attempt, not an earlier
             // plan or a partially executed failed read.
             self.session.take_selected_lock_keys();
-            round_wanted.clear();
             // Go's pessimistic point write takes its row lock DURING execution
             // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:549`),
             // asking TiKV to answer the row WITH the lock (`InitReturnValues`,
@@ -4711,13 +4709,16 @@ impl ClusterServerSession {
             // back conflict genuinely needs the fresh acquisition at the new
             // `for_update_ts`.
             if !prelock_keys.is_empty() {
-                round_wanted.extend(prelock_keys.iter().cloned());
                 self.session.notify_before_executor_first_run();
                 let outcome = match self.explicit.as_ref() {
                     Some(transaction) => {
                         self.session.publish_transaction_lock_waiting(true);
-                        let outcome =
-                            transaction.lock_staged_keys_with_values(prelock_keys.to_vec());
+                        let outcome = transaction.lock_staged_keys_with_values(
+                            prelock_keys.to_vec(),
+                            tidb_txnkv::transaction::LockWaitTime::Timeout(
+                                self.session.lock_wait_timeout(),
+                            ),
+                        );
                         self.session.publish_transaction_lock_waiting(false);
                         Some(outcome)
                     }
@@ -4725,22 +4726,10 @@ impl ClusterServerSession {
                 };
                 match outcome {
                     None => {}
-                    Some(Ok(LockKeysOutcome::Locked { newly_locked, .. })) => {
-                        // A FAILED statement releases exactly what its rounds
-                        // added (Go `OnPessimisticStmtEnd(isSuccessful=false)`);
-                        // a pre-locked key joins the same list as a post-run
-                        // delta key, so a duplicate-key failure AFTER the lock
-                        // cannot leak the row lock it took first.
-                        statement_locked.extend(newly_locked);
-                    }
-                    Some(Ok(LockKeysOutcome::RetryStatement {
-                        for_update_ts,
-                        newly_locked,
-                        ..
-                    })) => {
+                    Some(Ok(LockKeysOutcome::Locked { .. })) => {}
+                    Some(Ok(LockKeysOutcome::RetryStatement { for_update_ts, .. })) => {
                         // Fair locking's retained locks stay owned by this
                         // statement until it ends, whichever way it ends.
-                        statement_locked.extend(newly_locked);
                         if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
                             break Err(SqlQueryError::unknown(
                                 "pessimistic lock retry limit reached",
@@ -4805,19 +4794,26 @@ impl ClusterServerSession {
                                 .as_ref()
                                 .expect("autocommit write created its transaction handoff"),
                         ),
+                        self.buffer.clone(),
                         prelock_keys.to_vec(),
+                        tidb_txnkv::transaction::LockWaitTime::Timeout(
+                            self.session.lock_wait_timeout(),
+                        ),
                         Arc::<str>::from(resource_group),
                         pessimistic,
                         fair_locking,
                     )
                 } else {
-                    self.open_read_snapshot(
+                    match self.open_read_snapshot(
                         shape,
                         prelock_keys,
                         retry_read_ts,
                         read_ts,
                         resource_group,
-                    )?
+                    ) {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => break Err(error),
+                    }
                 };
             if let Some(stale) = self.bind(snapshot) {
                 // A previous statement that did not unbind would otherwise
@@ -4827,8 +4823,9 @@ impl ClusterServerSession {
             }
             self.declare_read_shape(shape);
             if let Err(error) = self.prepare_snapshot() {
+                let _ = self.finish_snapshot();
                 Self::rollback_prefetched_write(write_transaction.clone());
-                return Err(error);
+                break Err(error);
             }
             let outcome = run(&mut self.session);
             let finished = self.finish_snapshot();
@@ -4838,38 +4835,12 @@ impl ClusterServerSession {
                         Self::rollback_prefetched_write(write_transaction.clone());
                         break Err(error);
                     }
-                    match self.lock_pessimistic_statement_keys(
-                        savepoint,
-                        &mut statement_locked,
-                        &mut round_wanted,
-                    ) {
+                    match self.lock_pessimistic_statement_keys(savepoint) {
                         Ok(PessimisticStep::Done) => {
-                            // Go `OnPessimisticStmtEnd(isSuccessful=true)` ->
-                            // `KVTxn.DoneFairLocking`
-                            // (`pkg/sessiontxn/isolation/base.go:728-731`):
-                            // the locks earlier rounds of this statement
-                            // took that its final round did not need are
-                            // released now, not held to COMMIT.
-                            if retries > 0 && fair_locking {
-                                let stale: Vec<Vec<u8>> = statement_locked
-                                    .iter()
-                                    .filter(|key| !round_wanted.contains(*key))
-                                    .cloned()
-                                    .collect();
-                                if !stale.is_empty() {
-                                    if let Some(transaction) = self.explicit.as_ref() {
-                                        if let Err(error) =
-                                            transaction.release_statement_locks(stale.clone())
-                                        {
-                                            // The statement ran; its writes
-                                            // leave with its error.
-                                            self.buffer.restore(savepoint.clone());
-                                            break Err(SqlQueryError::unknown(error));
-                                        }
-                                    }
-                                    for key in &stale {
-                                        statement_locked.remove(key);
-                                    }
+                            if let Some(transaction) = self.explicit.as_ref() {
+                                if let Err(error) = transaction.finish_pessimistic_statement(true) {
+                                    self.buffer.restore(savepoint.clone());
+                                    break Err(SqlQueryError::unknown(error));
                                 }
                             }
                         }
@@ -4924,12 +4895,12 @@ impl ClusterServerSession {
         };
         if result.is_err() {
             Self::rollback_prefetched_write(write_transaction);
-            // Release the keys tracked here as statement-owned; earlier
-            // statements' locks remain transaction-owned. Best effort: a
-            // dead worker has already rolled the whole transaction back.
+            // Cancel the client's active fair scope. Ordinary locks remain
+            // transaction-owned, following Go StmtRollback.
             if let Some(transaction) = self.explicit.as_ref() {
-                let _ = transaction.release_statement_locks(statement_locked.into_iter().collect());
+                let _ = transaction.finish_pessimistic_statement(false);
             }
+            self.buffer.restore(*savepoint);
         }
         result
     }
@@ -4939,8 +4910,6 @@ impl ClusterServerSession {
     fn lock_pessimistic_statement_keys(
         &mut self,
         savepoint: &BufferCheckpoint,
-        statement_locked: &mut std::collections::BTreeSet<Vec<u8>>,
-        round_wanted: &mut std::collections::BTreeSet<Vec<u8>>,
     ) -> Result<PessimisticStep, SqlQueryError> {
         let Some(transaction) = self.explicit.as_ref() else {
             return Ok(PessimisticStep::Done);
@@ -4948,8 +4917,7 @@ impl ClusterServerSession {
         if !transaction.is_pessimistic() {
             return Ok(PessimisticStep::Done);
         }
-        let (before, after) = self.buffer.delta_since(*savepoint);
-        let keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(&before, &after);
+        let keys = self.buffer.pessimistic_keys_since(*savepoint);
         let mut requests = self.session.take_selected_lock_requests();
         if !keys.is_empty() {
             requests.push((
@@ -4958,8 +4926,7 @@ impl ClusterServerSession {
             ));
         }
         for (wait, keys) in requests {
-            round_wanted.extend(keys.iter().cloned());
-            match self.lock_pessimistic_keys(savepoint, statement_locked, keys, wait)? {
+            match self.lock_pessimistic_keys(savepoint, keys, wait)? {
                 PessimisticStep::Done => {}
                 retry => return Ok(retry),
             }
@@ -4970,8 +4937,7 @@ impl ClusterServerSession {
     fn lock_pessimistic_keys(
         &mut self,
         savepoint: &BufferCheckpoint,
-        statement_locked: &mut std::collections::BTreeSet<Vec<u8>>,
-        mut keys: Vec<Vec<u8>>,
+        keys: Vec<Vec<u8>>,
         wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<PessimisticStep, SqlQueryError> {
         let transaction = self.explicit.as_ref().expect("pessimistic transaction");
@@ -4995,7 +4961,6 @@ impl ClusterServerSession {
         };
         // Ownership removes a repeated acquisition, not a NEW absence check.
         // Go KVTxn.LockKeys verifies NeedCheckExists even on a held key.
-        keys.retain(|key| !statement_locked.contains(key) || presume_not_exists.contains(key));
         if keys.is_empty() {
             return Ok(PessimisticStep::Done);
         }
@@ -5025,15 +4990,8 @@ impl ClusterServerSession {
             }
         };
         match outcome {
-            LockKeysOutcome::Locked { newly_locked, .. } => {
-                statement_locked.extend(newly_locked);
-                Ok(PessimisticStep::Done)
-            }
-            LockKeysOutcome::RetryStatement {
-                for_update_ts,
-                newly_locked,
-            } => {
-                statement_locked.extend(newly_locked);
+            LockKeysOutcome::Locked { .. } => Ok(PessimisticStep::Done),
+            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
                 Ok(PessimisticStep::Retry { for_update_ts })
             }
             LockKeysOutcome::StatementError(error) => {
@@ -5249,6 +5207,7 @@ impl ClusterServerSession {
             .transactions
             .begin(pessimistic, fair_locking, resource_group)
             .map_err(SqlQueryError::unknown)?;
+        transaction.bind_mutation_buffer(&self.buffer);
         self.session.current_tso().publish(transaction.start_ts());
         self.explicit = Some(transaction);
         // The transaction reads this catalog version until it ends; the pin
@@ -5518,12 +5477,11 @@ impl ClusterServerSession {
     /// Drops the explicit transaction without publishing anything, along with
     /// every write it staged.
     fn discard_explicit(&mut self) -> Result<(), SqlQueryError> {
-        self.buffer.reset();
         self.session.clear_table_delta();
         self.savepoints.clear();
         self.session.current_tso().clear();
         self.transaction_pin = None;
-        match self.explicit.take() {
+        let result = match self.explicit.take() {
             Some(transaction) => {
                 // Go `pkg/session/metrics`: a rolled-back transaction counts
                 // as an abort, and its statement count is observed under the
@@ -5545,7 +5503,10 @@ impl ClusterServerSession {
                 result.map_err(SqlQueryError::unknown)
             }
             None => Ok(()),
-        }
+        };
+        // Rollback needs the native buffer's lock flags to release every key.
+        self.buffer.reset();
+        result
     }
 
     /// Rebinds this connection's tables to the node's current catalog.
@@ -6092,6 +6053,7 @@ impl ClusterServerSession {
                 transactions::stage_pessimistic_statement(
                     transaction,
                     &self.buffer,
+                    self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan =
@@ -6163,6 +6125,7 @@ impl ClusterServerSession {
                 transactions::stage_pessimistic_statement(
                     transaction,
                     &self.buffer,
+                    self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan = tidb_exec::cluster_stats_write::plan_stats_delta_statement(
@@ -6194,6 +6157,7 @@ impl ClusterServerSession {
             let refreshed = transactions::stage_pessimistic_statement(
                 transaction,
                 &self.buffer,
+                self.session.lock_wait_timeout(),
                 |snapshot, _| {
                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                     let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
@@ -6276,21 +6240,26 @@ impl ClusterServerSession {
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?
                 .contains(&global_table_id);
         let version = transaction.start_ts();
-        transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let plan = tidb_exec::cluster_stats_write::plan_exchange_partition_stats_update(
-                &mut snapshot,
-                &catalog,
-                global_table_id,
-                count_delta,
-                modify_count_delta,
-                locked,
-                version,
-                system_time_timestamp(SystemTime::now())?,
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(((), plan.mutations))
-        })
+        transactions::stage_pessimistic_statement(
+            transaction,
+            &self.buffer,
+            self.session.lock_wait_timeout(),
+            |snapshot, _| {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let plan = tidb_exec::cluster_stats_write::plan_exchange_partition_stats_update(
+                    &mut snapshot,
+                    &catalog,
+                    global_table_id,
+                    count_delta,
+                    modify_count_delta,
+                    locked,
+                    version,
+                    system_time_timestamp(SystemTime::now())?,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(((), plan.mutations))
+            },
+        )
         .map_err(SqlQueryError::unknown)
     }
 
@@ -6337,6 +6306,7 @@ impl ClusterServerSession {
                 let inserted = transactions::stage_pessimistic_statement(
                     transaction,
                     &self.buffer,
+                    self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let (inserted, plan) =
@@ -6361,7 +6331,7 @@ impl ClusterServerSession {
                     {
                         transactions::stage_pessimistic_statement(
                             transaction,
-                            &self.buffer,
+                            &self.buffer, self.session.lock_wait_timeout(),
                             |snapshot, _| {
                                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                                 let plan = tidb_exec::cluster_stats_write::plan_insert_column_default_bucket(
@@ -6385,6 +6355,7 @@ impl ClusterServerSession {
                 transactions::stage_pessimistic_statement(
                     transaction,
                     &self.buffer,
+                    self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
@@ -6418,18 +6389,23 @@ impl ClusterServerSession {
         let transaction = self.notifier_transaction()?;
         let catalog = self.catalog.load();
         for target in tidb_exec::cluster_stats_write::GLOBAL_STATS_ID_TABLES {
-            transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let plan = tidb_exec::cluster_stats_write::plan_change_global_stats_table_id(
-                    &mut snapshot,
-                    &catalog,
-                    target,
-                    old_table_id,
-                    new_table_id,
-                )
-                .map_err(|error| error.to_string())?;
-                Ok(((), plan.mutations))
-            })
+            transactions::stage_pessimistic_statement(
+                transaction,
+                &self.buffer,
+                self.session.lock_wait_timeout(),
+                |snapshot, _| {
+                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                    let plan = tidb_exec::cluster_stats_write::plan_change_global_stats_table_id(
+                        &mut snapshot,
+                        &catalog,
+                        target,
+                        old_table_id,
+                        new_table_id,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok(((), plan.mutations))
+                },
+            )
             .map_err(SqlQueryError::unknown)?;
         }
         Ok(())
@@ -6440,17 +6416,22 @@ impl ClusterServerSession {
         let catalog = self.catalog.load();
         let version = transaction.start_ts();
         for target in tidb_exec::cluster_stats_write::STATS_VERSION_TABLES {
-            transactions::stage_pessimistic_statement(transaction, &self.buffer, |snapshot, _| {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let plan = tidb_exec::cluster_stats_write::plan_update_stats_table_version(
-                    &mut snapshot,
-                    &catalog,
-                    target,
-                    version,
-                )
-                .map_err(|error| error.to_string())?;
-                Ok(((), plan.mutations))
-            })
+            transactions::stage_pessimistic_statement(
+                transaction,
+                &self.buffer,
+                self.session.lock_wait_timeout(),
+                |snapshot, _| {
+                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                    let plan = tidb_exec::cluster_stats_write::plan_update_stats_table_version(
+                        &mut snapshot,
+                        &catalog,
+                        target,
+                        version,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok(((), plan.mutations))
+                },
+            )
             .map_err(SqlQueryError::unknown)?;
         }
         Ok(())
@@ -6478,8 +6459,11 @@ impl ClusterServerSession {
         {
             return Ok(());
         }
-        let (modify_count, count) =
-            transactions::stage_pessimistic_statement(transaction, staged, |snapshot, _| {
+        let (modify_count, count) = transactions::stage_pessimistic_statement(
+            transaction,
+            staged,
+            self.session.lock_wait_timeout(),
+            |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let (counts, plan) =
                     tidb_exec::cluster_stats_write::plan_historical_stats_meta_lock(
@@ -6490,23 +6474,29 @@ impl ClusterServerSession {
                     )
                     .map_err(|error| error.to_string())?;
                 Ok((counts, plan.mutations))
-            })?;
+            },
+        )?;
         let now = tidb_exec::mysql_bootstrap::local_now_datetime6();
-        transactions::stage_pessimistic_statement(transaction, staged, |snapshot, _| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
-                &mut snapshot,
-                catalog,
-                physical_id,
-                modify_count,
-                count,
-                version,
-                "schema change",
-                now,
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(((), plan.mutations))
-        })
+        transactions::stage_pessimistic_statement(
+            transaction,
+            staged,
+            self.session.lock_wait_timeout(),
+            |snapshot, _| {
+                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
+                    &mut snapshot,
+                    catalog,
+                    physical_id,
+                    modify_count,
+                    count,
+                    version,
+                    "schema change",
+                    now,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(((), plan.mutations))
+            },
+        )
     }
 
     fn dynamic_partition_pruning(&self) -> Result<bool, SqlQueryError> {
@@ -6713,17 +6703,15 @@ impl QuerySession for ClusterServerSession {
         let (user, host) = self.session.current_identity().unwrap_or(("", ""));
         let db = self.session.current_database().to_owned();
         let digest = tidb_parser::normalize_digest(sql).1.to_string();
-        tidb_session::show_admin::record_slow_query(
-            tidb_session::show_admin::SlowQueryRecord {
-                sql: sql.to_owned(),
-                start,
-                duration,
-                conn_id: self.connection_id(),
-                user: format!("{user}@{host}"),
-                db,
-                digest,
-            },
-        );
+        tidb_session::show_admin::record_slow_query(tidb_session::show_admin::SlowQueryRecord {
+            sql: sql.to_owned(),
+            start,
+            duration,
+            conn_id: self.connection_id(),
+            user: format!("{user}@{host}"),
+            db,
+            digest,
+        });
     }
 
     fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
@@ -7470,8 +7458,6 @@ impl QuerySession for ClusterServerSession {
         self.execute_parsed(sql, &stmt)
     }
 
-
-
     /// One parse per command (Go `session.ParseSQL`, done by the connection
     /// through [`QuerySession::parse_statement`]).
     fn execute_parsed<'a>(
@@ -7562,6 +7548,15 @@ impl QuerySession for ClusterServerSession {
     }
 }
 
+fn global_lock_wait_timeout(vars: &GlobalSysvars) -> Duration {
+    let seconds = vars
+        .get("innodb_lock_wait_timeout")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(tidb_vardef::defaults::DEF_INNODB_LOCK_WAIT_TIMEOUT as u64);
+    Duration::from_secs(seconds)
+}
+
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
     let mapped = error.to_mysql_error();
     SqlQueryError::new(mapped.code, mapped.state, mapped.message)
@@ -7643,7 +7638,7 @@ impl ClusterServerSession {
     /// go `session.LogSlowQuery` (`adapter.go:2007`): a statement whose cost
     /// reached the session's slow threshold lands in the in-memory slow-query
     /// memory `ADMIN SHOW SLOW` reads back.
-pub(crate) fn note_slow_query(&mut self, sql: &str, duration: std::time::Duration) {
+    pub(crate) fn note_slow_query(&mut self, sql: &str, duration: std::time::Duration) {
         let Some(threshold) = self.slow_log_threshold() else {
             return;
         };
@@ -7656,16 +7651,14 @@ pub(crate) fn note_slow_query(&mut self, sql: &str, duration: std::time::Duratio
         let (user, host) = self.session.current_identity().unwrap_or(("", ""));
         let db = self.session.current_database().to_owned();
         let digest = tidb_parser::normalize_digest(sql).1.to_string();
-        tidb_session::show_admin::record_slow_query(
-            tidb_session::show_admin::SlowQueryRecord {
-                sql: sql.to_owned(),
-                start,
-                duration,
-                conn_id: self.connection_id(),
-                user: format!("{user}@{host}"),
-                db,
-                digest,
-            },
-        );
+        tidb_session::show_admin::record_slow_query(tidb_session::show_admin::SlowQueryRecord {
+            sql: sql.to_owned(),
+            start,
+            duration,
+            conn_id: self.connection_id(),
+            user: format!("{user}@{host}"),
+            db,
+            digest,
+        });
     }
 }

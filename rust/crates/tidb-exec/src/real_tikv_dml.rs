@@ -62,10 +62,9 @@ use tidb_txnkv::{
     region::RegionRecoveryLoader,
     rpc::UnaryCallContext,
     transaction::{
-        MutationBufferError, MutationSetError, OptimisticCommitOutcome, OptimisticCoordinatorError,
-        OptimisticMutation, OptimisticMutationKind, ReadOnlyTransaction, RealOptimisticTransaction,
-        RealOptimisticTransactionOpener, TransactionCommandClient, TransactionMutationBuffer,
-        MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+        BufferMutation, BufferMutationOp, MutationPlan, MutationSetError, OptimisticCommitOutcome,
+        OptimisticCoordinatorError, ReadOnlyTransaction, RealOptimisticTransaction,
+        RealOptimisticTransactionOpener, TransactionCommandClient,
     },
 };
 
@@ -107,8 +106,6 @@ pub enum ConfiguredWriteError {
     DuplicateHandle(i64),
     /// The transaction rejected the assembled mutation set.
     Mutations(MutationSetError),
-    /// Statement-local coalescing rejected two writes to one key.
-    Staging(MutationBufferError),
     /// The real transaction coordinator failed before or during publication.
     Transaction(OptimisticCoordinatorError),
     /// The statement is not admitted SQL for the configured write boundary.
@@ -225,7 +222,6 @@ impl fmt::Display for ConfiguredWriteError {
                 "configured write repeats clustered handle {handle}"
             ),
             Self::Mutations(error) => write!(formatter, "configured write mutations: {error}"),
-            Self::Staging(error) => write!(formatter, "configured write staging: {error}"),
             Self::Transaction(error) => write!(formatter, "configured write transaction: {error}"),
             Self::Plan(error) => write!(formatter, "{error}"),
             Self::Parse(message) => write!(formatter, "SQL parse error: {message}"),
@@ -293,7 +289,6 @@ impl std::error::Error for ConfiguredWriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Mutations(error) => Some(error),
-            Self::Staging(error) => Some(error),
             Self::Transaction(error) => Some(error),
             Self::Plan(error) => Some(error),
             Self::RowWrite(_)
@@ -331,7 +326,11 @@ impl From<MutationSetError> for ConfiguredWriteError {
 
 impl From<OptimisticCoordinatorError> for ConfiguredWriteError {
     fn from(error: OptimisticCoordinatorError) -> Self {
-        if matches!(error, OptimisticCoordinatorError::SnapshotBackoff { .. }) {
+        if matches!(
+            error,
+            OptimisticCoordinatorError::SnapshotBackoff { .. }
+                | OptimisticCoordinatorError::Storage(_)
+        ) {
             Self::Commit(crate::cluster_table_storage::coordinator_sql_error(error))
         } else {
             Self::Transaction(error)
@@ -350,7 +349,7 @@ pub enum ConfiguredWritePlan {
     /// commit.
     Write {
         /// Mutations in statement order; the transaction sorts and batches.
-        mutations: Vec<OptimisticMutation>,
+        mutations: Vec<BufferMutation>,
         /// Rows to report in the MySQL OK packet.
         affected_rows: u64,
         /// Truncation warnings the row conversions raised, in source row
@@ -368,7 +367,7 @@ pub enum ConfiguredWritePlan {
     /// warnings for the rows it skipped.
     Ignore {
         /// Mutations for the rows without a visible conflict.
-        mutations: Vec<OptimisticMutation>,
+        mutations: Vec<BufferMutation>,
         /// Rows accepted for insertion.
         affected_rows: u64,
         /// Duplicate-key warnings in source row order.
@@ -416,7 +415,7 @@ pub fn plan_insert(
         handles.push(handle);
         let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
         let value = encode_row_value(&columns)?;
-        mutations.push(OptimisticMutation::insert(key, value)?);
+        mutations.push(BufferMutation::insert(key, value)?);
         // Every configured index gains one entry for the new row, committed in
         // the same 2PC as the record so the index can never lag the row.
         for index in table.indexes() {
@@ -452,7 +451,7 @@ pub fn plan_insert_ignore<S: WritePlanningSnapshot>(
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
-    let mut staged = TransactionMutationBuffer::new();
+    let mut staged = MutationPlan::new();
     let mut warnings = Vec::new();
     let mut affected_rows = 0;
 
@@ -492,9 +491,7 @@ pub fn plan_insert_ignore<S: WritePlanningSnapshot>(
             unreachable!("one INSERT IGNORE row always has an insert plan")
         };
         for mutation in mutations {
-            staged
-                .stage(mutation)
-                .map_err(ConfiguredWriteError::Staging)?;
+            staged.stage(mutation);
         }
         affected_rows += 1;
     }
@@ -520,7 +517,7 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
-    let mut staged = TransactionMutationBuffer::new();
+    let mut staged = MutationPlan::new();
     let mut affected_rows = 0;
     let mut warnings = Vec::new();
     for row in rows {
@@ -532,9 +529,7 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
                 warnings: row_warnings,
             } => {
                 for mutation in mutations {
-                    staged
-                        .stage(mutation)
-                        .map_err(ConfiguredWriteError::Staging)?;
+                    staged.stage(mutation);
                 }
                 affected_rows += row_affected;
                 warnings.extend(row_warnings);
@@ -564,7 +559,7 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
 
 fn plan_replace_row<S: WritePlanningSnapshot>(
     snapshot: &mut S,
-    staged: &TransactionMutationBuffer,
+    staged: &MutationPlan,
     table: &ConfiguredTable,
     row: &ConfiguredInsertRow,
     call: &UnaryCallContext,
@@ -635,7 +630,7 @@ fn plan_replace_row<S: WritePlanningSnapshot>(
 
 fn staged_or_snapshot<S: WritePlanningSnapshot>(
     snapshot: &mut S,
-    staged: &TransactionMutationBuffer,
+    staged: &MutationPlan,
     key: &[u8],
     call: &UnaryCallContext,
 ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
@@ -643,17 +638,9 @@ fn staged_or_snapshot<S: WritePlanningSnapshot>(
         return snapshot.read_at_snapshot(key, call);
     };
     match mutation.kind() {
-        OptimisticMutationKind::Delete
-        | OptimisticMutationKind::IndexDelete
-        | OptimisticMutationKind::MetaDelete
-        | OptimisticMutationKind::SystemRowDelete => Ok(None),
-        OptimisticMutationKind::LockOnly => snapshot.read_at_snapshot(key, call),
-        OptimisticMutationKind::Insert
-        | OptimisticMutationKind::PutExisting
-        | OptimisticMutationKind::IndexPut
-        | OptimisticMutationKind::UniqueIndexInsert
-        | OptimisticMutationKind::MetaPut
-        | OptimisticMutationKind::SystemRowPut => Ok(Some(mutation.value().to_vec())),
+        BufferMutationOp::Delete => Ok(None),
+        BufferMutationOp::Lock => snapshot.read_at_snapshot(key, call),
+        BufferMutationOp::Set => Ok(Some(mutation.value().to_vec())),
     }
 }
 
@@ -719,13 +706,9 @@ pub fn plan_update(
         // (`configured_stored_value`): the same type check, range check,
         // truncation, and `NULL`-into-nullable-column rule, so `SET col = ?`
         // admits and refuses exactly what `INSERT ... (col) VALUES (?)` does.
-        ConfiguredAssignment::Set(value) => configured_stored_value(
-            assigned,
-            &value,
-            session_tz,
-            &mut update_warnings,
-            1,
-        )?,
+        ConfiguredAssignment::Set(value) => {
+            configured_stored_value(assigned, &value, session_tz, &mut update_warnings, 1)?
+        }
         ConfiguredAssignment::Add(addend) => plan_typed_add(assigned, &stored_value, &addend)?,
     };
     // An UPDATE whose value does not change writes nothing (Go `AddTouchedRows`
@@ -762,7 +745,7 @@ pub fn plan_update(
     columns.sort_by_key(|(id, _)| *id);
     let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
     let value = encode_row_value(&columns)?;
-    let mut mutations = vec![OptimisticMutation::put_existing(key, value)?];
+    let mut mutations = vec![BufferMutation::put_existing(key, value)?];
     // A single-column update moves only the entry of an index on that column;
     // any other index is untouched because its column value did not change. The
     // index path maintains integer columns only, so a moved entry over a CHAR
@@ -870,7 +853,7 @@ fn plan_on_duplicate_update(
     }
     columns.sort_by_key(|(id, _)| *id);
     let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
-    let mut mutations = vec![OptimisticMutation::put_existing(
+    let mut mutations = vec![BufferMutation::put_existing(
         key,
         encode_row_value(&columns)?,
     )?];
@@ -898,7 +881,7 @@ fn plan_on_duplicate_update(
 /// Plans one configured candidate row against its first visible duplicate.
 fn plan_on_duplicate_row<S: WritePlanningSnapshot>(
     snapshot: &mut S,
-    staged: &TransactionMutationBuffer,
+    staged: &MutationPlan,
     table: &ConfiguredTable,
     row: &ConfiguredInsertRow,
     assignments: &[ConfiguredOnDuplicateAssignment],
@@ -949,7 +932,7 @@ pub fn plan_insert_on_duplicate<S: WritePlanningSnapshot>(
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
-    let mut staged = TransactionMutationBuffer::new();
+    let mut staged = MutationPlan::new();
     let mut affected_rows = 0;
     let mut warnings = Vec::new();
     for row in rows {
@@ -960,9 +943,7 @@ pub fn plan_insert_on_duplicate<S: WritePlanningSnapshot>(
                 warnings: row_warnings,
             } => {
                 for mutation in mutations {
-                    staged
-                        .stage(mutation)
-                        .map_err(ConfiguredWriteError::Staging)?;
+                    staged.stage(mutation);
                 }
                 affected_rows += row_affected;
                 warnings.extend(row_warnings);
@@ -1006,7 +987,7 @@ pub fn plan_delete(
         });
     };
     let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
-    let mut mutations = vec![OptimisticMutation::delete(key)?];
+    let mut mutations = vec![BufferMutation::delete_existing(key)?];
     // The removed row's index entries go with it, keyed by the values it stored
     // at `start_ts`.
     if !table.indexes().is_empty() {
@@ -1027,11 +1008,6 @@ pub fn plan_delete(
         warnings: Vec::new(),
     })
 }
-
-/// A generous upper bound on one integer index entry's key + value bytes, used
-/// only to size the transaction's pre-open publication budget (an over-estimate
-/// is safe; the commit only rejects an *under*-provisioned mutation set).
-const MAX_INT_INDEX_ENTRY_BYTES: usize = 64;
 
 /// Admits a bound string into a `CHAR(max_length)` column, enforcing the
 /// character-length limit (Go `types.ProduceStrWithSpecifiedTp`): a value within
@@ -1094,11 +1070,11 @@ fn admit_decimal_value(
     row_index: usize,
 ) -> Result<Decimal, ConfiguredWriteError> {
     let (parsed, _warning) = Decimal::parse_mysql(&String::from_utf8_lossy(bytes));
-    let fitted = parsed.fit_precision_scale(precision, scale).ok_or_else(|| {
-        ConfiguredWriteError::DecimalOutOfRange {
+    let fitted = parsed
+        .fit_precision_scale(precision, scale)
+        .ok_or_else(|| ConfiguredWriteError::DecimalOutOfRange {
             column: column.name().to_owned(),
-        }
-    })?;
+        })?;
     // go `ProduceDecWithSpecifiedTp`: a scale/precision fit that CHANGED the
     // value (fractional rounding) is a 1366 truncation the column scope
     // names -- `Incorrect decimal value: '<text>' for column '<col>' at row
@@ -1310,10 +1286,10 @@ fn index_put_mutation(
     index: &ConfiguredIndex,
     value: i64,
     handle: i64,
-) -> Result<OptimisticMutation, ConfiguredWriteError> {
+) -> Result<BufferMutation, ConfiguredWriteError> {
     if index.is_unique() {
         let key = unique_index_key(table_id, index.index_id(), value)?;
-        return OptimisticMutation::unique_index_insert(key, handle.to_be_bytes().to_vec())
+        return BufferMutation::insert(key, handle.to_be_bytes().to_vec())
             .map_err(ConfiguredWriteError::Mutations);
     }
     let key =
@@ -1321,8 +1297,7 @@ fn index_put_mutation(
             .map_err(|_| ConfiguredWriteError::UnsupportedIndex {
             reason: "index column value is not encodable",
         })?;
-    OptimisticMutation::index_put(key, non_unique_index_value())
-        .map_err(ConfiguredWriteError::Mutations)
+    BufferMutation::set(key, non_unique_index_value()).map_err(ConfiguredWriteError::Mutations)
 }
 
 /// Builds the DELETE mutation removing an index entry for `(value, handle)`.
@@ -1331,7 +1306,7 @@ fn index_delete_mutation(
     index: &ConfiguredIndex,
     value: i64,
     handle: i64,
-) -> Result<OptimisticMutation, ConfiguredWriteError> {
+) -> Result<BufferMutation, ConfiguredWriteError> {
     let key = if index.is_unique() {
         unique_index_key(table_id, index.index_id(), value)?
     } else {
@@ -1340,7 +1315,8 @@ fn index_delete_mutation(
                 reason: "index column value is not encodable",
             })?
     };
-    OptimisticMutation::index_delete(key).map_err(ConfiguredWriteError::Mutations)
+    // Go index.Delete asserts existence for every public index.
+    BufferMutation::delete_existing(key).map_err(ConfiguredWriteError::Mutations)
 }
 
 fn unique_index_key(
@@ -1520,12 +1496,7 @@ fn configured_stored_value(
                 return Err(type_mismatch(column, false));
             };
             Ok(Datum::Decimal(admit_decimal_value(
-                column,
-                bytes,
-                precision,
-                scale,
-                warnings,
-                row_index,
+                column, bytes, precision, scale, warnings, row_index,
             )?))
         }
         scalar_type @ (ConfiguredScalarType::Date
@@ -1684,131 +1655,6 @@ fn check_column_value(column: &ConfiguredColumn, value: i64) -> Result<(), Confi
         });
     }
     Ok(())
-}
-
-/// Upper bounds on what a bound statement can publish.
-///
-/// `RealOptimisticTransactionOpener::begin` validates the plan before it spends
-/// a real PD timestamp, so these must be known without reading storage. An
-/// INSERT encodes its rows exactly; a point UPDATE cannot know its replacement
-/// row until it reads, so it declares one mutation and the widest row its
-/// configured table can produce.
-pub fn planned_publication_bounds(
-    write: &ConfiguredPreparedWrite,
-    session_tz: &SessionTimeZone,
-) -> Result<(usize, usize), ConfiguredWriteError> {
-    match write {
-        ConfiguredPreparedWrite::InsertRows { table, rows }
-        | ConfiguredPreparedWrite::InsertIgnoreRows { table, rows } => {
-            // Re-plans with the statement's real `time_zone` so a `TIMESTAMP`
-            // literal that only overflows (or only fits) under this session's
-            // own zone is admitted/refused identically here and in the real
-            // plan `execute_configured_write` runs inside the transaction.
-            let ConfiguredWritePlan::Write { mutations, .. } =
-                plan_insert(table, rows, session_tz)?
-            else {
-                return Err(ConfiguredWriteError::Mutations(MutationSetError::Empty));
-            };
-            let bytes = mutations
-                .iter()
-                .try_fold(0usize, |total, mutation| {
-                    total
-                        .checked_add(mutation.key().len())?
-                        .checked_add(mutation.value().len())
-                })
-                .unwrap_or(usize::MAX);
-            Ok((mutations.len(), bytes))
-        }
-        // The conflicting rows are read at the transaction start timestamp, so
-        // the exact mutation set does not exist before opening the transaction.
-        // Admit the coordinator's own checked maximum here; commit still
-        // validates the actual set before any RPC publishes it.
-        ConfiguredPreparedWrite::ReplaceRows { .. } => {
-            Ok((MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES))
-        }
-        ConfiguredPreparedWrite::InsertOnDuplicateRows { .. } => {
-            // Every candidate can conflict with a different row and each
-            // changed duplicate becomes a full-row rewrite.  The exact set is
-            // snapshot-dependent, so use the coordinator's checked maximum.
-            Ok((MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES))
-        }
-        ConfiguredPreparedWrite::UpdatePoint { table, handle, .. } => {
-            let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(*handle));
-            // At most one index (the one on the assigned column) moves its entry
-            // (delete + put). Over-provision two entries per index so the pre-open
-            // budget never under-counts the actual mutation set.
-            let index_entries = table.indexes().len().saturating_mul(2);
-            Ok((
-                1 + index_entries,
-                key.len()
-                    .saturating_add(max_configured_row_value_len(table))
-                    .saturating_add(index_entries.saturating_mul(MAX_INT_INDEX_ENTRY_BYTES)),
-            ))
-        }
-        ConfiguredPreparedWrite::DeletePoint { table, handle } => {
-            // A delete publishes one record mutation plus one entry per index.
-            let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(*handle));
-            let index_entries = table.indexes().len();
-            Ok((
-                1 + index_entries,
-                key.len()
-                    .saturating_add(index_entries.saturating_mul(MAX_INT_INDEX_ENTRY_BYTES)),
-            ))
-        }
-    }
-}
-
-/// Widest new-format row a configured table can persist.
-///
-/// Row format v2 spends a five-byte header, then per not-null column a column
-/// ID, an end offset, and the payload. The large-row layout is the worst case at
-/// four bytes each for ID and offset. The payload is type-dependent: a signed
-/// integer never exceeds eight bytes, while a `CHAR(N)` utf8mb4 value stores up
-/// to four bytes per character. Counting a `CHAR` column as an integer (as an
-/// earlier BIGINT-only version did) under-provisions the transaction's byte
-/// budget, so an UPDATE that rewrites a wide string row is wrongly rejected as
-/// `TransactionTooLarge` at commit.
-fn max_configured_row_value_len(table: &ConfiguredTable) -> usize {
-    const ROW_HEADER_LEN: usize = 5;
-    const MAX_COLUMN_METADATA_LEN: usize = 4 + 4;
-    const MAX_INT_PAYLOAD_LEN: usize = 8;
-    const UTF8MB4_MAX_BYTES_PER_CHAR: usize = 4;
-    table
-        .columns()
-        .iter()
-        .filter(|column| column.kind() == ConfiguredColumnKind::Stored)
-        .fold(ROW_HEADER_LEN, |total, column| {
-            let payload = match column.scalar_type() {
-                ConfiguredScalarType::BigInt
-                | ConfiguredScalarType::Int
-                | ConfiguredScalarType::UnsignedBigInt
-                | ConfiguredScalarType::Double
-                // `Date`/`Datetime`/`Timestamp` persist as the packed 8-byte
-                // `types.Time`; `Duration` persists as an 8-byte `int64`
-                // nanosecond count (`tidb_codec::column`'s temporal decode).
-                | ConfiguredScalarType::Date
-                | ConfiguredScalarType::Datetime { .. }
-                | ConfiguredScalarType::Timestamp { .. }
-                | ConfiguredScalarType::Duration { .. } => MAX_INT_PAYLOAD_LEN,
-                ConfiguredScalarType::Char { max_length } => {
-                    (max_length as usize).saturating_mul(UTF8MB4_MAX_BYTES_PER_CHAR)
-                }
-                ConfiguredScalarType::Varchar {
-                    max_length,
-                    binary: true,
-                } => max_length as usize,
-                ConfiguredScalarType::Varchar {
-                    max_length,
-                    binary: false,
-                } => (max_length as usize).saturating_mul(UTF8MB4_MAX_BYTES_PER_CHAR),
-                // Fixed-width `MyDecimal` binary encoding
-                // (`tidb_codec::column::MY_DECIMAL_BYTES`).
-                ConfiguredScalarType::Decimal { .. } => 40,
-            };
-            total
-                .saturating_add(MAX_COLUMN_METADATA_LEN)
-                .saturating_add(payload)
-        })
 }
 
 /// What one bound statement did to storage.
@@ -1974,8 +1820,7 @@ pub fn commit_configured_write<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
 ) -> Result<ConfiguredWriteReport, ConfiguredWriteError> {
     // Bounds are computed before the transaction opens so an oversized
     // statement never spends a real PD timestamp.
-    let (planned_mutations, planned_bytes) = planned_publication_bounds(write, session_tz)?;
-    let transaction = opener.begin(planned_mutations, planned_bytes)?;
+    let transaction = opener.begin()?;
     let call = UnaryCallContext::with_timeout(timeout);
     match execute_configured_write(transaction, write, &call, session_tz)? {
         ConfiguredWriteOutcome::Published {
@@ -2074,7 +1919,7 @@ impl<S: WritePlanningSnapshot> WritePlanningSnapshot for CountingWritePlanningSn
     }
 }
 
-fn mutation_write_details(mutations: &[OptimisticMutation]) -> (isize, isize) {
+fn mutation_write_details(mutations: &[BufferMutation]) -> (isize, isize) {
     mutations
         .iter()
         .fold((0_isize, 0_isize), |(size, keys), mutation| {

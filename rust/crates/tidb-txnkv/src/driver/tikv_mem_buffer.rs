@@ -58,6 +58,8 @@ use crate::{AssertionOp, FlagsOp, Key, KeyFlags};
 /// message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TikvMemBufferError {
+    /// A native buffer failure with its TiDB SQL identity.
+    Kv(crate::KvError),
     /// The canonical TiDB not-found identity.
     NotFound,
     /// Client-go rejects storing an empty value through `Set`.
@@ -69,6 +71,7 @@ pub enum TikvMemBufferError {
 impl std::fmt::Display for TikvMemBufferError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Kv(error) => error.fmt(formatter),
             Self::NotFound => formatter.write_str("key not exist"),
             Self::CannotSetNilValue => formatter.write_str("can not set nil value"),
             Self::Backend(message) => formatter.write_str(message),
@@ -97,11 +100,27 @@ fn map_read_error(error: TikvStaticError) -> TikvMemBufferError {
     }
 }
 
-fn map_write_error(error: Box<dyn std::error::Error + Send + Sync>) -> TikvMemBufferError {
-    match error.downcast_ref::<TikvStaticError>() {
-        Some(TikvStaticError::CannotSetNilValue) => TikvMemBufferError::CannotSetNilValue,
-        _ => TikvMemBufferError::Backend(error.to_string()),
+impl TikvMemBufferError {
+    /// Converts native MemDB failures without discarding their SQL identity.
+    pub fn from_native_write(error: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        if let Some(error) = error.downcast_ref::<tikv_client::error::EntryTooLargeError>() {
+            return Self::Kv(crate::gen_entry_too_large_err(error.limit, error.size));
+        }
+        if let Some(error) = error.downcast_ref::<tikv_client::error::TransactionTooLargeError>() {
+            return Self::Kv(crate::gen_txn_too_large_err(error.size as i64));
+        }
+        if let Some(error) = error.downcast_ref::<tikv_client::error::KeyTooLargeError>() {
+            return Self::Kv(crate::gen_key_too_large_err(error.key_size as i64));
+        }
+        match error.downcast_ref::<TikvStaticError>() {
+            Some(TikvStaticError::CannotSetNilValue) => Self::CannotSetNilValue,
+            _ => Self::Backend(error.to_string()),
+        }
     }
+}
+
+fn map_write_error(error: Box<dyn std::error::Error + Send + Sync>) -> TikvMemBufferError {
+    TikvMemBufferError::from_native_write(error)
 }
 
 fn map_snapshot_error(error: SnapshotError) -> TikvMemBufferError {

@@ -35,7 +35,7 @@ use std::collections::BTreeMap;
 use tidb_datatype::Datum;
 use tidb_exec::system_row_write::{insert_row, insert_row_with_collation, RowValues};
 use tidb_model::table_info::TableInfo;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 const GO_TABLE_INFOS: &str = include_str!("data/mysql_bootstrap_tableinfos.json");
 const FIXTURE: &str =
@@ -94,7 +94,7 @@ fn row(table: &TableInfo, named: &[(&str, &str)]) -> RowValues {
 }
 
 /// The one index-entry mutation `insert_row` produced for `index_id`.
-fn entry(mutations: &[OptimisticMutation], index_id: i64) -> (Vec<u8>, Vec<u8>) {
+fn entry(mutations: &[BufferMutation], index_id: i64) -> (Vec<u8>, Vec<u8>) {
     let mut found: Vec<(Vec<u8>, Vec<u8>)> = mutations
         .iter()
         // `_i` marks an index key; the id follows it, sign-flipped
@@ -109,7 +109,7 @@ fn entry(mutations: &[OptimisticMutation], index_id: i64) -> (Vec<u8>, Vec<u8>) 
     found.pop().unwrap()
 }
 
-fn assert_entry(name: &str, mutations: &[OptimisticMutation], index_id: i64) {
+fn assert_entry(name: &str, mutations: &[BufferMutation], index_id: i64) {
     let (key, value) = entry(mutations, index_id);
     assert_eq!(
         hex(&key),

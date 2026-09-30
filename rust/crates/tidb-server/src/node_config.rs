@@ -1183,6 +1183,8 @@ fn install_process_globals(config: SourceConfig) {
     let configured_edition = config.tidb_edition.clone();
     let configured_release = config.tidb_release_version.clone();
     let configured_server = config.server_version.clone();
+    tidb_txnkv::set_txn_entry_size_limit(config.performance.txn_entry_size_limit);
+    tidb_txnkv::set_txn_total_size_limit(config.performance.txn_total_size_limit);
     tidb_config::config_tree::config::store_global_config(config);
 
     let defaults = tidb_mysql::runtime_versions();

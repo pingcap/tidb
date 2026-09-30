@@ -24,7 +24,7 @@ use std::fmt;
 
 use tidb_datatype::Datum;
 use tidb_model::TableInfo;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
@@ -125,7 +125,7 @@ impl MviewAlertTable {
     pub fn append_delete(
         &self,
         row: &MviewAlertRow,
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), MviewAlertTableError> {
         mutations.extend(delete_clustered_row(&self.table, &row.values)?);
         Ok(())

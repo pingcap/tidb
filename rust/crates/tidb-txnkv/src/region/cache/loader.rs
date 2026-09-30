@@ -312,13 +312,41 @@ pub trait RegionLoader {
     fn batch_load_regions(
         &mut self,
         ranges: &[KeyRange],
-        _limit: usize,
+        limit: usize,
         _options: BatchLoadOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
-        ranges
-            .iter()
-            .map(|range| self.load_region(&range.start))
-            .collect()
+        let mut regions: Vec<RegionLocation> = Vec::new();
+        for range in ranges {
+            let mut key = range.start.clone();
+            loop {
+                if let Some(region) = regions.last().filter(|region| region.contains_key(&key)) {
+                    if region.end_key.is_empty()
+                        || (!range.end.is_empty() && region.end_key >= range.end)
+                    {
+                        break;
+                    }
+                    key.clone_from(&region.end_key);
+                }
+                if regions.len() == limit {
+                    return Ok(regions);
+                }
+                let region = self.load_region(&key)?;
+                if !region.contains_key(&key) {
+                    return Err(RegionLoadError::new(
+                        "region_coverage",
+                        "region lookup did not cover the requested key",
+                    ));
+                }
+                let covered = region.end_key.is_empty()
+                    || (!range.end.is_empty() && region.end_key >= range.end);
+                key.clone_from(&region.end_key);
+                regions.push(region);
+                if covered {
+                    break;
+                }
+            }
+        }
+        Ok(regions)
     }
 
     /// Returns the most recently resolved PD labels for one store.

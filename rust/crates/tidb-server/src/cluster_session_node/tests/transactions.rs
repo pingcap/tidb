@@ -19,6 +19,29 @@ use tidb_txnkv::transaction::{
     UndeterminedTransaction,
 };
 
+#[test]
+fn changing_session_lock_wait_reaches_an_open_transaction() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .unwrap();
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    for seconds in [7, 13] {
+        session
+            .execute_write(&format!("SET SESSION innodb_lock_wait_timeout = {seconds}"))
+            .unwrap();
+        cluster.lock_waits.lock().unwrap().clear();
+        session
+            .execute_write(&format!("UPDATE t SET v = {seconds} WHERE id = 1"))
+            .unwrap();
+        let waits = cluster.lock_waits.lock().unwrap();
+        assert!(!waits.is_empty());
+        assert!(waits.iter().all(|wait| *wait
+            == tidb_txnkv::transaction::LockWaitTime::Timeout(Duration::from_secs(seconds))));
+    }
+    session.control_transaction("ROLLBACK").unwrap();
+}
+
 /// Go `pkg/executor/executor_failpoint_test.go::TestTxnWriteThroughputSLI`.
 #[test]
 fn txn_write_throughput_sli_matches_source() {

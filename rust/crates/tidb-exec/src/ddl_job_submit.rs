@@ -25,7 +25,7 @@ use tidb_model::{
     GoSharedSlice, HistoryInfo, InvolvingSchemaInfo, Job, JobArgsValue, JobState, JobVersion,
     PartitionInfo, TableInfo, TraceInfo,
 };
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_ddl::{DdlAdmissionError, DdlPlanError};
@@ -79,10 +79,10 @@ impl GlobalIdAllocator {
         Ok((first..=new_max).collect())
     }
 
-    pub(crate) fn mutation(&self) -> Result<Option<OptimisticMutation>, DdlPlanError> {
+    pub(crate) fn mutation(&self) -> Result<Option<BufferMutation>, DdlPlanError> {
         (self.current != self.original)
             .then(|| {
-                OptimisticMutation::meta_put(
+                BufferMutation::set(
                     key::next_global_id_kv_key(),
                     value::encode_int_value(self.current),
                 )
@@ -715,7 +715,7 @@ pub fn prepare_submit_batch<S: MetaSnapshot>(
 pub fn plan_assign_global_ids<S: MetaSnapshot>(
     snapshot: &mut S,
     specs: &mut [JobSpec],
-) -> Result<Vec<OptimisticMutation>, DdlPlanError> {
+) -> Result<Vec<BufferMutation>, DdlPlanError> {
     if specs.is_empty() {
         return Ok(Vec::new());
     }
@@ -737,7 +737,7 @@ pub fn plan_assign_global_ids<S: MetaSnapshot>(
 pub fn plan_insert_job_rows(
     catalog: &ClusterCatalog,
     specs: &mut [JobSpec],
-    mutations: &mut Vec<OptimisticMutation>,
+    mutations: &mut Vec<BufferMutation>,
 ) -> Result<(), DdlPlanError> {
     if specs.is_empty() {
         return Ok(());
@@ -784,7 +784,7 @@ pub fn plan_insert_attempt<S, F, Cleanup>(
     catalog: &ClusterCatalog,
     specs: &mut [JobSpec],
     before_insert_with_assigned_ids: &mut F,
-) -> Result<(Vec<OptimisticMutation>, Option<Cleanup>), DdlPlanError>
+) -> Result<(Vec<BufferMutation>, Option<Cleanup>), DdlPlanError>
 where
     S: MetaSnapshot,
     F: FnMut(&[JobSpec]) -> Option<Cleanup>,

@@ -25,7 +25,7 @@ use std::fmt;
 use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
 use tidb_datatype::{Datum, Time, TimeType};
 use tidb_model::Job;
-use tidb_txnkv::transaction::OptimisticMutation;
+use tidb_txnkv::transaction::BufferMutation;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
@@ -169,7 +169,7 @@ impl DdlHistoryTable {
         snapshot: &mut S,
         job: &Job,
         encoded: &[u8],
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlHistoryTableError> {
         let already_exists = scan_system_table(snapshot, &self.view)?
             .into_iter()

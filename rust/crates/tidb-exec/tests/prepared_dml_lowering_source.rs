@@ -26,20 +26,17 @@
 
 use std::collections::BTreeMap;
 
+use tidb_codec::encode_key;
 use tidb_codec::table_key::{
     encode_index_seek_key, encode_non_unique_index_key, encode_row_key_with_handle,
     non_unique_index_value, RecordHandle,
 };
-use tidb_codec::encode_key;
 use tidb_datatype::{Datum, SessionTimeZone};
-use tidb_tablecodec::encode_table_row;
 use tidb_exec::real_tikv_dml::{
     plan_configured_write as plan_configured_write_in_zone, plan_delete,
     plan_insert as plan_insert_in_zone, plan_update as plan_update_in_zone,
-    planned_publication_bounds as planned_publication_bounds_in_zone, prepare_configured_write,
-    prepare_text_write,
-    ConfiguredWriteError, ConfiguredWritePlan, ConfiguredWriteReport, NoWriteReason,
-    WritePlanningSnapshot,
+    prepare_configured_write, prepare_text_write, ConfiguredWriteError, ConfiguredWritePlan,
+    ConfiguredWriteReport, NoWriteReason, WritePlanningSnapshot,
 };
 use tidb_planner::{
     configured_catalog::ConfiguredCatalog,
@@ -49,8 +46,9 @@ use tidb_planner::{
     },
     read_only_scan::{ConfiguredColumn, ConfiguredIndex, ConfiguredScalarType, ConfiguredTable},
 };
+use tidb_tablecodec::encode_table_row;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::OptimisticMutationKind;
+use tidb_txnkv::transaction::BufferMutationOp;
 
 fn fixed_zone(offset_secs: i32) -> SessionTimeZone {
     SessionTimeZone::Fixed {
@@ -83,13 +81,6 @@ fn plan_update(
         stored,
         &fixed_zone(offset_secs),
     )
-}
-
-fn planned_publication_bounds(
-    write: &ConfiguredPreparedWrite,
-    offset_secs: i32,
-) -> Result<(usize, usize), ConfiguredWriteError> {
-    planned_publication_bounds_in_zone(write, &fixed_zone(offset_secs))
 }
 
 fn plan_configured_write<S: WritePlanningSnapshot>(
@@ -261,7 +252,7 @@ fn one_insert_row_becomes_one_not_exists_mutation_and_one_affected_row() {
     assert_eq!(mutations.len(), 1);
 
     let (key, value) = expected_row(10, 100);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Insert);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[0].key(), key);
     assert_eq!(mutations[0].value(), value);
 }
@@ -344,7 +335,8 @@ fn a_changed_row_publishes_one_exists_mutation_and_reports_one_row() {
         BALANCE_INDEX,
         ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
         Some(&stored_row(100)),
-    0)
+        0,
+    )
     .expect("update must plan")
     else {
         panic!("a changed row publishes");
@@ -353,7 +345,7 @@ fn a_changed_row_publishes_one_exists_mutation_and_reports_one_row() {
     assert_eq!(mutations.len(), 1);
 
     let (key, value) = expected_row(10, 150);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[0].key(), key);
     assert_eq!(mutations[0].value(), value);
 }
@@ -367,7 +359,8 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(100)),
             Some(&stored_row(100)),
-        0),
+            0
+        ),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
             affected_rows: 0,
@@ -381,7 +374,8 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
             BALANCE_INDEX,
             ConfiguredAssignment::Add(PreparedBindValue::Int(0)),
             Some(&stored_row(100)),
-        0),
+            0
+        ),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
             affected_rows: 0,
@@ -431,7 +425,7 @@ fn a_point_delete_publishes_one_exists_asserted_delete_mutation() {
     };
     assert_eq!(affected_rows, 1);
     assert_eq!(mutations.len(), 1);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Delete);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Delete);
     // The delete targets the row record key (independent of the row value) and
     // carries no value.
     assert_eq!(mutations[0].key(), expected_row(10, 100).0);
@@ -458,7 +452,8 @@ fn a_missing_row_matches_nothing_and_publishes_nothing() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             None,
-        0),
+            0
+        ),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::MissingRow,
             affected_rows: 0,
@@ -474,7 +469,8 @@ fn arithmetic_update_reads_the_snapshot_value_it_adds_to() {
         BALANCE_INDEX,
         ConfiguredAssignment::Add(PreparedBindValue::Int(7)),
         Some(&stored_row(150)),
-    0)
+        0,
+    )
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
@@ -492,7 +488,8 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
             BALANCE_INDEX,
             ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored_row(i64::MAX)),
-        0),
+            0
+        ),
         Err(ConfiguredWriteError::Overflow {
             column: "balance".to_owned(),
             current: i64::MAX,
@@ -506,7 +503,8 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
             BALANCE_INDEX,
             ConfiguredAssignment::Add(PreparedBindValue::Int(-1)),
             Some(&stored_row(i64::MIN)),
-        0),
+            0
+        ),
         Err(ConfiguredWriteError::Overflow {
             column: "balance".to_owned(),
             current: i64::MIN,
@@ -521,7 +519,8 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
         BALANCE_INDEX,
         ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&stored_row(i64::MAX - 1)),
-    0)
+        0,
+    )
     .expect("the boundary value must remain admitted") else {
         panic!("a changed row publishes");
     };
@@ -530,8 +529,7 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
 
 #[test]
 fn a_row_missing_its_configured_column_fails_closed() {
-    let foreign_row =
-        encode_expected_row(TABLE_ID, 0, &[(BALANCE_COLUMN + 40, Datum::Int(100))]).1;
+    let foreign_row = encode_expected_row(TABLE_ID, 0, &[(BALANCE_COLUMN + 40, Datum::Int(100))]).1;
 
     assert!(matches!(
         plan_update(
@@ -540,7 +538,8 @@ fn a_row_missing_its_configured_column_fails_closed() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             Some(&foreign_row),
-        0),
+            0
+        ),
         Err(ConfiguredWriteError::RowRead(_))
     ));
     assert!(matches!(
@@ -550,7 +549,8 @@ fn a_row_missing_its_configured_column_fails_closed() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             Some(b"not a row"),
-        0),
+            0
+        ),
         Err(ConfiguredWriteError::RowRead(_))
     ));
 }
@@ -583,7 +583,8 @@ fn an_update_rewrites_every_stored_column_not_just_the_assigned_one() {
         BALANCE_INDEX,
         ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
         Some(&stored),
-    0)
+        0,
+    )
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
@@ -725,7 +726,8 @@ fn an_int_arithmetic_update_overflows_at_the_i32_bound_not_the_i64_bound() {
             BALANCE_INDEX,
             ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored),
-        0),
+            0
+        ),
         Err(ConfiguredWriteError::ValueOutOfRange {
             column: "balance".to_owned(),
             value: i64::from(i32::MAX) + 1,
@@ -741,7 +743,8 @@ fn an_int_arithmetic_update_overflows_at_the_i32_bound_not_the_i64_bound() {
         BALANCE_INDEX,
         ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&bigint_stored),
-    0)
+        0,
+    )
     .expect("a BIGINT admits values beyond the INT range") else {
         panic!("a changed row publishes");
     };
@@ -762,7 +765,8 @@ fn a_direct_int_update_outside_the_domain_fails_closed() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(i64::from(i32::MAX) + 1)),
             Some(&stored),
-        0),
+            0
+        ),
         Err(ConfiguredWriteError::ValueOutOfRange {
             column: "balance".to_owned(),
             value: i64::from(i32::MAX) + 1,
@@ -832,7 +836,10 @@ fn insert_ignore_skips_primary_conflicts_and_keeps_later_rows() {
     assert_eq!(affected_rows, 1);
     assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0].code, 1062);
-    assert_eq!(warnings[0].message, "Duplicate entry '10' for key 'PRIMARY'");
+    assert_eq!(
+        warnings[0].message,
+        "Duplicate entry '10' for key 'PRIMARY'"
+    );
     assert!(mutations.iter().any(|mutation| mutation.key() == accepted));
     assert!(!mutations.iter().any(|mutation| mutation.key() == duplicate));
 }
@@ -865,7 +872,10 @@ fn insert_ignore_reports_the_configured_unique_index_name() {
     assert!(mutations.is_empty());
     assert_eq!(affected_rows, 0);
     assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0].message, "Duplicate entry '100' for key 'balance_key'");
+    assert_eq!(
+        warnings[0].message,
+        "Duplicate entry '100' for key 'balance_key'"
+    );
 }
 
 #[test]
@@ -888,7 +898,7 @@ fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
     };
     assert_eq!(affected_rows, 2);
     assert_eq!(mutations.len(), 1);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[0].key(), record_key);
     assert_eq!(mutations[0].value(), stored_row(200));
 
@@ -933,21 +943,20 @@ fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
     };
     assert_eq!(mutations.len(), 3);
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::PutExisting
-            && mutation.key()
-                == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10))
+        (mutation.kind() == BufferMutationOp::Set
+            && mutation.assertion() == tidb_txnkv::AssertionOp::AssertExist)
+            && mutation.key() == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10))
     }));
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::IndexDelete
+        mutation.kind() == BufferMutationOp::Delete
             && mutation.key() == expected_index_entry(100, 10)
     }));
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::IndexPut
+        (mutation.kind() == BufferMutationOp::Set && tidb_tablecodec::is_index_key(mutation.key()))
             && mutation.key() == expected_index_entry(200, 10)
     }));
 
-    let catalog = ConfiguredCatalog::new([unique_indexed_table()])
-        .expect("catalog must validate");
+    let catalog = ConfiguredCatalog::new([unique_indexed_table()]).expect("catalog must validate");
     let write = lower_prepared_write(
         &tidb_parser::parse(
             "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
@@ -971,11 +980,11 @@ fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
     };
     assert_eq!(mutations.len(), 3);
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::IndexDelete
+        mutation.kind() == BufferMutationOp::Delete
             && mutation.key() == expected_unique_index_entry(100)
     }));
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::UniqueIndexInsert
+        mutation.presume_not_exists()
             && mutation.key() == expected_unique_index_entry(200)
             && mutation.value() == 10_i64.to_be_bytes()
     }));
@@ -1013,9 +1022,10 @@ fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
         panic!("the final duplicate update publishes");
     };
     assert_eq!(affected_rows, 3);
-    assert_eq!(mutations.len(), 1);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Insert);
-    assert_eq!(mutations[0].value(), stored_row(207));
+    assert_eq!(mutations.len(), 2);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
+    assert!(mutations[0].presume_not_exists());
+    assert_eq!(mutations[1].value(), stored_row(207));
 }
 
 #[test]
@@ -1043,8 +1053,8 @@ fn insert_adds_one_non_unique_index_entry_beside_the_record() {
     // one index entry — so the index can never lag the row.
     assert_eq!(affected_rows, 1);
     assert_eq!(mutations.len(), 2);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Insert);
-    assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexPut);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
+    assert_eq!(mutations[1].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[1].key(), expected_index_entry(100, 10));
     assert_eq!(mutations[1].value(), non_unique_index_value());
 }
@@ -1062,14 +1072,14 @@ fn insert_adds_an_absence_asserted_unique_index_entry_beside_the_record() {
     .expect("bind must succeed") else {
         panic!("expected an INSERT command");
     };
-    let ConfiguredWritePlan::Write { mutations, .. } = plan_insert(&table, &rows, 0)
-        .expect("insert must plan")
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
     };
     assert_eq!(mutations.len(), 2);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Insert);
-    assert_eq!(mutations[1].kind(), OptimisticMutationKind::UniqueIndexInsert);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
+    assert_eq!(mutations[1].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[1].key(), expected_unique_index_entry(100));
     assert_eq!(mutations[1].value(), 10_i64.to_be_bytes());
 }
@@ -1082,8 +1092,8 @@ fn delete_removes_the_index_entry_for_the_stored_value() {
         panic!("an existing row deletes");
     };
     assert_eq!(mutations.len(), 2);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Delete);
-    assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Delete);
+    assert_eq!(mutations[1].kind(), BufferMutationOp::Delete);
     assert_eq!(mutations[1].key(), expected_index_entry(100, 10));
     assert!(mutations[1].value().is_empty());
 }
@@ -1096,7 +1106,7 @@ fn delete_removes_the_unique_index_entry_for_the_stored_value() {
         panic!("an existing row deletes");
     };
     assert_eq!(mutations.len(), 2);
-    assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
+    assert_eq!(mutations[1].kind(), BufferMutationOp::Delete);
     assert_eq!(mutations[1].key(), expected_unique_index_entry(100));
 }
 
@@ -1119,16 +1129,17 @@ fn updating_the_indexed_column_moves_its_entry_from_old_to_new() {
         BALANCE_INDEX,
         ConfiguredAssignment::Set(PreparedBindValue::Int(250)),
         Some(&stored_row(100)),
-    0)
+        0,
+    )
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
     // The record put, then the old index entry removed and the new one added.
     assert_eq!(mutations.len(), 3);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
-    assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
+    assert_eq!(mutations[1].kind(), BufferMutationOp::Delete);
     assert_eq!(mutations[1].key(), expected_index_entry(100, 10));
-    assert_eq!(mutations[2].kind(), OptimisticMutationKind::IndexPut);
+    assert_eq!(mutations[2].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[2].key(), expected_index_entry(250, 10));
 }
 
@@ -1146,16 +1157,19 @@ fn updating_the_unique_indexed_column_moves_its_entry_atomically() {
         panic!("a changed row publishes");
     };
     assert_eq!(mutations.len(), 3);
-    assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
+    assert_eq!(mutations[1].kind(), BufferMutationOp::Delete);
     assert_eq!(mutations[1].key(), expected_unique_index_entry(100));
-    assert_eq!(mutations[2].kind(), OptimisticMutationKind::UniqueIndexInsert);
+    assert_eq!(mutations[2].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[2].key(), expected_unique_index_entry(250));
     assert_eq!(mutations[2].value(), 10_i64.to_be_bytes());
 }
 
 #[test]
 fn replace_deletes_a_conflicting_primary_row_then_reuses_its_record_key() {
-    let write = bound_write("REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)", &[10, 200]);
+    let write = bound_write(
+        "REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)",
+        &[10, 200],
+    );
     let record_key = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10));
     let mut snapshot = ReplaceSnapshot::with([(record_key.clone(), stored_row(100))]);
     let ConfiguredWritePlan::Write {
@@ -1167,8 +1181,14 @@ fn replace_deletes_a_conflicting_primary_row_then_reuses_its_record_key() {
         panic!("a changed replacement publishes");
     };
     assert_eq!(affected_rows, 2);
-    assert_eq!(mutations.len(), 1);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations.len(), 2);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Delete);
+    assert_eq!(
+        mutations[0].assertion(),
+        tidb_txnkv::AssertionOp::AssertExist
+    );
+    assert_eq!(mutations[1].kind(), BufferMutationOp::Set);
+    assert_eq!(mutations[1].key(), record_key);
     assert_eq!(mutations[0].key(), record_key);
     assert_eq!(snapshot.reads, vec![record_key]);
 }
@@ -1199,23 +1219,43 @@ fn replace_reads_a_unique_conflict_and_moves_its_handle() {
         panic!("a replacement with a unique conflict publishes");
     };
     assert_eq!(affected_rows, 2);
+    let prior_delete = mutations
+        .iter()
+        .position(|mutation| {
+            mutation.key() == unique_key && mutation.kind() == BufferMutationOp::Delete
+        })
+        .unwrap();
+    let replacement = mutations
+        .iter()
+        .rposition(|mutation| {
+            mutation.key() == unique_key && mutation.kind() == BufferMutationOp::Set
+        })
+        .unwrap();
+    assert!(prior_delete < replacement);
+    assert_eq!(
+        mutations[prior_delete].assertion(),
+        tidb_txnkv::AssertionOp::AssertExist
+    );
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::Delete && mutation.key() == record_key
+        mutation.kind() == BufferMutationOp::Delete && mutation.key() == record_key
     }));
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::PutExisting
+        mutation.kind() == BufferMutationOp::Set
             && mutation.key() == unique_key
             && mutation.value() == 20_i64.to_be_bytes()
     }));
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::Insert
+        mutation.presume_not_exists()
             && mutation.key() == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(20))
     }));
 }
 
 #[test]
 fn replacing_an_identical_primary_row_reports_one_affected_row_without_mutation() {
-    let write = bound_write("REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)", &[10, 100]);
+    let write = bound_write(
+        "REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)",
+        &[10, 100],
+    );
     let record_key = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10));
     let mut snapshot = ReplaceSnapshot::with([(record_key, stored_row(100))]);
     assert_eq!(
@@ -1231,10 +1271,8 @@ fn replacing_an_identical_primary_row_reports_one_affected_row_without_mutation(
 fn multiple_replace_rows_observe_the_statement_local_replacement() {
     let catalog = ConfiguredCatalog::new([unique_indexed_table()]).expect("catalog must validate");
     let write = lower_prepared_write(
-        &tidb_parser::parse(
-            "REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?), (?, ?)",
-        )
-        .expect("SQL must parse"),
+        &tidb_parser::parse("REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?), (?, ?)")
+            .expect("SQL must parse"),
         &catalog,
     )
     .expect("REPLACE must lower")
@@ -1250,14 +1288,13 @@ fn multiple_replace_rows_observe_the_statement_local_replacement() {
         panic!("the final replacement publishes");
     };
     assert_eq!(affected_rows, 3);
-    assert_eq!(mutations.len(), 2);
+    assert_eq!(mutations.len(), 6);
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::Insert
+        mutation.presume_not_exists()
             && mutation.key() == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10))
     }));
     assert!(mutations.iter().any(|mutation| {
-        mutation.kind() == OptimisticMutationKind::UniqueIndexInsert
-            && mutation.key() == expected_unique_index_entry(200)
+        mutation.presume_not_exists() && mutation.key() == expected_unique_index_entry(200)
     }));
 }
 
@@ -1283,7 +1320,8 @@ fn updating_an_unindexed_column_leaves_the_index_alone() {
         2, // column index of `b`, the unindexed column
         ConfiguredAssignment::Set(PreparedBindValue::Int(999)),
         Some(&stored),
-    0)
+        0,
+    )
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
@@ -1292,7 +1330,7 @@ fn updating_an_unindexed_column_leaves_the_index_alone() {
         1,
         "only the record mutation, no index change"
     );
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
 }
 
 // -----------------------------------------------------------------------------
@@ -1327,7 +1365,8 @@ fn updating_an_int_column_preserves_the_char_columns_of_a_mixed_row() {
         1, // column index of `k`
         ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&stored),
-    0)
+        0,
+    )
     .expect("update must plan")
     else {
         panic!("a changed row publishes");
@@ -1344,7 +1383,7 @@ fn updating_an_int_column_preserves_the_char_columns_of_a_mixed_row() {
             (4, Datum::Bytes(b"padding".to_vec())),
         ],
     );
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[0].key(), expected_key);
     assert_eq!(mutations[0].value(), expected_value);
 }
@@ -1361,7 +1400,8 @@ fn a_set_that_would_overflow_the_int_column_still_fails_on_a_mixed_row() {
             1,
             ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored),
-        0),
+            0
+        ),
         Err(ConfiguredWriteError::ValueOutOfRange { .. })
     ));
 }
@@ -1444,7 +1484,8 @@ fn setting_a_char_column_replaces_only_its_bytes_and_keeps_the_int_columns() {
         2, // column index of `c`
         ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"new value".to_vec())),
         Some(&stored),
-    0)
+        0,
+    )
     .expect("update must plan")
     else {
         panic!("a changed row publishes");
@@ -1460,7 +1501,7 @@ fn setting_a_char_column_replaces_only_its_bytes_and_keeps_the_int_columns() {
             (4, Datum::Bytes(b"padding".to_vec())),
         ],
     );
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[0].value(), expected_value);
 }
 
@@ -1474,7 +1515,8 @@ fn setting_a_char_column_to_its_current_value_writes_nothing() {
             2,
             ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"same".to_vec())),
             Some(&stored),
-        0),
+            0
+        ),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
             affected_rows: 0,
@@ -1489,10 +1531,15 @@ fn updating_k_on_an_indexed_mixed_table_moves_the_index_and_keeps_char_columns()
     // c/pad, and the k index entry moves from the old value to the new.
     let table = mixed_table().with_indexes([ConfiguredIndex::non_unique(7, 2)]);
     let stored = stored_mixed_row(50, b"hi", b"pad");
-    let ConfiguredWritePlan::Write { mutations, .. } =
-        plan_update(&table, 1, 1, ConfiguredAssignment::Add(PreparedBindValue::Int(1)), Some(&stored), 0)
-            .expect("update must plan")
-    else {
+    let ConfiguredWritePlan::Write { mutations, .. } = plan_update(
+        &table,
+        1,
+        1,
+        ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
+        Some(&stored),
+        0,
+    )
+    .expect("update must plan") else {
         panic!("a changed row publishes");
     };
     assert_eq!(mutations.len(), 3);
@@ -1505,14 +1552,14 @@ fn updating_k_on_an_indexed_mixed_table_moves_the_index_and_keeps_char_columns()
             (4, Datum::Bytes(b"pad".to_vec())),
         ],
     );
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
     assert_eq!(mutations[0].value(), expected_value);
-    assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
+    assert_eq!(mutations[1].kind(), BufferMutationOp::Delete);
     assert_eq!(
         mutations[1].key(),
         encode_non_unique_index_key(900, 7, &[Datum::new_int(50)], 1).unwrap()
     );
-    assert_eq!(mutations[2].kind(), OptimisticMutationKind::IndexPut);
+    assert_eq!(mutations[2].kind(), BufferMutationOp::Set);
     assert_eq!(
         mutations[2].key(),
         encode_non_unique_index_key(900, 7, &[Datum::new_int(51)], 1).unwrap()
@@ -1529,34 +1576,6 @@ fn arithmetic_on_a_char_column_is_rejected_at_lowering() {
         &catalog,
     )
     .is_err());
-}
-
-#[test]
-fn the_update_byte_budget_covers_a_max_length_char_row() {
-    // An UPDATE rebuilds the whole row, so its pre-open byte budget must cover a
-    // maximally-sized CHAR row (c CHAR(120), pad CHAR(60), at four utf8mb4 bytes
-    // per character) or the coordinator rejects the commit as TransactionTooLarge.
-    let write = ConfiguredPreparedWrite::UpdatePoint {
-        table: mixed_table(),
-        handle: 1,
-        column_index: 1,
-        assignment: ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
-    };
-    let (_, planned_bytes) = planned_publication_bounds(&write, 0).expect("bounds compute");
-    let (key, value) = encode_expected_row(
-        900,
-        1,
-        &[
-            (2, Datum::Int(i64::MAX)),
-            (3, Datum::Bytes(vec![b'x'; 120 * 4])),
-            (4, Datum::Bytes(vec![b'y'; 60 * 4])),
-        ],
-    );
-    assert!(
-        planned_bytes >= key.len() + value.len(),
-        "planned byte budget {planned_bytes} must cover the {}-byte max row",
-        key.len() + value.len()
-    );
 }
 
 // -----------------------------------------------------------------------------
@@ -1607,7 +1626,8 @@ fn updating_a_char_column_beyond_its_length_is_data_too_long() {
             2, // column index of `c` (CHAR(120))
             ConfiguredAssignment::Set(PreparedBindValue::Bytes(vec![b'z'; 121])),
             Some(&stored),
-        0),
+            0
+        ),
         Err(ConfiguredWriteError::DataTooLong {
             max_length: 120,
             char_length: 121,
@@ -1630,7 +1650,8 @@ fn updating_a_char_column_with_trailing_space_overflow_truncates_to_the_limit() 
         2,
         ConfiguredAssignment::Set(PreparedBindValue::Bytes(value)),
         Some(&stored),
-    0)
+        0,
+    )
     .expect("a whitespace overflow truncates and publishes") else {
         panic!("a changed row publishes");
     };
@@ -1729,7 +1750,7 @@ fn plan_configured_write_plans_an_insert_without_reading() {
         panic!("an INSERT plans a write");
     };
     assert_eq!(affected_rows, 1);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Insert);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
 }
 
 #[test]
@@ -1794,7 +1815,7 @@ fn plan_configured_write_reads_then_plans_a_present_delete() {
         panic!("a present row plans a delete");
     };
     assert_eq!(affected_rows, 1);
-    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Delete);
+    assert_eq!(mutations[0].kind(), BufferMutationOp::Delete);
 }
 
 /// Lowers one text-protocol statement against the same configured catalog.
@@ -1902,8 +1923,7 @@ fn a_nullable_column_admits_null_and_round_trips_it() {
     )
     .expect("prepared write must lower")
     .bind(&[PreparedBindValue::Int(10), PreparedBindValue::Null])
-    .expect("bind must succeed")
-    else {
+    .expect("bind must succeed") else {
         panic!("expected an INSERT command");
     };
     let ConfiguredWritePlan::Write { mutations, .. } =
@@ -1922,7 +1942,8 @@ fn a_nullable_column_admits_null_and_round_trips_it() {
         BALANCE_INDEX,
         ConfiguredAssignment::Set(PreparedBindValue::Int(1)),
         Some(&stored_value),
-    0)
+        0,
+    )
     .expect("a stored NULL decodes cleanly for a point UPDATE of the same row");
     assert!(matches!(decoded, ConfiguredWritePlan::Write { .. }));
 
@@ -1947,8 +1968,7 @@ fn null_is_refused_into_a_not_null_column() {
     )
     .expect("prepared write must lower")
     .bind(&[PreparedBindValue::Int(10), PreparedBindValue::Null])
-    .expect("bind must succeed")
-    else {
+    .expect("bind must succeed") else {
         panic!("expected an INSERT command");
     };
     let error =
@@ -2007,8 +2027,7 @@ fn insert_one_in_zone(
     )
     .expect("prepared write must lower")
     .bind(&[PreparedBindValue::Int(1), value])
-    .expect("bind must succeed")
-    else {
+    .expect("bind must succeed") else {
         panic!("expected an INSERT command");
     };
     plan_insert_in_zone(&table, &rows, session_tz)
@@ -2048,8 +2067,7 @@ fn update_one(
     )
     .expect("prepared write must lower")
     .bind(&[value, PreparedBindValue::Int(1)])
-    .expect("bind carries the value through untyped")
-    else {
+    .expect("bind carries the value through untyped") else {
         panic!("expected an UPDATE command");
     };
     plan_update(table, 1, 1, assignment, Some(&stored), 0)
@@ -2075,8 +2093,7 @@ fn add_one(
     )
     .expect("prepared write must lower")
     .bind(&[addend, PreparedBindValue::Int(1)])
-    .expect("bind carries the addend through untyped")
-    else {
+    .expect("bind carries the addend through untyped") else {
         panic!("expected an UPDATE command");
     };
     plan_update(table, 1, 1, assignment, Some(&stored), 0)
@@ -2097,7 +2114,10 @@ fn unsigned_bigint_round_trips_and_rejects_a_negative_value() {
 
     let error = insert_one(&table, PreparedBindValue::Int(-1))
         .expect_err("a negative value must be refused for BIGINT UNSIGNED");
-    assert!(matches!(error, ConfiguredWriteError::UnsignedOutOfRange { .. }));
+    assert!(matches!(
+        error,
+        ConfiguredWriteError::UnsignedOutOfRange { .. }
+    ));
 }
 
 #[test]
@@ -2114,11 +2134,8 @@ fn double_round_trips_a_float_and_an_integer_literal() {
 #[test]
 fn decimal_round_trips_and_rejects_a_value_that_overflows_precision() {
     let table = widened_table(ConfiguredColumn::stored_decimal_not_null("v", 2, 10, 2));
-    let ConfiguredWritePlan::Write { mutations, .. } = insert_one(
-        &table,
-        PreparedBindValue::Bytes(b"12.345".to_vec()),
-    )
-    .expect("insert must plan")
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        insert_one(&table, PreparedBindValue::Bytes(b"12.345".to_vec())).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
     };
@@ -2130,7 +2147,10 @@ fn decimal_round_trips_and_rejects_a_value_that_overflows_precision() {
 
     let error = insert_one(&table, PreparedBindValue::Bytes(b"999999999.99".to_vec()))
         .expect_err("a value whose integer part overflows precision must be refused");
-    assert!(matches!(error, ConfiguredWriteError::DecimalOutOfRange { .. }));
+    assert!(matches!(
+        error,
+        ConfiguredWriteError::DecimalOutOfRange { .. }
+    ));
 }
 
 #[test]
@@ -2158,8 +2178,7 @@ fn datetime_rounds_to_its_declared_fsp_and_rejects_an_invalid_literal() {
         &table,
         PreparedBindValue::Bytes(b"2026-01-02 03:04:05.6789".to_vec()),
     )
-    .expect("insert must plan")
-    else {
+    .expect("insert must plan") else {
         panic!("an INSERT always publishes");
     };
     let Datum::Time(time) = decode_one(&table, mutations[0].value()) else {
@@ -2171,7 +2190,10 @@ fn datetime_rounds_to_its_declared_fsp_and_rejects_an_invalid_literal() {
 
     let error = insert_one(&table, PreparedBindValue::Bytes(b"not-a-date".to_vec()))
         .expect_err("an invalid datetime literal must be refused");
-    assert!(matches!(error, ConfiguredWriteError::InvalidTemporal { .. }));
+    assert!(matches!(
+        error,
+        ConfiguredWriteError::InvalidTemporal { .. }
+    ));
 }
 
 /// `TIMESTAMP` session-`time_zone` round trip, pinned against the captured Go
@@ -2191,8 +2213,7 @@ fn timestamp_converts_session_local_literal_to_utc_for_storage() {
         PreparedBindValue::Bytes(b"2020-01-01 10:00:00".to_vec()),
         18_000,
     )
-    .expect("insert must plan")
-    else {
+    .expect("insert must plan") else {
         panic!("an INSERT always publishes");
     };
     let Datum::Time(time) = decode_one(&table, mutations[0].value()) else {
@@ -2235,8 +2256,7 @@ fn timestamp_uses_the_named_zones_offset_at_the_literal_instant() {
             PreparedBindValue::Bytes(literal.to_vec()),
             &los_angeles,
         )
-        .expect("named-zone timestamp must plan")
-        else {
+        .expect("named-zone timestamp must plan") else {
             panic!("an INSERT always publishes");
         };
         decode_one(&table, mutations[0].value())
@@ -2268,7 +2288,10 @@ fn timestamp_out_of_range_after_session_tz_conversion_is_refused() {
         50_400,
     )
     .expect_err("a literal that underflows MIN_TIMESTAMP after tz conversion must be refused");
-    assert!(matches!(low_error, ConfiguredWriteError::InvalidTemporal { .. }));
+    assert!(matches!(
+        low_error,
+        ConfiguredWriteError::InvalidTemporal { .. }
+    ));
 
     // Session tz -12:00 (-43,200s east): the literal converts to
     // 2038-01-19 15:14:07 UTC, past MAX_TIMESTAMP.
@@ -2278,7 +2301,10 @@ fn timestamp_out_of_range_after_session_tz_conversion_is_refused() {
         -43_200,
     )
     .expect_err("a literal that overflows MAX_TIMESTAMP after tz conversion must be refused");
-    assert!(matches!(high_error, ConfiguredWriteError::InvalidTemporal { .. }));
+    assert!(matches!(
+        high_error,
+        ConfiguredWriteError::InvalidTemporal { .. }
+    ));
 
     // The same high-boundary literal at UTC (offset 0) is exactly in range.
     insert_one_at_tz(
@@ -2292,11 +2318,9 @@ fn timestamp_out_of_range_after_session_tz_conversion_is_refused() {
 #[test]
 fn duration_round_trips_at_its_declared_fsp() {
     let table = widened_table(ConfiguredColumn::stored_duration_not_null("v", 2, 3));
-    let ConfiguredWritePlan::Write { mutations, .. } = insert_one(
-        &table,
-        PreparedBindValue::Bytes(b"10:20:30.5".to_vec()),
-    )
-    .expect("insert must plan")
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        insert_one(&table, PreparedBindValue::Bytes(b"10:20:30.5".to_vec()))
+            .expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
     };
@@ -2335,10 +2359,12 @@ fn date_round_trips_a_plain_calendar_date() {
 #[test]
 fn update_set_round_trips_unsigned_bigint_and_rejects_a_negative_value() {
     let table = widened_table(ConfiguredColumn::stored_unsigned_bigint_not_null("v", 2));
-    let ConfiguredWritePlan::Write { mutations, .. } =
-        update_one(&table, PreparedBindValue::UInt(0), PreparedBindValue::UInt(u64::MAX))
-            .expect("update must plan")
-    else {
+    let ConfiguredWritePlan::Write { mutations, .. } = update_one(
+        &table,
+        PreparedBindValue::UInt(0),
+        PreparedBindValue::UInt(u64::MAX),
+    )
+    .expect("update must plan") else {
         panic!("a changed row publishes");
     };
     assert_eq!(
@@ -2346,18 +2372,27 @@ fn update_set_round_trips_unsigned_bigint_and_rejects_a_negative_value() {
         Datum::UInt(u64::MAX)
     );
 
-    let error = update_one(&table, PreparedBindValue::UInt(0), PreparedBindValue::Int(-1))
-        .expect_err("a negative value must be refused for BIGINT UNSIGNED");
-    assert!(matches!(error, ConfiguredWriteError::UnsignedOutOfRange { .. }));
+    let error = update_one(
+        &table,
+        PreparedBindValue::UInt(0),
+        PreparedBindValue::Int(-1),
+    )
+    .expect_err("a negative value must be refused for BIGINT UNSIGNED");
+    assert!(matches!(
+        error,
+        ConfiguredWriteError::UnsignedOutOfRange { .. }
+    ));
 }
 
 #[test]
 fn update_set_round_trips_a_double_from_either_a_float_or_an_integer_parameter() {
     let table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
-    let ConfiguredWritePlan::Write { mutations, .. } =
-        update_one(&table, PreparedBindValue::Float(0.0), PreparedBindValue::Float(3.5))
-            .expect("update must plan")
-    else {
+    let ConfiguredWritePlan::Write { mutations, .. } = update_one(
+        &table,
+        PreparedBindValue::Float(0.0),
+        PreparedBindValue::Float(3.5),
+    )
+    .expect("update must plan") else {
         panic!("a changed row publishes");
     };
     assert_eq!(decode_one(&table, mutations[0].value()), Datum::Real(3.5));
@@ -2371,8 +2406,7 @@ fn update_set_rounds_a_decimal_to_scale_and_rejects_a_precision_overflow() {
         PreparedBindValue::Bytes(b"0".to_vec()),
         PreparedBindValue::Bytes(b"12.345".to_vec()),
     )
-    .expect("update must plan")
-    else {
+    .expect("update must plan") else {
         panic!("a changed row publishes");
     };
     let Datum::Decimal(decimal) = decode_one(&table, mutations[0].value()) else {
@@ -2386,7 +2420,10 @@ fn update_set_rounds_a_decimal_to_scale_and_rejects_a_precision_overflow() {
         PreparedBindValue::Bytes(b"999999999.99".to_vec()),
     )
     .expect_err("a value whose integer part overflows precision must be refused");
-    assert!(matches!(error, ConfiguredWriteError::DecimalOutOfRange { .. }));
+    assert!(matches!(
+        error,
+        ConfiguredWriteError::DecimalOutOfRange { .. }
+    ));
 }
 
 #[test]
@@ -2397,8 +2434,7 @@ fn update_set_rejects_a_varchar_value_past_its_declared_length() {
         PreparedBindValue::Bytes(b"aaaa".to_vec()),
         PreparedBindValue::Bytes(b"abcd".to_vec()),
     )
-    .expect("update must plan")
-    else {
+    .expect("update must plan") else {
         panic!("a changed row publishes");
     };
     assert_eq!(
@@ -2423,8 +2459,7 @@ fn update_set_rounds_a_datetime_to_its_declared_fsp_on_update_and_rejects_an_inv
         PreparedBindValue::Bytes(b"2026-01-01 00:00:00".to_vec()),
         PreparedBindValue::Bytes(b"2026-01-02 03:04:05.6789".to_vec()),
     )
-    .expect("update must plan")
-    else {
+    .expect("update must plan") else {
         panic!("a changed row publishes");
     };
     let Datum::Time(time) = decode_one(&table, mutations[0].value()) else {
@@ -2440,7 +2475,10 @@ fn update_set_rounds_a_datetime_to_its_declared_fsp_on_update_and_rejects_an_inv
         PreparedBindValue::Bytes(b"not-a-date".to_vec()),
     )
     .expect_err("an invalid datetime literal must be refused");
-    assert!(matches!(error, ConfiguredWriteError::InvalidTemporal { .. }));
+    assert!(matches!(
+        error,
+        ConfiguredWriteError::InvalidTemporal { .. }
+    ));
 }
 
 #[test]
@@ -2448,16 +2486,14 @@ fn update_set_admits_null_on_a_nullable_widened_column() {
     // A nullable non-integer column: `SET v = NULL` must round-trip through
     // `configured_stored_value`'s own nullability check, not the integer-only
     // path `plan_update` used before this column type was writable at all.
-    let table = widened_table(
-        ConfiguredColumn::stored_varchar_not_null("v", 2, 4, false).nullable(),
-    );
+    let table =
+        widened_table(ConfiguredColumn::stored_varchar_not_null("v", 2, 4, false).nullable());
     let ConfiguredWritePlan::Write { mutations, .. } = update_one(
         &table,
         PreparedBindValue::Bytes(b"abcd".to_vec()),
         PreparedBindValue::Null,
     )
-    .expect("update must plan")
-    else {
+    .expect("update must plan") else {
         panic!("a changed row publishes");
     };
     assert_eq!(decode_one(&table, mutations[0].value()), Datum::Null);
@@ -2466,8 +2502,12 @@ fn update_set_admits_null_on_a_nullable_widened_column() {
 #[test]
 fn update_set_refuses_null_into_a_not_null_widened_column() {
     let table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
-    let error = update_one(&table, PreparedBindValue::Float(1.0), PreparedBindValue::Null)
-        .expect_err("NULL into a NOT NULL column must be refused");
+    let error = update_one(
+        &table,
+        PreparedBindValue::Float(1.0),
+        PreparedBindValue::Null,
+    )
+    .expect_err("NULL into a NOT NULL column must be refused");
     assert!(matches!(error, ConfiguredWriteError::NullNotAllowed { .. }));
 }
 
@@ -2492,8 +2532,7 @@ fn typed_add_rounds_and_scales_a_decimal_column() {
         PreparedBindValue::Bytes(b"10.20".to_vec()),
         PreparedBindValue::Bytes(b"1.5".to_vec()),
     )
-    .expect("decimal add must plan")
-    else {
+    .expect("decimal add must plan") else {
         panic!("a changed row publishes");
     };
     let Datum::Decimal(sum) = decode_one(&table, mutations[0].value()) else {
@@ -2510,8 +2549,7 @@ fn typed_add_on_a_decimal_column_admits_a_negative_addend() {
         PreparedBindValue::Bytes(b"10.20".to_vec()),
         PreparedBindValue::Bytes(b"-1.5".to_vec()),
     )
-    .expect("decimal add must plan")
-    else {
+    .expect("decimal add must plan") else {
         panic!("a changed row publishes");
     };
     let Datum::Decimal(sum) = decode_one(&table, mutations[0].value()) else {
@@ -2543,8 +2581,7 @@ fn typed_add_on_a_double_column_adds_as_f64() {
         PreparedBindValue::Float(10.2),
         PreparedBindValue::Bytes(b"1.5".to_vec()),
     )
-    .expect("double add must plan")
-    else {
+    .expect("double add must plan") else {
         panic!("a changed row publishes");
     };
     let Datum::Real(sum) = decode_one(&table, mutations[0].value()) else {
@@ -2576,8 +2613,7 @@ fn typed_add_on_an_unsigned_column_admits_a_negative_addend_that_stays_in_range(
         PreparedBindValue::UInt(5),
         PreparedBindValue::Int(-2),
     )
-    .expect("unsigned add must plan")
-    else {
+    .expect("unsigned add must plan") else {
         panic!("a changed row publishes");
     };
     assert_eq!(decode_one(&table, mutations[0].value()), Datum::UInt(3));
@@ -2586,12 +2622,9 @@ fn typed_add_on_an_unsigned_column_admits_a_negative_addend_that_stays_in_range(
 #[test]
 fn typed_add_propagates_null_on_a_nullable_column() {
     let table = widened_table(ConfiguredColumn::stored_int_not_null("v", 2).nullable());
-    let ConfiguredWritePlan::Write { mutations, .. } = add_one(
-        &table,
-        PreparedBindValue::Int(10),
-        PreparedBindValue::Null,
-    )
-    .expect("null-propagating add must plan")
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        add_one(&table, PreparedBindValue::Int(10), PreparedBindValue::Null)
+            .expect("null-propagating add must plan")
     else {
         panic!("a changed row publishes");
     };

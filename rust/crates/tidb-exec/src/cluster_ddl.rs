@@ -64,7 +64,7 @@ use tidb_model::{
     get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared,
     GoSharedPointerSlice, GoSharedSlice, HistoryInfo, Job, JobArgsValue, JobState, TraceInfo,
 };
-use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
+use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 
 use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
@@ -3408,7 +3408,7 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
     let mut mutations = Vec::new();
     let diff = if schema_changed {
         info.update_ts = start_ts;
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::table_kv_key(database.info.id, info.id),
             value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -3420,11 +3420,11 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
             table_id: info.id,
             ..SchemaDiff::default()
         };
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_version_kv_key(),
             value::encode_int_value(schema_version),
         )?);
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_diff_kv_key(schema_version),
             value::serialize_schema_diff(&diff)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -3468,7 +3468,7 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
             let _ =
                 history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
         }
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::ddl_job_history_kv_key(active.job.id),
             encoded,
         )?);
@@ -3582,7 +3582,7 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
         SchemaDiff::default()
     } else {
         db_info.state = SchemaState::PUBLIC;
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::database_kv_key(db_info.id),
             value::serialize_db_info(&db_info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -3593,11 +3593,11 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
             schema_id: db_info.id,
             ..SchemaDiff::default()
         };
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_version_kv_key(),
             value::encode_int_value(schema_version),
         )?);
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_diff_kv_key(schema_version),
             value::serialize_schema_diff(&diff)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -3631,7 +3631,7 @@ pub fn plan_persisted_create_schema_job_step<S: MetaSnapshot>(
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
         let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::ddl_job_history_kv_key(active.job.id),
         encoded,
     )?);
@@ -3738,7 +3738,7 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
     } else {
         table_info.state = SchemaState::PUBLIC;
         table_info.update_ts = start_ts;
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::table_kv_key(database.info.id, table_info.id),
             value::serialize_table_info(&table_info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -3750,11 +3750,11 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
             table_id: table_info.id,
             ..SchemaDiff::default()
         };
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_version_kv_key(),
             value::encode_int_value(schema_version),
         )?);
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_diff_kv_key(schema_version),
             value::serialize_schema_diff(&diff)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -3795,7 +3795,7 @@ pub fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
         let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::ddl_job_history_kv_key(active.job.id),
         encoded,
     )?);
@@ -3932,7 +3932,7 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
             let mut info = info.clone();
             info.state = SchemaState::PUBLIC;
             info.update_ts = start_ts;
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::table_kv_key(database.info.id, info.id),
                 value::serialize_table_info(&info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -3961,11 +3961,11 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
                 })
                 .collect::<Vec<_>>(),
         );
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_version_kv_key(),
             value::encode_int_value(schema_version),
         )?);
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_diff_kv_key(schema_version),
             value::serialize_schema_diff(&diff)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -4006,7 +4006,7 @@ pub fn plan_persisted_create_tables_job_step<S: MetaSnapshot>(
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
         let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::ddl_job_history_kv_key(active.job.id),
         encoded,
     )?);
@@ -4206,7 +4206,7 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
                     ..tidb_model::AffectedOption::default()
                 });
             }
-            mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            mutations.push(BufferMutation::delete(key::table_kv_key(
                 move_plan.old_schema_id,
                 move_plan.table.id,
             ))?);
@@ -4221,7 +4221,7 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
                 table.auto_id_schema_id = 0;
             }
             table.update_ts = start_ts;
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::table_kv_key(move_plan.new_schema_id, table.id),
                 value::serialize_table_info(&table)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -4237,11 +4237,11 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
             old_schema_id: first.old_schema_id,
             ..SchemaDiff::default()
         };
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_version_kv_key(),
             value::encode_int_value(schema_version),
         )?);
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_diff_kv_key(schema_version),
             value::serialize_schema_diff(&diff)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -4306,11 +4306,11 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
             });
         }
         diff.affected_options = GoSharedPointerSlice::from(affected);
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_version_kv_key(),
             value::encode_int_value(schema_version),
         )?);
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::schema_diff_kv_key(schema_version),
             value::serialize_schema_diff(&diff)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -4345,7 +4345,7 @@ pub fn plan_persisted_rename_tables_job_step<S: MetaSnapshot>(
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
         let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::ddl_job_history_kv_key(active.job.id),
         encoded,
     )?);
@@ -4472,7 +4472,7 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     };
     let mut terminal = false;
     if db_info.state != SchemaState::NONE {
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::database_kv_key(db_info.id),
             value::serialize_db_info(&db_info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -4480,9 +4480,7 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     } else {
         // Go `metaMut.DropDatabase`: only the database meta key is deleted;
         // the tables' KVs are cleaned by the delete range.
-        mutations.push(OptimisticMutation::meta_delete(key::database_kv_key(
-            db_info.id,
-        ))?);
+        mutations.push(BufferMutation::delete(key::database_kv_key(db_info.id))?);
         active
             .job
             .finish_db_job(JobState::DONE, SchemaState::NONE, schema_version, None);
@@ -4490,11 +4488,11 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         terminal = true;
     }
     active.job.schema_state = db_info.state;
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_version_kv_key(),
         value::encode_int_value(schema_version),
     )?);
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_diff_kv_key(schema_version),
         value::serialize_schema_diff(&diff)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -4514,7 +4512,7 @@ pub fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
             let _ =
                 history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
         }
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::ddl_job_history_kv_key(active.job.id),
             encoded,
         )?);
@@ -4554,7 +4552,7 @@ fn terminal_drop_landing<S: MetaSnapshot>(
     snapshot: &mut S,
     job_table: &crate::ddl_job_table::DdlJobTable,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
-    mutations: &mut Vec<OptimisticMutation>,
+    mutations: &mut Vec<BufferMutation>,
     start_ts: u64,
 ) {
     if let Some(binlog) = active.job.binlog_info.as_ref() {
@@ -4568,9 +4566,7 @@ fn terminal_drop_landing<S: MetaSnapshot>(
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(catalog) {
         let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, mutations);
     }
-    if let Ok(mutation) =
-        OptimisticMutation::meta_put(key::ddl_job_history_kv_key(active.job.id), encoded)
-    {
+    if let Ok(mutation) = BufferMutation::set(key::ddl_job_history_kv_key(active.job.id), encoded) {
         mutations.push(mutation);
     }
     let _ = job_table.append_delete(active, mutations);
@@ -4718,13 +4714,13 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
     };
     let mut terminal = false;
     if table.state != SchemaState::NONE {
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::table_kv_key(database.info.id, table.id),
             value::serialize_table_info(&table)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         )?);
     } else {
-        mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+        mutations.push(BufferMutation::delete(key::table_kv_key(
             database.info.id,
             table.id,
         ))?);
@@ -4738,11 +4734,11 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
         terminal = true;
     }
     active.job.schema_state = table.state;
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_version_kv_key(),
         value::encode_int_value(schema_version),
     )?);
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_diff_kv_key(schema_version),
         value::serialize_schema_diff(&diff)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -4762,7 +4758,7 @@ pub fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             let _ =
                 history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
         }
-        mutations.push(OptimisticMutation::meta_put(
+        mutations.push(BufferMutation::set(
             key::ddl_job_history_kv_key(active.job.id),
             encoded,
         )?);
@@ -5011,12 +5007,12 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
         &mut mutations,
     )?;
 
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::table_kv_key(db_id, mlog_id),
         value::serialize_table_info(&mlog_info)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
     )?);
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::table_kv_key(db_id, base_info.id),
         value::serialize_table_info(&base_info)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5030,11 +5026,11 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
         table_id: mlog_id,
         ..SchemaDiff::default()
     };
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_version_kv_key(),
         value::encode_int_value(schema_version),
     )?);
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_diff_kv_key(schema_version),
         value::serialize_schema_diff(&diff)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5079,7 +5075,7 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
         let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::ddl_job_history_kv_key(active.job.id),
         encoded,
     )?);
@@ -5169,7 +5165,7 @@ fn cancelled_step(
         .job
         .encode(true)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::ddl_job_history_kv_key(active.job.id),
         encoded,
     )?);
@@ -5206,7 +5202,7 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
     let mut mutations = Vec::new();
     if let Some(dropping) = actual {
         let dropping = dropping.clone_like_go();
-        mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+        mutations.push(BufferMutation::delete(key::table_kv_key(
             db_id,
             dropping.id,
         ))?);
@@ -5218,7 +5214,7 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
             key::auto_random_table_id_kv_key(db_id, dropping.id),
         ] {
             if snapshot.get(&allocator)?.is_some() {
-                mutations.push(OptimisticMutation::meta_delete(allocator)?);
+                mutations.push(BufferMutation::delete(allocator)?);
             }
         }
         // Go `updateMaterializedViewBaseInfoOnDrop`'s log arm: clear the
@@ -5248,7 +5244,7 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
                 if cleared {
                     base_info.materialized_view_base = None;
                 }
-                mutations.push(OptimisticMutation::meta_put(
+                mutations.push(BufferMutation::set(
                     key::table_kv_key(db_id, base_info.id),
                     value::serialize_table_info(&base_info)
                         .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5265,7 +5261,7 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
     active.job.schema_state = SchemaState::NONE;
     let schema_version = catalog.schema_version + 1;
     active.job.last_schema_version = schema_version;
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_version_kv_key(),
         value::encode_int_value(schema_version),
     )?);
@@ -5276,7 +5272,7 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
         table_id: active.job.table_id,
         ..SchemaDiff::default()
     };
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_diff_kv_key(schema_version),
         value::serialize_schema_diff(&diff)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5297,7 +5293,7 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
         let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::ddl_job_history_kv_key(active.job.id),
         encoded,
     )?);
@@ -5611,13 +5607,13 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             }
 
             let mut mutations = Vec::new();
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::table_kv_key(db_id, view_id),
                 value::serialize_table_info(&view_info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
             for base_info in &updated_bases {
-                mutations.push(OptimisticMutation::meta_put(
+                mutations.push(BufferMutation::set(
                     key::table_kv_key(db_id, base_info.id),
                     value::serialize_table_info(base_info)
                         .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5632,11 +5628,11 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                 table_id: view_id,
                 ..SchemaDiff::default()
             };
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::schema_version_kv_key(),
                 value::encode_int_value(schema_version),
             )?);
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::schema_diff_kv_key(schema_version),
                 value::serialize_schema_diff(&diff)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5795,7 +5791,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             if let Some(meta) = view_info.materialized_view.as_ref() {
                 meta.write().init_build_state = tidb_model::MViewInitBuildState::INIT_BUILD_READY;
             }
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::table_kv_key(db_id, view_info.id),
                 value::serialize_table_info(&view_info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5809,11 +5805,11 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                 table_id: view_info.id,
                 ..SchemaDiff::default()
             };
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::schema_version_kv_key(),
                 value::encode_int_value(schema_version),
             )?);
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::schema_diff_kv_key(schema_version),
                 value::serialize_schema_diff(&diff)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5856,7 +5852,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                     &mut mutations,
                 );
             }
-            mutations.push(OptimisticMutation::meta_put(
+            mutations.push(BufferMutation::set(
                 key::ddl_job_history_kv_key(active.job.id),
                 encoded,
             )?);
@@ -5919,7 +5915,7 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
     let mut mutations = Vec::new();
     if let Some(dropping) = actual {
         let dropping = dropping.clone_like_go();
-        mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+        mutations.push(BufferMutation::delete(key::table_kv_key(
             db_id,
             dropping.id,
         ))?);
@@ -5929,7 +5925,7 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
             key::auto_random_table_id_kv_key(db_id, dropping.id),
         ] {
             if snapshot.get(&allocator)?.is_some() {
-                mutations.push(OptimisticMutation::meta_delete(allocator)?);
+                mutations.push(BufferMutation::delete(allocator)?);
             }
         }
         // Go `updateMaterializedViewBaseInfoOnDrop`'s view arm: every base's
@@ -5961,7 +5957,7 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
                     if emptied {
                         base_info.materialized_view_base = None;
                     }
-                    mutations.push(OptimisticMutation::meta_put(
+                    mutations.push(BufferMutation::set(
                         key::table_kv_key(db_id, base_info.id),
                         value::serialize_table_info(&base_info)
                             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -5987,7 +5983,7 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
     active.job.schema_state = SchemaState::NONE;
     let schema_version = catalog.schema_version + 1;
     active.job.last_schema_version = schema_version;
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_version_kv_key(),
         value::encode_int_value(schema_version),
     )?);
@@ -5998,7 +5994,7 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
         table_id: active.job.table_id,
         ..SchemaDiff::default()
     };
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::schema_diff_kv_key(schema_version),
         value::serialize_schema_diff(&diff)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -6019,7 +6015,7 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
     if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
         let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
     }
-    mutations.push(OptimisticMutation::meta_put(
+    mutations.push(BufferMutation::set(
         key::ddl_job_history_kv_key(active.job.id),
         encoded,
     )?);
@@ -6057,7 +6053,7 @@ pub fn plan_check_constraint_job_rollingback<S: MetaSnapshot>(
     ddl_job_id: i64,
     error_code: u16,
     error_message: &str,
-) -> Result<Vec<OptimisticMutation>, DdlPlanError> {
+) -> Result<Vec<BufferMutation>, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -6093,7 +6089,7 @@ pub struct DdlWrite {
     /// Go `model.Job.ID`, allocated after IDs owned by the job.
     pub ddl_job_id: i64,
     /// Every meta-key mutation, in a deterministic order.
-    pub mutations: Vec<OptimisticMutation>,
+    pub mutations: Vec<BufferMutation>,
     /// The schema version this change produces.
     pub schema_version: i64,
     /// The diff stored under `Diff:<schema_version>`.
@@ -6226,7 +6222,7 @@ impl MdlInfoUpdate {
         ddl_job_id: i64,
         schema_version: i64,
         owner_id: &str,
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlPlanError> {
         let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
         mutations.extend(
@@ -6243,7 +6239,7 @@ impl MdlInfoUpdate {
         ddl_job_id: i64,
         schema_version: i64,
         owner_id: &str,
-        mutations: &mut Vec<OptimisticMutation>,
+        mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlPlanError> {
         let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
         mutations.extend(
@@ -6834,10 +6830,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     };
                     let encoded = value::serialize_policy_info(&updated)
                         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-                    writes.push(OptimisticMutation::meta_put(
-                        key::policy_kv_key(found.id),
-                        encoded,
-                    )?);
+                    writes.push(BufferMutation::set(key::policy_kv_key(found.id), encoded)?);
                     diff.action_type = ActionType::ACTION_ALTER_PLACEMENT_POLICY;
                     diff.schema_id = found.id;
                 }
@@ -6858,10 +6851,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     };
                     let encoded = value::serialize_policy_info(&policy)
                         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-                    writes.push(OptimisticMutation::meta_put(
-                        key::policy_kv_key(policy_id),
-                        encoded,
-                    )?);
+                    writes.push(BufferMutation::set(key::policy_kv_key(policy_id), encoded)?);
                     diff.action_type = ActionType::ACTION_CREATE_PLACEMENT_POLICY;
                     diff.schema_id = policy_id;
                 }
@@ -6891,10 +6881,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             };
             let encoded = value::serialize_policy_info(&updated)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
-                key::policy_kv_key(found.id),
-                encoded,
-            )?);
+            writes.push(BufferMutation::set(key::policy_kv_key(found.id), encoded)?);
             // Go `updateExistPlacementPolicy` (`ddl/placement_policy.go:285`):
             // altering a policy changes what EVERY referencing object means,
             // so their bundles are rebuilt and resent, not just the policy
@@ -6925,9 +6912,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     format!("Placement policy '{name}' is still in use"),
                 )));
             }
-            writes.push(OptimisticMutation::meta_delete(key::policy_kv_key(
-                found.id,
-            ))?);
+            writes.push(BufferMutation::delete(key::policy_kv_key(found.id))?);
             diff.action_type = ActionType::ACTION_DROP_PLACEMENT_POLICY;
             diff.schema_id = found.id;
         }
@@ -6965,10 +6950,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             };
             let encoded = value::serialize_db_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
-                key::database_kv_key(db_id),
-                encoded,
-            )?);
+            writes.push(BufferMutation::set(key::database_kv_key(db_id), encoded)?);
             diff.action_type = ActionType::ACTION_CREATE_SCHEMA;
             diff.schema_id = db_id;
         }
@@ -6992,11 +6974,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // its `Table:<id>` entries and its per-table ID allocators — goes
             // with it. Only fields this snapshot actually observed are deleted.
             for (raw_key, _) in snapshot.scan_prefix(&key::database_metas_kv_prefix(db_id))? {
-                writes.push(OptimisticMutation::meta_delete(raw_key)?);
+                writes.push(BufferMutation::delete(raw_key)?);
             }
-            writes.push(OptimisticMutation::meta_delete(key::database_kv_key(
-                db_id,
-            ))?);
+            writes.push(BufferMutation::delete(key::database_kv_key(db_id))?);
             diff.action_type = ActionType::ACTION_DROP_SCHEMA;
             diff.schema_id = db_id;
             if !tidb_metadef::is_mem_or_sys_db(&name.go_to_lower()) {
@@ -7056,7 +7036,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -7280,7 +7260,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -7420,7 +7400,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -7432,13 +7412,13 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // and an absent key already reads as 0. Which key it is, is Go's
             // `SepAutoInc` choice, made in one place.
             if info.auto_inc_id > 1 {
-                writes.push(OptimisticMutation::meta_put(
+                writes.push(BufferMutation::set(
                     crate::cluster_auto_id::auto_id_key_for(db_id, &info),
                     value::encode_int_value(info.auto_inc_id - 1),
                 )?);
             }
             if info.auto_random_bits > 0 && info.auto_rand_id > 1 {
-                writes.push(OptimisticMutation::meta_put(
+                writes.push(BufferMutation::set(
                     crate::cluster_auto_id::auto_random_id_key_for(db_id, &info),
                     value::encode_int_value(info.auto_rand_id - 1),
                 )?);
@@ -7472,9 +7452,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // accessors, then creates the view under a FRESH table id
             // (`DropTableOrView` + `createTableOrViewWithCheck`).
             if let Some(old_id) = existing {
-                writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
-                    db_id, old_id,
-                ))?);
+                writes.push(BufferMutation::delete(key::table_kv_key(db_id, old_id))?);
             }
             let table_id = global_ids.allocate(1)?[0];
             created_id = Some(table_id);
@@ -7483,7 +7461,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -7512,7 +7490,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         "'{schema}.{name}' is a base table, not a VIEW (Go ErrWrongObject)"
                     )));
                 }
-                writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                writes.push(BufferMutation::delete(key::table_kv_key(
                     database.info.id,
                     table.id,
                 ))?);
@@ -7601,11 +7579,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             info.auto_rand_id = effective as i64;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 counter_key,
                 value::encode_int_value(effective as i64 - 1),
             )?);
@@ -7636,7 +7614,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut info = stored.clone_like_go();
             info.auto_id_cache = *new_cache;
             let db_id = database.info.id;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, stored.id),
                 value::serialize_table_info(&info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -7673,7 +7651,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 info.tiflash_replica = Some(GoShared::new(replica));
             }
             let db_id = database.info.id;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, stored.id),
                 value::serialize_table_info(&info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -7721,7 +7699,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 });
             }
             replica.write().available = *available;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, *table_id),
                 value::serialize_table_info(&info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -7860,14 +7838,14 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     .write()
                     .del_flag(u64::from(FieldTypeFlags::AUTO_INCREMENT));
             }
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 value::serialize_table_info(&info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
             let random_key = key::auto_random_table_id_kv_key(db_id, table_id);
             let current = if converting && stored.sep_auto_inc() {
-                writes.push(OptimisticMutation::meta_put(
+                writes.push(BufferMutation::set(
                     check_key,
                     value::encode_int_value(checked_current as i64),
                 )?);
@@ -7893,7 +7871,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     previous_random
                 };
             if !converting || rebased_random != previous_random {
-                writes.push(OptimisticMutation::meta_put(
+                writes.push(BufferMutation::set(
                     random_key,
                     value::encode_int_value(rebased_random as i64),
                 )?);
@@ -7901,7 +7879,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             if converting {
                 let row_id_key = key::auto_table_id_kv_key(db_id, table_id);
                 if snapshot.get(&row_id_key)?.is_some() {
-                    writes.push(OptimisticMutation::meta_delete(row_id_key)?);
+                    writes.push(BufferMutation::delete(row_id_key)?);
                 }
             }
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
@@ -8003,7 +7981,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -8214,16 +8192,16 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             standalone_info.exchange_partition_info = None;
             standalone_info.update_ts = start_ts;
 
-            writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            writes.push(BufferMutation::delete(key::table_kv_key(
                 standalone_db_id,
                 original_standalone_id,
             ))?);
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(partitioned_db_id, partitioned_info.id),
                 value::serialize_table_info(&partitioned_info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(standalone_db_id, standalone_info.id),
                 value::serialize_table_info(&standalone_info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -8240,11 +8218,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     read_auto_id(snapshot, &partitioned_key)?,
                     read_auto_id(snapshot, &standalone_key)?,
                 );
-                writes.push(OptimisticMutation::meta_put(
+                writes.push(BufferMutation::set(
                     partitioned_key,
                     value::encode_int_value(maximum),
                 )?);
-                writes.push(OptimisticMutation::meta_put(
+                writes.push(BufferMutation::set(
                     key_for(standalone_db_id, original_partition_id),
                     value::encode_int_value(maximum),
                 )?);
@@ -8368,7 +8346,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -8460,7 +8438,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -8499,7 +8477,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -8570,7 +8548,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -8715,7 +8693,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -8981,7 +8959,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9020,13 +8998,13 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 }
             }
             info.update_ts = start_ts;
-            writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            writes.push(BufferMutation::delete(key::table_kv_key(
                 db_id,
                 old_table_id,
             ))?);
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, new_table_id),
                 encoded,
             )?);
@@ -9038,7 +9016,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 key::auto_random_table_id_kv_key(db_id, old_table_id),
             ] {
                 if snapshot.get(&allocator)?.is_some() {
-                    writes.push(OptimisticMutation::meta_delete(allocator)?);
+                    writes.push(BufferMutation::delete(allocator)?);
                 }
             }
             // Go `onTruncateTable` rebuilds the bundles once the new id is
@@ -9106,9 +9084,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             };
             let db_id = database.info.id;
             let table_id = stored.id;
-            writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
-                db_id, table_id,
-            ))?);
+            writes.push(BufferMutation::delete(key::table_kv_key(db_id, table_id))?);
             // Go `GetAutoIDAccessors(dbID, tblID).Del()` removes the three
             // allocator fields with the table; each is deleted only if this
             // snapshot observed it, exactly as `HDel` does.
@@ -9118,7 +9094,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 key::auto_random_table_id_kv_key(db_id, table_id),
             ] {
                 if snapshot.get(&allocator)?.is_some() {
-                    writes.push(OptimisticMutation::meta_delete(allocator)?);
+                    writes.push(BufferMutation::delete(allocator)?);
                 }
             }
             diff.action_type = ActionType::ACTION_DROP_TABLE;
@@ -9183,7 +9159,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 ));
             }
             for (ordinal, (schema, db_id, table_id, stored)) in existing.iter().enumerate() {
-                writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                writes.push(BufferMutation::delete(key::table_kv_key(
                     *db_id, *table_id,
                 ))?);
                 for allocator in [
@@ -9192,7 +9168,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     key::auto_random_table_id_kv_key(*db_id, *table_id),
                 ] {
                     if snapshot.get(&allocator)?.is_some() {
-                        writes.push(OptimisticMutation::meta_delete(allocator)?);
+                        writes.push(BufferMutation::delete(allocator)?);
                     }
                 }
                 if ordinal == 0 {
@@ -9233,7 +9209,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             to_schema,
             to_table,
         } => {
-            if *is_alter && from_schema.eq_ignore_ascii_case(&to_schema)
+            if *is_alter
+                && from_schema.eq_ignore_ascii_case(&to_schema)
                 && from_table.eq_ignore_ascii_case(&to_table)
             {
                 // Go resolves the source before the ALTER identity early return.
@@ -9416,7 +9393,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9454,7 +9431,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9502,7 +9479,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9543,7 +9520,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9699,7 +9676,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9728,10 +9705,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let db_id = info.id;
             let encoded = value::serialize_db_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
-                key::database_kv_key(db_id),
-                encoded,
-            )?);
+            writes.push(BufferMutation::set(key::database_kv_key(db_id), encoded)?);
             diff.action_type = ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE;
             diff.schema_id = db_id;
         }
@@ -9783,7 +9757,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9837,7 +9811,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9922,7 +9896,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(OptimisticMutation::meta_put(
+            writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
@@ -9933,7 +9907,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // counter above, so both reduce to one write here.
             let new_end = new_base.wrapping_sub(1);
             if *force || (new_end as u64) > (stored_counter as u64) {
-                writes.push(OptimisticMutation::meta_put(
+                writes.push(BufferMutation::set(
                     counter_key,
                     value::encode_int_value(new_end),
                 )?);
@@ -9964,13 +9938,13 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     // The version bump comes last so the write set always ends with the two
     // keys that make the change observable — and the version key is what a
     // concurrent DDL collides with.
-    writes.push(OptimisticMutation::meta_put(
+    writes.push(BufferMutation::set(
         key::schema_version_kv_key(),
         value::encode_int_value(schema_version),
     )?);
     let encoded_diff = value::serialize_schema_diff(&diff)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    writes.push(OptimisticMutation::meta_put(
+    writes.push(BufferMutation::set(
         key::schema_diff_kv_key(schema_version),
         encoded_diff,
     )?);
@@ -10236,7 +10210,7 @@ fn plan_rename_tables(
     catalog: &ClusterCatalog,
     pairs: &[RenameTablePair],
     start_ts: u64,
-    writes: &mut Vec<OptimisticMutation>,
+    writes: &mut Vec<BufferMutation>,
     diff: &mut SchemaDiff,
 ) -> Result<(), DdlPlanError> {
     let database_ids = catalog
@@ -10312,14 +10286,14 @@ fn plan_rename_tables(
     for state in changed.values() {
         let table_id = state.table.id;
         if state.original_schema_id != state.current_schema_id {
-            writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            writes.push(BufferMutation::delete(key::table_kv_key(
                 state.original_schema_id,
                 table_id,
             ))?);
         }
         let encoded = value::serialize_table_info(&state.table)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        writes.push(OptimisticMutation::meta_put(
+        writes.push(BufferMutation::set(
             key::table_kv_key(state.current_schema_id, table_id),
             encoded,
         )?);
@@ -10396,7 +10370,7 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     ddl_job_id: i64,
     events: &[(i64, SchemaChangeEvent)],
-    writes: &mut Vec<OptimisticMutation>,
+    writes: &mut Vec<BufferMutation>,
 ) -> Result<(), DdlPlanError> {
     if events.is_empty() {
         return Ok(());
@@ -10462,7 +10436,7 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
         writes.extend(mutations.map_err(|error| DdlPlanError::Encode(error.to_string()))?);
     }
     if needs_row_id {
-        writes.push(OptimisticMutation::meta_put(
+        writes.push(BufferMutation::set(
             row_id_key,
             value::encode_int_value(row_id),
         )?);
