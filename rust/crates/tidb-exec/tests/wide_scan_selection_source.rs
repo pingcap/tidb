@@ -412,6 +412,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
         field_type: conditions[2].children[0].field_type.clone(),
         has_distinct: Some(false),
         agg_func_mode: None,
+        ..Default::default()
     };
     let scan = PhysicalTableScan::init(0, 0, TiKvTableScanSpec::new(46, columns));
     let request = construct_aggregate_read_only_dag_req_with_conditions(
@@ -482,6 +483,7 @@ fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wir
             ),
             has_distinct: Some(false),
             agg_func_mode: None,
+            ..Default::default()
         }
     };
     let aggregate = |tp: ExprType, child: Expr, field_type: &FieldType| Expr {
@@ -495,6 +497,7 @@ fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wir
         ),
         has_distinct: Some(false),
         agg_func_mode: None,
+        ..Default::default()
     };
     let functions = vec![
         aggregate(ExprType::Count, column_ref(2, &value_type), &group_type),
@@ -1027,7 +1030,11 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
         tidb_datatype::Collation::Utf8Mb4Bin,
     );
     assert_eq!(two.sig, Some(ScalarFuncSig::InString as i32));
-    assert_eq!(two.children.len(), 3, "the tested column plus one child per element");
+    assert_eq!(
+        two.children.len(),
+        3,
+        "the tested column plus one child per element"
+    );
     assert_eq!(
         two.field_type.as_ref().and_then(|tp| tp.collate),
         Some(tidb_datatype::collation_to_proto("utf8mb4_bin")),

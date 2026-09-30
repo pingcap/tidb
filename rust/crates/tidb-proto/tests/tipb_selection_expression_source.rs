@@ -12,10 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Exact TiPB wire vectors for the bounded Selection expression projection.
+//! Exact TiPB wire vectors for the complete upstream expression contract.
 
 use prost::Message;
 use tidb_proto::tipb::{ExecType, Executor, Expr, ExprType, FieldType, ScalarFuncSig, Selection};
+
+#[test]
+fn complete_contract_retains_master_executor_and_expression_fields() {
+    // Go master pins executor.proto's ExplainForConnection (executor field 26,
+    // connection_id field 1) and expression.proto's rpn_args_len (field 6).
+    let executor = [0x08, 0x15, 0xd2, 0x01, 0x02, 0x08, 0x2a];
+    assert_eq!(
+        Executor::decode(executor.as_slice())
+            .unwrap()
+            .encode_to_vec(),
+        executor
+    );
+    let expression = [0x30, 0x03];
+    assert_eq!(
+        Expr::decode(expression.as_slice()).unwrap().encode_to_vec(),
+        expression
+    );
+}
+
+#[test]
+fn complete_contract_recognizes_the_master_executor_vocabulary() {
+    assert!(ExecType::try_from(21).is_ok());
+}
 
 #[test]
 fn bounded_selection_contract_keeps_upstream_numeric_values() {
@@ -58,20 +81,23 @@ fn selection_executor_and_nonnullable_defaults_keep_exact_wire_tags() {
         field_type: None,
         has_distinct: Some(false),
         agg_func_mode: None,
+        ..Default::default()
     };
     let executor = Executor {
         tp: Some(ExecType::TypeSelection as i32),
         tbl_scan: None,
         idx_scan: None,
-        selection: Some(Selection {
+        selection: Some(Box::new(Selection {
             conditions: vec![literal],
-        }),
+            ..Default::default()
+        })),
         aggregation: None,
         top_n: None,
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
+        ..Default::default()
     };
     let expected = vec![
         0x08, 0x02, // Executor.tp = TypeSelection (field 1).

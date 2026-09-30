@@ -1,0 +1,34 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.goproto_sizecache_all) = false;
+option (rustproto.lite_runtime_all) = true;
+
+message ResourceGroupTag {
+  optional bytes sql_digest = 1;
+  optional bytes plan_digest = 2;
+
+  // Use to label the handling kv type of the request.
+  // This is for TiKV resource_metering to collect execution information by the key label.
+  optional ResourceGroupTagLabel label = 3;
+  optional int64 table_id = 4 [(gogoproto.nullable) = false];
+  optional bytes keyspace_name = 5;
+}
+
+enum ResourceGroupTagLabel {
+  ResourceGroupTagLabelUnknown = 0;
+  ResourceGroupTagLabelRow = 1;
+  ResourceGroupTagLabelIndex = 2;
+}

@@ -1,0 +1,687 @@
+{
+  "go_master": "6b2781326b722f217a61852ab403350858549bd0",
+  "tipb_version": "v0.0.0-20260908093239-fed7bc47c39d",
+  "integration_before": "5503f8860883c6cd80bdd0d487d34c53787daf24",
+  "mismatches": [
+    {
+      "symbol": ".tipb.TableInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.IndexInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.KeyRange",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ChecksumRewriteRule",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ChecksumRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ChecksumResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.Expr.rpn_args_len",
+      "kind": "missing field",
+      "tag": 6
+    },
+    {
+      "symbol": ".tipb.Expr.order_by",
+      "kind": "missing field",
+      "tag": 8
+    },
+    {
+      "symbol": ".tipb.RpnExpr",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ByItem.rpn_expr",
+      "kind": "missing field",
+      "tag": 3
+    },
+    {
+      "symbol": ".tipb.Executor.exchange_receiver",
+      "kind": "missing field",
+      "tag": 8
+    },
+    {
+      "symbol": ".tipb.Executor.join",
+      "kind": "missing field",
+      "tag": 9
+    },
+    {
+      "symbol": ".tipb.Executor.kill",
+      "kind": "missing field",
+      "tag": 11
+    },
+    {
+      "symbol": ".tipb.Executor.Projection",
+      "kind": "missing field",
+      "tag": 13
+    },
+    {
+      "symbol": ".tipb.Executor.partition_table_scan",
+      "kind": "missing field",
+      "tag": 14
+    },
+    {
+      "symbol": ".tipb.Executor.sort",
+      "kind": "missing field",
+      "tag": 15
+    },
+    {
+      "symbol": ".tipb.Executor.window",
+      "kind": "missing field",
+      "tag": 16
+    },
+    {
+      "symbol": ".tipb.Executor.fine_grained_shuffle_stream_count",
+      "kind": "missing field",
+      "tag": 17
+    },
+    {
+      "symbol": ".tipb.Executor.fine_grained_shuffle_batch_size",
+      "kind": "missing field",
+      "tag": 18
+    },
+    {
+      "symbol": ".tipb.Executor.expand",
+      "kind": "missing field",
+      "tag": 19
+    },
+    {
+      "symbol": ".tipb.Executor.expand2",
+      "kind": "missing field",
+      "tag": 20
+    },
+    {
+      "symbol": ".tipb.Executor.broadcast_query",
+      "kind": "missing field",
+      "tag": 21
+    },
+    {
+      "symbol": ".tipb.Executor.cte_sink",
+      "kind": "missing field",
+      "tag": 22
+    },
+    {
+      "symbol": ".tipb.Executor.cte_source",
+      "kind": "missing field",
+      "tag": 23
+    },
+    {
+      "symbol": ".tipb.Executor.index_lookup",
+      "kind": "missing field",
+      "tag": 24
+    },
+    {
+      "symbol": ".tipb.Executor.explain_for_connection",
+      "kind": "missing field",
+      "tag": 26
+    },
+    {
+      "symbol": ".tipb.ExchangeSender.partition_keys",
+      "kind": "missing field",
+      "tag": 3
+    },
+    {
+      "symbol": ".tipb.ExchangeSender.types",
+      "kind": "missing field",
+      "tag": 5
+    },
+    {
+      "symbol": ".tipb.ExchangeSender.compression",
+      "kind": "missing field",
+      "tag": 7
+    },
+    {
+      "symbol": ".tipb.ExchangeSender.upstream_cte_task_meta",
+      "kind": "missing field",
+      "tag": 8
+    },
+    {
+      "symbol": ".tipb.ExchangeSender.same_zone_flag",
+      "kind": "missing field",
+      "tag": 9
+    },
+    {
+      "symbol": ".tipb.CTESink",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.CTESource",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.IndexLookUp",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.EncodedBytesSlice",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ExchangeReceiver",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ANNQueryInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.InvertedQueryInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.FTSBooleanTerm",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.FTSBooleanQuery",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.FTSBooleanNode",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.FTSQueryInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TiCIVectorQueryInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ColumnarIndexInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TableScan.ranges",
+      "kind": "missing field",
+      "tag": 6
+    },
+    {
+      "symbol": ".tipb.TableScan.pushed_down_filter_conditions",
+      "kind": "missing field",
+      "tag": 10
+    },
+    {
+      "symbol": ".tipb.TableScan.runtime_filter_list",
+      "kind": "missing field",
+      "tag": 11
+    },
+    {
+      "symbol": ".tipb.TableScan.deprecated_ann_query",
+      "kind": "missing field",
+      "tag": 13
+    },
+    {
+      "symbol": ".tipb.TableScan.used_columnar_indexes",
+      "kind": "missing field",
+      "tag": 14
+    },
+    {
+      "symbol": ".tipb.PartitionTableScan",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.Join",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.RuntimeFilter",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.IndexScan.fts_query_info",
+      "kind": "missing field",
+      "tag": 7
+    },
+    {
+      "symbol": ".tipb.IndexScan.tici_vector_query_info",
+      "kind": "missing field",
+      "tag": 8
+    },
+    {
+      "symbol": ".tipb.Selection.rpn_conditions",
+      "kind": "missing field",
+      "tag": 2
+    },
+    {
+      "symbol": ".tipb.Selection.child",
+      "kind": "missing field",
+      "tag": 3
+    },
+    {
+      "symbol": ".tipb.Projection",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.Aggregation.rpn_group_by",
+      "kind": "missing field",
+      "tag": 4
+    },
+    {
+      "symbol": ".tipb.Aggregation.rpn_agg_func",
+      "kind": "missing field",
+      "tag": 5
+    },
+    {
+      "symbol": ".tipb.Aggregation.child",
+      "kind": "missing field",
+      "tag": 6
+    },
+    {
+      "symbol": ".tipb.Aggregation.pre_agg_mode",
+      "kind": "missing field",
+      "tag": 7
+    },
+    {
+      "symbol": ".tipb.TopN.child",
+      "kind": "missing field",
+      "tag": 3
+    },
+    {
+      "symbol": ".tipb.TopN.partition_by",
+      "kind": "missing field",
+      "tag": 4
+    },
+    {
+      "symbol": ".tipb.Limit.child",
+      "kind": "missing field",
+      "tag": 2
+    },
+    {
+      "symbol": ".tipb.Limit.partition_by",
+      "kind": "missing field",
+      "tag": 3
+    },
+    {
+      "symbol": ".tipb.Kill",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ExplainForConnection",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ExecutorExecutionSummary.tiflash_hash_table_stats",
+      "kind": "missing field",
+      "tag": 11
+    },
+    {
+      "symbol": ".tipb.TiFlashExecutionInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.Sort",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.WindowFrameBound",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.WindowFrame",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.Window",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.GroupingExpr",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.GroupingSet",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.Expand",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ExprSlice",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.Expand2",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.BroadcastQuery",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TiFlashHashTableStats",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.InUnionMetadata",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.CompareInMetadata",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.GroupingMark",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.GroupingFunctionMetadata",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.IntermediateOutputChannel",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.DAGRequest.start_ts_fallback",
+      "kind": "missing field",
+      "tag": 1
+    },
+    {
+      "symbol": ".tipb.DAGRequest.collect_range_counts",
+      "kind": "missing field",
+      "tag": 6
+    },
+    {
+      "symbol": ".tipb.DAGRequest.max_warning_count",
+      "kind": "missing field",
+      "tag": 7
+    },
+    {
+      "symbol": ".tipb.DAGRequest.sql_mode",
+      "kind": "missing field",
+      "tag": 9
+    },
+    {
+      "symbol": ".tipb.DAGRequest.max_allowed_packet",
+      "kind": "missing field",
+      "tag": 13
+    },
+    {
+      "symbol": ".tipb.DAGRequest.is_rpn_expr",
+      "kind": "missing field",
+      "tag": 15
+    },
+    {
+      "symbol": ".tipb.DAGRequest.user",
+      "kind": "missing field",
+      "tag": 16
+    },
+    {
+      "symbol": ".tipb.DAGRequest.force_encode_type",
+      "kind": "missing field",
+      "tag": 18
+    },
+    {
+      "symbol": ".tipb.DAGRequest.intermediate_output_channels",
+      "kind": "missing field",
+      "tag": 20
+    },
+    {
+      "symbol": ".tipb.UserIdentity",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshTeardownRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshSearchRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshEvalContext",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshFilterExprColumn",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshSearchResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshSearchResult",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshSearchRow",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshSearchStats",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SPFreshANNStats",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.CreateIndexRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.CreateIndexResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.DropIndexRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.DropIndexResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.TiCITableInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.TiCIColumnInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.TiCIIndexInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.TiCIIndexInfo.OtherParamsEntry",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.ParserInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.ParserInfo.ParserParamsEntry",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.GetIndexProgressRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.tici.GetIndexProgressResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TopSQLRecord",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TopRURecord",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TopRURecordItem",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TopSQLRecordItem",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TopSQLRecordItem.StmtKvExecCountEntry",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.SQLMeta",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.PlanMeta",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.EmptyResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TopRUConfig",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TopSQLSubRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.TopSQLSubResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".tipb.ChecksumScanOn",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.ChecksumAlgorithm",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.ExecType.TypeExplainForConnection",
+      "kind": "missing or mismatched enum value",
+      "value": 21
+    },
+    {
+      "symbol": ".tipb.CompressionMode",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.VectorIndexKind",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.VectorDistanceMetric",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.ANNQueryType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.FTSQueryType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.FTSBooleanOccur",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.FTSBooleanModifier",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.FTSBooleanTermType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.ColumnarIndexType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.JoinType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.JoinExecType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.RuntimeFilterType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.RuntimeFilterMode",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.TiFlashPreAggMode",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.WindowBoundType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.RangeCmpDataType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.WindowFrameType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.TiFlashHashTableSizeKind",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.GroupingMode",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.SPFreshTruncateMode",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.SPFreshFilterExprColumnSource",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.SPFreshErrorCode",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.tici.IndexType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.tici.ParserType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.CollectorType",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.ItemInterval",
+      "kind": "missing enum"
+    },
+    {
+      "symbol": ".tipb.Event",
+      "kind": "missing enum"
+    }
+  ]
+}

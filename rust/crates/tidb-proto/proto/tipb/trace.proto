@@ -1,0 +1,27 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.goproto_sizecache_all) = false;
+option (rustproto.lite_runtime_all) = true;
+
+enum Event {
+	Unknown = 0;
+	TiKvCoprGetRequest = 1000;
+	TiKvCoprHandleRequest = 1001;
+	TiKvCoprScheduleTask = 1002;
+	TiKvCoprGetSnapshot = 1003;
+	TiKvCoprExecuteDagRunner = 1004;
+	TiKvCoprExecuteBatchDagRunner = 1005;
+};

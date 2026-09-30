@@ -1,18 +1,19 @@
 //! Generated protobuf contracts shared by the Rust SQL layer.
 //!
 //! The source protos are checked in next to this crate and generated with
-//! `prost`; this crate intentionally does not contain handwritten wire
-//! encoders.  The response leaf is a dependency-closed projection of TiDB's
-//! upstream `tipb/select.proto` contract, retaining exact field numbers and
-//! cardinality for the next raw DistSQL response decoder.  The coprocessor
-//! request leaf follows the same rule for fields needed before region/RPC
-//! ownership.
+//! `prost`. TiPB uses complete upstream inputs selected by Go master and
+//! recorded in `tipb-source.json`. Native-client protocol packages share their
+//! generated types with the storage layer.
 
 #![allow(missing_docs)]
 
 /// The generated `tipb` package.
 pub mod tipb {
     include!(concat!(env!("OUT_DIR"), "/tipb.rs"));
+
+    pub mod tici {
+        include!(concat!(env!("OUT_DIR"), "/tipb.tici.rs"));
+    }
 }
 
 /// The generated dependency-closed coprocessor request package.
@@ -317,6 +318,7 @@ mod tests {
                     inter_zone_send_bytes: Some(31),
                     inter_zone_receive_bytes: Some(37),
                 }),
+                ..Default::default()
             }],
             encode_type: Some(EncodeType::TypeChunk as i32),
             ndvs: vec![41, 43],

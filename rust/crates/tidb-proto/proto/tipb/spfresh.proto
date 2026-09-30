@@ -1,0 +1,177 @@
+syntax = "proto3";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "expression.proto";
+import "schema.proto";
+import "select.proto";
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.goproto_sizecache_all) = false;
+option (rustproto.lite_runtime_all) = true;
+
+message SPFreshTeardownRequest {
+    uint32 keyspace_id = 1;
+    int64 table_id = 2;
+    int64 index_id = 3;
+}
+
+message SPFreshSearchRequest {
+    uint32 keyspace_id = 1;
+    int64 table_id = 2;
+    int64 index_id = 3;
+    uint64 start_ts = 4;
+    uint64 top_k = 5;
+
+    // query_vector_f32_le is f32 little-endian bytes, without the dims prefix.
+    bytes query_vector_f32_le = 6;
+
+    repeated ColumnInfo required_columns = 7;
+
+    // Optional tuning parameters.
+    double oversample_factor = 8;
+    // If zero, the server uses its default search beam size.
+    uint32 search_beam_size = 9;
+
+    // read_only disables background fixups (split/merge) triggered by search
+    // observations. When enabled, the server must not enqueue fixups and should
+    // avoid starting any background fixup workers.
+    bool read_only = 10;
+
+    // When true, the server populates SPFreshSearchRow.distance in each result row.
+    bool need_distance = 11;
+
+    // Optional pushed-down scalar filter expression over the request-visible
+    // filter schema. ColumnRef values are dense zero-based offsets into
+    // filter_expr_columns.
+    Expr filter_expr = 12;
+
+    // Explicit schema mapping for filter_expr ColumnRef offsets.
+    repeated SPFreshFilterExprColumn filter_expr_columns = 13;
+
+    // Mandatory statement evaluation properties when filter_expr is present.
+    SPFreshEvalContext eval_context = 14;
+
+    // Maximum encoded response size accepted by the client. Endpoints must
+    // reject zero rather than treating it as an unlimited or default budget.
+    uint64 max_response_bytes = 15;
+}
+
+message SPFreshEvalContext {
+    string time_zone_name = 1;
+    int64 time_zone_offset = 2;
+    uint64 max_warning_count = 3;
+    uint32 div_precision_increment = 4;
+    SPFreshTruncateMode truncate_mode = 5;
+    bool overflow_as_warning = 6;
+    bool ignore_zero_in_date = 11;
+    bool divided_by_zero_as_warning = 12;
+    uint64 max_allowed_packet = 14;
+    uint64 sql_mode = 15;
+
+    reserved 7, 8, 9, 10, 13;
+    reserved "no_zero_in_date", "no_zero_date", "allow_invalid_dates", "strict_sql_mode", "error_for_division_by_zero";
+}
+
+enum SPFreshTruncateMode {
+    TruncateError = 0;
+    TruncateIgnore = 1;
+    TruncateWarning = 2;
+}
+
+enum SPFreshFilterExprColumnSource {
+    SPFreshFilterExprColumnSourceUnspecified = 0;
+    Stored = 1;
+    Handle = 2;
+}
+
+message SPFreshFilterExprColumn {
+    int64 column_id = 1;
+    SPFreshFilterExprColumnSource source = 2;
+    FieldType field_type = 3;
+}
+
+message SPFreshSearchResponse {
+    oneof result {
+        SPFreshSearchResult success = 1;
+        Error error = 2;
+    }
+}
+
+message SPFreshSearchResult {
+    repeated SPFreshSearchRow rows = 1;
+    SPFreshSearchStats stats = 2;
+    repeated Error warnings = 3;
+    uint64 warning_count = 4;
+}
+
+enum SPFreshErrorCode {
+    SPFreshErrorCodeUnspecified = 0;
+    SPFreshIndexCorruption = 9015;
+    SPFreshResponseTooLarge = 9016;
+}
+
+message SPFreshSearchRow {
+    bytes handle_bytes = 1;
+    float distance = 2;
+    repeated bytes column_values = 3;
+}
+
+message SPFreshSearchStats {
+    uint64 partitions_scanned = 1;
+    uint64 vectors_scanned = 2;
+    uint64 table_lookup_keys = 3;
+    uint64 table_lookup_bytes = 4;
+    // Time costs of each major stage in microseconds.
+    uint64 permit_micros = 5;
+    uint64 config_micros = 6;
+    uint64 index_open_micros = 7;
+    uint64 search_micros = 8;
+    uint64 table_lookup_micros = 9;
+    // Aggregated tikv-client RPC stats (best-effort) for this /spfresh_search
+    // request.
+    uint64 tikv_client_rpc_count = 10;
+    uint64 tikv_client_rpc_micros = 11;
+    bool read_only = 12;
+    // Effective oversample factor used by the server for this request.
+    double oversample_factor = 13;
+    // Process-local partition cache stats for this request.
+    uint64 partition_cache_hits = 14;
+    uint64 partition_cache_misses = 15;
+
+    // When present, ann contains a complete report whose zero values are
+    // explicitly reported zeros.
+    SPFreshANNStats ann = 16;
+}
+
+message SPFreshANNStats {
+    bool exact_fallback = 1;
+
+    uint64 search_micros = 2;
+    uint64 partitions_scanned = 3;
+    uint64 centroids_scanned = 4;
+    uint64 leaf_vectors_scanned = 5;
+
+    uint64 rough_candidates = 6;
+    uint64 bound_pruned_candidates = 7;
+    uint64 rerank_candidates = 8;
+    uint64 exact_evaluated = 9;
+
+    uint64 partition_cache_hits = 10;
+    uint64 partition_cache_misses = 11;
+    uint64 partition_cache_lookup_micros = 12;
+    uint64 partition_cache_miss_load_micros = 13;
+
+    uint64 table_lookup_micros = 14;
+    uint64 rerank_micros = 15;
+}

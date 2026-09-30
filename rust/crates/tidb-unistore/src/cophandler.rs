@@ -5301,10 +5301,10 @@ mod tests {
                 },
                 tipb::Executor {
                     tp: Some(tipb::ExecType::TypeLimit as i32),
-                    limit: Some(tipb::Limit {
+                    limit: Some(Box::new(tipb::Limit {
                         limit: Some(2),
                         ..tipb::Limit::default()
-                    }),
+                    })),
                     ..tipb::Executor::default()
                 },
             ],
@@ -5418,9 +5418,10 @@ mod tests {
                 },
                 tipb::Executor {
                     tp: Some(tipb::ExecType::TypeSelection as i32),
-                    selection: Some(tipb::Selection {
+                    selection: Some(Box::new(tipb::Selection {
                         conditions: vec![condition],
-                    }),
+                        ..Default::default()
+                    })),
                     ..tipb::Executor::default()
                 },
             ],
@@ -5572,14 +5573,15 @@ mod tests {
         };
         let aggregation = tipb::Executor {
             tp: Some(tipb::ExecType::TypeAggregation as i32),
-            aggregation: Some(tipb::Aggregation {
+            aggregation: Some(Box::new(tipb::Aggregation {
                 group_by: vec![column_ref(0)],
                 agg_func: vec![
                     agg_of(tipb::ExprType::Sum, column_ref(1)),
                     agg_of(tipb::ExprType::Count, column_ref(1)),
                 ],
                 streamed: Some(false),
-            }),
+                ..Default::default()
+            })),
             ..tipb::Executor::default()
         };
         let dag = tipb::DagRequest {
@@ -5694,7 +5696,7 @@ mod tests {
         };
         let aggregation = tipb::Executor {
             tp: Some(tipb::ExecType::TypeStreamAgg as i32),
-            aggregation: Some(tipb::Aggregation {
+            aggregation: Some(Box::new(tipb::Aggregation {
                 group_by: vec![column_ref(0)],
                 agg_func: vec![tipb::Expr {
                     tp: Some(tipb::ExprType::Count as i32),
@@ -5702,7 +5704,8 @@ mod tests {
                     ..tipb::Expr::default()
                 }],
                 streamed: Some(true),
-            }),
+                ..Default::default()
+            })),
             ..tipb::Executor::default()
         };
         let dag = tipb::DagRequest {
@@ -5798,7 +5801,7 @@ mod tests {
         tidb_codec::encode_int(&mut key_offset, column_offset);
         let top_n = tipb::Executor {
             tp: Some(tipb::ExecType::TypeTopN as i32),
-            top_n: Some(tipb::TopN {
+            top_n: Some(Box::new(tipb::TopN {
                 order_by: vec![tipb::ByItem {
                     expr: Some(tipb::Expr {
                         tp: Some(tipb::ExprType::ColumnRef as i32),
@@ -5806,9 +5809,11 @@ mod tests {
                         ..tipb::Expr::default()
                     }),
                     desc: Some(desc),
+                    ..Default::default()
                 }],
                 limit: Some(limit),
-            }),
+                ..Default::default()
+            })),
             ..tipb::Executor::default()
         };
         let dag = tipb::DagRequest {

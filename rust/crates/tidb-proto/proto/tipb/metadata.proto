@@ -1,0 +1,43 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.goproto_sizecache_all) = false;
+option (rustproto.lite_runtime_all) = true;
+
+message InUnionMetadata {
+    required bool in_union = 1 [(gogoproto.nullable) = false];
+}
+
+message CompareInMetadata {
+    required bool has_null = 1 [(gogoproto.nullable) = false];
+    // consts represents all non-null const args in repeated Datum format.
+    optional bytes consts = 2;
+}
+
+enum GroupingMode {
+    ModeBitAnd = 1; // Do 'and' operation, e.g. x & y
+    ModeNumericCmp = 2; // Compare two number
+    ModeNumericSet = 3; // Find if number in the set
+}
+
+message GroupingMark {
+    repeated uint64 grouping_nums = 1;
+}
+
+message GroupingFunctionMetadata {
+    required GroupingMode mode = 1;
+    // 2 dimension here, out-most dimension is for grouping(a,b) = grouping(a) << 1 + grouping(b); we should maintain a slice of grouping mark.
+    repeated GroupingMark grouping_marks = 2; // Contain the grouping's meta info
+}

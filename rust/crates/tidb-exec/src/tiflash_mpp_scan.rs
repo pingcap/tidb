@@ -270,6 +270,7 @@ impl TiFlashMppScanSource {
                 keep_order: Some(false),
                 is_fast_scan: Some(false),
                 max_wait_time_ms: Some(0),
+                ..Default::default()
             }),
             idx_scan: None,
             selection: None,
@@ -281,6 +282,7 @@ impl TiFlashMppScanSource {
             executor_id: Some("TableFullScan_2".to_owned()),
             parent_idx: None,
             exchange_sender: None,
+            ..Default::default()
         };
         let sender_executor = Executor {
             tp: Some(ExecType::TypeExchangeSender as i32),
@@ -314,7 +316,9 @@ impl TiFlashMppScanSource {
                         array: Some(false),
                     })
                     .collect(),
+                ..Default::default()
             })),
+            ..Default::default()
         };
         let endian = if tidb_distsql::system_endian() == tidb_distsql::SystemEndian::Little {
             Endian::LittleEndian
@@ -336,6 +340,7 @@ impl TiFlashMppScanSource {
                 != DEFAULT_DIV_PRECISION_INCREMENT)
                 .then_some(context.div_precision_increment),
             root_executor: Some(sender_executor),
+            ..Default::default()
         };
         eprintln!(
             "{{\"event\":\"tiflash_mpp_dispatch\",\"address\":\"{address}\",\"schema_ver\":{},\"start_ts\":{},\"regions\":{},\"table_id\":{},\"ranges\":{:?},\"region_ids\":{:?},\"region_spans\":{:?}}}",

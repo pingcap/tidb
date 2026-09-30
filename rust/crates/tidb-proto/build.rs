@@ -1,9 +1,26 @@
 #![allow(missing_docs)]
 
+use std::path::{Path, PathBuf};
+
+fn tipb_sources(directory: &Path, sources: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(directory).expect("read upstream TiPB inputs") {
+        let path = entry.expect("read TiPB input path").path();
+        if path.is_dir() {
+            // Imported protobuf/compiler options are inputs, not TiPB packages.
+            if path.file_name().unwrap() != "include" {
+                tipb_sources(&path, sources);
+            }
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "proto")
+        {
+            sources.push(path);
+        }
+    }
+}
+
 fn main() {
-    println!("cargo:rerun-if-changed=proto/resourcetag.proto");
-    println!("cargo:rerun-if-changed=proto/select.proto");
-    println!("cargo:rerun-if-changed=proto/analyze.proto");
+    println!("cargo:rerun-if-changed=proto/tipb");
     println!("cargo:rerun-if-changed=proto/coprocessor.proto");
     println!("cargo:rerun-if-changed=proto/tikvpb.proto");
     println!("cargo:rerun-if-changed=proto/pdpb.proto");
@@ -11,7 +28,22 @@ fn main() {
     println!("cargo:rerun-if-changed=proto/mvccpb.proto");
     println!("cargo:rerun-if-changed=proto/etcdserverpb.proto");
     println!("cargo:rerun-if-changed=proto/brpb.proto");
-    println!("cargo:rerun-if-changed=proto/explain.proto");
+
+    let mut sources = Vec::new();
+    tipb_sources(Path::new("proto/tipb"), &mut sources);
+    sources.sort();
+    sources.extend(
+        [
+            "proto/coprocessor.proto",
+            "proto/tikvpb.proto",
+            "proto/pdpb.proto",
+            "proto/mpp.proto",
+            "proto/mvccpb.proto",
+            "proto/etcdserverpb.proto",
+            "proto/brpb.proto",
+        ]
+        .map(PathBuf::from),
+    );
 
     println!("cargo:rerun-if-changed=../../third_party/tikv-client-rs/proto");
     tonic_prost_build::configure()
@@ -39,24 +71,15 @@ fn main() {
         .bytes(".tikvpb.BatchCommandsRequest.Request")
         .bytes(".tikvpb.BatchCommandsResponse.Response")
         .compile_protos(
+            &sources,
             &[
-                "proto/resourcetag.proto",
-                "proto/select.proto",
-                "proto/analyze.proto",
-                "proto/coprocessor.proto",
-                "proto/tikvpb.proto",
-                "proto/pdpb.proto",
-                "proto/mpp.proto",
-                "proto/mvccpb.proto",
-                "proto/etcdserverpb.proto",
-                "proto/brpb.proto",
-                "proto/explain.proto",
-            ],
-            &[
+                "proto/tipb",
+                "proto/tipb/include",
                 "proto",
                 "../../third_party/tikv-client-rs/proto",
                 "../../third_party/tikv-client-rs/proto/include",
-            ],
+            ]
+            .map(PathBuf::from),
         )
-        .expect("compile checked-in dependency-closed TiDB protocol inputs");
+        .expect("compile checked-in TiDB protocol inputs");
 }

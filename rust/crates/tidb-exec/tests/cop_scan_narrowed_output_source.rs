@@ -143,11 +143,11 @@ impl QueryTransport for FakeTransport {
             prefix_limit: dag
                 .executors
                 .iter()
-                .find_map(|executor| executor.limit.clone()),
+                .find_map(|executor| executor.limit.as_deref().cloned()),
             topn: dag
                 .executors
                 .iter()
-                .find_map(|executor| executor.top_n.clone()),
+                .find_map(|executor| executor.top_n.as_deref().cloned()),
             executor_types: dag
                 .executors
                 .iter()

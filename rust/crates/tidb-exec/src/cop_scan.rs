@@ -609,6 +609,7 @@ where
                     Ok(ByItem {
                         expr: Some(expression),
                         desc: Some(item.desc),
+                        ..Default::default()
                     })
                 })
                 .collect::<Result<Vec<_>, PushdownScannerError>>()?;
@@ -618,14 +619,16 @@ where
                 idx_scan: None,
                 selection: None,
                 aggregation: None,
-                top_n: Some(TopN {
+                top_n: Some(Box::new(TopN {
                     order_by,
                     limit: Some(topn.limit),
-                }),
+                    ..Default::default()
+                })),
                 limit: None,
                 executor_id: Some(String::new()),
                 parent_idx: None,
                 exchange_sender: None,
+                ..Default::default()
             });
         }
 
@@ -1139,6 +1142,7 @@ fn lower_aggregate_function(
         field_type: Some(tidb_expr::pushdown_catalog::field_type_to_pb(output_type)?),
         has_distinct: Some(false),
         agg_func_mode: Some(tidb_proto::tipb::AggFunctionMode::Partial1Mode as i32),
+        ..Default::default()
     })
 }
 

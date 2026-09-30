@@ -217,20 +217,20 @@ fn cop_dag(
     if let Some(condition) = condition {
         executors.push(tipb::Executor {
             tp: Some(tipb::ExecType::TypeSelection as i32),
-            selection: Some(tipb::Selection {
+            selection: Some(Box::new(tipb::Selection {
                 conditions: vec![condition],
                 ..tipb::Selection::default()
-            }),
+            })),
             ..tipb::Executor::default()
         });
     }
     if let Some(limit) = limit {
         executors.push(tipb::Executor {
             tp: Some(tipb::ExecType::TypeLimit as i32),
-            limit: Some(tipb::Limit {
+            limit: Some(Box::new(tipb::Limit {
                 limit: Some(limit),
                 ..tipb::Limit::default()
-            }),
+            })),
             ..tipb::Executor::default()
         });
     }

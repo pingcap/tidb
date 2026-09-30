@@ -1,0 +1,47 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+// see https://github.com/gogo/protobuf/blob/master/gogoproto/gogo.proto
+// for the original idea
+
+package rustproto;
+
+extend google.protobuf.FileOptions {
+    // When true, oneof field is generated public
+    optional bool expose_oneof_all = 17001;
+    // When true all fields are public, and not accessors generated
+    optional bool expose_fields_all = 17003;
+    // When false, `get_`, `set_`, `mut_` etc. accessors are not generated
+    optional bool generate_accessors_all = 17004;
+    // Use `bytes::Bytes` for `bytes` fields
+    optional bool carllerche_bytes_for_bytes_all = 17011;
+    // Use `bytes::Bytes` for `string` fields
+    optional bool carllerche_bytes_for_string_all = 17012;
+    // When true, will only generate codes that works with lite runtime.
+    optional bool lite_runtime_all = 17035;
+}
+
+extend google.protobuf.MessageOptions {
+    // When true, oneof field is generated public
+    optional bool expose_oneof = 17001;
+    // When true all fields are public, and not accessors generated
+    optional bool expose_fields = 17003;
+    // When false, `get_`, `set_`, `mut_` etc. accessors are not generated
+    optional bool generate_accessors = 17004;
+    // Use `bytes::Bytes` for `bytes` fields
+    optional bool carllerche_bytes_for_bytes = 17011;
+    // Use `bytes::Bytes` for `string` fields
+    optional bool carllerche_bytes_for_string = 17012;
+}
+
+extend google.protobuf.FieldOptions {
+    // When true all fields are public, and not accessors generated
+    optional bool expose_fields_field = 17003;
+    // When false, `get_`, `set_`, `mut_` etc. accessors are not generated
+    optional bool generate_accessors_field = 17004;
+    // Use `bytes::Bytes` for `bytes` fields
+    optional bool carllerche_bytes_for_bytes_field = 17011;
+    // Use `bytes::Bytes` for `string` fields
+    optional bool carllerche_bytes_for_string_field = 17012;
+}

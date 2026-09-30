@@ -211,13 +211,14 @@ pub fn limit_to_pb(limit: u64) -> Executor {
         selection: None,
         aggregation: None,
         top_n: None,
-        limit: Some(Limit {
+        limit: Some(Box::new(Limit {
             limit: Some(limit),
             ..Limit::default()
-        }),
+        })),
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
+        ..Default::default()
     }
 }
 
@@ -415,6 +416,7 @@ pub fn construct_index_aggregated_dag_req(
         executor_id: None,
         parent_idx: None,
         exchange_sender: None,
+        ..Default::default()
     }];
     if !conditions.is_empty() {
         executors.push(selection_executor(conditions)?);
@@ -451,6 +453,7 @@ pub fn construct_index_aggregated_dag_req(
             != DEFAULT_DIV_PRECISION_INCREMENT)
             .then_some(context.div_precision_increment),
         root_executor: None,
+        ..Default::default()
     })
 }
 
@@ -465,12 +468,13 @@ fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
         tbl_scan: None,
         idx_scan: None,
         selection: None,
-        aggregation: Some(aggregation),
+        aggregation: Some(Box::new(aggregation)),
         top_n: None,
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
+        ..Default::default()
     }
 }
 
@@ -604,6 +608,7 @@ fn construct_dag_req_assembled(
             != DEFAULT_DIV_PRECISION_INCREMENT)
             .then_some(context.div_precision_increment),
         root_executor: None,
+        ..Default::default()
     })
 }
 
@@ -761,7 +766,10 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         tp: Some(ExecType::TypeSelection as i32),
         tbl_scan: None,
         idx_scan: None,
-        selection: Some(Selection { conditions }),
+        selection: Some(Box::new(Selection {
+            conditions,
+            ..Default::default()
+        })),
         aggregation: None,
         top_n: None,
         limit: None,
@@ -770,6 +778,7 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
+        ..Default::default()
     })
 }
 
@@ -790,19 +799,21 @@ fn aggregation_to_pb(
         tbl_scan: None,
         idx_scan: None,
         selection: None,
-        aggregation: Some(Aggregation {
+        aggregation: Some(Box::new(Aggregation {
             group_by: group_by.to_vec(),
             agg_func: functions.to_vec(),
             // Go's PhysicalHashAgg/PhysicalStreamAgg list-form protobuf does
             // not set Aggregation.streamed; the executor type is the mode
             // discriminator in this list-form request.
             streamed: None,
-        }),
+            ..Default::default()
+        })),
         top_n: None,
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
+        ..Default::default()
     })
 }
 
@@ -827,6 +838,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
             keep_order: Some(spec.keep_order),
             is_fast_scan: Some(false),
             max_wait_time_ms: Some(0),
+            ..Default::default()
         }),
         idx_scan: None,
         selection: None,
@@ -838,6 +850,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
         executor_id: Some(String::new()),
         parent_idx: None,
         exchange_sender: None,
+        ..Default::default()
     })
 }
 
@@ -864,6 +877,7 @@ fn index_scan_to_pb(plan: &PhysicalIndexScan) -> Result<Executor, DagRequestBuil
         executor_id: None,
         parent_idx: None,
         exchange_sender: None,
+        ..Default::default()
     })
 }
 
@@ -879,6 +893,7 @@ fn index_payload_to_pb(spec: &TiKvIndexScanSpec, plan: &PhysicalIndexScan) -> In
             plan.ranges(),
         )),
         primary_column_ids: spec.primary_column_ids.clone(),
+        ..Default::default()
     }
 }
 
