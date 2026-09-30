@@ -272,27 +272,19 @@ A distance formula answers the second and says nothing about the first, which is
 or polygon does.
 
 **One edge model, everywhere.** All 4326 topology uses a single edge model, and the metric
-is Andoyer throughout. This is a requirement rather than a preference, because mixing edge
-models makes the function set contradict itself:
+is Andoyer throughout, so:
 
 > `ST_Distance(g1, g2) = 0` if and only if `ST_Intersects(g1, g2)`, for every pair of
 > geometry types, and likewise for its negation `ST_Disjoint`.
 
-It is stated against `ST_Intersects` deliberately. The boundary-sensitive predicates keep
-their DE-9IM definitions and are *not* equivalent to zero distance: a point lying exactly on
-a polygon's boundary is at distance zero, intersects it and touches it, yet `ST_Within` is
-correctly false, because Within needs interior to meet interior. That is true under any one
-edge model, so it is not the contradiction this rule guards against.
-
-What mixing does produce is a disagreement no definition explains: the same point at the
-same place, measured to the same polygon, is distance zero under one surface and metres away
-under another, so `ST_Distance` and `ST_Intersects` disagree about whether the two meet at
-all.
+Not the boundary-sensitive predicates, which keep their DE-9IM definitions: a point on a
+polygon's boundary is at distance zero and correctly not `ST_Within`, under any single edge
+model. Mixing surfaces breaks something else, that the same point measured to the same
+polygon is distance zero on one and metres away on the other.
 
 **That model is Andoyer, and v1 takes only point operands.** Every other part of v1 is a
-strict MySQL subset, so predicates would otherwise be the one surface shipping a *different
-answer* rather than a *smaller* one, and a predicate is a boolean in a `WHERE` clause rather
-than a number a reader might round away.
+strict MySQL subset; predicates would otherwise be the one surface shipping a *different
+answer* rather than a *smaller* one.
 
 Matching MySQL is affordable on the half that matters. Boost decides which side of a segment
 a point falls on by comparing azimuths from the inverse solution, so a point-in-polygon
@@ -324,10 +316,9 @@ from documentation.
   ranking inverts, since Andoyer is itself 5,973 m from exact there. Its point-to-line and
   intersection solutions iterate where Andoyer's side test is closed form, so it is not the
   cheaper option either.
-- **Great-circle edges on a sphere.** What PostGIS `geography` ships, so a spherical answer
-  is normal practice rather than a corner cut. It would buy a wider operand set for a
-  measured 945 m of boundary position: `ST_Intersects` on the same point is true in MySQL
-  and false in PostGIS.
+- **Great-circle edges on a sphere.** What PostGIS `geography` ships. It would buy a wider
+  operand set for a measured 945 m of boundary position: `ST_Intersects` on the same point
+  is true in MySQL and false in PostGIS.
 - **The plane.** Not a candidate: its error does not shrink with polygon size the way the
   curved options do, and whole regions flip rather than boundary cases.
 
@@ -968,8 +959,8 @@ than the one SRID.
 
 ## Appendix: PostGIS delta for the type layer
 
-The compatibility target is **MySQL**, so full PostGIS compatibility is a stated non-goal
-rather than an omission: MySQL's spatial surface is a strict subset of PostGIS's, and the
+The compatibility target is **MySQL**; full PostGIS compatibility is a non-goal, not an
+oversight. MySQL's spatial surface is a strict subset of PostGIS's, and the
 syntax, the `SHOW CREATE TABLE` form, the single-`TypeGeometry`-plus-subtype model and the
 predicate semantics all anchor on MySQL. This appendix records the delta a PostGIS user
 meets at the **type and function layer**, so a deliberate MySQL-alignment choice is not
