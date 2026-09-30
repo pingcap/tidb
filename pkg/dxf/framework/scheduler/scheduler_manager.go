@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -441,6 +442,7 @@ func (sm *Manager) cleanTaskLoop() {
 			ActiveProducerChecker: orphanDataActiveProducerChecker{taskMgr: sm.taskMgr},
 			GetStorageURI:         func() string { return handle.GetCloudStorageURI(sm.ctx, sm.store) },
 			Logger:                sm.logger,
+			RetainedPrefixes:      []string{conflictpath.StoragePrefix},
 		})
 	}
 	sm.drainCleanTaskBatches()

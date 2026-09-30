@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -60,7 +61,7 @@ func TestScan(t *testing.T) {
 		require.NoError(t, store.WriteFile(ctx, "p00000001/456/data", []byte("45678")))
 		require.NoError(t, store.WriteFile(ctx, "unknown/file", nil))
 
-		stats, err := scanOrphanData(ctx, store)
+		stats, err := scanOrphanData(ctx, store, nil)
 		require.NoError(t, err)
 		require.Equal(t, scanStats{
 			sizeBytes:     8,
@@ -75,13 +76,28 @@ func TestScan(t *testing.T) {
 			entries: []walkEntry{{path: "unknown/file", size: -1}},
 		}
 
-		stats, err := scanOrphanData(context.Background(), store)
+		stats, err := scanOrphanData(context.Background(), store, nil)
 		require.NoError(t, err)
 		require.Equal(t, scanStats{
 			objectCount:   1,
 			sampleObjects: []string{"unknown/file"},
 		}, stats)
 		require.Equal(t, 1, store.walkCount)
+	})
+
+	t.Run("skip retained conflict-row namespace", func(t *testing.T) {
+		ctx := context.Background()
+		store := objstore.NewMemStorage()
+		require.NoError(t, store.WriteFile(ctx, "123/meta.json", []byte("123")))
+		require.NoError(t, store.WriteFile(ctx, "conflicted-rows/9/3-uuid/0_1", []byte("conflict")))
+
+		stats, err := scanOrphanData(ctx, store, []string{conflictpath.StoragePrefix})
+		require.NoError(t, err)
+		require.Equal(t, scanStats{
+			sizeBytes:     3,
+			objectCount:   1,
+			sampleObjects: []string{"123/meta.json"},
+		}, stats)
 	})
 
 	t.Run("sample is bounded", func(t *testing.T) {
@@ -94,7 +110,7 @@ func TestScan(t *testing.T) {
 			entries: entries,
 		}
 
-		stats, err := scanOrphanData(context.Background(), store)
+		stats, err := scanOrphanData(context.Background(), store, nil)
 		require.NoError(t, err)
 		require.Equal(t, int64(len(entries)), stats.objectCount)
 		require.Len(t, stats.sampleObjects, sampleObjectLimit)

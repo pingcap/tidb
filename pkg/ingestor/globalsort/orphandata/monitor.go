@@ -16,6 +16,7 @@ package orphandata
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -39,6 +40,10 @@ type Config struct {
 	// on every run, so it reads the latest value of the system variable.
 	GetStorageURI func() string
 	Logger        *zap.Logger
+	// RetainedPrefixes are object-store namespaces that other DXF components
+	// intentionally keep after a task finishes. Objects under them are managed
+	// by dedicated retention policies and are not orphan data.
+	RetainedPrefixes []string
 }
 
 type noActiveProducerChecker struct{}
@@ -111,7 +116,7 @@ func (m *Monitor) Trigger(ctx context.Context) {
 	}
 	defer storage.Close()
 
-	stats, err := scanOrphanData(ctx, storage)
+	stats, err := scanOrphanData(ctx, storage, m.cfg.RetainedPrefixes)
 	if err != nil {
 		if ctx.Err() == nil {
 			m.cfg.Logger.Warn("global sort orphan data monitor failed to scan storage", zap.Error(err))
@@ -119,6 +124,11 @@ func (m *Monitor) Trigger(ctx context.Context) {
 		return
 	}
 
+	// Re-check after the scan. A producer that appears and disappears entirely
+	// between the two checks (empty -> active -> empty) is not detected. We
+	// accept that ABA window for now: a task removes its own objects before its
+	// row leaves the task table, so any value published from a scan that raced a
+	// cleanup is corrected by the next scan.
 	hasActiveProducers, err = m.cfg.ActiveProducerChecker.HasActiveProducers(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -142,6 +152,16 @@ func (m *Monitor) Trigger(ctx context.Context) {
 // sampleObjectLimit bounds how many object names are kept for diagnostics.
 const sampleObjectLimit = 10
 
+// isRetainedObjectPath reports whether path belongs to a retained namespace.
+func isRetainedObjectPath(path string, retainedPrefixes []string) bool {
+	for _, prefix := range retainedPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // scanStats summarizes the global-sort orphan objects found by a scan.
 type scanStats struct {
 	sizeBytes     int64
@@ -150,10 +170,14 @@ type scanStats struct {
 	truncated     bool
 }
 
-// scanOrphanData walks storage and returns global-sort orphan object statistics.
-func scanOrphanData(ctx context.Context, storage storeapi.Storage) (scanStats, error) {
+// scanOrphanData walks storage and returns global-sort orphan object statistics,
+// skipping objects under retainedPrefixes.
+func scanOrphanData(ctx context.Context, storage storeapi.Storage, retainedPrefixes []string) (scanStats, error) {
 	var stats scanStats
 	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		if isRetainedObjectPath(path, retainedPrefixes) {
+			return nil
+		}
 		stats.objectCount++
 		if len(stats.sampleObjects) < sampleObjectLimit {
 			stats.sampleObjects = append(stats.sampleObjects, path)
