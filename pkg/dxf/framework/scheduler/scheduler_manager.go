@@ -435,7 +435,7 @@ func (sm *Manager) cleanTaskLoop() {
 	if kerneltype.IsNextGen() {
 		monitor = orphandata.NewMonitor(orphandata.Config{
 			ActiveProducerChecker: orphanDataActiveProducerChecker{taskMgr: sm.taskMgr},
-			StorageURI:            handle.GetCloudStorageURI(sm.ctx, sm.store),
+			StorageURI:            func() string { return handle.GetCloudStorageURI(sm.ctx, sm.store) },
 			Logger:                sm.logger,
 		})
 	}

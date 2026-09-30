@@ -522,6 +522,7 @@ func TestSchedulerCleanTask(t *testing.T) {
 	})
 
 	t.Run("runs cleanup immediately on startup", func(t *testing.T) {
+		setCloudStorageURIForTest(t, "s3://bucket")
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		taskMgr := mock.NewMockTaskManager(ctrl)
