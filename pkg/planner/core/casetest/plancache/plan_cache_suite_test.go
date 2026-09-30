@@ -2369,6 +2369,37 @@ func TestNonPreparedCoalescePrecision(t *testing.T) {
 			tk.MustExec("update coalesce_precision set d=coalesce(12345,d) where id=1")
 			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery("select d from coalesce_precision").Check(testkit.Rows("12345.00000000"))
+			// The guard applies to the whole statement, even when COALESCE has
+			// only an integer argument. Other SET and WHERE decimal parameters
+			// must have exact precision/scale; integer values can still vary.
+			tk.MustExec("create table coalesce_other_params(id int primary key, d decimal(20,8), v decimal(20,8))")
+			tk.MustExec("insert into coalesce_other_params values(1,0,0)")
+			fresh := testkit.NewTestKit(t, store)
+			fresh.MustExec("use test")
+			fresh.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+			fresh.MustExec("create table coalesce_other_params_ref like coalesce_other_params")
+			fresh.MustExec("insert into coalesce_other_params_ref values(1,0,0)")
+			for _, tc := range []struct {
+				integer, value, bound string
+				hit                   bool
+			}{
+				{"1", "1.23456789", "1000.00", false},
+				{"2", "2.34567891", "2000.00", true},
+				{"3", "3.14159", "2000.00", false}, // Other SET parameter changes scale.
+				{"4", "4.14159", "2000.00", true},
+				{"5", "4.14159", "2000.0", false}, // WHERE parameter changes scale.
+				{"6", "5.14159", "3000.0", true},
+				{"7", "6.12345678", "2000.00", true}, // Reuse the original signature.
+			} {
+				query := " set d=coalesce(" + tc.integer + ",d),v=" + tc.value + " where id=1 and v<" + tc.bound
+				tk.MustExec("update coalesce_other_params" + query)
+				require.Equal(t, tc.hit, tk.Session().GetSessionVars().FoundInPlanCache, query)
+				gotWarnings := tk.MustQuery("show warnings").Rows()
+				fresh.MustExec("update coalesce_other_params_ref" + query)
+				require.Equal(t, fresh.MustQuery("show warnings").Rows(), gotWarnings, query)
+				tk.MustQuery("select d,v from coalesce_other_params").Check(fresh.MustQuery("select d,v from coalesce_other_params_ref").Rows())
+			}
+
 		})
 	}
 }

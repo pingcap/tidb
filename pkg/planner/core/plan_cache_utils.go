@@ -245,8 +245,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	// The non-prepared caller has already passed NonPreparedPlanCacheableWithCtx,
 	// which currently permits COALESCE only in supported UPDATE assignments.
 	// Thus hasCoalesce identifies that exception here, not general COALESCE support.
+	// This conservatively guards all DECIMAL parameters in the statement, including
+	// other SET expressions and WHERE predicates, not just COALESCE arguments.
 	// Revisit this policy if the eligibility checker admits other COALESCE contexts.
-	preparedObj.requireExactDecimalPrecisionForCoalesceAssignment = !isPrepStmt && extractor.hasCoalesce
+	preparedObj.requireExactDecimalParamTypes = !isPrepStmt && extractor.hasCoalesce
 
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
 	ast.Walk(paramStmt, stmtProcessor)
@@ -563,10 +565,9 @@ type PlanCacheValue struct {
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 
-	// Supported non-prepared UPDATE COALESCE assignments require exact DECIMAL
-	// parameter precision and scale. Other plans retain the normal compatibility
-	// rules. This policy is immutable once the plan is cached.
-	requireExactDecimalPrecisionForCoalesceAssignment bool
+	// Require exact precision and scale for every DECIMAL parameter in this plan,
+	// including parameters outside COALESCE. Immutable once the plan is cached.
+	requireExactDecimalParamTypes bool
 
 	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
 	executions         int64 // the execution times.
@@ -702,12 +703,12 @@ func NewPlanCacheValue(
 		PlanDigest:       stmt.PlanDigest.String(),
 		BinaryPlan:       binaryPlan,
 
-		LoadTime:      time.Now(),
-		Plan:          plan,
-		OutputColumns: names,
-		ParamTypes:    userParamTypes,
-		StmtHints:     stmtHints.Clone(),
-		requireExactDecimalPrecisionForCoalesceAssignment: stmt.requireExactDecimalPrecisionForCoalesceAssignment,
+		LoadTime:                      time.Now(),
+		Plan:                          plan,
+		OutputColumns:                 names,
+		ParamTypes:                    userParamTypes,
+		StmtHints:                     stmtHints.Clone(),
+		requireExactDecimalParamTypes: stmt.requireExactDecimalParamTypes,
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv
@@ -764,10 +765,11 @@ type PlanCacheStmt struct {
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr
 
-	// requireExactDecimalPrecisionForCoalesceAssignment records the precision guard
-	// for the non-prepared UPDATE assignment exception. It is not a general policy
-	// for every statement containing COALESCE; see the eligibility contract above.
-	requireExactDecimalPrecisionForCoalesceAssignment bool
+	// requireExactDecimalParamTypes requires exact precision and scale for all
+	// DECIMAL parameters in the statement. Currently enabled for non-prepared
+	// UPDATEs whose COALESCE assignments pass NonPreparedPlanCacheableWithCtx;
+	// parameters in other SET expressions and WHERE predicates are also checked.
+	requireExactDecimalParamTypes bool
 
 	PointGet PointGetExecutorCache
 
@@ -881,7 +883,7 @@ func (v *PlanCacheValue) matchesParamTypes(actual any) bool {
 	if !checkTypesCompatibility4PC(v.ParamTypes, actual) {
 		return false
 	}
-	if !v.requireExactDecimalPrecisionForCoalesceAssignment || actual == nil {
+	if !v.requireExactDecimalParamTypes || actual == nil {
 		return true
 	}
 	for i, tp := range actual.([]*types.FieldType) {

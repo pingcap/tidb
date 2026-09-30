@@ -453,7 +453,7 @@ func testPlanCacheExactDecimalPrecision(t *testing.T) {
 			for i, params := range signatures {
 				_, hit := get("same-key", params)
 				require.False(t, hit)
-				values[i] = &PlanCacheValue{ParamTypes: params, requireExactDecimalPrecisionForCoalesceAssignment: true, Memory: 100}
+				values[i] = &PlanCacheValue{ParamTypes: params, requireExactDecimalParamTypes: true, Memory: 100}
 				put("same-key", values[i], params)
 				require.Equal(t, i+1, count())
 			}
