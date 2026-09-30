@@ -427,6 +427,23 @@ impl TopNChunkHeap {
         out
     }
 
+    /// Go's cop `topNHeap` (`store/mockstore/unistore/cophandler/topn.go`):
+    /// the heap grows by sequential `heap.Push` -- sift-UP only, never
+    /// `heap.Init`. Which of several tied rows sits where differs from the
+    /// heapify build, and the replay's stable sort preserves that layout, so
+    /// a TopN executed AS the cop layer must build its heap this way to
+    /// return go's tie order (oracle g-group: `ORDER BY g LIMIT 100`).
+    pub fn build_by_pushes(&mut self) {
+        let n = self.row_ptrs.len();
+        self.with_ptrs(|heap, ptrs| {
+            for i in 1..n {
+                go_heap::up(ptrs, i, &mut |a, b| {
+                    heap.key_columns_compare(*a, *b) == Ordering::Greater
+                });
+            }
+        });
+    }
+
     /// Go `heap.Init(h)`.
     pub fn heap_init(&mut self) {
         self.with_ptrs(|heap, ptrs| {

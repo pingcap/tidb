@@ -155,6 +155,10 @@ pub struct TopNExec<C: Columns> {
     spill_chunk_size: usize,
     /// Go `TopNExec.Concurrency`: workers are activated only after spilling
     /// starts; the ordinary in-memory TopN remains serial.
+    /// Build the heap by sequential pushes (the cop `topNHeap` shape) rather
+    /// than `heap.Init`: set when this executor IS the cop-layer TopN, whose
+    /// observable tie order follows the push layout.
+    cop_heap: bool,
     parallelism: usize,
     /// Per-worker input receipts retained for focused concurrency tests.
     parallel_worker_chunks: Vec<usize>,
@@ -383,6 +387,7 @@ where
             merge_heads: Vec::new(),
             merge_initialized: false,
             spill_chunk_size: SPILL_CHUNK_SIZE,
+            cop_heap: false,
             parallelism: 1,
             parallel_worker_chunks: Vec::new(),
         }
@@ -391,6 +396,12 @@ where
     /// Resolves Go `TopNExec.Concurrency` for this statement. It affects only
     /// the post-spill worker phase, matching Go's activation boundary.
     #[must_use]
+    #[must_use]
+    pub fn with_cop_heap(mut self, cop_heap: bool) -> Self {
+        self.cop_heap = cop_heap;
+        self
+    }
+
     pub fn with_parallelism(mut self, parallelism: usize) -> Self {
         self.parallelism = parallelism.max(1);
         self
@@ -646,10 +657,6 @@ where
                 break;
             }
             self.spill_heap()?;
-            if self.parallelism > 1 {
-                self.fetch_parallel_remainder()?;
-                break;
-            }
         }
 
         // Go `spillRemainingRowsWhenNeeded`: once ANY run exists, the rows
@@ -792,9 +799,20 @@ where
     fn run_one_segment(&mut self) -> Result<bool, ExecError> {
         self.ensure_heap_init();
 
-        // Phase 1: fill the store to `totalLimit` rows.
+        // Phase 1: fill the store to `totalLimit` rows. Go caps each fetch's
+        // required rows at the remaining capacity (`loadChunksUntilTotalLimit`:
+        // `srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())))`),
+        // so the store first holds EXACTLY `totalLimit` rows and every later
+        // row goes through `processChk`'s strict no-evict-on-tie admission. A
+        // full-chunk fill would instead overflow into `heap.Pop` trimming,
+        // whose pop-on-tie picks by heap shape and can evict the wrong tied
+        // row (go keeps the EARLIEST of a tie).
         while (self.stored_len() as u64) < self.total_limit {
             let mut chunk = self.child.new_chunk();
+            chunk.set_required_rows(
+                (self.total_limit.saturating_sub(self.stored_len() as u64)) as isize,
+                self.child.max_chunk_size(),
+            );
             self.child.next(&mut chunk)?;
             if chunk.num_rows() == 0 {
                 break;
@@ -811,8 +829,13 @@ where
         self.account()?;
 
         // Phase 2: heapify, trim to `totalLimit`, then stream the rest of the
-        // child through the heap.
-        self.heap.heap_init();
+        // child through the heap. The cop-layer shape builds by pushes
+        // instead (its tie layout is what go's coprocessor returns).
+        if self.cop_heap {
+            self.heap.build_by_pushes();
+        } else {
+            self.heap.heap_init();
+        }
         self.heap.trim_to_total_limit();
         self.heap.take_cmp_err()?;
         if self.need_spill.load(SeqCst) {
