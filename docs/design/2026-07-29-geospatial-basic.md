@@ -478,11 +478,19 @@ over such an expression is rejected.
 Pure Go, no cgo, so the stack builds with `CGO_ENABLED=0` and needs no libgeos in the
 Bazel/CI sandbox; the only Bazel work is adding `DEPS.bzl` proxy-fetch entries.
 
-- `github.com/peterstace/simplefeatures`: OGC/DE-9IM model, WKT/WKB/GeoJSON I/O,
-  predicates, planar measurement. Validated byte-identical to MySQL in the PoC.
-- `github.com/golang/geo` (Google's S2 port, Apache 2.0): spherical geometry for 4326.
-- `pkg/util/geomrel`: in-tree ellipsoidal distance/length (Andoyer) and the spherical S2
-  point-in-polygon refine.
+- `github.com/peterstace/simplefeatures`: OGC/DE-9IM model, WKT/WKB/GeoJSON I/O, and the
+  planar predicates and measurement SRID 0 uses. Validated byte-identical to MySQL in the
+  PoC.
+- In-tree Andoyer for 4326, since no Go library implements it and the topology primitives
+  exist in no geodesic library in any language ([Reference surface](#srid-model)):
+  ellipsoidal distance and length, which the proof of concept already carries, plus the
+  inverse problem with azimuths and a crossing test over it for the predicates.
+
+`github.com/golang/geo` (Google's S2 port) is **not** needed here. Its only job in the
+proof of concept was the spherical point-in-polygon refine, which Andoyer edges replace;
+`ST_Distance_Sphere` computes its great circle directly. The spatial index does depend on
+it, for cell ids, coverings and bounds, so TiDB keeps the dependency overall
+([`docs/design/2026-06-25-spatial-index.md`](2026-06-25-spatial-index.md)).
 
 The processing tail may need GEOS-equivalent algorithms; it is deferred with the rest of
 the tail.
