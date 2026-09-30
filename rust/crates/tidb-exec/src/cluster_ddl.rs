@@ -2010,9 +2010,22 @@ fn lower_alter_table_catalog(
                 )),
             }))
         }
-        tidb_ast::AlterTableAction::WithoutValidation
-        | tidb_ast::AlterTableAction::Algorithm(_)
-        | tidb_ast::AlterTableAction::Lock(_) => {
+        // go raises 8200 for the WITHOUT VALIDATION option-only form too,
+        // naming its own spelling (oracle g-alter: `ALTER TABLE ab3 WITHOUT
+        // VALIDATION` answers `ALTER TABLE WITHOUT VALIDATION is currently
+        // unsupported`); ALGORITHM/LOCK stay silent.
+        tidb_ast::AlterTableAction::WithoutValidation => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AcceptedNoOp {
+                schema,
+                table,
+                warning: Some((
+                    8200,
+                    "ALTER TABLE WITHOUT VALIDATION is currently unsupported".to_owned(),
+                )),
+            }))
+        }
+        tidb_ast::AlterTableAction::Algorithm(_) | tidb_ast::AlterTableAction::Lock(_) => {
             // go runs these as no-op jobs: the option selects execution
             // strategy, and there is nothing to execute.
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
