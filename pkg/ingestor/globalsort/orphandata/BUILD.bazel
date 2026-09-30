@@ -25,6 +25,7 @@ go_test(
     flaky = True,
     shard_count = 2,
     deps = [
+        "//pkg/dxf/importinto/conflictpath",
         "//pkg/metrics",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",

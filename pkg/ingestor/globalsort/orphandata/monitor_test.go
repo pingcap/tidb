@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -353,6 +354,32 @@ func TestMonitor(t *testing.T) {
 		}, fields["sample-objects"])
 		require.Equal(t, true, fields["sample-truncated"])
 		requireNoCredentials(t, m.logs, accessKey, secretKey, sessionToken, "success%2Bsk")
+	})
+
+	t.Run("retained prefixes are not orphan data", func(t *testing.T) {
+		metrics.GlobalSortOrphanDataSize.Set(37)
+		store := &monitorStorage{
+			Storage: objstore.NewMemStorage(),
+			entries: []monitorWalkEntry{
+				{path: "123/meta.json", size: 5},
+				{path: conflictpath.StoragePrefix + "9/3-uuid/0_1", size: 41},
+			},
+		}
+		m := newTestMonitor(t, Config{
+			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			GetStorageURI:         staticURI("memstore:///orphandata"),
+			RetainedPrefixes:      []string{conflictpath.StoragePrefix},
+		})
+		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
+			return store, nil
+		}
+
+		m.Trigger(context.Background())
+
+		requireGauge(t, 5)
+		successLogs := m.logs.FilterMessage("global sort orphan data monitor success").All()
+		require.Len(t, successLogs, 1)
+		require.EqualValues(t, 1, successLogs[0].ContextMap()["object-count"])
 	})
 
 	t.Run("configured Azure URI is omitted", func(t *testing.T) {

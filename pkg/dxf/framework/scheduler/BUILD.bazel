@@ -26,6 +26,7 @@ go_library(
         "//pkg/dxf/framework/schstatus",
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/dxf/importinto/conflictpath",
         "//pkg/ingestor/errdef",
         "//pkg/ingestor/globalsort/orphandata",
         "//pkg/kv",
