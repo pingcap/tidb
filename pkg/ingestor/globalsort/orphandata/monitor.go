@@ -131,15 +131,9 @@ func (m *Monitor) Trigger(ctx context.Context) {
 	}
 
 	metrics.GlobalSortOrphanDataSize.Set(float64(scan.SizeBytes))
-	// an idle cluster scans on every cleanup interval, so keep a clean scan at
-	// debug level and only report it as info when orphan data was found.
-	logFn := m.cfg.Logger.Debug
-	if scan.ObjectCount > 0 {
-		logFn = m.cfg.Logger.Info
-	}
-	logFn("global sort orphan data monitor success",
-		zap.Int64("orphan-data-size-bytes", scan.SizeBytes),
-		zap.Int64("orphan-data-object-count", scan.ObjectCount),
+	m.cfg.Logger.Info("global sort orphan data monitor success",
+		zap.Int64("size-bytes", scan.SizeBytes),
+		zap.Int64("object-count", scan.ObjectCount),
 		zap.Strings("sample-prefixes", scan.SamplePrefixes),
 		zap.Bool("sample-prefixes-omitted", scan.SamplePrefixesOmitted))
 }
