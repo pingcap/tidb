@@ -97,7 +97,7 @@ async fn pd_routed_requests_share_the_mock_coprocessor_handler() {
             request: &coprocessor::Request,
         ) -> coprocessor::Response {
             coprocessor::Response {
-                data: request.data.clone(),
+                data: request.data.clone().into(),
                 ..Default::default()
             }
         }

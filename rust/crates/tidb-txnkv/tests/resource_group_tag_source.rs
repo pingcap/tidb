@@ -140,6 +140,7 @@ fn TestGetFirstKeyFromRequest() {
                 }],
                 ..CoprocessorRegionInfo::default()
             }],
+            ..Default::default()
         })),
         second
     );

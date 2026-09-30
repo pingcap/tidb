@@ -57,10 +57,7 @@ diff --git a/proto-build/src/main.rs b/proto-build/src/main.rs
 index cf347df..d773078 100644
 --- a/proto-build/src/main.rs
 +++ b/proto-build/src/main.rs
-@@ -23,14 +23,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
-     let mut prost = prost_build::Config::new();
-     prost.enable_type_names();
- 
+@@ -34,11 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 -    tonic_build::configure()
 +    tonic_prost_build::configure()
          .emit_rerun_if_changed(false)

@@ -1554,9 +1554,9 @@ rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	244	#[ignore 
 rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	251	#[ignore = "go-parity-gap: same session+executor boundary, plus Go's kerneltype.IsClassic gate has no Rust counterpart"]
 rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	259	#[ignore = "go-parity-gap: cross-session pessimistic lock ordering needs transactional execution"]
 rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	266	#[ignore = "go-parity-gap: statement-hint application writes StmtCtx fields that no Rust surface carries yet"]
-rust/crates/tidb-proto/src/lib.rs	107	/// TikvServer are not implemented. Construct `Server` based on
-rust/crates/tidb-proto/src/lib.rs	114	/// to is defined once, here, with the exact `"method <Rpc> not implemented"`
-rust/crates/tidb-proto/src/lib.rs	131	tonic::Status::unimplemented(format!("method {rpc} not implemented"))
+rust/crates/tidb-proto/src/lib.rs	105	/// TikvServer are not implemented. Construct `Server` based on
+rust/crates/tidb-proto/src/lib.rs	112	/// to is defined once, here, with the exact `"method <Rpc> not implemented"`
+rust/crates/tidb-proto/src/lib.rs	129	tonic::Status::unimplemented(format!("method {rpc} not implemented"))
 rust/crates/tidb-protocol/src/error_conversion.rs	43	/// Feature is not supported yet.
 rust/crates/tidb-server/src/cluster_session_node/mod.rs	6848	"{feature} is not supported yet"
 rust/crates/tidb-server/src/mysql_connection.rs	259	/// such as `COM_FIELD_LIST` that this bounded node has not implemented.

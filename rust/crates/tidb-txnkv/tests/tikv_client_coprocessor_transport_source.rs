@@ -71,7 +71,8 @@ impl CoprRpcHandler for EchoCoprocessor {
                 String::from_utf8_lossy(&request.data),
                 ranges.join(",")
             )
-            .into_bytes(),
+            .into_bytes()
+            .into(),
             ..Default::default()
         }
     }
@@ -121,7 +122,7 @@ fn coprocessor_requests_dispatch_through_region_resolution_to_the_handler() {
             response.region_error.is_none() && response.other_error.is_empty(),
             "the mock store accepted the region-pinned context: {response:?}"
         );
-        let echoed = String::from_utf8(response.data).unwrap();
+        let echoed = std::str::from_utf8(&response.data).unwrap();
         assert_eq!(
             echoed,
             format!(

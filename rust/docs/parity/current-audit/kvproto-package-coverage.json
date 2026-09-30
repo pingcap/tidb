@@ -1,0 +1,811 @@
+{
+ "go_master": "6b2781326b722f217a61852ab403350858549bd0",
+ "module": "github.com/pingcap/kvproto",
+ "version": "v0.0.0-20260820070758-623e58e60fa9",
+ "digest": "sha256",
+ "packages": [
+  {
+   "package": ".",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     ".agents/skills/README.md",
+     "3e47eb34c90eb6125a00a7dd35cc807689d35d08ef00d262f2a3eb88a46d7da9"
+    ],
+    [
+     ".agents/skills/backup-meta-schema-version/SKILL.md",
+     "a39ecd3ea880c076f7c91f181e109e8f094fa70345a5736a5ab26d6fb6a9dcf4"
+    ],
+    [
+     ".editorconfig",
+     "16cc234dc0392dd687a25d4e5b9ab56089d04acc0b7173ececa15354cb4b8777"
+    ],
+    [
+     ".gitattributes",
+     "023d03e1ffdf7f55bbcccdd1697ecbd7c00c5744fa5a494700bb2ba073079451"
+    ],
+    [
+     ".github/workflows/cpp-test.yaml",
+     "c57fe202c821a2a4b51803b50ecdf303fb2493bd0461b006ebadc320fdc3e542"
+    ],
+    [
+     ".github/workflows/golang-test.yaml",
+     "18c1a3a868a61a7c60dacf6e91a5d0dcaeea678f2475d75bbff5947aad2f256d"
+    ],
+    [
+     ".github/workflows/rust-test.yaml",
+     "9d71607fad051a56d0d98a81ac4880e14e5251e603f22c36aeacaece7c003cc0"
+    ],
+    [
+     ".gitignore",
+     "b45ee6d15392230e0cc15d9c80d398f2e2fbc2eb5928b2297da81a698f5a68eb"
+    ],
+    [
+     "AGENTS.md",
+     "120274e4ad8491396758d8051a5425cdfd42116d49ae01a17b1c2eb3b4b88756"
+    ],
+    [
+     "Cargo.lock",
+     "dbe418e984a33b34e77adb9682fed850ad52483f9e96f8180a7cd4b197f2e86f"
+    ],
+    [
+     "Cargo.toml",
+     "8ebe3ee6e9534aeb29fb25df8a94c341bc89778bd27337d68edf998dc19260c1"
+    ],
+    [
+     "Dockerfile",
+     "099057e389f8e2c3706b2c1a207b53bf9f0972018ce85c9938670b06ca8e026f"
+    ],
+    [
+     "LICENSE",
+     "2da5bcc8cff0ae5ba36d9923145e34eed3340a458a269f663c3582430f8c358f"
+    ],
+    [
+     "Makefile",
+     "4b9dd42508cc3c92e0ce1a2ea88292acb25734e1a4b58fb67db262b987d28538"
+    ],
+    [
+     "OWNERS",
+     "637eded7dd1e929d9978eda121141e6e1916d0809b8346359420cfea14f1c0b5"
+    ],
+    [
+     "OWNERS_ALIASES",
+     "d099cb9056e8153e98e6dfb8f536b7bb19f70b01db1b68f641d88ddcdb7f48a4"
+    ],
+    [
+     "README.md",
+     "54f9a38d51b93b4d4de5f0453406c0ed4db1fd538d32c2a9e9d4f930eb9a3f5e"
+    ],
+    [
+     "build.rs",
+     "c6ba84d748122023685ec483d99980f655e1fd56bfd35bb7cc345fe69e46e34d"
+    ],
+    [
+     "cpp/CMakeLists.txt",
+     "b396786d3fd4de9bf86a1ae2341197cf6ea954e207c8af796411d5d74ed3fba7"
+    ],
+    [
+     "cpp/cmake/Modules/FindPackageHandleStandardArgs.cmake",
+     "d0b1bf84c54e0fa1394dd649a05bf6b19f2bab0fb1ee824784262881a6052a12"
+    ],
+    [
+     "cpp/cmake/Modules/FindPackageMessage.cmake",
+     "654bbd1cdb7ecf291efa934c7a91cd0d2ade67b8c06605db9eee0c03ab704088"
+    ],
+    [
+     "cpp/cmake/Modules/FindgRPC.cmake",
+     "f6b2cc188951fab6c16b1a734a84fdf75267da1b5ba15c4a92f936b855cd862d"
+    ],
+    [
+     "cpp/cmake/find_abseil-cpp.cmake",
+     "563feb841ffc825bf67635322137bf6ab210c55daea9b59b7717de2663851aac"
+    ],
+    [
+     "cpp/cmake/find_grpc.cmake",
+     "3d2727811e2e01ae53feca43e969b34770c7d9064bccf0204dee20484dee1816"
+    ],
+    [
+     "cpp/cmake/find_protobuf.cmake",
+     "bc82a368e3261b6cfd826fc45f44dd17a3981a5ba860d0c8780db9dd22c02cbd"
+    ],
+    [
+     "docs/design/db9-coprocessor.md",
+     "f46b0dd86c010b89b5001d5b4437c594e1d732ad2ba8cf79b0870bea88e41a70"
+    ],
+    [
+     "go.mod",
+     "8360bbdfb4e41e85f78730f64ce087862e58d6d3087d8e497583f01acf01b497"
+    ],
+    [
+     "go.sum",
+     "25b9eae1a859e71a90eff991266c1921b599cd28b8f0fdc69489694b66e221e9"
+    ],
+    [
+     "include/eraftpb.proto",
+     "61b56c1733dd38c85074ce04cb4704adbc4f321dc1dd82651085e52bff0a900c"
+    ],
+    [
+     "include/gogoproto/gogo.proto",
+     "f2f77edf7de807ded7884813d851656f4ccb18262db717a8f31061995f3e7324"
+    ],
+    [
+     "include/google/api/annotations.proto",
+     "bff7c47b78bd25d34e70efc06f49764ec24f55e665067b9be49e53e825250ce8"
+    ],
+    [
+     "include/google/api/http.proto",
+     "400a190d48be0991ee6b0f4846800c468171dfa32f9f8db71d625a14610e9346"
+    ],
+    [
+     "include/google/protobuf/any.proto",
+     "8341419fabb1ab3237180016c11b62939491d3f512200081c0a4b1a87588e130"
+    ],
+    [
+     "include/google/protobuf/api.proto",
+     "ac0a37854f4e3c88fd19bd64341a7e9bb762f6bd56e9c250a277ef938f5eacd1"
+    ],
+    [
+     "include/google/protobuf/compiler/plugin.proto",
+     "2ce0f2c34edba7c53470fc5c682524da3ec64e17aec42032777d8d92a9773502"
+    ],
+    [
+     "include/google/protobuf/descriptor.proto",
+     "76ad50bfa8b723e65d8b364f0d8d853b39b944474d6b2ef30d694a8e02617849"
+    ],
+    [
+     "include/google/protobuf/duration.proto",
+     "f310aef977705580077680191ebced9379f5bea0b89a31e7c23762ac3ac36dfd"
+    ],
+    [
+     "include/google/protobuf/empty.proto",
+     "63e7e497f0e0202f05f8f4e1dd25ee79e4c3d9d5429ec3f2b1877faf7a0d773d"
+    ],
+    [
+     "include/google/protobuf/field_mask.proto",
+     "cf1111f12d4095440ebf75aa883f4ec56d7e25008c62fd0434de6139aea3c190"
+    ],
+    [
+     "include/google/protobuf/source_context.proto",
+     "2e78a0d6c886ef585da952e915d1a862e100275dcdd33a81597f45df1386897d"
+    ],
+    [
+     "include/google/protobuf/struct.proto",
+     "61798cb4fc742730eb48032023293619e7d887bb5b4adf11952d819ce482556d"
+    ],
+    [
+     "include/google/protobuf/timestamp.proto",
+     "5f4ef0cdb138e567070fe5a6fb248c18f787ca5e6847788daace4c8cbeaed2cb"
+    ],
+    [
+     "include/google/protobuf/type.proto",
+     "24b12f43fb3e4986d141f0e228c155d119f4c97b892dbd7e1f18d2b517903912"
+    ],
+    [
+     "include/google/protobuf/wrappers.proto",
+     "dfc9ede7efdd600444a306b18eab159e3afab3ea1dfbc250de5303ddf84d47b6"
+    ],
+    [
+     "include/rustproto.proto",
+     "ce3b069eab5fe972bd22eb10d224e57e41cb08307767cbfa53d2cf3e962f83d1"
+    ],
+    [
+     "proto/OWNERS",
+     "ed04862f5cd355e5617f436585c4d23f4dc3a292351af814f3497aecda99dc4e"
+    ],
+    [
+     "proto/apipb.proto",
+     "ec7e7672893c2c44544b10b8d591a2113f5ac851ce25d78422699df46b115a91"
+    ],
+    [
+     "proto/autoid.proto",
+     "fd79e4843ffd38cab0b6a878a9bae014426edd8698adc9d2ba2354b3eae35732"
+    ],
+    [
+     "proto/brpb.proto",
+     "799b592e4c4c3b049adc955ac40ee19e295212f6709158559879e7fbafcd3918"
+    ],
+    [
+     "proto/cdcpb.proto",
+     "67a0bb16d9bfb4b3b6c9c087779151a5148e4da97a0075e2ecad5d27ed7cff31"
+    ],
+    [
+     "proto/configpb.proto",
+     "d4cb27735afc52fb85d43bf6c5adc1380c024e7790969821a10244c4bcacd13d"
+    ],
+    [
+     "proto/coprocessor.proto",
+     "307502c3df5d651a10a54f5dc34fa2f0ccf19fe0b634063e3ae62bf071afd2d8"
+    ],
+    [
+     "proto/db9_coprocessor.proto",
+     "4a1a9f786aae9be67a2866e7f1c294d03c0e5d91b1d407324bf267253a218e35"
+    ],
+    [
+     "proto/deadlock.proto",
+     "35d2285b2463c542658698a1f9cc0ebc0b4c7d7eed22f8b34a4a3cea222519d8"
+    ],
+    [
+     "proto/debugpb.proto",
+     "305111885267bf596327caf714e516eef3823898c565ea591894c219543673b2"
+    ],
+    [
+     "proto/diagnosticspb.proto",
+     "df7e86e7f9cf7982075c564b7174ec1f7ae5a661e0aafecb1dacc8ba996c224e"
+    ],
+    [
+     "proto/disaggregated.proto",
+     "87f4a3c6ee5e742cf07111d8608155de359324e1168bb2944de0d3c168485c5f"
+    ],
+    [
+     "proto/disk_usage.proto",
+     "c497c5297b11dc68033dd3de2fae8953d8ae0184296750c111d07ae22d776b1a"
+    ],
+    [
+     "proto/encryptionpb.proto",
+     "0d78c7a484271be3a29638e10a54a5e7543a72fe40346667afe12735bb72f934"
+    ],
+    [
+     "proto/enginepb.proto",
+     "b799fb5bfe18091d5f4c831fa6c075a7d85aaef3a9f516d2c2dd77dc86adf8ba"
+    ],
+    [
+     "proto/errorpb.proto",
+     "9a217e2ab8a8a77ab407a508ee3224a26c5f99a9911192b1acc52d3d9c93e1ea"
+    ],
+    [
+     "proto/externalworkloadpb.proto",
+     "de4909c1d1bd67871b7e0b714b2dc2d7909ac633405ebefe542b8f99bd8f42a4"
+    ],
+    [
+     "proto/gcpb.proto",
+     "630fde3dad770793d746ba1c7007c372b674a74cea8f7d1d3ff828b0df9c9c2f"
+    ],
+    [
+     "proto/import_kvpb.proto",
+     "ecdc34d1f80111cd4441cf76e6d74519df4b4a2f2c753d1353b1ac141ba47592"
+    ],
+    [
+     "proto/import_sstpb.proto",
+     "e1eebf05b686cfd20d81aa64283384718187a70f57c112ea39f37408d86dee7a"
+    ],
+    [
+     "proto/keyspace_encryptionpb.proto",
+     "6a1d7cf8c8c0d1ac64b9a854729187a6b83c0f53596f4a94f39c18067931a1d1"
+    ],
+    [
+     "proto/keyspacepb.proto",
+     "33dacfe45a870857eb401a5e6a5c525120e7ade07663c889f33b75d5208c1f15"
+    ],
+    [
+     "proto/kvrpcpb.proto",
+     "a04481c7bc93576374217e84f1111f266725531ae4722139be6a8ee0c62b6b56"
+    ],
+    [
+     "proto/logbackuppb.proto",
+     "9d3ca5bd917b05bd6e37aecc84ed3282d0f3c9a14965427cff76f1b8a1fa0765"
+    ],
+    [
+     "proto/meta_storagepb.proto",
+     "a17614f9903276b4fc09edf5ed3a3d87c02e11221e7a68e0065d98dee1def11c"
+    ],
+    [
+     "proto/metapb.proto",
+     "e1f5ea1f9f7701d087847a6a18385f3fa25f3355996fedc8435c55b8bca3a045"
+    ],
+    [
+     "proto/mpp.proto",
+     "479798510cbd229b718bf5699e58bc6eea45d9d917d53b9313f6b4af8d81a166"
+    ],
+    [
+     "proto/pdpb.proto",
+     "5c839bbead427a88cbb46eecd8f53fee9b6c66d7764cd53b898f0eef51213c6e"
+    ],
+    [
+     "proto/raft_cmdpb.proto",
+     "d7a35e5533ea0d4c9086462cda528afe217b27b4d8f80ffc86ecaf20f0a5bef9"
+    ],
+    [
+     "proto/raft_serverpb.proto",
+     "83c813817a452ff35c588274f486ebb5ca0a3bae1c3914d8384ba4d259aa8d69"
+    ],
+    [
+     "proto/recoverdatapb.proto",
+     "5e3ad44e3a2c079e75fd271b72497c5a2ba223adb4d6505443638614c9e27375"
+    ],
+    [
+     "proto/replication_modepb.proto",
+     "03559abdb7ebb64314e7399da79bb0b5b550fdbf1b2e6347b8e36d1bc5fbf16f"
+    ],
+    [
+     "proto/resource_manager.proto",
+     "cb7067e7b28da0d4b97021bffd225e93ff13842f0a2f4fe2eac8d74f0a990815"
+    ],
+    [
+     "proto/resource_usage_agent.proto",
+     "e942ccaac5518a7607966b4e41e8e29bf5e5fc6053f76215778ca13f3b2cb82d"
+    ],
+    [
+     "proto/routerpb.proto",
+     "d78e168a57485675149cbaf48ce32598b8b2b4d89dc2a8370af29194cbf69bd6"
+    ],
+    [
+     "proto/schedulingpb.proto",
+     "204b6f600ce8b0960ef26e7f37d32e7af48fe733f0737b8c6ea583893d98140c"
+    ],
+    [
+     "proto/tikvpb.proto",
+     "4549bc2657d6ecb67407f4aa6f18a6cce41e9485cca975a6ee6dbbbd7efe2615"
+    ],
+    [
+     "proto/tracepb.proto",
+     "7f16458e79e9c087ddf62aa61137a2537924fb83f17d3a081f3617ca1de75e98"
+    ],
+    [
+     "proto/tsopb.proto",
+     "432ad742b665129ea282ddf6f3c7561a4987bd10d81fa7f16c1cb8d8aaa2115c"
+    ],
+    [
+     "scripts/check.sh",
+     "1d3c3a020c9f92ce0438a2952eb4ccf2ec6e2c91296dd79324ed3582013c3891"
+    ],
+    [
+     "scripts/common.sh",
+     "3c76f4f5cbc08b55567071364fe306a789cacba544f8507e557e48b1c98b91ce"
+    ],
+    [
+     "scripts/docker-build.sh",
+     "caf466e43af93039d232d931491fe230938f52cd3ce6f5f7bf3961ca30ace463"
+    ],
+    [
+     "scripts/docker-run.sh",
+     "4ed0f84e93bb3bb3b8188b535c89d0cf2dc4606e742f73718214911fbddb133e"
+    ],
+    [
+     "scripts/generate_cpp.sh",
+     "f5a1c0773e1e82efa5fbcb79d38f9c3f1ea8a0c8ab77f98fdc89fb6cd8633d04"
+    ],
+    [
+     "scripts/generate_go.sh",
+     "5ca268962e507e80234ffc23c87ee8398a587b49c1b8ca1e91d4fd011ca4c3a8"
+    ],
+    [
+     "scripts/proto.lock",
+     "4b8db32606644cf9b1b9a435d3220829b38bae9e4b8a213be4a4288ef309e762"
+    ],
+    [
+     "scripts/proto_format.sh",
+     "846ba78c8474165683058d8794053cbd1db8e4857e1b6969bcfbb386524f8762"
+    ],
+    [
+     "src/lib.rs",
+     "9c0cea15aa8affa9064b15f3203a59156b360a851fe0e250b9251492f19b68f8"
+    ],
+    [
+     "tools.go",
+     "0734d0aa4eb156cd851c8e56574b6ef48027d9082f158c115994efcd27047f80"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/apipb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/apipb/apipb.pb.go",
+     "bd1bef95e5d0309b1b82dd84be147bd4986ac01ed383d1e8c69439d0afbfdbb5"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/autoid",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/autoid/autoid.pb.go",
+     "36eea0337acbdc9b026fe12ce7dbf9e3f3a6528ed2c63bca2745056496018047"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/brpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/brpb/backup_schema_version.go",
+     "c5fc97ab47cf46abdf79db0a5eb4445e0744fc77a9a76fedeb481963d0694750"
+    ],
+    [
+     "pkg/brpb/brpb.pb.go",
+     "5f2b3777779ce1e056da715381fa8a5701068ae6f23dd9eea583ba518dcb791f"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/cdcpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/cdcpb/cdcpb.pb.go",
+     "c83898001ea8dd682f709eb50bc8b484a202c7f757b01c7a5c6b1d734e2f0b3b"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/configpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/configpb/configpb.pb.go",
+     "f3f22eb150fa6c115a7f3734a2c95f6df2031d18888fb0410c7aa1cfa8e280a4"
+    ],
+    [
+     "pkg/configpb/configpb.pb.gw.go",
+     "22bfaef6164eec520d236e463162a32024e7de7bc2091455d5e20cf4cdcf9427"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/coprocessor",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/coprocessor/coprocessor.pb.go",
+     "0bc5c5d0acfe50af43e6b98d27fc235919a9d64238ec5da5f676f08a7b5fded9"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/db9_coprocessor",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/db9_coprocessor/db9_coprocessor.pb.go",
+     "08ad10191e7d4c712936192ded038846da55bd6d273d4cdcfb2bf4bf18e9e270"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/deadlock",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/deadlock/deadlock.pb.go",
+     "a733dd1bef1c1330844f515a4b23f37139e97bb095dd206a44ff109a4a1c331f"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/debugpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/debugpb/debugpb.pb.go",
+     "04d1197d642e1feeb36fd7ad1210bc914030a6ba223f7945ede826f93fd3fcf4"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/diagnosticspb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/diagnosticspb/diagnosticspb.pb.go",
+     "79c35496a7b2a58554831f2168bd72098b1180517b38959a270556e6a906268c"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/disaggregated",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/disaggregated/disaggregated.pb.go",
+     "db17799028029ba3524e0f0ca79043897366a6d8cb5ca2a968d7db77aa90cdb3"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/disk_usage",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/disk_usage/disk_usage.pb.go",
+     "f1840b3ed0f3b77b1b7bca0b920fc1aa950a95d6994c245e0f628c3b1d81e12a"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/encryptionpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/encryptionpb/encryptionpb.pb.go",
+     "f328e99ee88c9745b994f1b5eab9ed0f09d837da5864ef39feea2434a0c66db1"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/enginepb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/enginepb/enginepb.pb.go",
+     "9e98d8aab97a538569087ccdf8ca853c5497199e8e1926eac1f4324d8f1f143b"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/eraftpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/eraftpb/eraftpb.pb.go",
+     "8a0482cfd06d61fc86e6a4fa4d02d206c05b332cb19f0ed87a3fc4fe5ab0e850"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/errorpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/errorpb/errorpb.pb.go",
+     "19ab9db6c540b1e345a66aeeccbb5bfeb7e47c42ec0af565609eeeb3970b9353"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/externalworkloadpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/externalworkloadpb/externalworkloadpb.pb.go",
+     "81c65c139331f8947d5738091de63116ac44978235dd2c02c8ecff2088e26038"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/gcpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/gcpb/gcpb.pb.go",
+     "d25d81e3be422700e02749a145b95aeab98cea1dc8a619d7644b4548e503cc9f"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/import_kvpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/import_kvpb/import_kvpb.pb.go",
+     "7cacb757ce382777c45ed94266173c17cecd7ca15a1727424edc7ec0e6abac8b"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/import_sstpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/import_sstpb/import_sstpb.pb.go",
+     "b1eead0689aba679736b824a671c857c809902a91913030c5d2d6ddc4469658e"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/keyspace_encryptionpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/keyspace_encryptionpb/keyspace_encryptionpb.pb.go",
+     "cdc03a044bb30436d8c158c9831196c43c647460f1749664bcd5a9741e3ae039"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/keyspacepb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/keyspacepb/keyspacepb.pb.go",
+     "21502a8affea7e73691cab782d1a0367b1f5bc52b6df37f269e009889e9e9522"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/kvrpcpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/kvrpcpb/kvrpcpb.pb.go",
+     "6e5bc4de1c373792f1d33800f61136a4855c244c4e31320a9a463f552bd0a367"
+    ],
+    [
+     "pkg/kvrpcpb/shared_lock_lost_test.go",
+     "8a98a25a54d79ee8b382a96d399e4d40c2259538b38c97a6036b6a877f191a7d"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/logbackuppb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/logbackuppb/logbackuppb.pb.go",
+     "71cd8119a1505a117dbbd8bff0cafe778c56d9eac8a12a8d40b51d219bf95ce7"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/meta_storagepb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/meta_storagepb/meta_storagepb.pb.go",
+     "75ce2dfbd3e7f14688b7047ef0c9c247224f7bc84119d7cb181c28e2a6c44f8e"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/metapb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/metapb/metapb.pb.go",
+     "3e3056a2d8ee22b919fc899b1b78c6472a19bd2dd01e6b2c33d372e2728145ba"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/mpp",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/mpp/mpp.pb.go",
+     "14095a877ea61d43c3f95910660c5f16e033b24f48cf21a0111a7d2f82d73944"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/pdpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/pdpb/get_gc_state_global_barriers_compat_test.go",
+     "6784f3c728bbe8cad28ad1324a0eb67ccceab61cb197ae862abfca2a5217c4e6"
+    ],
+    [
+     "pkg/pdpb/pdpb.pb.go",
+     "c69aefe0a670ddc58786db7604b64d9a4d74e5c07ff01910187b704c73366589"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/raft_cmdpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/raft_cmdpb/raft_cmdpb.pb.go",
+     "6de1cc023f7464c05ea576323d69cb217e53e9a11e1888af2ff5ea9a869c6233"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/raft_serverpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/raft_serverpb/raft_serverpb.pb.go",
+     "59c4100c6a9347cc163e8d61a40d028b56641bbc0310d5f929d074373fd184e9"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/recoverdatapb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/recoverdatapb/recoverdatapb.pb.go",
+     "e5c5951a691bf85b91abd305fb42bae3e7aa4659f6549f02deb634cb338cb673"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/replication_modepb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/replication_modepb/replication_modepb.pb.go",
+     "aed8e5a28cb7410417155f43266a4744ae9b04237957aa574e8aca4be48c8098"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/resource_manager",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/resource_manager/resource_manager.pb.go",
+     "89f58c017786819b9544b08253254645bca45e027e1165b47270c2fe76095249"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/resource_usage_agent",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/resource_usage_agent/resource_usage_agent.pb.go",
+     "7ad85f2a4157c3bb8ff5f6bccc71d3f920de8cee7792cdd586fa4be733e2bb61"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/routerpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/routerpb/routerpb.pb.go",
+     "8348c10c35a2db1443356697f40ab6c26ed440ebeebf056bafafaeabe513e3c1"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/schedulingpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/schedulingpb/schedulingpb.pb.go",
+     "e85f641793d14b205ef6003ecaefc0c76bf924b3409786a8661fe1b631748fdc"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/sharedbytes",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/sharedbytes/sharedbytes.go",
+     "b7cb0fe523f355ab2a97db6b38ba6f0164975a0300f9e12c252a29252228d3cc"
+    ],
+    [
+     "pkg/sharedbytes/sharedbytes_test.go",
+     "f5bf832ce52c6022bce3dc92cd853a87bcf2b12fac94c42b74b78cbca4836ff5"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/tikvpb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/tikvpb/tikvpb.pb.go",
+     "cfe29a2b9c0a58af4224972f4e8f327f1d49e92f7748a4a90a8345fbe891b944"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/tracepb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/tracepb/tracepb.pb.go",
+     "6a08736befb2f52c47399a34524152f2e92d3e30b5f52bf78e7ffbf733b97dc0"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/tsopb",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/tsopb/tsopb.pb.go",
+     "b7eb4919a46c23dcb29d50f4fb3642f3c8a358c59e2b6066849e8e08f4c10eb1"
+    ]
+   ]
+  }
+ ],
+ "unassigned_artifacts": []
+}

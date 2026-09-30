@@ -22,6 +22,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut prost = prost_build::Config::new();
     prost.enable_type_names();
+    // Go's SharedBytes custom fields borrow the received message body. Bytes
+    // retains that ownership across native and TiDB consumers without a copy.
+    prost.bytes([
+        ".coprocessor.Response.data",
+        ".coprocessor.BatchResponse.data",
+        ".coprocessor.StoreBatchTaskResponse.data",
+        ".kvrpcpb.TiFlashSystemTableResponse.data",
+    ]);
 
     tonic_prost_build::configure()
         .emit_rerun_if_changed(false)

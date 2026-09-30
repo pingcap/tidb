@@ -1,7 +1,7 @@
 {
-  "go_master": "12b639a1161cd5a60126a47277f5ad14c320fd4a",
+  "go_master": "6b2781326b722f217a61852ab403350858549bd0",
   "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
-  "integration": "complete existing generated packages; no new transcreation claim",
+  "integration": "complete existing generated packages; one native type identity",
   "packages": {
     "kvrpcpb": {
       "go_artifacts": [
@@ -16,11 +16,9 @@
       ],
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/kvrpcpb.rs",
-        "sha256": "76ed74335c8a86a88ec37fff0588e130033b87f44b075031dacbd1d2a69931b2"
+        "sha256": "6f3e0b9347f21b2057dbf6f0dc9b2ab6ed80483667dabd8e36d8fbca0029f7a6"
       },
-      "integration": "whole-package re-export and prost extern_path",
-      "source_test_mapping": "shared_lock_lost_matches_upstream_wire_contract",
-      "platform_variants": []
+      "integration": "whole-package re-export and prost extern_path"
     },
     "errorpb": {
       "go_artifacts": [
@@ -33,9 +31,7 @@
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/errorpb.rs",
         "sha256": "a7693310bc6f0058c54aa7e5728f97832f1ee94c01c3746e3b1fc98082834210"
       },
-      "integration": "whole-package re-export and prost extern_path",
-      "source_test_mapping": "no original package tests",
-      "platform_variants": []
+      "integration": "whole-package re-export and prost extern_path"
     },
     "metapb": {
       "go_artifacts": [
@@ -48,9 +44,7 @@
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/metapb.rs",
         "sha256": "059cfdff8795c9eb20b9b05be8554562e778f4ce70691d75768c4447c38b5a48"
       },
-      "integration": "whole-package re-export and prost extern_path",
-      "source_test_mapping": "no original package tests",
-      "platform_variants": []
+      "integration": "whole-package re-export and prost extern_path"
     },
     "encryptionpb": {
       "go_artifacts": [
@@ -63,149 +57,597 @@
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/encryptionpb.rs",
         "sha256": "93d2a0a0fac1729e7dc26029f4b4ca25ac49ebcec6e3351f65c20124ff755df9"
       },
-      "integration": "whole-package re-export and prost extern_path",
-      "source_test_mapping": "no original package tests",
-      "platform_variants": []
+      "integration": "whole-package re-export and prost extern_path"
+    },
+    "coprocessor": {
+      "go_artifacts": [
+        {
+          "path": "pkg/coprocessor/coprocessor.pb.go",
+          "sha256": "0bc5c5d0acfe50af43e6b98d27fc235919a9d64238ec5da5f676f08a7b5fded9"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/coprocessor.rs",
+        "sha256": "c6b45465d66982393c7627917b77f17061fc9e5e2827687790915ebc790a31f9"
+      },
+      "integration": "whole-package re-export and prost extern_path"
+    },
+    "mpp": {
+      "go_artifacts": [
+        {
+          "path": "pkg/mpp/mpp.pb.go",
+          "sha256": "14095a877ea61d43c3f95910660c5f16e033b24f48cf21a0111a7d2f82d73944"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/mpp.rs",
+        "sha256": "ede302e01053d2254678840704cecf33e4c58d083daf7b3011291c416986dcfa"
+      },
+      "integration": "whole-package re-export and prost extern_path"
     }
   },
-  "proto_import_closure": [
+  "module_artifacts": [
     {
-      "import": "apipb.proto",
-      "go": {
-        "path": "proto/apipb.proto",
-        "sha256": "ec7e7672893c2c44544b10b8d591a2113f5ac851ce25d78422699df46b115a91"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/apipb.proto",
-        "sha256": "ec7e7672893c2c44544b10b8d591a2113f5ac851ce25d78422699df46b115a91"
-      },
-      "identical": true
+      "path": ".agents/skills/README.md",
+      "sha256": "3e47eb34c90eb6125a00a7dd35cc807689d35d08ef00d262f2a3eb88a46d7da9"
     },
     {
-      "import": "deadlock.proto",
-      "go": {
-        "path": "proto/deadlock.proto",
-        "sha256": "35d2285b2463c542658698a1f9cc0ebc0b4c7d7eed22f8b34a4a3cea222519d8"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/deadlock.proto",
-        "sha256": "35d2285b2463c542658698a1f9cc0ebc0b4c7d7eed22f8b34a4a3cea222519d8"
-      },
-      "identical": true
+      "path": ".agents/skills/backup-meta-schema-version/SKILL.md",
+      "sha256": "a39ecd3ea880c076f7c91f181e109e8f094fa70345a5736a5ab26d6fb6a9dcf4"
     },
     {
-      "import": "encryptionpb.proto",
-      "go": {
-        "path": "proto/encryptionpb.proto",
-        "sha256": "0d78c7a484271be3a29638e10a54a5e7543a72fe40346667afe12735bb72f934"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/encryptionpb.proto",
-        "sha256": "0d78c7a484271be3a29638e10a54a5e7543a72fe40346667afe12735bb72f934"
-      },
-      "identical": true
+      "path": ".editorconfig",
+      "sha256": "16cc234dc0392dd687a25d4e5b9ab56089d04acc0b7173ececa15354cb4b8777"
     },
     {
-      "import": "errorpb.proto",
-      "go": {
-        "path": "proto/errorpb.proto",
-        "sha256": "9a217e2ab8a8a77ab407a508ee3224a26c5f99a9911192b1acc52d3d9c93e1ea"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/errorpb.proto",
-        "sha256": "9a217e2ab8a8a77ab407a508ee3224a26c5f99a9911192b1acc52d3d9c93e1ea"
-      },
-      "identical": true
+      "path": ".gitattributes",
+      "sha256": "023d03e1ffdf7f55bbcccdd1697ecbd7c00c5744fa5a494700bb2ba073079451"
     },
     {
-      "import": "gogoproto/gogo.proto",
-      "go": {
-        "path": "include/gogoproto/gogo.proto",
-        "sha256": "f2f77edf7de807ded7884813d851656f4ccb18262db717a8f31061995f3e7324"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/include/gogoproto/gogo.proto",
-        "sha256": "f2f77edf7de807ded7884813d851656f4ccb18262db717a8f31061995f3e7324"
-      },
-      "identical": true
+      "path": ".github/workflows/cpp-test.yaml",
+      "sha256": "c57fe202c821a2a4b51803b50ecdf303fb2493bd0461b006ebadc320fdc3e542"
     },
     {
-      "import": "google/protobuf/descriptor.proto",
-      "go": {
-        "path": "include/google/protobuf/descriptor.proto",
-        "sha256": "76ad50bfa8b723e65d8b364f0d8d853b39b944474d6b2ef30d694a8e02617849"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/include/google/protobuf/descriptor.proto",
-        "sha256": "76ad50bfa8b723e65d8b364f0d8d853b39b944474d6b2ef30d694a8e02617849"
-      },
-      "identical": true
+      "path": ".github/workflows/golang-test.yaml",
+      "sha256": "18c1a3a868a61a7c60dacf6e91a5d0dcaeea678f2475d75bbff5947aad2f256d"
     },
     {
-      "import": "kvrpcpb.proto",
-      "go": {
-        "path": "proto/kvrpcpb.proto",
-        "sha256": "a04481c7bc93576374217e84f1111f266725531ae4722139be6a8ee0c62b6b56"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/kvrpcpb.proto",
-        "sha256": "a04481c7bc93576374217e84f1111f266725531ae4722139be6a8ee0c62b6b56"
-      },
-      "identical": true
+      "path": ".github/workflows/rust-test.yaml",
+      "sha256": "9d71607fad051a56d0d98a81ac4880e14e5251e603f22c36aeacaece7c003cc0"
     },
     {
-      "import": "metapb.proto",
-      "go": {
-        "path": "proto/metapb.proto",
-        "sha256": "e1f5ea1f9f7701d087847a6a18385f3fa25f3355996fedc8435c55b8bca3a045"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/metapb.proto",
-        "sha256": "e1f5ea1f9f7701d087847a6a18385f3fa25f3355996fedc8435c55b8bca3a045"
-      },
-      "identical": true
+      "path": ".gitignore",
+      "sha256": "b45ee6d15392230e0cc15d9c80d398f2e2fbc2eb5928b2297da81a698f5a68eb"
     },
     {
-      "import": "resource_manager.proto",
-      "go": {
-        "path": "proto/resource_manager.proto",
-        "sha256": "cb7067e7b28da0d4b97021bffd225e93ff13842f0a2f4fe2eac8d74f0a990815"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/resource_manager.proto",
-        "sha256": "cb7067e7b28da0d4b97021bffd225e93ff13842f0a2f4fe2eac8d74f0a990815"
-      },
-      "identical": true
+      "path": "AGENTS.md",
+      "sha256": "120274e4ad8491396758d8051a5425cdfd42116d49ae01a17b1c2eb3b4b88756"
     },
     {
-      "import": "rustproto.proto",
-      "go": {
-        "path": "include/rustproto.proto",
-        "sha256": "ce3b069eab5fe972bd22eb10d224e57e41cb08307767cbfa53d2cf3e962f83d1"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/include/rustproto.proto",
-        "sha256": "ce3b069eab5fe972bd22eb10d224e57e41cb08307767cbfa53d2cf3e962f83d1"
-      },
-      "identical": true
+      "path": "Cargo.lock",
+      "sha256": "dbe418e984a33b34e77adb9682fed850ad52483f9e96f8180a7cd4b197f2e86f"
     },
     {
-      "import": "tracepb.proto",
-      "go": {
-        "path": "proto/tracepb.proto",
-        "sha256": "7f16458e79e9c087ddf62aa61137a2537924fb83f17d3a081f3617ca1de75e98"
-      },
-      "native": {
-        "path": "rust/third_party/tikv-client-rs/proto/tracepb.proto",
-        "sha256": "7f16458e79e9c087ddf62aa61137a2537924fb83f17d3a081f3617ca1de75e98"
-      },
-      "identical": true
+      "path": "Cargo.toml",
+      "sha256": "8ebe3ee6e9534aeb29fb25df8a94c341bc89778bd27337d68edf998dc19260c1"
+    },
+    {
+      "path": "Dockerfile",
+      "sha256": "099057e389f8e2c3706b2c1a207b53bf9f0972018ce85c9938670b06ca8e026f"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "2da5bcc8cff0ae5ba36d9923145e34eed3340a458a269f663c3582430f8c358f"
+    },
+    {
+      "path": "Makefile",
+      "sha256": "4b9dd42508cc3c92e0ce1a2ea88292acb25734e1a4b58fb67db262b987d28538"
+    },
+    {
+      "path": "OWNERS",
+      "sha256": "637eded7dd1e929d9978eda121141e6e1916d0809b8346359420cfea14f1c0b5"
+    },
+    {
+      "path": "OWNERS_ALIASES",
+      "sha256": "d099cb9056e8153e98e6dfb8f536b7bb19f70b01db1b68f641d88ddcdb7f48a4"
+    },
+    {
+      "path": "README.md",
+      "sha256": "54f9a38d51b93b4d4de5f0453406c0ed4db1fd538d32c2a9e9d4f930eb9a3f5e"
+    },
+    {
+      "path": "build.rs",
+      "sha256": "c6ba84d748122023685ec483d99980f655e1fd56bfd35bb7cc345fe69e46e34d"
+    },
+    {
+      "path": "cpp/CMakeLists.txt",
+      "sha256": "b396786d3fd4de9bf86a1ae2341197cf6ea954e207c8af796411d5d74ed3fba7"
+    },
+    {
+      "path": "cpp/cmake/Modules/FindPackageHandleStandardArgs.cmake",
+      "sha256": "d0b1bf84c54e0fa1394dd649a05bf6b19f2bab0fb1ee824784262881a6052a12"
+    },
+    {
+      "path": "cpp/cmake/Modules/FindPackageMessage.cmake",
+      "sha256": "654bbd1cdb7ecf291efa934c7a91cd0d2ade67b8c06605db9eee0c03ab704088"
+    },
+    {
+      "path": "cpp/cmake/Modules/FindgRPC.cmake",
+      "sha256": "f6b2cc188951fab6c16b1a734a84fdf75267da1b5ba15c4a92f936b855cd862d"
+    },
+    {
+      "path": "cpp/cmake/find_abseil-cpp.cmake",
+      "sha256": "563feb841ffc825bf67635322137bf6ab210c55daea9b59b7717de2663851aac"
+    },
+    {
+      "path": "cpp/cmake/find_grpc.cmake",
+      "sha256": "3d2727811e2e01ae53feca43e969b34770c7d9064bccf0204dee20484dee1816"
+    },
+    {
+      "path": "cpp/cmake/find_protobuf.cmake",
+      "sha256": "bc82a368e3261b6cfd826fc45f44dd17a3981a5ba860d0c8780db9dd22c02cbd"
+    },
+    {
+      "path": "docs/design/db9-coprocessor.md",
+      "sha256": "f46b0dd86c010b89b5001d5b4437c594e1d732ad2ba8cf79b0870bea88e41a70"
+    },
+    {
+      "path": "go.mod",
+      "sha256": "8360bbdfb4e41e85f78730f64ce087862e58d6d3087d8e497583f01acf01b497"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "25b9eae1a859e71a90eff991266c1921b599cd28b8f0fdc69489694b66e221e9"
+    },
+    {
+      "path": "include/eraftpb.proto",
+      "sha256": "61b56c1733dd38c85074ce04cb4704adbc4f321dc1dd82651085e52bff0a900c"
+    },
+    {
+      "path": "include/gogoproto/gogo.proto",
+      "sha256": "f2f77edf7de807ded7884813d851656f4ccb18262db717a8f31061995f3e7324"
+    },
+    {
+      "path": "include/google/api/annotations.proto",
+      "sha256": "bff7c47b78bd25d34e70efc06f49764ec24f55e665067b9be49e53e825250ce8"
+    },
+    {
+      "path": "include/google/api/http.proto",
+      "sha256": "400a190d48be0991ee6b0f4846800c468171dfa32f9f8db71d625a14610e9346"
+    },
+    {
+      "path": "include/google/protobuf/any.proto",
+      "sha256": "8341419fabb1ab3237180016c11b62939491d3f512200081c0a4b1a87588e130"
+    },
+    {
+      "path": "include/google/protobuf/api.proto",
+      "sha256": "ac0a37854f4e3c88fd19bd64341a7e9bb762f6bd56e9c250a277ef938f5eacd1"
+    },
+    {
+      "path": "include/google/protobuf/compiler/plugin.proto",
+      "sha256": "2ce0f2c34edba7c53470fc5c682524da3ec64e17aec42032777d8d92a9773502"
+    },
+    {
+      "path": "include/google/protobuf/descriptor.proto",
+      "sha256": "76ad50bfa8b723e65d8b364f0d8d853b39b944474d6b2ef30d694a8e02617849"
+    },
+    {
+      "path": "include/google/protobuf/duration.proto",
+      "sha256": "f310aef977705580077680191ebced9379f5bea0b89a31e7c23762ac3ac36dfd"
+    },
+    {
+      "path": "include/google/protobuf/empty.proto",
+      "sha256": "63e7e497f0e0202f05f8f4e1dd25ee79e4c3d9d5429ec3f2b1877faf7a0d773d"
+    },
+    {
+      "path": "include/google/protobuf/field_mask.proto",
+      "sha256": "cf1111f12d4095440ebf75aa883f4ec56d7e25008c62fd0434de6139aea3c190"
+    },
+    {
+      "path": "include/google/protobuf/source_context.proto",
+      "sha256": "2e78a0d6c886ef585da952e915d1a862e100275dcdd33a81597f45df1386897d"
+    },
+    {
+      "path": "include/google/protobuf/struct.proto",
+      "sha256": "61798cb4fc742730eb48032023293619e7d887bb5b4adf11952d819ce482556d"
+    },
+    {
+      "path": "include/google/protobuf/timestamp.proto",
+      "sha256": "5f4ef0cdb138e567070fe5a6fb248c18f787ca5e6847788daace4c8cbeaed2cb"
+    },
+    {
+      "path": "include/google/protobuf/type.proto",
+      "sha256": "24b12f43fb3e4986d141f0e228c155d119f4c97b892dbd7e1f18d2b517903912"
+    },
+    {
+      "path": "include/google/protobuf/wrappers.proto",
+      "sha256": "dfc9ede7efdd600444a306b18eab159e3afab3ea1dfbc250de5303ddf84d47b6"
+    },
+    {
+      "path": "include/rustproto.proto",
+      "sha256": "ce3b069eab5fe972bd22eb10d224e57e41cb08307767cbfa53d2cf3e962f83d1"
+    },
+    {
+      "path": "pkg/apipb/apipb.pb.go",
+      "sha256": "bd1bef95e5d0309b1b82dd84be147bd4986ac01ed383d1e8c69439d0afbfdbb5"
+    },
+    {
+      "path": "pkg/autoid/autoid.pb.go",
+      "sha256": "36eea0337acbdc9b026fe12ce7dbf9e3f3a6528ed2c63bca2745056496018047"
+    },
+    {
+      "path": "pkg/brpb/backup_schema_version.go",
+      "sha256": "c5fc97ab47cf46abdf79db0a5eb4445e0744fc77a9a76fedeb481963d0694750"
+    },
+    {
+      "path": "pkg/brpb/brpb.pb.go",
+      "sha256": "5f2b3777779ce1e056da715381fa8a5701068ae6f23dd9eea583ba518dcb791f"
+    },
+    {
+      "path": "pkg/cdcpb/cdcpb.pb.go",
+      "sha256": "c83898001ea8dd682f709eb50bc8b484a202c7f757b01c7a5c6b1d734e2f0b3b"
+    },
+    {
+      "path": "pkg/configpb/configpb.pb.go",
+      "sha256": "f3f22eb150fa6c115a7f3734a2c95f6df2031d18888fb0410c7aa1cfa8e280a4"
+    },
+    {
+      "path": "pkg/configpb/configpb.pb.gw.go",
+      "sha256": "22bfaef6164eec520d236e463162a32024e7de7bc2091455d5e20cf4cdcf9427"
+    },
+    {
+      "path": "pkg/coprocessor/coprocessor.pb.go",
+      "sha256": "0bc5c5d0acfe50af43e6b98d27fc235919a9d64238ec5da5f676f08a7b5fded9"
+    },
+    {
+      "path": "pkg/db9_coprocessor/db9_coprocessor.pb.go",
+      "sha256": "08ad10191e7d4c712936192ded038846da55bd6d273d4cdcfb2bf4bf18e9e270"
+    },
+    {
+      "path": "pkg/deadlock/deadlock.pb.go",
+      "sha256": "a733dd1bef1c1330844f515a4b23f37139e97bb095dd206a44ff109a4a1c331f"
+    },
+    {
+      "path": "pkg/debugpb/debugpb.pb.go",
+      "sha256": "04d1197d642e1feeb36fd7ad1210bc914030a6ba223f7945ede826f93fd3fcf4"
+    },
+    {
+      "path": "pkg/diagnosticspb/diagnosticspb.pb.go",
+      "sha256": "79c35496a7b2a58554831f2168bd72098b1180517b38959a270556e6a906268c"
+    },
+    {
+      "path": "pkg/disaggregated/disaggregated.pb.go",
+      "sha256": "db17799028029ba3524e0f0ca79043897366a6d8cb5ca2a968d7db77aa90cdb3"
+    },
+    {
+      "path": "pkg/disk_usage/disk_usage.pb.go",
+      "sha256": "f1840b3ed0f3b77b1b7bca0b920fc1aa950a95d6994c245e0f628c3b1d81e12a"
+    },
+    {
+      "path": "pkg/encryptionpb/encryptionpb.pb.go",
+      "sha256": "f328e99ee88c9745b994f1b5eab9ed0f09d837da5864ef39feea2434a0c66db1"
+    },
+    {
+      "path": "pkg/enginepb/enginepb.pb.go",
+      "sha256": "9e98d8aab97a538569087ccdf8ca853c5497199e8e1926eac1f4324d8f1f143b"
+    },
+    {
+      "path": "pkg/eraftpb/eraftpb.pb.go",
+      "sha256": "8a0482cfd06d61fc86e6a4fa4d02d206c05b332cb19f0ed87a3fc4fe5ab0e850"
+    },
+    {
+      "path": "pkg/errorpb/errorpb.pb.go",
+      "sha256": "19ab9db6c540b1e345a66aeeccbb5bfeb7e47c42ec0af565609eeeb3970b9353"
+    },
+    {
+      "path": "pkg/externalworkloadpb/externalworkloadpb.pb.go",
+      "sha256": "81c65c139331f8947d5738091de63116ac44978235dd2c02c8ecff2088e26038"
+    },
+    {
+      "path": "pkg/gcpb/gcpb.pb.go",
+      "sha256": "d25d81e3be422700e02749a145b95aeab98cea1dc8a619d7644b4548e503cc9f"
+    },
+    {
+      "path": "pkg/import_kvpb/import_kvpb.pb.go",
+      "sha256": "7cacb757ce382777c45ed94266173c17cecd7ca15a1727424edc7ec0e6abac8b"
+    },
+    {
+      "path": "pkg/import_sstpb/import_sstpb.pb.go",
+      "sha256": "b1eead0689aba679736b824a671c857c809902a91913030c5d2d6ddc4469658e"
+    },
+    {
+      "path": "pkg/keyspace_encryptionpb/keyspace_encryptionpb.pb.go",
+      "sha256": "cdc03a044bb30436d8c158c9831196c43c647460f1749664bcd5a9741e3ae039"
+    },
+    {
+      "path": "pkg/keyspacepb/keyspacepb.pb.go",
+      "sha256": "21502a8affea7e73691cab782d1a0367b1f5bc52b6df37f269e009889e9e9522"
+    },
+    {
+      "path": "pkg/kvrpcpb/kvrpcpb.pb.go",
+      "sha256": "6e5bc4de1c373792f1d33800f61136a4855c244c4e31320a9a463f552bd0a367"
+    },
+    {
+      "path": "pkg/kvrpcpb/shared_lock_lost_test.go",
+      "sha256": "8a98a25a54d79ee8b382a96d399e4d40c2259538b38c97a6036b6a877f191a7d"
+    },
+    {
+      "path": "pkg/logbackuppb/logbackuppb.pb.go",
+      "sha256": "71cd8119a1505a117dbbd8bff0cafe778c56d9eac8a12a8d40b51d219bf95ce7"
+    },
+    {
+      "path": "pkg/meta_storagepb/meta_storagepb.pb.go",
+      "sha256": "75ce2dfbd3e7f14688b7047ef0c9c247224f7bc84119d7cb181c28e2a6c44f8e"
+    },
+    {
+      "path": "pkg/metapb/metapb.pb.go",
+      "sha256": "3e3056a2d8ee22b919fc899b1b78c6472a19bd2dd01e6b2c33d372e2728145ba"
+    },
+    {
+      "path": "pkg/mpp/mpp.pb.go",
+      "sha256": "14095a877ea61d43c3f95910660c5f16e033b24f48cf21a0111a7d2f82d73944"
+    },
+    {
+      "path": "pkg/pdpb/get_gc_state_global_barriers_compat_test.go",
+      "sha256": "6784f3c728bbe8cad28ad1324a0eb67ccceab61cb197ae862abfca2a5217c4e6"
+    },
+    {
+      "path": "pkg/pdpb/pdpb.pb.go",
+      "sha256": "c69aefe0a670ddc58786db7604b64d9a4d74e5c07ff01910187b704c73366589"
+    },
+    {
+      "path": "pkg/raft_cmdpb/raft_cmdpb.pb.go",
+      "sha256": "6de1cc023f7464c05ea576323d69cb217e53e9a11e1888af2ff5ea9a869c6233"
+    },
+    {
+      "path": "pkg/raft_serverpb/raft_serverpb.pb.go",
+      "sha256": "59c4100c6a9347cc163e8d61a40d028b56641bbc0310d5f929d074373fd184e9"
+    },
+    {
+      "path": "pkg/recoverdatapb/recoverdatapb.pb.go",
+      "sha256": "e5c5951a691bf85b91abd305fb42bae3e7aa4659f6549f02deb634cb338cb673"
+    },
+    {
+      "path": "pkg/replication_modepb/replication_modepb.pb.go",
+      "sha256": "aed8e5a28cb7410417155f43266a4744ae9b04237957aa574e8aca4be48c8098"
+    },
+    {
+      "path": "pkg/resource_manager/resource_manager.pb.go",
+      "sha256": "89f58c017786819b9544b08253254645bca45e027e1165b47270c2fe76095249"
+    },
+    {
+      "path": "pkg/resource_usage_agent/resource_usage_agent.pb.go",
+      "sha256": "7ad85f2a4157c3bb8ff5f6bccc71d3f920de8cee7792cdd586fa4be733e2bb61"
+    },
+    {
+      "path": "pkg/routerpb/routerpb.pb.go",
+      "sha256": "8348c10c35a2db1443356697f40ab6c26ed440ebeebf056bafafaeabe513e3c1"
+    },
+    {
+      "path": "pkg/schedulingpb/schedulingpb.pb.go",
+      "sha256": "e85f641793d14b205ef6003ecaefc0c76bf924b3409786a8661fe1b631748fdc"
+    },
+    {
+      "path": "pkg/sharedbytes/sharedbytes.go",
+      "sha256": "b7cb0fe523f355ab2a97db6b38ba6f0164975a0300f9e12c252a29252228d3cc"
+    },
+    {
+      "path": "pkg/sharedbytes/sharedbytes_test.go",
+      "sha256": "f5bf832ce52c6022bce3dc92cd853a87bcf2b12fac94c42b74b78cbca4836ff5"
+    },
+    {
+      "path": "pkg/tikvpb/tikvpb.pb.go",
+      "sha256": "cfe29a2b9c0a58af4224972f4e8f327f1d49e92f7748a4a90a8345fbe891b944"
+    },
+    {
+      "path": "pkg/tracepb/tracepb.pb.go",
+      "sha256": "6a08736befb2f52c47399a34524152f2e92d3e30b5f52bf78e7ffbf733b97dc0"
+    },
+    {
+      "path": "pkg/tsopb/tsopb.pb.go",
+      "sha256": "b7eb4919a46c23dcb29d50f4fb3642f3c8a358c59e2b6066849e8e08f4c10eb1"
+    },
+    {
+      "path": "proto/OWNERS",
+      "sha256": "ed04862f5cd355e5617f436585c4d23f4dc3a292351af814f3497aecda99dc4e"
+    },
+    {
+      "path": "proto/apipb.proto",
+      "sha256": "ec7e7672893c2c44544b10b8d591a2113f5ac851ce25d78422699df46b115a91"
+    },
+    {
+      "path": "proto/autoid.proto",
+      "sha256": "fd79e4843ffd38cab0b6a878a9bae014426edd8698adc9d2ba2354b3eae35732"
+    },
+    {
+      "path": "proto/brpb.proto",
+      "sha256": "799b592e4c4c3b049adc955ac40ee19e295212f6709158559879e7fbafcd3918"
+    },
+    {
+      "path": "proto/cdcpb.proto",
+      "sha256": "67a0bb16d9bfb4b3b6c9c087779151a5148e4da97a0075e2ecad5d27ed7cff31"
+    },
+    {
+      "path": "proto/configpb.proto",
+      "sha256": "d4cb27735afc52fb85d43bf6c5adc1380c024e7790969821a10244c4bcacd13d"
+    },
+    {
+      "path": "proto/coprocessor.proto",
+      "sha256": "307502c3df5d651a10a54f5dc34fa2f0ccf19fe0b634063e3ae62bf071afd2d8"
+    },
+    {
+      "path": "proto/db9_coprocessor.proto",
+      "sha256": "4a1a9f786aae9be67a2866e7f1c294d03c0e5d91b1d407324bf267253a218e35"
+    },
+    {
+      "path": "proto/deadlock.proto",
+      "sha256": "35d2285b2463c542658698a1f9cc0ebc0b4c7d7eed22f8b34a4a3cea222519d8"
+    },
+    {
+      "path": "proto/debugpb.proto",
+      "sha256": "305111885267bf596327caf714e516eef3823898c565ea591894c219543673b2"
+    },
+    {
+      "path": "proto/diagnosticspb.proto",
+      "sha256": "df7e86e7f9cf7982075c564b7174ec1f7ae5a661e0aafecb1dacc8ba996c224e"
+    },
+    {
+      "path": "proto/disaggregated.proto",
+      "sha256": "87f4a3c6ee5e742cf07111d8608155de359324e1168bb2944de0d3c168485c5f"
+    },
+    {
+      "path": "proto/disk_usage.proto",
+      "sha256": "c497c5297b11dc68033dd3de2fae8953d8ae0184296750c111d07ae22d776b1a"
+    },
+    {
+      "path": "proto/encryptionpb.proto",
+      "sha256": "0d78c7a484271be3a29638e10a54a5e7543a72fe40346667afe12735bb72f934"
+    },
+    {
+      "path": "proto/enginepb.proto",
+      "sha256": "b799fb5bfe18091d5f4c831fa6c075a7d85aaef3a9f516d2c2dd77dc86adf8ba"
+    },
+    {
+      "path": "proto/errorpb.proto",
+      "sha256": "9a217e2ab8a8a77ab407a508ee3224a26c5f99a9911192b1acc52d3d9c93e1ea"
+    },
+    {
+      "path": "proto/externalworkloadpb.proto",
+      "sha256": "de4909c1d1bd67871b7e0b714b2dc2d7909ac633405ebefe542b8f99bd8f42a4"
+    },
+    {
+      "path": "proto/gcpb.proto",
+      "sha256": "630fde3dad770793d746ba1c7007c372b674a74cea8f7d1d3ff828b0df9c9c2f"
+    },
+    {
+      "path": "proto/import_kvpb.proto",
+      "sha256": "ecdc34d1f80111cd4441cf76e6d74519df4b4a2f2c753d1353b1ac141ba47592"
+    },
+    {
+      "path": "proto/import_sstpb.proto",
+      "sha256": "e1eebf05b686cfd20d81aa64283384718187a70f57c112ea39f37408d86dee7a"
+    },
+    {
+      "path": "proto/keyspace_encryptionpb.proto",
+      "sha256": "6a1d7cf8c8c0d1ac64b9a854729187a6b83c0f53596f4a94f39c18067931a1d1"
+    },
+    {
+      "path": "proto/keyspacepb.proto",
+      "sha256": "33dacfe45a870857eb401a5e6a5c525120e7ade07663c889f33b75d5208c1f15"
+    },
+    {
+      "path": "proto/kvrpcpb.proto",
+      "sha256": "a04481c7bc93576374217e84f1111f266725531ae4722139be6a8ee0c62b6b56"
+    },
+    {
+      "path": "proto/logbackuppb.proto",
+      "sha256": "9d3ca5bd917b05bd6e37aecc84ed3282d0f3c9a14965427cff76f1b8a1fa0765"
+    },
+    {
+      "path": "proto/meta_storagepb.proto",
+      "sha256": "a17614f9903276b4fc09edf5ed3a3d87c02e11221e7a68e0065d98dee1def11c"
+    },
+    {
+      "path": "proto/metapb.proto",
+      "sha256": "e1f5ea1f9f7701d087847a6a18385f3fa25f3355996fedc8435c55b8bca3a045"
+    },
+    {
+      "path": "proto/mpp.proto",
+      "sha256": "479798510cbd229b718bf5699e58bc6eea45d9d917d53b9313f6b4af8d81a166"
+    },
+    {
+      "path": "proto/pdpb.proto",
+      "sha256": "5c839bbead427a88cbb46eecd8f53fee9b6c66d7764cd53b898f0eef51213c6e"
+    },
+    {
+      "path": "proto/raft_cmdpb.proto",
+      "sha256": "d7a35e5533ea0d4c9086462cda528afe217b27b4d8f80ffc86ecaf20f0a5bef9"
+    },
+    {
+      "path": "proto/raft_serverpb.proto",
+      "sha256": "83c813817a452ff35c588274f486ebb5ca0a3bae1c3914d8384ba4d259aa8d69"
+    },
+    {
+      "path": "proto/recoverdatapb.proto",
+      "sha256": "5e3ad44e3a2c079e75fd271b72497c5a2ba223adb4d6505443638614c9e27375"
+    },
+    {
+      "path": "proto/replication_modepb.proto",
+      "sha256": "03559abdb7ebb64314e7399da79bb0b5b550fdbf1b2e6347b8e36d1bc5fbf16f"
+    },
+    {
+      "path": "proto/resource_manager.proto",
+      "sha256": "cb7067e7b28da0d4b97021bffd225e93ff13842f0a2f4fe2eac8d74f0a990815"
+    },
+    {
+      "path": "proto/resource_usage_agent.proto",
+      "sha256": "e942ccaac5518a7607966b4e41e8e29bf5e5fc6053f76215778ca13f3b2cb82d"
+    },
+    {
+      "path": "proto/routerpb.proto",
+      "sha256": "d78e168a57485675149cbaf48ce32598b8b2b4d89dc2a8370af29194cbf69bd6"
+    },
+    {
+      "path": "proto/schedulingpb.proto",
+      "sha256": "204b6f600ce8b0960ef26e7f37d32e7af48fe733f0737b8c6ea583893d98140c"
+    },
+    {
+      "path": "proto/tikvpb.proto",
+      "sha256": "4549bc2657d6ecb67407f4aa6f18a6cce41e9485cca975a6ee6dbbbd7efe2615"
+    },
+    {
+      "path": "proto/tracepb.proto",
+      "sha256": "7f16458e79e9c087ddf62aa61137a2537924fb83f17d3a081f3617ca1de75e98"
+    },
+    {
+      "path": "proto/tsopb.proto",
+      "sha256": "432ad742b665129ea282ddf6f3c7561a4987bd10d81fa7f16c1cb8d8aaa2115c"
+    },
+    {
+      "path": "scripts/check.sh",
+      "sha256": "1d3c3a020c9f92ce0438a2952eb4ccf2ec6e2c91296dd79324ed3582013c3891"
+    },
+    {
+      "path": "scripts/common.sh",
+      "sha256": "3c76f4f5cbc08b55567071364fe306a789cacba544f8507e557e48b1c98b91ce"
+    },
+    {
+      "path": "scripts/docker-build.sh",
+      "sha256": "caf466e43af93039d232d931491fe230938f52cd3ce6f5f7bf3961ca30ace463"
+    },
+    {
+      "path": "scripts/docker-run.sh",
+      "sha256": "4ed0f84e93bb3bb3b8188b535c89d0cf2dc4606e742f73718214911fbddb133e"
+    },
+    {
+      "path": "scripts/generate_cpp.sh",
+      "sha256": "f5a1c0773e1e82efa5fbcb79d38f9c3f1ea8a0c8ab77f98fdc89fb6cd8633d04"
+    },
+    {
+      "path": "scripts/generate_go.sh",
+      "sha256": "5ca268962e507e80234ffc23c87ee8398a587b49c1b8ca1e91d4fd011ca4c3a8"
+    },
+    {
+      "path": "scripts/proto.lock",
+      "sha256": "4b8db32606644cf9b1b9a435d3220829b38bae9e4b8a213be4a4288ef309e762"
+    },
+    {
+      "path": "scripts/proto_format.sh",
+      "sha256": "846ba78c8474165683058d8794053cbd1db8e4857e1b6969bcfbb386524f8762"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "9c0cea15aa8affa9064b15f3203a59156b360a851fe0e250b9251492f19b68f8"
+    },
+    {
+      "path": "tools.go",
+      "sha256": "0734d0aa4eb156cd851c8e56574b6ef48027d9082f158c115994efcd27047f80"
     }
   ],
   "build_inputs": [
     {
       "path": "rust/third_party/tikv-client-rs/proto-build/src/main.rs",
-      "sha256": "f9dd3b4932fe75b61ff910e567da9286b3f803378fd12f417a594e7b836e0f4a"
+      "sha256": "3af2bfcf97e43d94fec7ef8d68a9d239728a9d58f9641f4a948ec56e8dad881a"
     },
     {
       "path": "rust/third_party/tikv-client-rs/proto-build/Cargo.toml",
@@ -213,19 +655,19 @@
     },
     {
       "path": "rust/third_party/tikv-client-rs/kvproto/src/lib.rs",
-      "sha256": "af675018ee2d4f2558eeaae84f5c6af396c305d7bf285f56245ff8c63db1b28c"
+      "sha256": "25ca0f10ff5c176ee61cf7323fb19289aa7a5f364597f158a7aaba8c5084ac98"
     },
     {
       "path": "rust/third_party/tikv-client-rs/kvproto/Cargo.toml",
       "sha256": "e46cb96fc5f846e2b45e8ebcb6404047a91f4a59f616c0f22684c951552f674e"
     },
     {
-      "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/file_descriptor_set.bin",
-      "sha256": "dd2f2687d2f6dcb8d2209636da5234820ff705f287b719d73a0802fd6de9ee12"
+      "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/mod.rs",
+      "sha256": "a941eb8cfa4ee1db08eb74940fc78e582549cbe75fa68a46967c42baa1c0268f"
     },
     {
-      "path": "rust/crates/tidb-proto/build.rs",
-      "sha256": "f4a79850a7693111407f461a20ac10ee8e9c265149b375c5d387e270b4800554"
+      "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/file_descriptor_set.bin",
+      "sha256": "dd2f2687d2f6dcb8d2209636da5234820ff705f287b719d73a0802fd6de9ee12"
     }
   ]
 }

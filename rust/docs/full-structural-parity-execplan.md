@@ -127,3 +127,107 @@ pinned client-go module, in addition to the 856 TiDB package directories. The
 2,051 marker hits remain candidates only. The inventory generator records
 unreviewed status by design; acceptance receipts are separate. Other external
 modules still need complete inventories before any acceptance claim.
+
+## Coprocessor and MPP protocol owner follow-up
+
+
+TiPB repair 25870bf5d0 was committed and pushed after the hook and fresh locked
+server build passed. The subsequent table-policy review confirms that a safe
+repair must carry both transaction mode and actual existence-read evidence to
+the table/index owner. Configured DML currently omits transaction mode from its
+planning interface, and system-row index mutations omit assertions. Do not
+replace the generic constructor with a blanket Unknown rule.
+
+Two complete generated packages can instead immediately share their existing
+native owner: kvproto/pkg/coprocessor and kvproto/pkg/mpp at master's
+v0.0.0-20260820070758-623e58e60fa9. Native schemas match that pin byte-for-byte.
+TiDB's local copies omit batched/versioned request fields, merged task response
+markers and MPP partition/shard metadata. Add failing wire regressions, then
+remove both local schemas and re-export the complete native types, using
+extern_path for imported references in the local TiKV service.
+
+First make the native generator preserve all four upstream SharedBytes custom
+fields (three coprocessor response bodies and TiFlashSystemTableResponse.data)
+with prost Bytes, reproducing the copy before changing generation. This keeps
+the existing TiDB response decoder's shared-buffer contract when its duplicate
+schema is removed. Publish native changes before synchronizing the vendor,
+regenerating artifacts rather than editing generated code. Validate original
+Go package artifacts/tests, native protocol/client tests and Clippy, all TiDB
+consumer targets, source wire vectors, coprocessor/RPC/SQL tests, lint, hook
+build and fresh pre-push build. The transaction-lifetime patches remain
+unapplied. No SQL feature is added by exposing complete protocol fields.
+
+The complete descriptor comparison also found two changed field contracts:
+MPP TaskMeta.keyspace_id belongs to a oneof, and api_version is the APIVersion
+enum. The before-image contains all 29 gaps (10 messages, 17 fields, two changed
+contracts). Both package aliases now share the native type identities, tested
+along with explicit zero keyspace presence and last-oneof-arm decoding.
+
+Using the generated API enum exposed a caller defect: api_version=1 meant
+V1TTL, not transactional V1. The extracted dispatch-context regression failed
+with V1TTL before the fix. Dispatch now obtains the version and null keyspace
+from native Keyspace::Disable and applies them through the native Request
+setters, like client-go internal/apicodec.setAPICtx. The duplicate numeric
+metadata values were removed. The receiver/sender task metadata remains the
+unencoded task identity; dispatch encodes its clone as Go does. The larger MPP
+statement-identity gap (fixed IDs and Unix seconds instead of StmtCtx atomic
+query/task ownership and UnixNano) is recorded separately and remains open.
+
+Native client-rust b2b3783cee3982ad39c0a70df2654176aafc784d is published to
+master. Full native library tests pass 1,401 with two ignored; native protocol
+and generator suites pass three each, all workspace targets/features compile,
+and strict library Clippy passes. The maintained vendor script regenerated the
+TiDB-compatible output from that commit. Only the context of transport patch
+020 changed; its version/API adaptation is unchanged. No transaction-lifetime
+patch was applied.
+
+The shared-contract source gate now verifies all upstream kvproto schemas and
+includes, exact file membership (excluding the separately owned gRPC Channelz
+input), six shared package outputs and build inputs, and all 139 Go module
+artifacts. Its receipt explicitly pins Go master. The overall review inventory
+also includes every artifact in kvproto's 41 package directories. Source checks
+run in make lint. No hand edits to generated files were made.
+
+
+Coprocessor/MPP validation from rust/:
+
+    cargo test --locked -p tidb-proto --test coprocessor_mpp_wire_source
+    cargo test --locked -p tidb-proto
+    cargo test --locked -p tikv-client-kvproto
+    cargo test --locked -p tidb-exec --lib classic_mpp_dispatch_uses_the_transactional_v1_codec
+    cargo test --locked -p tidb-txnkv --test resource_group_tag_source
+    cargo test --locked -p tidb-txnkv --test all tikv_client_coprocessor_transport_source
+    cargo test --locked -p tidb-unistore --lib cophandler::
+    cargo test --locked -p tidb-distsql --test all select_result
+    cargo test --locked -p tidb-server --lib pushed_conditional_signatures_evaluate_in_the_coprocessor_like_go
+    cargo check --locked -p tidb-server -p tidb-proto -p tidb-exec -p tidb-expr -p tidb-distsql -p tidb-executor -p tidb-unistore -p tidb-planner -p tidb-txnkv -p tidb-util -p tidb-protocol -p tidb-pd-client --all-targets
+
+The first command reproduced three discarded-payload failures before removing
+the local schemas. The complete protocol suite now passes 49 tests. The native
+protocol crate under TiDB's transport versions passes three; the MPP API
+regression passes one after failing with V1TTL; resource tagging, native
+transport, mock coprocessor, DistSQL and embedded SQL pass 3, 2, 86, 20 and 1
+respectively. Two existing DistSQL cases remain ignored. All direct consumer
+targets compile. From repository root, make lint, make rust_proto_check and
+git diff --check pass. Original Go checks pass from the pinned module using
+ go test ./pkg/coprocessor ./pkg/mpp ./pkg/sharedbytes (the two generated packages
+have no original tests; sharedbytes has one). Logs are
+/private/tmp/tidb-copro-mpp-*.log and /private/tmp/tidb-mpp-api-{red,green}.log.
+
+Changed files: tidb-proto's build/module exports and source tests; the two
+removed schemas; tiflash_mpp_scan.rs's dispatch context; two txnkv test
+fixtures; native source/generated/test updates from b2b3783; source-check and
+inventory scripts; Makefile's protocol gate; the transport patch context;
+and audit/receipt documentation. No Go/Bazel/module input changed, so no
+Bazel preparation or failpoint toggling applies. This validates generated
+contract ownership and the codec caller, not complete MPP execution parity.
+RealTiKV/TiFlash clusters, full-workspace runtime tests, sysbench/TPC-C/TPC-H/
+YCSB were not run. Bytes changes the public Rust response-body type; all local
+consumers compile. No benchmark speedup is claimed.
+
+Disk cleanup confirmed no cargo/rustc/rustdoc process was active and removed
+418 incremental-cache directories whose files were untouched for three days,
+37.08 GiB of regenerable file contents. Free filesystem space afterward was
+44 GiB; no source, worktree, fixtures or generated checked-in inputs were
+removed. Publication still runs the required hook and fresh locked server
+build even though caches were reclaimed.

@@ -1,0 +1,156 @@
+{
+  "go_master": "6b2781326b722f217a61852ab403350858549bd0",
+  "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
+  "integration_before": "25870bf5d0",
+  "mismatches": [
+    {
+      "symbol": ".coprocessor.Request.tasks",
+      "kind": "missing field",
+      "number": 11
+    },
+    {
+      "symbol": ".coprocessor.Request.table_shard_infos",
+      "kind": "missing field",
+      "number": 14
+    },
+    {
+      "symbol": ".coprocessor.Request.versioned_ranges",
+      "kind": "missing field",
+      "number": 15
+    },
+    {
+      "symbol": ".coprocessor.ShardInfo",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".coprocessor.TableShardInfos",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".coprocessor.TiCIEstimateCountRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".coprocessor.TiCIEstimateCountResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".coprocessor.TableRegions",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.context",
+      "kind": "missing field",
+      "number": 1
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.tp",
+      "kind": "missing field",
+      "number": 2
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.data",
+      "kind": "missing field",
+      "number": 3
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.start_ts",
+      "kind": "missing field",
+      "number": 5
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.schema_ver",
+      "kind": "missing field",
+      "number": 6
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.table_regions",
+      "kind": "missing field",
+      "number": 7
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.log_id",
+      "kind": "missing field",
+      "number": 8
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.connection_id",
+      "kind": "missing field",
+      "number": 9
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.connection_alias",
+      "kind": "missing field",
+      "number": 10
+    },
+    {
+      "symbol": ".coprocessor.BatchRequest.table_shard_infos",
+      "kind": "missing field",
+      "number": 11
+    },
+    {
+      "symbol": ".coprocessor.BatchResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".coprocessor.StoreBatchTaskResponse.data_merged_into_response",
+      "kind": "missing field",
+      "number": 7
+    },
+    {
+      "symbol": ".coprocessor.DelegateRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".coprocessor.DelegateResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".mpp.TaskMeta.keyspace_identity",
+      "kind": "missing field",
+      "number": 22
+    },
+    {
+      "symbol": ".mpp.IsAliveRequest",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".mpp.IsAliveResponse",
+      "kind": "missing message"
+    },
+    {
+      "symbol": ".mpp.DispatchTaskRequest.table_regions",
+      "kind": "missing field",
+      "number": 6
+    },
+    {
+      "symbol": ".mpp.DispatchTaskRequest.table_shard_infos",
+      "kind": "missing field",
+      "number": 7
+    },
+    {
+      "symbol": ".mpp.TaskMeta.keyspace_id",
+      "kind": "field contract differs",
+      "attributes": {
+        "oneof": [
+          null,
+          "keyspace"
+        ]
+      }
+    },
+    {
+      "symbol": ".mpp.TaskMeta.api_version",
+      "kind": "field contract differs",
+      "attributes": {
+        "type": [
+          "TYPE_INT32",
+          "TYPE_ENUM"
+        ],
+        "type_name": [
+          null,
+          ".kvrpcpb.APIVersion"
+        ]
+      }
+    }
+  ]
+}

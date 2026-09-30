@@ -241,21 +241,14 @@ impl TiFlashMppScanSource {
             local_query_id: 1,
             server_id: u64::from(std::process::id()),
             mpp_version: 3,
-            // Go `MPPDispatchRequest.KeySpaceID`: for a classic API-V1
-            // cluster the keyspace is the NULL keyspace, whose id is
-            // 4294967295 (`keyspace.NullKeyspaceID`), NOT zero. TiFlash
-            // registers every storage under this keyspace and resolves the
-            // task's table through the SAME id; a zero here makes even a
-            // synced table read as missing.
-            keyspace_id: 4294967295,
             coordinator_address: "tidb-mpp-coordinator".to_owned(),
             report_execution_summary: false,
-            api_version: 1,
             resource_group_name: request.statement.resource_group_name.clone(),
             connection_id: 0,
             connection_alias: String::new(),
             sql_digest: String::new(),
             plan_digest: String::new(),
+            ..TaskMeta::default()
         };
 
         let scan_executor = Executor {
@@ -414,13 +407,14 @@ impl TiFlashMppScanSource {
                 }
             })
             .collect();
-        let dispatch_request = DispatchTaskRequest {
+        let dispatch_request = encode_dispatch_request(DispatchTaskRequest {
             meta: Some(meta.clone()),
             encoded_plan,
             timeout: 10,
             regions: region_infos,
             schema_ver: (self.schema_version)(),
-        };
+            ..Default::default()
+        });
 
         // The dispatch and the result stream run on this module's runtime.
         // The stream drains fully before rows are served: the root task's
@@ -624,5 +618,36 @@ impl PushdownRowStream for MppRowStream {
 
     fn rows_returned(&self) -> u64 {
         self.returned
+    }
+}
+
+fn encode_dispatch_request(mut request: DispatchTaskRequest) -> DispatchTaskRequest {
+    use tikv_client::tikv::Request;
+
+    // This scanner uses classic API-V1 record keys. Match client-go's
+    // setAPICtx: the native keyspace codec owns both the wire API version
+    // and the null-keyspace sentinel, rather than duplicating their numbers.
+    let keyspace = tikv_client::request::Keyspace::Disable;
+    request.set_api_version(keyspace.api_version());
+    request.set_keyspace_id(keyspace.context_keyspace_id());
+    request
+}
+
+#[cfg(test)]
+mod dispatch_context_tests {
+    use super::*;
+
+    #[test]
+    fn classic_mpp_dispatch_uses_the_transactional_v1_codec() {
+        let request = encode_dispatch_request(DispatchTaskRequest {
+            meta: Some(TaskMeta::default()),
+            ..Default::default()
+        });
+        let meta = request.meta.unwrap();
+        assert_eq!(meta.api_version(), tidb_proto::kvrpcpb::ApiVersion::V1);
+        assert_eq!(
+            meta.keyspace,
+            Some(tidb_proto::mpp::task_meta::Keyspace::KeyspaceId(u32::MAX))
+        );
     }
 }

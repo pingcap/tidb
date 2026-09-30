@@ -27,6 +27,31 @@ mod tests {
         resource_manager, tsopb, FILE_DESCRIPTOR_SET,
     };
 
+    #[test]
+    fn go_sharedbytes_fields_retain_the_received_buffer() {
+        // Each upstream field has gogoproto.customtype=sharedbytes.SharedBytes.
+        // Decoding from an owned Bytes buffer must slice, rather than copy it.
+        let wire = prost::bytes::Bytes::from_static(b"\x0a\x04data");
+        let original = wire[2..].as_ptr();
+        let response = super::coprocessor::Response::decode(wire.clone()).unwrap();
+        let batch = super::coprocessor::BatchResponse::decode(wire.clone()).unwrap();
+        let task = super::coprocessor::StoreBatchTaskResponse::decode(wire.clone()).unwrap();
+        let system = super::kvrpcpb::TiFlashSystemTableResponse::decode(wire.clone()).unwrap();
+        assert_eq!(response.encode_to_vec(), wire);
+        assert_eq!(batch.encode_to_vec(), wire);
+        assert_eq!(task.encode_to_vec(), wire);
+        assert_eq!(system.encode_to_vec(), wire);
+        assert_eq!(
+            [
+                response.data.as_ptr() == original,
+                batch.data.as_ptr() == original,
+                task.data.as_ptr() == original,
+                system.data.as_ptr() == original
+            ],
+            [true; 4],
+        );
+    }
+
     fn identity() -> apipb::KeyspaceIdentity {
         apipb::KeyspaceIdentity {
             namespace_id: 1,

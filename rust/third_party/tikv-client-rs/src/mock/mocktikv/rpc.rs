@@ -2045,7 +2045,7 @@ mod tests {
             _request: &coprocessor::Request,
         ) -> coprocessor::Response {
             coprocessor::Response {
-                data: b"unary".to_vec(),
+                data: b"unary".to_vec().into(),
                 ..Default::default()
             }
         }
@@ -2058,7 +2058,7 @@ mod tests {
         ) -> Result<BatchCoprocessorStreamResponse> {
             Ok(BatchCoprocessorStreamResponse::from_first(Some(
                 coprocessor::BatchResponse {
-                    data: b"batch".to_vec(),
+                    data: b"batch".to_vec().into(),
                     ..Default::default()
                 },
             )))
@@ -2072,7 +2072,7 @@ mod tests {
         ) -> Result<CoprocessorStreamResponse> {
             Ok(CoprocessorStreamResponse::from_first(Some(
                 coprocessor::Response {
-                    data: b"stream".to_vec(),
+                    data: b"stream".to_vec().into(),
                     ..Default::default()
                 },
             )))
@@ -2246,7 +2246,7 @@ mod tests {
             .unwrap()
             .downcast::<coprocessor::Response>()
             .unwrap();
-        assert_eq!(unary.data, b"unary");
+        assert_eq!(unary.data.as_ref(), b"unary");
 
         let stream = client
             .dispatch(&CoprocessorStreamRequest::new(coprocessor::Request {
@@ -2257,7 +2257,7 @@ mod tests {
             .unwrap()
             .downcast::<CoprocessorStreamResponse>()
             .unwrap();
-        assert_eq!(stream.first.unwrap().data, b"stream");
+        assert_eq!(stream.first.unwrap().data.as_ref(), b"stream");
 
         let batch = client
             .dispatch(&BatchCoprocessorStreamRequest::new(
@@ -2270,7 +2270,7 @@ mod tests {
             .unwrap()
             .downcast::<BatchCoprocessorStreamResponse>()
             .unwrap();
-        assert_eq!(batch.first.unwrap().data, b"batch");
+        assert_eq!(batch.first.unwrap().data.as_ref(), b"batch");
     }
 }
 

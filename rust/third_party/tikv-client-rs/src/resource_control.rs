@@ -519,7 +519,7 @@ mod test {
             }),
             batch_responses: vec![
                 coprocessor::StoreBatchTaskResponse {
-                    data: b"data".to_vec(),
+                    data: b"data".to_vec().into(),
                     exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
                         scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
                             processed_versions_size: 10,
@@ -550,7 +550,7 @@ mod test {
                     ..Default::default()
                 },
                 coprocessor::StoreBatchTaskResponse {
-                    data: b"12345678".to_vec(),
+                    data: b"12345678".to_vec().into(),
                     ..Default::default()
                 },
             ],
@@ -579,7 +579,7 @@ mod test {
                 ..Default::default()
             }),
             batch_responses: vec![coprocessor::StoreBatchTaskResponse {
-                data: vec![0],
+                data: vec![0].into(),
                 ..Default::default()
             }],
             ..Default::default()

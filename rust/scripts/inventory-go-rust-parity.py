@@ -13,7 +13,7 @@ import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "rust/docs/parity/current-audit"
-CLIENT_GO = "github.com/tikv/client-go/v2"
+EXTERNAL_MODULES = {"client-go": "github.com/tikv/client-go/v2", "kvproto": "github.com/pingcap/kvproto"}
 
 
 def run(*command):
@@ -53,18 +53,21 @@ def main():
                                "review": "unreviewed-at-current-master"}
                               for p in sorted((ROOT / "rust/crates").glob("*/Cargo.toml"))]}
     go_mod = run("git", "show", f"{revision}:go.mod")
-    versions = re.findall(r"^\s*" + re.escape(CLIENT_GO) + r"\s+(v\S+)", go_mod, re.M)
-    if len(versions) != 1:
-        raise ValueError("expected one client-go module pin")
-    module = json.loads(run("go", "mod", "download", "-json", f"{CLIENT_GO}@{versions[0]}"))
-    directory = pathlib.Path(module["Dir"])
-    external = {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest()
-                for p in directory.rglob("*") if p.is_file()}
-    client_report = {"go_master": revision, "module": CLIENT_GO, "version": versions[0],
-                     "digest": "sha256", **package_inventory(external)}
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    for name, data in [("package-coverage.json", report), ("client-go-package-coverage.json", client_report)]:
-        (OUTPUT / name).write_text(json.dumps(data, indent=1) + "\n")
+    (OUTPUT / "package-coverage.json").write_text(json.dumps(report, indent=1) + "\n")
+    external_counts = []
+    for name, module_path in EXTERNAL_MODULES.items():
+        versions = re.findall(r"^\s*" + re.escape(module_path) + r"\s+(v\S+)", go_mod, re.M)
+        if len(versions) != 1:
+            raise ValueError(f"expected one {module_path} module pin")
+        module = json.loads(run("go", "mod", "download", "-json", f"{module_path}@{versions[0]}"))
+        directory = pathlib.Path(module["Dir"])
+        external = {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in directory.rglob("*") if p.is_file()}
+        module_report = {"go_master": revision, "module": module_path, "version": versions[0],
+                         "digest": "sha256", **package_inventory(external)}
+        (OUTPUT / f"{name}-package-coverage.json").write_text(json.dumps(module_report, indent=1) + "\n")
+        external_counts.append(f"{len(module_report['packages'])} {name} package directories")
     pattern = re.compile(r"go-parity-gap|not implemented|not supported yet|unimplemented!")
     lines = ["path\tline\tevidence"]
     for base in [ROOT / "rust/crates", ROOT / "rust/third_party/tikv-client-rs/src"]:
@@ -74,7 +77,7 @@ def main():
                     evidence = line.strip().replace("\t", " ")
                     lines.append(f"{path.relative_to(ROOT)}\t{num}\t{evidence}")
     (OUTPUT / "candidate-gaps.tsv").write_text("\n".join(lines) + "\n")
-    print(f"{len(report['packages'])} TiDB package directories; {len(client_report['packages'])} client-go package directories; {len(report['rust_crates'])} Rust crates; {len(lines)-1} candidate lines (not defect counts)")
+    print(f"{len(report['packages'])} TiDB package directories; {'; '.join(external_counts)}; {len(report['rust_crates'])} Rust crates; {len(lines)-1} candidate lines (not defect counts)")
 
 
 if __name__ == "__main__":

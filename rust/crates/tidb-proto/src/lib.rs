@@ -16,14 +16,14 @@ pub mod tipb {
     }
 }
 
-/// The generated dependency-closed coprocessor request package.
+/// Complete coprocessor contracts shared with the native client.
 pub mod coprocessor {
     // Keep the public aliases while sharing the upstream-owned nested types.
+    pub use tikv_client_kvproto::coprocessor::*;
     pub use tikv_client_kvproto::kvrpcpb::{
         ExecDetails, ExecDetailsV2, ScanDetail, ScanDetailV2, ScanInfo, TimeDetail, TimeDetailV2,
     };
     pub use tikv_client_kvproto::metapb::{Peer, RegionEpoch};
-    include!(concat!(env!("OUT_DIR"), "/coprocessor.rs"));
 }
 
 /// Complete region-error contract shared with the native client.
@@ -50,10 +50,8 @@ pub mod pdpb {
     include!(concat!(env!("OUT_DIR"), "/pdpb.rs"));
 }
 
-/// The generated dependency-closed TiFlash MPP package.
-pub mod mpp {
-    include!(concat!(env!("OUT_DIR"), "/mpp.rs"));
-}
+/// Complete TiFlash MPP contracts shared with the native client.
+pub use tikv_client_kvproto::mpp;
 
 /// The generated dependency-closed etcd MVCC key/value package.
 pub mod mvccpb {

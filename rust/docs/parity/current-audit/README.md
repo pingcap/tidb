@@ -2,13 +2,13 @@
 
 Baseline: TiDB Go master `6b2781326b722f217a61852ab403350858549bd0`, client-go
 `v2.0.8-0.20260928031501-8edb23f6c7ee`, client-rust
-`884589f0365053c0f5bd300209751187a4811782`. The integration started at
+`b2b3783` (published shared-buffer repair). The integration started at
 `5503f8860883c6cd80bdd0d487d34c53787daf24`.
 
 This is the list of **currently confirmed findings and explicit review gaps**.
 It is not a claim that every semantic mismatch has been discovered or removed.
-The coverage inventories enumerate every tracked artifact in 856 TiDB and 41
-client-go package directories, with 83 Rust crates awaiting current-master
+The coverage inventories enumerate every tracked artifact in 856 TiDB, 41 client-go and 41 kvproto
+package directories, with 83 Rust crates awaiting current-master
 acceptance. Original tests, generated/build/platform inputs, fixtures and
 unassigned root artifacts are retained. The 2,051 candidate lines are search
 evidence, not 2,051 defects. Some are errors Go intentionally returns.
@@ -16,17 +16,20 @@ evidence, not 2,051 defects. Some are errors Go intentionally returns.
 Reproduce the inventory from the repository root with
 `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`.
 Receipts and reviewed findings live separately so regeneration cannot certify
-unreviewed packages. External dependencies beyond client-go and TiPB still
+unreviewed packages. External dependencies beyond client-go, kvproto and TiPB still
 require their own complete inventories before acceptance.
 
 | Finding | Evidence and Go ownership | Status |
 | --- | --- | --- |
 | Partial TiPB declarations and stale dependency selection | Four local projections omitted 157 declarations from master's pin; the old checker validated only locally present declarations against this branch's older pin. `Executor` decode discarded a valid ExplainForConnection body. | Fixed by complete upstream input ownership; individual gaps listed below. Source gate, original Go tests, Rust wire tests and consumers validated. |
-| Generic mutation constructor chooses table assertion policy | `tidb-txnkv/src/transaction/mutation.rs::BufferMutation::insert` combines presume-not-exists with AssertNotExist. `tidb-exec/src/real_tikv_dml.rs::plan_insert` intentionally does no snapshot check. Go `pkg/table/tables` chooses Unknown for a lazy optimistic miss and NotExist for an eager/pessimistic insert. | Open. Reconcile all callers; blanket Unknown would break eager/pessimistic ownership. |
+| Duplicate coprocessor and MPP contracts | Local projections lost 27 declarations and had two field-contract differences (MPP keyspace oneof/API version enum). Native generation copied four Go SharedBytes fields. | Fixed through complete native package re-exports and source regeneration; native repair published as b2b3783. Individual gaps listed below. |
+| MPP dispatch bypassed the native API-context codec | The local literal api_version=1 is V1TTL; classic transactional Go uses V1=0 and the null keyspace from its codec. | Fixed by using native Keyspace and Request setters; the regression failed with V1TTL and now passes with V1. |
+| MPP query/task identity has no statement owner | Go executor/mpp_gather.go gets one atomic query ID and UnixNano timestamp from StmtCtx.MPPQueryInfo; builder.go uses domain ServerID. Rust tiflash_mpp_scan.rs uses local_query_id=1, gather_id=1, process ID and Unix seconds. | Open structural mismatch. Needs the statement/coordinator lifecycle, not an isolated global counter. |
+| Generic mutation constructor chooses table assertion policy | `tidb-txnkv/src/transaction/mutation.rs::BufferMutation::insert` combines presume-not-exists with AssertNotExist. `tidb-exec/src/real_tikv_dml.rs::plan_insert` intentionally does no snapshot check. Go `pkg/table/tables` chooses Unknown for a lazy optimistic miss and NotExist for an eager/pessimistic insert. | Open. Reconcile all callers; blanket Unknown would break eager/pessimistic ownership. Configured WritePlanningSnapshot lacks transaction-mode input; system-row index writes omit assertions. These need the table owner, not another global default. |
 | Region/cache/RPC algorithms have competing owners | `tidb-txnkv/src/driver/client_bridge.rs::ClientPd` delegates to TiDB routing/recovery/transport while client-rust also implements these algorithms. DistSQL still needs TiDB capabilities. | Open architecture migration. Duplication alone is not proof of a runtime failure; native RetryBackoffer already owns RegionBackoffBudget. |
 | Background lifetime still has request-type inference | The bridge retains a TxnHeartBeatRequest exception; additional pipelined/transaction-file cleanup paths need explicit operation scopes like Go's owners. | Open; the concrete native patch was rejected by automatic approval review and remains unapplied pending its separately requested approval. Foreground ResolveLock must remain cancellable. |
 | Alternate storage session dispatch remains incomplete | The lightweight path's supported SET assignments now use the normal parser, but its transaction mode/autocommit lifecycle is not fully unified with the ordinary session owner. | Review required at session package scope; do not delete a dispatcher before migrating all its callers. |
-| Other locally projected protocol packages | PD, coprocessor, MPP, etcd and BR inputs remain local projections. | Unreviewed completeness. The TiPB gate does not certify these packages. |
+| Other locally projected protocol packages | PD, the local TiKV service, etcd and BR inputs remain local projections. | Unreviewed completeness. The TiPB gate does not certify these packages. |
 
 The earlier five diff comments (explicit lock retry limits, secondary retry
 budget, locked snapshot commit timestamps, mock wake-up semantics and detached
@@ -218,3 +221,42 @@ does not invent SQL executor implementations for previously unsupported types.
 | `.tipb.CollectorType` | missing enum | Fixed by complete upstream schema |
 | `.tipb.ItemInterval` | missing enum | Fixed by complete upstream schema |
 | `.tipb.Event` | missing enum | Fixed by complete upstream schema |
+
+## Complete coprocessor and MPP gap list
+
+These 29 gaps are removed by native package ownership. In addition to 10
+messages and 17 fields, the old MPP TaskMeta declared a plain keyspace_id
+instead of a oneof arm and int32 instead of the APIVersion enum. The same
+native response generator now respects all four upstream SharedBytes fields.
+
+| Declaration | Former gap | Status |
+| --- | --- | --- |
+| `.coprocessor.Request.tasks` | missing field | Fixed through native package ownership |
+| `.coprocessor.Request.table_shard_infos` | missing field | Fixed through native package ownership |
+| `.coprocessor.Request.versioned_ranges` | missing field | Fixed through native package ownership |
+| `.coprocessor.ShardInfo` | missing message | Fixed through native package ownership |
+| `.coprocessor.TableShardInfos` | missing message | Fixed through native package ownership |
+| `.coprocessor.TiCIEstimateCountRequest` | missing message | Fixed through native package ownership |
+| `.coprocessor.TiCIEstimateCountResponse` | missing message | Fixed through native package ownership |
+| `.coprocessor.TableRegions` | missing message | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.context` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.tp` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.data` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.start_ts` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.schema_ver` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.table_regions` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.log_id` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.connection_id` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.connection_alias` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchRequest.table_shard_infos` | missing field | Fixed through native package ownership |
+| `.coprocessor.BatchResponse` | missing message | Fixed through native package ownership |
+| `.coprocessor.StoreBatchTaskResponse.data_merged_into_response` | missing field | Fixed through native package ownership |
+| `.coprocessor.DelegateRequest` | missing message | Fixed through native package ownership |
+| `.coprocessor.DelegateResponse` | missing message | Fixed through native package ownership |
+| `.mpp.TaskMeta.keyspace_identity` | missing field | Fixed through native package ownership |
+| `.mpp.IsAliveRequest` | missing message | Fixed through native package ownership |
+| `.mpp.IsAliveResponse` | missing message | Fixed through native package ownership |
+| `.mpp.DispatchTaskRequest.table_regions` | missing field | Fixed through native package ownership |
+| `.mpp.DispatchTaskRequest.table_shard_infos` | missing field | Fixed through native package ownership |
+| `.mpp.TaskMeta.keyspace_id` | field contract differs | Fixed through native package ownership |
+| `.mpp.TaskMeta.api_version` | field contract differs | Fixed through native package ownership |
