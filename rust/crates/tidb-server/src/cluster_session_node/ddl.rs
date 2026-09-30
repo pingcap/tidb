@@ -823,6 +823,47 @@ mod schema_sync_tests {
                 .state,
             JobState::SYNCED
         );
+        let wait_count = waits.len();
+        drop(waits);
+        // A cancelled action also checks ownership before its single history
+        // commit. Retrying after owner loss records the new failure only once
+        // and must not publish or wait for an unchanged schema version.
+        job.id = 503;
+        job.state = JobState::QUEUEING;
+        job.error_count = 2;
+        seed(&mut job);
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let lost_before_cancel_commit = || {
+            if checks.fetch_add(1, Ordering::Relaxed) == 0 {
+                Ok(())
+            } else {
+                Err("owner lost".into())
+            }
+        };
+        assert!(run(503, None, &lost_before_cancel_commit).is_err());
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].state, JobState::QUEUEING);
+        assert_eq!(active[0].error_count, 2);
+        assert!(load_history_persisted_ddl_job(opener.clone(), 503, timeout)
+            .unwrap()
+            .is_none());
+        run(503, Some(&FailedNotifier), &|| Ok(())).unwrap();
+        let history = load_history_persisted_ddl_job(opener.clone(), 503, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::CANCELLED);
+        assert_eq!(history.error_count, 3);
+        assert_eq!(
+            history.error.as_ref().unwrap().read().code().value(),
+            tidb_error::tidb::errcode::ErrDBDropExists as isize
+        );
+        assert_eq!(barrier.waits.lock().unwrap().len(), wait_count);
+        assert_eq!(
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+                .unwrap()
+                .schema_version,
+            before + 4
+        );
     }
 
     #[test]

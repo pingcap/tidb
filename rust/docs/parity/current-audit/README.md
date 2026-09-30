@@ -317,3 +317,29 @@ worker validation/error identity details. General DDL admission/scheduling,
 delete-range GC, MDL-disabled operation and TiFlash placement gaps above remain
 open. No full package validation, multi-node interoperability run or benchmark
 performance claim accompanies this maintenance repair.
+
+
+## Persisted action queue ownership (2026-09-30)
+
+Go master e953a09d9d job_worker.go owns updateDDLJob and immediate cancelled-job
+finalization after discarding action mutations. Removed 17 action-local queue
+writes from existing Rust CHECK/catalog/MV seed planners. The shared worker
+now receives borrowed job state, metadata writes, updateRawArgs and any handled
+rollback error. It persists one envelope update or finalizes cancellation.
+Historical Job.Error no longer cancels successful create/schema/batch/rename
+actions. Fresh cancellation errors increment ErrorCount once, including after
+an owner-loss retry; cancellation neither announces nor waits for a new schema.
+The separate CHECK validation-error state transaction remains explicit.
+
+Red/green regressions and all 95 planner + 7 commit-classification + 4 embedded
+DDL tests pass, as do affected compilation and root lint. Files, exact commands,
+source decisions and publication gates are in
+[the action-state receipt](../../full-structural-parity-execplan.md#persisted-action-state-ownership-receipt-2026-09-30).
+
+Still open: ordinary non-cancelling errors return without Go's persisted
+countForError/global error-limit/CANCELLING lifecycle; CHECK missing-object and
+constraint validation does not yet consistently select Go's cancelled state.
+Other worker validation/error identities and the previously listed admission,
+reorg, rollback dependency/GC, scheduler, MDL-disabled and TiFlash ownership
+gaps remain. The supported action list is unchanged; no unaccepted seed action
+was dispatched and no package-complete parity or performance claim is made.

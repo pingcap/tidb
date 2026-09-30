@@ -17,7 +17,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 - [x] Repair MPP statement/query/gather/task identity and carry the existing server-info identity; 98 targeted tests, lint, hook and fresh pre-push locked builds passed; published as 7d8d69b6a0.
 - [x] Remove duplicate TiFlash poller startup, detached lifetime and private DDL publisher; validate the shared owner and HTTP consumers.
 - [x] Publish shared persisted DDL worker synchronization and completion (d54903d0b2).
-- [x] Remove five materialized-view seed history writers; preserve durable errors and reuse the shared barrier/finalizer without enabling seed dispatch. Targeted tests, all-target compilation and lint pass; publication gates follow.
+- [x] Remove five materialized-view seed history writers; preserve durable errors and reuse the shared barrier/finalizer without enabling seed dispatch. Published as 6ed271503c after targeted tests, lint and both locked build gates.
+- [x] Remove all 17 action-stage queue writers; share fresh cancellation/error handling and preserve historical retry diagnostics. Targeted tests, compilation and lint pass; publication gates follow.
 - [ ] Reconcile generic insertion policy with the ordinary table owner.
 - [ ] Reconcile remaining native routing/RPC and operation-lifetime owners.
 - [ ] Resolve each confirmed baseline SQL/DDL/statistics failure at its owning package.
@@ -41,10 +42,21 @@ Run regressions before production fixes and afterward. Protocol validation uses 
 ## Surprises & Discoveries
 
 
+The action-state follow-up found that four successful action paths used a
+historical Job.Error as a current cancellation decision. The multi-action
+fixture reproduces CANCELLED history for an otherwise successful create after
+a prior error. Go counts fresh run errors and lets action state control finalization.
+
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
 
+
+For the action-state follow-up, move queue writes to the shared worker instead
+of routing each existing writer through another thin wrapper. Borrowing the
+worker-owned job lets cancellation discard action mutations, while an explicit
+updateRawArgs flag preserves each action's decoding contract. The public plan
+and live dispatch set stay unchanged.
 
 For the 2026-09-30 materialized-view cleanup, use explicit seed entrypoints
 around the shared planner instead of adding those actions to live dispatch.
@@ -57,6 +69,12 @@ Inventory coverage explicitly and implement package-sized owner corrections. Do 
 
 ## Outcomes & Retrospective
 
+
+The action-state maintenance follow-up removes 17 action-owned queue writes
+and the stale-error cancellation predicates. All targeted planner and embedded
+lifecycle checks pass. Ordinary retry/error-limit handling and remaining action
+validation still require separate source-backed work; passing these tests does
+not establish package acceptance.
 
 The materialized-view maintenance follow-up removes five remaining seed
 history writers and preserves cancellation/build errors. The shared live
@@ -605,3 +623,83 @@ back-references, system-table failure transitions, and worker validation/error
 identity details. Direct DDL admission, delete-range GC, general scheduling,
 MDL-disabled operation and TiFlash placement ownership remain open. No complete
 package or repository parity is claimed.
+
+
+## Persisted action state ownership receipt (2026-09-30)
+
+Pulled integration 6ed271503c and refreshed master e953a09d9d. Go
+pkg/ddl/job_worker.go transitOneJobStep owns updateDDLJob after actions return;
+countForError records fresh errors, and cancellation resets the action
+transaction and immediately calls handleJobDone. Rust still has action-local
+queue writes, cancellation persistence, and checks of the historical Job.Error
+to decide whether a successful action should cancel.
+
+Removed all 17 action-stage append_update call sites across the existing
+integrated and explicit seed planners. Actions now borrow the worker-owned
+active job and return PersistedDdlActionStep: metadata writes, updateRawArgs,
+and an optional handled rollback error. They no longer receive a queue-table
+handle. The shared lifecycle appends one durable envelope update after a
+successful/handled step. On cancellation it discards action writes, records
+only the fresh error, and calls the existing history finalizer immediately.
+DROP keeps updateRawArgs=false, preserving undecoded arguments. The separate
+CHECK validation-error transaction retains its explicit state write; it is not
+an action planner or a second ordinary worker pipeline.
+
+Removed the checks that inferred cancellation from any historical Job.Error.
+Successful retries preserve their earlier error/count and finish DONE/SYNCED
+as Go does. Decoding failures for create/schema/batch/rename/CHECK cancel via
+the worker. Fresh create/drop/rename refusal codes travel with the refusal;
+CREATE SCHEMA no longer uses the table-exists code, and missing-database
+errors no longer become table-not-found solely because of a shared literal.
+The view build's handled rollback error also moves from action-local recording
+to this shared owner. No supported-action allowlist or public planner API
+changes, SQL feature additions, native dependency changes or generated edits.
+
+Before the production fix, the new source regression failed because cancelled
+CREATE SCHEMA needed a second transaction; the existing multi-action lifecycle
+fixture, seeded with an earlier retry error, finished with CANCELLED instead
+of SYNCED. Red evidence: /private/tmp/tidb-ddl-action-owner-red.log. The final
+source suite covers success after historical errors through all six catalog
+actions (including empty batch), atomic refusal/no partial batch publication,
+retryable history failures, argument-decode cancellation for seven actions,
+and preserved raw arguments. The embedded worker test adds ownership loss
+before cancellation commit, then successful retry with exactly one additional
+error count and no schema notification/acknowledgement.
+
+Files: rust/crates/tidb-exec/src/cluster_ddl.rs,
+rust/crates/tidb-exec/tests/cluster_ddl_source.rs,
+rust/crates/tidb-server/src/cluster_session_node/ddl.rs, this ExecPlan and
+rust/docs/parity/current-audit/README.md. Rust-only scope does not trigger
+bazel_prepare or Go failpoint setup.
+
+Exact validation commands, from rust/:
+
+    cargo test --locked -p tidb-exec --test all cluster_ddl_source::persisted_
+    cargo check --locked -p tidb-exec --lib
+    cargo test --locked -p tidb-exec --test all cluster_ddl_source
+    cargo test --locked -p tidb-exec --lib real_tikv_ddl::tests
+    cargo test --locked -p tidb-server --lib cluster_session_node::ddl::schema_sync_tests
+    cargo check --locked -p tidb-exec -p tidb-server --all-targets
+
+The first command is the red reproduction. Final results: 95 source planner,
+7 commit-classification and 4 embedded DDL tests pass; affected compilation
+passes with existing warnings. Embedded tests require host memory/storage
+setup access. Green logs: /private/tmp/tidb-ddl-action-owner-{green,worker,server,all-targets}.log.
+From the repository root, make lint and git diff --check pass. Commit must use
+TERM=xterm git -c core.hooksPath=hooks commit and pass the hook's locked server
+build; then a separate `cd rust && cargo build --locked -p tidb-server` must
+succeed immediately before normal push to hparser-integration.
+
+Correctness/compatibility impact: cancellation completes atomically without
+schema publication, successful retries retain their diagnostics without being
+misclassified, and queue writes have one action-independent owner. Tests cover
+phase ordering and raw-argument preservation. No measured performance change
+is claimed. This is maintenance of existing paths, not new package acceptance.
+Normal non-cancelling errors still lack Go's complete persisted error-count,
+global retry-limit and CANCELLING transition owner. CHECK missing-object and
+constraint checks, other worker validation/error identities, MV build/reorg
+and rollback dependencies, direct SQL admission, delete-range GC, scheduling,
+MDL-disabled operation and TiFlash placement gaps remain open. Full upstream
+package variants/original tests, real multi-node interoperability, prior ten
+embedded baseline failures and sysbench/TPC-C/TPC-H/YCSB were not verified.
+No complete package or repository parity is claimed.

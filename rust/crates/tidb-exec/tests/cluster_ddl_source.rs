@@ -564,6 +564,13 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
     fn execute(store: &mut MetaStore, job: &mut Job, ids: &str, expected_phases: usize) {
         let catalog = load_cluster_catalog(store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
+        // Go retains earlier retry diagnostics on the job. A later successful
+        // action must finish normally, not treat this as a fresh cancellation.
+        job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1105),
+            "earlier retry failed",
+        )));
+        job.error_count = 2;
         let mut mutations = Vec::new();
         queue
             .append_insert(job, false, "112", ids, false, &mut mutations)
@@ -649,6 +656,12 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
                 .unwrap()
                 .state,
             JobState::SYNCED
+        );
+        let completed = history.iter().find(|entry| entry.id == job.id).unwrap();
+        assert_eq!(completed.error_count, 2);
+        assert_eq!(
+            completed.error.as_ref().unwrap().read().message(),
+            "earlier retry failed"
         );
         if job.type_ == ActionType::ACTION_CREATE_TABLES {
             let entry = history.iter().find(|entry| entry.id == job.id).unwrap();
@@ -745,6 +758,193 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
     job.type_ = ActionType::ACTION_DROP_SCHEMA;
     job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
     execute(&mut store, &mut job, "0", 3);
+}
+
+#[test]
+fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
+    use tidb_model::{
+        BatchCreateTableArgs, CreateSchemaArgs, CreateTableArgs, GoField, HistoryInfo, TableInfo,
+    };
+    for action in [
+        ActionType::ACTION_CREATE_SCHEMA,
+        ActionType::ACTION_CREATE_TABLE,
+        ActionType::ACTION_CREATE_TABLES,
+        ActionType::ACTION_DROP_SCHEMA,
+        ActionType::ACTION_DROP_TABLE,
+    ] {
+        let mut store = bootstrapped();
+        let create = plan(
+            &mut store,
+            "CREATE TABLE existing (id INT PRIMARY KEY)",
+            1_000,
+        );
+        apply(&mut store, &create);
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 900;
+        job.schema_id = 112;
+        job.schema_name = "u6".into();
+        job.table_id = 901;
+        job.version = JobVersion::V2;
+        job.type_ = action;
+        job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+        job.error_count = 2;
+        let table = |id, name: &str| CreateTableArgs {
+            table_info: GoField::new(Some(GoShared::new(TableInfo {
+                id,
+                name: tidb_ast::CiString::new(name),
+                ..Default::default()
+            }))),
+            ..Default::default()
+        };
+        let expected_code = match action {
+            ActionType::ACTION_CREATE_SCHEMA => {
+                job.fill_args(Some(GoShared::new(CreateSchemaArgs {
+                    db_info: GoField::new(Some(GoShared::new(DBInfo {
+                        name: tidb_ast::CiString::new("u6"),
+                        ..Default::default()
+                    }))),
+                })));
+                tidb_error::tidb::errcode::ErrDBCreateExists
+            }
+            ActionType::ACTION_CREATE_TABLE => {
+                job.fill_args(Some(GoShared::new(table(901, "existing"))));
+                tidb_error::tidb::errcode::ErrTableExists
+            }
+            ActionType::ACTION_CREATE_TABLES => {
+                job.fill_args(Some(GoShared::new(BatchCreateTableArgs {
+                    tables: GoField::new(
+                        vec![table(902, "must_not_publish"), table(901, "existing")].into(),
+                    ),
+                })));
+                tidb_error::tidb::errcode::ErrTableExists
+            }
+            ActionType::ACTION_DROP_SCHEMA => {
+                job.schema_id = 999;
+                job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
+                tidb_error::tidb::errcode::ErrDBDropExists
+            }
+            _ => {
+                job.fill_v2_arg(serde_json::from_str("{}").unwrap());
+                tidb_error::tidb::errcode::ErrNoSuchTable
+            }
+        };
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, false, "112", "901", false, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let raw_args = queue
+            .load_by_id(&mut store, 900)
+            .unwrap()
+            .unwrap()
+            .job
+            .raw_args
+            .clone();
+        let before = store.pairs.clone();
+        let mut broken = store.clone();
+        let (db, history) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
+        broken.pairs.remove(&key::table_kv_key(db.id, history.id));
+        let broken_before = broken.pairs.clone();
+        assert!(plan_worker_step(&mut broken, 900, 10_000).is_err());
+        assert_eq!(
+            broken.pairs, broken_before,
+            "a failed finalizer must keep cancellation retryable"
+        );
+        let step = plan_worker_step(&mut store, 900, 10_000).unwrap();
+        assert!(
+            step.terminal,
+            "{action}: Go finalizes cancellation in this transaction"
+        );
+        assert_eq!(step.write.schema_version, 0);
+        assert!(step.write.mdl_info_update.is_none());
+        assert_eq!(store.pairs, before);
+        apply(&mut store, &step.write);
+        assert!(queue.load_by_id(&mut store, 900).unwrap().is_none());
+        let finished = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap()
+            .into_iter()
+            .find(|job| job.id == 900)
+            .unwrap();
+        assert_eq!(finished.state, JobState::CANCELLED);
+        assert_eq!(finished.error_count, 3);
+        assert_eq!(
+            finished.error.as_ref().unwrap().read().code().value(),
+            expected_code as isize
+        );
+        assert_eq!(finished.raw_args, raw_args);
+        assert_eq!(
+            finished.binlog_info.as_ref().unwrap().read().finished_ts,
+            10_000
+        );
+        let after = load_cluster_catalog(&mut store).unwrap();
+        assert_eq!(after.schema_version, catalog.schema_version);
+        assert!(after.find_table("u6", "must_not_publish").is_none());
+        assert!(after.find_table("u6", "existing").is_some());
+    }
+}
+
+#[test]
+fn persisted_action_decode_errors_use_shared_cancellation() {
+    for action in [
+        ActionType::ACTION_CREATE_SCHEMA,
+        ActionType::ACTION_CREATE_TABLE,
+        ActionType::ACTION_CREATE_TABLES,
+        ActionType::ACTION_RENAME_TABLES,
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+        ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+        ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
+    ] {
+        let mut store = bootstrapped();
+        let create = plan(
+            &mut store,
+            "CREATE TABLE decode_error (id INT PRIMARY KEY)",
+            1_000,
+        );
+        apply(&mut store, &create);
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 900;
+        job.schema_id = 112;
+        job.table_id = create.created_id.unwrap();
+        job.type_ = action;
+        job.version = JobVersion::V2;
+        job.binlog_info = Some(GoShared::new(tidb_model::HistoryInfo::default()));
+        job.fill_v2_arg(serde_json::from_str("123").unwrap());
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, false, "112", "116", false, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let raw_args = job.raw_args.clone();
+        let step = plan_worker_step(&mut store, 900, 10_000).unwrap();
+        assert!(
+            step.terminal,
+            "{action} decode failure must finalize cancellation"
+        );
+        assert_eq!(step.write.schema_version, 0);
+        apply(&mut store, &step.write);
+        assert!(queue.load_by_id(&mut store, 900).unwrap().is_none());
+        let finished = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap()
+            .into_iter()
+            .find(|job| job.id == 900)
+            .unwrap();
+        assert_eq!(finished.state, JobState::CANCELLED);
+        assert_eq!(finished.error_count, 1);
+        assert_eq!(finished.error.as_ref().unwrap().read().code().value(), 1105);
+        assert_eq!(finished.raw_args, raw_args);
+        assert_eq!(
+            load_cluster_catalog(&mut store).unwrap().schema_version,
+            catalog.schema_version
+        );
+    }
 }
 
 #[test]
