@@ -752,7 +752,7 @@ func (checker *nonPreparedPlanCacheableChecker) isSupportedCoalesceAssignment(as
 		return false
 	}
 	col, ok := fn.Args[1].(*ast.ColumnNameExpr)
-	if !ok || len(checker.tableNodes) != 1 {
+	if !ok || len(checker.tableNodes) != 1 || checker.schema == nil {
 		return false
 	}
 	table := checker.tableNodes[0]
