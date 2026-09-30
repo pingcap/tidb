@@ -120,8 +120,8 @@ deliberately asymmetric:
   because changing the bytes a client receives is where compatibility actually breaks.
   Emitting Z/M is a later extension, and then only behind an explicit option.
 
-So a stored value can exist that no `ST_As*` can express. It reads back as the raw column
-value, and no v1 function computes on it.
+So a stored value can exist that no `ST_As*` can express. Reading it back needs
+`ST_AsEWKB`, and no v1 function interprets its coordinates.
 
 MySQL behaviors and measurements below were verified against running 8.4.6 and 9.7.2, and
 against the proof of concept, [PR #69475](https://github.com/pingcap/tidb/pull/69475).
@@ -387,8 +387,9 @@ function until a later milestone adds it.
 - **Accessors:** `ST_X`, `ST_Y`, `ST_Latitude`, `ST_Longitude`, `ST_SRID` (getter and the
   `ST_SRID(g, srid)` setter), `ST_GeometryType`, `ST_Dimension`, `ST_Envelope`,
   `ST_IsEmpty`, `ST_IsValid`, `ST_StartPoint`, `ST_EndPoint`, `ST_PointN`, `ST_NumPoints`,
-  `ST_ExteriorRing`, `ST_NumInteriorRings`, `ST_Centroid`. `ST_Centroid` is Cartesian-only,
-  as in MySQL, which raises `ERROR 3618` for it on 4326.
+  `ST_ExteriorRing`, `ST_NumInteriorRings`, `ST_Centroid`. `ST_Centroid` and `ST_Envelope`
+  are Cartesian-only, as in MySQL, which raises `ERROR 3618` for both on 4326. So MySQL
+  exposes no geodesic envelope at all, though its own R-tree computes one internally.
 - **Measurement:** `ST_Length(ls)`, `ST_Distance(g1, g2)`, which on 4326 takes the same
   one-operand-a-`POINT` rule as the predicates below, and
   `ST_Distance_Sphere(g1, g2 [, radius])`, whose `radius` must be positive. The default
@@ -548,12 +549,11 @@ The v1 surface lands in dependency order, each step reviewable on its own:
 | 2. I/O | `ST_GeomFrom*`, `ST_As*`, their option arguments, and the SRID validation on every ingest path | byte-identical to MySQL on the round-trip suite |
 | 3. Catalog | `information_schema.st_spatial_reference_systems`, and DDL validating `SRID n` against it rather than against a hardcoded pair | the two rows match MySQL column for column |
 | 4. Inspection | the constructors and the accessors | matches MySQL, including the constructor axis order |
-| 5. Measurement | `ST_Length`, `ST_Distance`, `ST_Distance_Sphere`, and `pkg/util/geomrel` | matches MySQL to the tolerances in [Functional Tests](#functional-tests) |
+| 5. Measurement | `ST_Length`, `ST_Distance`, `ST_Distance_Sphere`, and the Andoyer metric behind them | matches MySQL to the tolerances in [Functional Tests](#functional-tests) |
 | 6. Predicates | the eight DE-9IM predicates, over Andoyer edges, one operand a `POINT` on 4326 | matches MySQL exactly on the pairs it takes, and rejects the rest rather than approximating them |
 
 Steps 1 to 3 are what the spatial index codes against, so they are the ones whose surface
-is hard to change later. Steps 4 to 6 are independent of each other and of the index, so
-they can land in parallel or in another order if review capacity says so.
+is hard to change later. Steps 4 to 6 are independent of each other and of the index.
 
 ### Scope and deferrals
 
@@ -564,12 +564,10 @@ Out of scope here, each with a home:
   ([#69473](https://github.com/pingcap/tidb/pull/69473)), for which this layer is the prerequisite.
 - The **geometry-processing function tail**, typed I/O aliases, `MBR*` family, geohash and
   niche accessors: a later, parallel expression-layer milestone.
-- **`ST_Area`**, deferred whole rather than split by SRID. On 4326 MySQL computes it
-  ellipsoidally (12308778368.75 m2 for a 1-degree box), where a planar degree2 or an
-  off-by-0.45% spherical value would be silently wrong. Nothing blocks matching that, since
-  an exact ellipsoidal area already agrees with MySQL to 6e-10 relative, but shipping only
-  the SRID 0 half would put a function in v1 whose support depends on the SRID, which
-  nothing else in the set does. It lands with the tail.
+- **`ST_Area`**, deferred whole rather than split by SRID. Matching MySQL's ellipsoidal
+  4326 answer is not the obstacle; shipping only the SRID 0 half would be, since it would
+  put a function in v1 whose support depends on the SRID, which nothing else does. It lands
+  with the tail.
 - **SRIDs beyond 0 and 4326**, the full SRS catalog and `ST_Transform`:
   [Future extensions](#future-extensions). `ST_Transform` is MySQL functionality, but it
   has nothing to do until more SRSs exist, so it is out of scope for v1.
@@ -714,14 +712,15 @@ Risks:
   value-format and axis-order decisions here are lock-ins for them.
 - **Value-format lock-in:** the on-disk format is hard to change post-GA; mitigated by the
   version byte and by storing Z/M and unsupported SRIDs losslessly from the start.
-- **4326 semantics gaps:** each predicate path differs from MySQL wherever it falls back to
-  a simpler surface than MySQL's ellipsoidal edges; mitigated by documenting rather than
-  returning wrong values, and bounded by edge length, so geofence-scale polygons are
-  unaffected.
+- **Andoyer has to be written:** no Go library implements MySQL's edge formula, so matching
+  its predicate results means building the inverse problem with azimuths and a crossing test
+  over it. Mitigated by the operand restriction, which keeps v1 to the closed-form half, and
+  by the regression test that pins where the 4326 edge sits.
 - **MySQL error parity:** exact codes and messages may not match initially (the PoC used
   placeholder wording); a compatibility risk, not a correctness one.
-- **Pure-Go library gaps:** `simplefeatures` covers the v1 surface but not the GEOS-class
-  processing tail, which is deferred.
+- **Pure-Go library gaps:** `simplefeatures` covers the planar surface but neither the 4326
+  edges nor the GEOS-class processing tail, both of which are this design's own work or
+  deferred.
 - **Parsers take untrusted bytes:** geometry parsing is the one new path a client drives
   with arbitrary input, so a parser bug is an availability risk for the server, not just
   the session. Go makes this sharper than MySQL: a stack overflow is a fatal crash with no
