@@ -307,14 +307,10 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
 	checker.reset(sctx, is, tableNames, maxNumParam)
-	if update, ok := node.(*ast.UpdateStmt); ok {
+	if update, ok := node.(*ast.UpdateStmt); ok && len(tableNames) == 1 {
 		for _, assignment := range update.List {
-			if fn, ok := assignment.Expr.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce && len(fn.Args) == 2 {
-				// Cross-column assignments can introduce observable conversions even
-				// on a miss, so initially allow only updates of the fallback column.
-				if col, ok := fn.Args[1].(*ast.ColumnNameExpr); ok && col.Name.Name.L == assignment.Column.Name.L {
-					checker.coalesceAssignments = append(checker.coalesceAssignments, fn)
-				}
+			if checker.isSupportedCoalesceAssignment(assignment) {
+				checker.coalesceAssignments = append(checker.coalesceAssignments, assignment.Expr.(*ast.FuncCallExpr))
 			}
 		}
 	}
@@ -480,7 +476,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (skipChildren
 		}
 		return !checker.cacheable
 	case *ast.FuncCallExpr:
-		if node.FnName.L == ast.Coalesce && checker.cacheableCoalesceAssignment(node) {
+		if node.FnName.L == ast.Coalesce && slices.Contains(checker.coalesceAssignments, node) {
 			return false
 		}
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
@@ -739,15 +735,16 @@ func checkTableCacheable(ctx context.Context, sctx base.PlanContext, schema info
 	return true, ""
 }
 
-// cacheableCoalesceAssignment initially supports only UPDATE SET expressions of
-// the form col = COALESCE(numeric literal, col), where col is numeric. Prepared statements and
-// other contexts retain the shared blacklist entry.
+// isSupportedCoalesceAssignment checks the AST shape and column types for the
+// narrow non-prepared UPDATE exception. This is not a check of the inferred
+// COALESCE return type: cached plans separately require exact parameter precision.
 // TODO: Rebuild dependent expression types and implicit casts before allowing
 // cross-precision reuse. Never mutate expression types in a shared cached plan.
 // TODO: Extend MySQL compatibility coverage (metadata, NULL transitions, rounding,
 // warnings and scalar/vectorized evaluation) before broadening this exception.
-func (checker *nonPreparedPlanCacheableChecker) cacheableCoalesceAssignment(fn *ast.FuncCallExpr) bool {
-	if len(fn.Args) != 2 || !slices.Contains(checker.coalesceAssignments, fn) {
+func (checker *nonPreparedPlanCacheableChecker) isSupportedCoalesceAssignment(assignment *ast.Assignment) bool {
+	fn, ok := assignment.Expr.(*ast.FuncCallExpr)
+	if !ok || fn.FnName.L != ast.Coalesce || len(fn.Args) != 2 {
 		return false
 	}
 	value, ok := fn.Args[0].(*driver.ValueExpr)
@@ -755,18 +752,33 @@ func (checker *nonPreparedPlanCacheableChecker) cacheableCoalesceAssignment(fn *
 		return false
 	}
 	col, ok := fn.Args[1].(*ast.ColumnNameExpr)
-	if !ok {
+	if !ok || len(checker.tableNodes) != 1 {
 		return false
 	}
-	for _, table := range checker.tableNodes {
-		tp, found := getColType(checker.schema, table, col.Name)
-		if !found {
-			continue
+	table := checker.tableNodes[0]
+	tb, err := checker.schema.TableByName(context.Background(), table.Schema, table.Name)
+	if err != nil {
+		return false
+	}
+	var target, fallback *types.FieldType
+	for _, c := range tb.Cols() {
+		if c.Name.L == assignment.Column.Name.L {
+			target = &c.FieldType
 		}
-		switch tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
-			return true
+		if c.Name.L == col.Name.Name.L {
+			fallback = &c.FieldType
 		}
+	}
+	if target == nil || fallback == nil {
+		return false
+	}
+	switch target.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
+		// Equal covers precision, signedness, charset and collation. Also keep
+		// scale and value-related flags identical rather than relying on casts.
+		const flags = mysql.NotNullFlag | mysql.UnsignedFlag | mysql.ZerofillFlag
+		return target.Equal(fallback) && target.GetDecimal() == fallback.GetDecimal() &&
+			target.GetFlag()&flags == fallback.GetFlag()&flags
 	}
 	return false
 }

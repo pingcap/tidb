@@ -2374,6 +2374,7 @@ func TestNonPreparedCoalescePrecision(t *testing.T) {
 }
 
 func TestNonPreparedCoalesceScope(t *testing.T) {
+	t.Run("CrossColumnTypes", testNonPreparedCoalesceCrossColumnTypes)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2417,4 +2418,60 @@ func TestNonPreparedCoalesceScope(t *testing.T) {
 	tk.MustExec("update coalesce_scope set d=greatest(4,d) where id=1")
 	tk.MustExec("update coalesce_scope set d=greatest(5,d) where id=1")
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+}
+
+func testNonPreparedCoalesceCrossColumnTypes(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, target, fallback string
+			cacheable              bool
+		}{
+			{"decimal", "decimal(20,8)", "decimal(20,8)", true},
+			{"integer", "bigint", "bigint", true},
+			{"unsigned", "bigint unsigned", "bigint unsigned", true},
+			{"precision", "decimal(20,8)", "decimal(19,8)", false},
+			{"scale", "decimal(20,8)", "decimal(20,7)", false},
+			{"signedness", "bigint unsigned", "bigint", false},
+			{"integer_width", "bigint", "int", false},
+			{"nullability", "bigint not null", "bigint", false},
+			{"string", "varchar(50)", "decimal(20,8)", false},
+		} {
+			t.Run(fmt.Sprintf("instance=%v/%s", instance, tc.name), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				cached, fresh := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+				cached.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+				for i, tk := range []*testkit.TestKit{cached, fresh} {
+					tk.MustExec("use test")
+					tk.MustExec(fmt.Sprintf("set tidb_enable_non_prepared_plan_cache=%v", i == 0))
+					tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				}
+				cached.MustExec("create table cached_cross(id int primary key, dst " + tc.target + ", src " + tc.fallback + ")")
+				fresh.MustExec("create table fresh_cross like cached_cross")
+				cached.MustExec("insert into cached_cross values(1,0,7)")
+				fresh.MustExec("insert into fresh_cross values(1,0,7)")
+				// Include rounding into integer targets, precision changes, and
+				// NULL fallback. Compare evaluation warnings as well as rows.
+				for _, literal := range []string{"1.23456789", "2.34567891", "3.14159", "1", "NULL"} {
+					for run := range 2 {
+						results := make([][][]any, 2)
+						warnings := make([][][]any, 2)
+						for i, tk := range []*testkit.TestKit{cached, fresh} {
+							table := "cached_cross"
+							if i == 1 {
+								table = "fresh_cross"
+							}
+							tk.MustExec("update " + table + " as x set x.dst=coalesce(" + literal + ",x.src) where x.id=1")
+							if i == 0 && run == 1 {
+								require.Equal(t, tc.cacheable && literal != "NULL", tk.Session().GetSessionVars().FoundInPlanCache, literal)
+							}
+							warnings[i] = tk.MustQuery("show warnings").Rows()
+							results[i] = tk.MustQuery("select dst,src from " + table).Rows()
+						}
+						require.Equal(t, results[1], results[0], literal)
+						require.Equal(t, warnings[1], warnings[0], literal)
+					}
+				}
+			})
+		}
+	}
 }
