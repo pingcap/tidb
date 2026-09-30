@@ -750,7 +750,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 	}
 	_, err = w.resolveLocks(ctx, safePoint, concurrency, usePhysical)
 	if err != nil {
-		logutil.Logger(ctx).Error("resolve locks returns an error", zap.String("category", "gc worker"),
+		logutil.Logger(ctx).Warn("resolve locks returns an error", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("resolve_lock").Inc()
@@ -846,7 +846,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		})
 
 		if err != nil {
-			logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
@@ -855,7 +855,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		}
 
 		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
-			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("gc placement rules failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
@@ -913,7 +913,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
 		if err != nil {
-			logutil.Logger(ctx).Error("redo-delete range failed on range", zap.String("category", "gc worker"),
+			logutil.Logger(ctx).Warn("redo-delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
@@ -1193,7 +1193,7 @@ func (w *GCWorker) legacyResolveLocks(
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
-		logutil.Logger(ctx).Error("resolve locks failed", zap.String("category", "gc worker"),
+		logutil.Logger(ctx).Warn("resolve locks failed", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
 			zap.Uint64("safePoint", safePoint),
 			zap.Error(err))
