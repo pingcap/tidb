@@ -203,6 +203,11 @@ MySQL form and cannot come back on the bare path, while a value whose only exten
 SRID does, because MySQL represents any SRID in its own binary format. That is what keeps
 replication and dump whole for a column MySQL itself accepts.
 
+The bare path applies **no axis conversion** to such a value, because the swap follows the
+SRS definition and v1 has no definition for an SRID outside 0 and 4326. The bytes pass
+through in the order they arrived, which is exactly what makes the round trip exact, and it
+is the same reason the functions that would reorder them error instead.
+
 Both directions of the bare path are v1 choices, not properties of the format. Later
 versions can widen either end without a migration: ingest could try to recognise the format it was handed rather than
 assume MySQL's, and bare output could do something better than erroring, so long as it is
@@ -627,7 +632,7 @@ Out of scope here, each with a home:
 | Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own. No new operator, access path or statistics. `ANALYZE` skips geometry as it skips JSON and the blob types, which means adding `geometry` both to the accepted values of `tidb_analyze_skip_column_types` and to its default, today `json,blob,mediumblob,longblob,mediumtext,longtext`. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
 | BR | None. Backs up and restores bytes and metadata without interpreting column values. |
-| Dumpling, Lightning | Geometry dumps as MySQL's binary format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged. A table holding extended values cannot be dumped that way, since a bare `SELECT` of them errors; dumping those needs `ST_AsEWKB` and emitting `ST_GeomFromEWKB(0x...)`, which is Dumpling work and TiDB-only output. |
+| Dumpling, Lightning | Geometry dumps as MySQL's binary format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged. A column holding Z/M values cannot be dumped that way, since MySQL has no form for them and a bare `SELECT` errors; those need `ST_AsEWKB` and an `ST_GeomFromEWKB(0x...)` literal, which is Dumpling work and TiDB-only output. An SRID outside 0 and 4326 needs none of that, since it round-trips on the bare path unchanged. |
 | DM | Replicating MySQL into TiDB carries geometry in MySQL's binary format, since the binlog row image is the same bytes MySQL stores and returns, and that is exactly what the bare ingest path takes. DM itself needs no change; the conversion, including the geographic axis swap, is TiDB-side. This is the migration case the bare path is chosen for. |
 | TiFlash, TiCDC | Not pass-through, and for a different reason than the tools above: both read the stored value from the KV layer rather than through the SQL layer, so they see the format-version byte and EWKB, not MySQL's format. TiCDC into a MySQL sink therefore has to convert before it emits, and TiFlash has to learn the type before it can replicate at all. Both are separate work; until then a table with a geometry column should not be assumed replicable to TiFlash. |
 | Upgrade | Additive: the type does not exist in earlier releases, so no existing schema or query changes behavior. |
@@ -653,10 +658,11 @@ decision were quietly undone.
   loads as the same geometry. Byte-compared against MySQL for both SRIDs, which is what
   catches the geographic axis swap: at 4326 the bare bytes must be longitude-first while
   `ST_AsBinary` of the same value is latitude-first, and at SRID 0 the two agree.
-- **Extended data stays opt-in.** Z/M values and SRIDs outside 0 and 4326 go in through
-  `ST_GeomFromEWKB` and come back byte-identical through `ST_AsEWKB`, while a bare `SELECT`
-  of them errors naming `ST_AsEWKB`, and every function that interprets coordinates errors
-  clearly on them.
+- **Extended data splits two ways.** A Z/M value goes in through `ST_GeomFromEWKB`, comes
+  back byte-identical through `ST_AsEWKB`, and errors on a bare `SELECT`, since MySQL has no
+  form for it. A value whose only extension is its SRID round-trips on the bare path
+  byte-for-byte instead, with no axis conversion applied, which is the case replication and
+  dump depend on. Functions that interpret coordinates error on both.
 - **Parsing is bounded, and bounded equally.** WKB nested past the depth the parser bounds,
   truncated and over-long inputs in each format, and a fuzz target over the WKT, WKB and
   GeoJSON parsers. The bar is a clean error, never a panic, since Go's stack overflow is
