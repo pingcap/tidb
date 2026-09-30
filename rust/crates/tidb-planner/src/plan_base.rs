@@ -439,6 +439,14 @@ pub enum PlanErrorKind {
         /// One-based ORDER BY item position.
         position: usize,
     },
+    /// Go `plannererrors.ErrFieldInGroupingNotGroupBy` (3602): the
+    /// only-full-group-by arm a `WITH ROLLUP` query takes — go's
+    /// `checkOnlyFullGroupByWithGroupClause` rewrites the offending select
+    /// item through the rollup GROUPING lens and names the item's position.
+    FieldInGroupingNotGroupByArg {
+        /// The offending expression's 1-based position in the SELECT list.
+        position: usize,
+    },
     /// Go `plannererrors.ErrFieldNotInGroupBy` (1055).
     FieldNotInGroupBy {
         /// One-based expression position.
@@ -849,6 +857,18 @@ impl PlanError {
                 clause,
                 column,
             },
+        }
+    }
+
+    /// Go `plannererrors.ErrFieldInGroupingNotGroupBy` (3602), the
+    /// `checkOnlyFullGroupByWithGroupClause` rollup arm (`:3577`).
+    #[must_use]
+    pub fn field_in_grouping_not_group_by_arg(position: usize) -> Self {
+        Self {
+            message: format!(
+                "Argument {position} of GROUPING function is not in GROUP BY"
+            ),
+            kind: PlanErrorKind::FieldInGroupingNotGroupByArg { position },
         }
     }
 

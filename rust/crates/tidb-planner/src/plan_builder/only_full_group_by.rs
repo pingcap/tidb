@@ -286,6 +286,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ) {
                 continue;
             }
+            // `:3577` a WITH ROLLUP select list goes through the rollup
+            // GROUPING rewrite, so a still-unjustified SELECT-list item
+            // reports 3602 naming its position — NOT 1055 (oracle g-group:
+            // `SELECT g, v FROM go1 GROUP BY g WITH ROLLUP` answers
+            // `Argument 2 of GROUPING function is not in GROUP BY`).
+            if offender.clause == Clause::Select && select.rollup {
+                return Err(PlanError::field_in_grouping_not_group_by_arg(
+                    offender.position,
+                ));
+            }
             return Err(err_field_not_in_group_by(
                 offender.position,
                 offender.clause,

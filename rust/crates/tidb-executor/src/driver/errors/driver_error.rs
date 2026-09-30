@@ -743,6 +743,12 @@ pub enum DriverError {
     /// resolves to an aggregate or window-function select field, which
     /// cannot itself be grouped on.
     WrongGroupField(String),
+    /// Go `plannererrors.ErrFieldInGroupingNotGroupBy` (3602): the
+    /// only-full-group-by arm a `WITH ROLLUP` query takes.
+    FieldInGroupingNotGroupByArg {
+        /// The offending expression's 1-based position in the SELECT list.
+        position: usize,
+    },
     /// Go `plannererrors.ErrFieldNotInGroupBy` (1055): under
     /// `ONLY_FULL_GROUP_BY`, an expression reports a column that `GROUP BY`
     /// neither pins nor functionally determines.

@@ -98,10 +98,14 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         // caller wrapped by hand. Rendering through the twin keeps ONE
         // spelling of each message instead of a second copy. Named one by one
         // rather than with `_` so a new executor failure has to be placed.
+        ExecError::JsonDocumentNullKey => {
+            // Evaluation-origin: go's warning buffer stays EMPTY beside the
+            // fatal 3158 (oracle g-group: `JSON_OBJECTAGG(NULL, 1)`).
+            DriverError::from(error).to_mysql_error().from_evaluation()
+        }
         error @ (ExecError::SubqueryReturnsMoreThanOneRow
         | ExecError::CteMaxRecursionDepth(_)
         | ExecError::MemoryExceedForQuery { .. }
-        | ExecError::JsonDocumentNullKey
         | ExecError::InvalidJsonCharset { .. }) => DriverError::from(error).to_mysql_error(),
     }
 }
@@ -150,15 +154,12 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
                 _ => json.code(),
             };
             let error = MysqlError::coded(code, json.message());
-            // The path-parse failure is an evaluation-origin event: go's
-            // write/read flags never record it as its own warning row (the
-            // column-sourced `JSON_EXTRACT(a, 1)` answers 1105 with an EMPTY
-            // SHOW WARNINGS).
-            if code == 1105 {
-                error.from_evaluation()
-            } else {
-                error
-            }
+            // Every error here is evaluation-origin: go's warning buffer
+            // never records a FATAL evaluation error as its own row beside
+            // the statement error (the column-sourced `JSON_EXTRACT(a, 1)`
+            // answers 1105 with an EMPTY SHOW WARNINGS; oracle g-group:
+            // `JSON_OBJECTAGG(NULL, 1)` answers 3158 the same way).
+            error.from_evaluation()
         }
         EvalError::Sequence(sequence) => MysqlError::coded(sequence.code(), sequence.message()),
         // The collation class is how a user learns a query needs an explicit

@@ -1279,6 +1279,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             return Err(RewriteError::OperandColumns(1));
         }
         if l_len != np_schema.len() {
+            eprintln!("E1241:compare-subquery l_len={l_len} np={}", np_schema.len());
             return Err(RewriteError::OperandColumns(l_len));
         }
         let rexpr = self.row_of_schema(&np_schema)?;

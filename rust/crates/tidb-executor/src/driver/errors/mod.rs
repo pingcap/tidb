@@ -798,10 +798,18 @@ impl DriverError {
             1111,
             "Invalid use of group function".to_owned(),
         ),
-        // Go: "Argument #%d of GROUPING function is not in GROUP BY".
+        // Go: "Argument #%d of GROUPING function is not in GROUP BY"
+        // (`resolveGroupingFuncArgsInGroupBy`, the eval-facing rewrite arm).
         DriverError::FieldInGroupingNotGroupBy(position) => MysqlError::new(
             3602,
             format!("Argument #{position} of GROUPING function is not in GROUP BY"),
+        ),
+        // Go: "Argument %s of GROUPING function is not in GROUP BY" fed
+        // `strconv.Itoa(offset+1)` (`checkOnlyFullGroupByWithGroupClause`'s
+        // rollup arm), so this spelling carries NO `#`.
+        DriverError::FieldInGroupingNotGroupByArg { position } => MysqlError::new(
+            3602,
+            format!("Argument {position} of GROUPING function is not in GROUP BY"),
         ),
         // Go: "Unknown column '%-.192s' in '%-.192s'".
         DriverError::UnknownColumnInTable { column, table } => MysqlError::new(

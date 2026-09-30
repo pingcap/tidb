@@ -903,8 +903,35 @@ fn rewrite_comparison(
 ) -> Result<Expression, EvalError> {
     match (left, right) {
         (Expr::Row(left), Expr::Row(right)) => rewrite_row_comparison(op, left, right, resolver),
-        (Expr::Row(left), _) => Err(EvalError::OperandColumns(left.len())),
-        (_, Expr::Row(_)) => Err(EvalError::OperandColumns(1)),
+        // go's ctxStack holds BUILT expressions by the time
+        // `constructBinaryOpFunction` runs: one side a row, the other a
+        // folded multi-column scalar subquery's `row` function
+        // (`(a,b) = (SELECT a,b ...)` with an uncorrelated subquery) is a
+        // row comparison over the built sides (oracle g-subq: empty result).
+        (Expr::Row(left), other) | (other, Expr::Row(left)) => {
+            let built = rewrite_expr_resolved(other, resolver)?;
+            let (row_on_left, right_args) = match &built {
+                Expression::ScalarFunction(function)
+                    if function.func_name.lowercase() == "row"
+                        && function.get_args().len() == left.len() =>
+                {
+                    (true, function.get_args().to_vec())
+                }
+                _ => return Err(EvalError::OperandColumns(left.len())),
+            };
+            let mut left_args = Vec::with_capacity(left.len());
+            for element in left {
+                left_args.push(rewrite_expr_resolved(element, resolver)?);
+            }
+            // Keep the operator's orientation: the row's element stays on the
+            // side it was written on.
+            let (lhs, rhs): (&Vec<Expression>, &Vec<Expression>) = if row_on_left {
+                (&left_args, &right_args)
+            } else {
+                (&right_args, &left_args)
+            };
+            row_comparison_of_built(op, lhs, rhs, resolver)
+        }
         _ => binary_expression(
             op,
             rewrite_expr_resolved(left, resolver)?,
@@ -912,6 +939,57 @@ fn rewrite_comparison(
             resolver,
         ),
     }
+}
+
+/// go `constructBinaryOpFunction`'s row arms over BUILT expressions:
+/// equality and NULL-safe equality are CNF, inequality is DNF, and ordering
+/// is lexicographic DNF whose prefix comparisons use the STRICT form.
+fn row_comparison_of_built(
+    op: BinaryOp,
+    left: &[Expression],
+    right: &[Expression],
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    let pair = |op: BinaryOp, i: usize| -> Result<Expression, EvalError> {
+        binary_expression(op, left[i].clone(), right[i].clone(), resolver)
+    };
+    if matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::NullEq) {
+        let join = if op == BinaryOp::Ne {
+            BinaryOp::LogicOr
+        } else {
+            BinaryOp::LogicAnd
+        };
+        let first = pair(op, 0)?;
+        return (1..left.len()).try_fold(first, |condition, i| {
+            binary_expression(join, condition, pair(op, i)?, resolver)
+        });
+    }
+    // Lexicographic DNF: positions before `i` are equal, position `i` decides.
+    let mut alternatives = Vec::with_capacity(left.len());
+    for i in 0..left.len() {
+        let mut conj = Vec::with_capacity(i + 1);
+        for j in 0..i {
+            conj.push(pair(BinaryOp::Eq, j)?);
+        }
+        let decider = if i + 1 < left.len() {
+            match op {
+                BinaryOp::Ge => BinaryOp::Gt,
+                BinaryOp::Le => BinaryOp::Lt,
+                _ => op,
+            }
+        } else {
+            op
+        };
+        conj.push(pair(decider, i)?);
+        let first = conj.remove(0);
+        alternatives.push(conj.into_iter().try_fold(first, |condition, term| {
+            binary_expression(BinaryOp::LogicAnd, condition, term, resolver)
+        })?);
+    }
+    let first = alternatives.remove(0);
+    alternatives.into_iter().try_fold(first, |condition, term| {
+        binary_expression(BinaryOp::LogicOr, condition, term, resolver)
+    })
 }
 
 fn compose_comparisons(

@@ -663,6 +663,11 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 position: *position,
             }
         }
+        tidb_planner::plan_base::PlanErrorKind::FieldInGroupingNotGroupByArg { position } => {
+            DriverError::FieldInGroupingNotGroupByArg {
+                position: *position,
+            }
+        }
         tidb_planner::plan_base::PlanErrorKind::FieldNotInGroupBy {
             position,
             clause,
