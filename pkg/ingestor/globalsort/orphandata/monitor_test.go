@@ -349,8 +349,8 @@ func TestMonitor(t *testing.T) {
 		require.Len(t, successLogs, 1)
 		fields := successLogs[0].ContextMap()
 		require.NotContains(t, fields, "storage-uri")
-		require.EqualValues(t, 66, fields["orphan-data-size-bytes"])
-		require.EqualValues(t, 11, fields["orphan-data-object-count"])
+		require.EqualValues(t, 66, fields["size-bytes"])
+		require.EqualValues(t, 11, fields["object-count"])
 		require.Equal(t, []any{
 			"prefix-00/", "prefix-01/", "prefix-02/", "prefix-03/", "prefix-04/",
 			"prefix-05/", "prefix-06/", "prefix-07/", "prefix-08/", "prefix-09/",
@@ -420,8 +420,8 @@ func TestMonitor(t *testing.T) {
 		for _, field := range []string{
 			"storage-uri",
 			"task-count",
-			"orphan-data-size-bytes",
-			"orphan-data-object-count",
+			"size-bytes",
+			"object-count",
 			"sample-prefixes",
 			"sample-prefixes-omitted",
 		} {
