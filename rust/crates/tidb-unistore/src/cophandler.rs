@@ -499,11 +499,7 @@ fn exec_index_scan(
         }
     }
     if let Some(spec) = topn {
-        // Go `topNProcessor.Finish` (`closure_exec.go:1064`): the kept rows
-        // replay in key order; a separate Limit above caps the replay
-        // further.
-        spec.sort_rows(&mut topn_rows);
-        topn_rows.truncate(spec.limit);
+        let topn_rows = go_topn_heap_finish(&spec.keys, topn_rows, spec.limit);
         for (projected, _) in topn_rows {
             rows.push(projected);
             emitted += 1;
@@ -812,12 +808,7 @@ fn exec_table_scan(
         }
     }
     if let Some(spec) = topn {
-        // Go `topNProcessor.Finish` (`closure_exec.go:1064`): the kept rows
-        // replay in key order; a separate Limit above caps the replay
-        // further. Sorted ties are deterministic here where Go's unstable
-        // sort leaves them unordered.
-        spec.sort_rows(&mut topn_rows);
-        topn_rows.truncate(spec.limit);
+        let topn_rows = go_topn_heap_finish(&spec.keys, topn_rows, spec.limit);
         for (projected, _) in topn_rows {
             let encoded = match tidb_codec::encode_value_in_timezone(&timezone, &projected) {
                 Ok(encoded) => encoded,
@@ -1214,6 +1205,113 @@ impl TopNSpec {
 /// non-NULL datum, numerics compare by value across signedness, `Time` and
 /// `Duration` through their own comparators, and the string kinds under the
 /// key's collation.
+/// Go's cop TopN is NOT sort-then-truncate: `topNHeap.tryToAddRow`
+/// (`cophandler/topn.go`) admits a row iff it sorts STRICTLY before the heap
+/// root -- a tie never evicts, so among equal keys the EARLIEST scanned rows
+/// survive -- and `topNProcessor.Finish` (`closure_exec.go:1058`) replays the
+/// survivors through `sort.Sort` (insertion sort for n <= 12, stable in
+/// effect). Buffer-then-truncate reshuffles ties and can drop the wrong tied
+/// rows (oracle g-group: `ORDER BY g LIMIT 100`).
+fn go_topn_heap_finish(
+    by_items: &[(SimpleExpr, bool, tidb_datatype::Collation)],
+    topn_rows: Vec<(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)>,
+    limit: usize,
+) -> Vec<(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)> {
+    let ordering = |a: &[tidb_datatype::Datum], b: &[tidb_datatype::Datum]| {
+        let mut order = std::cmp::Ordering::Equal;
+        for ((_, desc, collation), (left, right)) in by_items.iter().zip(a.iter().zip(b.iter())) {
+            let mut step = match compare_sort_keys(left, right, collation) {
+                Ok(step) => step,
+                Err(_) => std::cmp::Ordering::Equal,
+            };
+            if *desc {
+                step = step.reverse();
+            }
+            if step != std::cmp::Ordering::Equal {
+                order = step;
+                break;
+            }
+        }
+        order
+    };
+    // `heap_less(i, j)`: `topNHeap.Less` returns true when row i's key sorts
+    // AFTER row j's (`ret > 0`), making the root the worst retained row.
+    let heap_less = |heap: &[(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)],
+                     i: usize,
+                     j: usize| { ordering(&heap[i].1, &heap[j].1) == std::cmp::Ordering::Greater };
+    let heap_up =
+        |heap: &mut Vec<(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)>, mut j: usize| {
+            while j > 0 {
+                let i = (j - 1) / 2;
+                if i == j || !heap_less(heap, j, i) {
+                    break;
+                }
+                heap.swap(i, j);
+                j = i;
+            }
+        };
+    let heap_down =
+        |heap: &mut Vec<(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)>,
+         i0: usize,
+         n: usize| {
+            let mut i = i0;
+            loop {
+                let j1 = 2 * i + 1;
+                if j1 >= n {
+                    break;
+                }
+                let mut j = j1;
+                let j2 = j1 + 1;
+                if j2 < n && heap_less(heap, j2, j1) {
+                    j = j2;
+                }
+                if !heap_less(heap, j, i) {
+                    break;
+                }
+                heap.swap(i, j);
+                i = j;
+            }
+            i > i0
+        };
+    let mut heap: Vec<(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)> = Vec::new();
+    for candidate in topn_rows {
+        if heap.len() == limit {
+            // `tryToAddRow`'s full case: park the candidate at index
+            // `heapSize`, evict the root iff the root sorts strictly after it
+            // (a tie keeps the incumbent), then drop the tail.
+            heap.push(candidate);
+            let tail = heap.len() - 1;
+            if heap_less(&heap, 0, tail) {
+                heap.swap(0, tail);
+                if !heap_down(&mut heap, 0, tail) {
+                    heap_up(&mut heap, 0);
+                }
+            }
+            heap.truncate(tail);
+        } else {
+            // `heap.Push`: append, then sift up.
+            heap.push(candidate);
+            let last = heap.len() - 1;
+            heap_up(&mut heap, last);
+        }
+    }
+    // `topNProcessor.Finish`: `sort.Sort(&ctx.heap.topNSorter)` over the
+    // survivors, ascending under the by-item order.
+    let mut sorted = heap;
+    if sorted.len() <= 12 {
+        for i in 1..sorted.len() {
+            let mut j = i;
+            while j > 0 && ordering(&sorted[j].1, &sorted[j - 1].1) == std::cmp::Ordering::Less {
+                sorted.swap(j, j - 1);
+                j -= 1;
+            }
+        }
+    } else {
+        sorted.sort_by(|a, b| ordering(&a.1, &b.1));
+    }
+    sorted
+}
+
 fn compare_sort_keys(
     left: &tidb_datatype::Datum,
     right: &tidb_datatype::Datum,
