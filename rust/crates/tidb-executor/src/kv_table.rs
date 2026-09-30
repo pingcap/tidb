@@ -811,15 +811,31 @@ impl PointRead<'_> {
         decoder: &PreparedPointGetRowDecoder,
         context: &PreparedPointGetDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let Some((_, entry)) = read_stored_record(
-            self.store.as_mut(),
-            self.table.record_physical_ids(),
-            handle,
-        )?
-        else {
+        // The common sysbench point-get shape is an unpartitioned table. Avoid
+        // allocating a one-element physical-id Vec for every row lookup; Go's
+        // point reader carries the table id directly in that shape.
+        let record = if self.table.read_partitions.is_none() && self.table.partition.is_none() {
+            read_stored_record_one(self.store.as_mut(), self.table.table_id, handle)?
+        } else {
+            read_stored_record(self.store.as_mut(), self.table.record_physical_ids(), handle)?
+        };
+        let Some((_, entry)) = record else {
             return Ok(None);
         };
         decoder.decode(handle, &entry, context).map(Some)
+    }
+}
+
+fn read_stored_record_one(
+    store: &mut dyn TableStorage,
+    physical_id: i64,
+    handle: &TableHandle,
+) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
+    let key = Key::from_bytes(encode_row_key_with_handle(physical_id, &handle.record_handle()));
+    match store.get(&key) {
+        Ok(entry) => Ok(Some((key, entry))),
+        Err(StorageError::NotFound) => Ok(None),
+        Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
     }
 }
 
@@ -1698,6 +1714,9 @@ impl KvTable {
         &mut self,
         handle: &TableHandle,
     ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
+        if self.read_partitions.is_none() && self.partition.is_none() {
+            return read_stored_record_one(self.store.as_mut(), self.table_id, handle);
+        }
         let physical_ids = self.record_physical_ids();
         read_stored_record(self.store.as_mut(), physical_ids, handle)
     }
