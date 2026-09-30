@@ -34,8 +34,10 @@ type ActiveProducerChecker interface {
 // Config configures an orphan data Monitor.
 type Config struct {
 	ActiveProducerChecker ActiveProducerChecker
-	StorageURI            string
-	Logger                *zap.Logger
+	// StorageURI returns the cloud storage URI to scan. It is a function so the
+	// monitor reads the latest value, which may change with the system variable.
+	StorageURI func() string
+	Logger     *zap.Logger
 }
 
 type noActiveProducerChecker struct{}
@@ -62,6 +64,9 @@ func NewMonitor(cfg Config) *Monitor {
 	if cfg.ActiveProducerChecker == nil {
 		cfg.ActiveProducerChecker = noActiveProducerChecker{}
 	}
+	if cfg.StorageURI == nil {
+		cfg.StorageURI = func() string { return "" }
+	}
 	return &Monitor{
 		cfg:          cfg,
 		storeFactory: newStore,
@@ -80,6 +85,11 @@ func newStore(ctx context.Context, uri string) (storeapi.Storage, error) {
 // synchronously and is not safe for concurrent use: the scheduler cleanup loop
 // calls it serially from its own goroutine, which also owns cancellation.
 func (m *Monitor) Trigger(ctx context.Context) {
+	storageURI := m.cfg.StorageURI()
+	if storageURI == "" {
+		return
+	}
+
 	hasActiveProducers, err := m.cfg.ActiveProducerChecker.HasActiveProducers(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -91,25 +101,21 @@ func (m *Monitor) Trigger(ctx context.Context) {
 		return
 	}
 
-	storageURI := m.cfg.StorageURI
-	var scan Stats
-	if storageURI != "" {
-		storage, err := m.storeFactory(ctx, storageURI)
-		if err != nil {
-			if ctx.Err() == nil {
-				m.cfg.Logger.Warn("global sort orphan data monitor failed to create storage")
-			}
-			return
+	storage, err := m.storeFactory(ctx, storageURI)
+	if err != nil {
+		if ctx.Err() == nil {
+			m.cfg.Logger.Warn("global sort orphan data monitor failed to create storage")
 		}
-		defer storage.Close()
+		return
+	}
+	defer storage.Close()
 
-		scan, err = Scan(ctx, storage)
-		if err != nil {
-			if ctx.Err() == nil {
-				m.cfg.Logger.Warn("global sort orphan data monitor failed to scan storage")
-			}
-			return
+	scan, err := Scan(ctx, storage)
+	if err != nil {
+		if ctx.Err() == nil {
+			m.cfg.Logger.Warn("global sort orphan data monitor failed to scan storage")
 		}
+		return
 	}
 
 	hasActiveProducers, err = m.cfg.ActiveProducerChecker.HasActiveProducers(ctx)
