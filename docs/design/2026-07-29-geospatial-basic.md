@@ -28,7 +28,6 @@
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
 * [Future extensions](#future-extensions)
-* [Appendix: binary format lengths](#appendix-binary-format-lengths)
 * [Appendix: SRS catalog and axis order](#appendix-srs-catalog-and-axis-order)
     * [Catalog row contents](#catalog-row-contents)
     * [EPSG terms of use](#epsg-terms-of-use)
@@ -173,8 +172,7 @@ literal is always MySQL's format, and the stored format stays off the user surfa
 what makes a Dumpling to Lightning round-trip work with no function call, and what lets a
 `mysqldump` load unchanged. The SRID in those bytes is validated against `SRID n` like any
 other ingest path, and the geometry has to consume the input exactly: a byte short or a
-byte long is rejected, as MySQL rejects both with `ERROR 3037`. See
-[the appendix](#appendix-binary-format-lengths) for what that admits.
+byte long is rejected, as MySQL rejects both with `ERROR 3037`.
 
 **That format is not WKB order.** MySQL has one binary representation, `<srid u32 LE><WKB>`,
 and uses it everywhere: what it stores, what a bare `SELECT` returns over the wire, what it
@@ -861,10 +859,8 @@ endianness part of the format rather than a property of the writer. It carries
 no SRID, so it would apply only where a `SRID n` column fixes one, which is the same
 condition under which version 1 already omits the SRID flag.
 
-Two independent checks tell it from a MySQL value, which is what makes it safe to add: the
-first byte is the version, 2 rather than 1, and 17 bytes is a length MySQL's format can
-never produce (see [the appendix](#appendix-binary-format-lengths)). Nothing on the user
-surface changes, since the bare path exchanges MySQL's format either way.
+Nothing on the user surface changes, since the bare path exchanges MySQL's format either
+way.
 
 **Predicates between two extended geometries.** v1 answers the eight DE-9IM predicates on
 4326 only where one operand is a `POINT` ([Reference surface](#srid-model)). Widening that to
@@ -883,38 +879,6 @@ A `GEOGRAPHY` type is a further extension, covered in
 [the appendix](#appendix-postgis-delta-for-the-type-layer). The function tail, the `MBR*`
 family and the rest of the deferred surface are in
 [Scope and deferrals](#scope-and-deferrals).
-
-## Appendix: binary format lengths
-
-A MySQL binary value is `4 + WKB`, and the WKB size follows the structure rather than one
-formula: a `POINT` is 21, a `LINESTRING` of n points `9 + 16n`, a `POLYGON` of r rings and
-p points `9 + 4r + 16p`, a `MULTIPOINT` of n points `9 + 21n` since each member repeats the
-byte-order flag and type word, and any collection `9 + Σ member sizes`. Requiring the
-parse to end exactly at the input length is therefore an exact check, and the one the bare
-path applies.
-
-It is a validity check, not a format tag. What it admits, computed over those rules and
-spot-checked against 9.7.2:
-
-| | |
-| --- | --- |
-| Smallest valid lengths | 13, 22, 25, 29, 31, 33, 34, 38, 40, 42, 43, 45, 47, 49 |
-| Never valid | 1-12, 14-21, 23-24, 26-28, 30, 32, 35-37, 39, 41, 44, 46, 48, 50, 57, 66 |
-| Largest invalid length | **66**; every length from 67 up is valid |
-
-Some of the small valid ones are counter-intuitive, because this path validates framing and
-not geometry, which `ST_IsValid` covers separately. 29 is a `LINESTRING` with a single
-point, 33 a `POLYGON` whose one ring has a single point, and 22 a
-`GEOMETRYCOLLECTION(GEOMETRYCOLLECTION EMPTY)`, which nests in steps of 9 to give 31, 40
-and 49. All three were accepted by 9.7.2. Only framing errors are rejected: a `LINESTRING`
-with no points, a `POLYGON` with no rings, or any `MULTI*` with no members, since
-`GEOMETRYCOLLECTION` is the only container allowed to be empty.
-
-So no length window can be reserved for a second variable-length format. Above 66 there is
-none free, and below it a geometry of arbitrary size has nowhere to live. A fixed-size
-layout is the exception, since it needs one length rather than a window: 17 is never valid
-above, which is what lets the compact point in
-[Future extensions](#future-extensions) be told apart from a MySQL value by length alone.
 
 ## Appendix: SRS catalog and axis order
 
