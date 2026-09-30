@@ -30,9 +30,7 @@ use tidb_exec::cluster_catalog::{
 };
 use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
-    plan_ddl_with_collation, plan_persisted_ddl_job_step,
-    plan_persisted_materialized_view_create_job_step,
-    plan_persisted_materialized_view_log_job_step, prepare_check_constraint_job_submission,
+    plan_ddl_with_collation, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission,
     prepare_materialized_view_job_submission, AlterColumnAction, DdlPlan, DdlPlanError,
     DdlStatement, MdlInfoUpdate, PersistedDdlJobPlan, PersistedDdlJobStep,
 };
@@ -751,34 +749,50 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
 
 #[test]
 fn history_failure_keeps_completed_job_recoverable() {
-    let mut store = bootstrapped();
-    let catalog = load_cluster_catalog(&mut store).unwrap();
-    let queue = DdlJobTable::locate(&catalog).unwrap();
-    let mut job = Job::default();
-    job.id = 900;
-    job.type_ = ActionType::ACTION_CREATE_SCHEMA;
-    job.state = JobState::DONE;
-    let mut mutations = Vec::new();
-    queue
-        .append_insert(&mut job, false, "0", "0", false, &mut mutations)
-        .unwrap();
-    apply_mutations(&mut store, &mutations);
-    // The old action writers discarded this error and removed the queue row.
-    let (db, table) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
-    store.pairs.remove(&key::table_kv_key(db.id, table.id));
-    assert!(plan_persisted_ddl_job_step(&mut store, 900, 10_000, None).is_err());
-    assert_eq!(
-        queue
-            .load_by_id(&mut store, 900)
-            .unwrap()
-            .unwrap()
-            .job
-            .state,
-        JobState::DONE
-    );
-    assert!(!store.pairs.contains_key(&key::ddl_job_history_kv_key(900)));
+    for action in [
+        ActionType::ACTION_CREATE_SCHEMA,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+    ] {
+        for state in [JobState::DONE, JobState::ROLLBACK_DONE, JobState::CANCELLED] {
+            let mut store = bootstrapped();
+            let catalog = load_cluster_catalog(&mut store).unwrap();
+            let queue = DdlJobTable::locate(&catalog).unwrap();
+            let mut job = Job::default();
+            job.id = 900;
+            job.type_ = action;
+            job.state = state;
+            let mut mutations = Vec::new();
+            queue
+                .append_insert(&mut job, false, "0", "0", false, &mut mutations)
+                .unwrap();
+            apply_mutations(&mut store, &mutations);
+            // The old action writers discarded this error and removed the queue row.
+            let (db, table) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
+            store.pairs.remove(&key::table_kv_key(db.id, table.id));
+            let result = match action {
+                ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
+                    plan_mview_log_step(&mut store, 900, 10_000)
+                }
+                ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+                    plan_mview_step(&mut store, 900, 10_000, None)
+                }
+                _ => plan_worker_step(&mut store, 900, 10_000),
+            };
+            assert!(result.is_err());
+            assert_eq!(
+                queue
+                    .load_by_id(&mut store, 900)
+                    .unwrap()
+                    .unwrap()
+                    .job
+                    .state,
+                state
+            );
+            assert!(!store.pairs.contains_key(&key::ddl_job_history_kv_key(900)));
+        }
+    }
 }
-
 #[test]
 fn completed_check_schema_stays_active_until_schema_sync() {
     let mut store = bootstrapped();
@@ -6188,11 +6202,247 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
     );
 }
 
+fn seed_step(
+    plan: Result<PersistedDdlJobPlan, DdlPlanError>,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    match plan? {
+        PersistedDdlJobPlan::Step(step) => Ok(step),
+        PersistedDdlJobPlan::SchemaSync { .. } => panic!("seed step must acknowledge previous MDL"),
+    }
+}
+
+fn plan_mview_log_step(
+    store: &mut MetaStore,
+    job_id: i64,
+    ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    seed_step(
+        tidb_exec::cluster_ddl::plan_persisted_materialized_view_log_job_step(
+            store, job_id, ts, None,
+        ),
+    )
+}
+
+fn plan_mview_step(
+    store: &mut MetaStore,
+    job_id: i64,
+    ts: u64,
+    build: Option<tidb_exec::cluster_ddl::MviewBuildOutcome>,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    seed_step(
+        tidb_exec::cluster_ddl::plan_persisted_materialized_view_create_job_step(
+            store, job_id, ts, build, None,
+        ),
+    )
+}
+
+// Model the worker's schema acknowledgement after committing an action. Each
+// seed phase must recover the same durable queue scope on owner replacement.
+fn acknowledge_mview_schema(store: &mut MetaStore, step: &PersistedDdlJobStep) {
+    assert!(!step.terminal);
+    let job_id = step.write.ddl_job_id;
+    let catalog = load_cluster_catalog(store).unwrap();
+    let queue = DdlJobTable::locate(&catalog).unwrap();
+    let active = queue.load_by_id(store, job_id).unwrap().unwrap();
+    assert!(active.job.real_start_ts > 0);
+    assert!(!store
+        .pairs
+        .contains_key(&key::ddl_job_history_kv_key(job_id)));
+    let mdl = step.write.mdl_info_update.as_ref().unwrap();
+    assert_eq!(mdl.table_ids, active.table_ids);
+    let mut mutations = Vec::new();
+    mdl.append_mutations(job_id, step.write.schema_version, "owner", &mut mutations)
+        .unwrap();
+    apply_mutations(store, &mutations);
+    let plan = match active.job.type_ {
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
+            tidb_exec::cluster_ddl::plan_persisted_materialized_view_log_job_step(
+                store, job_id, 20_000, None,
+            )
+        }
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+            tidb_exec::cluster_ddl::plan_persisted_materialized_view_create_job_step(
+                store, job_id, 20_000, None, None,
+            )
+        }
+        _ => panic!("not a materialized-view seed action"),
+    }
+    .unwrap();
+    let PersistedDdlJobPlan::SchemaSync { version, mdl_info } = plan else {
+        panic!("replacement owner must recover the previous publication before advancing");
+    };
+    assert_eq!(version, step.write.schema_version);
+    assert_eq!(mdl_info.table_ids, active.table_ids);
+    assert!(!tidb_exec::cluster_ddl::supports_persisted_ddl_job(
+        active.job.type_
+    ));
+    assert!(plan_persisted_ddl_job_step(store, job_id, 20_000, None).is_err());
+    let mut cleanup = Vec::new();
+    mdl_info
+        .append_delete_mutations(store, job_id, "owner", &mut cleanup)
+        .unwrap();
+    apply_mutations(store, &cleanup);
+}
+
+fn finish_mview_job(store: &mut MetaStore, job_id: i64, ts: u64) {
+    let catalog = load_cluster_catalog(store).unwrap();
+    let queue = DdlJobTable::locate(&catalog).unwrap();
+    let active = queue.load_by_id(store, job_id).unwrap().unwrap();
+    assert!(matches!(
+        active.job.state,
+        JobState::DONE | JobState::ROLLBACK_DONE
+    ));
+    assert_eq!(
+        active.job.binlog_info.as_ref().unwrap().read().finished_ts,
+        0
+    );
+    let step = match active.job.type_ {
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => plan_mview_log_step(store, job_id, ts),
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW => plan_mview_step(store, job_id, ts, None),
+        _ => panic!("not a materialized-view seed action"),
+    }
+    .unwrap();
+    assert!(step.terminal);
+    assert_eq!(step.write.schema_version, 0);
+    assert!(step.write.mdl_info_update.is_none());
+    apply(store, &step.write);
+    assert!(queue.load_by_id(store, job_id).unwrap().is_none());
+    let finished = DdlHistoryTable::locate(&catalog)
+        .unwrap()
+        .load(store)
+        .unwrap()
+        .into_iter()
+        .find(|job| job.id == job_id)
+        .unwrap();
+    assert_eq!(finished.raw_args, active.job.raw_args);
+    assert_eq!(
+        finished.binlog_info.as_ref().unwrap().read().finished_ts,
+        ts
+    );
+}
+
+#[test]
+fn materialized_view_cancellation_persists_history_and_error() {
+    for (action, args, expected_code) in [
+        (
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+            serde_json::json!({"table_info": {}}),
+            tidb_error::tidb::errcode::ErrInvalidDDLJob,
+        ),
+        (
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+            serde_json::json!({}),
+            tidb_error::tidb::errcode::ErrInvalidDDLJob,
+        ),
+        (
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+            serde_json::json!({"table_info": {}}),
+            tidb_error::tidb::errcode::ErrInvalidDDLJob,
+        ),
+        (
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+            serde_json::json!({}),
+            tidb_error::tidb::errcode::ErrInvalidDDLJob,
+        ),
+        (
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+            serde_json::json!({"table_info": 123}),
+            1105,
+        ),
+        (
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+            serde_json::json!({"table_info": 123}),
+            1105,
+        ),
+    ] {
+        let mut store = bootstrapped();
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 900;
+        job.version = JobVersion::V2;
+        job.type_ = action;
+        job.schema_id = 112;
+        job.schema_name = "u6".into();
+        job.binlog_info = Some(GoShared::new(tidb_model::HistoryInfo::default()));
+        job.fill_v2_arg(serde_json::from_value(args).unwrap());
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, false, "112", "0", true, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let before = store.pairs.clone();
+        let raw_args = queue
+            .load_by_id(&mut store, 900)
+            .unwrap()
+            .unwrap()
+            .job
+            .raw_args
+            .clone();
+        // A wrong action entrypoint must not finalize this queue row. A failed
+        // SQL history write must likewise leave the active row retryable.
+        let wrong_entrypoint = if action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG {
+            plan_mview_step(&mut store, 900, 10_000, None)
+        } else {
+            plan_mview_log_step(&mut store, 900, 10_000)
+        };
+        assert!(wrong_entrypoint.is_err());
+        let mut broken = store.clone();
+        let (db, history) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
+        broken.pairs.remove(&key::table_kv_key(db.id, history.id));
+        let broken_before = broken.pairs.clone();
+        let result = if action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG {
+            plan_mview_log_step(&mut broken, 900, 10_000)
+        } else {
+            plan_mview_step(&mut broken, 900, 10_000, None)
+        };
+        assert!(result.is_err());
+        assert_eq!(broken.pairs, broken_before);
+        assert!(queue.load_by_id(&mut broken, 900).unwrap().is_some());
+        let step = if action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG {
+            plan_mview_log_step(&mut store, 900, 10_000)
+        } else {
+            plan_mview_step(&mut store, 900, 10_000, None)
+        }
+        .expect("cancellation returns committable history mutations");
+        assert!(step.terminal);
+        assert_eq!(step.write.schema_version, 0);
+        assert!(step.write.mdl_info_update.is_none());
+        assert!(step.write.warnings.is_empty());
+        assert_eq!(store.pairs, before, "planning does not publish changes");
+        apply(&mut store, &step.write);
+        assert!(queue.load_by_id(&mut store, 900).unwrap().is_none());
+        let finished = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap()
+            .into_iter()
+            .find(|job| job.id == 900)
+            .unwrap();
+        assert_eq!(finished.state, JobState::CANCELLED);
+        assert_eq!(finished.error_count, 1);
+        assert_eq!(
+            finished.error.as_ref().unwrap().read().code(),
+            tidb_error::terror::TerrorCode::new(expected_code as isize)
+        );
+        assert_eq!(finished.raw_args, raw_args);
+        assert_eq!(
+            finished.binlog_info.as_ref().unwrap().read().finished_ts,
+            10_000
+        );
+        assert!(store.pairs.contains_key(&key::ddl_job_history_kv_key(900)));
+        assert_eq!(
+            load_cluster_catalog(&mut store).unwrap().schema_version,
+            catalog.schema_version
+        );
+    }
+}
+
 /// Go `onCreateMaterializedViewLog` (master `94a9cbedab`): one owner step
 /// turns the submitted job into the created `$mlog$` table, the base's
 /// `MLogID` back-reference, the purge-schedule row, the schema-version bump
-/// with its create-table event, and the terminal history row. The rollback
-/// transition drops the created table and clears the base again.
+/// with its create-table event. History follows schema acknowledgement. The
+/// rollback transition also waits before shared finalization.
 #[test]
 fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
     use tidb_executor::StmtContext;
@@ -6251,9 +6501,11 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
     assert_ne!(job_id, 0);
 
     // The owner step creates everything Go's single phase creates.
-    let step = plan_persisted_materialized_view_log_job_step(&mut store, job_id, 1_502)
-        .expect("the worker step plans");
-    assert!(step.terminal, "the create-log job finishes in one phase");
+    let step = plan_mview_log_step(&mut store, job_id, 1_502).expect("the worker step plans");
+    assert!(
+        !step.terminal,
+        "DONE must wait for schema sync before history"
+    );
     assert_eq!(step.write.schema_version, base_schema_version + 1);
     assert_eq!(
         step.write.diff.action_type,
@@ -6261,6 +6513,9 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
     );
     let mlog_id = step.write.created_id.expect("the step created the mlog");
     apply_mutations(&mut store, &step.write.mutations);
+    if step.write.schema_version != 0 {
+        acknowledge_mview_schema(&mut store, &step);
+    }
 
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
     let database = catalog
@@ -6307,8 +6562,9 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
         .expect("the step recorded the schedule row");
     assert_eq!(row.next_purge_unix_seconds, None);
 
-    // The job left the active queue and landed in history as DONE, carrying
-    // both affected tables.
+    // The shared history transaction follows acknowledgement and carries
+    // both affected tables, with Go's DONE -> SYNCED transition.
+    finish_mview_job(&mut store, job_id, 19_000);
     let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
     let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
     assert!(job_table
@@ -6322,7 +6578,7 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
         .iter()
         .find(|job| job.id == job_id)
         .expect("the finished job is in history");
-    assert_eq!(finished.state, JobState::DONE);
+    assert_eq!(finished.state, JobState::SYNCED);
     let binlog = finished
         .binlog_info
         .as_ref()
@@ -6396,10 +6652,14 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
         .expect("the queued row updates");
     apply_mutations(&mut store, &rewrite);
 
-    let step = plan_persisted_materialized_view_log_job_step(&mut store, rollback_job_id, 1_505)
-        .expect("the rollback step plans");
-    assert!(step.terminal);
+    let step =
+        plan_mview_log_step(&mut store, rollback_job_id, 1_505).expect("the rollback step plans");
+    assert!(!step.terminal);
     apply_mutations(&mut store, &step.write.mutations);
+    if step.write.schema_version != 0 {
+        acknowledge_mview_schema(&mut store, &step);
+    }
+    finish_mview_job(&mut store, rollback_job_id, 19_000);
 
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
     let database = catalog
@@ -6478,9 +6738,11 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     apply_mutations(&mut store, &mutations);
     drop(cleanup);
     let log_job_id = log_submit.job.id;
-    let log_step = plan_persisted_materialized_view_log_job_step(&mut store, log_job_id, 1_602)
-        .expect("the log worker step plans");
+    let log_step =
+        plan_mview_log_step(&mut store, log_job_id, 1_602).expect("the log worker step plans");
     apply_mutations(&mut store, &log_step.write.mutations);
+    acknowledge_mview_schema(&mut store, &log_step);
+    finish_mview_job(&mut store, log_step.write.ddl_job_id, 19_000);
     let mlog_id = log_step
         .write
         .created_id
@@ -6515,9 +6777,7 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
 
     // Phase 1: the catalog gains the view, the base its back-reference, and
     // the job its WriteReorganization transition — non-terminal.
-    let step =
-        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_604, None)
-            .expect("phase 1 plans");
+    let step = plan_mview_step(&mut store, view_job_id, 1_604, None).expect("phase 1 plans");
     assert!(!step.terminal, "phase 1 hands the job to the build phase");
     assert_eq!(
         step.write.diff.action_type,
@@ -6525,6 +6785,9 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     );
     let view_id = step.write.created_id.expect("phase 1 created the view");
     apply_mutations(&mut store, &step.write.mutations);
+    if step.write.schema_version != 0 {
+        acknowledge_mview_schema(&mut store, &step);
+    }
 
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
     let database = catalog
@@ -6616,12 +6879,14 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     // Phase 2 with no caller-supplied outcome runs the pure-tier build
     // itself: the definition SELECT executes over the base rows just seeded
     // and the aggregated view rows land in the completion transaction —
-    // one tick, terminal, job DONE.
-    let step =
-        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_605, None)
-            .expect("the build phase plans, builds, and completes");
-    assert!(step.terminal, "the built job finishes in one tick");
+    // one action tick, job DONE but still active until schema acknowledgement.
+    let step = plan_mview_step(&mut store, view_job_id, 1_605, None)
+        .expect("the build phase plans, builds, and completes");
+    assert!(!step.terminal, "the built job waits for schema sync");
     apply_mutations(&mut store, &step.write.mutations);
+    if step.write.schema_version != 0 {
+        acknowledge_mview_schema(&mut store, &step);
+    }
     let view_id = step.write.created_id.expect("the view id");
 
     // The build actually MOVED the rows: the view answers the aggregation
@@ -6649,7 +6914,8 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         ],
     );
 
-    // The completed job is DONE in history with every affected table.
+    // The shared history transaction follows the successful schema wait.
+    finish_mview_job(&mut store, view_job_id, 19_000);
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
     let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
     let finished = history
@@ -6658,7 +6924,7 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         .into_iter()
         .find(|job| job.id == view_job_id)
         .expect("the finished job is in history");
-    assert_eq!(finished.state, JobState::DONE);
+    assert_eq!(finished.state, JobState::SYNCED);
     let finished_tables: Vec<_> = finished
         .binlog_info
         .as_ref()
@@ -6708,10 +6974,11 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     .expect("the log insertion plans");
     apply_mutations(&mut store, &mutations);
     drop(cleanup);
-    let log_step =
-        plan_persisted_materialized_view_log_job_step(&mut store, log_spec.job.id, 1_609)
-            .expect("the second log worker step plans");
+    let log_step = plan_mview_log_step(&mut store, log_spec.job.id, 1_609)
+        .expect("the second log worker step plans");
     apply_mutations(&mut store, &log_step.write.mutations);
+    acknowledge_mview_schema(&mut store, &log_step);
+    finish_mview_job(&mut store, log_step.write.ddl_job_id, 19_000);
 
     let mut view_spec = prepare_materialized_view_job_submission(
         &mut store,
@@ -6740,11 +7007,12 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     };
 
     // Phase 1 only.
-    let step =
-        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_611, None)
-            .expect("phase 1 plans");
+    let step = plan_mview_step(&mut store, view_job_id, 1_611, None).expect("phase 1 plans");
     assert!(!step.terminal);
     apply_mutations(&mut store, &step.write.mutations);
+    if step.write.schema_version != 0 {
+        acknowledge_mview_schema(&mut store, &step);
+    }
 
     // Persist Rollingback, then the step undoes phase 1.
     let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
@@ -6763,10 +7031,13 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     apply_mutations(&mut store, &rewrite);
 
     let step =
-        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_613, None)
-            .expect("the rollback step plans");
-    assert!(step.terminal);
+        plan_mview_step(&mut store, view_job_id, 1_613, None).expect("the rollback step plans");
+    assert!(!step.terminal);
     apply_mutations(&mut store, &step.write.mutations);
+    if step.write.schema_version != 0 {
+        acknowledge_mview_schema(&mut store, &step);
+    }
+    finish_mview_job(&mut store, view_job_id, 19_000);
 
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
     let database = catalog
@@ -6866,9 +7137,10 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
         drop(cleanup);
     }
     let log_step =
-        plan_persisted_materialized_view_log_job_step(&mut store, log_spec.job.id, 1_702)
-            .expect("the log worker step plans");
+        plan_mview_log_step(&mut store, log_spec.job.id, 1_702).expect("the log worker step plans");
     apply_mutations(&mut store, &log_step.write.mutations);
+    acknowledge_mview_schema(&mut store, &log_step);
+    finish_mview_job(&mut store, log_step.write.ddl_job_id, 19_000);
 
     let mut spec = prepare_materialized_view_job_submission(
         &mut store,
@@ -6895,9 +7167,7 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
         drop(cleanup);
         spec.job.id
     };
-    let phase_one =
-        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_704, None)
-            .expect("phase 1 plans");
+    let phase_one = plan_mview_step(&mut store, view_job_id, 1_704, None).expect("phase 1 plans");
     apply_mutations(&mut store, &phase_one.write.mutations);
 
     // Rows a crashed prior attempt left behind: the view's record range is
@@ -6927,25 +7197,37 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
         store_clustered_row(&residual_view, None, &values).expect("the residual row encodes");
     apply_mutations(&mut store, &mutations);
 
-    // The build tick refuses, moves the job to Rollingback, and stays
-    // non-terminal — Go's own error text rides the step's warning.
-    let step =
-        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_705, None)
-            .expect("the refused tick plans the Rollingback transition");
+    // The build error must survive the Rollingback transition and history;
+    // it is a job error, not a successful statement warning.
+    let step = plan_mview_step(&mut store, view_job_id, 1_705, None)
+        .expect("the refused tick plans the Rollingback transition");
     assert!(!step.terminal, "Rollingback is not terminal");
-    assert_eq!(step.write.warnings.len(), 1);
-    let (level, code, message) = &step.write.warnings[0];
-    assert_eq!((*level, *code), (DdlWarningLevel::Warning, 1105));
-    assert!(message.contains("residual build rows"), "{message}");
+    assert!(step.write.warnings.is_empty());
     apply_mutations(&mut store, &step.write.mutations);
+    if step.write.schema_version != 0 {
+        acknowledge_mview_schema(&mut store, &step);
+    }
+
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let active = DdlJobTable::locate(&catalog)
+        .unwrap()
+        .load_by_id(&mut store, view_job_id)
+        .unwrap()
+        .unwrap();
+    assert!(
+        active.job.error.is_some(),
+        "Go countForError persists the build error"
+    );
+    assert_eq!(active.job.error_count, 1);
 
     // The next tick runs the rollback: the phase-1 view drops and the job
     // ends ROLLBACK_DONE.
     let rollback =
-        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_706, None)
-            .expect("the rollback tick plans");
-    assert!(rollback.terminal, "the rollback ends the job");
+        plan_mview_step(&mut store, view_job_id, 1_706, None).expect("the rollback tick plans");
+    assert!(!rollback.terminal, "rollback waits for schema sync");
     apply_mutations(&mut store, &rollback.write.mutations);
+    acknowledge_mview_schema(&mut store, &rollback);
+    finish_mview_job(&mut store, view_job_id, 19_000);
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
     let database = catalog
         .databases
@@ -6964,6 +7246,18 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
         .find(|job| job.id == view_job_id)
         .expect("the rolled-back job is in history");
     assert_eq!(finished.state, JobState::ROLLBACK_DONE);
+    assert_eq!(finished.error_count, 1);
+    assert_eq!(
+        finished.error.as_ref().unwrap().read().code().value(),
+        tidb_error::tidb::errcode::ErrInvalidDDLJob as isize
+    );
+    assert!(finished
+        .error
+        .as_ref()
+        .unwrap()
+        .read()
+        .to_string()
+        .contains("residual build rows"));
 }
 
 /// Go master `94a9cbedab` parses `ALTER MATERIALIZED VIEW` and
@@ -7215,7 +7509,7 @@ fn persisted_materialized_view_log_step_derives_the_purge_schedule() {
     // The derivation evaluates CAST('2030-01-02 10:00:00' AS DATETIME) under
     // the log's schedule zone (this context's zone is UTC) and persists the
     // unix seconds.
-    let step = plan_persisted_materialized_view_log_job_step(&mut store, job_id, 1_702)
+    let step = plan_mview_log_step(&mut store, job_id, 1_702)
         .expect("the worker step plans with the derived schedule");
     apply_mutations(&mut store, &step.write.mutations);
     let mlog_id = step.write.created_id.expect("the mlog id");

@@ -16,6 +16,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 - [x] Replace partial TiPB schema ownership with the complete pinned external package inputs, generation and drift gate; validate original Go tests and Rust consumers.
 - [x] Repair MPP statement/query/gather/task identity and carry the existing server-info identity; 98 targeted tests, lint, hook and fresh pre-push locked builds passed; published as 7d8d69b6a0.
 - [x] Remove duplicate TiFlash poller startup, detached lifetime and private DDL publisher; validate the shared owner and HTTP consumers.
+- [x] Publish shared persisted DDL worker synchronization and completion (d54903d0b2).
+- [x] Remove five materialized-view seed history writers; preserve durable errors and reuse the shared barrier/finalizer without enabling seed dispatch. Targeted tests, all-target compilation and lint pass; publication gates follow.
 - [ ] Reconcile generic insertion policy with the ordinary table owner.
 - [ ] Reconcile remaining native routing/RPC and operation-lifetime owners.
 - [ ] Resolve each confirmed baseline SQL/DDL/statistics failure at its owning package.
@@ -44,10 +46,22 @@ The old testport manifest contains only 45 package mappings and does not describ
 ## Decision Log
 
 
+For the 2026-09-30 materialized-view cleanup, use explicit seed entrypoints
+around the shared planner instead of adding those actions to live dispatch.
+This removes duplicate completion ownership without integrating unaccepted
+build/reorg implementations. Cancellation shares the finalizer immediately,
+matching Go's transaction reset plus handleJobDone; it does not gain an extra
+schema publication or require another action tick.
+
 Inventory coverage explicitly and implement package-sized owner corrections. Do not promise a complete semantic audit from partial receipts, suppress failing tests, or replace Go policies with broad defaults. Complete generated schemas are the owner of protocol declarations; Rust execution support remains a separately audited consumer.
 
 ## Outcomes & Retrospective
 
+
+The materialized-view maintenance follow-up removes five remaining seed
+history writers and preserves cancellation/build errors. The shared live
+worker tests still pass. This is existing seed maintenance, not new package
+acceptance; the remaining materialized-view action/reorg gaps stay explicit.
 
 The full review remains in progress. The first completed repair removes the partial TiPB schema owner. It does not certify every generated-runtime behavior or SQL consumer as package-complete, and does not establish repository-wide parity.
 
@@ -517,3 +531,77 @@ admission, delete-range GC/DropTableArgs, undispatched materialized-view seed
 lifecycles, pause/cancel/reorg scheduling, MDL-disabled operation and TiFlash
 placement ownership remain open in the audit. No complete package or repository
 parity is claimed.
+
+
+## Materialized-view seed completion cleanup receipt (2026-09-30)
+
+Integration was pulled at d54903d0b2 and Go master refreshed at e953a09d9d.
+Inspection of pkg/ddl/mview_worker.go and job_worker.go shows that action
+handlers finish metadata in DONE/ROLLBACK_DONE while the shared worker owns
+schema acknowledgement and history. Five private Rust seed history writers
+bypass that lifecycle; cancellation constructs mutations and then discards
+them by returning an error. Build rollback records a warning instead of the
+durable Job.Error and ErrorCount.
+
+The explicit seed entrypoints now reuse plan_persisted_ddl_job_with, while the
+live supported-action allowlist remains unchanged. One finish_persisted_ddl_job
+owns SQL/KV history and active-row removal. Actions retain DONE/ROLLBACK_DONE
+in the queue until the MDL (metadata-lock) publication barrier is acknowledged.
+Only finalization stamps finished_ts/sequence_number and converts DONE to
+SYNCED. Cancellation calls this same finalizer immediately with no action
+mutations; its error/count and submitted raw args reach history. Build failures
+persist Job.Error/ErrorCount, replacing the invented statement warning. CHECK
+uses the same error-field owner. All three entrypoints and CHECK error recovery
+now point-read one job instead of scanning and decoding the entire queue.
+
+The before-fix planner regressions failed on premature log history and missing
+build error; the separate cancellation regression failed because no committable
+write set was returned. Logs: /private/tmp/tidb-mview-lifecycle-red.log and
+/private/tmp/tidb-mview-cancel-red.log. The final suite covers each seed schema
+phase's retained active row, full queued table-ID scope, replacement-owner MDL
+recovery, separate history transaction, raw args and completion timestamps.
+Six cancellation cases cover nil/missing metadata and decoding failures;
+wrong-action dispatch is refused and SQL-history failures keep cancellation or
+completed rows retryable. Successful/rolled-back seed actions remain excluded
+from live dispatch. These changes maintain existing seed evidence; they do
+not accept or dispatch a partial upstream package.
+
+Files changed: rust/crates/tidb-exec/src/cluster_ddl.rs,
+rust/crates/tidb-exec/tests/cluster_ddl_source.rs, this ExecPlan and
+rust/docs/parity/current-audit/README.md. No Go/Bazel, generated code or native
+client/dependency inputs changed. bazel_prepare and Go failpoints do not apply.
+
+Exact validation commands from rust/:
+
+    cargo test --locked -p tidb-exec --test all cluster_ddl_source::persisted_materialized_view -- --nocapture
+    cargo test --locked -p tidb-exec --test all cluster_ddl_source::materialized_view_cancellation_persists_history_and_error
+    cargo test --locked -p tidb-exec --test all cluster_ddl_source
+    cargo test --locked -p tidb-exec --lib real_tikv_ddl::tests
+    cargo test --locked -p tidb-server --lib cluster_session_node::ddl::schema_sync_tests
+    cargo check --locked -p tidb-exec --lib
+    cargo check --locked -p tidb-exec -p tidb-server --all-targets
+
+The first two commands are the red reproductions. The final planner, commit
+classification and embedded server runs pass 93 + 7 + 4 tests. The embedded
+server tests use host access for the existing memory/storage setup. Both
+compilation checks pass with existing warnings. Green/check logs are
+/private/tmp/tidb-mview-{lifecycle-green,worker-tests,server-tests,all-targets}.log.
+From the repository root, make lint and git diff --check pass. The hook must
+run its locked Rust server build at commit, followed by a separate
+`cd rust && cargo build --locked -p tidb-server` immediately before push.
+
+Correctness impact: successful and rolled-back jobs remain recoverable until
+schema acknowledgement; cancellation/build errors persist across owners.
+Compatibility: the two seed APIs now return the shared Step/SchemaSync plan
+and accept the worker-local previously_synced_version. Their only callers are
+source tests; live SQL dispatch does not expand. Point lookups avoid redundant
+queue decoding, but no benchmark speedup is claimed.
+
+Not verified locally: full upstream pkg/ddl/package variants and original tests,
+real multi-node TiDB/TiKV/TiFlash interoperability, the ten previously recorded
+embedded baseline failures, or sysbench/TPC-C/TPC-H/YCSB. Open seed mismatches
+include the build/reorg transaction boundary, rollback data GC and base/log
+back-references, system-table failure transitions, and worker validation/error
+identity details. Direct DDL admission, delete-range GC, general scheduling,
+MDL-disabled operation and TiFlash placement ownership remain open. No complete
+package or repository parity is claimed.

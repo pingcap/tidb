@@ -285,8 +285,35 @@ single-table finish, preserving the full history list and completing empty batch
 
 Still open: non-CHECK SQL admission usually bypasses persisted jobs; DROP lacks
 Go finishDDLJob's delete-range registration/GC owner and typed DropTableArgs;
-materialized-view seed planners still have independent history code and are not
-dispatched; general pause/cancel/reorg scheduling and MDL-disabled operation
+materialized-view seed action/reorg gaps remain and those actions are not
+dispatched (shared completion cleanup is recorded below); general
+pause/cancel/reorg scheduling and MDL-disabled operation
 are not complete. TiFlash placement creation/deletion, partition handling and
 progress/backoff remain open as described above. These are source-backed
 maintenance changes, not a complete pkg/ddl or pkg/meta/model acceptance claim.
+
+
+## Materialized-view seed completion ownership (2026-09-30)
+
+Compared pkg/ddl/mview_worker.go and job_worker.go at master e953a09d9d. Five
+remaining private history writers in tidb-exec/src/cluster_ddl.rs are removed.
+Both explicit seed entrypoints reuse the shared point lookup, MDL recovery,
+active-state lifecycle and history finalizer. DONE/ROLLBACK_DONE remain active
+until synchronization; cancellation uses the same finalizer immediately and
+persists its error rather than constructing and discarding mutations. Initial
+build errors persist in Job.Error/ErrorCount through rollback and history,
+replacing an invented success warning. The shared helper also owns CHECK's
+error-field update. Seed actions remain excluded from the live dispatcher.
+
+Three red reproductions now pass, along with 93 source planner, 7 commit
+classification and 4 embedded DDL tests, affected all-target compilation and
+root lint. Exact commands, source decisions, files and limitations are in
+[the materialized-view receipt](../../full-structural-parity-execplan.md#materialized-view-seed-completion-cleanup-receipt-2026-09-30).
+
+This does not certify complete materialized-view or pkg/ddl parity. Remaining
+seed differences include build/reorg transaction ownership, rollback data GC
+and base/log back-references, required-system-table failure transitions, and
+worker validation/error identity details. General DDL admission/scheduling,
+delete-range GC, MDL-disabled operation and TiFlash placement gaps above remain
+open. No full package validation, multi-node interoperability run or benchmark
+performance claim accompanies this maintenance repair.

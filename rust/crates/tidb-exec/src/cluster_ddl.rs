@@ -3152,6 +3152,59 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     start_ts: u64,
     previously_synced_version: Option<i64>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
+    plan_persisted_ddl_job_with(
+        snapshot,
+        ddl_job_id,
+        start_ts,
+        previously_synced_version,
+        supports_persisted_ddl_job,
+        |_snapshot, catalog, job_table, active| {
+            let action = active.job.type_;
+            match action {
+                ActionType::ACTION_ADD_CHECK_CONSTRAINT
+                | ActionType::ACTION_DROP_CHECK_CONSTRAINT
+                | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
+                    plan_persisted_check_constraint_job_step(catalog, job_table, active, start_ts)
+                }
+                ActionType::ACTION_CREATE_SCHEMA => {
+                    plan_persisted_create_schema_job_step(catalog, job_table, active)
+                }
+                ActionType::ACTION_CREATE_TABLE => {
+                    plan_persisted_create_table_job_step(catalog, job_table, active, start_ts)
+                }
+                ActionType::ACTION_CREATE_TABLES => {
+                    plan_persisted_create_tables_job_step(catalog, job_table, active, start_ts)
+                }
+                ActionType::ACTION_RENAME_TABLES => {
+                    plan_persisted_rename_tables_job_step(catalog, job_table, active, start_ts)
+                }
+                ActionType::ACTION_DROP_SCHEMA => {
+                    plan_persisted_drop_schema_job_step(catalog, job_table, active)
+                }
+                ActionType::ACTION_DROP_TABLE => {
+                    plan_persisted_drop_table_job_step(catalog, job_table, active)
+                }
+                _ => unreachable!("supported action checked above"),
+            }
+        },
+    )
+}
+
+// All persisted actions share the queue, MDL recovery and history owner. The
+// explicit action predicate keeps seed entrypoints out of live dispatch.
+fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+    previously_synced_version: Option<i64>,
+    supports_action: impl FnOnce(ActionType) -> bool,
+    plan_action: impl FnOnce(
+        &mut S,
+        &ClusterCatalog,
+        &crate::ddl_job_table::DdlJobTable,
+        crate::ddl_job_table::ActiveDdlJob,
+    ) -> Result<PersistedDdlJobStep, DdlPlanError>,
+) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -3159,7 +3212,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
         .load_by_id(snapshot, ddl_job_id)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
         .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-    if !supports_persisted_ddl_job(active.job.type_) {
+    if !supports_action(active.job.type_) {
         return Err(DdlPlanError::Encode(format!(
             "unsupported persisted DDL action {}",
             active.job.type_
@@ -3183,84 +3236,17 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
         active.job.state,
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED
     ) {
-        if active.job.state == JobState::DONE {
-            active.job.state = JobState::SYNCED;
-        }
-        if let Some(binlog) = active.job.binlog_info.as_ref() {
-            binlog.write().finished_ts = start_ts;
-        }
-        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-        // No action has run in this transaction. Preserve the persisted raw
-        // args instead of re-encoding a newly decoded, empty Args field.
-        let encoded = active
-            .job
-            .encode(false)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        let mut mutations = Vec::new();
-        crate::ddl_history_table::DdlHistoryTable::locate(&catalog)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-            .append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        mutations.push(BufferMutation::set(
-            key::ddl_job_history_kv_key(ddl_job_id),
-            encoded,
-        )?);
-        job_table
-            .append_delete(&active, &mut mutations)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        return Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
-            write: DdlWrite {
-                ddl_job_id,
-                mutations,
-                schema_version: 0,
-                diff: SchemaDiff::default(),
-                created_id: None,
-                backfill: Vec::new(),
-                auto_pre_split: false,
-                exchange_partition_validation: None,
-                check_constraint_validation: None,
-                mdl_info_update: None,
-                exchange_partition_label_swap: None,
-                warnings: Vec::new(),
-                placement_bundles: Vec::new(),
-                placement_rollback_bundles: Vec::new(),
-            },
-            terminal: true,
-        }));
+        return finish_persisted_ddl_job(snapshot, &catalog, &job_table, &mut active, start_ts)
+            .map(PersistedDdlJobPlan::Step);
     }
+
     if active.job.real_start_ts == 0 {
         active.job.real_start_ts = start_ts;
     }
     if active.job.state != JobState::ROLLINGBACK {
         active.job.state = JobState::RUNNING;
     }
-    let action = active.job.type_;
-    let mut step = match action {
-        ActionType::ACTION_ADD_CHECK_CONSTRAINT
-        | ActionType::ACTION_DROP_CHECK_CONSTRAINT
-        | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
-            plan_persisted_check_constraint_job_step(&catalog, &job_table, active, start_ts)
-        }
-        ActionType::ACTION_CREATE_SCHEMA => {
-            plan_persisted_create_schema_job_step(&catalog, &job_table, active)
-        }
-        ActionType::ACTION_CREATE_TABLE => {
-            plan_persisted_create_table_job_step(&catalog, &job_table, active, start_ts)
-        }
-        ActionType::ACTION_CREATE_TABLES => {
-            plan_persisted_create_tables_job_step(&catalog, &job_table, active, start_ts)
-        }
-        ActionType::ACTION_RENAME_TABLES => {
-            plan_persisted_rename_tables_job_step(&catalog, &job_table, active, start_ts)
-        }
-        ActionType::ACTION_DROP_SCHEMA => {
-            plan_persisted_drop_schema_job_step(&catalog, &job_table, active)
-        }
-        ActionType::ACTION_DROP_TABLE => {
-            plan_persisted_drop_table_job_step(&catalog, &job_table, active)
-        }
-        _ => unreachable!("supported action checked above"),
-    }?;
+    let mut step = plan_action(snapshot, &catalog, &job_table, active)?;
     // Only a new diff publishes a schema version; cancellation is not a
     // publication of whatever catalog version happened to be read.
     step.write.schema_version = step.write.diff.version;
@@ -3268,6 +3254,62 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
         step.write.mdl_info_update = Some(mdl_info);
     }
     Ok(PersistedDdlJobPlan::Step(step))
+}
+
+// Go handleJobDone/finishDDLJob. Cancellation calls this in its current
+// transaction after discarding action mutations; DONE/ROLLBACK_DONE reach it
+// only after the shared MDL barrier. No action handler writes history itself.
+fn finish_persisted_ddl_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    if active.job.state == JobState::DONE {
+        active.job.state = JobState::SYNCED;
+    }
+    if let Some(binlog) = active.job.binlog_info.as_ref() {
+        binlog.write().finished_ts = start_ts;
+    }
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    // Preserve the submitted raw args, including invalid args on cancellation.
+    // Completed jobs have a freshly decoded, empty private Args field.
+    let encoded = active
+        .job
+        .encode(false)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut mutations = Vec::new();
+    crate::ddl_history_table::DdlHistoryTable::locate(catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    mutations.push(BufferMutation::set(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id: active.job.id,
+            mutations,
+            schema_version: 0,
+            diff: SchemaDiff::default(),
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warnings: Vec::new(),
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
 }
 
 /// Plans one CHECK worker step from `mysql.tidb_ddl_job` and current table
@@ -4645,73 +4687,109 @@ fn plan_persisted_drop_table_job_step(
         terminal: false,
     })
 }
-/// Plans pinned Go `onCreateMaterializedViewLog` (master `94a9cbedab`):
-/// the one owner transaction that turns a submitted create-log job into the
-/// created `$mlog$` table, the base table's `MLogID` back-reference, the
-/// `mysql.tidb_mlog_purge_info` schedule row, the schema-version bump with
-/// its create-table event, and the job's terminal state.
-///
-/// The log's purge schedule derives through the driver's FROM-less SELECT
-/// under the recorded SQL mode and schedule zone (Go evaluates the same
-/// expressions through the owner session's internal SQL).
-///
-/// The active row is the operation authority; a process may disappear after
-/// any committed phase and a later owner can call this function with the
-/// same job ID.
+/// Seed planner for Go `onCreateMaterializedViewLog`, using the shared
+/// persisted lifecycle for MDL recovery and history. The action publishes the
+/// log, base back-reference and purge schedule, then leaves DONE in the queue.
+/// This entrypoint does not enable the action in the live owner dispatcher.
+/// `previously_synced_version` has the same worker-local lifetime as in
+/// [`plan_persisted_ddl_job_step`].
 pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
+    start_ts: u64,
+    previously_synced_version: Option<i64>,
+) -> Result<PersistedDdlJobPlan, DdlPlanError> {
+    plan_persisted_ddl_job_with(
+        snapshot,
+        ddl_job_id,
+        start_ts,
+        previously_synced_version,
+        |action| action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+        |snapshot, catalog, job_table, active| {
+            plan_materialized_view_log_action(snapshot, catalog, job_table, active, start_ts)
+        },
+    )
+}
+
+fn plan_materialized_view_log_action<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     use crate::mlog_purge_info_table::{MlogPurgeDerived, MlogPurgeInfoTable};
 
     const PURGE_INFO_MISSING: &str = "create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist";
 
-    let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
-        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if active.job.type_ != ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG {
-        return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} is not a create materialized view log job"
-        )));
-    }
+    let ddl_job_id = active.job.id;
 
     // Go decodes and validates the typed arguments first; a decode failure
     // or missing metadata cancels the job.
-    let Some(args) = tidb_model::get_create_materialized_view_log_args(&mut active.job)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-    else {
-        return cancelled_step(
+    let args = match tidb_model::get_create_materialized_view_log_args(&mut active.job) {
+        Ok(args) => args,
+        Err(error) => {
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
+                &mut active,
+                start_ts,
+                DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
+            )
+        }
+    };
+    let Some(args) = args else {
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            "create materialized view log: invalid job args",
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                "create materialized view log: invalid job args",
+            ),
         );
     };
-    let table_shared = args
-        .read()
-        .table_info
-        .get()
-        .ok_or_else(|| DdlPlanError::Encode("invalid job args".to_owned()))?;
-    let Some(log_meta_shared) = table_shared.read().materialized_view_log.clone() else {
-        return cancelled_step(
+    let Some(table_shared) = args.read().table_info.get() else {
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            "create materialized view log: invalid job args",
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                "create materialized view log: invalid job args",
+            ),
+        );
+    };
+    let Some(log_meta_shared) = table_shared.read().materialized_view_log.clone() else {
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
+            &mut active,
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                "create materialized view log: invalid job args",
+            ),
         );
     };
     let base_table_id = log_meta_shared.read().base_table_id;
     if base_table_id == 0 {
-        return cancelled_step(
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            "create materialized view log: invalid base table id",
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                "create materialized view log: invalid base table id",
+            ),
         );
     }
 
@@ -4725,7 +4803,7 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
     // The purge-schedule row storage. Go converts a missing system table
     // into ErrInvalidDDLJob, which rolls the job back; this plan surfaces
     // the same refusal before any mutation is built.
-    let purge_table = MlogPurgeInfoTable::locate(&catalog).map_err(|_| {
+    let purge_table = MlogPurgeInfoTable::locate(catalog).map_err(|_| {
         DdlPlanError::Admission(DdlAdmissionError::with_code(
             tidb_error::tidb::errcode::ErrInvalidDDLJob,
             PURGE_INFO_MISSING,
@@ -4734,12 +4812,11 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
 
     if active.job.state == JobState::ROLLINGBACK {
         return plan_rollback_materialized_view_log_step(
-            &catalog,
-            &job_table,
+            catalog,
+            job_table,
             active,
             &purge_table,
             snapshot,
-            start_ts,
         );
     }
 
@@ -4750,13 +4827,19 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
         .iter()
         .find(|table| table.id == base_table_id)
     else {
-        return cancelled_step(
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            &format!(
-                "Table '{}.{}' doesn't exist",
-                database.info.name.original(),
-                log_meta_shared.read().columns.len()
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrNoSuchTable,
+                &format!(
+                    "Table '{}.{}' doesn't exist",
+                    database.info.name.original(),
+                    log_meta_shared.read().columns.len()
+                ),
             ),
         );
     };
@@ -4766,31 +4849,49 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
         || base.materialized_view.is_some()
         || base.materialized_view_log.is_some()
     {
-        return cancelled_step(
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            &format!(
-                "'{}.{}' is not BASE TABLE",
-                database.info.name.original(),
-                base.name.original()
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrWrongObject,
+                &format!(
+                    "'{}.{}' is not BASE TABLE",
+                    database.info.name.original(),
+                    base.name.original()
+                ),
             ),
         );
     }
     if base.partition.is_some() {
-        return cancelled_step(
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            "CREATE MATERIALIZED VIEW LOG on partition table",
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                "Unsupported CREATE MATERIALIZED VIEW LOG on partition table",
+            ),
         );
     }
     if base.state != SchemaState::PUBLIC {
-        return cancelled_step(
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            &format!(
-                "table {} is not in public, but {}",
-                base.name.original(),
-                base.state
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLState,
+                &format!(
+                    "table {} is not in public, but {}",
+                    base.name.original(),
+                    base.state
+                ),
             ),
         );
     }
@@ -4799,14 +4900,21 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
         .as_ref()
         .is_some_and(|info| info.read().mlog_id != 0)
     {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrTableExists,
-            format!(
-                "Table '{}.{}' already exists",
-                database.info.name.original(),
-                table_shared.read().name.original()
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
+            &mut active,
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrTableExists,
+                format!(
+                    "Table '{}.{}' already exists",
+                    database.info.name.original(),
+                    table_shared.read().name.original()
+                ),
             ),
-        )));
+        );
     }
 
     // Go `createTable`: the submitted table info lands PUBLIC at this
@@ -4914,33 +5022,10 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
         schema_version,
         &finished,
     );
-    active
-        .job
-        .binlog_info
-        .as_ref()
-        .expect("submitted jobs always carry BinlogInfo")
-        .write()
-        .finished_ts = start_ts;
-    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let encoded = active
-        .job
-        .encode(true)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-    }
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
     job_table
-        .append_delete(&active, &mut mutations)
+        .append_update(&mut active, true, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
-    // Go `updateSchemaVersion` hands the base table's readers an MDL marker
-    // in the same transaction, so a session reading the base cannot miss the
-    // metadata revision its snapshot chose.
-    let mdl_info_update = mdl_info_update(&catalog, base_info.id)?;
     Ok(PersistedDdlJobStep {
         write: DdlWrite {
             ddl_job_id,
@@ -4952,30 +5037,41 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
             auto_pre_split: false,
             exchange_partition_validation: None,
             check_constraint_validation: None,
-            mdl_info_update: Some(mdl_info_update),
+            mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal: true,
+        terminal: false,
     })
 }
 
-/// Cancels a create-log job whose execution-time checks failed: Go sets
-/// `job.State = Cancelled` and returns, and the terminal handler then moves
-/// the cancelled job to history without touching schema metadata. The plan
-/// carries only the terminal row moves; the error carries Go's refusal text
-/// for the statement waiting on the job.
-/// Go's build-failure shape for the initial build: the job moves to
-/// `Rollingback` — non-terminal, the error recorded with the step's warning
-/// — and the NEXT tick runs `rollbackCreateMaterializedView`.
+// Go countForError stores the error on the job so rollback and its eventual
+// history row retain the failure across owner restarts.
+fn record_ddl_job_error(job: &mut Job, code: u16, message: &str) {
+    job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+        tidb_error::terror::TerrorCode::new(
+            isize::try_from(code).expect("u16 error code fits isize"),
+        ),
+        message,
+    )));
+    job.error_count += 1;
+}
+
+// A build failure persists Rollingback and its error; a later tick performs
+// the action rollback before the shared lifecycle moves it to history.
 fn rolling_back_step(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     job_table: &crate::ddl_job_table::DdlJobTable,
     error: &DdlPlanError,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     active.job.state = JobState::ROLLINGBACK;
+    let (code, message) = match error {
+        DdlPlanError::Admission(error) => (error.code, error.reason.clone()),
+        _ => (GENERIC_ERROR_CODE, error.to_string()),
+    };
+    record_ddl_job_error(&mut active.job, code, &message);
     let mut mutations = Vec::new();
     job_table
         .append_update(active, true, &mut mutations)
@@ -4993,7 +5089,7 @@ fn rolling_back_step(
             check_constraint_validation: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
-            warnings: vec![(DdlWarningLevel::Warning, 1105, error.to_string())],
+            warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
@@ -5001,32 +5097,20 @@ fn rolling_back_step(
     })
 }
 
-fn cancelled_step(
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
+// Go discards the action transaction on cancellation and calls handleJobDone
+// immediately. Return that common finalizer's mutations, not an Err that loses
+// the queue removal and the durable error.
+fn cancel_persisted_ddl_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
     job_table: &crate::ddl_job_table::DdlJobTable,
-    reason: &str,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    error: DdlAdmissionError,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     active.job.state = JobState::CANCELLED;
-    let mut mutations = Vec::new();
-    active
-        .job
-        .binlog_info
-        .as_ref()
-        .expect("submitted jobs always carry BinlogInfo")
-        .write()
-        .finished_ts = 0;
-    let encoded = active
-        .job
-        .encode(true)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
-    job_table
-        .append_delete(active, &mut mutations)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    Err(DdlPlanError::Encode(reason.to_owned()))
+    record_ddl_job_error(&mut active.job, error.code, &error.reason);
+    finish_persisted_ddl_job(snapshot, catalog, job_table, active, start_ts)
 }
 
 /// Plans pinned Go `rollbackCreateMaterializedViewLog`: the created log
@@ -5038,7 +5122,6 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
     mut active: crate::ddl_job_table::ActiveDdlJob,
     purge_table: &crate::mlog_purge_info_table::MlogPurgeInfoTable,
     snapshot: &mut S,
-    start_ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     let database = catalog
         .databases
@@ -5132,27 +5215,8 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
     )?);
 
-    active
-        .job
-        .binlog_info
-        .as_ref()
-        .expect("submitted jobs always carry BinlogInfo")
-        .write()
-        .finished_ts = start_ts;
-    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let encoded = active
-        .job
-        .encode(true)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-    }
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
     job_table
-        .append_delete(&active, &mut mutations)
+        .append_update(&mut active, true, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     Ok(PersistedDdlJobStep {
@@ -5172,7 +5236,7 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal: true,
+        terminal: false,
     })
 }
 
@@ -5205,35 +5269,39 @@ impl crate::mview_schedule_derive::ScheduleDecision {
     }
 }
 
-/// Plans pinned Go `onCreateMaterializedView` (master `94a9cbedab`), the
-/// view create's two-phase worker, over the persisted active row:
-///
-/// * `StateNone` — Go's first arm: the per-base re-checks
-///   (`onCreateMaterializedViewBaseCheck`), the view `TableInfo` landing
-///   PUBLIC through `createTable`, each base gaining the view ID in its
-///   `MaterializedViewBase.MViewIDs` (`updateMaterializedViewBaseInfoOnCreate`),
-///   the schema-version bump with the create-table event, the
-///   `mysql.tidb_mview_refresh_info` prewrite row, and the transition to
-///   `StateWriteReorganization`/`Running` as a NON-terminal step;
-/// * `StateWriteReorganization` — the initial build. Go moves the base
-///   table's rows into the view through import-into or insert-select at the
-///   build read TS (`buildCreateMaterializedViewData`); that data-movement
-///   engine is not ported, so this planner refuses with a retryable error
-///   and leaves the queued job exactly where Go's own
-///   `ErrWaitReorgTimeout` tick would — still `Running` at
-///   `StateWriteReorganization`, resumable by a later owner;
-/// * `Rollingback` — `rollbackCreateMaterializedView`: the created view (if
-///   the phase committed) drops with its auto-ID allocators, every base's
-///   `MViewIDs` loses the view (Go's `updateMaterializedViewBaseInfoOnDrop`
-///   view arm, dropping the now-empty metadata), the refresh-info row is
-///   deleted, and the job ends `RollbackDone`/`StateNone`.
-///
-/// The active row is the operation authority; a process may disappear after
-/// any committed phase and a later owner can call this function with the
-/// same job ID.
+/// Seed planner for Go `onCreateMaterializedView`, using the shared persisted
+/// lifecycle. The action's metadata, build and rollback phases leave the active
+/// row available until schema acknowledgement and a separate history step.
+/// The existing seed build engine and caller-supplied build result remain
+/// outside live dispatch; this is not a complete reorg implementation.
+/// `previously_synced_version` has the same worker-local lifetime as in
+/// [`plan_persisted_ddl_job_step`].
 pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
+    start_ts: u64,
+    build: Option<MviewBuildOutcome>,
+    previously_synced_version: Option<i64>,
+) -> Result<PersistedDdlJobPlan, DdlPlanError> {
+    plan_persisted_ddl_job_with(
+        snapshot,
+        ddl_job_id,
+        start_ts,
+        previously_synced_version,
+        |action| action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+        |snapshot, catalog, job_table, active| {
+            plan_materialized_view_create_action(
+                snapshot, catalog, job_table, active, start_ts, build,
+            )
+        },
+    )
+}
+
+fn plan_materialized_view_create_action<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     build: Option<MviewBuildOutcome>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
@@ -5241,40 +5309,59 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
 
     const REFRESH_INFO_MISSING: &str = "create materialized view: required system table mysql.tidb_mview_refresh_info does not exist";
 
-    let catalog = load_cluster_catalog(snapshot)?;
-    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut active = job_table
-        .load(snapshot)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
-        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-
-    if active.job.type_ != ActionType::ACTION_CREATE_MATERIALIZED_VIEW {
-        return Err(DdlPlanError::Encode(format!(
-            "DDL job {ddl_job_id} is not a create materialized view job"
-        )));
-    }
+    let ddl_job_id = active.job.id;
 
     // Go decodes and validates the typed arguments first.
-    let Some(args) = tidb_model::get_create_materialized_view_args(&mut active.job)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-    else {
-        return cancelled_step(
+    let args = match tidb_model::get_create_materialized_view_args(&mut active.job) {
+        Ok(args) => args,
+        Err(error) => {
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
+                &mut active,
+                start_ts,
+                DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
+            )
+        }
+    };
+    let Some(args) = args else {
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            "create materialized view: invalid job args",
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                "create materialized view: invalid job args",
+            ),
         );
     };
-    let table_shared = args.read().table_info.get().ok_or_else(|| {
-        DdlPlanError::Encode("create materialized view: invalid job args".to_owned())
-    })?;
-    let Some(view_meta_shared) = table_shared.read().materialized_view.clone() else {
-        return cancelled_step(
+    let Some(table_shared) = args.read().table_info.get() else {
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            "create materialized view: invalid job args",
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                "create materialized view: invalid job args",
+            ),
+        );
+    };
+    let Some(view_meta_shared) = table_shared.read().materialized_view.clone() else {
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
+            &mut active,
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                "create materialized view: invalid job args",
+            ),
         );
     };
     let base_table_ids: Vec<i64> = view_meta_shared
@@ -5284,26 +5371,44 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
         .copied()
         .collect();
     if base_table_ids.is_empty() {
-        return cancelled_step(
+        return cancel_persisted_ddl_job(
+            snapshot,
+            catalog,
+            job_table,
             &mut active,
-            &job_table,
-            "create materialized view: invalid job args",
+            start_ts,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                "create materialized view: invalid job args",
+            ),
         );
     }
     let mut seen = std::collections::HashSet::with_capacity(base_table_ids.len());
     for id in &base_table_ids {
         if *id == 0 {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                "create materialized view: invalid base table id",
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                    "create materialized view: invalid base table id",
+                ),
             );
         }
         if !seen.insert(*id) {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                "create materialized view: duplicate base table id",
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                    "create materialized view: duplicate base table id",
+                ),
             );
         }
     }
@@ -5315,7 +5420,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
         .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
     let db_id = database.info.id;
 
-    let refresh_table = MviewRefreshInfoTable::locate(&catalog).map_err(|_| {
+    let refresh_table = MviewRefreshInfoTable::locate(catalog).map_err(|_| {
         DdlPlanError::Admission(DdlAdmissionError::with_code(
             tidb_error::tidb::errcode::ErrInvalidDDLJob,
             REFRESH_INFO_MISSING,
@@ -5324,12 +5429,11 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
 
     if active.job.state == JobState::ROLLINGBACK {
         return plan_rollback_materialized_view_create_step(
-            &catalog,
-            &job_table,
+            catalog,
+            job_table,
             active,
             &refresh_table,
             snapshot,
-            start_ts,
         );
     }
 
@@ -5342,13 +5446,19 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             .iter()
             .find(|table| table.id == *base_table_id)
         else {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                &format!(
-                    "Table '{}.{}' doesn't exist",
-                    database.info.name.original(),
-                    base_table_id
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrNoSuchTable,
+                    &format!(
+                        "Table '{}.{}' doesn't exist",
+                        database.info.name.original(),
+                        base_table_id
+                    ),
                 ),
             );
         };
@@ -5356,31 +5466,49 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             || base.is_sequence()
             || base.temp_table_type != tidb_model::TempTableType::NONE
         {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                &format!(
-                    "'{}.{}' is not BASE TABLE",
-                    database.info.name.original(),
-                    base.name.original()
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrWrongObject,
+                    &format!(
+                        "'{}.{}' is not BASE TABLE",
+                        database.info.name.original(),
+                        base.name.original()
+                    ),
                 ),
             );
         }
         if base.partition.is_some() {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                "CREATE MATERIALIZED VIEW on partition table",
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                    "Unsupported CREATE MATERIALIZED VIEW on partition table",
+                ),
             );
         }
         if base.state != SchemaState::PUBLIC {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                &format!(
-                    "table {} is not in public, but {}",
-                    base.name.original(),
-                    base.state
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidDDLState,
+                    &format!(
+                        "table {} is not in public, but {}",
+                        base.name.original(),
+                        base.state
+                    ),
                 ),
             );
         }
@@ -5390,17 +5518,29 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             .map(|handle| handle.read().mlog_id)
             .unwrap_or_default();
         if mlog_id == 0 {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                "create materialized view: base table has no materialized view log",
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                    "create materialized view: base table has no materialized view log",
+                ),
             );
         }
         let Some(mlog) = database.tables.iter().find(|table| table.id == mlog_id) else {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                "create materialized view: invalid materialized view log metadata",
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                    "create materialized view: invalid materialized view log metadata",
+                ),
             );
         };
         let mlog_ok = mlog
@@ -5409,20 +5549,32 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             .map(|handle| handle.read().base_table_id == base.id)
             .unwrap_or(false);
         if !mlog_ok {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                "create materialized view: invalid materialized view log metadata",
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                    "create materialized view: invalid materialized view log metadata",
+                ),
             );
         }
         if mlog.state != SchemaState::PUBLIC {
-            return cancelled_step(
+            return cancel_persisted_ddl_job(
+                snapshot,
+                catalog,
+                job_table,
                 &mut active,
-                &job_table,
-                &format!(
-                    "table {} is not in public, but {}",
-                    mlog.name.original(),
-                    mlog.state
+                start_ts,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidDDLState,
+                    &format!(
+                        "table {} is not in public, but {}",
+                        mlog.name.original(),
+                        mlog.state
+                    ),
                 ),
             );
         }
@@ -5496,7 +5648,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             // Go `asyncNotifyEvent(notifier.NewCreateTableEvent(mviewTableInfo))`.
             append_schema_change_mutations(
                 snapshot,
-                &catalog,
+                catalog,
                 active.job.id,
                 &[(
                     -1,
@@ -5528,7 +5680,6 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                 .append_update(&mut active, true, &mut mutations)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
-            let mdl_info_update = mdl_info_update(&catalog, view_id)?;
             Ok(PersistedDdlJobStep {
                 write: DdlWrite {
                     ddl_job_id,
@@ -5540,7 +5691,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                     auto_pre_split: false,
                     exchange_partition_validation: None,
                     check_constraint_validation: None,
-                    mdl_info_update: Some(mdl_info_update),
+                    mdl_info_update: None,
                     exchange_partition_label_swap: None,
                     warnings: Vec::new(),
                     placement_bundles: Vec::new(),
@@ -5580,7 +5731,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                         // `rollbackCreateMaterializedView`. The transition
                         // itself persists here as a non-terminal step.
                         Err(error) => {
-                            return rolling_back_step(&mut active, &job_table, &error);
+                            return rolling_back_step(&mut active, job_table, &error);
                         }
                     }
                 }
@@ -5686,35 +5837,10 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                 schema_version,
                 &finished,
             );
-            active
-                .job
-                .binlog_info
-                .as_ref()
-                .expect("submitted jobs always carry BinlogInfo")
-                .write()
-                .finished_ts = start_ts;
-            active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-            let encoded = active
-                .job
-                .encode(true)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-                let _ = history_table.append_insert_ignore(
-                    snapshot,
-                    &active.job,
-                    &encoded,
-                    &mut mutations,
-                );
-            }
-            mutations.push(BufferMutation::set(
-                key::ddl_job_history_kv_key(active.job.id),
-                encoded,
-            )?);
             job_table
-                .append_delete(&active, &mut mutations)
+                .append_update(&mut active, true, &mut mutations)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
-            let mdl_info_update = mdl_info_update(&catalog, view_info.id)?;
             Ok(PersistedDdlJobStep {
                 write: DdlWrite {
                     ddl_job_id,
@@ -5726,13 +5852,13 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                     auto_pre_split: false,
                     exchange_partition_validation: None,
                     check_constraint_validation: None,
-                    mdl_info_update: Some(mdl_info_update),
+                    mdl_info_update: None,
                     exchange_partition_label_swap: None,
                     warnings: Vec::new(),
                     placement_bundles: Vec::new(),
                     placement_rollback_bundles: Vec::new(),
                 },
-                terminal: true,
+                terminal: false,
             })
         }
         state => Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
@@ -5753,7 +5879,6 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
     mut active: crate::ddl_job_table::ActiveDdlJob,
     refresh_table: &crate::mview_refresh_info_table::MviewRefreshInfoTable,
     snapshot: &mut S,
-    start_ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     let database = catalog
         .databases
@@ -5854,27 +5979,8 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
     )?);
 
-    active
-        .job
-        .binlog_info
-        .as_ref()
-        .expect("submitted jobs always carry BinlogInfo")
-        .write()
-        .finished_ts = start_ts;
-    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
-    let encoded = active
-        .job
-        .encode(true)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
-        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
-    }
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
     job_table
-        .append_delete(&active, &mut mutations)
+        .append_update(&mut active, true, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
 
     Ok(PersistedDdlJobStep {
@@ -5894,7 +6000,7 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        terminal: true,
+        terminal: false,
     })
 }
 
@@ -5912,19 +6018,11 @@ pub fn plan_check_constraint_job_rollingback<S: MetaSnapshot>(
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
-        .load(snapshot)
+        .load_by_id(snapshot, ddl_job_id)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .into_iter()
-        .find(|active| active.job.id == ddl_job_id)
         .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
     active.job.state = JobState::ROLLINGBACK;
-    active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
-        tidb_error::terror::TerrorCode::new(
-            isize::try_from(error_code).expect("u16 error code fits isize"),
-        ),
-        error_message,
-    )));
-    active.job.error_count += 1;
+    record_ddl_job_error(&mut active.job, error_code, error_message);
     let mut mutations = Vec::new();
     job_table
         // This is a separate transaction after the validation step. The job
