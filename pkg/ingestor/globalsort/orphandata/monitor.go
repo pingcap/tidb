@@ -16,7 +16,6 @@ package orphandata
 
 import (
 	"context"
-	"errors"
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -50,15 +49,13 @@ type storeFactory func(context.Context, string) (storeapi.Storage, error)
 // Monitor scans orphan global-sort objects and publishes their size, but only
 // when no producer is active, so the reported size is orphan data.
 type Monitor struct {
-	ctx context.Context
 	cfg Config
-	// storeFactory builds the object store for a scan. It is a field so tests
-	// can substitute a store that injects walk errors and counts Close calls.
+	// storeFactory builds the object store for a scan; tests substitute it.
 	storeFactory storeFactory
 }
 
 // NewMonitor creates an orphan data Monitor.
-func NewMonitor(ctx context.Context, cfg Config) *Monitor {
+func NewMonitor(cfg Config) *Monitor {
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()
 	}
@@ -66,7 +63,6 @@ func NewMonitor(ctx context.Context, cfg Config) *Monitor {
 		cfg.ActiveProducerChecker = noActiveProducerChecker{}
 	}
 	return &Monitor{
-		ctx:          ctx,
 		cfg:          cfg,
 		storeFactory: newStore,
 	}
@@ -83,63 +79,48 @@ func newStore(ctx context.Context, uri string) (storeapi.Storage, error) {
 // Trigger scans orphan global-sort objects and publishes their size. It runs
 // synchronously and is not safe for concurrent use: the scheduler cleanup loop
 // calls it serially from its own goroutine, which also owns cancellation.
-func (m *Monitor) Trigger() {
-	if m.ctx.Err() != nil {
-		return
-	}
-
-	hasActiveProducers, err := m.cfg.ActiveProducerChecker.HasActiveProducers(m.ctx)
+func (m *Monitor) Trigger(ctx context.Context) {
+	hasActiveProducers, err := m.cfg.ActiveProducerChecker.HasActiveProducers(ctx)
 	if err != nil {
-		if !isCancellation(err) {
+		if ctx.Err() == nil {
 			m.cfg.Logger.Warn("global sort orphan data monitor failed to check active producers", zap.Error(err))
 		}
 		return
 	}
 	if hasActiveProducers {
-		metrics.GlobalSortOrphanDataSize.Set(0)
-		return
-	}
-	if m.ctx.Err() != nil {
 		return
 	}
 
 	storageURI := m.cfg.StorageURI
 	var scan Stats
 	if storageURI != "" {
-		storage, err := m.storeFactory(m.ctx, storageURI)
+		storage, err := m.storeFactory(ctx, storageURI)
 		if err != nil {
-			if !isCancellation(err) {
+			if ctx.Err() == nil {
 				m.cfg.Logger.Warn("global sort orphan data monitor failed to create storage")
 			}
 			return
 		}
 		defer storage.Close()
 
-		scan, err = Scan(m.ctx, storage)
+		scan, err = Scan(ctx, storage)
 		if err != nil {
-			if !isCancellation(err) {
+			if ctx.Err() == nil {
 				m.cfg.Logger.Warn("global sort orphan data monitor failed to scan storage")
 			}
 			return
 		}
 	}
-	if m.ctx.Err() != nil {
-		return
-	}
 
-	hasActiveProducers, err = m.cfg.ActiveProducerChecker.HasActiveProducers(m.ctx)
+	hasActiveProducers, err = m.cfg.ActiveProducerChecker.HasActiveProducers(ctx)
 	if err != nil {
-		if !isCancellation(err) {
+		if ctx.Err() == nil {
 			m.cfg.Logger.Warn("global sort orphan data monitor failed to check active producers", zap.Error(err))
 		}
 		return
 	}
 	if hasActiveProducers {
-		metrics.GlobalSortOrphanDataSize.Set(0)
 		m.cfg.Logger.Info("global sort orphan data monitor discarded scan because tasks appeared")
-		return
-	}
-	if m.ctx.Err() != nil {
 		return
 	}
 
@@ -155,8 +136,4 @@ func (m *Monitor) Trigger() {
 		zap.Int64("orphan-data-object-count", scan.ObjectCount),
 		zap.Strings("sample-prefixes", scan.SamplePrefixes),
 		zap.Bool("sample-prefixes-omitted", scan.SamplePrefixesOmitted))
-}
-
-func isCancellation(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
