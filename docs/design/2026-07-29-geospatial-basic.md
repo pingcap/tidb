@@ -824,10 +824,10 @@ MySQL, which answers. The operand restriction is a different thing and survives 
 test: it has no threshold, it is predictable from the query text alone, and it never returns
 a boolean MySQL would not.
 
-What the invariant rules out, concretely: an earlier draft paired spherical point-in-polygon
-with planar polygon/polygon, and that answers a point and an infinitesimal polygon at the
-same location differently. `ST_Within(POINT(30 70), ...)` against the polygon above is true
-while the same test on a tiny polygon there is false, where MySQL answers true for both. No
+What the invariant rules out, concretely: pairing spherical point-in-polygon with planar
+polygon/polygon would answer a point and an infinitesimal polygon at the same location
+differently. `ST_Within(POINT(30 70), ...)` against the polygon above would be true while
+the same test on a tiny polygon there would be false, where MySQL answers true for both. No
 DE-9IM definition distinguishes those two operands; only the choice of surface does.
 
 This design owns the decision, since the type layer owns predicate semantics. No bytes are
